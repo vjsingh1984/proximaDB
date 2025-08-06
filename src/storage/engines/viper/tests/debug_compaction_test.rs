@@ -137,18 +137,14 @@ async fn test_viper_flush_and_compaction_debug() -> Result<()> {
     let temp_dir = format!("{}/{}/data/___temp", base_path, collection_id);
     fs::create_dir_all(&temp_dir).await?;
     
-    let assignment_service = crate::storage::assignment_service::get_assignment_service();
-    let storage_location = crate::core::config::StorageLocation {
-        url: format!("file://{}", base_path),
-        weight: 1,
-        tags: Default::default(),
-    };
-    assignment_service
-        .assign_collection(collection_id, &[storage_location], "hash")
-        .await?;
+    // Storage assignment is now handled internally by CollectionService
+    // when a collection is created. For test purposes, we just ensure
+    // the directory structure exists.
+    let wal_dir = format!("{}/{}/write_buffer", base_path, collection_id);
+    fs::create_dir_all(&wal_dir).await?;
     
-    let assignment = assignment_service.get_assignment(collection_id).await.unwrap();
-    println!("📍 Storage assignment: {}", assignment.data_url);
+    let data_url = format!("file://{}/{}/data", base_path, collection_id);
+    println!("📍 Data directory: {}", data_url);
     
     // Step 1: Create and flush vectors
     println!("\n📝 Step 1: Creating and flushing vectors");
@@ -177,8 +173,8 @@ async fn test_viper_flush_and_compaction_debug() -> Result<()> {
     // Step 2: List and inspect flushed files
     println!("\n📋 Step 2: Listing flushed files");
     
-    let fs = engine.get_filesystem_factory().get_filesystem(&assignment.data_url)?;
-    let entries = fs.list(&assignment.data_url).await?;
+    let fs = engine.get_filesystem_factory().get_filesystem(&data_url)?;
+    let entries = fs.list(&data_url).await?;
     
     let mut parquet_files = Vec::new();
     for entry in entries {
@@ -227,7 +223,7 @@ async fn test_viper_flush_and_compaction_debug() -> Result<()> {
     // Step 5: List files after compaction
     println!("\n📋 Step 5: Listing files after compaction");
     
-    let entries_after = fs.list(&assignment.data_url).await?;
+    let entries_after = fs.list(&data_url).await?;
     let mut compacted_files = Vec::new();
     
     for entry in entries_after {

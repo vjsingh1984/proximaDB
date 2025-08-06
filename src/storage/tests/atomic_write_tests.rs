@@ -17,7 +17,6 @@
 //! Integration tests for atomic write patterns with UnifiedAtomicCoordinator
 
 use crate::storage::atomic::{UnifiedAtomicCoordinator, StagingConfig, StagingOperationType};
-use crate::storage::assignment_service::UnifiedAssignment;
 use crate::storage::persistence::filesystem::{FilesystemFactory};
 use crate::storage::persistence::filesystem::FilesystemConfig;
 use crate::core::{VectorId, VectorRecord};

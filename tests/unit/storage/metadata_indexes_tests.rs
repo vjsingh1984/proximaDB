@@ -44,6 +44,7 @@ fn create_test_collection(id: &str, name: &str) -> Collection {
         }),
         created_at: 1000,
         updated_at: 1000,
+        storage_assignment: None,
     }
 }
 

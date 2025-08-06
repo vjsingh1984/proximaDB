@@ -135,6 +135,7 @@ impl RestHttpServerBuilder {
             enable_dashboard: self.enable_dashboard,
             enable_metrics: self.enable_metrics,
             enable_health: self.enable_health,
+            enable_compression: false, // Default to false for better debugging and troubleshooting
             tls_cert_file: self.tls_cert_file,
             tls_key_file: self.tls_key_file,
         })
@@ -328,6 +329,7 @@ impl GrpcHttpServerBuilder {
 pub struct MultiServerBuilder {
     http_builder: RestHttpServerBuilder,
     grpc_builder: GrpcHttpServerBuilder,
+    api_config: Option<crate::core::config::ApiConfig>,
 }
 
 impl Default for MultiServerBuilder {
@@ -335,6 +337,7 @@ impl Default for MultiServerBuilder {
         Self {
             http_builder: RestHttpServerBuilder::default(),
             grpc_builder: GrpcHttpServerBuilder::default(),
+            api_config: None,
         }
     }
 }
@@ -385,6 +388,12 @@ impl MultiServerBuilder {
         self
     }
 
+    /// Set API configuration (request limits, timeouts, etc.)
+    pub fn with_api_config(mut self, api_config: crate::core::config::ApiConfig) -> Self {
+        self.api_config = Some(api_config);
+        self
+    }
+
     /// Build the complete multi-server configuration
     pub fn build(self) -> Result<MultiServerConfig> {
         let http_config = self
@@ -400,6 +409,7 @@ impl MultiServerBuilder {
             http_config,
             grpc_config,
             tls_config: crate::network::multi_server::TLSConfig::default(),
+            api_config: self.api_config,
         })
     }
 

@@ -106,29 +106,4 @@ impl Default for AuthConfig {
     }
 }
 
-/// Rate limiting configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RateLimitConfig {
-    /// Enable rate limiting
-    pub enabled: bool,
-
-    /// Requests per minute per client
-    pub requests_per_minute: u32,
-
-    /// Burst allowance
-    pub burst_size: u32,
-
-    /// Rate limit by IP address
-    pub by_ip: bool,
-}
-
-impl Default for RateLimitConfig {
-    fn default() -> Self {
-        Self {
-            enabled: true,
-            requests_per_minute: 1000,
-            burst_size: 100,
-            by_ip: true,
-        }
-    }
-}
+// RateLimitConfig moved to middleware/rate_limit.rs for consolidation

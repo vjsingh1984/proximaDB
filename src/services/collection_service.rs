@@ -77,7 +77,7 @@ impl CollectionService {
         &self,
         config: &crate::proto::proximadb::CollectionConfig,
     ) -> Result<CollectionServiceResponse> {
-        info!("🆕 Creating collection: {}", config.name);
+        println!("🆕 Creating collection: {} with distance_metric={}", config.name, config.distance_metric);
         let start_time = std::time::Instant::now();
 
         // Input validation
@@ -126,7 +126,13 @@ impl CollectionService {
         let uuid = self.generate_unique_collection_id().await?;
         let now = chrono::Utc::now().timestamp_micros();
         
-        // Create proto collection with stats
+        // Create storage directories using assignment service FIRST
+        let (storage_assignments, unified_assignment) = self
+            .create_storage_directories(&config.name, &uuid)
+            .await
+            .context("Failed to create storage directories")?;
+
+        // Create proto collection with stats and storage assignment
         let proto_collection = Collection {
             id: uuid.clone(),
             config: Some(config.clone()),
@@ -137,13 +143,13 @@ impl CollectionService {
             }),
             created_at: now,
             updated_at: now,
+            storage_assignment: Some(crate::proto::proximadb::StorageAssignment {
+                data_location: unified_assignment.location_url.clone(),
+                wal_location: unified_assignment.write_buffer_url.clone(),
+                location_index: unified_assignment.location_index as u32,
+                assigned_at: chrono::Utc::now().timestamp_micros(),
+            }),
         };
-
-        // Create storage directories using assignment service
-        let storage_assignments = self
-            .create_storage_directories(&config.name, &uuid)
-            .await
-            .context("Failed to create storage directories")?;
 
         // Store proto collection using protobuf serialization (zero-copy)
         self.metadata_backend
@@ -751,7 +757,7 @@ impl CollectionService {
         &self,
         collection_name: &str,
         collection_uuid: &str,
-    ) -> Result<Vec<StorageComponentType>> {
+    ) -> Result<(Vec<StorageComponentType>, crate::storage::assignment_service::UnifiedAssignment)> {
         info!(
             "🏗️ Creating storage directories for collection {} (UUID: {})",
             collection_name, collection_uuid
@@ -827,7 +833,7 @@ impl CollectionService {
             collection_name,
             assignment.location_url
         );
-        Ok(created_components)
+        Ok((created_components, assignment))
     }
 
     /// Clean up storage directories for a deleted collection

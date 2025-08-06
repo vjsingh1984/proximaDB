@@ -19,6 +19,17 @@ import numpy as np
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 
 from .config import ClientConfig, load_config, Protocol
+from .protocol_selector import (
+    ProtocolSelector, 
+    SelectionStrategy, 
+    create_protocol_selector
+)
+from .operation_router import (
+    OperationRouter,
+    RoutingConfig,
+    RoutingStrategy,
+    create_operation_router
+)
 from .models import (
     Collection,
     CollectionConfig,
@@ -77,6 +88,11 @@ class ProximaDBClient:
         verify_ssl: bool = True,
         cert_file: Optional[str] = None,
         key_file: Optional[str] = None,
+        enable_intelligent_selection: bool = False,
+        selection_strategy: SelectionStrategy = SelectionStrategy.BALANCED,
+        enable_operation_routing: bool = False,
+        routing_strategy: RoutingStrategy = RoutingStrategy.HYBRID,
+        routing_config: Optional[RoutingConfig] = None,
         **kwargs
     ):
         """
@@ -93,6 +109,11 @@ class ProximaDBClient:
             verify_ssl: Verify SSL certificates
             cert_file: Client certificate file path for mTLS
             key_file: Client key file path for mTLS
+            enable_intelligent_selection: Enable intelligent protocol selection (Phase 2 optimization)
+            selection_strategy: Strategy for intelligent protocol selection
+            enable_operation_routing: Enable operation-specific routing (Phase 3 optimization)
+            routing_strategy: Strategy for operation routing (HYBRID, PERFORMANCE_BASED, etc.)
+            routing_config: Custom routing configuration
             **kwargs: Additional configuration parameters
         """
         if config is None:
@@ -111,13 +132,32 @@ class ProximaDBClient:
         
         self.config = config
         self.protocol = Protocol(protocol) if isinstance(protocol, str) else protocol
+        self.enable_intelligent_selection = enable_intelligent_selection
+        self.selection_strategy = selection_strategy
+        self.enable_operation_routing = enable_operation_routing
+        self.routing_strategy = routing_strategy
+        
+        # Client state
         self._client = None
+        self._protocol_selector: Optional[ProtocolSelector] = None
+        self._operation_router: Optional[OperationRouter] = None
+        self._rest_client = None
+        self._grpc_client = None
+        
+        # Setup operation routing if enabled
+        if self.enable_operation_routing:
+            self._setup_operation_routing(routing_config)
+        
         self._setup_client()
     
     def _setup_client(self):
         """Setup the underlying client based on protocol preference"""
-        if self.protocol == Protocol.AUTO:
-            # Try gRPC first (high performance), then fallback to REST
+        if self.enable_intelligent_selection and self.protocol == Protocol.AUTO:
+            # Use intelligent protocol selection (Phase 2 optimization)
+            logger.info(f"🧠 Enabling intelligent protocol selection with {self.selection_strategy.value} strategy")
+            self._setup_intelligent_selection()
+        elif self.protocol == Protocol.AUTO:
+            # Traditional auto-selection (try gRPC first, fallback to REST)
             try:
                 if not GRPC_AVAILABLE:
                     raise ImportError("gRPC dependencies not available")
@@ -149,6 +189,61 @@ class ProximaDBClient:
         
         else:
             raise ValueError(f"Unknown protocol: {self.protocol}")
+    
+    def _setup_intelligent_selection(self):
+        """Setup intelligent protocol selection system"""
+        try:
+            # Create protocol selector with client factories
+            self._protocol_selector = create_protocol_selector(
+                config=self.config,
+                grpc_factory=self._create_grpc_client,
+                rest_factory=self._create_rest_client,
+                strategy=self.selection_strategy
+            )
+            
+            # Get initial client
+            self._client = self._protocol_selector.get_client()
+            self._active_protocol = self._protocol_selector.select_protocol()
+            
+            logger.info(f"🧠 Intelligent protocol selection initialized: {self._active_protocol.value}")
+            
+        except Exception as e:
+            logger.warning(f"⚠️ Intelligent selection failed: {e}, falling back to traditional auto-selection")
+            # Fallback to traditional selection
+            self.enable_intelligent_selection = False
+            self._setup_client()
+    
+    def _setup_operation_routing(self, routing_config: Optional[RoutingConfig]):
+        """Setup operation-specific routing system"""
+        try:
+            # Create routing configuration if not provided
+            if routing_config is None:
+                routing_config = RoutingConfig(
+                    strategy=self.routing_strategy,
+                    default_protocol=Protocol.GRPC if GRPC_AVAILABLE else Protocol.REST,
+                    enable_adaptive_routing=True,
+                    enable_fallback=True,
+                    enable_load_balancing=True
+                )
+            
+            # Create operation router
+            self._operation_router = OperationRouter(routing_config)
+            
+            # Pre-create both clients for routing
+            self._rest_client = self._create_rest_client()
+            if GRPC_AVAILABLE:
+                try:
+                    self._grpc_client = self._create_grpc_client()
+                except Exception as e:
+                    logger.warning(f"⚠️ gRPC client creation failed: {e}")
+                    self._grpc_client = None
+            
+            logger.info(f"🎯 Operation-specific routing enabled with {self.routing_strategy.value} strategy")
+            
+        except Exception as e:
+            logger.warning(f"⚠️ Operation routing setup failed: {e}, disabling routing")
+            self.enable_operation_routing = False
+            self._operation_router = None
     
     def _create_grpc_client(self):
         """Create gRPC client"""
@@ -212,6 +307,119 @@ class ProximaDBClient:
                 "serialization": "JSON",
                 "transport": "HTTP/1.1"
             }
+    
+    # Intelligent protocol selection methods (Phase 2 optimization)
+    
+    def get_protocol_metrics(self) -> Dict[str, Any]:
+        """Get detailed metrics for all available protocols"""
+        if self._protocol_selector:
+            return self._protocol_selector.get_protocol_metrics()
+        else:
+            return {"error": "Intelligent protocol selection not enabled"}
+    
+    # Operation-specific routing methods (Phase 3 optimization)
+    
+    def _get_client_for_operation(
+        self, 
+        operation_name: str, 
+        data_size_hint: Optional[int] = None,
+        context: Optional[Dict[str, Any]] = None,
+        preferred_protocol: Optional[Protocol] = None
+    ) -> Any:
+        """Get appropriate client for specific operation"""
+        if not self.enable_operation_routing or not self._operation_router:
+            # Fallback to default client selection
+            return self._client
+        
+        # Route operation to appropriate protocol
+        selected_protocol = self._operation_router.route_operation(
+            operation_name=operation_name,
+            data_size_hint=data_size_hint,
+            context=context,
+            preferred_protocol=preferred_protocol
+        )
+        
+        # Return appropriate client
+        if selected_protocol == Protocol.GRPC and self._grpc_client:
+            return self._grpc_client
+        elif selected_protocol == Protocol.REST and self._rest_client:
+            return self._rest_client
+        else:
+            # Fallback to default client
+            logger.warning(f"Requested protocol {selected_protocol.value} not available, using default")
+            return self._client
+    
+    def _record_operation_result(
+        self,
+        operation_name: str,
+        protocol: Protocol,
+        success: bool,
+        response_time_ms: float,
+        error: Optional[str] = None,
+        throughput_ops_per_sec: float = 0.0
+    ):
+        """Record operation result for adaptive routing"""
+        if self._operation_router:
+            self._operation_router.record_operation_result(
+                protocol=protocol,
+                success=success,
+                response_time_ms=response_time_ms,
+                error=error,
+                throughput_ops_per_sec=throughput_ops_per_sec
+            )
+    
+    def get_routing_stats(self) -> Dict[str, Any]:
+        """Get operation routing statistics"""
+        if self._operation_router:
+            return self._operation_router.get_routing_stats()
+        else:
+            return {"error": "Operation routing not enabled"}
+    
+    def add_routing_rule(self, rule) -> None:
+        """Add custom routing rule"""
+        if self._operation_router:
+            self._operation_router.add_routing_rule(rule)
+        else:
+            logger.warning("Operation routing not enabled, cannot add routing rule")
+    
+    def reset_routing_metrics(self) -> None:
+        """Reset routing performance metrics"""
+        if self._operation_router:
+            self._operation_router.reset_metrics()
+        else:
+            logger.warning("Operation routing not enabled, cannot reset metrics")
+    
+    def get_selection_stats(self) -> Dict[str, Any]:
+        """Get protocol selection statistics"""
+        if self._protocol_selector:
+            return self._protocol_selector.get_selection_stats()
+        else:
+            return {"error": "Intelligent protocol selection not enabled"}
+    
+    def force_protocol_switch(self, target_protocol: Protocol):
+        """Force switch to specific protocol (for testing/debugging)"""
+        if self._protocol_selector:
+            self._protocol_selector.force_protocol_switch(target_protocol)
+            # Update client reference
+            self._client = self._protocol_selector.get_client(target_protocol)
+            self._active_protocol = target_protocol
+        else:
+            raise ProximaDBError("Intelligent protocol selection not enabled")
+    
+    
+    def _get_optimal_client(self, operation_hint: Optional[str] = None):
+        """Get optimal client for operation (with intelligent selection)"""
+        if self._protocol_selector:
+            # Get optimal protocol for this operation
+            optimal_protocol = self._protocol_selector.select_protocol(operation_hint)
+            
+            # Switch if different from current
+            if optimal_protocol != self._active_protocol:
+                self._client = self._protocol_selector.get_client(optimal_protocol)
+                self._active_protocol = optimal_protocol
+                logger.debug(f"Switched to {optimal_protocol.value} for {operation_hint or 'operation'}")
+        
+        return self._client
     
     # Type conversion helpers
     def _proto_to_pydantic_collection(self, proto_collection: 'pb2.Collection') -> Collection:
@@ -407,14 +615,24 @@ class ProximaDBClient:
         
         if self._active_protocol == Protocol.GRPC:
             proto_config = self._pydantic_to_proto_collection_config(config)
-            proto_collection = self._client.create_collection(
+            response = self._client.create_collection(
                 name=config.name,
                 dimension=config.dimension,
                 distance_metric=self._pydantic_to_proto_distance_metric(config.distance_metric),
                 indexing_algorithm=self._pydantic_to_proto_indexing_algorithm(config.primary_indexing_algorithm),
                 storage_engine=self._pydantic_to_proto_storage_engine(config.storage_engine)
             )
-            return self._proto_to_pydantic_collection(proto_collection)
+            # Handle VectorOperationResponse
+            if hasattr(response, 'collection') and response.collection:
+                return self._proto_to_pydantic_collection(response.collection)
+            else:
+                # Return a simple collection object if successful
+                return Collection(
+                    id=response.collection.id if hasattr(response, 'collection') else config.name,
+                    config=config,
+                    created_at=int(time.time() * 1e6),
+                    updated_at=int(time.time() * 1e6)
+                )
         else:
             return self._client.create_collection(name, config, **kwargs)
     
@@ -430,11 +648,42 @@ class ProximaDBClient:
     
     def list_collections(self) -> List[Collection]:
         """List all collections"""
-        if self._active_protocol == Protocol.GRPC:
-            proto_collections = self._client.list_collections()
-            return [self._proto_to_pydantic_collection(col) for col in proto_collections]
-        else:
-            return self._client.list_collections()
+        operation_name = "list_collections"
+        start_time = time.time()
+        
+        try:
+            # Get appropriate client for this operation
+            client = self._get_client_for_operation(operation_name)
+            
+            # Determine which protocol we're using
+            if client == self._grpc_client:
+                protocol_used = Protocol.GRPC
+                proto_collections = client.list_collections()
+                result = [self._proto_to_pydantic_collection(col) for col in proto_collections]
+            elif client == self._rest_client:
+                protocol_used = Protocol.REST
+                result = client.list_collections()
+            else:
+                # Fallback to active protocol
+                protocol_used = self._active_protocol
+                if protocol_used == Protocol.GRPC:
+                    proto_collections = client.list_collections()
+                    result = [self._proto_to_pydantic_collection(col) for col in proto_collections]
+                else:
+                    result = client.list_collections()
+            
+            # Record successful operation
+            response_time = (time.time() - start_time) * 1000
+            self._record_operation_result(operation_name, protocol_used, True, response_time)
+            
+            return result
+            
+        except Exception as e:
+            # Record failed operation
+            response_time = (time.time() - start_time) * 1000
+            protocol_used = getattr(self, '_active_protocol', Protocol.REST)
+            self._record_operation_result(operation_name, protocol_used, False, response_time, str(e))
+            raise
     
     def delete_collection(self, collection_id: str) -> bool:
         """Delete a collection"""
@@ -484,56 +733,138 @@ class ProximaDBClient:
         if records is None or (hasattr(records, '__len__') and len(records) == 0) or (not hasattr(records, '__len__') and not records):
             raise ValueError("Either 'records' or 'vectors' must be provided")
         
-        if self._active_protocol == Protocol.GRPC:
-            # Convert Pydantic VectorRecord to dict format for gRPC client
-            vector_dicts = []
-            for record in records:
-                vector_dict = {
-                    "vector": record.vector,
-                    "metadata": record.metadata
-                }
-                if record.id:
-                    vector_dict["id"] = record.id
-                if record.timestamp:
-                    vector_dict["timestamp"] = record.timestamp
-                if record.expires_at:
-                    vector_dict["expires_at"] = record.expires_at
-                vector_dicts.append(vector_dict)
-            
-            proto_response = self._client.insert_vectors(collection_id, vector_dicts)
-            # Convert proto response to Pydantic (simplified for now)
-            # Handle case where metrics might not be present in the response
-            metrics = None
-            if hasattr(proto_response, 'metrics') and proto_response.metrics:
-                metrics = OperationMetrics(
-                    total_processed=proto_response.metrics.total_processed,
-                    successful_count=proto_response.metrics.successful_count,
-                    failed_count=proto_response.metrics.failed_count
-                )
-            else:
-                # Default metrics if not provided
-                metrics = OperationMetrics(
-                    total_processed=len(vector_dicts),
-                    successful_count=len(vector_dicts) if proto_response.success else 0,
-                    failed_count=0 if proto_response.success else len(vector_dicts)
-                )
-            
-            return VectorOperationResponse(
-                success=proto_response.success,
-                operation="insert",
-                metrics=metrics
+        # Estimate data size for routing
+        data_size_hint = len(records) * len(records[0].vector) * 4 if records and records[0].vector else 1000  # Rough estimate
+        operation_name = "bulk_insert_vectors" if len(records) > 10 else "insert_vectors"
+        
+        start_time = time.time()
+        
+        try:
+            # Get appropriate client for this operation
+            client = self._get_client_for_operation(
+                operation_name=operation_name,
+                data_size_hint=data_size_hint,
+                context={"collection_id": collection_id, "vector_count": len(records)}
             )
-        else:
-            # REST client expects separate arrays
-            vectors = [r.vector for r in records]
-            ids = [r.id for r in records if r.id]
-            metadata = [r.metadata for r in records]
             
-            # If no IDs provided, generate them
-            if not ids:
-                ids = [f"vec_{i}" for i in range(len(vectors))]
+            # Determine protocol and execute
+            if client == self._grpc_client:
+                protocol_used = Protocol.GRPC
+                # Convert Pydantic VectorRecord to dict format for gRPC client
+                vector_dicts = []
+                for record in records:
+                    vector_dict = {
+                        "vector": record.vector,
+                        "metadata": record.metadata
+                    }
+                    if record.id:
+                        vector_dict["id"] = record.id
+                    if record.timestamp:
+                        vector_dict["timestamp"] = record.timestamp
+                    if record.expires_at:
+                        vector_dict["expires_at"] = record.expires_at
+                    vector_dicts.append(vector_dict)
+                
+                proto_response = client.insert_vectors(collection_id, vector_dicts)
+                # Convert proto response to Pydantic (simplified for now)
+                # Handle case where metrics might not be present in the response
+                metrics = None
+                if hasattr(proto_response, 'metrics') and proto_response.metrics:
+                    metrics = OperationMetrics(
+                        total_processed=proto_response.metrics.total_processed,
+                        successful_count=proto_response.metrics.successful_count,
+                        failed_count=proto_response.metrics.failed_count
+                    )
+                else:
+                    # Default metrics if not provided
+                    metrics = OperationMetrics(
+                        total_processed=len(vector_dicts),
+                        successful_count=len(vector_dicts) if proto_response.success else 0,
+                        failed_count=0 if proto_response.success else len(vector_dicts)
+                    )
+                
+                result = VectorOperationResponse(
+                    success=proto_response.success,
+                    operation="insert",
+                    metrics=metrics
+                )
+                
+            elif client == self._rest_client:
+                protocol_used = Protocol.REST
+                # REST client expects separate arrays
+                vectors = [r.vector for r in records]
+                ids = [r.id for r in records if r.id]
+                metadata = [r.metadata for r in records]
+                
+                # If no IDs provided, generate them
+                if not ids:
+                    ids = [f"vec_{i}" for i in range(len(vectors))]
+                
+                result = client.insert_vectors(collection_id, vectors, ids, metadata)
+                
+            else:
+                # Fallback to active protocol
+                protocol_used = self._active_protocol
+                if protocol_used == Protocol.GRPC:
+                    # Similar to gRPC path above
+                    vector_dicts = []
+                    for record in records:
+                        vector_dict = {
+                            "vector": record.vector,
+                            "metadata": record.metadata
+                        }
+                        if record.id:
+                            vector_dict["id"] = record.id
+                        if record.timestamp:
+                            vector_dict["timestamp"] = record.timestamp
+                        if record.expires_at:
+                            vector_dict["expires_at"] = record.expires_at
+                        vector_dicts.append(vector_dict)
+                    
+                    proto_response = client.insert_vectors(collection_id, vector_dicts)
+                    metrics = None
+                    if hasattr(proto_response, 'metrics') and proto_response.metrics:
+                        metrics = OperationMetrics(
+                            total_processed=proto_response.metrics.total_processed,
+                            successful_count=proto_response.metrics.successful_count,
+                            failed_count=proto_response.metrics.failed_count
+                        )
+                    else:
+                        metrics = OperationMetrics(
+                            total_processed=len(vector_dicts),
+                            successful_count=len(vector_dicts) if proto_response.success else 0,
+                            failed_count=0 if proto_response.success else len(vector_dicts)
+                        )
+                    
+                    result = VectorOperationResponse(
+                        success=proto_response.success,
+                        operation="insert", 
+                        metrics=metrics
+                    )
+                else:
+                    # REST fallback
+                    vectors = [r.vector for r in records]
+                    ids = [r.id for r in records if r.id]
+                    metadata = [r.metadata for r in records]
+                    
+                    if not ids:
+                        ids = [f"vec_{i}" for i in range(len(vectors))]
+                    
+                    result = client.insert_vectors(collection_id, vectors, ids, metadata)
             
-            return self._client.insert_vectors(collection_id, vectors, ids, metadata)
+            # Record successful operation
+            response_time = (time.time() - start_time) * 1000
+            throughput = len(records) / ((time.time() - start_time) + 0.001)  # Add small value to avoid division by zero
+            self._record_operation_result(operation_name, protocol_used, True, response_time, throughput_ops_per_sec=throughput)
+            
+            return result
+            
+        except Exception as e:
+            # Record failed operation
+            response_time = (time.time() - start_time) * 1000
+            protocol_used = getattr(self, '_active_protocol', Protocol.REST)
+            self._record_operation_result(operation_name, protocol_used, False, response_time, str(e))
+            raise
     
     def upsert_vectors(
         self,
@@ -672,7 +1003,8 @@ class ProximaDBClient:
                 }
             })
             
-            proto_response = self._client.search_vectors(
+            # grpc_sync.search_vectors already returns List[SearchResult]
+            results = self._client.search_vectors(
                 collection_id=collection_id,
                 query_vectors=[vector],
                 top_k=top_k,
@@ -682,22 +1014,7 @@ class ProximaDBClient:
                 # Note: search_hints would need to be converted to SearchParameters proto
             )
             
-            # Extract results from proto response
-            results = []
-            if hasattr(proto_response, 'compact_results') and proto_response.compact_results:
-                for result in proto_response.compact_results.results:
-                    # Extract metadata from protobuf repeated field
-                    from .metadata_utils import proto_metadata_to_dict
-                    metadata_dict = proto_metadata_to_dict(result.metadata) if hasattr(result, 'metadata') else {}
-                    
-                    search_result = SearchResult(
-                        id=result.id if result.id else "",
-                        score=result.score,
-                        vector=list(result.vector) if result.vector else None,
-                        metadata=metadata_dict,
-                        rank=result.rank if hasattr(result, 'rank') and result.rank else None
-                    )
-                    results.append(search_result)
+            # Results are already SearchResult objects, just return them
             return results
         else:
             # For REST, use search method (filter out unsupported parameters)
@@ -948,6 +1265,11 @@ class ProximaDBClient:
         """Close the client and cleanup resources"""
         if self._client and hasattr(self._client, 'close'):
             self._client.close()
+        
+        # Close protocol selector if enabled
+        if self._protocol_selector:
+            self._protocol_selector.close()
+            self._protocol_selector = None
     
     def __enter__(self):
         """Context manager entry"""

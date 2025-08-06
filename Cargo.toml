@@ -47,14 +47,14 @@ lazy_static = "1.5"
 # dashmap = "6.1.0"     # High-performance concurrent hashmap for ART alternative (already defined below)
 
 # Networking & gRPC
-tonic = "0.10"
+tonic = { version = "0.10", features = ["gzip"] }
 tonic-build = "0.10"
 tonic-reflection = "0.10"
 prost = "0.12"
 prost-types = "0.12"
 hyper = "0.14"
 tower = "0.4"
-tower-http = { version = "0.4", features = ["cors", "trace", "fs"] }
+tower-http = { version = "0.4", features = ["cors", "trace", "fs", "compression-full", "decompression-full"] }
 url = "2.4"
 reqwest = { version = "0.11", features = ["json"] }
 

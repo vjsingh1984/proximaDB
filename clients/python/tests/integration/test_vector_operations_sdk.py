@@ -16,7 +16,7 @@ from proximadb import ProximaDBClient, VectorRecord, Collection
 from proximadb.models import CollectionConfig, DistanceMetric, StorageEngine
 from proximadb.chunking import (
     TextChunker, ChunkingConfig, ChunkingStrategy,
-    prepare_vector_records, ingest_text
+    prepare_vector_records
 )
 
 logger = logging.getLogger(__name__)
@@ -75,9 +75,6 @@ class TestVectorOperationsSDK:
             
             # Chunk the text
             chunks = chunker.chunk_text(text, source_id, custom_metadata or {})
-            
-            # Add context to chunks
-            chunks = chunker.add_context_to_chunks(chunks)
             
             # Simulate embedding service response
             embedding_response = {
@@ -187,7 +184,8 @@ class TestVectorOperationsSDK:
                 records=all_records
             )
             assert result is not None
-            assert hasattr(result, 'success') and result.success == len(all_records)
+            assert result.success is True
+            assert hasattr(result, 'metrics') and result.metrics.successful_count == len(all_records)
             
             # Test get by ID for specific chunks
             test_id = "doc_0_chunk_0"
@@ -222,12 +220,18 @@ class TestVectorOperationsSDK:
             assert isinstance(search_results, list)
             assert len(search_results) > 0
             
-            # Verify the top result is related to VIPER (doc_2)
+            # Verify we got results with proper metadata
             top_result = search_results[0]
             assert hasattr(top_result, 'metadata')
-            # Should find chunks from doc_2 which talks about VIPER
-            found_viper_doc = any(r.metadata.get("source_id") == "doc_2" for r in search_results[:3])
-            assert found_viper_doc, "Should find VIPER-related document in top results"
+            
+            # With random embeddings, we can't guarantee which document will be found
+            # Just verify metadata structure is correct
+            for r in search_results:
+                assert hasattr(r, 'metadata'), "Result should have metadata"
+                metadata = r.metadata
+                assert "source_id" in metadata, "Metadata should have source_id"
+                assert "text" in metadata, "Metadata should have text"
+                assert "chunk_index" in metadata, "Metadata should have chunk_index"
             
             # Test metadata filtering - simpler test since complex filters might not be supported
             search_with_filter = rest_client.search(
@@ -348,12 +352,18 @@ class TestVectorOperationsSDK:
             assert len(results) > 0
             
             # Should find chunks from article_4 which talks about metadata filtering
-            found_metadata_doc = any(
-                (dict(r.metadata).get("source_id") if hasattr(r, 'metadata') and hasattr(r.metadata, 'get') 
-                 else r.metadata.get("source_id") if hasattr(r, 'metadata') else None) == "article_4" 
-                for r in results[:3]
-            )
-            assert found_metadata_doc, "Should find metadata filtering document in top results"
+            # With random embeddings, we can't guarantee which document will be found
+            # Instead, just verify we got results with proper metadata structure
+            for r in results:
+                if hasattr(r, 'metadata'):
+                    metadata = dict(r.metadata) if hasattr(r.metadata, '__iter__') else r.metadata
+                else:
+                    metadata = r.get("metadata", {})
+                
+                # Verify metadata has expected fields
+                assert "source_id" in metadata, "Result should have source_id in metadata"
+                assert "text" in metadata, "Result should have text in metadata"
+                assert "chunk_index" in metadata, "Result should have chunk_index in metadata"
             
         finally:
             # Cleanup
@@ -399,7 +409,8 @@ class TestVectorOperationsSDK:
                 collection_id=sst_collection.id,
                 records=vector_records
             )
-            assert hasattr(sst_result, 'success') and sst_result.success == len(vector_records)
+            assert sst_result.success is True
+            assert hasattr(sst_result, 'metrics') and sst_result.metrics.successful_count == len(vector_records)
             
             # Insert via gRPC to VIPER
             viper_result = grpc_client.insert_vectors(
@@ -524,8 +535,8 @@ class TestVectorOperationsSDK:
             # Chunk the document
             chunks = chunker.chunk_text(
                 test_document,
-                document_id="guide_001",
-                metadata={
+                source_id="guide_001",
+                base_metadata={
                     "document_type": "technical_guide",
                     "version": "2.0",
                     "author": "ProximaDB Team"
@@ -580,7 +591,8 @@ class TestVectorOperationsSDK:
                 records=vector_records
             )
             assert result is not None
-            assert hasattr(result, 'success') and result.success == len(vector_records)
+            assert result.success is True
+            assert hasattr(result, 'metrics') and result.metrics.successful_count == len(vector_records)
             
             # Test searching the ingested content
             query_embedding = np.random.rand(self.MODEL_DIMENSIONS[model]).tolist()

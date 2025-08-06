@@ -72,6 +72,7 @@ impl FlushManager {
         force: bool,
         synchronous: bool,
         viper_config: &crate::core::config::ViperConfig,
+        provided_collection_config: Option<&crate::proto::proximadb::Collection>,
     ) -> Result<crate::storage::traits::FlushResult> {
         info!("🔄 VIPER: Starting flush operation with staging pattern");
         info!(
@@ -82,12 +83,19 @@ impl FlushManager {
             batch_ids.len()
         );
 
-        // Fetch collection configuration using proto type directly
-        let collection_config = {
+        // Use provided collection config or fetch if not provided (avoid duplicate calls)
+        let collection_config = if let Some(config) = provided_collection_config {
+            info!("✅ VIPER: Using provided collection config (avoiding duplicate fetch)");
+            Some(config.clone())
+        } else {
+            // Fetch collection configuration using proto type directly
             let service_lock = self.collection_service.read().await;
             if let Some(ref service) = *service_lock {
                 match service.get_proto_collection(collection_id).await {
-                    Ok(Some(collection)) => Some(collection),
+                    Ok(Some(collection)) => {
+                        info!("📋 VIPER: Fetched collection config from service");
+                        Some(collection)
+                    }
                     Ok(None) => {
                         warn!("⚠️ Collection {} not found during flush", collection_id);
                         None
@@ -209,7 +217,7 @@ impl FlushManager {
             parquet_filename
         );
         let final_file_path = match self
-            .write_parquet_atomic(collection_id, &parquet_filename, &parquet_data)
+            .write_parquet_atomic(collection_id, &parquet_filename, &parquet_data, &collection_config)
             .await
         {
             Ok(path) => {
@@ -603,21 +611,24 @@ impl FlushManager {
         &self, 
         collection_id: &str, 
         filename: &str, 
-        parquet_data: &[u8]
+        parquet_data: &[u8],
+        collection_config: &Option<crate::proto::proximadb::Collection>
     ) -> Result<String> {
         info!("🔄 Writing Parquet file atomically: {} ({} bytes)", filename, parquet_data.len());
         
-        // Use assignment service for proper path resolution
-        let assignment_service = crate::storage::assignment_service::get_assignment_service();
-        let storage_assignment = assignment_service
-            .get_assignment(collection_id)
-            .await
-            .context("Failed to get storage assignment")?;
+        // Get storage assignment from collection config - fail fast if not present
+        let storage_assignment = collection_config
+            .as_ref()
+            .and_then(|c| c.storage_assignment.as_ref())
+            .ok_or_else(|| anyhow::anyhow!(
+                "Collection '{}' has no storage assignment. All collections must have storage assignments.",
+                collection_id
+            ))?;
         
         // Begin atomic operation for flush
-        // Note: data_url already includes collection path, so don't set collection_id
+        // Note: data_location already includes collection path, so don't set collection_id
         let staging_config = StagingConfig {
-            base_url: storage_assignment.data_url.clone(),
+            base_url: storage_assignment.data_location.clone(),
             collection_id: None,  // Don't duplicate collection path
             operation_type: StagingOperationType::Flush,
             custom_staging_dir: None,
@@ -645,13 +656,13 @@ impl FlushManager {
             .await
             .context("Failed to finalize atomic flush")?;
         
-        let final_path = format!("{}/{}", storage_assignment.data_url, filename);
+        let final_path = format!("{}/{}", storage_assignment.data_location, filename);
         
         info!("✅ VIPER: Atomically wrote Parquet file {} ({} KB)", 
               final_path, parquet_data.len() / 1024);
         
         // Verify file was written
-        let fs = self.filesystem_factory.get_filesystem(&storage_assignment.data_url)?;
+        let fs = self.filesystem_factory.get_filesystem(&storage_assignment.data_location)?;
         if fs.exists(&final_path).await? {
             let metadata = fs.metadata(&final_path).await?;
             info!("✅ VIPER: Verified file exists at {} with size {} bytes", 
@@ -666,73 +677,41 @@ impl FlushManager {
     /// Check if compaction should be triggered
     async fn check_compaction_trigger(&self, collection_id: &str) -> Result<bool> {
         // Compaction triggers based on multiple factors
+        // Note: This is deferred to the CompactionManager which has full context
+        // about file counts, sizes, and collection-specific thresholds.
+        // For now, we don't trigger compaction from the flush path.
         
-        // 1. Check number of Parquet files for this collection
-        // TODO: Get filesystem and flush_path from somewhere
-        let file_count = 0; // Placeholder
+        // The BackgroundManager handles compaction scheduling based on:
+        // 1. Number of Parquet files for this collection
+        // 2. File size distribution
+        // 3. Collection-specific compaction policies
+        // 4. System load and resource availability
         
-        // 2. Define compaction thresholds
-        const MAX_FILES_BEFORE_COMPACTION: usize = 10;
-        const MIN_FILES_FOR_COMPACTION: usize = 3;
-        const FILE_SIZE_THRESHOLD_MB: u64 = 100;
-        
-        // Trigger if too many files
-        if file_count >= MAX_FILES_BEFORE_COMPACTION {
-            tracing::info!("Compaction triggered for {}: {} files exceed max threshold", 
-                collection_id, file_count);
-            return Ok(true);
-        }
-        
-        // Check if we have enough small files to compact
-        if file_count >= MIN_FILES_FOR_COMPACTION {
-            let _small_file_count = 0;
-            // TODO: Check file sizes when filesystem is available
-            /*for file_info in &collection_files {
-                if let Some(size) = file_info.size {
-                    if size < FILE_SIZE_THRESHOLD_MB * 1024 * 1024 {
-                        small_file_count += 1;
-                    }
-                }
-            }*/
-            let _small_file_count = 0; // Placeholder
-            
-            // Trigger if more than half are small files
-            if _small_file_count > file_count / 2 {
-                tracing::info!("Compaction triggered for {}: {} small files out of {}", 
-                    collection_id, _small_file_count, file_count);
-                return Ok(true);
-            }
-        }
-        
+        // Return false to let BackgroundManager handle compaction decisions
         Ok(false)
     }
 
     /// Update collection metadata after flush
     async fn update_collection_metadata_after_flush(&self, collection_id: &str, records_count: usize, bytes_written: usize) -> Result<()> {
-        // Update collection statistics through shared services if available
-        // TODO: Update collection statistics through collection service
-        if false {
-            // Update collection metadata with new stats
-            let _metadata_update = crate::storage::metadata::MetadataOperation::UpdateStats {
-                collection_id: collection_id.to_string(),
-                vector_delta: records_count as i64,
-                size_delta: bytes_written as i64,
-            };
-            
-            // Execute metadata update through shared services
-            /*if let Some(metadata_store) = shared_services.metadata_store() {
-                metadata_store.batch_operations(vec![metadata_update]).await?;
-                
-                tracing::debug!(
-                    "Updated collection {} metadata: +{} vectors, +{} bytes",
-                    collection_id, records_count, bytes_written
-                );
-            } else {
-                tracing::warn!("No metadata store available to update collection stats");
-            }*/
-        } else {
-            tracing::debug!("No shared services available for metadata update");
-        }
+        // Note: Collection stats update is currently not implemented in the flush path.
+        // The CollectionService has an update_stats() method that can track:
+        // - vector_count (incremental changes)
+        // - data_size_bytes (storage usage)
+        // 
+        // This would be valuable metrics for users to monitor:
+        // - Collection growth over time
+        // - Storage utilization
+        // - Flush performance metrics
+        //
+        // For now, we just log the flush completion locally.
+        
+        debug!(
+            "Flush completed for collection {}: {} vectors, {} bytes written",
+            collection_id, records_count, bytes_written
+        );
+        
+        // TODO: Consider integrating with CollectionService::update_stats()
+        // to maintain accurate collection-level metrics that users can query.
         
         Ok(())
     }

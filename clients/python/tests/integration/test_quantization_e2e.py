@@ -132,7 +132,7 @@ class TestQuantizationE2E:
             collection_name, 
             query, 
             top_k=10,
-            optimization_hints=None
+            search_hints=None
         )
         time_baseline = time.time() - start
         
@@ -142,10 +142,10 @@ class TestQuantizationE2E:
             collection_name,
             query,
             top_k=10,
-            optimization_hints=SearchOptimizationHints(
-                enable_two_stage=True,
-                quantization_hint=QuantizationHint(hint_type="scalar", parameters={"bits": 8})
-            )
+            search_hints={
+                "enable_two_stage": True,
+                "quantization_hint": "scalar"  # Let search_utils build the proper format
+            }
         )
         time_optimized = time.time() - start
         
@@ -204,7 +204,15 @@ class TestQuantizationE2E:
             collection_id=collection_name,
             vector=query,
             top_k=10,
-            optimization_hints=hints
+            search_hints={
+                "enable_two_stage": True,
+                "quantization_hint": "pq8",  # Use string format for simplicity
+                "accuracy_threshold": 0.9,
+                "custom_hints": {
+                    "algorithm": "hnsw",
+                    "ef_search": "100"
+                }
+            }
         )
         
         assert len(results) == 10
@@ -304,10 +312,10 @@ class TestQuantizationE2E:
                 collection_name,
                 query,
                 top_k=5,
-                optimization_hints=SearchOptimizationHints(
-                    enable_two_stage=True,
-                    quantization_hint=QuantizationHint(hint_type="uniform", parameters={"bits": 8})
-                )
+                search_hints={
+                    "enable_two_stage": True,
+                    "quantization_hint": "scalar"  # Uniform not widely supported, use scalar
+                }
             )
             
             assert len(results) <= 5

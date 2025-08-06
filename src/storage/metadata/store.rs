@@ -498,6 +498,7 @@ impl MetadataStoreInterface for MetadataStore {
                     strategy_config: CollectionStrategyConfig::default(),
                     strategy_change_history: Vec::new(),
                     flush_config: None, // Use global defaults
+                    storage_assignment: None,
                 };
                 Ok(Some(metadata))
             } else {
@@ -578,6 +579,7 @@ impl MetadataStoreInterface for MetadataStore {
                     strategy_config: CollectionStrategyConfig::default(),
                     strategy_change_history: Vec::new(),
                     flush_config: None,
+                    storage_assignment: None,
                 })
                 .collect();
 

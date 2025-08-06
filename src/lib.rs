@@ -125,7 +125,8 @@ impl ProximaDB {
         tracing::debug!("🔧 ProximaDB::new - Building multi-server configuration...");
         let mut builder = network::MultiServerBuilder::custom()
             .http(|h| h.bind_address(rest_addr))
-            .grpc(|g| g.bind_address(grpc_addr));
+            .grpc(|g| g.bind_address(grpc_addr))
+            .with_api_config(config.api.clone());
 
         // Add TLS configuration if enabled
         if config.api.enable_tls.unwrap_or(false) && config.tls.is_some() {

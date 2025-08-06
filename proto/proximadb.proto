@@ -405,6 +405,14 @@ message Collection {
   CollectionStats stats = 3;
   int64 created_at = 4;
   int64 updated_at = 5;
+  optional StorageAssignment storage_assignment = 6;
+}
+
+message StorageAssignment {
+  string data_location = 1;      // Storage location URL for data (e.g., "file:///data/disk1")
+  string wal_location = 2;       // WAL location URL (e.g., "file:///data/disk1/{collection_id}/write_buffer")
+  uint32 location_index = 3;     // Location index in the storage_locations array
+  int64 assigned_at = 4;         // Assignment timestamp
 }
 
 message CollectionStats {

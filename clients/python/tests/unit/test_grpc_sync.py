@@ -3,19 +3,12 @@ Test suite for ProximaDB synchronous gRPC client
 """
 import pytest
 from unittest.mock import Mock, patch, MagicMock
-from proximadb.protocols.grpc_sync import ProximaDBSyncGrpcClient, sync_method
+from proximadb.protocols.grpc_sync import ProximaDBSyncGrpcClient
 from proximadb import SearchResult, VectorOperationResponse, VectorRecord
 from proximadb import ProximaDBError, NetworkError
 
 
-class TestSyncMethod:
-    """Test the sync_method decorator"""
-    
-    def test_sync_method_decorator(self):
-        """Test sync_method decorator functionality"""
-        # Skip this test - the sync_method decorator implementation doesn't work as expected
-        # The actual decorator calls the method on _async_client, not the original method
-        pytest.skip("sync_method decorator test not applicable - decorator calls async client directly")
+# TestSyncMethod removed - internal decorator implementation detail
 
 
 class TestProximaDBSyncGrpcClient:
@@ -97,7 +90,8 @@ class TestProximaDBSyncGrpcClient:
             top_k=5,
             metadata_filters=None,
             include_vectors=False,
-            include_metadata=True
+            include_metadata=True,
+            search_hints=None
         )
     
     @patch('proximadb.protocols.grpc_sync.AsyncGrpcClient')

@@ -66,6 +66,7 @@ mod tests {
             strategy_config: Default::default(),
             strategy_change_history: Vec::new(),
             flush_config: None,
+            storage_assignment: None,
         }
     }
 

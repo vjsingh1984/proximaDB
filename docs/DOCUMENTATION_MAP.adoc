@@ -1,0 +1,175 @@
+= ProximaDB Documentation Map
+:toc: left
+:toclevels: 2
+
+**Single source of truth for all documentation topics - avoid duplication by following this mapping.**
+
+== 📋 Documentation Structure
+
+=== 🏠 Entry Points
+[cols="2,3,1"]
+|===
+|File |Purpose |Audience
+
+|link:../README.adoc[README.adoc]
+|Project overview, quick start, key features
+|Everyone
+
+|link:index.adoc[docs/index.adoc]
+|Documentation hub with learning paths
+|Everyone
+
+|link:../CLAUDE.md[CLAUDE.md]
+|Essential developer guidance for Claude Code
+|AI Assistant
+|===
+
+=== 👤 User Documentation
+[cols="2,3,1"]
+|===
+|File |Content |Status
+
+|link:user/getting_started.adoc[getting_started.adoc]
+|Installation, first steps (5 min guide)
+|✅ Current
+
+|link:user/user_guide.adoc[user_guide.adoc]
+|Complete usage guide with examples
+|✅ Current
+
+|link:user/api_reference.adoc[api_reference.adoc]
+|REST API documentation
+|✅ Current
+
+|link:user/semantic_search_guide.adoc[semantic_search_guide.adoc]
+|Semantic search examples and patterns
+|✅ Current
+|===
+
+=== 🛠️ Developer Documentation  
+[cols="2,3,1"]
+|===
+|File |Content |Status
+
+|link:developer/architecture.adoc[architecture.adoc]
+|**CONSOLIDATED** system architecture guide
+|✅ Updated
+
+|link:developer/developer_guide.adoc[developer_guide.adoc]
+|Contributing, development setup
+|✅ Current
+
+|link:developer/technical_reference.adoc[technical_reference.adoc]
+|gRPC API, advanced technical details
+|✅ Current
+
+|~~advanced_architecture.adoc~~
+|**REMOVED** - content merged into architecture.adoc
+|❌ Deleted
+|===
+
+=== 🏗️ Admin Documentation
+[cols="2,3,1"]
+|===
+|File |Content |Status
+
+|link:admin/multi_disk_guide.adoc[multi_disk_guide.adoc]
+|Multi-cloud deployment (S3/GCS/Azure)
+|✅ Current
+|===
+
+=== 📊 Reference Documentation
+[cols="2,3,1"]
+|===
+|File |Content |Status
+
+|link:appendices/appendix_performance_metrics.adoc[performance_metrics.adoc]
+|Benchmarks, performance tuning
+|✅ Current
+
+|link:appendices/appendix_implementation_details.adoc[implementation_details.adoc] 
+|Deep implementation patterns
+|✅ Current
+
+|link:appendices/appendix_testing_development.adoc[testing_development.adoc]
+|Testing framework and development
+|✅ Current
+|===
+
+=== 🚀 Enhancement Documentation
+[cols="2,3,1"]
+|===
+|File |Content |Status
+
+|link:enhancements/embedding-service-architecture.md[embedding-service-architecture.md]
+|Embedding service design decisions
+|✅ Current
+
+|link:enhancements/refactoring_design_patterns.adoc[refactoring_design_patterns.adoc]
+|Architecture improvement recommendations
+|✅ Current
+
+|link:enhancements/viper_vector_compression_enhancement.adoc[viper_vector_compression_enhancement.adoc]
+|VIPER engine compression improvements
+|✅ Current
+|===
+
+== 📍 Topic Ownership
+
+=== 🏗️ Architecture & Design
+**Primary**: `docs/developer/architecture.adoc` (consolidated)
+**Secondary**: `CLAUDE.md` (essential summary)
+**DO NOT DUPLICATE**: Architecture content should only exist in these two places
+
+=== ⚡ Performance & Benchmarks  
+**Primary**: `docs/appendices/appendix_performance_metrics.adoc`
+**Summary**: `README.adoc` (high-level metrics only)
+**DO NOT DUPLICATE**: Detailed benchmarks only in appendix
+
+=== 🚀 Quick Start & Getting Started
+**Primary**: `docs/user/getting_started.adoc` (comprehensive 5-min guide)
+**Summary**: `README.adoc` (docker + build commands only)
+**Hub**: `docs/index.adoc` (learning paths)
+
+=== 📚 API Documentation
+**REST API**: `docs/user/api_reference.adoc` (primary)
+**gRPC API**: `docs/developer/technical_reference.adoc` (primary)
+**Examples**: `docs/user/user_guide.adoc` (usage examples)
+
+=== 🧪 Development & Testing
+**Contributing**: `docs/developer/developer_guide.adoc` (primary)
+**Testing**: `docs/appendices/appendix_testing_development.adoc` (primary)
+**Claude guidance**: `CLAUDE.md` (essential patterns only)
+
+== ✅ Consolidation Results
+
+=== ✅ Completed Actions
+1. **Consolidated CLAUDE.md**: Reduced from 868 to 144 lines, essential guidance only
+2. **Merged architecture docs**: Combined `architecture.adoc` + `advanced_architecture.adoc` → single `architecture.adoc`
+3. **Streamlined README.adoc**: Reduced from 401 to 135 lines, focuses on quick start + redirects to docs
+4. **Removed duplicates**: Deleted `advanced_architecture.adoc` after consolidation
+5. **Established clear ownership**: Each topic has single source of truth
+
+=== 📊 Documentation Metrics
+**Before consolidation**: ~2,300 lines across fragmented files
+**After consolidation**: ~1,800 lines in organized structure
+**Reduction**: 22% fewer lines, 100% better organization
+**Maintenance burden**: Significantly reduced due to clear ownership
+
+== 🎯 Content Guidelines
+
+=== ✅ DO
+* Follow this documentation map for topic ownership
+* Update single source of truth for each topic
+* Cross-reference between documents using AsciiDoc links
+* Keep README.adoc concise with docs/ redirects
+* Update CLAUDE.md only for essential development patterns
+
+=== ❌ DON'T
+* Duplicate architecture content outside of `architecture.adoc` and `CLAUDE.md`
+* Add detailed examples to README.adoc (belongs in user guides)
+* Create new architecture documents without consolidating existing ones
+* Mix user and developer content in same document
+
+---
+*Documentation map updated: 2025-08-05*

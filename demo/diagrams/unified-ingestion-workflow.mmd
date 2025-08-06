@@ -1,0 +1,46 @@
+graph TB
+    subgraph "Traditional Two-Step Workflow"
+        A1[Text Input] --> B1[Generate Embedding<br/>API Call 1]
+        B1 --> C1[Embedding Vector]
+        C1 --> D1[Insert to ProximaDB<br/>API Call 2]
+        D1 --> E1[Stored Vector]
+        
+        style B1 fill:#ffcccc
+        style D1 fill:#ffcccc
+    end
+    
+    subgraph "NEW: Unified Ingestion Workflow"
+        A2[Text Input] --> B2[Single API Call<br/>/api/embeddings/ingest]
+        B2 --> C2[Atomic Operation]
+        C2 --> D2[Generate Embedding]
+        C2 --> E2[Store in ProximaDB]
+        D2 --> F2[Stored Vector<br/>with Metadata]
+        E2 --> F2
+        
+        style B2 fill:#ccffcc
+        style C2 fill:#ccffcc
+    end
+    
+    subgraph "Document Workflow"
+        A3[Document] --> B3[/api/embeddings/ingest-document]
+        B3 --> C3[Chunk Text]
+        C3 --> D3[Generate Embeddings]
+        D3 --> E3[Batch Insert]
+        E3 --> F3[Multiple Vectors<br/>with Chunk Metadata]
+        
+        style B3 fill:#ccccff
+    end
+    
+    G[Benefits]
+    G --> G1[Atomic Operations]
+    G --> G2[No Partial Failures]
+    G --> G3[Automatic Metadata]
+    G --> G4[Original Text Preserved]
+    G --> G5[Better Error Handling]
+    
+    style G fill:#ffffcc
+    style G1 fill:#e6ffe6
+    style G2 fill:#e6ffe6
+    style G3 fill:#e6ffe6
+    style G4 fill:#e6ffe6
+    style G5 fill:#e6ffe6

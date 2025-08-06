@@ -4,17 +4,24 @@
 host = "0.0.0.0"
 port = 5678
 
+[rest]
+enable_compression = false  # Disabled for better debugging and troubleshooting
+max_request_size_mb = 64
+
 [grpc]
 host = "0.0.0.0"
 port = 5679
+enable_compression = false  # Disabled for colocated demo services
+enable_reflection = false
+max_frame_size_mb = 16
 
 [storage]
 # Single metadata URL
-metadata_url = "file:///app/metadata"
+metadata_url = "file:///data/metadata"
 
 # Storage locations in container
 [[storage.storage_locations]]
-url = "file:///app/data"
+url = "file:///data/collections"
 weight = 1
 tags = ["docker", "local"]
 
@@ -44,7 +51,7 @@ compression = "zstd"  # ZSTD for columnar data
 compression_enabled = true  # Enable compression by default  
 compression_level = 3  # Balanced speed/compression
 enable_statistics = true
-data_directory = "/app/viper_data"
+data_directory = "/data/viper_data"
 cache_size_mb = 256
 
 [storage.filesystem_config]
@@ -58,7 +65,7 @@ cleanup_temp_on_startup = true
 
 [logging]
 level = "info"
-file_path = "/app/logs/proximadb.log"
+file_path = "/data/logs/proximadb.log"
 max_files = 5
 max_file_size_mb = 100
 

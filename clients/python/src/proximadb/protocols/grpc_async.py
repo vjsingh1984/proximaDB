@@ -602,7 +602,8 @@ class ProximaDBClient:
         metadata_filters: Optional[Union[Dict[str, Any], Any]] = None,  # Dict or FilterBuilder
         include_metadata: bool = True,
         include_vectors: bool = False,
-        search_params = None
+        search_params = None,
+        search_hints: Optional[Dict[str, Any]] = None
     ):
         """
         Search for similar vectors
@@ -667,6 +668,29 @@ class ProximaDBClient:
             # Add search parameters if provided
             if search_params:
                 request.search_params.CopyFrom(search_params)
+                
+            # Add search optimization hints if provided
+            if search_hints:
+                from ..search_utils import build_search_params_grpc
+                search_optimization = build_search_params_grpc(
+                    top_k=search_hints.get('top_k', top_k),
+                    enable_two_stage=search_hints.get('enable_two_stage'),
+                    quantization_hint=search_hints.get('quantization_hint'),
+                    accuracy_threshold=search_hints.get('accuracy_threshold'),
+                    enable_clustering_hint=search_hints.get('enable_clustering_hint'),
+                    enable_metadata_filtering_hint=search_hints.get('enable_metadata_filtering_hint'),
+                    include_expired=search_hints.get('include_expired'),
+                    timeout_ms=search_hints.get('timeout_ms'),
+                    custom_hints=search_hints.get('custom_hints'),
+                    distance_metric=search_hints.get('distance_metric'),
+                    requires_ordering=search_hints.get('requires_ordering'),
+                    candidate_multiplier=search_hints.get('candidate_multiplier'),
+                    streaming_buffer_size=search_hints.get('streaming_buffer_size'),
+                    streaming_concurrent_search=search_hints.get('streaming_concurrent_search'),
+                    streaming_max_concurrent_tasks=search_hints.get('streaming_max_concurrent_tasks'),
+                    streaming_batch_size=search_hints.get('streaming_batch_size')
+                )
+                request.search_optimization.CopyFrom(search_optimization)
             
             # Call gRPC service
             response = self._call_with_timeout(self.stub.VectorSearch, request)

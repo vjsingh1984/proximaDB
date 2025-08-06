@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use tracing::{info, warn};
+use crate::network::NetworkConfig;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
@@ -9,6 +10,7 @@ pub struct Config {
     pub consensus: ConsensusConfig,
     pub api: ApiConfig,
     pub monitoring: MonitoringConfig,
+    pub network: Option<NetworkConfig>,
     pub tls: Option<TlsConfig>,
     pub hardware: Option<HardwareConfig>,
 }
@@ -758,6 +760,7 @@ impl Default for Config {
                 metrics_enabled: true,
                 log_level: "info".to_string(),
             },
+            network: Some(NetworkConfig::default()),
             tls: None,
             hardware: Some(HardwareConfig::default()),
         }

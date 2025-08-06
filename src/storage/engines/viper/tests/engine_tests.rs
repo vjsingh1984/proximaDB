@@ -39,16 +39,48 @@ async fn setup_test_assignment(collection_id: &str, base_path: &str) {
     fs::create_dir_all(&temp_dir).await
         .expect("Failed to create temp directory");
     
-    let assignment_service = crate::storage::assignment_service::get_assignment_service();
-    let storage_location = crate::core::config::StorageLocation {
-        url: format!("file://{}", base_path),
-        weight: 1,
-        tags: Default::default(),
-    };
-    assignment_service
-        .assign_collection(collection_id, &[storage_location], "hash")
-        .await
-        .expect("Failed to assign storage location");
+    // Storage assignment is now handled internally by CollectionService
+    // when a collection is created. For test purposes, we just ensure
+    // the directory structure exists.
+    let data_dir = format!("{}/{}/data", base_path, collection_id);
+    let wal_dir = format!("{}/{}/write_buffer", base_path, collection_id);
+    fs::create_dir_all(&data_dir).await
+        .expect("Failed to create data directory");
+    fs::create_dir_all(&wal_dir).await
+        .expect("Failed to create WAL directory");
+}
+
+/// Create test collection with storage assignment
+fn create_test_collection(collection_id: &str, base_path: &str) -> crate::proto::proximadb::Collection {
+    use crate::proto::proximadb::{Collection, CollectionConfig, StorageAssignment};
+    
+    Collection {
+        id: collection_id.to_string(),
+        config: Some(CollectionConfig {
+            name: collection_id.to_string(),
+            dimension: 128,
+            distance_metric: 0, // Cosine
+            storage_engine: 0, // VIPER
+            primary_indexing_algorithm: 0, // HNSW
+            filterable_columns: vec![],
+            index_configs: vec![],
+            quantization_config: None,
+            primary_index_name: String::new(),
+            enable_automatic_index_selection: false,
+            description: None,
+            tags: vec![],
+            owner: None,
+        }),
+        stats: None,
+        created_at: chrono::Utc::now().timestamp(),
+        updated_at: chrono::Utc::now().timestamp(),
+        storage_assignment: Some(StorageAssignment {
+            data_location: format!("file://{}/{}/data", base_path, collection_id),
+            wal_location: format!("file://{}/{}/write_buffer", base_path, collection_id),
+            location_index: 0,
+            assigned_at: chrono::Utc::now().timestamp_micros(),
+        }),
+    }
 }
 
 /// Create test vector with metadata
@@ -661,28 +693,31 @@ async fn test_search_vectors_unified() {
         }
     }
     
-    // Debug: Check what the assignment service returns
+    // Debug: Check the directory structure
     {
-        let assignment_service = crate::storage::assignment_service::get_assignment_service();
-        if let Some(assignment) = assignment_service.get_assignment(collection_id).await {
-            println!("Assignment service data_url: {}", assignment.data_url);
+        let base_path = temp_dir.path().to_str().unwrap();
+        let data_dir = format!("{}/{}/data", base_path, collection_id);
+        let wal_dir = format!("{}/{}/write_buffer", base_path, collection_id);
+        if tokio::fs::metadata(&data_dir).await.is_ok() {
+            println!("Data directory exists: {}", data_dir);
             
-            // List what's in the data_url using filesystem
+            // List what's in the data directory using filesystem
+            let data_url = format!("file://{}", data_dir);
             let fs_factory = crate::storage::persistence::filesystem::FilesystemFactory::new(Default::default()).await.unwrap();
-            let fs = fs_factory.get_filesystem(&assignment.data_url).unwrap();
-            match fs.list(&assignment.data_url).await {
+            let fs = fs_factory.get_filesystem(&data_url).unwrap();
+            match fs.list(&data_url).await {
                 Ok(entries) => {
-                    println!("Files in assignment data_url:");
+                    println!("Files in data directory:");
                     for entry in &entries {
                         println!("  - name: {}, url: {}", entry.name, entry.url);
                     }
                 }
                 Err(e) => {
-                    println!("Failed to list files in data_url: {}", e);
+                    println!("Failed to list files in data directory: {}", e);
                 }
             }
         } else {
-            println!("No assignment found for collection!");
+            println!("Data directory not found!");
         }
     }
     

@@ -20,7 +20,7 @@ import logging
 import time
 import gzip
 import json
-from typing import Any, Dict, List, Optional, Union, Iterator
+from typing import Any, Dict, List, Optional, Union, Iterator, Tuple
 import warnings
 
 import numpy as np
@@ -29,6 +29,8 @@ from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_excep
 
 from ..config import ClientConfig, load_config
 from ..metadata_utils import json_compatible_value
+from ..batching_unified import ThreadedBatchProcessor, BatchConfig, BatchStrategy, UnifiedBatchManager
+from ..cache import ResponseCache, CacheStrategy
 from ..models import (
     Collection,
     CollectionConfig,
@@ -44,6 +46,7 @@ from ..models import (
     SearchQuery,
     IncludeFields,
     MetadataFilter,
+    ServerCapabilities,
     FilterCondition,
     FilterOperator,
     FilterOperation,
@@ -70,6 +73,10 @@ class ProximaDBClient:
         url: Optional[str] = None,
         api_key: Optional[str] = None,
         config: Optional[ClientConfig] = None,
+        enable_batching: bool = False,
+        batch_config: Optional[BatchConfig] = None,
+        enable_caching: bool = False,
+        cache_config: Optional[Dict[str, Any]] = None,
         **kwargs
     ) -> None:
         """Initialize ProximaDB client
@@ -78,6 +85,10 @@ class ProximaDBClient:
             url: ProximaDB server URL
             api_key: API key for authentication
             config: Client configuration object
+            enable_batching: Enable request batching for improved throughput
+            batch_config: Configuration for batching behavior
+            enable_caching: Enable response caching for read operations
+            cache_config: Configuration for caching behavior
             **kwargs: Additional configuration parameters
         """
         if config is None:
@@ -88,6 +99,28 @@ class ProximaDBClient:
         
         # Initialize HTTP client
         self._http_client = self._create_http_client()
+        
+        # Initialize request batching if enabled
+        self.enable_batching = enable_batching
+        self._batch_processor: Optional[ThreadedBatchProcessor] = None
+        
+        if enable_batching:
+            # Create batch processor for REST operations
+            batch_config = batch_config or BatchConfig()
+            # For now, just store the config - actual batching will be implemented later
+            self._batch_config = batch_config
+            logger.info("Batching enabled with config: %s", batch_config)
+        
+        # Initialize response caching if enabled
+        self.enable_caching = enable_caching
+        self._response_cache: Optional[ResponseCache] = None
+        
+        if enable_caching:
+            self._response_cache = ResponseCache(
+                # Use default cache settings if not provided
+                default_ttl=cache_config.get('default_ttl', 300) if cache_config else 300
+            )
+            logger.info("Enabled response caching for read operations")
         
         logger.info(f"Initialized ProximaDB client for {self.config.url}")
     
@@ -321,6 +354,49 @@ class ProximaDBClient:
                 f"inserted via vector operations (stored in extra_meta).",
                 UserWarning
             )
+        
+        # Inform users about potential server fallbacks for better UX
+        fallback_warnings = []
+        
+        if config.distance_metric:
+            metric_str = config.distance_metric if isinstance(config.distance_metric, str) else config.distance_metric.value
+            if not ServerCapabilities.is_supported("distance_metric", metric_str):
+                fallback = ServerCapabilities.get_fallback_for("distance_metric", metric_str)
+                if fallback:
+                    fallback_warnings.append(
+                        f"💡 Distance metric '{metric_str}' will fallback to '{fallback}' (server decision). "
+                        f"For guaranteed support, use: {', '.join(ServerCapabilities().supported_distance_metrics)}"
+                    )
+        
+        if config.storage_engine:
+            engine_str = config.storage_engine if isinstance(config.storage_engine, str) else config.storage_engine.value
+            if not ServerCapabilities.is_supported("storage_engine", engine_str):
+                fallback = ServerCapabilities.get_fallback_for("storage_engine", engine_str)
+                if fallback:
+                    fallback_warnings.append(
+                        f"💡 Storage engine '{engine_str}' will fallback to '{fallback}' (server decision). "
+                        f"For guaranteed support, use: {', '.join(ServerCapabilities().supported_storage_engines)}"
+                    )
+        
+        if config.primary_indexing_algorithm:
+            algo_str = config.primary_indexing_algorithm if isinstance(config.primary_indexing_algorithm, str) else config.primary_indexing_algorithm.value
+            if not ServerCapabilities.is_supported("indexing_algorithm", algo_str):
+                fallback = ServerCapabilities.get_fallback_for("indexing_algorithm", algo_str)
+                if fallback:
+                    fallback_warnings.append(
+                        f"💡 Indexing algorithm '{algo_str}' will fallback to '{fallback}' (server decision). "
+                        f"For guaranteed support, use: {', '.join(ServerCapabilities().supported_indexing_algorithms)}"
+                    )
+        
+        # Issue all fallback warnings at once for better UX
+        if fallback_warnings:
+            combined_message = (
+                f"ProximaDB server will make intelligent fallback decisions for collection '{name}':\n" +
+                "\n".join(f"  • {warning}" for warning in fallback_warnings) +
+                f"\n\n📚 Server uses smart defaults to ensure your collection works. "
+                f"Check the returned collection config to see final server decisions."
+            )
+            warnings.warn(combined_message, UserWarning)
         
         # Build config object as expected by server
         config_data = {
@@ -652,13 +728,19 @@ class ProximaDBClient:
             # Handle unified API response
             if "metrics" in response_data:
                 metrics = response_data["metrics"]
-                return BatchResult(
+                result = BatchResult(
                     total=metrics.get("total_processed", len(vector_data)),
                     success=metrics.get("successful_count", len(vector_data)),
                     failed=metrics.get("failed_count", 0),
                     errors=[],
                     duration_ms=metrics.get("processing_time_us", 0) / 1000.0
                 )
+                
+                # Invalidate cache for collection after successful write
+                if result.success > 0:
+                    self._invalidate_collection_cache(collection_id)
+                
+                return result
             else:
                 return BatchResult(
                     total=len(vector_data),
@@ -726,6 +808,7 @@ class ProximaDBClient:
         quantization_level: str = "FP32",
         enable_simd: bool = True,
         timeout: Optional[float] = None,
+        search_hints: Optional[Dict[str, Any]] = None,
     ) -> List[SearchResult]:
         """Search for similar vectors with storage-aware optimizations
         
@@ -787,11 +870,25 @@ class ProximaDBClient:
                 score=True,
                 rank=True
             ),
-            search_optimization=None  # Use defaults
+            search_optimization=None  # Will be set below
         )
         
         # Convert model to dict for JSON serialization
         request_data = search_request.model_dump(exclude_none=True)
+        
+        # Add search optimization if hints provided
+        if search_hints:
+            from ..search_utils import build_search_optimization_rest
+            optimization = build_search_optimization_rest(
+                enable_two_stage=search_hints.get('enable_two_stage'),
+                quantization_hint=search_hints.get('quantization_hint', quantization_level),
+                accuracy_threshold=search_hints.get('accuracy_threshold'),
+                enable_clustering_hint=search_hints.get('enable_clustering_hint'),
+                enable_metadata_filtering_hint=search_hints.get('enable_metadata_filtering_hint'),
+                custom_hints=search_hints.get('custom_hints')
+            )
+            if optimization:
+                request_data['search_optimization'] = optimization
         
         response = self._make_request(
             "POST",
@@ -1011,8 +1108,400 @@ class ProximaDBClient:
     
     def close(self) -> None:
         """Close the client and cleanup resources"""
+        # Close batch processor first
+        if self._batch_processor:
+            self._batch_processor.close()
+            self._batch_processor = None
+        
+        # Close response cache
+        if self._response_cache:
+            self._response_cache.close()
+            self._response_cache = None
+        
         if hasattr(self, '_http_client'):
             self._http_client.close()
+    
+    # Helper methods for cache-aware operations
+    def _cached_get(self, operation: str, collection_id: str, params: Dict[str, Any], fetch_func: callable, ttl_seconds: Optional[float] = None) -> Any:
+        """Helper method for cache-aware GET operations"""
+        if not self.enable_caching or not self._response_cache:
+            return fetch_func()
+        
+        # Try to get from cache first
+        cached_result = self._response_cache.get(operation, collection_id, params)
+        if cached_result is not None:
+            return cached_result
+        
+        # Fetch from server
+        result = fetch_func()
+        
+        # Cache the result
+        if result is not None:
+            self._response_cache.put(operation, collection_id, params, result, ttl_seconds)
+        
+        return result
+    
+    def _invalidate_collection_cache(self, collection_id: str):
+        """Invalidate cache entries for a collection after write operations"""
+        if self.enable_caching and self._response_cache:
+            self._response_cache.invalidate_collection(collection_id)
+    
+    # Cache-aware read operations
+    def search_cached(
+        self,
+        collection_id: str,
+        vector: Union[List[float], np.ndarray],
+        top_k: int = 10,
+        metadata_filter: Optional[FilterDict] = None,
+        include_vectors: bool = False,
+        include_metadata: bool = True,
+        ttl_seconds: Optional[float] = None,
+        **kwargs
+    ) -> List[SearchResult]:
+        """Cache-aware vector search
+        
+        Args:
+            collection_id: Target collection ID
+            vector: Query vector
+            top_k: Number of results to return
+            metadata_filter: Metadata filter conditions
+            include_vectors: Include vector data in results
+            include_metadata: Include metadata in results
+            ttl_seconds: Cache TTL override
+            **kwargs: Additional search parameters
+            
+        Returns:
+            List of search results
+        """
+        if not self.enable_caching:
+            return self.search(collection_id, vector, top_k, metadata_filter, include_vectors, include_metadata, **kwargs)
+        
+        # Create cache key parameters
+        cache_params = {
+            "vector": vector if isinstance(vector, list) else vector.tolist(),
+            "top_k": top_k,
+            "metadata_filter": metadata_filter,
+            "include_vectors": include_vectors,
+            "include_metadata": include_metadata,
+            **kwargs
+        }
+        
+        def fetch_func():
+            return self.search(collection_id, vector, top_k, metadata_filter, include_vectors, include_metadata, **kwargs)
+        
+        return self._cached_get("search_vectors", collection_id, cache_params, fetch_func, ttl_seconds)
+    
+    def get_vector_cached(
+        self,
+        collection_id: str,
+        vector_id: str,
+        include_metadata: bool = True,
+        ttl_seconds: Optional[float] = None
+    ) -> Optional[Dict[str, Any]]:
+        """Cache-aware vector retrieval
+        
+        Args:
+            collection_id: Target collection ID
+            vector_id: Vector identifier
+            include_metadata: Include metadata in response
+            ttl_seconds: Cache TTL override
+            
+        Returns:
+            Vector data or None if not found
+        """
+        if not self.enable_caching:
+            return self.get_vector(collection_id, vector_id, include_metadata)
+        
+        cache_params = {
+            "vector_id": vector_id,
+            "include_metadata": include_metadata
+        }
+        
+        def fetch_func():
+            return self.get_vector(collection_id, vector_id, include_metadata)
+        
+        return self._cached_get("get_vector", collection_id, cache_params, fetch_func, ttl_seconds)
+    
+    def list_collections_cached(
+        self,
+        ttl_seconds: Optional[float] = None
+    ) -> List[Collection]:
+        """Cache-aware collection listing
+        
+        Args:
+            ttl_seconds: Cache TTL override
+            
+        Returns:
+            List of collections
+        """
+        if not self.enable_caching:
+            return self.list_collections()
+        
+        cache_params = {}  # No parameters for list collections
+        
+        def fetch_func():
+            return self.list_collections()
+        
+        return self._cached_get("list_collections", "_global", cache_params, fetch_func, ttl_seconds)
+    
+    def get_collection_cached(
+        self,
+        collection_id: str,
+        ttl_seconds: Optional[float] = None
+    ) -> Optional[Collection]:
+        """Cache-aware collection retrieval
+        
+        Args:
+            collection_id: Collection identifier
+            ttl_seconds: Cache TTL override
+            
+        Returns:
+            Collection object or None if not found
+        """
+        if not self.enable_caching:
+            return self.get_collection(collection_id)
+        
+        cache_params = {}  # No additional parameters
+        
+        def fetch_func():
+            return self.get_collection(collection_id)
+        
+        return self._cached_get("get_collection", collection_id, cache_params, fetch_func, ttl_seconds)
+    
+    def get_cache_stats(self) -> Dict[str, Any]:
+        """Get cache performance statistics
+        
+        Returns:
+            Dictionary of cache statistics
+            
+        Raises:
+            RuntimeError: If caching is not enabled
+        """
+        if not self.enable_caching or not self._response_cache:
+            return {"error": "Caching is not enabled"}
+        
+        return self._response_cache.get_stats()
+    
+    def clear_cache(self) -> int:
+        """Clear all cached responses
+        
+        Returns:
+            Number of entries cleared
+            
+        Raises:
+            RuntimeError: If caching is not enabled
+        """
+        if not self.enable_caching or not self._response_cache:
+            raise RuntimeError("Caching is not enabled. Initialize client with enable_caching=True")
+        
+        return self._response_cache.clear()
+    
+    def invalidate_collection_cache(self, collection_id: str) -> int:
+        """Invalidate cached responses for a collection
+        
+        Args:
+            collection_id: Collection to invalidate
+            
+        Returns:
+            Number of entries invalidated
+            
+        Raises:
+            RuntimeError: If caching is not enabled
+        """
+        if not self.enable_caching or not self._response_cache:
+            raise RuntimeError("Caching is not enabled. Initialize client with enable_caching=True")
+        
+        return self._response_cache.invalidate_collection(collection_id)
+    
+    def warm_cache(
+        self,
+        warmup_operations: List[Tuple[str, str, Dict[str, Any], Any]],
+        batch_size: Optional[int] = None
+    ) -> int:
+        """Warm cache with predefined operations
+        
+        Args:
+            warmup_operations: List of (operation, collection_id, params, response) tuples
+            batch_size: Batch size for warming
+            
+        Returns:
+            Number of entries warmed
+            
+        Raises:
+            RuntimeError: If caching is not enabled
+        """
+        if not self.enable_caching or not self._response_cache:
+            raise RuntimeError("Caching is not enabled. Initialize client with enable_caching=True")
+        
+        return self._response_cache.warm_cache(warmup_operations, batch_size)
+    
+    # Batched operations for improved throughput
+    def insert_vectors_batched(
+        self,
+        collection_id: str,
+        vectors: VectorArray,
+        ids: List[str],
+        metadata: Optional[List[MetadataDict]] = None,
+        callback: Optional[callable] = None,
+        priority: int = 1
+    ) -> str:
+        """Submit vectors for batched insertion
+        
+        Args:
+            collection_id: Target collection ID
+            vectors: Vector data array
+            ids: List of unique vector identifiers
+            metadata: Optional list of metadata dictionaries
+            callback: Optional callback function for result
+            priority: Request priority (higher = more urgent)
+            
+        Returns:
+            Request ID for tracking
+            
+        Raises:
+            RuntimeError: If batching is not enabled
+        """
+        if not self.enable_batching or not self._batch_processor:
+            raise RuntimeError("Batching is not enabled. Initialize client with enable_batching=True")
+        
+        vectors_list = self._normalize_vectors(vectors)
+        
+        if len(vectors_list) != len(ids):
+            raise ValueError("Number of vectors must match number of IDs")
+        
+        if metadata and len(metadata) != len(vectors_list):
+            raise ValueError("Number of metadata items must match number of vectors")
+        
+        # Prepare vector data
+        vector_data = []
+        for i, (vector_id, vector) in enumerate(zip(ids, vectors_list)):
+            metadata_items = self._convert_metadata_to_rest_format(
+                metadata[i] if metadata else {}
+            )
+            item = {
+                "id": vector_id,
+                "vector": vector,
+                "metadata": metadata_items,
+                "timestamp": int(time.time())
+            }
+            vector_data.append(item)
+        
+        return self._batch_processor.submit_request(
+            operation="insert_vectors",
+            collection_id=collection_id,
+            data=vector_data,
+            callback=callback,
+            priority=priority
+        )
+    
+    def upsert_vectors_batched(
+        self,
+        collection_id: str,
+        vectors: VectorArray,
+        ids: List[str],
+        metadata: Optional[List[MetadataDict]] = None,
+        callback: Optional[callable] = None,
+        priority: int = 1
+    ) -> str:
+        """Submit vectors for batched upsert
+        
+        Args:
+            collection_id: Target collection ID
+            vectors: Vector data array
+            ids: List of unique vector identifiers
+            metadata: Optional list of metadata dictionaries
+            callback: Optional callback function for result
+            priority: Request priority (higher = more urgent)
+            
+        Returns:
+            Request ID for tracking
+        """
+        if not self.enable_batching or not self._batch_processor:
+            raise RuntimeError("Batching is not enabled. Initialize client with enable_batching=True")
+        
+        vectors_list = self._normalize_vectors(vectors)
+        
+        if len(vectors_list) != len(ids):
+            raise ValueError("Number of vectors must match number of IDs")
+        
+        if metadata and len(metadata) != len(vectors_list):
+            raise ValueError("Number of metadata items must match number of vectors")
+        
+        # Prepare vector data
+        vector_data = []
+        for i, (vector_id, vector) in enumerate(zip(ids, vectors_list)):
+            metadata_items = self._convert_metadata_to_rest_format(
+                metadata[i] if metadata else {}
+            )
+            item = {
+                "id": vector_id,
+                "vector": vector,
+                "metadata": metadata_items,
+                "timestamp": int(time.time())
+            }
+            vector_data.append(item)
+        
+        return self._batch_processor.submit_request(
+            operation="upsert_vectors",
+            collection_id=collection_id,
+            data=vector_data,
+            callback=callback,
+            priority=priority
+        )
+    
+    def delete_vectors_batched(
+        self,
+        collection_id: str,
+        ids: List[str],
+        callback: Optional[callable] = None,
+        priority: int = 1
+    ) -> str:
+        """Submit vector IDs for batched deletion
+        
+        Args:
+            collection_id: Target collection ID
+            ids: List of vector IDs to delete
+            callback: Optional callback function for result
+            priority: Request priority (higher = more urgent)
+            
+        Returns:
+            Request ID for tracking
+        """
+        if not self.enable_batching or not self._batch_processor:
+            raise RuntimeError("Batching is not enabled. Initialize client with enable_batching=True")
+        
+        return self._batch_processor.submit_request(
+            operation="delete_vectors",
+            collection_id=collection_id,
+            data=ids,
+            callback=callback,
+            priority=priority
+        )
+    
+    def get_batch_metrics(self) -> Dict[str, Any]:
+        """Get batching performance metrics
+        
+        Returns:
+            Dictionary of batch processing metrics
+            
+        Raises:
+            RuntimeError: If batching is not enabled
+        """
+        if not self.enable_batching or not self._batch_processor:
+            raise RuntimeError("Batching is not enabled. Initialize client with enable_batching=True")
+        
+        return self._batch_processor.get_metrics()
+    
+    def reset_batch_metrics(self) -> None:
+        """Reset batching performance metrics
+        
+        Raises:
+            RuntimeError: If batching is not enabled
+        """
+        if not self.enable_batching or not self._batch_processor:
+            raise RuntimeError("Batching is not enabled. Initialize client with enable_batching=True")
+        
+        self._batch_processor.reset_metrics()
     
     def __enter__(self):
         """Context manager entry"""

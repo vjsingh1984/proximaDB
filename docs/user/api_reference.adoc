@@ -23,7 +23,7 @@ ProximaDB REST API with unified handlers and proto-first architecture.
 {
   "operation": "create",
   "config": {
-    "name": "products",
+    "name": "ai_documents",
     "dimension": 384,
     "distance_metric": "cosine",
     "storage_engine": "viper"

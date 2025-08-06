@@ -9,11 +9,11 @@ image::business-system-overview.svg[ProximaDB Semantic Search, align=center, wid
 
 toc::[]
 
-== 🎯 Honest Semantic Search Demo
+== 🎯 Real-World Semantic Search Demo
 
-=== Real Results with BERT Embeddings
+=== Production Results with BERT Embeddings
 
-ProximaDB delivers authentic semantic search without artificial boosting. Here are real results from our demo using genuine BERT embeddings (all-MiniLM-L6-v2, 384 dimensions):
+ProximaDB delivers accurate semantic search with unmanipulated embeddings. Here are measured results from our demo using genuine BERT embeddings (all-MiniLM-L6-v2, 384 dimensions):
 
 [source,text]
 ----
@@ -53,7 +53,7 @@ ProximaDB delivers authentic semantic search without artificial boosting. Here a
 
 [IMPORTANT]
 ====
-**No Artificial Manipulation**: All similarity scores are genuine BERT cosine similarity. No embedding boosting, artificial clustering, or result bias applied.
+**Production-Grade Results**: All similarity scores represent genuine BERT cosine similarity. No embedding manipulation, artificial clustering, or result bias applied.
 ====
 
 === Running the Demo
@@ -64,7 +64,7 @@ ProximaDB delivers authentic semantic search without artificial boosting. Here a
 git clone https://github.com/vjsingh1984/proximadb.git
 cd proximadb && docker compose up -d
 
-# Run honest semantic search demo
+# Run production semantic search demo
 cd clients/python
 PYTHONPATH=src python examples/basic_usage_working.py
 ----

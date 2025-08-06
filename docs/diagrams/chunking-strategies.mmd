@@ -1,0 +1,34 @@
+graph TB
+    subgraph "Text Input"
+        T[Text Document]
+    end
+    
+    subgraph "Chunking Strategies"
+        T --> SS[Semantic Chunking]
+        T --> SW[Sliding Window]
+        T --> PB[Paragraph Based]
+        T --> FS[Fixed Size]
+        
+        SS --> |Headers/Topics| SC[Semantic Chunks]
+        SW --> |Overlap| WC[Window Chunks]
+        PB --> |Natural Breaks| PC[Paragraph Chunks]
+        FS --> |Exact Size| FC[Fixed Chunks]
+    end
+    
+    subgraph "Embedding Process"
+        SC --> E[Embedding Service]
+        WC --> E
+        PC --> E
+        FC --> E
+        
+        E --> V[Vector + Metadata]
+    end
+    
+    subgraph "SDK Processing"
+        V --> PR[prepare_vector_records]
+        PR --> |Enrichment| VR[VectorRecord Objects]
+    end
+    
+    style T fill:#f9f,stroke:#333,stroke-width:2px
+    style E fill:#bbf,stroke:#333,stroke-width:2px
+    style PR fill:#9f9,stroke:#333,stroke-width:2px

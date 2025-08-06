@@ -1,0 +1,187 @@
+#!/usr/bin/env python3
+"""
+Test relaxed validation behavior in Python SDK.
+Verifies that the SDK now allows server-unsupported configurations
+and provides appropriate warnings about fallbacks.
+"""
+
+import pytest
+import warnings
+from pydantic import ValidationError
+from proximadb.models import (
+    CollectionConfig, DistanceMetric, StorageEngine, IndexingAlgorithm,
+    ServerCapabilities
+)
+
+
+class TestRelaxedValidation:
+    """Test relaxed validation and server capabilities"""
+    
+    def test_distance_metric_capabilities(self):
+        """Test distance metric capabilities detection"""
+        caps = ServerCapabilities()
+        
+        # Test supported metrics (no fallback)
+        assert caps.is_supported("distance_metric", "cosine")
+        assert caps.is_supported("distance_metric", "euclidean")
+        assert caps.is_supported("distance_metric", "dot_product")
+        
+        # Test metrics that fallback
+        assert not caps.is_supported("distance_metric", "manhattan")
+        assert not caps.is_supported("distance_metric", "hamming")
+        assert not caps.is_supported("distance_metric", "jaccard")
+        
+        # Test fallback values
+        assert caps.get_fallback_for("distance_metric", "manhattan") == "cosine"
+        assert caps.get_fallback_for("distance_metric", "hamming") == "cosine"
+        assert caps.get_fallback_for("distance_metric", "custom") == "cosine"
+        
+        # Test extended metrics (now available)
+        assert not caps.is_supported("distance_metric", "chebyshev")
+        assert caps.get_fallback_for("distance_metric", "chebyshev") == "cosine"
+    
+    def test_storage_engine_capabilities(self):
+        """Test storage engine capabilities detection"""
+        caps = ServerCapabilities()
+        
+        # Test supported engines (no fallback)
+        assert caps.is_supported("storage_engine", "viper")
+        assert caps.is_supported("storage_engine", "sst")
+        
+        # Test engines that fallback
+        assert not caps.is_supported("storage_engine", "mmap")
+        assert not caps.is_supported("storage_engine", "hybrid")
+        
+        # Test fallback values
+        assert caps.get_fallback_for("storage_engine", "mmap") == "viper"
+        assert caps.get_fallback_for("storage_engine", "hybrid") == "viper"
+    
+    def test_indexing_algorithm_capabilities(self):
+        """Test indexing algorithm capabilities detection"""
+        caps = ServerCapabilities()
+        
+        # Test supported algorithms (no fallback)
+        assert caps.is_supported("indexing_algorithm", "hnsw")
+        assert caps.is_supported("indexing_algorithm", "ivf")
+        assert caps.is_supported("indexing_algorithm", "flat")
+        assert caps.is_supported("indexing_algorithm", "annoy")
+        assert caps.is_supported("indexing_algorithm", "pq")
+        
+        # Test algorithm that falls back
+        assert not caps.is_supported("indexing_algorithm", "lsh")
+        assert caps.get_fallback_for("indexing_algorithm", "lsh") == "hnsw"
+    
+    def test_quantization_capabilities(self):
+        """Test quantization type capabilities"""
+        caps = ServerCapabilities()
+        
+        # All quantization types should be supported in VIPER
+        assert caps.is_supported("quantization_type", "none")
+        assert caps.is_supported("quantization_type", "uniform")
+        assert caps.is_supported("quantization_type", "pq")
+        assert caps.is_supported("quantization_type", "scalar")
+        assert caps.is_supported("quantization_type", "binary")
+        assert caps.is_supported("quantization_type", "custom")
+    
+    def test_extended_distance_metrics_enum(self):
+        """Test that extended distance metrics are available in enum"""
+        # Previously unsupported metrics should now be available
+        assert DistanceMetric.MANHATTAN == "manhattan"
+        assert DistanceMetric.HAMMING == "hamming"
+        assert DistanceMetric.JACCARD == "jaccard"
+        
+        # New extended metrics should be available
+        assert DistanceMetric.CHEBYSHEV == "chebyshev"
+        assert DistanceMetric.CANBERRA == "canberra"
+        assert DistanceMetric.MINKOWSKI == "minkowski"
+        assert DistanceMetric.ANGULAR == "angular"
+        assert DistanceMetric.BRAY_CURTIS == "bray_curtis"
+        assert DistanceMetric.HELLINGER == "hellinger"
+    
+    def test_strict_name_validation(self):
+        """Test that collection name validation enforces 8+ character minimum"""
+        # Valid names (8+ characters) should work
+        config = CollectionConfig(
+            name="valid_collection_name",
+            dimension=128
+        )
+        assert config.name == "valid_collection_name"
+        
+        # Exactly 8 characters should work
+        config = CollectionConfig(
+            name="exactly8",
+            dimension=128  
+        )
+        assert config.name == "exactly8"
+        
+        # Short names should fail (< 8 characters)
+        with pytest.raises(ValueError, match="at least 8 characters"):
+            CollectionConfig(name="short", dimension=128)
+        
+        # Very short names should fail
+        with pytest.raises(ValueError, match="at least 8 characters"):
+            CollectionConfig(name="a", dimension=128)
+        
+        # Empty names should fail (Pydantic catches this)
+        with pytest.raises(ValidationError):
+            CollectionConfig(name="", dimension=128)
+        
+        # Whitespace-only names should fail (Pydantic min_length catches this too)
+        with pytest.raises(ValidationError):
+            CollectionConfig(name="   ", dimension=128)
+        
+        # Names with whitespace that become < 8 chars after strip should fail
+        with pytest.raises(ValueError, match="at least 8 characters"):
+            CollectionConfig(name="  short  ", dimension=128)
+    
+    def test_relaxed_dimension_validation(self):
+        """Test that dimension validation is relaxed"""
+        # Large dimensions should be allowed (server handles limits)
+        config = CollectionConfig(
+            name="test_large_dimension_collection",
+            dimension=50000  # Previously limited to 10000
+        )
+        assert config.dimension == 50000
+        
+        # Very large dimensions should be allowed
+        config = CollectionConfig(
+            name="test_very_large_dimension_coll", 
+            dimension=100000
+        )
+        assert config.dimension == 100000
+        
+        # Zero dimensions should still fail
+        with pytest.raises(ValueError):
+            CollectionConfig(name="test_zero_dimension_coll", dimension=0)
+    
+    def test_collection_config_with_extended_options(self):
+        """Test creating collection configs with extended options"""
+        # Test collection with extended distance metric (8+ char name)
+        config = CollectionConfig(
+            name="test_extended_metrics_collection",
+            dimension=512,
+            distance_metric=DistanceMetric.CHEBYSHEV,
+            storage_engine=StorageEngine.MMAP,
+            primary_indexing_algorithm=IndexingAlgorithm.LSH
+        )
+        
+        assert config.distance_metric == DistanceMetric.CHEBYSHEV
+        assert config.storage_engine == StorageEngine.MMAP
+        assert config.primary_indexing_algorithm == IndexingAlgorithm.LSH
+    
+    def test_server_capabilities_notes(self):
+        """Test server capabilities notes"""
+        caps = ServerCapabilities()
+        
+        assert "fallback_policy" in caps.notes
+        assert "dimension_limit" in caps.notes
+        assert "name_validation" in caps.notes
+        assert "quantization_engine" in caps.notes
+        
+        assert "intelligent fallbacks" in caps.notes["fallback_policy"]
+        assert "100,000" in caps.notes["dimension_limit"]
+        assert "VIPER engine only" in caps.notes["quantization_engine"]
+
+
+if __name__ == "__main__":
+    pytest.main([__file__, "-v"])

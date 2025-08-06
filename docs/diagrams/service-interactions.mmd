@@ -23,14 +23,11 @@ sequenceDiagram
     REST->>+Handler: insert_vectors_unified()<br/> JSON → Proto
     Handler->>+DVS: insert_vectors_direct()<br/> Direct Memtable Access
     
-    Note over DVS:  Engine Routing Decision<br/>Collection Service Available?
+    Note over DVS:  Engine Routing Decision<br/>Via Collection Service
     
-    alt Collection Service Configured
-        DVS->>+CS: get_collection_storage_engine(collection_id)
-        CS-->>-DVS: "SST" | "VIPER" | Error
-    else No Collection Service (Current Issue)
-        Note over DVS:  Defaults to VIPER<br/>(Known routing limitation)
-    end
+    DVS->>+CS: get_collection_metadata(collection_id)
+    CS->>CS: Check storage_assignment<br/>in collection metadata
+    CS-->>-DVS: StorageEngine + Locations<br/>data_location, wal_location
     
     alt VIPER Engine (Default)
         DVS->>+VIPER: do_flush()<br/> Columnar Storage
@@ -80,18 +77,21 @@ sequenceDiagram
         Note over VIPER, SST: <span style="color:white">**✅ All Issues Resolved**<br/>• VIPER metadata filters working correctly<br/>• Storage engine routing fixed<br/>• SQL AND/OR operators fully implemented<br/>• 1,460+ tests passing with 0 failures</span>
     end
     
-    %% Collection Management Flow
-    Note over Client,Cloud: Collection Operations
+    %% Collection Management Flow (Updated 2025-08-06)
+    Note over Client,Cloud: Collection Operations with Storage Assignment
     
     Client->>+REST: POST /collections<br/> Collection Config
     REST->>+Handler: handle_collection_operation()<br/> JSON → Proto
     Handler->>+CS: create_collection()<br/> Metadata Setup
-    CS->>+Engine: initialize_storage()<br/> Directory Creation
-    Engine->>+Atomic: setup_collection_storage()<br/> Atomic Setup
-    Atomic->>+Cloud: create_collection_dirs()<br/> Cloud Directories
+    CS->>CS: Assign storage location<br/>Create StorageAssignment
+    CS->>+Engine: initialize_storage()<br/> With storage_assignment
+    Engine->>Engine: Create directories at<br/>assigned locations
+    Engine->>+Atomic: setup_collection_storage()<br/> data_location, wal_location
+    Atomic->>+Cloud: create_collection_dirs()<br/> At specified paths
     Cloud-->>-Atomic:  Directories Created
     Atomic-->>-Engine:  Storage Ready
-    Engine-->>-CS:  Collection Initialized
+    Engine-->>-CS:  Collection Initialized<br/>with StorageAssignment
+    CS->>CS: Persist metadata<br/>with storage_assignment
     CS-->>-Handler:  Collection Created
     Handler-->>-REST:  Proto → JSON Response
     REST-->>-Client:  Collection Details

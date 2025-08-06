@@ -36,32 +36,52 @@ FilterDict = Dict[str, Any]
 # ============================================================================
 
 class DistanceMetric(str, Enum):
-    """Distance metrics for REST API"""
+    """Distance metrics for REST API
+    
+    Note: Server supports 13+ distance metrics. Unsupported metrics
+    will fallback to COSINE (server behavior, not client validation).
+    """
     COSINE = "cosine"
     EUCLIDEAN = "euclidean"
     DOT_PRODUCT = "dot_product"
-    HAMMING = "hamming"
-    MANHATTAN = "manhattan"
-    JACCARD = "jaccard"
+    MANHATTAN = "manhattan"  # Fallback: COSINE (server decides)
+    HAMMING = "hamming"      # Fallback: COSINE (server decides)
+    JACCARD = "jaccard"      # Fallback: COSINE (server decides)
+    
+    # Extended metrics supported by server (ProximaDB v1.0+)
+    CHEBYSHEV = "chebyshev"
+    CANBERRA = "canberra"
+    MINKOWSKI = "minkowski"
+    ANGULAR = "angular"
+    BRAY_CURTIS = "bray_curtis"
+    HELLINGER = "hellinger"
     CUSTOM = "custom"
 
 
 class StorageEngine(str, Enum):
-    """Storage engines for REST API"""
-    VIPER = "viper"
-    SST = "sst"
-    MMAP = "mmap"
-    HYBRID = "hybrid"
+    """Storage engines for REST API
+    
+    Note: Server supports VIPER and SST. Unsupported engines
+    will fallback to VIPER (server behavior, not client validation).
+    """
+    VIPER = "viper"  # Columnar storage with Parquet format
+    SST = "sst"      # Row-based storage with SSTable format
+    MMAP = "mmap"    # Fallback: VIPER (server decides)
+    HYBRID = "hybrid" # Fallback: VIPER (server decides)
 
 
 class IndexingAlgorithm(str, Enum):
-    """Indexing algorithms for REST API"""
-    HNSW = "hnsw"
-    IVF = "ivf"
-    PQ = "pq"
-    FLAT = "flat"
-    ANNOY = "annoy"
-    LSH = "lsh"
+    """Indexing algorithms for REST API
+    
+    Note: All 6 indexing algorithms are fully supported by the server as of 2025-08.
+    No fallbacks required - server handles all algorithms natively.
+    """
+    HNSW = "hnsw"   # Hierarchical Navigable Small World
+    IVF = "ivf"     # Inverted File Index
+    PQ = "pq"       # Product Quantization
+    FLAT = "flat"   # Brute force / exhaustive search
+    ANNOY = "annoy" # Approximate Nearest Neighbors Oh Yeah
+    LSH = "lsh"     # Locality Sensitive Hashing (fully supported)
 
 
 
@@ -83,6 +103,80 @@ class FilterableDataType(str, Enum):
     ARRAY_STRING = "array_string"
     ARRAY_INTEGER = "array_integer"
     ARRAY_FLOAT = "array_float"
+
+
+class ServerCapabilities(BaseModel):
+    """Server capabilities and fallback behavior for configuration validation"""
+    
+    # Fully supported distance metrics (no fallback) - All 13 metrics supported as of 2025-08
+    supported_distance_metrics: List[str] = [
+        "cosine", "euclidean", "dot_product", "manhattan", "hamming", "jaccard", 
+        "chebyshev", "canberra", "minkowski", "angular", "bray_curtis", "hellinger", "custom"
+    ]
+    
+    # Distance metrics that fallback to cosine (none - all are now supported natively)
+    fallback_distance_metrics: List[str] = []
+    
+    # Fully supported storage engines (no fallback)
+    supported_storage_engines: List[str] = ["viper", "sst"]
+    
+    # Storage engines that fallback to viper
+    fallback_storage_engines: List[str] = ["mmap", "hybrid"]
+    
+    # Fully supported indexing algorithms (no fallback) - All 6 algorithms supported as of 2025-08
+    supported_indexing_algorithms: List[str] = [
+        "hnsw", "ivf", "pq", "flat", "annoy", "lsh"
+    ]
+    
+    # Indexing algorithms that fallback to hnsw (none - all are now supported natively)
+    fallback_indexing_algorithms: List[str] = []
+    
+    # Quantization types (all supported in VIPER engine)
+    supported_quantization_types: List[str] = [
+        "none", "uniform", "pq", "scalar", "binary", "custom"
+    ]
+    
+    # Server behavior notes
+    notes: Dict[str, str] = {
+        "fallback_policy": "Server uses intelligent fallbacks instead of errors",
+        "dimension_limit": "Server supports up to 100,000 dimensions",
+        "name_validation": "Collection names must be 8+ characters to avoid collision with 7-char base62 IDs",
+        "quantization_engine": "Quantization fully supported in VIPER engine only",
+        "filterable_columns": "All FilterableDataType values supported"
+    }
+    
+    @classmethod
+    def get_fallback_for(cls, config_type: str, value: str) -> Optional[str]:
+        """Get the fallback value for an unsupported configuration"""
+        capabilities = cls()
+        
+        if config_type == "distance_metric":
+            if value in capabilities.fallback_distance_metrics:
+                return "cosine"
+        elif config_type == "storage_engine":
+            if value in capabilities.fallback_storage_engines:
+                return "viper"
+        elif config_type == "indexing_algorithm":
+            if value in capabilities.fallback_indexing_algorithms:
+                return "hnsw"
+                
+        return None
+    
+    @classmethod
+    def is_supported(cls, config_type: str, value: str) -> bool:
+        """Check if a configuration value is fully supported (no fallback)"""
+        capabilities = cls()
+        
+        if config_type == "distance_metric":
+            return value in capabilities.supported_distance_metrics
+        elif config_type == "storage_engine":
+            return value in capabilities.supported_storage_engines
+        elif config_type == "indexing_algorithm":
+            return value in capabilities.supported_indexing_algorithms
+        elif config_type == "quantization_type":
+            return value in capabilities.supported_quantization_types
+            
+        return True  # Default to supported for unknown types
 
 
 class CollectionOperationType(str, Enum):
@@ -342,8 +436,8 @@ class FilterableColumn(BaseModel):
 
 class CollectionConfig(BaseModel):
     """Collection configuration for REST API"""
-    name: str = Field(min_length=8)  # Minimum 8 characters to prevent collision with IDs
-    dimension: int = Field(ge=1, le=10000)
+    name: str = Field(min_length=8)  # Minimum 8 characters to prevent collision with 7-char base62 IDs
+    dimension: int = Field(ge=1, le=100000)  # Relaxed: Server supports up to 100k dimensions
     distance_metric: Optional[DistanceMetric] = None
     storage_engine: Optional[StorageEngine] = None
     primary_indexing_algorithm: Optional[IndexingAlgorithm] = None
@@ -360,9 +454,12 @@ class CollectionConfig(BaseModel):
     
     @field_validator('name')
     def validate_name_length(cls, v):
-        """Validate collection name is at least 8 characters"""
+        """Validate collection name is at least 8 characters to prevent collision with 7-char base62 IDs"""
+        if not v or not v.strip():
+            raise ValueError("Collection name cannot be empty")
+        v = v.strip()
         if len(v) < 8:
-            raise ValueError("Collection name must be at least 8 characters long to prevent collision with collection IDs")
+            raise ValueError("Collection name must be at least 8 characters long to prevent collision with 7-character base62 collection IDs")
         return v
     
     @property

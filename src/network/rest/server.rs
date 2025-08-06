@@ -16,12 +16,14 @@
 
 //! REST server implementation using axum
 
-use axum::Router;
+use axum::{Router, extract::DefaultBodyLimit};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tower::ServiceBuilder;
 use tower_http::cors::{Any, CorsLayer};
 use tower_http::trace::TraceLayer;
+use tower_http::compression::CompressionLayer;
+use tower_http::decompression::DecompressionLayer;
 
 use super::handlers::{create_router, AppState};
 use crate::handlers::UnifiedHandlers;
@@ -37,21 +39,59 @@ impl RestServer {
     pub fn new(
         bind_addr: SocketAddr,
         unified_handlers: Arc<UnifiedHandlers>,
+        max_request_size_mb: Option<u64>,
+        enable_compression: bool,
     ) -> Self {
         let state = AppState {
             unified_handlers,
         };
 
-        let router = create_router(state).layer(
-            ServiceBuilder::new()
-                .layer(TraceLayer::new_for_http())
-                .layer(
-                    CorsLayer::new()
-                        .allow_origin(Any)
-                        .allow_methods(Any)
-                        .allow_headers(Any),
-                ),
-        );
+        // Calculate max request size in bytes (default to 64MB if not specified)
+        let max_size_bytes = max_request_size_mb.unwrap_or(64) * 1024 * 1024;
+
+        // Build service layers conditionally to avoid type mismatch
+        let router = if enable_compression {
+            // Create compression layer with support for multiple algorithms
+            // Priority order (fastest to best compression): deflate, gzip, zstd, brotli
+            let compression_layer = CompressionLayer::new()
+                .deflate(true)  // Fastest, low CPU usage
+                .gzip(true)     // Good balance of speed and compression
+                .zstd(true)     // Best compression ratio with good speed
+                .br(true);      // Brotli - slower but excellent compression
+            
+            // Create decompression layer for handling compressed requests
+            let decompression_layer = DecompressionLayer::new()
+                .deflate(true)
+                .gzip(true)
+                .br(true)
+                .zstd(true);
+
+            create_router(state).layer(
+                ServiceBuilder::new()
+                    .layer(DefaultBodyLimit::max(max_size_bytes as usize))
+                    .layer(decompression_layer)  // Handle compressed requests
+                    .layer(compression_layer)    // Compress responses
+                    .layer(TraceLayer::new_for_http())
+                    .layer(
+                        CorsLayer::new()
+                            .allow_origin(Any)
+                            .allow_methods(Any)
+                            .allow_headers(Any),
+                    ),
+            )
+        } else {
+            create_router(state).layer(
+                ServiceBuilder::new()
+                    .layer(DefaultBodyLimit::max(max_size_bytes as usize))
+                    .layer(TraceLayer::new_for_http())
+                    .layer(
+                        CorsLayer::new()
+                            .allow_origin(Any)
+                            .allow_methods(Any)
+                            .allow_headers(Any),
+                    ),
+            )
+        };
 
         Self { router, bind_addr }
     }
@@ -61,6 +101,7 @@ impl RestServer {
         tracing::info!("🌐 Starting REST server on {}", self.bind_addr);
 
         tracing::info!("✅ REST server listening on {}", self.bind_addr);
+        tracing::info!("🗜️  Compression enabled: deflate, gzip, zstd, brotli (in priority order)");
         tracing::info!("📋 Available endpoints:");
         tracing::info!("   GET    /health                           - Health check");
         tracing::info!("   POST   /api/v1/collection                - Unified collection operations");

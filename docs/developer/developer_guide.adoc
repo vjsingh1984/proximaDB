@@ -176,85 +176,12 @@ await client.insert_vectors(collection_id, vectors)
 results = await client.search(
     collection_id, 
     query_vector, 
-    k=10,
-    filter={"category": "electronics", "price": {"$lt": 500}}
+    top_k=10,
+    metadata_filter={"category": "electronics", "price": {"$lt": 500}}
 )
 ----
 
-=== Chunking & Metadata Design
-
-image::metadata-design-pattern.svg[Metadata Design Pattern, width=800]
-
-.📊 Metadata Design Pattern Source
-[%collapsible]
-====
-[source,mermaid]
-----
-include::../diagrams/metadata-design-pattern.mmd[]
-----
-====
-
-==== Overview
-
-The SDK provides a powerful chunking and metadata system designed for optimal performance across VIPER (columnar) and SST (row-based) storage engines.
-
-==== Design Principles
-
-**1. Metadata Separation**
-
-[cols="2,3,2"]
-|===
-|**Type** |**Description** |**Examples**
-
-|**Filterable**
-|High cardinality fields that users query on
-|`product_id`, `user_id`, `category`, `price`
-
-|**Extra**  
-|Low cardinality or rarely queried fields
-|`currency`, `api_version`, `source_system`
-|===
-
-**2. Performance Impact**
-
-* VIPER: Only filterable fields are indexed (60-90% I/O reduction)
-* SST: All fields queryable but separation ensures portability
-
-==== Using prepare_vector_records()
-
-The `prepare_vector_records` function is the core of the SDK's chunking system:
-
-[source,python]
-----
-from proximadb.chunking import prepare_vector_records
-
-# Define custom enrichment
-def enrich_chunk(chunk, index):
-    """Add derived metadata to each chunk"""
-    text = chunk["text"].lower()
-    return {
-        "has_code": "```" in chunk["text"],
-        "section": "intro" if index == 0 else "body",
-        "complexity": assess_complexity(text)
-    }
-
-# Convert chunks to optimized vector records
-vector_records = prepare_vector_records(
-    embedding_response,
-    source_id="DOC123",
-    source_type="manual",
-    source_metadata={
-        # Document-level metadata
-        "author": "John Doe",
-        "version": "2.0",
-        "language": "en"  # Low cardinality → extra_metadata
-    },
-    chunk_metadata_fn=enrich_chunk,
-    filterable_fields=["author", "section", "has_code"]
-)
-----
-
-==== Chunking Strategies
+=== Chunking & Embedding System
 
 image::chunking-strategies.svg[Chunking Strategies, width=700]
 
@@ -267,112 +194,355 @@ include::../diagrams/chunking-strategies.mmd[]
 ----
 ====
 
-**Available Strategies:**
+==== Overview
 
-[cols="1,3,2"]
+The SDK provides a modular chunking and embedding system with complete separation of concerns. Text chunking and embedding generation are independent operations that can be composed as needed.
+
+NOTE: The SDK is transitioning from the old mixed implementation to the new separated architecture. Currently:
+- `chunking.py` - Legacy implementation (being phased out)
+- `chunking_refactored.py` - Clean implementation with separation of concerns (use for new code)
+- `chunking_strategies/` - Strategy pattern implementation (recommended approach)
+The `_refactored` suffix will be removed in the next major release.
+
+==== Architecture
+
+**Three-Step Process:**
+
+[source,python]
+----
+from proximadb.chunking_refactored import (
+    TextChunker, ChunkingConfig, ChunkingStrategy, create_vector_records
+)
+from proximadb.embedding_providers import get_embedding_provider
+
+# 1. Chunk text (no embeddings involved)
+chunker = TextChunker(ChunkingConfig(
+    strategy=ChunkingStrategy.SEMANTIC,
+    chunk_size=1000,
+    chunk_overlap=100
+))
+chunks = chunker.chunk_text(text, source_id)
+
+# 2. Generate embeddings (no chunking involved) 
+provider = get_embedding_provider("fastembed")
+embeddings = provider.embed_texts([chunk.text for chunk in chunks])
+
+# 3. Create vector records (combine results)
+records = create_vector_records(
+    chunks=chunks,
+    embeddings=embeddings,
+    collection_metadata={"doc_type": "manual"},
+    filterable_fields=["doc_type", "source_id"]
+)
+----
+
+==== Chunking Strategies
+
+Each strategy is in its own module (`proximadb.chunking_strategies`):
+
+[cols="2,3,2"]
 |===
-|**Strategy** |**Best For** |**Parameters**
-
-|`semantic`
-|Documents with headers/sections
-|`chunk_size`, `overlap`
+|**Strategy** |**Description** |**Best Use Case**
 
 |`sliding_window`
-|Continuous text without breaks
-|`window_size`, `overlap`
+|Fixed-size overlapping chunks
+|General text, logs, code
+
+|`sentence`
+|Respects sentence boundaries
+|Articles, documentation
 
 |`paragraph`
-|Structured content
-|`max_size`, `min_size`
+|Preserves paragraph structure
+|Books, formatted documents
 
-|`fixed_size`
-|Uniform chunks
-|`chunk_size`
+|`semantic`
+|Topic-aware chunking (text analysis)
+|Technical docs with sections
+
+|`recursive`
+|Tries paragraph → sentence → sliding
+|Unknown or mixed content
 |===
 
-==== Collection Schema Design
-
-**E-commerce Example:**
-
+**Using Strategies:**
 [source,python]
 ----
-# Analyze cardinality for field placement
-filterable_fields = [
-    # Identity (high cardinality)
-    "product_id", "sku", "barcode",
-    
-    # Categorization (medium, frequently queried)
-    "category", "brand", "color", "size",
-    
-    # Numeric (range queries)
-    "price", "rating", "stock_count",
-    
-    # Flags (boolean filters)
-    "in_stock", "on_sale", "is_featured"
-]
+# Via factory
+from proximadb.chunking_strategies import get_chunking_strategy
 
-# Create optimized collection
-config = CollectionConfig(
-    name="products",
-    dimension=768,
-    storage_engine=StorageEngine.VIPER,
-    filterable_metadata_fields=filterable_fields
+strategy = get_chunking_strategy(
+    "semantic",
+    chunk_size=1000,
+    preserve_code_blocks=True
+)
+chunks = strategy.chunk(text, source_id)
+
+# Via TextChunker
+chunker = TextChunker(ChunkingConfig(
+    strategy=ChunkingStrategy.PARAGRAPH,
+    chunk_size=500,
+    min_chunk_size=100
+))
+----
+
+==== Embedding Providers
+
+The SDK includes multiple embedding providers (`proximadb.embedding_providers`):
+
+**Free Providers:**
+[cols="2,3,2"]
+|===
+|**Provider** |**Description** |**Installation**
+
+|`simulated`
+|Test embeddings (no dependencies)
+|Built-in
+
+|`sentence-transformer`
+|100+ HuggingFace models
+|`pip install sentence-transformers`
+
+|`fastembed`
+|ONNX-optimized, very fast
+|`pip install fastembed`
+
+|`instructor`
+|Task-specific embeddings
+|`pip install InstructorEmbedding`
+
+|`openai-compatible`
+|Works with Ollama, vLLM, LocalAI
+|No extra deps
+|===
+
+**Using Providers:**
+[source,python]
+----
+from proximadb.embedding_providers import (
+    get_embedding_provider,
+    recommend_free_providers
+)
+
+# Fast, lightweight option
+provider = get_embedding_provider(
+    "fastembed",
+    model_name="BAAI/bge-small-en-v1.5"
+)
+
+# High quality option
+provider = get_embedding_provider(
+    "sentence-transformer",
+    model_name="all-mpnet-base-v2"
+)
+
+# Local Ollama
+provider = get_embedding_provider(
+    "ollama",
+    model_name="nomic-embed-text"
 )
 ----
 
-==== High-Level SDK Functions
+==== Complete Workflow
 
-**1. Text Ingestion Pipeline:**
+**Simple approach using convenience function:**
 
 [source,python]
 ----
-from proximadb.chunking import ingest_text
+from proximadb.chunking_refactored import chunk_and_embed_text
+from proximadb.embedding_providers import get_embedding_provider
 
-result = ingest_text(
-    client=client,
-    collection_id="knowledge_base",
+# One function does all three steps
+records = chunk_and_embed_text(
     text=document_content,
-    source_id="DOC001",
-    source_metadata={
-        "category": "manual",
-        "product": "database"
+    source_id="doc_123",
+    embedding_provider=get_embedding_provider("fastembed"),
+    chunking_config=ChunkingConfig(
+        strategy=ChunkingStrategy.SEMANTIC,
+        chunk_size=1000
+    ),
+    metadata={"category": "manual", "version": "2.0"},
+    filterable_fields=["category", "version", "source_id"]
+)
+
+# Insert into collection
+client.insert_vectors(collection_name, records)
+----
+
+**Search workflow:**
+
+[source,python]
+----
+# Generate query embedding
+query_embedding = provider.embed_text("How to optimize queries?")
+
+# Search
+results = client.search(
+    collection_id=collection_name,
+    vector=query_embedding.tolist(),
+    top_k=10,
+    metadata_filter={"category": "manual"}
+)
+
+==== Metadata Design Pattern
+
+image::metadata-design-pattern.svg[Metadata Design Pattern, width=700]
+
+.📊 Metadata Design Source
+[%collapsible]
+====
+[source,mermaid]
+----
+include::../diagrams/metadata-design-pattern.mmd[]
+----
+====
+
+The SDK implements a sophisticated metadata layering system that separates different types of metadata for optimal performance and flexibility.
+
+**Metadata Layers:**
+
+1. **Core Chunking Metadata** (Automatically generated by chunking strategies):
+   - `chunk_id`: Unique identifier for the chunk
+   - `chunk_index`: Position within the source document
+   - `start_pos` / `end_pos`: Character positions in original text
+   - `chunk_length`: Size of the chunk in characters
+   - `chunking_strategy`: Strategy used (sliding_window, semantic, etc.)
+   - `source_id`: Reference to the source document
+   - `text_preview`: First 100 characters of chunk text
+
+2. **User Metadata** (Provided by developers):
+   - Any custom fields like `category`, `author`, `date`, `tags`
+   - Business-specific attributes
+   - External references and IDs
+
+3. **System Metadata** (Added during processing):
+   - `embedding_dimension`: Size of the embedding vector
+   - Processing timestamps
+   - Version information
+
+**Filterable vs Non-Filterable Separation:**
+
+[source,python]
+----
+# The SDK automatically separates metadata for optimal storage
+records = create_vector_records(
+    chunks=chunks,
+    embeddings=embeddings,
+    collection_metadata={
+        "category": "documentation",  # Will be filterable
+        "author": "John Doe",         # Will be filterable
+        "internal_notes": {...},      # Complex object - non-filterable
+        "processing_stats": {...}     # Complex object - non-filterable
     },
-    chunking_strategy="semantic",
-    chunk_size=400
+    filterable_fields=["category", "author", "date", "source_id"]
 )
+
+# Result in each VectorRecord:
+{
+    "id": "doc_123_chunk_0",
+    "vector": [...],
+    "metadata": {
+        # Filterable fields (high-cardinality, simple types)
+        "source_id": "doc_123",
+        "chunk_index": 0,
+        "category": "documentation",
+        "author": "John Doe",
+        
+        # Non-filterable fields grouped together
+        "additional_metadata": {
+            "internal_notes": {...},
+            "processing_stats": {...},
+            "text_preview": "ProximaDB is a high-performance..."
+        }
+    }
+}
 ----
 
-**2. Document Ingestion:**
+**Adding Custom Metadata:**
 
 [source,python]
 ----
-from proximadb.chunking import ingest_document
-
-result = ingest_document(
-    client=client,
-    collection_id="documents",
-    document_path="/path/to/doc.pdf",
-    source_type="technical_doc",
-    chunking_strategy="paragraph"
-)
-----
-
-**3. Semantic Search:**
-
-[source,python]
-----
-from proximadb.chunking import search_text
-
-results = search_text(
-    client=client,
-    collection_id="knowledge_base",
-    query_text="How to optimize queries?",
-    top_k=5,
-    filter_metadata={
-        "category": "manual",
-        "version": {"$gte": "2.0"}
+# Method 1: During chunking (applies to all chunks)
+chunks = chunker.chunk_text(
+    text=document,
+    source_id="doc_123",
+    base_metadata={
+        "department": "engineering",
+        "confidentiality": "public",
+        "version": "2.0"
     }
 )
+
+# Method 2: During record creation (more control)
+records = []
+for i, (chunk, embedding) in enumerate(zip(chunks, embeddings)):
+    # Add chunk-specific metadata
+    custom_metadata = {
+        "section": detect_section(chunk.text),
+        "has_code": contains_code(chunk.text),
+        "language": detect_language(chunk.text)
+    }
+    
+    record = VectorRecord(
+        id=f"{source_id}_chunk_{i}",
+        vector=embedding,
+        metadata={
+            **chunk.metadata,      # Core metadata
+            **custom_metadata,     # Your metadata
+            **global_metadata      # Collection-wide metadata
+        }
+    )
+    records.append(record)
+
+# Method 3: Using the convenience function
+records = chunk_and_embed_text(
+    text=document,
+    source_id="doc_123",
+    embedding_provider=provider,
+    metadata={
+        "project": "proximadb-docs",
+        "last_updated": "2025-08-05",
+        "tags": ["vector-db", "tutorial"]
+    },
+    filterable_fields=["project", "last_updated", "tags"]
+)
+----
+
+**Best Practices for Metadata Design:**
+
+1. **High-Cardinality Fields**: Make filterable (>10% unique values)
+   - Good: `user_id`, `document_id`, `timestamp`
+   - Bad: `is_active`, `status` (if only 2-3 values)
+
+2. **Complex Objects**: Store as non-filterable
+   - Nested dictionaries, lists, JSON objects
+   - Large text fields, descriptions
+   - Computed statistics
+
+3. **Performance Optimization**:
+   - Limit filterable fields to what you'll actually filter on
+   - Use simple types (str, int, float, bool) for filterable fields
+   - Consider field cardinality before making filterable
+
+4. **Metadata Inheritance**:
+   - Collection-level defaults
+   - Document-level metadata (all chunks inherit)
+   - Chunk-specific overrides
+
+[source,python]
+----
+# Example: Hierarchical metadata
+collection_defaults = {"environment": "production"}
+document_metadata = {"source": "user_manual", "version": "2.0"}
+chunk_metadata = {"page": 42, "section": "API Reference"}
+
+# Final metadata combines all levels with proper precedence
+final_metadata = {
+    **collection_defaults,
+    **document_metadata,
+    **chunk_metadata,
+    **auto_generated_metadata  # Core chunking metadata
+}
 ----
 
 ==== Performance Best Practices
@@ -495,6 +665,7 @@ class HybridSearch:
             vector_weight=alpha
         )
 ----
+
 
 == SQL Interface
 

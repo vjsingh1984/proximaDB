@@ -1,0 +1,49 @@
+graph LR
+    subgraph "Input Text Document"
+        T[Long Document Text<br/>Multiple paragraphs<br/>Complex structure]
+    end
+    
+    T --> S1[Sentence Strategy]
+    T --> S2[Paragraph Strategy]
+    T --> S3[Sliding Window]
+    T --> S4[Semantic Strategy]
+    T --> S5[Fixed Size]
+    T --> S6[Recursive Strategy]
+    
+    subgraph "Sentence-based Chunking"
+        S1 --> O1[Chunk 1: First sentence.<br/>Chunk 2: Second sentence.<br/>Chunk 3: Third sentence.]
+        O1 --> M1[✅ Natural boundaries<br/>❌ Variable chunk sizes]
+    end
+    
+    subgraph "Paragraph-based Chunking"
+        S2 --> O2[Chunk 1: First paragraph...<br/>Chunk 2: Second paragraph...<br/>Chunk 3: Third paragraph...]
+        O2 --> M2[✅ Logical sections<br/>❌ Large size variations]
+    end
+    
+    subgraph "Sliding Window"
+        S3 --> O3[Chunk 1: chars 0-512<br/>Chunk 2: chars 384-896<br/>Chunk 3: chars 768-1280]
+        O3 --> M3[✅ Consistent sizes<br/>✅ Overlapping context<br/>❌ May break sentences]
+    end
+    
+    subgraph "Semantic Strategy"
+        S4 --> O4[Chunk 1: # Header 1<br/>Content under header...<br/>Chunk 2: ## Section A<br/>Related content...]
+        O4 --> M4[✅ Meaningful sections<br/>✅ Preserves structure<br/>❌ Complex processing]
+    end
+    
+    subgraph "Fixed Size"
+        S5 --> O5[Chunk 1: exactly 512 chars<br/>Chunk 2: exactly 512 chars<br/>Chunk 3: exactly 512 chars]
+        O5 --> M5[✅ Predictable size<br/>✅ Fast processing<br/>❌ Breaks mid-word/sentence]
+    end
+    
+    subgraph "Recursive Strategy"
+        S6 --> O6[Try paragraphs → sentences → words<br/>Chunk 1: Para 1 + Para 2<br/>Chunk 2: Para 3 split by sentences]
+        O6 --> M6[✅ Adaptive approach<br/>✅ Respects boundaries<br/>❌ More complex]
+    end
+    
+    style T fill:#e3f2fd
+    style S1 fill:#e8f5e8
+    style S2 fill:#fff3e0
+    style S3 fill:#f3e5f5
+    style S4 fill:#e0f2f1
+    style S5 fill:#fce4ec
+    style S6 fill:#f1f8e9

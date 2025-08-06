@@ -22,5 +22,8 @@
 pub mod auth;
 pub mod rate_limit;
 
+#[cfg(test)]
+mod tests;
+
 pub use auth::{AuthConfig, AuthLayer};
 pub use rate_limit::{RateLimitConfig, RateLimitLayer};

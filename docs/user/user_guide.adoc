@@ -33,7 +33,7 @@ client = ProximaDBClient("http://localhost:5678")
 
 # Create a collection for document embeddings
 collection = client.create_collection(
-    name="documents",
+    name="ai_documents",
     dimension=384,                    # BERT-base embedding size
     distance_metric="cosine",        # Best for normalized embeddings
     engine="viper",                  # Columnar storage for analytics
@@ -83,19 +83,19 @@ for coll in collections:
     print(f"📁 {coll.name}: {coll.vector_count} vectors, {coll.dimension}D")
 
 # Get detailed collection information
-collection_info = client.get_collection("documents")
+collection_info = client.get_collection("ai_documents")
 print(f"Collection size: {collection_info.storage_size_mb} MB")
 print(f"Index type: {collection_info.index_algorithm}")
 
 # Update collection configuration
 client.update_collection(
-    name="documents",
+    name="ai_documents",
     description="Updated description",
     index_config={"ef_construction": 400}  # Improve recall
 )
 
 # Delete collection (⚠️  irreversible)
-client.delete_collection("documents")
+client.delete_collection("ai_documents")
 ----
 
 == 🔧 Vector Operations
@@ -108,7 +108,7 @@ client.delete_collection("documents")
 ----
 # Insert a single document vector
 result = client.insert_vector(
-    collection_id="documents",
+    collection_id="ai_documents",
     vector_id="article_123",
     vector=[0.1, 0.2, 0.3] * 128,  # 384-dimensional vector
     metadata={
@@ -143,7 +143,7 @@ for i in range(1000):  # Insert 1000 vectors efficiently
 
 # Batch insert for optimal performance
 results = client.insert_vectors(
-    collection_id="documents",
+    collection_id="ai_documents",
     vectors=vectors,
     batch_size=100  # Process in chunks of 100
 )
@@ -167,7 +167,7 @@ upsert_data = [
     }
 ]
 
-result = client.upsert_vectors("documents", upsert_data)
+result = client.upsert_vectors("ai_documents", upsert_data)
 print(f"✅ Upserted {len(result.upserted_ids)} vectors")
 ----
 
@@ -181,7 +181,7 @@ print(f"✅ Upserted {len(result.upserted_ids)} vectors")
 query_vector = [0.1, 0.2, 0.3] * 128  # Your query embedding
 
 results = client.search_vectors(
-    collection_id="documents",
+    collection_id="ai_documents",
     query_vector=query_vector,
     top_k=10,  # Return top 10 most similar
     include_metadata=True,

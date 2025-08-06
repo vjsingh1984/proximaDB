@@ -60,6 +60,7 @@ from .models import (
     CompressionType,
     FilterableColumn,
     FilterableDataType,
+    ServerCapabilities,
     
     # Type aliases
     VectorArray,
@@ -201,6 +202,7 @@ __all__ = [
     "CompressionType",
     "FilterableColumn",
     "FilterableDataType",
+    "ServerCapabilities",
     "VectorArray",
     "MetadataDict",
     "FilterDict",
@@ -290,10 +292,7 @@ try:
     from .cache import (
         SmartCache,
         CacheStrategy,
-        CacheConfig,
         CacheMetrics,
-        cached,
-        create_smart_cache,
     )
     _cache_available = True
 except ImportError:
@@ -345,10 +344,7 @@ if _cache_available:
     __all__.extend([
         "SmartCache",
         "CacheStrategy",
-        "CacheConfig",
         "CacheMetrics",
-        "cached",
-        "create_smart_cache",
     ])
 
 if _circuit_breaker_available:

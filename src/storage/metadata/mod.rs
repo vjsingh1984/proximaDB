@@ -87,6 +87,25 @@ pub struct CollectionMetadata {
 
     // WAL flush configuration (None = use global defaults)
     pub flush_config: Option<CollectionFlushConfig>,
+    
+    // Storage assignment information
+    pub storage_assignment: Option<StorageAssignment>,
+}
+
+/// Storage assignment information for a collection
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StorageAssignment {
+    /// Storage location URL for data (e.g., "file:///data/disk1")
+    pub data_location: String,
+    
+    /// WAL location URL (e.g., "file:///data/disk1/{collection_id}/write_buffer")
+    pub wal_location: String,
+    
+    /// Location index in the storage_locations array
+    pub location_index: usize,
+    
+    /// Assignment timestamp
+    pub assigned_at: DateTime<Utc>,
 }
 
 /// Access pattern hints for storage optimization
@@ -208,6 +227,7 @@ impl Default for CollectionMetadata {
             strategy_config: CollectionStrategyConfig::default(),
             strategy_change_history: Vec::new(),
             flush_config: None, // Use global defaults
+            storage_assignment: None,
         }
     }
 }

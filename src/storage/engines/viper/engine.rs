@@ -668,7 +668,7 @@ impl UnifiedStorageEngine for ViperEngine {
             .map(|id| id.to_string())
             .collect();
         
-        // Use the modular flush manager to flush vectors
+        // Use the modular flush manager to flush vectors with provided collection config
         let mut flush_result = self.flush_manager.flush_vectors(
             collection_id,
             &params.vector_records,
@@ -676,6 +676,7 @@ impl UnifiedStorageEngine for ViperEngine {
             params.force,
             params.synchronous,
             &self.core_config,
+            params.collection_config.as_ref(), // Pass collection config from params
         ).await?;
         
         // Update engine statistics

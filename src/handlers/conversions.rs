@@ -20,6 +20,7 @@
 //! between REST and gRPC handlers.
 
 use serde_json::json;
+use anyhow::Result;
 
 use crate::proto::proximadb::{
     Collection, CollectionConfig, CollectionRequest, CollectionOperation,
@@ -50,33 +51,44 @@ pub fn parse_vector_operation(op: &str) -> Result<VectorOperation, String> {
 }
 
 /// Convert REST distance metric string to proto enum
-pub fn parse_distance_metric(metric: &str) -> DistanceMetric {
+pub fn parse_distance_metric(metric: &str) -> Result<DistanceMetric> {
     match metric.to_lowercase().as_str() {
-        "cosine" => DistanceMetric::Cosine,
-        "euclidean" => DistanceMetric::Euclidean,
-        "dot_product" => DistanceMetric::DotProduct,
-        _ => DistanceMetric::Cosine, // Default
+        "cosine" => Ok(DistanceMetric::Cosine),
+        "euclidean" => Ok(DistanceMetric::Euclidean),
+        "dot_product" | "dotproduct" => Ok(DistanceMetric::DotProduct),
+        "manhattan" => Ok(DistanceMetric::Manhattan),
+        "hamming" => Ok(DistanceMetric::Hamming),
+        "jaccard" => Ok(DistanceMetric::Jaccard),
+        "chebyshev" => Ok(DistanceMetric::Chebyshev),
+        "canberra" => Ok(DistanceMetric::Canberra),
+        "minkowski" => Ok(DistanceMetric::Minkowski),
+        "angular" => Ok(DistanceMetric::Angular),
+        "bray_curtis" | "braycurtis" => Ok(DistanceMetric::BrayCurtis),
+        "hellinger" => Ok(DistanceMetric::Hellinger),
+        "custom" => Ok(DistanceMetric::Custom),
+        _ => Err(anyhow::anyhow!("Unknown distance metric: '{}'", metric)),
     }
 }
 
 /// Convert REST storage engine string to proto enum
-pub fn parse_storage_engine(engine: &str) -> StorageEngine {
+pub fn parse_storage_engine(engine: &str) -> Result<StorageEngine> {
     match engine.to_lowercase().as_str() {
-        "viper" => StorageEngine::Viper,
-        "sst" => StorageEngine::Sst,
-        _ => StorageEngine::Viper, // Default
+        "viper" => Ok(StorageEngine::Viper),
+        "sst" => Ok(StorageEngine::Sst),
+        _ => Err(anyhow::anyhow!("Unknown storage engine: '{}'. Supported engines: viper, sst", engine)),
     }
 }
 
 /// Convert REST indexing algorithm string to proto enum
-pub fn parse_indexing_algorithm(algo: &str) -> IndexingAlgorithm {
+pub fn parse_indexing_algorithm(algo: &str) -> Result<IndexingAlgorithm> {
     match algo.to_lowercase().as_str() {
-        "hnsw" => IndexingAlgorithm::Hnsw,
-        "ivf" => IndexingAlgorithm::Ivf,
-        "flat" => IndexingAlgorithm::Flat,
-        "pq" => IndexingAlgorithm::Pq,
-        "annoy" => IndexingAlgorithm::Annoy,
-        _ => IndexingAlgorithm::Hnsw, // Default
+        "hnsw" => Ok(IndexingAlgorithm::Hnsw),
+        "ivf" => Ok(IndexingAlgorithm::Ivf),
+        "flat" => Ok(IndexingAlgorithm::Flat),
+        "pq" => Ok(IndexingAlgorithm::Pq),
+        "annoy" => Ok(IndexingAlgorithm::Annoy),
+        "lsh" => Ok(IndexingAlgorithm::Lsh),
+        _ => Err(anyhow::anyhow!("Unknown indexing algorithm: '{}'. Supported: hnsw, ivf, flat, pq, annoy, lsh", algo)),
     }
 }
 
@@ -86,7 +98,17 @@ pub fn distance_metric_to_string(metric: i32) -> &'static str {
         Ok(DistanceMetric::Cosine) => "cosine",
         Ok(DistanceMetric::Euclidean) => "euclidean",
         Ok(DistanceMetric::DotProduct) => "dot_product",
-        _ => "cosine",
+        Ok(DistanceMetric::Manhattan) => "manhattan",
+        Ok(DistanceMetric::Hamming) => "hamming",
+        Ok(DistanceMetric::Jaccard) => "jaccard",
+        Ok(DistanceMetric::Chebyshev) => "chebyshev",
+        Ok(DistanceMetric::Canberra) => "canberra",
+        Ok(DistanceMetric::Minkowski) => "minkowski",
+        Ok(DistanceMetric::Angular) => "angular",
+        Ok(DistanceMetric::BrayCurtis) => "bray_curtis",
+        Ok(DistanceMetric::Hellinger) => "hellinger",
+        Ok(DistanceMetric::Custom) => "custom",
+        _ => "unknown", // No fallback - explicit error
     }
 }
 
@@ -107,6 +129,7 @@ pub fn indexing_algorithm_to_string(algo: i32) -> &'static str {
         Ok(IndexingAlgorithm::Flat) => "flat",
         Ok(IndexingAlgorithm::Pq) => "pq",
         Ok(IndexingAlgorithm::Annoy) => "annoy",
+        Ok(IndexingAlgorithm::Lsh) => "lsh",
         _ => "hnsw",
     }
 }
@@ -186,21 +209,27 @@ impl CollectionRequestBuilder {
             .and_then(|v| v.as_i64())
             .ok_or("Missing config.dimension")? as i32;
             
-        // Apply defaults for optional fields
-        let distance_metric = json.get("distance_metric")
-            .and_then(|v| v.as_str())
-            .map(parse_distance_metric)
-            .unwrap_or(DistanceMetric::Cosine) as i32;
+        // Parse optional fields with explicit validation (no silent defaults)
+        let distance_metric = if let Some(metric_str) = json.get("distance_metric").and_then(|v| v.as_str()) {
+            parse_distance_metric(metric_str)
+                .map_err(|e| format!("Invalid distance_metric: {}", e))? as i32
+        } else {
+            DistanceMetric::Cosine as i32 // Explicit default only when not provided
+        };
             
-        let storage_engine = json.get("storage_engine")
-            .and_then(|v| v.as_str())
-            .map(parse_storage_engine)
-            .unwrap_or(StorageEngine::Viper) as i32;
+        let storage_engine = if let Some(engine_str) = json.get("storage_engine").and_then(|v| v.as_str()) {
+            parse_storage_engine(engine_str)
+                .map_err(|e| format!("Invalid storage_engine: {}", e))? as i32
+        } else {
+            StorageEngine::Viper as i32 // Explicit default only when not provided
+        };
             
-        let primary_indexing_algorithm = json.get("primary_indexing_algorithm")
-            .and_then(|v| v.as_str())
-            .map(parse_indexing_algorithm)
-            .unwrap_or(IndexingAlgorithm::Hnsw) as i32;
+        let primary_indexing_algorithm = if let Some(algo_str) = json.get("primary_indexing_algorithm").and_then(|v| v.as_str()) {
+            parse_indexing_algorithm(algo_str)
+                .map_err(|e| format!("Invalid primary_indexing_algorithm: {}", e))? as i32
+        } else {
+            IndexingAlgorithm::Hnsw as i32 // Explicit default only when not provided
+        };
             
         Ok(CollectionConfig {
             name,
@@ -509,8 +538,22 @@ mod tests {
     
     #[test]
     fn test_parse_metrics() {
-        assert_eq!(parse_distance_metric("cosine"), DistanceMetric::Cosine);
-        assert_eq!(parse_distance_metric("EUCLIDEAN"), DistanceMetric::Euclidean);
-        assert_eq!(parse_distance_metric("invalid"), DistanceMetric::Cosine); // Default
+        assert_eq!(parse_distance_metric("cosine").unwrap(), DistanceMetric::Cosine);
+        assert_eq!(parse_distance_metric("EUCLIDEAN").unwrap(), DistanceMetric::Euclidean);
+        assert!(parse_distance_metric("invalid").is_err()); // No fallback - error on invalid
+    }
+    
+    #[test]
+    fn test_parse_engines() {
+        assert_eq!(parse_storage_engine("viper").unwrap(), StorageEngine::Viper);
+        assert_eq!(parse_storage_engine("SST").unwrap(), StorageEngine::Sst);
+        assert!(parse_storage_engine("invalid").is_err()); // No fallback - error on invalid
+    }
+    
+    #[test]
+    fn test_parse_algorithms() {
+        assert_eq!(parse_indexing_algorithm("hnsw").unwrap(), IndexingAlgorithm::Hnsw);
+        assert_eq!(parse_indexing_algorithm("IVF").unwrap(), IndexingAlgorithm::Ivf);
+        assert!(parse_indexing_algorithm("invalid").is_err()); // No fallback - error on invalid
     }
 }

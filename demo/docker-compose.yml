@@ -1,22 +1,25 @@
-# Docker Compose configuration for ProximaDB demos
+# Docker Compose configuration for ProximaDB unified container
 
 services:
-  proximadb:
+  proximadb-unified:
     build:
       context: ..
       dockerfile: Dockerfile
     ports:
-      - "5678:5678"  # REST API
-      - "5679:5679"  # gRPC
-      - "9090:9090"  # Prometheus metrics
+      - "127.0.0.1:5678:5678"  # ProximaDB REST API
+      - "127.0.0.1:5679:5679"  # ProximaDB gRPC
+      - "127.0.0.1:8080:8080"  # Demo Web UI
     volumes:
       - proximadb_data:/data
-      - ./docker-config.toml:/opt/proximadb/config/docker-config.toml:ro
+      - ./demo_results:/app/results
     environment:
       - RUST_LOG=info
       - PROXIMADB_CONFIG_PATH=/opt/proximadb/config/docker-config.toml
+      - PROXIMADB_SERVER_URL=http://localhost:5678
+      - PROXIMADB_GRPC_URL=localhost:5679
+      - PYTHONUNBUFFERED=1
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:5678/health"]
+      test: ["CMD", "curl", "-f", "http://localhost:8080/api/health"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -24,79 +27,31 @@ services:
     networks:
       - proximadb-network
 
-  demo:
-    build:
-      context: ..
-      dockerfile: demo/Dockerfile.demo
-    depends_on:
-      proximadb:
-        condition: service_healthy
-    environment:
-      - PROXIMADB_SERVER_URL=http://proximadb:5678
-      - PROXIMADB_GRPC_URL=proximadb:5679
-      - PYTHONUNBUFFERED=1
-      - KEEP_RUNNING=false  # Set to true to keep container running
-    networks:
-      - proximadb-network
-    volumes:
-      - ./demo_results:/app/results
-
-  # Optional: Run specific demo
+  # Optional: Interactive shell for CLI demos (use with --profile interactive)
   demo-interactive:
     build:
       context: ..
-      dockerfile: demo/Dockerfile.demo
+      dockerfile: Dockerfile
     depends_on:
-      proximadb:
+      proximadb-unified:
         condition: service_healthy
     environment:
-      - PROXIMADB_SERVER_URL=http://proximadb:5678
-      - PROXIMADB_GRPC_URL=proximadb:5679
+      - PROXIMADB_SERVER_URL=http://proximadb-unified:5678
+      - PROXIMADB_GRPC_URL=proximadb-unified:5679
       - PYTHONUNBUFFERED=1
     networks:
       - proximadb-network
     volumes:
       - ./demo_results:/app/results
+    working_dir: /app
     command: /bin/bash
     stdin_open: true
     tty: true
     profiles: ["interactive"]
 
-  prometheus:
-    image: prom/prometheus:latest
-    ports:
-      - "9091:9090"
-    volumes:
-      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
-      - prometheus_data:/prometheus
-    command:
-      - '--config.file=/etc/prometheus/prometheus.yml'
-      - '--storage.tsdb.path=/prometheus'
-      - '--web.console.libraries=/usr/share/prometheus/console_libraries'
-      - '--web.console.templates=/usr/share/prometheus/consoles'
-      - '--web.enable-lifecycle'
-    networks:
-      - proximadb-network
-
-  grafana:
-    image: grafana/grafana:latest
-    ports:
-      - "3000:3000"
-    environment:
-      - GF_SECURITY_ADMIN_PASSWORD=admin
-      - GF_USERS_ALLOW_SIGN_UP=false
-    volumes:
-      - grafana_data:/var/lib/grafana
-      - ./grafana/dashboards:/etc/grafana/provisioning/dashboards
-      - ./grafana/datasources:/etc/grafana/provisioning/datasources
-    networks:
-      - proximadb-network
-    profiles: ["monitoring"]
 
 volumes:
   proximadb_data:
-  prometheus_data:
-  grafana_data:
 
 networks:
   proximadb-network:

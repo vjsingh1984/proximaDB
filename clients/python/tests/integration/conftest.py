@@ -49,7 +49,13 @@ def test_config() -> Dict[str, Any]:
 def verify_server_running(test_config):
     """Verify ProximaDB server is running before tests"""
     try:
-        rest_client = connect_rest(test_config["rest_endpoint"])
+        from proximadb.config import ClientConfig, Protocol
+        config = ClientConfig(
+            url=test_config["rest_endpoint"],
+            protocol=Protocol.REST,
+            timeout=test_config["default_timeout"]
+        )
+        rest_client = ProximaDBClient(config=config)
         
         # Try to connect and get health status
         try:
@@ -71,7 +77,13 @@ def verify_server_running(test_config):
 @pytest.fixture(scope="class")
 def rest_client(verify_server_running, test_config) -> Generator[ProximaDBClient, None, None]:
     """Shared REST client fixture for test classes"""
-    client = connect_rest(test_config["rest_endpoint"])
+    from proximadb.config import ClientConfig, Protocol
+    config = ClientConfig(
+        url=test_config["rest_endpoint"],
+        protocol=Protocol.REST,
+        timeout=test_config["default_timeout"]
+    )
+    client = ProximaDBClient(config=config)
     yield client
     
     if hasattr(client, 'close'):
@@ -81,7 +93,19 @@ def rest_client(verify_server_running, test_config) -> Generator[ProximaDBClient
 @pytest.fixture(scope="class")
 def grpc_client(verify_server_running, test_config) -> Generator[ProximaDBClient, None, None]:
     """Shared gRPC client fixture for test classes"""
-    client = connect_grpc(test_config["grpc_endpoint"])
+    from proximadb.config import ClientConfig, Protocol
+    
+    # Ensure grpc_endpoint has the proper scheme
+    grpc_url = test_config["grpc_endpoint"]
+    if not grpc_url.startswith(("grpc://", "grpcs://")):
+        grpc_url = f"grpc://{grpc_url}"
+    
+    config = ClientConfig(
+        url=grpc_url,
+        protocol=Protocol.GRPC,
+        timeout=test_config["default_timeout"]
+    )
+    client = ProximaDBClient(config=config)
     yield client
     
     if hasattr(client, 'close'):

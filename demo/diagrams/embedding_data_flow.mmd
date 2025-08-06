@@ -1,0 +1,45 @@
+sequenceDiagram
+    participant UI as Web UI
+    participant DS as Demo Server
+    participant ES as Embedding Service
+    participant SDK as ProximaDB SDK
+    participant BERT as BERT Model
+    participant PDB as ProximaDB Server
+    
+    Note over UI,PDB: Real BERT Embedding Workflow
+    
+    UI->>DS: POST /api/embeddings/chunk<br/>{text, strategy, model}
+    DS->>ES: Initialize Embedding Service
+    ES->>BERT: Load Model (all-MiniLM-L6-v2)
+    BERT-->>ES: Model Ready (384-dim)
+    
+    ES->>SDK: chunk_text(strategy="sliding_window")
+    SDK-->>ES: Text chunks with metadata
+    
+    loop For each chunk
+        ES->>BERT: encode(chunk_text)
+        BERT-->>ES: embedding_vector[384]
+    end
+    
+    ES-->>DS: {chunks, embeddings, metadata}
+    DS-->>UI: JSON Response with chunked embeddings
+    
+    Note over UI,PDB: Vector Storage & Search
+    
+    UI->>DS: POST /api/collections/{id}/insert<br/>{vectors: chunks+embeddings}
+    DS->>PDB: gRPC/REST Insert Request
+    PDB-->>DS: Insert Success
+    DS-->>UI: Confirmation
+    
+    UI->>DS: POST /api/embeddings/search<br/>{query, chunks, top_k}
+    DS->>ES: search_similar_chunks()
+    ES->>BERT: encode(query)
+    BERT-->>ES: query_vector[384]
+    ES->>ES: cosine_similarity(query_vector, chunk_vectors)
+    ES-->>DS: Ranked results with scores
+    DS-->>UI: Similar chunks with similarity scores
+    
+    Note over UI,PDB: Consistent Seeds & Reproducibility
+    ES->>BERT: Set torch.manual_seed(42)
+    ES->>SDK: Set np.random.seed(42)
+    Note right of ES: Same embeddings across<br/>JavaScript and Python

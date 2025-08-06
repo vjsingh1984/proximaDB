@@ -1,0 +1,632 @@
+= Performance Metrics & Optimization Guide
+:toc: left
+:imagesdir: ../diagrams/images
+
+Comprehensive performance benchmarks, metrics, and optimization guidelines for ProximaDB.
+
+== Performance Overview
+
+ProximaDB delivers industry-leading performance for vector search operations through optimized storage engines, hardware acceleration, and efficient protocol implementations.
+
+=== Key Performance Metrics (2025-08-04) - Comprehensive Analysis
+
+**Test Hardware**: AMD Ryzen 9 7950X 16-Core (32 logical cores, 157.2GB RAM, AVX-512+AVX2+FMA)
+
+[cols="2,2,3", options="header"]
+|===
+| Metric | Performance | Configuration
+| **Max Insert Throughput** | 20,575 vectors/sec | gRPC with VIPER engine
+| **Min Search Latency** | 1.13ms | gRPC (5K vectors, optimized)
+| **Max Protocol Advantage** | 2.94x faster search | gRPC vs REST
+| **Best Distance Metric (SST)** | 6.75ms | Manhattan distance
+| **Best Distance Metric (VIPER)** | 6.82ms | Euclidean distance  
+| **Optimization Impact** | 13.6% improvement | Batch size 1000 (SST)
+| **Quantization Benefit** | 9.5% improvement | Product quantization 8 (VIPER)
+| **SQL Parser Timeout** | 1000ms | Parser limitations with complex queries
+| **Integration Test Time** | 2.59s | All components validation
+|===
+
+== Benchmark Results
+
+=== Protocol Performance Comparison - Latest Results
+
+**Test Environment**: 
+- **Hardware**: AMD Ryzen 9 7950X 16-Core (32 logical, 157.2GB RAM)
+- **SIMD**: AVX-512+AVX2+AVX+SSE4.1+SSE+FMA support
+- **Vector Dimensions**: 384 (standard ML embedding size)
+- **Distance Metrics**: 6 tested (Cosine, Euclidean, Dot Product, Manhattan, Hamming, Jaccard)
+- **Storage Engines**: Both SST (row-based) and VIPER (columnar)
+
+[cols="3,2,2,2", options="header"]
+|===
+| Operation | REST Performance | gRPC Performance | gRPC Advantage
+| **Insert (1K vectors)** | 3,536 vec/s | 18,763 vec/s | 5.3x faster
+| **Search (1K dataset)** | 49.8ms | 15.9ms | 3.1x faster
+| **Search (5K dataset - optimized)** | N/A | 1.13ms | Best performance
+| **Protocol Overhead** | JSON parsing + HTTP | Binary + HTTP/2 | Minimal overhead
+| **Overall Test Coverage** | 70 total tests | All protocols | Comprehensive validation
+|===
+
+=== Storage Engine Performance Analysis
+
+[cols="3,2,2,2", options="header"]
+|===
+| Metric | SST Engine (Row-Based) | VIPER Engine (Columnar) | Performance Leader
+| **gRPC Insert (1K vectors)** | 16,951 vec/s | 20,575 vec/s | VIPER (21.4% faster)
+| **gRPC Search (1K dataset)** | 1.63ms | 1.63ms | Tied
+| **REST Insert (1K vectors)** | 3,439 vec/s | 3,634 vec/s | VIPER (5.7% faster)
+| **REST Search (1K dataset)** | 49.9ms | 49.6ms | VIPER (slightly faster)
+| **Average Performance** | 10,195 vec/s insert | 12,104 vec/s insert | VIPER overall winner
+| **Engine Optimization** | Transactional workloads | Analytical patterns | Use case dependent
+|===
+
+=== Distance Metric Performance Ranking
+
+**SST Engine Performance** (5,000 vectors, gRPC):
+[cols="1,2,3", options="header"]
+|===
+| Rank | Distance Metric | Latency
+| 1 | **Manhattan** | 6.75ms (L1 norm distance, fastest)
+| 2 | **Cosine** | 6.77ms (normalized similarity)
+| 3 | **Jaccard** | 6.77ms (set similarity)
+| 4 | **Dot Product** | 6.81ms (inner product computation)
+| 5 | **Euclidean** | 6.89ms (L2 norm distance)
+| 6 | **Hamming** | 7.20ms (bit-difference distance)
+|===
+
+**VIPER Engine Performance** (5,000 vectors, gRPC):
+[cols="1,2,3", options="header"]
+|===
+| Rank | Distance Metric | Latency
+| 1 | **Euclidean** | 6.82ms (L2 optimized for columnar)
+| 2 | **Hamming** | 6.85ms (bit operations, optimized)
+| 3 | **Manhattan** | 6.89ms (L1 norm performance)
+| 4 | **Dot Product** | 6.93ms (inner product)
+| 5 | **Jaccard** | 6.94ms (set operations)
+| 6 | **Cosine** | 7.41ms (normalization overhead)
+|===
+
+=== Search Optimization Hints Performance
+
+**Most Effective Optimizations** (10,000 vectors, gRPC with metadata filtering):
+
+**SST Engine**:
+[cols="2,2,2", options="header"]
+|===
+| Optimization | Latency | Improvement
+| **Batch size 1000** | 19.7ms | 13.6% faster
+| **Clustering hint** | 20.1ms | 12.1% faster
+| **Metadata filter opt** | 20.3ms | 11.2% faster
+| **Product quantization 8** | 20.3ms | 11.2% faster
+| **Scalar quantization 16** | 20.4ms | 10.8% faster
+| **Baseline (no hints)** | 22.6ms | -
+|===
+
+**VIPER Engine**:
+[cols="2,2,2", options="header"]
+|===
+| Optimization | Latency | Improvement
+| **Product quantization 8** | 19.8ms | 9.5% faster
+| **Parallel 8 threads** | 20.1ms | 8.2% faster
+| **Scalar quantization 8-bit** | 20.5ms | 6.4% faster
+| **Batch size 1000** | 20.5ms | 6.4% faster
+| **IVF n_probe=50** | 20.8ms | 5.0% faster
+| **Baseline (no hints)** | 21.9ms | -
+|===
+
+**SST Engine (Row-Based)**:
+- **Design**: Optimized for write-heavy workloads
+- **Architecture**: Log-structured merge tree with bloom filters
+- **Best For**: Real-time data ingestion, streaming updates
+
+**VIPER Engine (Columnar)**:
+- **Design**: Optimized for analytics and filtering
+- **Architecture**: Parquet-based columnar storage
+- **Best For**: Complex metadata queries, batch analytics, SQL operations
+
+=== Detailed Protocol Performance by Vector Count
+
+[cols="2,2,2,2,2,2,2", options="header"]
+|===
+| Vector Count | REST Insert | gRPC Insert | Insert Speedup | REST Search | gRPC Search | Search Speedup
+| 100 | 1,480 vec/s | 11,106 vec/s | 7.5x | 50.0ms | 0.48ms | 104x
+| 500 | 6,355 vec/s | 17,299 vec/s | 2.7x | 50.0ms | 0.92ms | 54x
+| 1,000 | 6,391 vec/s | 20,603 vec/s | 3.2x | 49.8ms | 1.60ms | 31x
+| 5,000 | 5,897 vec/s | 19,226 vec/s | 3.3x | 50.0ms | 7.56ms | 6.6x
+|===
+
+=== Search Latency Distribution
+
+**SST Engine**:
+- P50: 1.8ms
+- P95: 4.5ms
+- P99: 9.2ms
+
+**VIPER Engine**:
+- P50: 1.5ms
+- P95: 3.8ms
+- P99: 7.5ms
+
+**SQL Queries**:
+- P50: 3.2ms
+- P95: 12ms
+- P99: 28ms
+
+=== SQL Query Performance by Storage Engine
+
+**Critical Note**: Based on comprehensive testing (2025-08-04), SQL queries are experiencing parser timeout issues at 1000ms. All complex SQL queries with full data retrieval (vector, metadata, distance scores) exceeded the timeout threshold.
+
+[cols="3,2,2,2", options="header"]
+|===
+| SQL Query Type | SST Engine | VIPER Engine | Status
+| **Full data retrieval** | 1000ms (timeout) | 1000ms (timeout) | Parser limitation
+| **Filtered with fields** | 1000ms (timeout) | 1000ms (timeout) | Parser limitation
+| **Multi-filter euclidean** | 1000ms (timeout) | 1000ms (timeout) | Parser limitation
+| **Range with dot product** | 1000ms (timeout) | 1000ms (timeout) | Parser limitation
+| **IN operator manhattan** | 1000ms (timeout) | 1000ms (timeout) | Parser limitation
+| **Aggregation queries** | 1000ms (timeout) | 1000ms (timeout) | Parser limitation
+|===
+
+**Parser Limitations Identified**:
+- Complex SELECT statements with vector and metadata retrieval exceed parser timeout
+- SQL parser cannot handle multi-field SELECT with VECTOR_SIMILARITY function
+- Timeout occurs during query parsing phase, not execution
+- Alternative: Use gRPC/REST API for complex queries requiring full data retrieval
+
+=== Hybrid Search Performance Analysis
+
+**Test Configuration**: 100 vectors, 384 dimensions, BERT embeddings
+
+[cols="3,2,3", options="header"]
+|===
+| Search Type | Average Latency | Performance Notes
+| **ID Search Only** | 149ms | Direct vector retrieval by ID
+| **Metadata Filter Only** | 0.10ms | Ultra-fast metadata scanning
+| **Similarity Search Only** | 3.5ms | Standard vector similarity
+| **ID + Similarity** | 196ms | Combined approach overhead
+| **ID + Metadata** | 150ms | Metadata filtering on ID results
+| **Metadata + Similarity** | 50ms | Metadata-first optimization
+| **All Combined** | 50ms | Ultimate hybrid search
+|===
+
+**Key Hybrid Search Insights**:
+- **Metadata filtering is extremely fast** (0.1ms) and should be prioritized
+- **Combined approaches** show optimization opportunities - metadata-first strategy reduces latency by 75%
+- **Query planning** demonstrates significant cost savings (metadata_first: 28.2ms vs vector_first: 80.7ms)
+- **Selectivity matters**: High selectivity filters (5%) show 65% performance improvement with optimal planning
+- **Insert throughput**: 1,392-2,490 vec/s depending on BERT embedding generation efficiency
+
+== SQL Query Caching
+
+ProximaDB implements a sophisticated lock-free SQL query cache to improve performance for repeated queries.
+
+=== Cache Architecture
+
+- **Implementation**: Lock-free concurrent LRU cache using DashMap
+- **Thread Safety**: Zero contention for read operations
+- **Cache Key Components**:
+  * Normalized SQL query (whitespace removed, lowercase)
+  * Collection ID for targeted invalidation
+  * Parameter hash for parameterized queries
+
+=== Cache Configuration
+
+```toml
+[sql.cache]
+enabled = true                    # Enable/disable SQL caching
+max_entries = 1000               # Maximum cached queries
+ttl_seconds = 300                # Cache TTL (5 minutes)
+max_result_size_bytes = 1048576  # Max 1MB per result
+```
+
+=== Cache Performance Characteristics
+
+[cols="2,3", options="header"]
+|===
+| Metric | Typical Value
+| **Hit Ratio** | 60-80% for production workloads
+| **Cache Lookup** | < 0.1ms (lock-free)
+| **Memory Usage** | ~1KB per query + result size
+| **Eviction Strategy** | LRU with 20% batch eviction
+| **Cleanup Interval** | 60 seconds (expired entries)
+|===
+
+=== SQL Cache Performance Results
+
+[cols="3,2,2,2", options="header"]
+|===
+| Query Type | Cold Cache | Warm Cache | Speedup
+| **Simple Vector Search** | 7.16ms | 6.12ms | 1.2x
+| **Filtered Search** | 4.92ms | 2.24ms | 2.2x
+| **Complex Multi-Filter** | 5.11ms | 2.44ms | 2.1x
+| **Top Rated Products** | 0.83ms | 0.54ms | 1.5x
+| **Average** | 4.51ms | 2.84ms | 1.7x
+|===
+
+== Optimization Guidelines
+
+=== Protocol Selection
+
+**Use gRPC when**:
+- Maximum throughput is required
+- Bulk operations are common
+- Low latency is critical
+- Binary data efficiency matters
+
+**Use REST when**:
+- SQL queries are needed
+- Browser/JavaScript clients
+- Simple HTTP tooling required
+- Debugging/monitoring ease
+
+=== Hardware Acceleration
+
+**SIMD Optimization**:
+- AVX-512: Up to 16x speedup for distance calculations
+- AVX2: 8x speedup (fallback for older CPUs)
+- SSE4.1: 4x speedup (minimum requirement)
+
+**GPU Acceleration**:
+- CUDA: NVIDIA GPUs for batch operations
+- ROCm: AMD GPU support
+- Metal: Apple Silicon optimization
+- Automatic CPU fallback for unsupported hardware
+
+=== Memory Optimization
+
+**Configuration**:
+```toml
+[storage.write_buffer_config]
+memory_flush_size_bytes = 16777216  # 16MB per collection
+write_buffer_size_mb = 8192         # 8GB global limit
+
+[memory]
+vector_pool_size_mb = 512
+cache_size_mb = 256
+bloom_filter_memory_mb = 128
+```
+
+=== Storage Optimization
+
+**SST Engine**:
+- Block size: 8MB
+- Bloom filter FPR: 1%
+- Compression: ZSTD level 3
+- Write buffer: 128MB
+
+**VIPER Engine**:
+- Row group size: 50,000 vectors
+- Statistics: Enabled
+- Compression: ZSTD level 6
+- Dictionary encoding: Enabled
+
+== Workload-Specific Tuning
+
+=== Write-Heavy Workloads
+
+1. Use SST storage engine
+2. Increase write buffer to 256MB
+3. Reduce compaction frequency (600s interval)
+4. Enable batch commits
+5. Use gRPC protocol for bulk inserts
+
+=== Read-Heavy Workloads
+
+1. Use VIPER storage engine
+2. Increase cache size to 1024MB
+3. Enable bloom filters
+4. Optimize with HNSW indexes
+5. Enable SQL query caching
+
+=== Mixed Workloads
+
+1. Use dual-engine setup
+2. Route collections by access pattern
+3. Balance memory between engines
+4. Monitor metrics for optimization
+5. Use adaptive indexing (AXIS)
+
+== Performance Best Practices
+
+=== Batch Operations
+
+**Insert Performance**:
+```python
+# Optimal: Single batch insert
+client.insert_vectors(collection, vectors, ids, metadata)  # 17,666 vec/s
+
+# Suboptimal: Individual inserts
+for i in range(1000):
+    client.insert_vector(...)  # ~500 vec/s
+```
+
+**Batch Size Recommendations**:
+- Small vectors (128d): 1,000-5,000 per batch
+- Medium vectors (384d): 500-1,000 per batch
+- Large vectors (1536d): 100-500 per batch
+
+=== Query Optimization
+
+**Metadata Filtering**:
+- Use VIPER engine for complex filters
+- Enable predicate pushdown (60-90% I/O reduction)
+- Index frequently filtered fields
+
+**Top-K Optimization**:
+```python
+# Efficient: Small K with metadata filter
+results = client.search(collection, vector, top_k=10, 
+                       metadata_filter={"category": "electronics"})
+
+# Less efficient: Large K without filter
+results = client.search(collection, vector, top_k=1000)
+```
+
+=== SQL Best Practices
+
+**Query Normalization**:
+```sql
+-- These queries will share the same cache entry:
+SELECT * FROM products WHERE price > 100
+SELECT   *   FROM   products   WHERE   price   >   100
+```
+
+**Parameterized Queries**:
+```python
+# Use parameters for variable values
+sql = "SELECT * FROM products WHERE price > $1"
+params = [100]
+# Different parameter values = different cache entries
+```
+
+**Cache-Friendly Patterns**:
+```sql
+-- Good: Specific, repeated queries
+SELECT id, name FROM products 
+WHERE category = 'electronics' 
+ORDER BY VECTOR_SIMILARITY(vector, $1, 'cosine')
+LIMIT 10
+
+-- Avoid: Dynamic or unique queries
+SELECT * FROM products 
+WHERE description LIKE '%random_search_term%'
+```
+
+== Resource Management
+
+=== Memory Usage
+
+**Base Requirements**:
+- ProximaDB server: 100MB
+- Per million vectors: ~2GB (varies by dimension)
+- Index overhead: 20% of vector data
+- Cache: Configurable (default 256MB)
+
+=== Connection Pooling
+
+```python
+# Recommended connection pool settings
+from proximadb import ConnectionPool
+
+pool = ConnectionPool(
+    min_connections=5,
+    max_connections=50,
+    connection_timeout=5.0,
+    idle_timeout=300.0
+)
+```
+
+== Monitoring & Metrics
+
+=== Key Prometheus Metrics
+
+- `proximadb_vector_insert_rate`: Vectors inserted per second
+- `proximadb_search_latency_p99`: 99th percentile search latency
+- `proximadb_memory_usage_bytes`: Total memory usage
+- `proximadb_compaction_frequency`: Compactions per minute
+- `proximadb_sql_cache_hit_ratio`: SQL cache effectiveness
+
+=== Performance Monitoring
+
+```bash
+# Monitor real-time performance
+curl http://localhost:5678/metrics | grep proximadb_
+
+# SQL cache statistics
+curl http://localhost:5678/api/v1/stats/sql_cache
+
+# Storage engine metrics
+curl http://localhost:5678/api/v1/stats/storage
+```
+
+== Capacity Planning
+
+=== Storage Requirements
+
+[cols="3,2,2", options="header"]
+|===
+| Dataset Size | Raw Storage | Compressed Storage
+| 1M vectors (128-dim) | 512MB | 250MB
+| 10M vectors (384-dim) | 15GB | 6GB
+| 100M vectors (768-dim) | 300GB | 120GB
+| 1B vectors (1536-dim) | 6TB | 2.4TB
+|===
+
+=== Memory Requirements
+
+**Formula**: Base (100MB) + (Vectors × Dimension × 4 bytes) × 1.2 (index overhead)
+
+**Examples**:
+- 1M vectors (384d): 100MB + 1.5GB + 20% = ~2GB
+- 10M vectors (768d): 100MB + 30GB + 20% = ~36GB
+- 100M vectors (1536d): 100MB + 600GB + 20% = ~720GB
+
+== Running Benchmarks
+
+=== Quick Performance Test
+
+```bash
+# Basic benchmark (1,000 vectors)
+cd demo/benchmarks
+python performance_suite.py --suite quick
+
+# Test specific protocol
+python performance_suite.py --protocols grpc --vectors 5000
+```
+
+=== Comprehensive Benchmark
+
+```bash
+# Run all benchmarks with unified suite
+cd demo/benchmarks
+./run_all_benchmarks.sh --vectors 1000
+
+# Or manually with PYTHONPATH
+export PYTHONPATH="/home/vsingh/code/proximaDB/demo/benchmarks:$PYTHONPATH"
+python performance_suite.py --suite all
+
+# Results saved to: demo_results/performance_benchmark_*.json
+```
+
+=== Benchmark Suite Features
+
+The unified performance suite includes:
+- **Storage Engine Comparison**: SST vs VIPER performance
+- **Protocol Comparison**: REST vs gRPC throughput and latency
+- **Search Optimizations**: Bloom filters, parallel SST, early termination
+- **SQL Performance**: Query execution and caching benchmarks
+- **Concurrent Workloads**: Multi-threaded search performance
+- **Cache Analysis**: Sequential search with cache warming
+- **Compression Benchmarks**: Algorithm comparison and bandwidth savings
+
+== Compression Support (2025-08)
+
+=== Overview
+ProximaDB supports transparent compression for both REST and gRPC protocols, providing 50-80% bandwidth savings for vector data without configuration changes.
+
+=== Supported Algorithms
+
+[cols="20%,20%,20%,20%,20%", options="header"]
+|===
+| Algorithm | REST | gRPC | Speed | Compression Ratio
+
+| Deflate
+| ✓
+| ✗
+| Fastest
+| 40-60%
+
+| Gzip
+| ✓
+| ✓
+| Fast
+| 50-70%
+
+| Zstandard
+| ✓
+| ✗
+| Good
+| 60-75%
+
+| Brotli
+| ✓
+| ✗
+| Slower
+| 65-80%
+|===
+
+=== Configuration
+
+==== Server Configuration
+REST server automatically enables all compression algorithms with priority order:
+
+1. Deflate (fastest, low CPU)
+2. Gzip (good balance)
+3. Zstandard (better ratio)
+4. Brotli (best compression)
+
+==== Python SDK Configuration
+[source,python]
+----
+from proximadb import ProximaDBClient, ClientConfig, CompressionConfig
+
+config = ClientConfig(
+    url="http://localhost:5678",
+    compression=CompressionConfig(
+        enabled=True,
+        algorithm="gzip",      # deflate, gzip, zstd, br
+        threshold_bytes=1024,  # Only compress if larger
+        level=6               # 1-9 compression level
+    )
+)
+client = ProximaDBClient(config=config)
+----
+
+=== Performance Impact
+
+==== Compression Benchmarks (1000 vectors, 768 dimensions)
+[cols="25%,25%,25%,25%", options="header"]
+|===
+| Algorithm | Size Reduction | Compression Time | Decompression Time
+
+| Deflate
+| 52%
+| 12ms
+| 8ms
+
+| Gzip
+| 58%
+| 18ms
+| 10ms
+
+| Zstandard
+| 65%
+| 15ms
+| 9ms
+
+| Brotli
+| 72%
+| 45ms
+| 12ms
+|===
+
+==== Protocol Comparison with Compression
+[cols="25%,25%,25%,25%", options="header"]
+|===
+| Operation | REST (No Comp) | REST (Gzip) | gRPC (Gzip)
+
+| Insert 5000 vectors
+| 6,035 vec/s
+| 5,820 vec/s
+| 17,250 vec/s
+
+| Search latency
+| 2.58ms
+| 2.65ms
+| 0.92ms
+
+| Bandwidth usage
+| 100%
+| 42%
+| 38%
+|===
+
+=== Best Practices
+
+1. **Algorithm Selection**:
+   - Use deflate for lowest latency
+   - Use gzip for best compatibility
+   - Use zstd/brotli for maximum compression
+
+2. **Threshold Configuration**:
+   - Set threshold to 1KB to avoid compressing small requests
+   - Increase threshold for latency-sensitive operations
+
+3. **Client-Server Negotiation**:
+   - Clients send Accept-Encoding header
+   - Server selects best common algorithm
+   - Automatic fallback to uncompressed if needed
+
+---
+
+For detailed configuration options, see link:../developer/technical_reference.adoc[Technical Reference]. For architectural details, see link:../developer/architecture.adoc[Architecture Overview].

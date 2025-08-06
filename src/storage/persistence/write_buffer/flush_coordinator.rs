@@ -81,6 +81,8 @@ pub struct WriteBufferFlushCoordinator {
     axis_manager: Option<Arc<crate::index::axis::manager::AxisManager>>,
     /// Optimized flush coordinator for high-performance flushing
     optimized_coordinator: Option<Arc<OptimizedFlushCoordinator>>,
+    /// Collection service for fetching metadata
+    collection_service: Option<Arc<crate::services::collection_service::CollectionService>>,
 }
 
 impl WriteBufferFlushCoordinator {
@@ -92,7 +94,13 @@ impl WriteBufferFlushCoordinator {
             storage_engines: Arc::new(RwLock::new(HashMap::new())),
             axis_manager: None,
             optimized_coordinator: None,
+            collection_service: None,
         }
+    }
+    
+    /// Set collection service for metadata fetching
+    pub fn set_collection_service(&mut self, service: Arc<crate::services::collection_service::CollectionService>) {
+        self.collection_service = Some(service);
     }
     
     /// Enable optimized flush processing
@@ -223,14 +231,55 @@ impl WriteBufferFlushCoordinator {
             vector_records.len()
         );
 
-        // Step 2: Select appropriate storage engine (Strategy Pattern)
-        let engine_type = preferred_engine.ok_or_else(|| {
-            anyhow::anyhow!(
-                "No storage engine specified for collection {}. \
-                 Engine routing must be determined by the collection service.",
-                collection_id
-            )
-        })?;
+        // Step 2: Fetch collection metadata ONCE to avoid duplicate calls
+        // This includes: storage engine type, compression settings, storage assignment, etc.
+        let collection_metadata = if let Some(ref collection_service) = self.collection_service {
+            match collection_service.get_proto_collection(collection_id).await {
+                Ok(Some(collection)) => {
+                    info!(
+                        "📋 Coordinator: Fetched collection metadata for '{}' - engine: {:?}, compression: {:?}",
+                        collection_id,
+                        collection.config.as_ref().map(|c| c.storage_engine),
+                        collection.config.as_ref().and_then(|c| c.quantization_config.as_ref())
+                    );
+                    Some(collection)
+                }
+                Ok(None) => {
+                    warn!("⚠️ Coordinator: Collection '{}' not found in metadata", collection_id);
+                    None
+                }
+                Err(e) => {
+                    warn!("⚠️ Coordinator: Failed to fetch collection metadata: {}", e);
+                    None
+                }
+            }
+        } else {
+            warn!("⚠️ Coordinator: No collection service available, proceeding without metadata");
+            None
+        };
+        
+        // Determine storage engine from metadata or use provided preference
+        let engine_type = if let Some(ref metadata) = collection_metadata {
+            if let Some(ref config) = metadata.config {
+                // Map proto storage engine enum to string
+                use crate::proto::proximadb::StorageEngine;
+                match StorageEngine::try_from(config.storage_engine) {
+                    Ok(StorageEngine::Viper) => "VIPER",
+                    Ok(StorageEngine::Sst) => "SST",
+                    _ => preferred_engine.unwrap_or("VIPER") // Default to VIPER or provided preference
+                }
+            } else {
+                preferred_engine.unwrap_or("VIPER")
+            }
+        } else {
+            preferred_engine.ok_or_else(|| {
+                anyhow::anyhow!(
+                    "No storage engine specified for collection {} and no metadata available",
+                    collection_id
+                )
+            })?
+        };
+        
         info!(
             "🔍 Coordinator: Using {} storage engine for collection {}",
             engine_type, collection_id
@@ -249,7 +298,7 @@ impl WriteBufferFlushCoordinator {
         };
 
         info!(
-            "🔄 Coordinator: Using {} engine for ATOMIC flush",
+            "🔄 Coordinator: Using {} engine for ATOMIC flush with metadata",
             engine_type
         );
 
@@ -281,13 +330,14 @@ impl WriteBufferFlushCoordinator {
             // The optimized result uses Arc<VectorRecord> to avoid cloning
             base_result
         } else {
-            // Regular flush path
+            // Regular flush path with collection metadata
             let flush_params = FlushParameters {
                 collection_id: Some(collection_id.to_string()),
                 force: true,
                 synchronous: true,
                 vector_records,
                 batch_ids, // ✅ Include BatchIds for coordination
+                collection_config: collection_metadata.clone(), // ✅ Pass metadata to avoid duplicate fetches
                 ..Default::default()
             };
 

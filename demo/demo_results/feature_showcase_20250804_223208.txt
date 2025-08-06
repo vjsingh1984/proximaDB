@@ -1,0 +1,4 @@
+ℹ️ Protocol: GRPC, Engine: VIPER, Mode: Quick
+ℹ️ Testing VIPER engine...
+ℹ️ ❌ Showcase failed: Collection creation failed: gRPC error: StatusCode.UNAVAILABLE: failed to connect to all addresses; last error: UNKNOWN: ipv4:127.0.0.1:5679: Failed to connect to remote host: connect: Connection refused (111)
+ℹ️ 🗑️  Cleaned up 0 demo collections

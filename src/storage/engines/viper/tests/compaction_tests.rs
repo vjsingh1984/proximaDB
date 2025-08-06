@@ -43,16 +43,12 @@ async fn setup_test_assignment(collection_id: &str, base_path: &str) {
     fs::create_dir_all(&temp_dir).await
         .expect("Failed to create temp directory");
     
-    let assignment_service = crate::storage::assignment_service::get_assignment_service();
-    let storage_location = crate::core::config::StorageLocation {
-        url: format!("file://{}", base_path),
-        weight: 1,
-        tags: Default::default(),
-    };
-    assignment_service
-        .assign_collection(collection_id, &[storage_location], "hash")
-        .await
-        .expect("Failed to assign storage location");
+    // Storage assignment is now handled internally by CollectionService
+    // when a collection is created. For test purposes, we just ensure
+    // the directory structure exists.
+    let wal_dir = format!("{}/{}/write_buffer", base_path, collection_id);
+    tokio::fs::create_dir_all(&wal_dir).await
+        .expect("Failed to create WAL directory");
 }
 
 /// Create test vector
@@ -123,12 +119,12 @@ async fn test_insert_flush_compact_flow() {
              flush_result.files_created, flush_result.entries_flushed);
     
     // List files after flush
-    let assignment_service = crate::storage::assignment_service::get_assignment_service();
-    let assignment = assignment_service.get_assignment(collection_id).await.unwrap();
-    let fs = engine.get_filesystem_factory().get_filesystem(&assignment.data_url).unwrap();
+    let base_path = temp_dir.path().to_str().unwrap();
+    let data_url = format!("file://{}/{}/data", base_path, collection_id);
+    let fs = engine.get_filesystem_factory().get_filesystem(&data_url).unwrap();
     
     println!("\n📂 Files after flush:");
-    if let Ok(entries) = fs.list(&assignment.data_url).await {
+    if let Ok(entries) = fs.list(&data_url).await {
         for entry in &entries {
             if entry.name.ends_with(".parquet") && !entry.metadata.is_directory {
                 println!("  - {}", entry.name);
@@ -156,12 +152,12 @@ async fn test_insert_flush_compact_flow() {
     // List files after compaction
     println!("\n📂 Files after compaction:");
     let mut compacted_file_url = None;
-    if let Ok(entries) = fs.list(&assignment.data_url).await {
+    if let Ok(entries) = fs.list(&data_url).await {
         for entry in &entries {
             if entry.name.ends_with(".parquet") && !entry.metadata.is_directory {
                 println!("  - {}", entry.name);
                 if entry.name.starts_with("compacted_") {
-                    compacted_file_url = Some(format!("{}/{}", assignment.data_url, entry.name));
+                    compacted_file_url = Some(format!("{}/{}", data_url, entry.name));
                 }
             }
         }
@@ -215,15 +211,14 @@ async fn test_basic_compaction() {
     // Set up storage assignment for the test collection
     setup_test_assignment(collection_id, temp_dir.path().to_str().unwrap()).await;
     
-    // Debug: check what assignment was created
-    let assignment_service = crate::storage::assignment_service::get_assignment_service();
-    let assignment = assignment_service.get_assignment(collection_id).await
-        .expect("Assignment should exist after setup");
-    println!("📍 Assignment created: data_url={}", assignment.data_url);
+    // Debug: check data directory
+    let base_path = temp_dir.path().to_str().unwrap();
+    let data_url = format!("file://{}/{}/data", base_path, collection_id);
+    println!("📍 Data directory: {}", data_url);
     
     // Extract the actual filesystem path for debugging
-    if assignment.data_url.starts_with("file://") {
-        let fs_path = assignment.data_url.strip_prefix("file://").unwrap_or(&assignment.data_url);
+    if data_url.starts_with("file://") {
+        let fs_path = data_url.strip_prefix("file://").unwrap_or(&data_url);
         println!("📍 Filesystem path: {}", fs_path);
     }
     
@@ -258,19 +253,18 @@ async fn test_basic_compaction() {
     }
     
     // Debug: check what files exist in the data directory
-    let assignment_service = crate::storage::assignment_service::get_assignment_service();
-    let assignment = assignment_service.get_assignment(collection_id).await.unwrap();
-    let fs = engine.get_filesystem_factory().get_filesystem(&assignment.data_url).unwrap();
+    let data_url = format!("file://{}/{}/data", base_path, collection_id);
+    let fs = engine.get_filesystem_factory().get_filesystem(&data_url).unwrap();
     
-    if fs.exists(&assignment.data_url).await.unwrap() {
-        let entries = fs.list(&assignment.data_url).await.unwrap();
-        println!("📂 Files in data directory ({}):", assignment.data_url);
+    if fs.exists(&data_url).await.unwrap() {
+        let entries = fs.list(&data_url).await.unwrap();
+        println!("📂 Files in data directory ({}):", data_url);
         for entry in &entries {
             println!("  - {} (is_dir: {})", entry.name, entry.metadata.is_directory);
             
             // Check inside ___temp directory
             if entry.name == "___temp" {
-                let temp_url = format!("{}/___temp", assignment.data_url);
+                let temp_url = format!("{}/___temp", data_url);
                 if fs.exists(&temp_url).await.unwrap() {
                     let temp_entries = fs.list(&temp_url).await.unwrap();
                     println!("    📁 Files in temp directory:");
@@ -281,7 +275,7 @@ async fn test_basic_compaction() {
             }
         }
     } else {
-        println!("❌ Data directory does not exist: {}", assignment.data_url);
+        println!("❌ Data directory does not exist: {}", data_url);
     }
     
     // Run compaction
@@ -310,15 +304,15 @@ async fn test_basic_compaction() {
     
     // List files after compaction
     println!("📂 Files after compaction:");
-    if fs.exists(&assignment.data_url).await.unwrap() {
-        let entries = fs.list(&assignment.data_url).await.unwrap();
-        println!("Files in data directory ({}):", assignment.data_url);
+    if fs.exists(&data_url).await.unwrap() {
+        let entries = fs.list(&data_url).await.unwrap();
+        println!("Files in data directory ({}):", data_url);
         for entry in &entries {
             println!("  - {} (is_dir: {})", entry.name, entry.metadata.is_directory);
             
             // Check inside ___temp directory
             if entry.name == "___temp" {
-                let temp_url = format!("{}/___temp", assignment.data_url);
+                let temp_url = format!("{}/___temp", data_url);
                 if fs.exists(&temp_url).await.unwrap() {
                     let temp_entries = fs.list(&temp_url).await.unwrap();
                     println!("    📁 Files in temp directory:");
@@ -334,13 +328,12 @@ async fn test_basic_compaction() {
     tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
     
     // List all parquet files in data directory to debug
-    let assignment_service = crate::storage::assignment_service::get_assignment_service();
-    let assignment = assignment_service.get_assignment(collection_id).await.unwrap();
-    let fs = engine.get_filesystem_factory().get_filesystem(&assignment.data_url).unwrap();
+    let data_url = format!("file://{}/{}/data", base_path, collection_id);
+    let fs = engine.get_filesystem_factory().get_filesystem(&data_url).unwrap();
     
-    println!("🔍 Looking for parquet files in: {}", assignment.data_url);
+    println!("🔍 Looking for parquet files in: {}", data_url);
     let mut all_parquet_files = Vec::new();
-    if let Ok(entries) = fs.list(&assignment.data_url).await {
+    if let Ok(entries) = fs.list(&data_url).await {
         for entry in entries {
             if entry.name.ends_with(".parquet") && !entry.metadata.is_directory {
                 println!("  ✅ Found parquet file: {}", entry.name);
@@ -353,7 +346,7 @@ async fn test_basic_compaction() {
         println!("  ❌ No parquet files found in data directory!");
         
         // Check ___temp directory
-        let temp_url = format!("{}/___temp", assignment.data_url);
+        let temp_url = format!("{}/___temp", data_url);
         if let Ok(temp_entries) = fs.list(&temp_url).await {
             println!("  📁 Checking ___temp directory:");
             for entry in temp_entries {
@@ -365,7 +358,7 @@ async fn test_basic_compaction() {
     } else {
         // Debug: Read the compacted file directly to see what's in it
         let compacted_file = &all_parquet_files[0];
-        let file_url = format!("{}/{}", assignment.data_url, compacted_file);
+        let file_url = format!("{}/{}", data_url, compacted_file);
         println!("🔍 Debug: Reading compacted file directly: {}", file_url);
         
         if let Ok(data) = fs.read(&file_url).await {

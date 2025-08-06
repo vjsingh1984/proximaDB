@@ -1532,6 +1532,7 @@ mod tests {
             }),
             created_at: chrono::Utc::now().timestamp_micros(),
             updated_at: chrono::Utc::now().timestamp_micros(),
+            storage_assignment: None,
         };
         
         backend.upsert_collection_proto(&collection).await.unwrap();
@@ -1616,6 +1617,7 @@ mod integration_tests {
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
                 .as_secs() as i64,
+            storage_assignment: None,
         };
         
         // Store the collection
@@ -1686,6 +1688,7 @@ mod integration_tests {
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
                 .as_secs() as i64,
+            storage_assignment: None,
         };
         
         backend.upsert_collection_proto(&collection).await.unwrap();

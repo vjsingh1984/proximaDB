@@ -15,17 +15,17 @@ Choose your path based on your role and experience level:
 |**Step** |**Guide** |**Time** |**Difficulty**
 
 |1. **Quick Start**
-|link:getting_started.adoc[Installation & First Steps]
+|link:user/getting_started.adoc[Installation & First Steps]
 |5 min
 |🟢 Easy
 
 |2. **Build Your First App**
-|link:user_guide.adoc[User Guide with Examples]
+|link:user/user_guide.adoc[User Guide with Examples]
 |20 min
 |🟢 Easy
 
 |3. **Production Deployment**
-|link:technical_reference.adoc[Production Setup]
+|link:developer/technical_reference.adoc[Production Setup]
 |45 min
 |🟡 Medium
 |===
@@ -36,22 +36,22 @@ Choose your path based on your role and experience level:
 |**Need** |**Guide** |**Time** |**Difficulty**
 
 |**API Reference**
-|link:api/unified_rest_api.adoc[Complete REST API]
+|link:user/api_reference.adoc[Complete REST API]
 |30 min
 |🟢 Easy
 
 |**Client Libraries**
-|link:user_guide.adoc#client-libraries[Python, JavaScript, Go]
+|link:user/user_guide.adoc#client-libraries[Python, JavaScript, Go]
 |15 min
 |🟢 Easy
 
 |**SQL Queries**
-|link:user_guide.adoc#sql-engine[Vector SQL Guide]
+|link:user/user_guide.adoc#sql-engine[Vector SQL Guide]
 |25 min
 |🟡 Medium
 
 |**Performance Tuning**
-|link:appendix_performance_metrics.adoc[Optimization Guide]
+|link:appendices/appendix_performance_metrics.adoc[Performance Guide]
 |40 min
 |🟡 Medium
 |===
@@ -62,22 +62,22 @@ Choose your path based on your role and experience level:
 |**Topic** |**Guide** |**Time** |**Difficulty**
 
 |**Architecture Overview**
-|link:architecture.adoc[System Design]
+|link:developer/architecture.adoc[System Design]
 |30 min
 |🟡 Medium
 
 |**Storage Engines**
-|link:architecture/storage-engine-optimizations.adoc[VIPER vs SST]
+|link:developer/architecture.adoc#dual-storage[VIPER vs SST]
 |45 min
 |🔴 Advanced
 
 |**Multi-Cloud Setup**
-|link:guides/Multi_Disk_Configuration_Guide.adoc[S3/GCS/Azure]
+|link:admin/multi_disk_guide.adoc[S3/GCS/Azure]
 |60 min
 |🔴 Advanced
 
 |**Scaling & Performance**
-|link:appendix_performance_metrics.adoc[Benchmarks & Tuning]
+|link:appendices/appendix_performance_metrics.adoc[Benchmarks & Tuning]
 |45 min
 |🔴 Advanced
 |===
@@ -88,17 +88,17 @@ Choose your path based on your role and experience level:
 |**Goal** |**Guide** |**Time** |**Difficulty**
 
 |**Contributing**
-|link:developer_guide.adoc[Developer Setup]
+|link:developer/developer_guide.adoc[Developer Setup]
 |60 min
 |🟡 Medium
 
 |**Code Architecture**
-|link:appendix_implementation_details.adoc[Implementation Patterns]
+|link:appendices/appendix_implementation_details.adoc[Implementation Patterns]
 |90 min
 |🔴 Advanced
 
 |**Testing Framework**
-|link:appendix_testing_development.adoc[Test Development]
+|link:appendices/appendix_testing_development.adoc[Test Development]
 |45 min
 |🟡 Medium
 |===
@@ -111,60 +111,61 @@ Choose your path based on your role and experience level:
 |**Topic** |**Documentation** |**Type**
 
 |**Getting Started**
-|link:getting_started.adoc[Installation Guide]
+|link:user/getting_started.adoc[Installation Guide]
 |Essential
 
 |**API Reference**
-|link:api/unified_rest_api.adoc[REST API] • link:technical_reference.adoc[gRPC API]
+|link:user/api_reference.adoc[REST API] • link:developer/technical_reference.adoc[gRPC API]
 |Reference
 
 |**SQL Queries**
-|link:user_guide.adoc#sql-engine[Vector SQL Examples]
+|link:user/user_guide.adoc#sql-engine[Vector SQL Examples]
 |Tutorial
 
 |**Performance**
-|link:appendix_performance_metrics.adoc[Benchmarks & Optimization]
+|link:appendices/appendix_performance_metrics.adoc[Benchmarks & Optimization]
 |Deep Dive
 
 |**Architecture**
-|link:architecture.adoc[System Overview]
+|link:developer/architecture.adoc[System Overview]
 |Conceptual
 
 |**Storage Engines**
-|link:architecture/storage-engine-optimizations.adoc[VIPER vs SST Comparison]
+|link:developer/architecture.adoc#dual-storage[VIPER vs SST Comparison]
 |Technical
 
 |**Multi-Cloud**
-|link:guides/Multi_Disk_Configuration_Guide.adoc[S3/GCS/Azure Setup]
+|link:admin/multi_disk_guide.adoc[S3/GCS/Azure Setup]
 |Configuration
 
 |**Vector Features**
-|link:quantization_and_optimization.adoc[Quantization & Compression]
+|link:developer/architecture.adoc#quantization-optimization[Quantization & Compression]
 |Advanced
 |===
 
 === 📋 Additional Resources
 * **📈 Roadmap**: link:requirements.adoc[Features & Timeline]
-* **🧪 Testing**: link:appendix_testing_development.adoc[Test Framework]
+* **🧪 Testing**: link:appendices/appendix_testing_development.adoc[Test Framework]
 * **📝 Changes**: link:../CHANGELOG.adoc[Release History]
 * **🤝 Contributing**: link:../CONTRIBUTING.adoc[Guidelines]
+* **🗺️ Documentation Map**: link:DOCUMENTATION_MAP.adoc[Topic ownership & structure]
 
 == 🎯 Popular Topics
 
 === Most Visited Guides
-1. **link:getting_started.adoc[Getting Started]** - Set up ProximaDB in 5 minutes
-2. **link:user_guide.adoc[User Guide]** - Complete usage guide with examples
-3. **link:api/unified_rest_api.adoc[REST API]** - Full API documentation
-4. **link:architecture.adoc[Architecture]** - How ProximaDB works internally
+1. **link:user/getting_started.adoc[Getting Started]** - Set up ProximaDB in 5 minutes
+2. **link:user/user_guide.adoc[User Guide]** - Complete usage guide with examples
+3. **link:user/api_reference.adoc[REST API]** - Full API documentation
+4. **link:developer/architecture.adoc[Architecture]** - How ProximaDB works internally
 
 === Advanced Topics
-1. **link:appendix_performance_metrics.adoc[Performance Tuning]** - Optimize for your workload
-2. **link:architecture/storage-engine-optimizations.adoc[Storage Engines]** - VIPER vs SST deep dive  
-3. **link:quantization_and_optimization.adoc[Vector Quantization]** - Reduce memory usage
-4. **link:guides/Multi_Disk_Configuration_Guide.adoc[Multi-Cloud Setup]** - Enterprise deployment
+1. **link:appendices/appendix_performance_metrics.adoc[Performance Tuning]** - Optimize for your workload
+2. **link:developer/architecture.adoc#dual-storage[Storage Engines]** - VIPER vs SST deep dive  
+3. **link:developer/architecture.adoc#quantization-optimization[Vector Quantization]** - Reduce memory usage
+4. **link:admin/multi_disk_guide.adoc[Multi-Cloud Setup]** - Enterprise deployment
 
 ---
 
-**🚀 Ready to start?** Begin with link:getting_started.adoc[Getting Started] or jump to link:user_guide.adoc[User Guide] for complete examples.
+**🚀 Ready to start?** Begin with link:user/getting_started.adoc[Getting Started] or jump to link:user/user_guide.adoc[User Guide] for complete examples.
 
 _Documentation updated: {docdate}_

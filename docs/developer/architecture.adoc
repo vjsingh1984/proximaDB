@@ -3,600 +3,266 @@
 :toclevels: 3
 :imagesdir: ../diagrams/images
 
-**Understanding ProximaDB's high-performance architecture for enterprise AI applications.**
+**Complete architectural guide for ProximaDB - from system overview to advanced implementation details.**
 
-== 🏗️ Architecture Overview
+== 🏗️ System Overview
 
-ProximaDB is designed as a **proto-first, hardware-accelerated vector database** with dual storage engines optimized for different workloads.
+ProximaDB is a **proto-first, hardware-accelerated vector database** designed for enterprise AI applications.
 
-image::business-system-overview.svg[ProximaDB System Overview, width=800, align=center]
+image::proximadb-unified-architecture.svg[ProximaDB Architecture, align=center, width=800]
 
-.📊 System Overview Diagram Source
-[%collapsible]
-====
-[source,mermaid]
-----
-include::../../diagrams/business-system-overview.mmd[]
-----
-====
+=== Core Design Principles
 
-=== Key Design Principles
+* **Proto-first**: Zero double serialization - VectorRecord flows natively as proto types
+* **Hardware acceleration**: Automatic GPU/SIMD detection and usage
+* **Dual storage engines**: VIPER (columnar/analytics) + SST (row-based/OLTP)
+* **Direct vector service**: Eliminates abstraction layers for 40-60% latency improvement
 
-[cols="1,3"]
+=== Key Performance Metrics (2025-08-05)
+[cols="2,1,1,1"]
 |===
-|**Principle** |**Implementation**
+|Operation |REST |gRPC |Speedup
 
-|**🚀 Performance First**
-|DirectVectorService eliminates abstraction layers (40-60% latency reduction)
+|Bulk Insert
+|6K vec/s
+|17K vec/s
+|2.9x
 
-|**⚡ Zero-Copy Design**  
-|Proto-first architecture avoids double serialization overhead
+|Search + Metadata
+|2.6ms
+|0.9ms
+|2.9x
 
-|**🔄 Dual Storage**
-|SST (write-optimized) + VIPER (analytics-optimized) engines
-
-|**🧠 Hardware Aware**
-|Automatic GPU/SIMD acceleration with intelligent fallbacks
-
-|**🔒 ACID Compliance**
-|Centralized MVCC with atomic operations across all engines
+|Concurrent Search
+|842 QPS
+|1,770 QPS
+|2.1x
 |===
 
-== Core Components
+== 🔧 Core Components
 
-image::direct-vector-service.svg[DirectVectorService Architecture]
+=== DirectVectorService
+**Location**: `/src/services/direct_vector_service.rs`
 
-.DirectVectorService Architecture Source
-[%collapsible]
-====
-[source,mermaid]
-----
-include::../../diagrams/direct-vector-service.mmd[]
-----
-====
+Direct memtable access eliminating abstraction layers:
+```rust
+// Proto-first pipeline
+Proto → DirectVectorService → Memtable → Storage
+```
 
-**DirectVectorService**: Direct memtable access, coordinated search across WriteBuffer + Storage, atomic operations, result streaming.
+**Benefits**:
+* 40-60% latency reduction
+* Zero serialization overhead
+* Direct memory access patterns
+* Integrated WAL recovery using collection metadata
 
-image::storage-engine-classes.svg[Storage Engine Classes]
+=== CollectionService (Updated 2025-08-06)
+**Location**: `/src/services/collection_service.rs`
 
-.Storage Engine Classes Source
-[%collapsible]
-====
-[source,mermaid]
-----
-include::../../diagrams/storage-engine-classes.mmd[]
-----
-====
+Manages collection metadata with integrated storage assignment:
+```rust
+// Storage assignment now embedded in Collection proto
+Collection {
+    id: String,
+    config: CollectionConfig,
+    stats: CollectionStats,
+    storage_assignment: Option<StorageAssignment>, // NEW
+}
+```
 
-**Storage Engines**: SST (row-based, write-optimized, bloom filters). VIPER (columnar, analytics-optimized, 60-90% I/O reduction). Both use centralized **MvccResolver** for consistent versioning and data lifecycle management.
+**Key Changes**:
+* Removed separate AssignmentService
+* Storage locations managed within collection metadata
+* WAL discovery through collection service
+* Automatic storage assignment on collection creation
 
-**AXIS Indexing**: Adaptive selection - HNSW (high-recall), IVF (large-scale), LSH (approximate), Annoy (memory-constrained).
+=== Hardware Capabilities System
+**Location**: `/src/core/hardware_capabilities.rs`
 
-== Hardware Capabilities System
-
-image::hardware-capabilities-flow.svg[Hardware Capabilities Flow]
-
-.Hardware Capabilities Flow Source
-[%collapsible]
-====
-[source,mermaid]
-----
-include::../../diagrams/hardware-capabilities-flow.mmd[]
-----
-====
-
-**Centralized Detection**: One-time hardware capability detection at server startup eliminates repeated overhead and provides consistent access across all modules.
-
-[source,rust]
-----
-// Global hardware capabilities access
+Centralized hardware detection using `OnceLock` pattern:
+```rust
+// Initialize once at startup
+initialize_hardware_capabilities_default()?;
 let caps = get_hardware_capabilities();
-if caps.has_avx512() && caps.config.enable_simd {
-    // Use AVX-512 acceleration
+```
+
+**Features**:
+* GPU detection (CUDA, ROCm, MPS, OpenCL)
+* SIMD capabilities (AVX2, SSE4.1)
+* Memory and CPU optimization
+
+=== Unified Atomic Coordinator
+**Location**: `/src/storage/atomic.rs`
+
+ACID transaction support for all write operations:
+* Multi-collection consistency
+* Write buffer coordination
+* Rollback capabilities
+
+== 🗄️ Storage Engines
+
+=== VIPER Engine (Columnar)
+**Optimized for**: Analytics, read-heavy workloads
+
+**Features**:
+* Parquet format with ZSTD compression
+* Predicate pushdown (60-90% I/O reduction)
+* Quantization support
+* Adaptive reading strategies
+
+**File Structure**:
+```
+/src/storage/engines/viper/
+├── unified_parquet_reader.rs    # Adaptive reading
+├── quantization/               # Compression support
+└── tests/                     # Engine tests
+```
+
+=== SST Engine (Row-based)
+**Optimized for**: OLTP, write-heavy workloads
+
+**Features**:
+* SSTable format with bloom filters
+* Three-stage filtering (Bloom → Index → Row)
+* Bytemuck serialization (5-10x speedup)
+* Intelligent compaction
+
+**File Structure**:
+```
+/src/storage/engines/sst/
+├── unified_search_engine.rs     # Search optimization
+├── bloom_filter/               # Fast filtering
+└── tests/                     # Engine tests
+```
+
+== 🔍 Indexing System (AXIS)
+
+=== Supported Algorithms (All 6 fully supported)
+[cols="2,2,3"]
+|===
+|Algorithm |Type |Use Case
+
+|**HNSW**
+|Graph-based
+|General purpose, high recall
+
+|**IVF**
+|Clustering
+|Large datasets, good recall/speed balance
+
+|**PQ**
+|Quantization
+|Memory-constrained environments
+
+|**FLAT**
+|Brute force
+|Small datasets, perfect recall
+
+|**ANNOY**
+|Tree-based
+|Read-heavy workloads
+
+|**LSH**
+|Hash-based
+|High-dimensional sparse vectors
+|===
+
+=== Adaptive Selection
+**Location**: `/src/index/axis/`
+
+Automatic algorithm selection based on:
+* Vector dimension and count
+* Query patterns
+* Hardware capabilities
+* Memory constraints
+
+== 📏 Distance Metrics
+
+=== All 13 Metrics Supported (2025-08-05)
+**Core**: cosine, euclidean, dot_product
+**Extended**: manhattan, hamming, jaccard, chebyshev, canberra, minkowski, angular, bray_curtis, hellinger, custom
+
+**Hardware Acceleration**: SIMD/GPU optimized implementations for all metrics
+
+== 🚀 Performance Optimizations
+
+=== Search Optimizations
+1. **Bloom Filters**: Skip 95%+ irrelevant batches in memtable
+2. **Parallel SSTable Reading**: 3-5x speedup for multi-file searches  
+3. **Early Termination**: Stop when k results found (unordered queries)
+4. **Query Result Caching**: LRU cache at service level
+5. **Predicate Pushdown**: Reduce data transfer by 50-80%
+
+=== SQL Engine (High-Performance)
+**Location**: `/src/query/sql_engine/`
+
+**Features**:
+* Lock-free parser pool (1M+ queries/sec)
+* SIMD-accelerated vector parsing (AVX2/SSE4.1)
+* Query result caching with DashMap
+* GPU-accelerated parsing support
+
+**Architecture**:
+```rust
+// Lock-free concurrent parsing
+LockFreeParserPool → SIMD VectorParser → QueryCache
+```
+
+=== Compression System
+**Automatic compression** for both REST and gRPC:
+* **REST**: deflate, gzip, zstd, brotli via tower-http
+* **gRPC**: Native gzip compression  
+* **Bandwidth savings**: 50-80% reduction
+* **Zero configuration**: Transparent to clients
+
+== 🧪 Testing Architecture
+
+=== Test Requirements
+All tests must initialize hardware capabilities:
+```rust
+#[test]
+fn test_example() {
+    let _ = proximadb::core::hardware_capabilities::initialize_hardware_capabilities_default();
+    // Test code here
 }
-----
-
-**Hardware Features**:
-- **CPU Detection**: Physical/logical cores, vendor identification, model detection
-- **SIMD Capabilities**: AVX-512, AVX2, SSE4.1, SSE, NEON, FMA support
-- **GPU Backends**: CUDA, ROCm, MPS (Apple), OpenCL with automatic detection
-- **Memory Information**: Total/available memory, cache size recommendations
-- **Configuration Integration**: Respects TOML hardware configuration flags
-
-**Performance Benefits**:
-- **Initialization**: Single detection at startup vs repeated checks
-- **Thread Safety**: `OnceLock` pattern for safe concurrent access
-- **Fallback Logic**: Intelligent degradation when hardware unavailable
-- **Testing Support**: Deterministic initialization for test environments
-
-== MVCC Resolution System
-
-**Centralized Version Control**: The `MvccResolver` provides consistent multi-version concurrency control across all storage engines with sophisticated lifecycle management.
-
-[source,rust]
-----
-// MVCC resolution with expiry and versioning
-let resolver = MvccResolver::new();
-let resolved_records = resolver.resolve_batch(records);
-----
-
-**MVCC Rules**:
-- **Expiry Handling**: Records with `expires_at < current_time` are automatically excluded
-- **Version Resolution**: For same ID, highest version without gaps wins (versions start from 1)
-- **Timestamp Precedence**: For same version, earliest timestamp wins
-- **Append-Only Mode**: Empty/null IDs bypass versioning for high-throughput scenarios
-- **Global Deletion**: Non-empty ID with expiry marks all versions as deleted
-
-**Multi-Tier Deduplication**: Enhanced result processing with `MultiTierDeduplicator` for optimal search result quality and performance.
-
-== Advanced SQL Processing
-
-**GPU-Accelerated SQL Parser**: High-performance SQL parsing with GPU tokenization and intelligent CPU fallback for complex grammar processing.
-
-**SIMD Vector Parser**: Multi-tier SIMD acceleration for large vector array parsing with comprehensive performance monitoring.
-
-[source,rust]
-----
-// GPU SQL parsing
-let mut parser = GpuSqlParser::new()?;
-let query = parser.parse(sql)?; // GPU tokenization + CPU grammar
-
-// SIMD vector parsing  
-let mut simd_parser = SimdVectorParser::new();
-let vectors = simd_parser.parse_vector_array(&input)?; // AVX2/SSE4.1/scalar
-----
-
-**SQL Acceleration Features**:
-- **Multi-GPU Support**: CUDA, ROCm, MPS, OpenCL backends
-- **Performance Statistics**: GPU vs CPU parsing metrics
-- **Complex Query Support**: VECTOR_SIMILARITY with array literals
-- **Global Parser Instances**: Thread-safe singleton patterns
-
-== Key Design Patterns
-
-**Proto-First Architecture**: REST/gRPC → Proto → DirectVectorService → Storage. Benefits: zero double serialization, consistent data model, efficient transport.
-
-**Unified Interfaces**: Trait-based design with UnifiedMemtable, UnifiedSearchEngine, UnifiedAtomicCoordinator, BloomFilterStrategy.
-
-**Memory Optimization**: Vector Memory Pool (30-50% allocation reduction), RAII pooling, zero-copy bytemuck, adaptive ZSTD compression.
-
-== Bloom Filter Architecture
-
-ProximaDB's unified bloom filter architecture provides a polymorphic, strategy-based design for efficient filtering across all storage engines.
-
-=== Overview
-
-The bloom filter system uses a trait-based interface with multiple strategy implementations optimized for different use cases:
-
-* **ByteAligned**: SST storage (disk persistence) - ~10 bits per key for 1% false positive rate
-* **BitPacked**: Memtable filtering (in-memory) - 64-bit word operations, cache-friendly  
-* **Composite**: VIPER metadata filtering - column-specific filtering with predicate pushdown
-* **NoOp**: Disabled filters or empty collections - zero memory overhead
-
-=== Bloom Filter Factory
-
-[source,rust]
-----
-// Factory pattern for consistent creation
-let filter = BloomFilterFactory::create(&BloomFilterConfig {
-    enabled: true,
-    strategy: BloomStrategy::ByteAligned,
-    bits_per_key: Some(10),
-    expected_items: 100_000,
-    ..Default::default()
-});
-
-// Usage pattern
-bloom_filter.insert(&record.key);
-if bloom_filter.might_contain(&search_key) {
-    // Check actual data only if bloom filter says maybe
-    if let Some(value) = sstable.get(&search_key) {
-        // Found it
-    }
-}
-----
-
-=== Configuration
-
-**SST Engine Configuration**:
-[source,toml]
-----
-[storage.sst.bloom_filter]
-enabled = true
-bits_per_key = 10
-expected_items = 50000
-----
-
-**VIPER Engine Configuration**:
-[source,toml]
-----
-[storage.viper.bloom_filter]
-enabled = true
-false_positive_rate = 0.01
-metadata_columns = ["category", "tags"]
-----
-
-=== Performance Characteristics
-
-[cols="2,2,2,2,2"]
-|===
-| Strategy | Memory/Key | Insert Time | Query Time | Best For
-
-| ByteAligned
-| 10 bits
-| O(k)
-| O(k)
-| Disk persistence
-
-| BitPacked
-| 8-12 bits
-| O(k)
-| O(k)
-| In-memory
-
-| Composite
-| Variable
-| O(k*m)
-| O(k*m)
-| Metadata filtering
-
-| NoOp
-| 0 bytes
-| O(1)
-| O(1)
-| Disabled filters
-|===
-
-Where k = number of hash functions, m = number of metadata fields
-
-=== Best Practices
-
-* **Strategy Selection**: ByteAligned for disk, BitPacked for memory, Composite for metadata
-* **Configuration**: Set realistic expected_items, use 10 bits/key for 1% FPR, enable only when beneficial (>100 items)
-* **Monitoring**: Track false positive rates and memory usage in production
-* **Performance**: Check bloom filter before expensive disk I/O operations
-
-== Storage Engine Optimizations
-
-Both SST and VIPER storage engines achieved significant improvements through unified interfaces and targeted optimizations.
-
-=== Overall Impact
-
-* **70% code reduction** through polymorphic designs
-* **2.6x query performance** improvement  
-* **Zero code duplication** with shared components
-
-=== SST Engine Optimizations
-
-**Unified SSTable Reader**:
-* 70% code reduction (5 files → 1 file)
-* 2.6x faster metadata queries
-* Block-level filtering for efficient scans
-
-**Atomic Compaction Operations**:
-* ACID guarantees via UnifiedAtomicCoordinator
-* No partial states during crashes
-* 25% faster compaction cycles
-
-**Metadata Bloom Filters**:
-* 95% reduction in blocks scanned for metadata queries
-* 3x faster predicate evaluation
-* Column-specific filters with configurable FPR
-
-=== VIPER Engine Optimizations
-
-**Unified Parquet Reader**:
-* 60% code reduction with integrated features
-* Predicate pushdown to Parquet level (60-90% I/O reduction)
-* 4x faster filtered queries
-
-**Collection-Aware Compaction**:
-* Configurable strategies: Leveled, Tiered, Unified
-* 30% reduction in write amplification
-* Better space utilization
-
-**ML-Driven Clustering**:
-* K-means clustering for locality-preserving storage
-* 85% reduction in search space
-* 10x faster approximate search
-
-=== Unified Improvements
-
-**Centralized MVCC Resolution**:
-* MvccResolver provides consistent version control across all engines
-* Single source of truth for version continuity and expiry
-* Engine-agnostic timestamp-based tiebreaking
-
-**Common Infrastructure**:
-* Shared bloom filter design with engine-specific strategies
-* UnifiedAtomicCoordinator for cross-engine atomic operations
-* Consistent failure handling and recovery mechanisms
-
-=== Performance Results
-
-[cols="3,2,2,2"]
-|===
-| Metric | Before | SST After | VIPER After
-
-| Query Latency (P50)
-| 10ms
-| 3.8ms
-| 2.5ms
-
-| Write Throughput
-| 5K/sec
-| 12K/sec
-| 15K/sec
-
-| Memory Usage
-| 100%
-| 60%
-| 55%
-
-| Compaction Time
-| 60s
-| 15s
-| 12s
-|===
-
-== Data Flow
-
-image::service-interactions.svg[Service Interactions]
-
-.Service Interactions Source
-[%collapsible]
-====
-[source,mermaid]
-----
-include::../../diagrams/service-interactions.mmd[]
-----
-====
-
-**Write Path**: Client → DirectVectorService → UnifiedMemtable → WriteBuffer → Storage Engine
-
-image::two-stage-search.svg[Two-Stage Search Process]
-
-.Two-Stage Search Process Source
-[%collapsible]
-====
-[source,mermaid]
-----
-include::../../diagrams/two-stage-search.mmd[]
-----
-====
-
-**Search Path**: Request → DirectVectorService → Parallel Search (WriteBuffer + Memtable + Storage) → Result Merging → Response
-
-== Deployment & Performance
-
-image::deployment-architecture.svg[Deployment Architecture]
-
-.Deployment Architecture Source
-[%collapsible]
-====
-[source,mermaid]
-----
-include::../../diagrams/deployment-architecture.mmd[]
-----
-====
-
-image::multi_disk_architecture.svg[Multi-Disk Storage Architecture]
-
-.Multi-Disk Storage Architecture Source
-[%collapsible]
-====
-[source,mermaid]
-----
-include::../../diagrams/multi_disk_architecture.mmd[]
-----
-====
-
-**Single Node**: Docker container, REST/gRPC ports, local/cloud storage, Prometheus metrics.
-
-**Multi-Node (Planned)**: Consistent hashing, Raft consensus, cross-node coordination.
-
-image::storage-performance-unified.svg[Storage Performance Characteristics]
-
-.Storage Performance Characteristics Source
-[%collapsible]
-====
-[source,mermaid]
-----
-include::../../diagrams/storage-performance-unified.mmd[]
-----
-====
-
-**Performance**: Insert <1ms (memtable), <5ms (durable). Search <2ms (P50), <10ms (P99). Writes 49K vectors/sec, reads 48 QPS. **Test Suite**: 1,460+ tests with 100% pass rate.
-
-**Resources**: 100MB base memory, scales with cores (SIMD), 30-50% compression ratio.
-
-== Compression Architecture 
-
-ProximaDB provides **transparent compression** for both REST and gRPC protocols with zero configuration requirements and automatic algorithm selection.
-
-=== Compression Strategy
-
-**REST API Compression** (using tower-http):
-- **Automatic**: Content-Type and size-based selection
-- **Algorithms**: gzip (universal), Brotli (modern), Zstd (performance), LZ4 (streaming)
-- **Threshold**: Only compress responses >1KB
-- **Headers**: Automatic Accept-Encoding negotiation
-
-**gRPC Compression** (using Tonic):
-- **Default**: gzip (gRPC standard)
-- **Alternative**: Zstd (better performance/ratio)
-- **Metadata**: Client `grpc-accept-encoding` header support
-- **Streaming**: Message-level compression
-
-=== Performance Characteristics
-
-[cols="2,2,2,2"]
-|===
-|**Data Type** |**Compression Ratio** |**CPU Overhead** |**Time Savings**
-
-|**Vector Arrays**
-|60-80% reduction
-|3-7% CPU increase
-|50-70% network time
-
-|**JSON Metadata** 
-|40-60% reduction
-|5-10% CPU increase
-|40-60% network time
-
-|**Search Results**
-|50-70% reduction
-|3-8% CPU increase
-|45-65% network time
-|===
-
-**Configuration Example**:
-[source,toml]
-----
-[rest.compression]
-enabled = true
-algorithms = ["gzip", "br", "zstd"]
-min_size_bytes = 1024
-compression_level = "default"
-
-[grpc.compression]  
-enabled = true
-accept_encodings = ["gzip", "zstd"]
-send_encoding = "gzip"
-----
-
-=== Client SDK Support
-
-**Python SDK** - Automatic compression enabled by default:
-[source,python]
-----
-# REST client with compression
-client = ProximaDBClient(
-    url="http://localhost:5678",
-    compression=CompressionConfig(
-        enabled=True,
-        algorithms=["gzip", "zstd"],
-        request_threshold_bytes=1024
-    )
-)
-
-# gRPC client with compression
-client = connect_grpc(
-    "grpc://localhost:5679",
-    enable_compression=True
-)
-----
-
-== Quantization & Optimization
-
-image::unified_quantization_system.svg[Unified Quantization System]
-
-.Unified Quantization System Source
-[%collapsible]
-====
-[source,mermaid]
-----
-include::../../diagrams/unified_quantization_system.mmd[]
-----
-====
-
-ProximaDB's **quantization engine** provides hardware-accelerated vector compression with up to **32x compression** and **3-10x search speedup** while maintaining high accuracy.
-
-=== Quantization Types
-
-**Product Quantization (PQ)**:
-- Divides vectors into subvectors with learned codebooks
-- **4-16x compression** with **90-95% accuracy**
-- Best for high-dimensional embeddings (768D+)
-
-**Scalar Quantization**:
-- Maps floats to integers (INT8, INT16, etc.)
-- **2-4x compression** with **>99% accuracy**
-- General purpose, good for most cases
-
-**Binary Quantization**:
-- 1 bit per dimension (sign-based)  
-- **32x compression** with **85-90% accuracy**
-- Maximum compression for speed-critical use cases
-
-=== Two-Stage Search Architecture
-
-ProximaDB uses **two-stage search** for optimal speed and accuracy:
-
-1. **Stage 1**: Fast quantized search to find candidates
-2. **Stage 2**: Precise reranking with full precision
-
-[source,python]
-----
-search_hints = {
-    "enable_two_stage_search": True,
-    "quantization_hint": "PQ8",
-    "candidate_multiplier": 3.0,
-    "accuracy_threshold": 0.95
-}
-
-results = client.search_vectors(
-    collection_id="my_collection",
-    query_vector=query,
-    k=10,
-    optimization_hints=search_hints
-)
-----
-
-**Performance Benefits**:
-- **3-6x faster** search overall
-- **90% memory bandwidth reduction**
-- **100% accuracy** maintained (final results)
-
-=== Hardware Acceleration
-
-**Automatic Detection and Usage**:
-- **SIMD**: AVX2/AVX512 on x86, NEON on ARM
-- **GPU**: CUDA on NVIDIA, ROCm on AMD
-- **Fallback**: Optimized scalar implementations
-
-**Quantization Guidelines**:
-- **High Accuracy**: Scalar INT8 (3x speed, >99% accuracy)
-- **Balanced**: PQ8 (5x speed, 95-98% accuracy)  
-- **Maximum Speed**: Binary (10x speed, 85-90% accuracy)
-
-=== Collection Configuration
-
-[source,python]
-----
-# Create collection with quantization
-collection = client.create_collection({
-    "name": "semantic_search",
-    "dimension": 768,
-    "distance_metric": "cosine",
-    "quantization_config": {
-        "enabled": True,
-        "type": "product",           # PQ, scalar, or binary
-        "bits_per_subvector": 8,     # PQ configuration
-        "accuracy_threshold": 0.95   # Target accuracy
-    }
-})
-----
-
-**Performance Results**:
-- **10-32x memory reduction** with quantization
-- **3-10x search speedup** using two-stage search
-- **95-99% accuracy** with proper configuration
-- **Sub-second latency** at billion scale
-
-== Security & Reliability
-
-**Data Protection**: ACID transactions, centralized **MvccResolver** with expiry handling, atomic operations, WAL durability, point-in-time recovery, multi-tier deduplication.
-
-**Operations**: Health checks, Prometheus integration, JSON logging, hot config reload.
-
-== Next Steps
-
-* **Implementation Details**: link:../appendices/appendix_implementation_details.adoc[Code patterns and examples]
-* **Performance Tuning**: link:../appendices/appendix_performance_metrics.adoc[Benchmarks and optimization]
-* **API Reference**: link:technical_reference.adoc[Complete API documentation]
-* **Deployment Guide**: link:../user/user_guide.adoc#docker-deployment[Production deployment]
+```
+
+=== Test Structure
+* **Unit tests**: Component-specific (900+ tests)
+* **Integration tests**: Cross-component workflows
+* **Performance tests**: Benchmark validation
+* **Stress tests**: Concurrent load validation
+
+== 🔧 Development Guidelines
+
+=== Code Patterns
+* **Proto-first**: Use proto types directly, avoid conversions
+* **Atomic writes**: Always use UnifiedAtomicCoordinator
+* **Storage-aware**: Let engines select optimal strategies
+* **Hardware-aware**: Use capabilities system for optimization
+
+=== Key File Structure
+```
+src/
+├── services/
+│   └── direct_vector_service.rs     # Main service layer
+├── core/
+│   └── hardware_capabilities.rs     # Hardware detection
+├── storage/
+│   ├── atomic.rs                    # ACID coordinator
+│   ├── engines/viper/               # Columnar engine
+│   └── engines/sst/                 # Row engine
+├── index/axis/                      # Adaptive indexing
+├── query/sql_engine/               # SQL processing
+└── handlers/conversions.rs         # REST API layer
+```
+
+== 📚 Further Reading
+
+* **User Guide**: link:../user/user_guide.adoc[Complete usage examples]
+* **API Reference**: link:../user/api_reference.adoc[REST/gRPC APIs]
+* **Performance**: link:../appendices/appendix_performance_metrics.adoc[Benchmarks and tuning]
+* **Multi-disk**: link:../admin/multi_disk_guide.adoc[Enterprise deployment]
 
 ---
-
-For questions about architecture decisions, see link:../CONTRIBUTING.adoc[Contributing Guidelines].
+*Last updated: 2025-08-05*

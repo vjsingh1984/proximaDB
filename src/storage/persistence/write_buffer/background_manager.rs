@@ -104,6 +104,9 @@ pub struct BackgroundMaintenanceManager {
     
     /// Collection vector counts at last model training
     last_training_vector_counts: Arc<RwLock<HashMap<String, usize>>>,
+    
+    /// Collection service for fetching metadata
+    collection_service: Option<Arc<crate::services::collection_service::CollectionService>>,
 }
 
 /// Statistics for background maintenance operations
@@ -134,7 +137,23 @@ impl BackgroundMaintenanceManager {
             storage_engines: Arc::new(RwLock::new(HashMap::new())),
             // clustering_model_manager: None, // Moved to AXIS
             last_training_vector_counts: Arc::new(RwLock::new(HashMap::new())),
+            collection_service: None,
         }
+    }
+    
+    /// Set collection service for metadata fetching
+    pub fn set_collection_service(&mut self, service: Arc<crate::services::collection_service::CollectionService>) {
+        self.collection_service = Some(service.clone());
+        
+        // Also inject into flush coordinator if available
+        if let Some(coordinator) = &mut self.flush_coordinator {
+            // The flush coordinator needs mutable access to set the service
+            // Since we have Arc, we'd need to use Arc::get_mut which requires unique ownership
+            // Instead, the flush coordinator should be configured before being set
+            info!("⚠️ BackgroundManager: Flush coordinator already set - collection service should be injected before setting coordinator");
+        }
+        
+        info!("🔗 BackgroundManager: Collection service registered for metadata fetching");
     }
 
     /// Set AXIS manager for IndexConfig-based indexing
@@ -502,111 +521,120 @@ impl BackgroundMaintenanceManager {
     }
 
     /// Get collection configuration from collection service
-    async fn get_collection_configuration(collection_id: &str) -> Result<CollectionConfiguration> {
-        // TODO: Inject collection service dependency into BackgroundManager
-        // For now, we'll simulate getting configuration from collection service
-        // In production, this would be: collection_service.get_collection_by_name(collection_id).await?
-        
+    async fn get_collection_configuration(&self, collection_id: &str) -> Result<(CollectionConfiguration, Option<crate::proto::proximadb::Collection>)> {
         info!("🔍 [CONFIG] Getting collection configuration for {}", collection_id);
         
-        // Simulate collection service call with realistic configuration
-        // This would be replaced with actual collection service integration
-        let collection_config = match collection_id.as_ref() {
-            "embeddings" => CollectionConfiguration {
-                name: collection_id.to_string(),
-                dimension: 384,
-                distance_metric: "cosine".to_string(),
-                quantization_settings: Some(QuantizationSettings {
-                    enabled: true,
-                    quantization_type: QuantizationType::ProductQuantization,
-                    bits_per_component: 8,
-                    subspaces: 8,
-                }),
-                filterable_metadata: vec![
-                    FilterableMetadataColumn {
-                        name: "category".to_string(),
-                        data_type: FilterableColumnType::String,
-                        indexed: true,
-                    },
-                    FilterableMetadataColumn {
-                        name: "priority".to_string(),
-                        data_type: FilterableColumnType::Integer,
-                        indexed: true,
-                    },
-                    FilterableMetadataColumn {
-                        name: "created_date".to_string(),
-                        data_type: FilterableColumnType::Timestamp,
-                        indexed: true,
-                    },
-                    FilterableMetadataColumn {
-                        name: "tags".to_string(),
-                        data_type: FilterableColumnType::ListString,
-                        indexed: false,
-                    },
-                ],
-            },
-            "documents" => CollectionConfiguration {
-                name: collection_id.to_string(),
-                dimension: 1024,
-                distance_metric: "euclidean".to_string(),
-                quantization_settings: Some(QuantizationSettings {
-                    enabled: true,
-                    quantization_type: QuantizationType::ScalarQuantization,
-                    bits_per_component: 16,
-                    subspaces: 1,
-                }),
-                filterable_metadata: vec![
-                    FilterableMetadataColumn {
-                        name: "document_type".to_string(),
-                        data_type: FilterableColumnType::String,
-                        indexed: true,
-                    },
-                    FilterableMetadataColumn {
-                        name: "size_bytes".to_string(),
-                        data_type: FilterableColumnType::Integer,
-                        indexed: true,
-                    },
-                    FilterableMetadataColumn {
-                        name: "is_public".to_string(),
-                        data_type: FilterableColumnType::Boolean,
-                        indexed: true,
-                    },
-                ],
-            },
-            _ => CollectionConfiguration {
-                name: collection_id.to_string(),
-                dimension: 512,
-                distance_metric: "cosine".to_string(),
-                quantization_settings: None, // No quantization for default
-                filterable_metadata: vec![
-                    FilterableMetadataColumn {
-                        name: "status".to_string(),
-                        data_type: FilterableColumnType::String,
-                        indexed: true,
-                    },
-                ],
-            },
-        };
+        // Fetch from actual collection service if available
+        if let Some(ref collection_service) = self.collection_service {
+            match collection_service.get_proto_collection(collection_id).await {
+                Ok(Some(collection)) => {
+                    // Extract configuration from proto Collection
+                    let config = if let Some(ref proto_config) = collection.config {
+                        // Map proto types to internal types
+                        let filterable_metadata = proto_config.filterable_columns.iter().map(|col| {
+                            use crate::proto::proximadb::FilterableDataType;
+                            let data_type = match FilterableDataType::try_from(col.data_type) {
+                                Ok(FilterableDataType::FilterableString) => FilterableColumnType::String,
+                                Ok(FilterableDataType::FilterableInteger) => FilterableColumnType::Integer,
+                                Ok(FilterableDataType::FilterableFloat) => FilterableColumnType::Float,
+                                Ok(FilterableDataType::FilterableBoolean) => FilterableColumnType::Boolean,
+                                Ok(FilterableDataType::FilterableDatetime) => FilterableColumnType::Timestamp,
+                                Ok(FilterableDataType::FilterableArrayString) => FilterableColumnType::ListString,
+                                Ok(FilterableDataType::FilterableArrayInteger) => FilterableColumnType::ListInteger,
+                                _ => FilterableColumnType::String, // Default
+                            };
+                            
+                            FilterableMetadataColumn {
+                                name: col.name.clone(),
+                                data_type,
+                                indexed: col.indexed,
+                            }
+                        }).collect();
+                        
+                        let quantization_settings = proto_config.quantization_config.as_ref().map(|q| {
+                            // Map quantization type based on configuration
+                            let q_type = if q.enabled {
+                                // Use quantization level to determine type
+                                match q.quantization_level {
+                                    0 => QuantizationType::ScalarQuantization,  // None/Basic
+                                    1 => QuantizationType::ScalarQuantization,  // Low
+                                    2 => QuantizationType::ProductQuantization, // Medium
+                                    3 => QuantizationType::ProductQuantization, // High
+                                    _ => QuantizationType::ScalarQuantization,
+                                }
+                            } else {
+                                QuantizationType::ScalarQuantization // Default
+                            };
+                            
+                            QuantizationSettings {
+                                enabled: q.enabled,
+                                quantization_type: q_type,
+                                bits_per_component: q.bits_per_component as u8,
+                                subspaces: q.num_subvectors as u8,
+                            }
+                        });
+                        
+                        CollectionConfiguration {
+                            name: proto_config.name.clone(),
+                            dimension: proto_config.dimension as usize,
+                            distance_metric: {
+                                use crate::proto::proximadb::DistanceMetric;
+                                match DistanceMetric::try_from(proto_config.distance_metric) {
+                                    Ok(DistanceMetric::Cosine) => "cosine",
+                                    Ok(DistanceMetric::Euclidean) => "euclidean",
+                                    Ok(DistanceMetric::DotProduct) => "dot_product",
+                                    Ok(DistanceMetric::Manhattan) => "manhattan",
+                                    _ => "cosine",
+                                }.to_string()
+                            },
+                            quantization_settings,
+                            filterable_metadata,
+                        }
+                    } else {
+                        // Fallback configuration if config is missing
+                        CollectionConfiguration {
+                            name: collection_id.to_string(),
+                            dimension: 512,
+                            distance_metric: "cosine".to_string(),
+                            quantization_settings: None,
+                            filterable_metadata: vec![],
+                        }
+                    };
+                    
+                    info!(
+                        "✅ [CONFIG] Retrieved configuration for collection {}: dim={}, metric={}, quantization={}, filterable_fields={}",
+                        collection_id,
+                        config.dimension,
+                        config.distance_metric,
+                        config.quantization_settings.is_some(),
+                        config.filterable_metadata.len()
+                    );
+                    
+                    return Ok((config, Some(collection)));
+                }
+                Ok(None) => {
+                    warn!("⚠️ [CONFIG] Collection {} not found in metadata", collection_id);
+                }
+                Err(e) => {
+                    warn!("⚠️ [CONFIG] Failed to fetch collection metadata: {}", e);
+                }
+            }
+        }
         
-        info!(
-            "✅ [CONFIG] Retrieved configuration for collection {}: dim={}, metric={}, quantization={}, filterable_fields={}",
-            collection_id,
-            collection_config.dimension,
-            collection_config.distance_metric,
-            collection_config.quantization_settings.is_some(),
-            collection_config.filterable_metadata.len()
-        );
-        
-        Ok(collection_config)
+        // No fallback - fail fast in production if collection service not available
+        Err(anyhow::anyhow!(
+            "Collection service not available or collection '{}' not found. Cannot proceed without metadata.",
+            collection_id
+        ))
     }
 
     /// Generate dynamic Parquet schema based on collection configuration
-    async fn generate_parquet_schema_for_collection(collection_id: &str) -> Result<Arc<arrow_schema::Schema>> {
+    async fn generate_parquet_schema_for_collection(&self, collection_id: &str) -> Result<Arc<arrow_schema::Schema>> {
         use arrow_schema::{DataType, Field, Schema};
         use std::sync::Arc;
         
         // Get actual collection configuration from collection service
-        let collection_config = Self::get_collection_configuration(collection_id).await?;
+        let (collection_config, _proto_collection) = self.get_collection_configuration(collection_id).await?;
         
         let mut schema_fields = Vec::new();
         
@@ -718,21 +746,54 @@ impl BackgroundMaintenanceManager {
         &self,
         collection_id: &str,
     ) -> Result<Vec<String>> {
-        Self::execute_compaction_with_engines(&self.storage_engines, collection_id).await
-    }
-
-    /// Execute compaction for a collection - delegates to storage engine (static helper for async context)
-    async fn execute_compaction_with_engines(
-        storage_engines: &Arc<RwLock<HashMap<String, Arc<dyn crate::storage::traits::UnifiedStorageEngine>>>>,
-        collection_id: &str,
-    ) -> Result<Vec<String>> {
         info!(
             "🔄 [COMPACTION] Starting compaction for collection {} (delegating to storage engine)",
             collection_id
         );
         
-        // Get storage engine for delegation (check VIPER first, then LSM)
-        let engines = storage_engines.read().await;
+        // Fetch collection metadata ONCE to avoid duplicate calls
+        let collection_metadata = if let Some(ref collection_service) = self.collection_service {
+            match collection_service.get_proto_collection(collection_id).await {
+                Ok(Some(collection)) => {
+                    info!(
+                        "📋 [COMPACTION] Fetched collection metadata for '{}' - engine: {:?}",
+                        collection_id,
+                        collection.config.as_ref().map(|c| c.storage_engine)
+                    );
+                    Some(collection)
+                }
+                Ok(None) => {
+                    warn!("⚠️ [COMPACTION] Collection '{}' not found in metadata", collection_id);
+                    None
+                }
+                Err(e) => {
+                    warn!("⚠️ [COMPACTION] Failed to fetch collection metadata: {}", e);
+                    None
+                }
+            }
+        } else {
+            warn!("⚠️ [COMPACTION] No collection service available, proceeding without metadata");
+            None
+        };
+        
+        // Determine storage engine from metadata
+        let engine_name = if let Some(ref metadata) = collection_metadata {
+            if let Some(ref config) = metadata.config {
+                use crate::proto::proximadb::StorageEngine;
+                match StorageEngine::try_from(config.storage_engine) {
+                    Ok(StorageEngine::Viper) => "viper",
+                    Ok(StorageEngine::Sst) => "lsm",
+                    _ => "viper" // Default to VIPER
+                }
+            } else {
+                "viper"
+            }
+        } else {
+            "viper" // Default to VIPER if no metadata
+        };
+        
+        // Get storage engine for delegation
+        let engines = self.storage_engines.read().await;
         
         // Try VIPER engine first (default strategy)
         let engine = if let Some(viper_engine) = engines.get("viper") {
@@ -748,7 +809,7 @@ impl BackgroundMaintenanceManager {
         
         drop(engines); // Release the read lock
         
-        // Create compaction parameters
+        // Create compaction parameters with collection metadata
         let compaction_params = crate::storage::traits::CompactionParameters {
             collection_id: Some(collection_id.to_string()),
             force: false, // Background compaction is not forced
@@ -756,7 +817,7 @@ impl BackgroundMaintenanceManager {
             hints: std::collections::HashMap::new(),
             timeout_ms: Some(300_000), // 5 minute timeout
             priority: crate::storage::traits::OperationPriority::Low,
-            collection_config: None, // Background manager doesn't have collection service access
+            collection_config: collection_metadata.clone(), // Pass metadata to avoid duplicate fetches
         };
         
         info!(

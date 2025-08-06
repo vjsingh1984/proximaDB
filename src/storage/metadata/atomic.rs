@@ -613,6 +613,7 @@ impl MetadataStoreInterface for AtomicMetadataStore {
                 strategy_config: super::CollectionStrategyConfig::default(),
                 strategy_change_history: Vec::new(), // TODO: Convert back
                 flush_config: None,                  // TODO: Convert back
+                storage_assignment: None,            // TODO: Convert back
             };
 
             Ok(Some(metadata))
@@ -700,6 +701,7 @@ impl MetadataStoreInterface for AtomicMetadataStore {
                     strategy_config: CollectionStrategyConfig::default(),
                     strategy_change_history: Vec::new(),
                     flush_config: None, // Use global defaults
+                    storage_assignment: None,
                 }
             })
             .collect();

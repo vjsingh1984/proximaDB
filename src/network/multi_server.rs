@@ -33,6 +33,9 @@ pub struct MultiServerConfig {
 
     /// Global TLS configuration - applies to all servers
     pub tls_config: TLSConfig,
+
+    /// API configuration (request limits, timeouts, etc.)
+    pub api_config: Option<crate::core::config::ApiConfig>,
 }
 
 /// Global TLS configuration for all protocols
@@ -83,6 +86,9 @@ pub struct RestHttpServerConfig {
 
     /// Enable health check endpoint
     pub enable_health: bool,
+
+    /// Enable HTTP compression (default: false for better performance)
+    pub enable_compression: bool,
 
     /// TLS certificate file path
     pub tls_cert_file: Option<String>,
@@ -173,6 +179,7 @@ impl Default for MultiServerConfig {
                 enable_dashboard: true,
                 enable_metrics: true,
                 enable_health: true,
+                enable_compression: false, // Default to false for better debugging
                 tls_cert_file: None,
                 tls_key_file: None,
             },
@@ -194,6 +201,7 @@ impl Default for MultiServerConfig {
                 bind_interface: "0.0.0.0".to_string(),
                 enabled: false,
             },
+            api_config: None, // Will be set when creating from Config
         }
     }
 }
@@ -451,6 +459,14 @@ impl SharedServices {
                     }),
                     created_at: metadata.created_at.timestamp_millis(),
                     updated_at: metadata.updated_at.timestamp_millis(),
+                    storage_assignment: metadata.storage_assignment.as_ref().map(|sa| {
+                        crate::proto::proximadb::StorageAssignment {
+                            data_location: sa.data_location.clone(),
+                            wal_location: sa.wal_location.clone(),
+                            location_index: sa.location_index as u32,
+                            assigned_at: sa.assigned_at.timestamp_micros(),
+                        }
+                    }),
                 };
 
                 // Store the recovered collection in the metadata backend
@@ -636,6 +652,17 @@ impl MultiServer {
             let grpc_service =
                 crate::proto::proximadb::proxima_db_server::ProximaDbServer::new(grpc_handler);
 
+            // Apply compression if enabled
+            let grpc_service = if self.config.grpc_config.enable_compression {
+                use tonic::codec::CompressionEncoding;
+                info!("🗜️  gRPC compression enabled (gzip)");
+                grpc_service
+                    .accept_compressed(CompressionEncoding::Gzip)
+                    .send_compressed(CompressionEncoding::Gzip)
+            } else {
+                grpc_service
+            };
+
             let mut server_builder = tonic::transport::Server::builder()
                 .add_service(grpc_service);
 
@@ -675,10 +702,13 @@ impl MultiServer {
             let rest_bind_addr = self.config.get_http_bind_address();
             let unified_handlers = services.unified_handlers.clone();
 
+            let api_config = self.config.api_config.clone();
+            let enable_compression = self.config.http_config.enable_compression;
             let rest_handle = tokio::spawn(async move {
                 use crate::network::rest::server::RestServer;
 
-                match RestServer::new(rest_bind_addr, unified_handlers)
+                let max_request_size_mb = api_config.map(|c| c.max_request_size_mb);
+                match RestServer::new(rest_bind_addr, unified_handlers, max_request_size_mb, enable_compression)
                     .start()
                     .await
                 {

@@ -187,6 +187,7 @@ async fn test_collection_service_dependency_injection() {
         }),
         created_at: chrono::Utc::now().timestamp(),
         updated_at: chrono::Utc::now().timestamp(),
+        storage_assignment: None,
     };
     
     // Test metadata backend operations directly
@@ -328,6 +329,7 @@ async fn test_metadata_backend_persistence() {
                 }),
                 created_at: 1000 + i as i64,
                 updated_at: 1000 + i as i64,
+                storage_assignment: None,
             };
             
             metadata_backend.upsert_collection_record(record).await.unwrap();
@@ -455,6 +457,7 @@ async fn test_metadata_backend_deletion() {
             }),
             created_at: 2000 + i as i64,
             updated_at: 2000 + i as i64,
+            storage_assignment: None,
         };
         
         metadata_backend.upsert_collection_record(record).await.unwrap();
@@ -560,6 +563,7 @@ async fn test_concurrent_metadata_operations() {
                 }),
                 created_at: 3000 + i as i64,
                 updated_at: 3000 + i as i64,
+                storage_assignment: None,
             };
             
             backend.upsert_collection_record(record).await
@@ -651,6 +655,7 @@ async fn test_metadata_backend_updates() {
         }),
         created_at: 4000,
         updated_at: 4000,
+        storage_assignment: None,
     };
     
     metadata_backend.upsert_collection_record(record.clone()).await.unwrap();
@@ -805,6 +810,7 @@ async fn test_collection_metadata_provider_trait() {
         }),
         created_at: chrono::Utc::now().timestamp(),
         updated_at: chrono::Utc::now().timestamp(),
+        storage_assignment: None,
     };
     
     metadata_backend

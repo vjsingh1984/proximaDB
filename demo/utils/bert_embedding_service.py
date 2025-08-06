@@ -24,7 +24,7 @@ except ImportError:
 class BERTEmbeddingService:
     """Service for generating BERT embeddings from text"""
     
-    def __init__(self, model_name: str = "all-MiniLM-L6-v2", cache_dir: Optional[str] = None):
+    def __init__(self, model_name: str = "all-mpnet-base-v2", cache_dir: Optional[str] = None):
         """
         Initialize BERT embedding service
         
@@ -53,7 +53,7 @@ class BERTEmbeddingService:
                 "all-MiniLM-L12-v2": 384,
                 "all-distilroberta-v1": 768
             }
-            self.dimension = dimensions.get(model_name, 384)
+            self.dimension = dimensions.get(model_name, 768)
             self.model = None
             print(f"⚠️ Using simulated {self.dimension}D embeddings (install sentence-transformers for real BERT)")
     
@@ -286,7 +286,7 @@ def create_sample_corpus(size_mb: float = 10.0) -> List[Dict[str, str]]:
 
 if __name__ == "__main__":
     # Demo the embedding service
-    service = BERTEmbeddingService("all-MiniLM-L6-v2")
+    service = BERTEmbeddingService("all-mpnet-base-v2")
     
     # Test embedding
     sample_text = "This is a test document about machine learning and AI."

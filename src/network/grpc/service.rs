@@ -192,10 +192,17 @@ impl ProximaDb for ProximaDbGrpcService {
                     Status::invalid_argument("Missing collection config for CREATE")
                 })?;
 
+                // Debug log the received config
+                println!("📊 gRPC CREATE received config: name={}, dimension={}, distance_metric={}, storage_engine={}, indexing_algorithm={}", 
+                    config.name, config.dimension, config.distance_metric, config.storage_engine, config.primary_indexing_algorithm);
+
                 // Parse proto types to native types - using proto enum directly
                 let _distance_metric = match crate::proto::proximadb::DistanceMetric::try_from(config.distance_metric) {
                     Ok(metric) => metric,
-                    _ => crate::proto::proximadb::DistanceMetric::Cosine,
+                    Err(e) => {
+                        info!("⚠️ Failed to parse distance_metric {}: {}", config.distance_metric, e);
+                        crate::proto::proximadb::DistanceMetric::Cosine
+                    }
                 };
                 
                 let _storage_engine = match crate::proto::proximadb::StorageEngine::try_from(config.storage_engine) {

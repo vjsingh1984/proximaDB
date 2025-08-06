@@ -1787,94 +1787,78 @@ trait DirectWalRecovery {
 }
 
 impl DirectWalRecovery for DirectVectorService {
-    /// Discover WAL files and group them by collection
+    /// Discover WAL files and group them by collection using metadata
     async fn discover_wal_files(&self) -> Result<std::collections::HashMap<String, Vec<std::path::PathBuf>>> {
         use std::collections::HashMap;
-        use crate::storage::assignment_service::get_assignment_service;
+        use crate::services::collection_service::CollectionService;
         
-        debug!("🔧 DirectVectorService::discover_wal_files - Starting WAL file discovery...");
+        println!("🔧 DirectVectorService::discover_wal_files - Starting WAL file discovery from metadata...");
         let mut collection_wal_files: HashMap<String, Vec<std::path::PathBuf>> = HashMap::new();
         
-        // Get assignment service to find WAL directories
-        debug!("🔧 DirectVectorService::discover_wal_files - Getting assignment service...");
-        let _assignment_service = get_assignment_service();
-        debug!("✅ DirectVectorService::discover_wal_files - Assignment service obtained");
-        
-        // Get all configured WAL directories
-        debug!("🔧 DirectVectorService::discover_wal_files - Checking {} WAL directories", self.write_buffer_config.multi_disk.data_directories.len());
-        for write_buffer_url in &self.write_buffer_config.multi_disk.data_directories {
-            debug!("🔧 DirectVectorService::discover_wal_files - Processing WAL URL: {}", write_buffer_url);
-            let base_path = if write_buffer_url.starts_with("file://") {
-                write_buffer_url.strip_prefix("file://").unwrap_or(write_buffer_url)
-            } else {
-                write_buffer_url
-            };
-            
-            debug!("🔧 DirectVectorService::discover_wal_files - Base path: {}", base_path);
-            let wal_path = std::path::Path::new(base_path);
-            if !wal_path.exists() {
-                debug!("⚠️ DirectVectorService::discover_wal_files - WAL path does not exist: {}", base_path);
-                continue;
+        // Get collection service to access metadata
+        let collection_service = match &self.collection_service {
+            Some(cs) => cs,
+            None => {
+                println!("⚠️ DirectVectorService::discover_wal_files - No collection service available, cannot discover WAL files from metadata");
+                return Ok(collection_wal_files);
             }
-            debug!("✅ DirectVectorService::discover_wal_files - WAL path exists: {}", base_path);
-            
-            // Scan for collection directories
-            debug!("🔧 DirectVectorService::discover_wal_files - Scanning directory: {}", base_path);
-            if let Ok(entries) = std::fs::read_dir(wal_path) {
-                let entries_vec: Vec<_> = entries.flatten().collect();
-                debug!("🔧 DirectVectorService::discover_wal_files - Found {} entries in WAL directory", entries_vec.len());
+        };
+        
+        // List all collections from metadata
+        let collections = collection_service.list_collections().await?;
+        println!("🔧 DirectVectorService::discover_wal_files - Found {} collections in metadata", collections.len());
+        
+        for collection in collections {
+            // Check if collection has storage assignment
+            if let Some(storage_assignment) = &collection.storage_assignment {
+                println!("🔧 DirectVectorService::discover_wal_files - Processing collection '{}' with WAL location: {}", 
+                    collection.id, storage_assignment.wal_location);
                 
-                for entry in entries_vec {
-                    debug!("🔧 DirectVectorService::discover_wal_files - Processing entry: {:?}", entry.path());
-                    if entry.file_type().map(|ft| ft.is_dir()).unwrap_or(false) {
-                        let collection_id = entry.file_name().to_string_lossy().to_string();
-                        let logs_dir = entry.path().join("logs");
+                // Extract base path from WAL location
+                let wal_url = &storage_assignment.wal_location;
+                let base_path = if wal_url.starts_with("file://") {
+                    wal_url.strip_prefix("file://").unwrap_or(wal_url)
+                } else {
+                    wal_url
+                };
+                
+                // WAL files are in {wal_location}/logs/
+                let logs_dir = std::path::Path::new(base_path).join("logs");
+                
+                if logs_dir.exists() {
+                    let mut wal_files = Vec::new();
+                    
+                    // Find WAL files in logs directory
+                    println!("🔧 DirectVectorService::discover_wal_files - Scanning logs directory: {:?}", logs_dir);
+                    if let Ok(log_entries) = std::fs::read_dir(&logs_dir) {
+                        let log_entries_vec: Vec<_> = log_entries.flatten().collect();
+                        println!("🔧 DirectVectorService::discover_wal_files - Found {} log entries", log_entries_vec.len());
                         
-                        debug!("🔧 DirectVectorService::discover_wal_files - Found collection directory: {}, logs_dir: {:?}", collection_id, logs_dir);
-                        
-                        if logs_dir.exists() {
-                            let mut wal_files = Vec::new();
-                            
-                            // Find WAL files in logs directory
-                            debug!("🔧 DirectVectorService::discover_wal_files - Scanning logs directory: {:?}", logs_dir);
-                            if let Ok(log_entries) = std::fs::read_dir(&logs_dir) {
-                                let log_entries_vec: Vec<_> = log_entries.flatten().collect();
-                                debug!("🔧 DirectVectorService::discover_wal_files - Found {} log entries", log_entries_vec.len());
-                                
-                                for log_entry in log_entries_vec {
-                                    debug!("🔧 DirectVectorService::discover_wal_files - Processing log entry: {:?}", log_entry.path());
-                                    let file_name = log_entry.file_name().to_string_lossy().to_string();
-                                    if file_name.starts_with("wal_") && 
-                                       (file_name.ends_with(".pbwal") || 
-                                        file_name.ends_with(".bcwal") || 
-                                        file_name.ends_with(".avwal")) {
-                                        debug!("🔧 DirectVectorService::discover_wal_files - Found WAL file: {:?}", log_entry.path());
-                                        wal_files.push(log_entry.path());
-                                    } else {
-                                        debug!("⚠️ DirectVectorService::discover_wal_files - Skipping non-WAL file: {}", file_name);
-                                    }
-                                }
-                            } else {
-                                debug!("⚠️ DirectVectorService::discover_wal_files - Could not read logs directory: {:?}", logs_dir);
+                        for log_entry in log_entries_vec {
+                            let file_name = log_entry.file_name().to_string_lossy().to_string();
+                            if file_name.starts_with("wal_") && 
+                               (file_name.ends_with(".pbwal") || 
+                                file_name.ends_with(".bcwal") || 
+                                file_name.ends_with(".avwal")) {
+                                println!("🔧 DirectVectorService::discover_wal_files - Found WAL file: {:?}", log_entry.path());
+                                wal_files.push(log_entry.path());
                             }
-                            
-                            if !wal_files.is_empty() {
-                                debug!("🔧 DirectVectorService::discover_wal_files - Adding collection '{}' with {} WAL files", collection_id, wal_files.len());
-                                // Sort WAL files by sequence for proper ordering
-                                wal_files.sort();
-                                collection_wal_files.insert(collection_id, wal_files);
-                            } else {
-                                debug!("⚠️ DirectVectorService::discover_wal_files - No WAL files found for collection '{}'", collection_id);
-                            }
-                        } else {
-                            debug!("⚠️ DirectVectorService::discover_wal_files - Logs directory does not exist: {:?}", logs_dir);
                         }
-                    } else {
-                        debug!("⚠️ DirectVectorService::discover_wal_files - Entry is not a directory: {:?}", entry.path());
                     }
+                    
+                    if !wal_files.is_empty() {
+                        println!("🔧 DirectVectorService::discover_wal_files - Adding collection '{}' with {} WAL files", collection.id, wal_files.len());
+                        // Sort WAL files by sequence for proper ordering
+                        wal_files.sort();
+                        collection_wal_files.insert(collection.id.clone(), wal_files);
+                    } else {
+                        println!("⚠️ DirectVectorService::discover_wal_files - No WAL files found for collection '{}'", collection.id);
+                    }
+                } else {
+                    println!("⚠️ DirectVectorService::discover_wal_files - Logs directory does not exist: {:?}", logs_dir);
                 }
             } else {
-                debug!("⚠️ DirectVectorService::discover_wal_files - Could not read WAL directory: {}", base_path);
+                println!("⚠️ DirectVectorService::discover_wal_files - Collection '{}' has no storage assignment", collection.id);
             }
         }
         

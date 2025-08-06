@@ -159,7 +159,7 @@ class ClientConfig(BaseModel):
         if api_key := os.getenv("PROXIMADB_API_KEY"):
             config_dict["api_key"] = api_key
         if protocol := os.getenv("PROXIMADB_PROTOCOL"):
-            config_dict["protocol"] = protocol
+            config_dict["protocol"] = Protocol(protocol.lower())
         if timeout := os.getenv("PROXIMADB_TIMEOUT"):
             config_dict["timeout"] = float(timeout)
         
@@ -212,6 +212,10 @@ class ClientConfig(BaseModel):
         # URL is required
         if "url" not in config_dict:
             raise ValueError("URL must be provided via PROXIMADB_URL environment variable or constructor")
+        
+        # Convert protocol string to enum if needed
+        if "protocol" in config_dict and isinstance(config_dict["protocol"], str):
+            config_dict["protocol"] = Protocol(config_dict["protocol"].lower())
         
         return cls(**config_dict)
     

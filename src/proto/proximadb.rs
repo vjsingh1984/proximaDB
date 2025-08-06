@@ -637,6 +637,25 @@ pub struct Collection {
     pub created_at: i64,
     #[prost(int64, tag = "5")]
     pub updated_at: i64,
+    #[prost(message, optional, tag = "6")]
+    pub storage_assignment: ::core::option::Option<StorageAssignment>,
+}
+#[derive(serde::Serialize, serde::Deserialize)]
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct StorageAssignment {
+    /// Storage location URL for data (e.g., "file:///data/disk1")
+    #[prost(string, tag = "1")]
+    pub data_location: ::prost::alloc::string::String,
+    /// WAL location URL (e.g., "file:///data/disk1/{collection_id}/write_buffer")
+    #[prost(string, tag = "2")]
+    pub wal_location: ::prost::alloc::string::String,
+    /// Location index in the storage_locations array
+    #[prost(uint32, tag = "3")]
+    pub location_index: u32,
+    /// Assignment timestamp
+    #[prost(int64, tag = "4")]
+    pub assigned_at: i64,
 }
 #[derive(serde::Serialize, serde::Deserialize)]
 #[allow(clippy::derive_partial_eq_without_eq)]

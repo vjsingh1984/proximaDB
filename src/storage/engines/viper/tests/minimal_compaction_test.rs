@@ -49,15 +49,11 @@ async fn test_minimal_viper_compaction() -> Result<()> {
     let data_dir = format!("{}/{}/data", base_path, collection_id);
     fs::create_dir_all(&data_dir).await?;
     
-    let assignment_service = crate::storage::assignment_service::get_assignment_service();
-    let storage_location = crate::core::config::StorageLocation {
-        url: format!("file://{}", base_path),
-        weight: 1,
-        tags: Default::default(),
-    };
-    assignment_service
-        .assign_collection(collection_id, &[storage_location], "hash")
-        .await?;
+    // Storage assignment is now handled internally by CollectionService
+    // when a collection is created. For test purposes, we just ensure
+    // the directory structure exists.
+    let wal_dir = format!("{}/{}/write_buffer", base_path, collection_id);
+    fs::create_dir_all(&wal_dir).await?;
     
     // Create and flush just 3 vectors
     println!("\n[TEST] Creating and flushing 3 vectors");

@@ -58,8 +58,6 @@ pub enum SerializationFormat {
     RawBytemuck = 0x01,
     /// ZSTD compressed bytemuck bytes
     ZstdBytemuck = 0x02,
-    /// Legacy bincode format (for backward compatibility)
-    LegacyBincode = 0x03,
 }
 
 /// Header for serialized vector data
@@ -170,18 +168,13 @@ impl VectorSerializationConfig {
         let format = match header.format {
             0x01 => SerializationFormat::RawBytemuck,
             0x02 => SerializationFormat::ZstdBytemuck,
-            0x03 => SerializationFormat::LegacyBincode,
-            _ => return Err(anyhow::anyhow!("Unknown serialization format: {}", header.format)),
+            _ => return Err(anyhow::anyhow!("Unknown serialization format: {:#x}", header.format)),
         };
 
         let decompressed_bytes = match format {
             SerializationFormat::RawBytemuck => payload.to_vec(),
             SerializationFormat::ZstdBytemuck => {
                 decode_all(payload).context("Failed to decompress ZSTD vector data")?
-            }
-            SerializationFormat::LegacyBincode => {
-                // Fallback to bincode deserialization
-                return bincode::deserialize(payload).context("Failed to deserialize legacy bincode vector");
             }
         };
 

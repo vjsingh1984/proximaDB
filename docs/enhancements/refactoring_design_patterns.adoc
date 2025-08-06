@@ -1,6 +1,6 @@
 = ProximaDB Architecture Enhancement Recommendations
 :toc: left
-:imagesdir: diagrams/images
+:imagesdir: ../diagrams/images
 
 Strategic design pattern recommendations and architectural improvements for enhanced maintainability, flexibility, and understanding.
 
