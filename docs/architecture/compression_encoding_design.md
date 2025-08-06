@@ -1,7 +1,29 @@
 # ProximaDB Compression & Encoding Design - Release 1.0
 
+## Core Design Principles
+
+### Principle 1: 100% Vector Fidelity (Non-Negotiable)
+**Original FP32 vectors MUST maintain perfect accuracy**. Any compression technique for FP32 vectors must be fully reversible with bit-perfect reconstruction. This is an absolute requirement.
+
+### Principle 2: Lossless-Only for Original Vectors
+- **FP32 vectors**: ONLY lossless compression (ZSTD) allowed
+- **No lossy techniques**: Median normalization, trimmed mean, etc. are FORBIDDEN for FP32
+- **Perfect recovery**: Must reconstruct exact original bit-for-bit values
+- **User trust**: Users must always get back exactly what they stored
+
+### Principle 3: Quantization as Optional Secondary Index
+- **Separate storage**: Quantized vectors stored in addition to, never instead of, originals
+- **Lossy allowed here**: Normalization techniques (median, trimmed mean) can apply to quantized copies
+- **User choice**: Quantization only when explicitly requested via configuration
+- **Clear trade-offs**: Users informed that quantized search trades accuracy for speed
+
+### Principle 4: Storage Engine Determines Quantization Strategy
+- **SST (Row)**: NEVER quantize - increases I/O due to row storage model
+- **VIPER (Columnar)**: Quantization beneficial - can read only quantized columns
+- **But always**: Original FP32 vectors preserved with 100% fidelity
+
 ## Executive Summary
-Finalized design for granular per-collection compression control with optimal encoding strategies for SST and VIPER storage engines. This document captures all architectural decisions made for Release 1.0, prioritizing **adaptive precision reduction** for SST and **standard Parquet with transformations** for VIPER.
+Finalized design for granular per-collection compression control with optimal encoding strategies for SST and VIPER storage engines. This document captures all architectural decisions made for Release 1.0, ensuring **100% fidelity for original vectors** while offering optional quantization for performance optimization.
 
 ## Visual Architecture
 
@@ -908,22 +930,93 @@ Row Storage Reality:
    entire row     Makes it WORSE
 ```
 
-#### VIPER ENGINE STRATEGY [QUANTIZATION RECOMMENDED]
+#### VIPER ENGINE STRATEGY [DUAL STORAGE WITH 100% FIDELITY]
 
-##### Primary Approach: Quantization in Separate Columns
-- **Method**: Store quantized vectors in dedicated columns
-- **Columnar Advantage**: Read ONLY what you need
+##### Critical Requirement: FP32 Column MUST Preserve Full Fidelity
+```rust
+// VIPER Column Structure with Guaranteed Fidelity
+struct ViperColumns {
+    // PRIMARY: Original vectors with 100% fidelity - ALWAYS PRESENT
+    fp32_vector_column: Column<Vec<f32>>,  // Lossless ZSTD only, NO modifications
+    
+    // SECONDARY: Optional quantized for performance
+    int8_vector_column: Option<Column<Vec<i8>>>,     // Can use normalization
+    pq_codes_column: Option<Column<Vec<u8>>>,        // Can use lossy techniques
+    
+    // METADATA
+    metadata_columns: HashMap<String, Column>,
+}
+```
+
+##### Storage Strategy: Separate Columns with Different Techniques
 ```
 Column Storage:
-├── fp32_vector_column     ← Skip during search
-├── int8_vector_column     ← Read only this (24x less I/O)
-├── pq_codes_column        ← Or this (256B per vector)
-└── metadata_columns       ← Read if filtering
+├── fp32_vector_column     ← ALWAYS stored, 100% fidelity, lossless only
+│   └── Compression: ZSTD only (NO normalization allowed)
+├── int8_vector_column     ← Optional, can use normalization + quantization
+│   └── Compression: Trimmed mean → Quantize → ZSTD
+├── pq_codes_column        ← Optional, maximum compression
+│   └── Compression: Median normalize → PQ4/8 → ZSTD  
+└── metadata_columns       ← Standard columnar compression
 ```
+
+##### Quantized Column Optimization (Secondary Storage Only)
+```rust
+// Normalization + Quantization for MAXIMUM compression
+// Applied ONLY to quantized columns, NEVER to FP32
+impl QuantizedColumnCompression {
+    fn compress_for_search(&self, original_vectors: &[Vec<f32>]) -> CompressedColumn {
+        // Clone for quantization - originals untouched
+        let working_copy = original_vectors.to_vec();
+        
+        // Step 1: Analyze distribution
+        let stats = analyze_distribution(&working_copy);
+        
+        // Step 2: Select best normalization for compression
+        let normalized = match stats.distribution_type {
+            Distribution::Normal => {
+                // Mean normalization: fastest, good for normal data
+                mean_normalize(working_copy)  // 2-3x compression boost
+            },
+            Distribution::Skewed => {
+                // Trimmed mean: robust to outliers
+                trimmed_mean_normalize(working_copy, 0.05)  // 3-4x boost
+            },
+            Distribution::HeavyTailed => {
+                // Median: most robust but slower
+                median_normalize(working_copy)  // 4-5x boost
+            }
+        };
+        
+        // Step 3: Quantize normalized vectors
+        let quantized = match self.config.quantization_type {
+            QuantType::INT8 => int8_quantize(normalized),    // 24x reduction
+            QuantType::PQ8 => pq8_quantize(normalized),      // 48x reduction
+            QuantType::PQ4 => pq4_quantize(normalized),      // 96x reduction
+        };
+        
+        // Step 4: Apply ZSTD for additional 20-40% reduction
+        let compressed = zstd::compress(&quantized, self.config.zstd_level);
+        
+        CompressedColumn {
+            data: compressed,
+            compression_chain: vec![
+                "Normalization (lossy)",
+                "Quantization (lossy)", 
+                "ZSTD (lossless)"
+            ],
+            total_reduction: "60-120x for quantized column",
+            original_fidelity: false,  // This is the quantized copy
+        }
+    }
+}
+```
+
 - **Benefits**: 
-  - 24x less I/O for quantized search
-  - 100x faster candidate selection
-  - Optional FP32 for precision when needed
+  - FP32 column: 100% fidelity always available
+  - INT8 column: 24x less I/O with normalization boosting compression
+  - PQ column: 48-96x reduction with aggressive normalization
+  - Flexible: Use quantized for search, FP32 for final results
 
 ```rust
 struct AdaptivePrecisionBlock {
@@ -1362,3 +1455,516 @@ This unified design provides:
 5. **Two-Stage Search**: VIPER candidates → SST precision
 
 The key insight is that row storage (SST) should NEVER use quantization while columnar storage (VIPER) should ALWAYS use quantization. Block sizes should be dynamically adjusted based on vector dimensions to maintain optimal compression ratios.
+
+## 15. Enhancement Synergies
+
+### 15.1 VIPER Vector Compression Enhancement Alignment
+
+The proposed VIPER vector compression enhancement (`viper_vector_compression_enhancement.adoc`) offers strong synergies with our compression design:
+
+#### Critical Clarification: Normalization ONLY for Quantized Copies
+
+**IMPORTANT**: Normalization techniques (median, trimmed mean, etc.) apply ONLY to quantized vector copies, NEVER to original FP32 vectors.
+
+```rust
+// VIPER stores both original and quantized vectors
+struct ViperStorage {
+    // Original vectors - ALWAYS preserved with 100% fidelity
+    fp32_vectors: Vec<Vec<f32>>,     // Lossless ZSTD only
+    
+    // Quantized copies - can use normalization
+    quantized_vectors: Option<QuantizedVectors>,  // Lossy techniques allowed
+}
+```
+
+#### Complementary Techniques (For Quantized Copies Only)
+
+**1. Median Normalization + PQ Quantization**
+```rust
+// Applied ONLY to create quantized secondary index
+// Original FP32 vectors remain untouched
+impl ViperQuantization {
+    fn create_quantized_index(&self, original_vectors: &[Vec<f32>]) -> QuantizedIndex {
+        // Step 1: Clone vectors for quantization (originals preserved)
+        let vectors_copy = original_vectors.to_vec();
+        
+        // Step 2: Apply normalization to COPY only
+        let normalized = median_normalize(vectors_copy);
+        
+        // Step 3: Quantize the normalized copy
+        let quantized = pq8_quantize(normalized);
+        
+        // Original vectors unchanged, quantized index created
+        QuantizedIndex {
+            quantized_data: quantized,
+            normalization_params: params,
+            original_vectors_preserved: true,  // Always true
+        }
+    }
+}
+```
+
+**2. Trimmed Mean for Robustness (Quantized Only)**
+- Enhancement proposes trimmed mean (5% trim) for outlier handling
+- Applied ONLY when creating quantized representations
+- Original FP32 vectors always stored without modification
+- Benefits: Better compression of quantized index without touching originals
+
+**3. Adaptive Central Tendency Selection (Quantized Only)**
+- Enhancement's adaptive method selection based on data distribution
+- Used ONLY for quantized vector generation
+- Original vectors always use lossless ZSTD compression only
+
+#### Implementation Synergy
+
+```rust
+// Unified VIPER compression pipeline
+impl ViperCompressionPipeline {
+    pub fn compress_vectors(&self, vectors: &[Vec<f32>]) -> CompressedBatch {
+        // 1. Adaptive normalization from enhancement
+        let (normalized, method) = self.adaptive_normalize(vectors);
+        
+        // 2. Our PQ quantization design
+        let quantized = match self.config.quantization {
+            QuantizationType::PQ8 => self.pq8_quantize(&normalized),
+            QuantizationType::PQ4 => self.pq4_quantize(&normalized),
+        };
+        
+        // 3. Apply ZSTD compression
+        let compressed = zstd::compress(&quantized, self.config.zstd_level);
+        
+        CompressedBatch {
+            data: compressed,
+            normalization_params: method.params(),
+            quantization_type: self.config.quantization,
+        }
+    }
+}
+```
+
+#### Recommended Combined Approach
+
+1. **Adopt Trimmed Mean Normalization**: More robust than simple mean, faster than full median
+2. **Layer Normalization + Quantization**: Normalize first, then quantize for optimal compression
+3. **Sidecar Metadata**: Enhancement's `.vmeta` files align with our metadata design
+4. **Adaptive Selection**: Use enhancement's distribution analysis for automatic optimization
+
+### 15.2 Refactoring Design Patterns Enhancement Alignment
+
+The refactoring enhancement (`refactoring_design_patterns.adoc`) provides architectural patterns that strengthen our compression implementation:
+
+#### Configuration System Integration
+
+**Enhanced Configuration Builder (Priority 1)**
+```rust
+// Apply to compression configuration
+pub struct CompressionConfigBuilder {
+    environment: Environment,
+    storage_engine: StorageEngineType,
+    compression_profiles: HashMap<String, CompressionProfile>,
+}
+
+impl CompressionConfigBuilder {
+    pub fn with_sst_compression(level: u8) -> Self
+    pub fn with_viper_quantization(type: QuantizationType) -> Self
+    pub fn validate_and_build(self) -> Result<ValidatedCompressionConfig>
+}
+```
+
+Benefits:
+- Type-safe compression configuration
+- Environment-specific optimization profiles
+- Compile-time validation of compression settings
+
+#### Error Handling for Compression
+
+**Unified Error System (Priority 2)**
+```rust
+#[derive(Error, Debug)]
+pub enum CompressionError {
+    #[error("Compression failed: {operation} - {context}")]
+    CompressionFailed {
+        operation: String,
+        context: String,
+        code: CompressionErrorCode,
+        fallback_available: bool,
+    },
+    
+    #[error("Decompression error: corrupted data in block {block_id}")]
+    DecompressionFailed {
+        block_id: String,
+        recovery_strategy: RecoveryStrategy,
+    },
+}
+```
+
+Benefits:
+- Clear error handling for compression failures
+- Automatic fallback to uncompressed storage
+- Better debugging of compression issues
+
+#### Observability for Compression
+
+**Compression Metrics (Priority 3)**
+```rust
+#[instrument(
+    name = "compression.compress_block",
+    fields(engine, method, input_size, output_size),
+    metrics = ["compression_ratio", "compression_time_ms"]
+)]
+pub async fn compress_block(&self, block: DataBlock) -> Result<CompressedBlock> {
+    // Automatic metrics collection for:
+    // - Compression ratios per engine
+    // - Performance impact tracking
+    // - Adaptive threshold tuning
+}
+```
+
+Benefits:
+- Real-time compression effectiveness monitoring
+- Performance regression detection
+- Data-driven compression level tuning
+
+#### Plugin Architecture for Compression
+
+**Compression Plugin Interface (Priority 4)**
+```rust
+pub trait CompressionPlugin: ProximaPlugin {
+    fn algorithm_name(&self) -> &str;
+    fn compress(&self, data: &[u8], level: u8) -> Result<Vec<u8>>;
+    fn decompress(&self, data: &[u8]) -> Result<Vec<u8>>;
+    fn estimate_ratio(&self, sample: &[u8]) -> f32;
+}
+
+// Allows third-party compression algorithms
+// Examples: LZ4, Snappy, Brotli plugins
+```
+
+Benefits:
+- Extensible compression algorithm support
+- A/B testing different compression methods
+- Community-contributed optimizations
+
+### 15.3 Combined Implementation Strategy
+
+#### Phase 1: Foundation (Weeks 1-2)
+1. Implement SST block compression with ZSTD
+2. Add basic compression configuration
+3. Create compression metrics collection
+
+#### Phase 2: VIPER Enhancement (Weeks 3-4)
+1. Integrate trimmed mean normalization from enhancement
+2. Implement PQ quantization columns
+3. Add adaptive method selection
+4. Create `.vmeta` sidecar files
+
+#### Phase 3: Architecture Integration (Weeks 5-6)
+1. Apply configuration builder pattern
+2. Implement comprehensive error handling
+3. Add observability framework
+4. Create compression plugin interface
+
+#### Phase 4: Optimization (Weeks 7-8)
+1. Performance baseline establishment
+2. Compression ratio optimization
+3. Query performance tuning
+4. Documentation and testing
+
+### 15.4 Expected Combined Benefits
+
+**Compression Effectiveness**
+- SST: 30-40% reduction (ZSTD alone)
+- VIPER: 85-95% reduction (normalization + PQ8 + ZSTD)
+- Overall: 70-80% storage reduction
+
+**Performance Impact**
+- Write: 5-10% overhead (amortized through batching)
+- Read: <5% overhead (offset by reduced I/O)
+- Query: 10-15% overhead for decompression (cached results)
+
+**Operational Benefits**
+- Automatic compression tuning through observability
+- Clear error handling and recovery
+- Extensible through plugin architecture
+- Environment-specific optimization profiles
+
+## 16. Comprehensive Trade-off Analysis
+
+### 16.1 SST Engine Trade-offs
+
+| Aspect | Choice | Trade-off | Rationale |
+|--------|--------|-----------|-----------|
+| **Quantization** | Never use | Accuracy vs Size | Row storage requires reading entire record anyway |
+| **Block Size** | 8MB default | Memory vs Compression | Optimal for 768D vectors (~2350 vectors/block) |
+| **ZSTD Level** | 3-6 default | Speed vs Ratio | Balanced for write-heavy workloads |
+| **Metadata Sorting** | Always enabled | CPU vs Compression | +10-15% compression worth sorting cost |
+
+**Decision Matrix:**
+```yaml
+sst_profiles:
+  write_optimized:
+    zstd_level: 1      # Fastest writes
+    block_size: 4MB    # Lower memory usage
+    trade_off: "30% less compression for 50% faster writes"
+    
+  balanced:
+    zstd_level: 3      # Default
+    block_size: 8MB    # Optimal
+    trade_off: "Best overall performance"
+    
+  storage_optimized:
+    zstd_level: 9      # Maximum compression
+    block_size: 16MB   # Better compression
+    trade_off: "40% better compression, 2x slower writes"
+```
+
+### 16.2 VIPER Engine Trade-offs
+
+| Aspect | Choice | Trade-off | Rationale |
+|--------|--------|-----------|-----------|
+| **FP32 Column** | Always Present | Storage vs Fidelity | 100% fidelity non-negotiable |
+| **FP32 Compression** | ZSTD Only | Limited compression | Lossless requirement |
+| **Quantized Normalization** | Adaptive | Speed vs Compression | Applied to copies only |
+| **Quantization** | PQ8 default | Accuracy vs Size | Secondary index for speed |
+| **Dual Storage** | FP32 + Quantized | 2x storage | Flexibility worth the cost |
+
+**Decision Matrix:**
+```yaml
+viper_profiles:
+  fidelity_first:  # DEFAULT
+    fp32_column: 
+      compression: zstd_3       # Lossless only
+      normalization: none       # FORBIDDEN for FP32
+    quantized_column:
+      normalization: adaptive   # Can use any technique
+      quantization: pq8        # Good balance
+    trade_off: "100% fidelity + fast search, 2x storage"
+    
+  storage_optimized:
+    fp32_column:
+      compression: zstd_9       # Maximum lossless
+      normalization: none       # Still forbidden
+    quantized_column:
+      normalization: median     # Best compression
+      quantization: pq4        # Aggressive
+    trade_off: "100% fidelity maintained, 95% search accuracy"
+    
+  speed_optimized:
+    fp32_column:
+      compression: zstd_1       # Fast compression
+      cache: true              # Keep in memory
+    quantized_column:
+      normalization: mean       # Fastest
+      quantization: int8       # Simple
+    trade_off: "100% fidelity + fastest search, more memory"
+```
+
+**Compression Gains with Normalization on Quantized Columns:**
+| Quantization Type | Without Normalization | With Normalization | Additional Gain |
+|-------------------|----------------------|-------------------|-----------------|
+| INT8 | 4x reduction | 8-12x reduction | 2-3x |
+| PQ8 | 8x reduction | 24-32x reduction | 3-4x |
+| PQ4 | 16x reduction | 64-80x reduction | 4-5x |
+
+**Key Insight**: Normalization techniques provide 2-5x additional compression when applied to quantized columns, making the dual-storage approach more viable.
+
+### 16.3 Combined Strategy Trade-offs
+
+#### Memory vs Compression
+```
+Small Blocks (2-4MB):
+  ✅ Lower memory footprint
+  ✅ Faster random access
+  ❌ 10-20% worse compression
+  
+Large Blocks (8-16MB):
+  ✅ 40-60% better compression
+  ✅ Fewer metadata entries
+  ❌ Higher memory requirements
+  
+Decision: Dynamic sizing based on available memory
+```
+
+#### Accuracy vs Speed
+```
+Full Precision Path:
+  ✅ 100% accuracy guaranteed
+  ❌ 24x more I/O required
+  Use: Final reranking only
+  
+Quantized Path:
+  ✅ 24x less I/O
+  ✅ 100x faster search
+  ❌ 1-5% accuracy loss
+  Use: Candidate selection
+  
+Decision: Two-stage architecture maximizes both
+```
+
+#### Complexity vs Features
+```
+Simple Compression:
+  ✅ Easy to implement
+  ✅ Predictable behavior
+  ❌ 30-40% compression only
+  
+Advanced Pipeline:
+  ✅ 70-95% compression
+  ✅ Adaptive optimization
+  ❌ Complex implementation
+  ❌ More failure modes
+  
+Decision: Phased rollout with fallbacks
+```
+
+### 16.4 Workload-Specific Recommendations
+
+#### High-Throughput Ingestion
+```yaml
+configuration:
+  sst:
+    zstd_level: 1
+    block_size: 4MB
+    async_compression: true
+  viper:
+    normalization: mean
+    quantization: pq8
+    batch_size: 10000
+expected:
+  throughput: 100K vectors/sec
+  compression: 60%
+  accuracy: 99%
+```
+
+#### Storage-Constrained Deployment
+```yaml
+configuration:
+  sst:
+    zstd_level: 9
+    block_size: 16MB
+  viper:
+    normalization: median
+    quantization: pq4
+    aggressive_pruning: true
+expected:
+  compression: 90-95%
+  throughput: 10K vectors/sec
+  accuracy: 97%
+```
+
+#### Latency-Critical Search
+```yaml
+configuration:
+  sst:
+    zstd_level: 3
+    block_size: 8MB
+    cache_decompressed: true
+  viper:
+    normalization: trimmed_mean
+    quantization: pq8
+    prefetch_columns: true
+expected:
+  p99_latency: <10ms
+  compression: 70%
+  accuracy: 99%
+```
+
+### 16.5 Risk Mitigation Strategies
+
+| Risk | Mitigation | Fallback |
+|------|------------|----------|
+| **Compression Failure** | Validate before commit | Store uncompressed |
+| **Corruption** | CRC32 checksums | Recovery from WAL |
+| **Memory Pressure** | Dynamic block sizing | Smaller blocks |
+| **CPU Overload** | Async compression | Lower compression level |
+| **Accuracy Loss** | Monitor recall metrics | Disable quantization |
+
+### 16.6 Decision Framework
+
+```rust
+fn select_compression_strategy(
+    workload: &WorkloadProfile,
+    resources: &SystemResources,
+    requirements: &Requirements,
+) -> CompressionStrategy {
+    match (workload.write_rate, resources.memory, requirements.accuracy) {
+        (High, _, _) => Strategy::FastWrites,
+        (_, Low, _) => Strategy::SmallBlocks,
+        (_, _, Critical) => Strategy::NoQuantization,
+        (Low, High, Normal) => Strategy::MaxCompression,
+        _ => Strategy::Balanced,
+    }
+}
+```
+
+## 17. Final Consolidated Design
+
+### Architecture Overview
+
+![Combined Compression Strategy](./diagrams/images/combined-compression-strategy.svg)
+
+### Key Decisions (With 100% Fidelity Guarantee)
+
+1. **100% Vector Fidelity**: Original FP32 vectors ALWAYS preserved bit-perfectly
+2. **SST Never Quantizes**: Row storage makes quantization counterproductive
+3. **VIPER Dual Storage**: Original FP32 (lossless) + Optional quantized (lossy) columns
+4. **Normalization for Quantized Only**: Trimmed mean/median apply ONLY to quantized copies
+5. **Dynamic Block Sizing**: Adapts to vector dimensions and memory
+6. **Two-Stage Search**: VIPER quantized candidates → SST/VIPER FP32 precision
+7. **Configuration Profiles**: Pre-defined for common workloads
+8. **Observability First**: Metrics drive optimization decisions
+9. **Plugin Architecture**: Extensible for future algorithms
+
+### Storage Guarantees
+
+```rust
+// Every storage engine MUST implement this contract
+trait VectorStorageGuarantee {
+    /// Original vectors MUST be retrievable with 100% fidelity
+    fn retrieve_original(&self, id: &str) -> Vec<f32>;
+    
+    /// Quantized vectors are optional secondary indices
+    fn retrieve_quantized(&self, id: &str) -> Option<QuantizedVector>;
+    
+    /// Compression info must indicate if lossy techniques were used
+    fn compression_info(&self) -> CompressionInfo {
+        CompressionInfo {
+            original_compression: "ZSTD (lossless)",
+            quantized_compression: "PQ8 + Normalization (lossy)",
+            fidelity_guarantee: true,  // Always true for originals
+        }
+    }
+}
+```
+
+### Implementation Roadmap
+
+**Phase 1 (Weeks 1-2): Foundation**
+- SST block compression with ZSTD
+- Basic configuration system
+- Initial metrics collection
+
+**Phase 2 (Weeks 3-4): VIPER Enhancement**
+- Trimmed mean normalization integration
+- PQ8/PQ4 quantization columns
+- Sidecar metadata files
+
+**Phase 3 (Weeks 5-6): Architecture**
+- Configuration builder pattern
+- Comprehensive error handling
+- Observability framework
+- Plugin interfaces
+
+**Phase 4 (Weeks 7-8): Optimization**
+- Performance baselines
+- Adaptive tuning
+- Documentation
+- Testing suite
+
+### Success Metrics
+
+- **Storage Reduction**: 70-80% overall
+- **Query Performance**: <10ms p99 latency
+- **Accuracy**: 99%+ recall@10
+- **Throughput**: 50K+ vectors/sec ingestion
+- **Operational**: Zero compression-related incidents
