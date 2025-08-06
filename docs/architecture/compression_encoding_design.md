@@ -3,6 +3,28 @@
 ## Executive Summary
 Comprehensive design for granular per-collection compression control with optimal encoding strategies for SST and VIPER storage engines, supporting mixed compression during queries and gradual migration.
 
+## Visual Architecture
+
+### Compression Resolution Flow
+![Compression Resolution](../diagrams/images/compression-resolution.svg)
+*[View Mermaid Source](../diagrams/compression-resolution.mmd)*
+
+### VIPER Compression Architecture
+![VIPER Architecture](../diagrams/images/viper-compression-architecture.svg)
+*[View Mermaid Source](../diagrams/viper-compression-architecture.mmd)*
+
+### SST Vector Compression Techniques
+![SST Compression](../diagrams/images/sst-vector-compression.svg)
+*[View Mermaid Source](../diagrams/sst-vector-compression.mmd)*
+
+### Mixed Compression Migration
+![Migration Flow](../diagrams/images/mixed-compression-migration.svg)
+*[View Mermaid Source](../diagrams/mixed-compression-migration.mmd)*
+
+### Compression Decision Tree
+![Decision Tree](../diagrams/images/compression-decision-tree.svg)
+*[View Mermaid Source](../diagrams/compression-decision-tree.mmd)*
+
 ## Design Goals
 1. **Granular Control**: Per-collection compression configuration
 2. **Mixed Compression**: Support reading mixed compressed/uncompressed files during migration
@@ -79,6 +101,24 @@ message StorageOptimizationHints {
 ### 2.1 VIPER Engine (Columnar/Parquet)
 
 #### Critical Design Decision: Leverage Standard Arrow/Parquet Infrastructure
+
+```
+┌─────────────┐     ┌──────────────┐     ┌──────────────┐     ┌─────────────┐
+│   FP32      │────▶│  Transform   │────▶│   Standard   │────▶│   Parquet   │
+│  Vectors    │     │   Layer      │     │    Arrow     │     │    File     │
+└─────────────┘     └──────────────┘     └──────────────┘     └─────────────┘
+                           │                     │                     │
+                    ┌──────▼──────┐       ┌─────▼─────┐        ┌──────▼──────┐
+                    │ Quantization│       │  List<T>  │        │ Compressed  │
+                    │   Packing   │       │  Format   │        │   Storage   │
+                    │   Sparse→COO│       │  Native   │        │   ZSTD/LZ4  │
+                    └─────────────┘       └───────────┘        └─────────────┘
+                                                                       │
+                    ┌─────────────┐       ┌───────────┐        ┌──────▼──────┐
+                    │   FP32      │◀──────│ Transform │◀───────│    Read     │
+                    │  Vectors    │       │   Back    │        │   Parquet   │
+                    └─────────────┘       └───────────┘        └─────────────┘
+```
 
 **Principle**: Use standard Arrow writers/readers with their supported encodings. Custom transformations (quantization, bit-packing) happen BEFORE writing and AFTER reading, not within the Parquet layer.
 
@@ -312,6 +352,42 @@ impl SstableWriter {
 ```
 
 ## 3. Compression Resolution Strategy
+
+```
+                     ┌──────────────────────┐
+                     │  SDK Request         │
+                     │  compression_config? │
+                     └──────────┬───────────┘
+                                │
+                     ┌──────────▼───────────┐
+                     │  Has Config?         │
+                     └──────┬───┬───────────┘
+                          Yes│   │No
+                             │   │
+                   ┌─────────▼─┐ ▼─────────────┐
+                   │ Validate & │ Server Engine │
+                   │  Adjust    │   Defaults    │
+                   └─────────┬─┘ └──────┬──────┘
+                             │          │
+                             ▼          ▼
+                     ┌──────────────────────┐
+                     │  Apply Compression   │
+                     │     Configuration    │
+                     └──────────┬───────────┘
+                                │
+                     ┌──────────▼───────────┐
+                     │  Check Access        │
+                     │     Pattern          │
+                     └──────────┬───────────┘
+                                │
+                ┌───────────────┼───────────────┐
+                ▼               ▼               ▼
+         ┌──────────┐    ┌──────────┐   ┌──────────┐
+         │ Archive  │    │  Write   │   │  Read    │
+         │ ZSTD-9   │    │  Heavy   │   │  Heavy   │
+         │ Max Comp │    │   LZ4    │   │  None    │
+         └──────────┘    └──────────┘   └──────────┘
+```
 
 ### 3.1 Collection Service Resolution
 ```rust
@@ -672,6 +748,30 @@ client.create_collection(
 ## 11. SST Vector Optimization (Custom Serialization)
 
 ### 11.1 Advanced Vector Compression Techniques
+
+```
+┌──────────────────────────────────────────────────────────────────┐
+│                        SST Vector Analysis                        │
+├────────────────┬─────────────────┬─────────────────┬────────────┤
+│   Similarity   │    Sparsity     │   Precision     │   Random   │
+│    Analysis    │    Detection    │   Analysis      │   Dense    │
+├────────────────┼─────────────────┼─────────────────┼────────────┤
+│ Similar: >0.8  │  Sparse: >70%   │  Can Reduce     │  Default   │
+│      ↓         │       ↓         │       ↓         │      ↓     │
+│  XOR Delta     │   COO/CSR       │   Adaptive      │   ZSTD     │
+│  40-60% comp   │  70-90% comp    │  50-75% comp    │  10-30%    │
+└────────────────┴─────────────────┴─────────────────┴────────────┘
+                               ↓
+                    ┌──────────────────────┐
+                    │   SST Block V2       │
+                    ├──────────────────────┤
+                    │ • Magic: SST2        │
+                    │ • Compression Type   │
+                    │ • Vector Encoding    │
+                    │ • Dimensions         │
+                    │ • Checksums          │
+                    └──────────────────────┘
+```
 
 Since SST has full control over serialization, we can implement sophisticated compression beyond standard algorithms.
 

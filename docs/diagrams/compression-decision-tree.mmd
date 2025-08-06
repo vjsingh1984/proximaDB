@@ -1,0 +1,59 @@
+graph TD
+    Start([New Collection]) --> Engine{Storage<br/>Engine?}
+    
+    Engine -->|VIPER| ViperPath[Columnar Storage<br/>Analytics Optimized]
+    Engine -->|SST| SstPath[Row Storage<br/>Write Optimized]
+    
+    ViperPath --> VectorType1{Vector<br/>Type?}
+    VectorType1 -->|FP32| VFP32[Standard Parquet<br/>List&lt;Float32&gt;<br/>30-50% compression]
+    VectorType1 -->|INT8/16| VQuant[Quantized Storage<br/>List&lt;Int8/16&gt;<br/>75% reduction]
+    VectorType1 -->|4-6 bit| VCustom[Pack to INT8<br/>with Bytemuck<br/>81-87% reduction]
+    VectorType1 -->|Sparse| VSparse[COO Format<br/>indices + values<br/>70-90% reduction]
+    
+    SstPath --> VectorChar{Vector<br/>Characteristics?}
+    VectorChar -->|Similar<br/>Sequential| SXOR[XOR Delta<br/>40-60% compression]
+    VectorChar -->|High<br/>Precision Waste| SAdaptive[Adaptive Precision<br/>50-75% compression]
+    VectorChar -->|>70% Sparse| SSparse[COO/CSR Format<br/>70-90% compression]
+    VectorChar -->|Random Dense| SStandard[ZSTD Only<br/>10-30% compression]
+    
+    VFP32 --> Access1{Access<br/>Pattern?}
+    VQuant --> Access1
+    VCustom --> Access1
+    VSparse --> Access1
+    
+    SXOR --> Access2{Access<br/>Pattern?}
+    SAdaptive --> Access2
+    SSparse --> Access2
+    SStandard --> Access2
+    
+    Access1 -->|Archive| A1[ZSTD-9<br/>Max compression]
+    Access1 -->|Read Heavy| A2[ZSTD-1 or None<br/>Low latency]
+    Access1 -->|Write Heavy| A3[LZ4<br/>Fast compression]
+    Access1 -->|Balanced| A4[ZSTD-3<br/>Balanced]
+    
+    Access2 -->|Archive| A5[ZSTD-9<br/>Max compression]
+    Access2 -->|Read Heavy| A6[ZSTD-1 or None<br/>Low latency]
+    Access2 -->|Write Heavy| A7[LZ4<br/>Fast compression]
+    Access2 -->|Balanced| A8[ZSTD-3<br/>Balanced]
+    
+    A1 --> Result1[/Expected:<br/>60-80% reduction<br/>-30% query speed/]
+    A2 --> Result2[/Expected:<br/>30-50% reduction<br/>Baseline speed/]
+    A3 --> Result3[/Expected:<br/>40-60% reduction<br/>-10% write speed/]
+    A4 --> Result4[/Expected:<br/>50-70% reduction<br/>-15% overall speed/]
+    
+    A5 --> Result5[/Expected:<br/>70-90% reduction<br/>-30% query speed/]
+    A6 --> Result6[/Expected:<br/>40-60% reduction<br/>-5% query speed/]
+    A7 --> Result7[/Expected:<br/>50-70% reduction<br/>-10% write speed/]
+    A8 --> Result8[/Expected:<br/>60-80% reduction<br/>-15% overall speed/]
+    
+    style Start fill:#e1f5fe
+    style ViperPath fill:#fff3e0
+    style SstPath fill:#f3e5f5
+    style Result1 fill:#ffebee
+    style Result2 fill:#e8f5e9
+    style Result3 fill:#e8f5e9
+    style Result4 fill:#fff9c4
+    style Result5 fill:#ffebee
+    style Result6 fill:#e8f5e9
+    style Result7 fill:#e8f5e9
+    style Result8 fill:#fff9c4
