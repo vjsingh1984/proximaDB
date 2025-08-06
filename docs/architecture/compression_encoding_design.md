@@ -37,16 +37,26 @@ Finalized design for granular per-collection compression control with optimal en
 ![Timeline](../diagrams/images/implementation-phases.svg)
 *[View Mermaid Source](../diagrams/implementation-phases.mmd)*
 
-## Finalized Design Decisions (Release 1.0)
+## Finalized Design Decisions (Release 1.0 - REVISED)
+
+### Engine-Specific Quantization Strategy
+![Engine Strategy](../diagrams/images/engine-quantization-strategy.svg)
+*[View Mermaid Source](../diagrams/engine-quantization-strategy.mmd)*
+
+### SST Compression Levels
+![SST Compression](../diagrams/images/sst-compression-levels.svg)
+*[View Mermaid Source](../diagrams/sst-compression-levels.mmd)*
 
 | Component | Decision | Rationale |
 |-----------|----------|-----------|
 | **Default Compression** | ZSTD-3 | Balanced performance/compression for initial release |
-| **SST Vector Method** | Adaptive Precision Reduction | Universal applicability, 50-75% reduction, predictable -5% read overhead |
-| **VIPER Quantization** | Pack 4-6 bit into INT8 with bytemuck | Maximum compression while maintaining Parquet compatibility |
+| **SST Quantization** | **NOT RECOMMENDED** | Row storage requires reading entire record - quantization increases I/O |
+| **SST Strategy** | FP32 only + ZSTD block compression | Optimal I/O, 100% accuracy, 20-40% compression |
+| **VIPER Quantization** | **STRONGLY RECOMMENDED** | Columnar storage allows reading only quantized column |
+| **VIPER Strategy** | Write quantized columns (INT8/PQ) | 24x less I/O, 100x faster search |
 | **Migration Strategy** | Support mixed compression reading | Allows gradual migration without downtime |
-| **Compression Tuning** | Fixed levels per access pattern | Predictable overhead, simpler implementation |
-| **Python SDK** | Smart defaults based on dimension/engine | Better out-of-box experience |
+| **Compression Levels** | User configurable (ZSTD 1-9) | Trade-off between speed and compression ratio |
+| **Python SDK** | Smart defaults based on engine | VIPER → quantization, SST → FP32 only |
 
 ## Design Goals
 1. **Granular Control**: Per-collection compression configuration
@@ -861,27 +871,46 @@ client.create_collection(
                     └──────────────────────┘
 ```
 
-**DECISION: Adaptive Precision for QUANTIZED vectors, Lossless compression for FP32**
+**REVISED DECISION: SST should NOT use quantization - FP32 only with block compression**
 
-#### PRIMARY STRATEGY [SELECTED FOR RELEASE 1.0]
+#### SST ENGINE STRATEGY [FINAL FOR RELEASE 1.0]
 
-##### For FP32 Vectors: Block-Level Lossless Compression
-- **Method**: ZSTD-3 on entire data blocks (not per-vector)
-- **Block Size**: ~1000 vectors per block (6MB uncompressed)
-- **Compression**: 20-40% reduction (better with larger blocks)
-- **Accuracy**: 100% preserved
+##### Primary Approach: FP32-Only with Block Compression
+- **Method**: ZSTD on entire data blocks (1000 vectors)
+- **NO QUANTIZATION**: Avoid dual storage in row format
+- **Compression Levels**: User configurable (1-9)
+  - ZSTD-1: 15-25% reduction, fastest (real-time)
+  - ZSTD-3: 20-40% reduction, balanced (default)
+  - ZSTD-6: 35-50% reduction, cold storage
+  - ZSTD-9: 40-60% reduction, archive
+- **Sparse Bonus**: Additional 20-30% if >70% zeros
+- **Accuracy**: 100% preserved always
+
+##### Why NO Quantization in SST:
+```
+Row Storage Reality:
+[ID | FP32 Vector | Quantized Vector | Metadata]
+        ↑              ↑
+   Must read      Adds I/O overhead
+   entire row     Makes it WORSE
+```
+
+#### VIPER ENGINE STRATEGY [QUANTIZATION RECOMMENDED]
+
+##### Primary Approach: Quantization in Separate Columns
+- **Method**: Store quantized vectors in dedicated columns
+- **Columnar Advantage**: Read ONLY what you need
+```
+Column Storage:
+├── fp32_vector_column     ← Skip during search
+├── int8_vector_column     ← Read only this (24x less I/O)
+├── pq_codes_column        ← Or this (256B per vector)
+└── metadata_columns       ← Read if filtering
+```
 - **Benefits**: 
-  - Single decompression per block
-  - Better compression ratio (cross-vector patterns)
-  - Amortized decompression cost
-
-##### For Quantized Vectors (INT8/INT16): Adaptive Precision ⭐
-- **Method**: Further reduce already-quantized vectors
-- **Example**: INT16 → adaptive 12-bit (25% additional savings)
-- **Example**: INT8 → adaptive 6-bit (25% additional savings)  
-- **Compression**: 50-75% total reduction from original FP32
-- **CPU Cost**: Medium write (-20%), Low read (-5%)
-- **Rationale**: Already accepted quantization loss, can optimize further
+  - 24x less I/O for quantized search
+  - 100x faster candidate selection
+  - Optional FP32 for precision when needed
 
 ```rust
 struct AdaptivePrecisionBlock {
@@ -1071,17 +1100,22 @@ struct StreamingReader {
 - ❌ **Optimization Limits**: Cannot use custom encodings
 - ❌ **Transformation Overhead**: Pre/post processing cost
 
-### 12.2 SST Engine - CONFIRMED APPROACH
+### 12.2 SST Engine - REVISED APPROACH
 
-**DECISION**: Implement Adaptive Precision Reduction as PRIMARY method
+**DECISION**: FP32-only with configurable ZSTD compression levels
 
-| Vector Type | Release 1.0 Method | Expected Reduction | Status |
-|-------------|-------------------|-------------------|---------|
-| **FP32 Vectors** | **ZSTD-3 (Lossless)** | **10-30%** | **100% Accuracy** |
-| **INT16 Quantized** | **Adaptive 12-bit** ⭐ | **62.5% total** | **PRIMARY** |
-| **INT8 Quantized** | **Adaptive 6-bit** ⭐ | **81% total** | **PRIMARY** |
-| Similar Sequential | XOR Delta | 40-60% | Future (Phase 5) |
-| Sparse (>70% zeros) | COO/CSR Format | 70-90% | Future (Phase 5) |
+| Configuration | Compression Level | Storage Reduction | Performance | Use Case |
+|--------------|------------------|-------------------|-------------|----------|
+| **Real-time** | ZSTD-1 | 15-25% | Write: 9.5K/s, Read: 50K/s | Hot data |
+| **Balanced** | ZSTD-3 (default) | 20-40% | Write: 9K/s, Read: 49K/s | General |
+| **Storage-optimized** | ZSTD-6 | 35-50% | Write: 7K/s, Read: 47K/s | Cold data |
+| **Archive** | ZSTD-9 | 40-60% | Write: 5K/s, Read: 45K/s | Rarely accessed |
+| **Sparse vectors** | Any + sparse | +20-30% bonus | Same | >70% zeros |
+
+**Why NO Quantization in SST**:
+- Row storage requires reading entire record
+- Adding quantized field INCREASES I/O (not decreases)
+- Quantization benefits only work with columnar storage
 
 **Key Trade-offs**:
 - ✅ **Maximum Compression**: Custom techniques for 50-70% reduction

@@ -1,0 +1,50 @@
+graph TD
+    Start([Vector Storage Decision]) --> Engine{Which Engine?}
+    
+    Engine -->|VIPER<br/>Columnar| ViperPath
+    Engine -->|SST<br/>Row-based| SstPath
+    
+    subgraph ViperPath["VIPER: Quantization RECOMMENDED ✓"]
+        VP1[Columnar Storage<br/>Read only what you need]
+        VP2[Perfect for Quantization<br/>Separate columns for each type]
+        
+        VP1 --> VQuant{Quantization<br/>Strategy}
+        
+        VQuant -->|Write Quantized| VQ1[INT8/INT4 Column<br/>24x less I/O]
+        VQuant -->|Write PQ Codes| VQ2[PQ Codes Column<br/>256B per vector]
+        VQuant -->|Write Both| VQ3[FP32 + Quantized<br/>Separate columns]
+        
+        VQ1 --> VBenefit1[Read only quantized<br/>for search]
+        VQ2 --> VBenefit2[Read only PQ codes<br/>for candidates]
+        VQ3 --> VBenefit3[Choose column<br/>based on query]
+    end
+    
+    subgraph SstPath["SST: Quantization NOT RECOMMENDED ✗"]
+        SP1[Row Storage<br/>Must read entire record]
+        SP2[Adding quantization<br/>INCREASES I/O]
+        
+        SP1 --> SQuant{Quantization<br/>Decision}
+        
+        SQuant -->|NO Quantization| SQ1[FP32 Only<br/>+ ZSTD Block Compression]
+        SQuant -->|Has Quantization| SQ2[Forced to store both<br/>FP32 + Quantized]
+        
+        SQ1 --> SBenefit1[✓ Optimal I/O<br/>✓ 100% accuracy<br/>✓ 20-40% compression]
+        SQ2 --> SBenefit2[✗ Wasted I/O<br/>✗ Storage overhead<br/>✗ Complexity]
+    end
+    
+    subgraph Recommendations["Final Recommendations"]
+        R1[VIPER: Use quantization<br/>for fast search]
+        R2[SST: Use FP32 only<br/>with block compression]
+        R3[Two-stage: VIPER candidates<br/>→ SST precision]
+        
+        R1 --> Perf1[100x faster<br/>24x less I/O]
+        R2 --> Perf2[100% accuracy<br/>Optimal I/O]
+        R3 --> Perf3[Best of both<br/>Fast + Accurate]
+    end
+    
+    style ViperPath fill:#e8f5e9
+    style SstPath fill:#ffebee
+    style VQ1 fill:#c8e6c9,stroke:#4caf50,stroke-width:2px
+    style VQ2 fill:#c8e6c9,stroke:#4caf50,stroke-width:2px
+    style SQ1 fill:#c8e6c9,stroke:#4caf50,stroke-width:2px
+    style SQ2 fill:#ffcdd2,stroke:#f44336,stroke-width:2px

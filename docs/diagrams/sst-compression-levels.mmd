@@ -1,0 +1,41 @@
+graph LR
+    subgraph SST["SST Engine - FP32 Only Strategy"]
+        Input[FP32 Vectors<br/>1536d = 6KB each]
+        
+        Input --> Block[Group into Blocks<br/>1000 vectors = 6MB]
+        
+        Block --> Level{Compression<br/>Level Choice}
+        
+        Level -->|Speed Priority| L1[ZSTD-1<br/>Fastest]
+        Level -->|Balanced| L3[ZSTD-3<br/>Default]
+        Level -->|Storage Priority| L6[ZSTD-6<br/>Better Ratio]
+        Level -->|Maximum Savings| L9[ZSTD-9<br/>Best Ratio]
+        
+        L1 --> P1[Compression: 15-25%<br/>Write: 9.5K vec/s<br/>Read: 50K vec/s]
+        L3 --> P3[Compression: 20-40%<br/>Write: 9K vec/s<br/>Read: 49K vec/s]
+        L6 --> P6[Compression: 35-50%<br/>Write: 7K vec/s<br/>Read: 47K vec/s]
+        L9 --> P9[Compression: 40-60%<br/>Write: 5K vec/s<br/>Read: 45K vec/s]
+    end
+    
+    subgraph Sparse["Sparse Vector Bonus"]
+        SparseCheck{Vector<br/>Sparsity}
+        
+        SparseCheck -->|>70% zeros| SparseBonus[+20-30%<br/>compression]
+        SparseCheck -->|Dense| NoBonus[Standard<br/>compression]
+        
+        P1 --> SparseCheck
+        P3 --> SparseCheck
+        P6 --> SparseCheck
+        P9 --> SparseCheck
+    end
+    
+    subgraph Decision["Decision Matrix"]
+        D1[Real-time Search → ZSTD-1]
+        D2[General Purpose → ZSTD-3]
+        D3[Cold Storage → ZSTD-6]
+        D4[Archive → ZSTD-9]
+    end
+    
+    style L3 fill:#c8e6c9,stroke:#4caf50,stroke-width:2px
+    style P3 fill:#fff9c4
+    style D2 fill:#c8e6c9
