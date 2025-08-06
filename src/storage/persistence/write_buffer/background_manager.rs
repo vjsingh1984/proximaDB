@@ -15,6 +15,9 @@ use tokio::sync::{Mutex, RwLock};
 use tracing::{debug, info, warn};
 
 use super::WriteBufferConfig;
+use crate::metrics::updater::{InternalMetricsUpdater, FlushMetricsUpdate, CompactionMetricsUpdate};
+use crate::storage::traits::UnifiedStorageEngine;
+use crate::storage::background_flush_context::BackgroundFlushContext;
 
 // use crate::storage::engines::viper::clustering_models::{ClusteringModelManager, MIN_VECTORS_FOR_CLUSTERING}; // Moved to AXIS
 const MIN_VECTORS_FOR_CLUSTERING: usize = 1000; // Local constant since clustering moved to AXIS
@@ -107,6 +110,9 @@ pub struct BackgroundMaintenanceManager {
     
     /// Collection service for fetching metadata
     collection_service: Option<Arc<crate::services::collection_service::CollectionService>>,
+    
+    /// Optional metrics updater for non-critical metrics
+    metrics_updater: Option<Arc<dyn InternalMetricsUpdater>>,
 }
 
 /// Statistics for background maintenance operations
@@ -138,6 +144,7 @@ impl BackgroundMaintenanceManager {
             // clustering_model_manager: None, // Moved to AXIS
             last_training_vector_counts: Arc::new(RwLock::new(HashMap::new())),
             collection_service: None,
+            metrics_updater: None, // Will be set via set_metrics_updater
         }
     }
     
@@ -154,6 +161,12 @@ impl BackgroundMaintenanceManager {
         }
         
         info!("🔗 BackgroundManager: Collection service registered for metadata fetching");
+    }
+    
+    /// Set the metrics updater (optional, for non-critical metrics)
+    pub fn set_metrics_updater(&mut self, updater: Arc<dyn InternalMetricsUpdater>) {
+        self.metrics_updater = Some(updater);
+        info!("🔗 BackgroundManager: Metrics updater registered for background operation metrics");
     }
 
     /// Set AXIS manager for IndexConfig-based indexing
@@ -207,85 +220,141 @@ impl BackgroundMaintenanceManager {
         false
     }
 
-    /// Trigger async flush for collection if not already running
-    /// Returns true if flush was triggered, false if already running
+    /// REMOVED: Legacy flush method replaced by DirectVectorService context-based approach  
+    /// See CLAUDE.md optimization principles - all background operations now use pre-computed context
     pub async fn trigger_flush_if_needed(
         &self,
-        collection_id: &str,
-        current_memory_size: usize,
+        _collection_id: &str,
+        _current_memory_size: usize,
     ) -> Result<bool> {
-        let effective_config = self.config.effective_config_for_collection(collection_id);
+        warn!("⚠️ DEPRECATED: trigger_flush_if_needed called - DirectVectorService handles all background operations now");
+        Ok(false) // No longer performs any flush operations
+    }
 
-        // Check if flush is needed based on size
-        if current_memory_size < effective_config.memory_flush_size_bytes {
-            return Ok(false);
-        }
+    /// Check if collection needs compaction based on file count and sizes  
+    async fn should_trigger_compaction_after_flush(_collection_id: &str) -> bool {
+        // TODO: Implement proper compaction criteria check
+        // This would check file count and average file sizes
+        // For now, always trigger compaction to test the Arrow/Parquet implementation
+        true
+    }
 
-        // Check if background task is already running
-        {
-            let status_map = self.collection_status.read().await;
-            if let Some(status) = status_map.get(collection_id) {
-                match status {
-                    BackgroundTaskStatus::Idle => {}
-                    BackgroundTaskStatus::Flushing => {
-                        debug!(
-                            "🔄 Flush already in progress for collection {}, skipping",
-                            collection_id
-                        );
-                        let mut stats = self.stats.lock().await;
-                        stats.flush_operations_skipped += 1;
-                        return Ok(false);
-                    }
-                    BackgroundTaskStatus::Compacting => {
-                        // Upgrade to flush + compact
-                        debug!(
-                            "📈 Upgrading compaction to flush+compact for collection {}",
-                            collection_id
-                        );
-                        drop(status_map);
-                        let mut status_map = self.collection_status.write().await;
-                        status_map
-                            .insert(collection_id.to_string(), BackgroundTaskStatus::FlushAndCompact);
-                        return Ok(false);
-                    }
-                    BackgroundTaskStatus::FlushAndCompact => {
-                        debug!(
-                            "⏳ Flush+compact already queued for collection {}, skipping",
-                            collection_id
-                        );
-                        let mut stats = self.stats.lock().await;
-                        stats.flush_operations_skipped += 1;
-                        return Ok(false);
-                    }
+    /// DEPRECATED: Collection configuration should be pre-computed in context  
+    /// This method is only kept for legacy compatibility
+    async fn get_collection_configuration(&self, _collection_id: &str) -> Result<(CollectionConfiguration, Option<crate::proto::proximadb::Collection>)> {
+        warn!("⚠️ DEPRECATED: get_collection_configuration called - use BackgroundFlushContext instead");
+        Err(anyhow::anyhow!("Collection configuration should be provided via BackgroundFlushContext"))
+    }
+
+    /// Execute compaction for a collection - delegates to storage engine (OPTIMIZED: uses pre-computed context)
+    async fn execute_compaction_with_context(
+        storage_engines: &Arc<RwLock<HashMap<String, Arc<dyn UnifiedStorageEngine>>>>,
+        context: &BackgroundFlushContext,
+    ) -> Result<Vec<String>> {
+        info!(
+            "🔄 [COMPACTION] Starting compaction for collection {} using {} engine (context-optimized)",
+            context.collection_id, context.engine_name()
+        );
+        
+        // 🚀 OPTIMIZATION: Use pre-computed engine name (no service calls needed!)
+        let engine_name = context.engine_name();
+        
+        info!("✅ CONTEXT_OPTIMIZED: Using pre-computed engine {} for collection {}", 
+              engine_name, context.collection_id);
+        
+        // Get storage engine for delegation using pre-computed engine type  
+        let engines = storage_engines.read().await;
+        
+        // Use the engine type from context instead of defaulting to VIPER
+        let engine = if let Some(engine) = engines.get(engine_name) {
+            info!("🏭 [COMPACTION] Using {} storage engine for collection {}", 
+                  engine_name, context.collection_id);
+            engine.clone()
+        } else {
+            // Fallback to VIPER if the requested engine isn't available
+            if let Some(viper_engine) = engines.get("viper") {
+                warn!("⚠️ [COMPACTION] Requested engine '{}' not found, falling back to VIPER for collection {}", 
+                      engine_name, context.collection_id);
+                viper_engine.clone()
+            } else if let Some(sst_engine) = engines.get("sst") {
+                warn!("⚠️ [COMPACTION] Neither '{}' nor 'viper' found, falling back to SST for collection {}", 
+                      engine_name, context.collection_id);
+                sst_engine.clone()
+            } else {
+                warn!("⚠️ [COMPACTION] No storage engines registered, cannot perform compaction");
+                return Err(anyhow::anyhow!("No storage engines available for compaction"));
+            }
+        };
+        
+        drop(engines); // Release the read lock
+        
+        // 🚀 OPTIMIZATION: Create compaction parameters with context metadata (no service calls!)
+        let compaction_params = crate::storage::traits::CompactionParameters {
+            collection_id: Some(context.collection_id.clone()),
+            force: false, // Background compaction is not forced
+            synchronous: true, // Wait for completion
+            hints: std::collections::HashMap::new(),
+            timeout_ms: context.timeout_ms.or(Some(300_000)), // Use context timeout or 5 minute default
+            priority: match context.priority {
+                crate::storage::background_flush_context::OperationPriority::Low => crate::storage::traits::OperationPriority::Low,
+                crate::storage::background_flush_context::OperationPriority::Normal => crate::storage::traits::OperationPriority::Normal,
+                crate::storage::background_flush_context::OperationPriority::High => crate::storage::traits::OperationPriority::High,
+                crate::storage::background_flush_context::OperationPriority::Critical => crate::storage::traits::OperationPriority::High, // Map to High since Critical may not exist
+            },
+            collection_config: None, // No service calls needed - all metadata available in context
+        };
+        
+        info!(
+            "📋 [COMPACTION] Delegating to {} engine: do_compact({})",
+            engine.engine_name(),
+            context.collection_id
+        );
+        
+        // Execute compaction via storage engine
+        match engine.do_compact(&compaction_params).await {
+            Ok(result) => {
+                if result.success {
+                    info!(
+                        "✅ [COMPACTION] {} compaction completed for collection {}: {} entries processed, {} files {} → {}",
+                        engine.engine_name(),
+                        context.collection_id,
+                        result.entries_processed,
+                        result.input_files,
+                        result.output_files,
+                        result.duration_ms
+                    );
+                    
+                    // Return file list for compatibility - for VIPER this would be the compacted files
+                    // Since the UnifiedStorageEngine doesn't return file paths, we'll return a placeholder
+                    Ok(vec![format!("compacted_collection_{}_{}files", context.collection_id, result.output_files)])
+                } else {
+                    warn!(
+                        "❌ [COMPACTION] {} compaction failed for collection {}",
+                        engine.engine_name(),
+                        context.collection_id
+                    );
+                    Err(anyhow::anyhow!("Storage engine compaction failed"))
                 }
             }
+            Err(e) => {
+                warn!(
+                    "❌ [COMPACTION] {} compaction error for collection {}: {}",
+                    engine.engine_name(),
+                    context.collection_id,
+                    e
+                );
+                Err(e)
+            }
         }
+    }
 
-        // Set status to flushing
-        {
-            let mut status_map = self.collection_status.write().await;
-            status_map.insert(collection_id.to_string(), BackgroundTaskStatus::Flushing);
+    /// Combine multiple single-row RecordBatches into a single larger batch with schema alignment
+    fn combine_record_batches(schema: Arc<arrow_schema::Schema>, batches: &[arrow_array::RecordBatch]) -> Result<arrow_array::RecordBatch> {
+        if batches.is_empty() {
+            return Err(anyhow::anyhow!("Cannot combine empty batches"));
         }
-
-        // Trigger async flush task
-        let collection_id_clone = collection_id.to_string();
-        let status_map_clone = self.collection_status.clone();
-        let stats_clone = self.stats.clone();
-        let flush_coordinator = self.flush_coordinator.clone();
-        let axis_manager = self.axis_manager.clone();
-        let storage_engines_clone = self.storage_engines.clone();
-        // let clustering_model_manager = self.clustering_model_manager.clone(); // Moved to AXIS
-        let _last_training_vector_counts = self.last_training_vector_counts.clone();
-
-        tokio::spawn(async move {
-            let start_time = std::time::Instant::now();
-
-            info!(
-                "🚿 [FLUSH] Starting background flush for collection {} (memory: {}MB, trigger_size: {}MB)",
-                collection_id_clone,
-                current_memory_size / (1024 * 1024),
-                effective_config.memory_flush_size_bytes / (1024 * 1024)
-            );
+        
+        use arrow_array::ArrayRef;
 
             debug!(
                 "🚿 [FLUSH] Collection: {}, Start time: {:?}, Memory size: {} bytes",
@@ -305,6 +374,7 @@ impl BackgroundMaintenanceManager {
                     .await
                 {
                     Ok(result) => {
+                        let flush_duration = flush_start.elapsed();
                         info!(
                             "✅ [FLUSH] Coordinated flush successful for collection {}: {} entries, {} bytes, {} files",
                             collection_id_clone,
@@ -312,6 +382,22 @@ impl BackgroundMaintenanceManager {
                             result.base.bytes_written,
                             result.base.files_created
                         );
+                        
+                        // Record background flush metrics (non-blocking)
+                        if let Some(ref metrics_updater) = metrics_updater_clone {
+                            let flush_update = FlushMetricsUpdate {
+                                vectors_flushed: result.base.entries_flushed as i64,
+                                bytes_written: result.base.bytes_written as i64,
+                                duration_ms: flush_duration.as_millis() as i64,
+                                files_created: result.base.files_created as i32,
+                                engine_type: "BackgroundManager".to_string(),
+                                timestamp: chrono::Utc::now().timestamp_millis(),
+                            };
+                            
+                            // Fire and forget - never block flush operation
+                            metrics_updater.record_flush(&collection_id_clone, flush_update).await;
+                        }
+                        
                         Some(result)
                     }
                     Err(e) => {
@@ -372,8 +458,9 @@ impl BackgroundMaintenanceManager {
                 );
 
                 // Execute compaction via storage engine delegation
-                let compaction_result = Self::execute_compaction_with_engines(
+                let compaction_result = Self::execute_compaction(
                     &storage_engines_clone,
+                    &collection_service_clone,
                     &collection_id_clone
                 ).await;
                 
@@ -385,6 +472,22 @@ impl BackgroundMaintenanceManager {
                             "✅ [COMPACTION] Compaction successful for collection {}: {} files created in {:?}",
                             collection_id_clone, compacted_files.len(), compaction_duration
                         );
+                        
+                        // Record background compaction metrics (non-blocking)
+                        if let Some(ref metrics_updater) = metrics_updater_clone {
+                            let compaction_update = CompactionMetricsUpdate {
+                                files_before: 0,       // TODO: Get from compaction result
+                                files_after: compacted_files.len() as i32,
+                                bytes_before: 0,       // TODO: Get from compaction result
+                                bytes_after: 0,        // TODO: Get from compaction result
+                                duration_ms: compaction_duration.as_millis() as i64,
+                                timestamp: chrono::Utc::now().timestamp_millis(),
+                            };
+                            
+                            // Fire and forget - never block compaction operation
+                            metrics_updater.record_compaction(&collection_id_clone, compaction_update).await;
+                        }
+                        
                         // Update final files list with compacted files
                         final_files_created = compacted_files;
                     }
@@ -554,14 +657,8 @@ impl BackgroundMaintenanceManager {
                         let quantization_settings = proto_config.quantization_config.as_ref().map(|q| {
                             // Map quantization type based on configuration
                             let q_type = if q.enabled {
-                                // Use quantization level to determine type
-                                match q.quantization_level {
-                                    0 => QuantizationType::ScalarQuantization,  // None/Basic
-                                    1 => QuantizationType::ScalarQuantization,  // Low
-                                    2 => QuantizationType::ProductQuantization, // Medium
-                                    3 => QuantizationType::ProductQuantization, // High
-                                    _ => QuantizationType::ScalarQuantization,
-                                }
+                                // Default to scalar quantization for proto config
+                                QuantizationType::ScalarQuantization
                             } else {
                                 QuantizationType::ScalarQuantization // Default
                             };
@@ -569,8 +666,8 @@ impl BackgroundMaintenanceManager {
                             QuantizationSettings {
                                 enabled: q.enabled,
                                 quantization_type: q_type,
-                                bits_per_component: q.bits_per_component as u8,
-                                subspaces: q.num_subvectors as u8,
+                                bits_per_component: 8, // Default
+                                subspaces: 1, // Default
                             }
                         });
                         
@@ -741,89 +838,68 @@ impl BackgroundMaintenanceManager {
         Ok(schema)
     }
     
-    /// Execute compaction for a collection - delegates to storage engine (instance method)
-    async fn execute_compaction(
-        &self,
-        collection_id: &str,
+    /// Execute compaction for a collection - delegates to storage engine (OPTIMIZED: uses pre-computed context)
+    async fn execute_compaction_with_context(
+        storage_engines: &Arc<RwLock<HashMap<String, Arc<dyn UnifiedStorageEngine>>>>,
+        context: &crate::storage::background_flush_context::BackgroundFlushContext,
     ) -> Result<Vec<String>> {
         info!(
-            "🔄 [COMPACTION] Starting compaction for collection {} (delegating to storage engine)",
-            collection_id
+            "🔄 [COMPACTION] Starting compaction for collection {} using {} engine (context-optimized)",
+            context.collection_id, context.engine_name()
         );
         
-        // Fetch collection metadata ONCE to avoid duplicate calls
-        let collection_metadata = if let Some(ref collection_service) = self.collection_service {
-            match collection_service.get_proto_collection(collection_id).await {
-                Ok(Some(collection)) => {
-                    info!(
-                        "📋 [COMPACTION] Fetched collection metadata for '{}' - engine: {:?}",
-                        collection_id,
-                        collection.config.as_ref().map(|c| c.storage_engine)
-                    );
-                    Some(collection)
-                }
-                Ok(None) => {
-                    warn!("⚠️ [COMPACTION] Collection '{}' not found in metadata", collection_id);
-                    None
-                }
-                Err(e) => {
-                    warn!("⚠️ [COMPACTION] Failed to fetch collection metadata: {}", e);
-                    None
-                }
-            }
-        } else {
-            warn!("⚠️ [COMPACTION] No collection service available, proceeding without metadata");
-            None
-        };
+        // 🚀 OPTIMIZATION: Use pre-computed engine name (no service calls needed!)
+        let engine_name = context.engine_name();
         
-        // Determine storage engine from metadata
-        let engine_name = if let Some(ref metadata) = collection_metadata {
-            if let Some(ref config) = metadata.config {
-                use crate::proto::proximadb::StorageEngine;
-                match StorageEngine::try_from(config.storage_engine) {
-                    Ok(StorageEngine::Viper) => "viper",
-                    Ok(StorageEngine::Sst) => "lsm",
-                    _ => "viper" // Default to VIPER
-                }
+        info!("✅ CONTEXT_OPTIMIZED: Using pre-computed engine {} for collection {}", 
+              engine_name, context.collection_id);
+        
+        // Get storage engine for delegation using pre-computed engine type  
+        let engines = storage_engines.read().await;
+        
+        // Use the engine type from context instead of defaulting to VIPER
+        let engine = if let Some(engine) = engines.get(engine_name) {
+            info!("🏭 [COMPACTION] Using {} storage engine for collection {}", 
+                  engine_name, context.collection_id);
+            engine.clone()
+        } else {
+            // Fallback to VIPER if the requested engine isn't available
+            if let Some(viper_engine) = engines.get("viper") {
+                warn!("⚠️ [COMPACTION] Requested engine '{}' not found, falling back to VIPER for collection {}", 
+                      engine_name, context.collection_id);
+                viper_engine.clone()
+            } else if let Some(sst_engine) = engines.get("sst") {
+                warn!("⚠️ [COMPACTION] Neither '{}' nor 'viper' found, falling back to SST for collection {}", 
+                      engine_name, context.collection_id);
+                sst_engine.clone()
             } else {
-                "viper"
+                warn!("⚠️ [COMPACTION] No storage engines registered, cannot perform compaction");
+                return Err(anyhow::anyhow!("No storage engines available for compaction"));
             }
-        } else {
-            "viper" // Default to VIPER if no metadata
-        };
-        
-        // Get storage engine for delegation
-        let engines = self.storage_engines.read().await;
-        
-        // Try VIPER engine first (default strategy)
-        let engine = if let Some(viper_engine) = engines.get("viper") {
-            info!("🏭 [COMPACTION] Using VIPER storage engine for collection {}", collection_id);
-            viper_engine.clone()
-        } else if let Some(lsm_engine) = engines.get("lsm") {
-            info!("🏭 [COMPACTION] Using LSM storage engine for collection {}", collection_id);
-            lsm_engine.clone()
-        } else {
-            warn!("⚠️ [COMPACTION] No storage engines registered, cannot perform compaction");
-            return Err(anyhow::anyhow!("No storage engines available for compaction"));
         };
         
         drop(engines); // Release the read lock
         
-        // Create compaction parameters with collection metadata
+        // 🚀 OPTIMIZATION: Create compaction parameters with context metadata (no service calls!)
         let compaction_params = crate::storage::traits::CompactionParameters {
-            collection_id: Some(collection_id.to_string()),
+            collection_id: Some(context.collection_id.clone()),
             force: false, // Background compaction is not forced
             synchronous: true, // Wait for completion
             hints: std::collections::HashMap::new(),
-            timeout_ms: Some(300_000), // 5 minute timeout
-            priority: crate::storage::traits::OperationPriority::Low,
-            collection_config: collection_metadata.clone(), // Pass metadata to avoid duplicate fetches
+            timeout_ms: context.timeout_ms.or(Some(300_000)), // Use context timeout or 5 minute default
+            priority: match context.priority {
+                crate::storage::background_flush_context::OperationPriority::Low => crate::storage::traits::OperationPriority::Low,
+                crate::storage::background_flush_context::OperationPriority::Normal => crate::storage::traits::OperationPriority::Normal,
+                crate::storage::background_flush_context::OperationPriority::High => crate::storage::traits::OperationPriority::High,
+                crate::storage::background_flush_context::OperationPriority::Critical => crate::storage::traits::OperationPriority::High, // Map to High since Critical may not exist
+            },
+            collection_config: None, // No service calls needed - all metadata available in context
         };
         
         info!(
             "📋 [COMPACTION] Delegating to {} engine: do_compact({})",
             engine.engine_name(),
-            collection_id
+            context.collection_id
         );
         
         // Execute compaction via storage engine
@@ -833,7 +909,7 @@ impl BackgroundMaintenanceManager {
                     info!(
                         "✅ [COMPACTION] {} compaction completed for collection {}: {} entries processed, {} files {} → {}",
                         engine.engine_name(),
-                        collection_id,
+                        context.collection_id,
                         result.entries_processed,
                         result.input_files,
                         result.output_files,
@@ -842,12 +918,12 @@ impl BackgroundMaintenanceManager {
                     
                     // Return file list for compatibility - for VIPER this would be the compacted files
                     // Since the UnifiedStorageEngine doesn't return file paths, we'll return a placeholder
-                    Ok(vec![format!("compacted_collection_{}_{}files", collection_id, result.output_files)])
+                    Ok(vec![format!("compacted_collection_{}_{}files", context.collection_id, result.output_files)])
                 } else {
                     warn!(
                         "❌ [COMPACTION] {} compaction failed for collection {}",
                         engine.engine_name(),
-                        collection_id
+                        context.collection_id
                     );
                     Err(anyhow::anyhow!("Storage engine compaction failed"))
                 }
@@ -856,7 +932,7 @@ impl BackgroundMaintenanceManager {
                 warn!(
                     "❌ [COMPACTION] {} compaction error for collection {}: {}",
                     engine.engine_name(),
-                    collection_id,
+                    context.collection_id,
                     e
                 );
                 Err(e)

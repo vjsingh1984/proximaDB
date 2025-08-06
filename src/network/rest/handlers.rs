@@ -556,6 +556,8 @@ pub fn create_router(state: AppState) -> Router {
         // Health and metrics
         .route("/health", get(health_check))
         .route("/metrics", get(get_metrics))
+        .route("/metrics/:collection_id", get(get_collection_metrics))
+        .route("/metrics/query-hints/:collection_id", get(get_query_hints))
         // Collection endpoints with proper REST verbs
         .route("/api/v1/collection", post(collection_operation))  // create/update operations
         .route("/api/v1/collections", get(list_collections))       // list all collections
@@ -945,6 +947,52 @@ pub async fn get_metrics(
         }
         Err(e) => {
             tracing::error!("Get metrics failed: {:?}", e);
+            Err(StatusCode::INTERNAL_SERVER_ERROR)
+        }
+    }
+}
+
+/// Get collection-specific metrics endpoint
+pub async fn get_collection_metrics(
+    State(state): State<AppState>,
+    Path(collection_id): Path<String>,
+    Query(params): Query<std::collections::HashMap<String, String>>,
+) -> Result<JsonResponse<ApiResponse<serde_json::Value>>, StatusCode> {
+    // Parse query options
+    let include_hints = params.get("include_hints")
+        .map(|v| v.parse().unwrap_or(true))
+        .unwrap_or(true);
+    let include_history = params.get("include_history")
+        .map(|v| v.parse().unwrap_or(false))
+        .unwrap_or(false);
+    
+    // TODO: Delegate to metrics query service when integrated
+    match state.unified_handlers.get_collection_metrics(&collection_id, include_hints).await {
+        Ok(metrics_data) => {
+            Ok(JsonResponse(ApiResponse::success(metrics_data)))
+        }
+        Err(e) => {
+            tracing::error!("Get collection metrics failed for {}: {:?}", collection_id, e);
+            Err(StatusCode::INTERNAL_SERVER_ERROR)
+        }
+    }
+}
+
+/// Get query optimization hints endpoint
+pub async fn get_query_hints(
+    State(state): State<AppState>,
+    Path(collection_id): Path<String>,
+    Query(params): Query<std::collections::HashMap<String, String>>,
+) -> Result<JsonResponse<ApiResponse<serde_json::Value>>, StatusCode> {
+    let query_type = params.get("query_type").cloned();
+    
+    // TODO: Delegate to metrics query service when integrated
+    match state.unified_handlers.get_query_hints(&collection_id, query_type).await {
+        Ok(hints_data) => {
+            Ok(JsonResponse(ApiResponse::success(hints_data)))
+        }
+        Err(e) => {
+            tracing::error!("Get query hints failed for {}: {:?}", collection_id, e);
             Err(StatusCode::INTERNAL_SERVER_ERROR)
         }
     }

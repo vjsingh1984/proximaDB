@@ -27,7 +27,7 @@ A comprehensive metrics system providing operational insights and query optimiza
 │         (Partitioned by collection_id)                      │
 │    - Uses FilesystemFactory for cross-cloud                 │
 │    - Periodic snapshots (configurable)                      │
-│    - Efficient binary format (Avro)                         │
+│    - Efficient binary format (Bincode + zstd)               │
 │    - Automatic retention management                         │
 └────────────────────────▲────────────────────────────────────┘
                          │
@@ -169,18 +169,18 @@ if query.filter_count > 0 && metrics.bloom_filter_size_bytes > 0 {
 /metrics/
 ├── snapshots/
 │   ├── global/
-│   │   ├── snapshot_2025_01_15_1200.avro  # Hourly aggregates
-│   │   └── snapshot_2025_01_15.avro       # Daily aggregates
+│   │   ├── snapshot_2025_01_15_1200.bincode  # Hourly aggregates
+│   │   └── snapshot_2025_01_15.bincode       # Daily aggregates
 │   └── collections/
 │       ├── {collection_id}/
-│       │   ├── snapshot_latest.avro       # Latest snapshot
-│       │   ├── snapshot_2025_01_15_1200.avro
+│       │   ├── snapshot_latest.bincode       # Latest snapshot
+│       │   ├── snapshot_2025_01_15_1200.bincode
 │       │   └── history/
-│       │       └── snapshot_2025_01_14_1200.avro
+│       │       └── snapshot_2025_01_14_1200.bincode
 │       └── _index.json                    # Collection ID mapping
 └── incremental/
     └── {collection_id}/
-        └── updates_{timestamp}.avro       # Pending updates
+        └── updates_{timestamp}.bincode       # Pending updates
 ```
 
 ### 5. Integration Points

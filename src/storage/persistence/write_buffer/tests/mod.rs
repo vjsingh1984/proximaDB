@@ -23,3 +23,12 @@ pub mod flush_coordinator_tests;
 
 #[cfg(test)]
 pub mod durability_tests;
+
+#[cfg(test)]
+pub mod background_flush_optimization_tests;
+
+#[cfg(test)]
+pub mod simple_context_test;
+
+#[cfg(test)]
+pub mod optimization_validation;

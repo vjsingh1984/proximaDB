@@ -79,6 +79,13 @@ impl CollectionService {
     ) -> Result<CollectionServiceResponse> {
         println!("🆕 Creating collection: {} with distance_metric={}", config.name, config.distance_metric);
         let start_time = std::time::Instant::now();
+        
+        // Resolve compression configuration
+        let mut enriched_config = config.clone();
+        enriched_config.compression = self.resolve_compression_config(
+            config.compression.as_ref(),
+            config.storage_engine,
+        );
 
         // Input validation
         if config.name.is_empty() {
@@ -128,14 +135,14 @@ impl CollectionService {
         
         // Create storage directories using assignment service FIRST
         let (storage_assignments, unified_assignment) = self
-            .create_storage_directories(&config.name, &uuid)
+            .create_storage_directories(&enriched_config.name, &uuid)
             .await
             .context("Failed to create storage directories")?;
 
         // Create proto collection with stats and storage assignment
         let proto_collection = Collection {
             id: uuid.clone(),
-            config: Some(config.clone()),
+            config: Some(enriched_config.clone()),  // Use enriched config with compression
             stats: Some(crate::proto::proximadb::CollectionStats {
                 vector_count: 0,
                 index_size_bytes: 0,
@@ -716,6 +723,135 @@ impl CollectionService {
     /// Get access to the metadata backend for recovery operations
     pub fn get_metadata_backend(&self) -> &Arc<FilestoreMetadataBackend> {
         &self.metadata_backend
+    }
+    
+    /// Resolve compression configuration based on SDK request and server defaults
+    fn resolve_compression_config(
+        &self,
+        requested: Option<&crate::proto::proximadb::CompressionConfig>,
+        storage_engine: i32,
+    ) -> Option<crate::proto::proximadb::CompressionConfig> {
+        use crate::proto::proximadb::{CompressionAlgorithm, CompressionConfig, StorageEngine};
+        
+        // If compression explicitly requested, validate and use it
+        if let Some(config) = requested {
+            // Validate compression level if specified
+            if let Some(level) = config.level {
+                match CompressionAlgorithm::try_from(config.algorithm) {
+                    Ok(CompressionAlgorithm::CompressionZstd) => {
+                        if level < 1 || level > 22 {
+                            warn!("Invalid ZSTD compression level {}, using default 3", level);
+                            return Some(CompressionConfig {
+                                algorithm: config.algorithm,
+                                level: Some(3),
+                                adaptive: config.adaptive,
+                                min_ratio: config.min_ratio,
+                            });
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            return Some(config.clone());
+        }
+        
+        // If not specified, use server defaults based on storage engine
+        let engine = StorageEngine::try_from(storage_engine).unwrap_or(StorageEngine::Viper);
+        
+        match engine {
+            StorageEngine::Viper => {
+                // VIPER: Default to ZSTD level 3 if compression enabled in config
+                if self.storage_config.viper_config.compression_enabled {
+                    Some(CompressionConfig {
+                        algorithm: CompressionAlgorithm::CompressionZstd as i32,
+                        level: Some(self.storage_config.viper_config.compression_level),
+                        adaptive: false,
+                        min_ratio: Some(1.5),
+                    })
+                } else {
+                    Some(CompressionConfig {
+                        algorithm: CompressionAlgorithm::CompressionNone as i32,
+                        level: None,
+                        adaptive: false,
+                        min_ratio: None,
+                    })
+                }
+            }
+            StorageEngine::Sst => {
+                // SST: Default to ZSTD level 3 if compression enabled
+                if self.storage_config.sst_config.compression_enabled {
+                    Some(CompressionConfig {
+                        algorithm: CompressionAlgorithm::CompressionZstd as i32,
+                        level: Some(3),
+                        adaptive: false,
+                        min_ratio: Some(1.5),
+                    })
+                } else {
+                    Some(CompressionConfig {
+                        algorithm: CompressionAlgorithm::CompressionNone as i32,
+                        level: None,
+                        adaptive: false,
+                        min_ratio: None,
+                    })
+                }
+            }
+            _ => {
+                // Other engines: No compression by default
+                Some(CompressionConfig {
+                    algorithm: CompressionAlgorithm::CompressionNone as i32,
+                    level: None,
+                    adaptive: false,
+                    min_ratio: None,
+                })
+            }
+        }
+    }
+    
+    /// Update collection compression configuration
+    pub async fn update_collection_compression(
+        &self,
+        identifier: &str,
+        compression: &crate::proto::proximadb::CompressionConfig,
+    ) -> Result<CollectionServiceResponse> {
+        let start_time = std::time::Instant::now();
+        
+        // Get existing collection
+        let collection = match self.get_proto_collection(identifier).await? {
+            Some(c) => c,
+            None => {
+                return Ok(CollectionServiceResponse::error(
+                    format!("Collection '{}' not found", identifier),
+                    "COLLECTION_NOT_FOUND".to_string(),
+                    start_time.elapsed().as_micros() as i64,
+                ));
+            }
+        };
+        
+        // Update compression config
+        let mut updated_collection = collection.clone();
+        if let Some(ref mut config) = updated_collection.config {
+            config.compression = Some(compression.clone());
+        }
+        
+        // Store updated collection
+        self.metadata_backend
+            .upsert_collection_proto(&updated_collection)
+            .await
+            .context("Failed to update collection metadata")?;
+        
+        info!(
+            "✅ Updated compression for collection {}: algorithm={}, level={:?}",
+            identifier, compression.algorithm, compression.level
+        );
+        
+        Ok(CollectionServiceResponse {
+            success: true,
+            collection: Some(updated_collection),
+            storage_path: None,
+            error_message: None,
+            error_code: None,
+            processing_time_us: start_time.elapsed().as_micros() as i64,
+        })
     }
 
     /// Validate collection configuration

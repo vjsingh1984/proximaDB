@@ -165,6 +165,13 @@ message CollectionConfig {
   optional string description = 11;                     // Human-readable description
   repeated string tags = 12;                            // Tags for categorization
   optional string owner = 13;                           // Owner/creator of the collection
+  
+  // Compression configuration (field 14)
+  optional CompressionConfig compression = 14;          // Per-collection compression settings
+  
+  // Storage optimization hints (field 15)
+  optional StorageOptimizationHints optimization_hints = 15; // Hints for automatic optimization
+  
   // Note: Use filterable_columns (field 6) for specifying filterable fields with proper types!
 }
 
@@ -267,6 +274,52 @@ enum RandomProjectionType {
   GAUSSIAN = 0;                                   // Gaussian random projection
   BINARY = 1;                                     // Binary random projection  
   SPARSE = 2;                                     // Sparse random projection
+}
+
+// ============================================================================
+// COMPRESSION CONFIGURATION - Granular per-collection compression control
+// ============================================================================
+
+// Compression algorithms supported by storage engines
+enum CompressionAlgorithm {
+  COMPRESSION_NONE = 0;      // No compression
+  COMPRESSION_ZSTD = 1;      // Zstandard compression (levels 1-22)
+  COMPRESSION_LZ4 = 2;       // LZ4 fast compression (future)
+  COMPRESSION_SNAPPY = 3;    // Snappy balanced compression (future)
+}
+
+// Access patterns for optimization hints
+enum AccessPattern {
+  ACCESS_PATTERN_UNKNOWN = 0;
+  ACCESS_PATTERN_WRITE_HEAVY = 1;  // High write throughput
+  ACCESS_PATTERN_READ_HEAVY = 2;   // High read throughput
+  ACCESS_PATTERN_BALANCED = 3;     // Mixed read/write
+  ACCESS_PATTERN_ARCHIVE = 4;      // Rarely accessed, maximum compression
+}
+
+// Data density characteristics
+enum DataDensity {
+  DENSITY_UNKNOWN = 0;
+  DENSITY_DENSE = 1;        // >80% non-zero values
+  DENSITY_SPARSE = 2;       // <20% non-zero values  
+  DENSITY_MIXED = 3;        // Mixed density
+}
+
+// Compression configuration for collections
+message CompressionConfig {
+  CompressionAlgorithm algorithm = 1;     // Compression algorithm to use
+  optional int32 level = 2;               // Algorithm-specific level (e.g., ZSTD 1-22)
+  bool adaptive = 3;                      // Enable adaptive compression based on data
+  optional float min_ratio = 4;           // Minimum compression ratio (e.g., 1.5 = 50% reduction)
+}
+
+// Storage optimization hints to guide compression selection
+message StorageOptimizationHints {
+  AccessPattern access_pattern = 1;       // Expected access pattern
+  DataDensity data_density = 2;           // Data density characteristics
+  bool frequent_updates = 3;              // Whether data is frequently updated
+  optional int64 expected_size_gb = 4;    // Expected collection size in GB
+  optional float read_write_ratio = 5;    // Read/write ratio (1.0 = balanced)
 }
 
 // Comprehensive quantization configuration with storage-aware strategies
@@ -385,6 +438,17 @@ message FilterableColumnSpec {
   bool indexed = 3;                         // Whether to create an index
   bool supports_range = 4;                  // Whether this column supports range queries
   optional int32 estimated_cardinality = 5; // Estimated cardinality for optimization
+  optional ColumnEncoding encoding_hint = 6; // Column-specific encoding for VIPER (RLE, Dictionary, etc.)
+}
+
+// Column-specific encoding hints for VIPER Parquet storage
+enum ColumnEncoding {
+  ENCODING_AUTO = 0;        // Let Parquet decide based on data
+  ENCODING_PLAIN = 1;       // No encoding, just compress
+  ENCODING_DICTIONARY = 2;  // Dictionary encoding for low cardinality
+  ENCODING_RLE = 3;         // Run-length encoding for repeated values
+  ENCODING_DELTA = 4;       // Delta encoding for sequential values
+  ENCODING_BITPACKED = 5;   // Bit-packing for small integers
 }
 
 enum FilterableDataType {

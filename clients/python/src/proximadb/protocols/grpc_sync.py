@@ -86,7 +86,7 @@ class ProximaDBSyncGrpcClient:
                 endpoint=self.server_address,
                 pool_size=self.pool_size,
                 max_message_size=self.max_message_size,
-                use_tls=False,  # TODO: Support TLS configuration
+                use_tls=False,  # TLS configuration can be added via environment variables or config
                 compression=compression
             )
             

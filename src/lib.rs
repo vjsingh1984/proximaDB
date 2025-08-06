@@ -39,6 +39,7 @@ pub mod core;
 // pub mod distributed;  // Temporarily disabled for single-node optimization
 pub mod handlers;
 pub mod index;
+pub mod metrics;
 pub mod monitoring;
 pub mod network;
 pub mod proto;

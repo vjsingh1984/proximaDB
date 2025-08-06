@@ -16,7 +16,7 @@ use std::time::Instant;
 use tokio::sync::{mpsc, RwLock};
 use tracing::{debug, warn};
 
-use super::schema::{CollectionMetrics, FilterableColumnStats};
+use super::{schema::{CollectionMetrics, FilterableColumnStats}, store::PersistentMetricsStore};
 
 /// Internal interface for updating metrics - not exposed to external users
 #[async_trait]
@@ -25,38 +25,43 @@ pub trait InternalMetricsUpdater: Send + Sync {
     async fn record_operation(
         &self,
         collection_id: &str,
-        operation: OperationType,
-        latency_us: u64,
-        success: bool,
-    );
+        update: OperationMetricsUpdate,
+    ) -> Result<()>;
+    
+    /// Record search metrics
+    async fn record_search(
+        &self,
+        collection_id: &str,
+        update: SearchMetricsUpdate,
+    ) -> Result<()>;
     
     /// Update metrics after a flush operation
     async fn record_flush(
         &self,
         collection_id: &str,
         update: FlushMetricsUpdate,
-    );
+    ) -> Result<()>;
     
     /// Update metrics after a compaction operation
     async fn record_compaction(
         &self,
         collection_id: &str,
         update: CompactionMetricsUpdate,
-    );
+    ) -> Result<()>;
     
     /// Update storage metrics
     async fn update_storage_metrics(
         &self,
         collection_id: &str,
         update: StorageMetricsUpdate,
-    );
+    ) -> Result<()>;
     
     /// Update data characteristics for optimization
     async fn update_data_characteristics(
         &self,
         collection_id: &str,
         update: DataCharacteristicsUpdate,
-    );
+    ) -> Result<()>;
     
     /// Update filterable column statistics
     async fn update_column_stats(
@@ -64,7 +69,7 @@ pub trait InternalMetricsUpdater: Send + Sync {
         collection_id: &str,
         column_name: &str,
         stats: FilterableColumnStats,
-    );
+    ) -> Result<()>;
 }
 
 /// Types of vector operations
@@ -98,6 +103,27 @@ pub struct CompactionMetricsUpdate {
     pub timestamp: i64,
 }
 
+/// Metrics update from search operations
+#[derive(Debug, Clone)]
+pub struct SearchMetricsUpdate {
+    pub query_latency_us: f64,
+    pub results_count: i32,
+    pub vectors_scanned: i64,
+    pub cache_hit: bool,
+    pub index_used: String,
+    pub timestamp: i64,
+}
+
+/// Metrics update from general operations (insert/update/delete)
+#[derive(Debug, Clone)]
+pub struct OperationMetricsUpdate {
+    pub operation_type: String,
+    pub latency_us: f64,
+    pub success: bool,
+    pub bytes_processed: usize,
+    pub timestamp: i64,
+}
+
 /// Storage layer metrics update
 #[derive(Debug, Clone)]
 pub struct StorageMetricsUpdate {
@@ -123,9 +149,11 @@ pub struct DataCharacteristicsUpdate {
 pub enum MetricsUpdate {
     Operation {
         collection_id: String,
-        operation: OperationType,
-        latency_us: u64,
-        success: bool,
+        update: OperationMetricsUpdate,
+    },
+    Search {
+        collection_id: String,
+        update: SearchMetricsUpdate,
     },
     Flush {
         collection_id: String,
@@ -210,37 +238,46 @@ impl AsyncMetricsUpdater {
         let mut cache = self.metrics_cache.write().await;
         
         match update {
-            MetricsUpdate::Operation { collection_id, operation, latency_us, success } => {
+            MetricsUpdate::Operation { collection_id, update } => {
                 let metrics = cache.entry(collection_id.clone())
                     .or_insert_with(|| CollectionMetrics {
                         collection_id: collection_id.clone(),
                         ..Default::default()
                     });
                 
-                match operation {
-                    OperationType::Insert => {
+                match update.operation_type.as_str() {
+                    "insert" => {
                         metrics.total_inserts += 1;
-                        if *success {
+                        if update.success {
                             // Update insert latency (simple moving average)
                             let weight = 0.1; // Weight for new value
                             metrics.avg_insert_latency_us = 
                                 metrics.avg_insert_latency_us * (1.0 - weight) + 
-                                (*latency_us as f64) * weight;
+                                update.latency_us * weight;
                         }
                     }
-                    OperationType::Update => metrics.total_updates += 1,
-                    OperationType::Delete => metrics.total_deletes += 1,
-                    OperationType::Search => {
-                        metrics.total_searches += 1;
-                        if *success {
-                            // Update search latency (simple moving average)
-                            let weight = 0.1;
-                            metrics.avg_search_latency_us = 
-                                metrics.avg_search_latency_us * (1.0 - weight) + 
-                                (*latency_us as f64) * weight;
-                        }
-                    }
+                    "update" => metrics.total_updates += 1,
+                    "delete" => metrics.total_deletes += 1,
+                    _ => {}, // Handle unknown operation types gracefully
                 }
+                
+                metrics.updated_at = chrono::Utc::now().timestamp_millis();
+            }
+            
+            MetricsUpdate::Search { collection_id, update } => {
+                let metrics = cache.entry(collection_id.clone())
+                    .or_insert_with(|| CollectionMetrics {
+                        collection_id: collection_id.clone(),
+                        ..Default::default()
+                    });
+                
+                metrics.total_searches += 1;
+                
+                // Update search latency (simple moving average)
+                let weight = 0.1;
+                metrics.avg_search_latency_us = 
+                    metrics.avg_search_latency_us * (1.0 - weight) + 
+                    update.query_latency_us * weight;
                 
                 metrics.updated_at = chrono::Utc::now().timestamp_millis();
             }
@@ -376,61 +413,74 @@ impl InternalMetricsUpdater for AsyncMetricsUpdater {
     async fn record_operation(
         &self,
         collection_id: &str,
-        operation: OperationType,
-        latency_us: u64,
-        success: bool,
-    ) {
+        update: OperationMetricsUpdate,
+    ) -> Result<()> {
         // Fire and forget - never block
         let _ = self.tx.send(MetricsUpdate::Operation {
             collection_id: collection_id.to_string(),
-            operation,
-            latency_us,
-            success,
+            update,
         });
+        Ok(())
+    }
+    
+    async fn record_search(
+        &self,
+        collection_id: &str,
+        update: SearchMetricsUpdate,
+    ) -> Result<()> {
+        let _ = self.tx.send(MetricsUpdate::Search {
+            collection_id: collection_id.to_string(),
+            update,
+        });
+        Ok(())
     }
     
     async fn record_flush(
         &self,
         collection_id: &str,
         update: FlushMetricsUpdate,
-    ) {
+    ) -> Result<()> {
         let _ = self.tx.send(MetricsUpdate::Flush {
             collection_id: collection_id.to_string(),
             update,
         });
+        Ok(())
     }
     
     async fn record_compaction(
         &self,
         collection_id: &str,
         update: CompactionMetricsUpdate,
-    ) {
+    ) -> Result<()> {
         let _ = self.tx.send(MetricsUpdate::Compaction {
             collection_id: collection_id.to_string(),
             update,
         });
+        Ok(())
     }
     
     async fn update_storage_metrics(
         &self,
         collection_id: &str,
         update: StorageMetricsUpdate,
-    ) {
+    ) -> Result<()> {
         let _ = self.tx.send(MetricsUpdate::Storage {
             collection_id: collection_id.to_string(),
             update,
         });
+        Ok(())
     }
     
     async fn update_data_characteristics(
         &self,
         collection_id: &str,
         update: DataCharacteristicsUpdate,
-    ) {
+    ) -> Result<()> {
         let _ = self.tx.send(MetricsUpdate::DataCharacteristics {
             collection_id: collection_id.to_string(),
             update,
         });
+        Ok(())
     }
     
     async fn update_column_stats(
@@ -438,11 +488,231 @@ impl InternalMetricsUpdater for AsyncMetricsUpdater {
         collection_id: &str,
         column_name: &str,
         stats: FilterableColumnStats,
-    ) {
+    ) -> Result<()> {
         let _ = self.tx.send(MetricsUpdate::ColumnStats {
             collection_id: collection_id.to_string(),
             column_name: column_name.to_string(),
             stats,
         });
+        Ok(())
+    }
+}
+
+/// Default metrics updater implementation for testing and simple use cases
+pub struct DefaultMetricsUpdater {
+    store: Arc<PersistentMetricsStore>,
+}
+
+impl DefaultMetricsUpdater {
+    pub fn new(store: Arc<PersistentMetricsStore>) -> Self {
+        Self { store }
+    }
+    
+    pub fn get_store(&self) -> &Arc<PersistentMetricsStore> {
+        &self.store
+    }
+}
+
+#[async_trait]
+impl InternalMetricsUpdater for DefaultMetricsUpdater {
+    async fn record_operation(
+        &self,
+        collection_id: &str,
+        update: OperationMetricsUpdate,
+    ) -> Result<()> {
+        // Get or create collection metrics
+        let mut metrics = self.store.get_collection_metrics(collection_id).await?
+            .unwrap_or_else(|| CollectionMetrics {
+                collection_id: collection_id.to_string(),
+                created_at: chrono::Utc::now().timestamp_millis(),
+                ..Default::default()
+            });
+        
+        // Update operation counts and latencies
+        match update.operation_type.as_str() {
+            "insert" => {
+                metrics.total_inserts += 1;
+                metrics.avg_insert_latency_us = if metrics.total_inserts > 1 {
+                    (metrics.avg_insert_latency_us * ((metrics.total_inserts - 1) as f64) + update.latency_us) / (metrics.total_inserts as f64)
+                } else {
+                    update.latency_us
+                };
+            },
+            "update" => metrics.total_updates += 1,
+            "delete" => metrics.total_deletes += 1,
+            _ => {},
+        }
+        
+        metrics.updated_at = chrono::Utc::now().timestamp_millis();
+        self.store.store_collection_metrics(&metrics).await?;
+        Ok(())
+    }
+    
+    async fn record_search(
+        &self,
+        collection_id: &str,
+        update: SearchMetricsUpdate,
+    ) -> Result<()> {
+        let mut metrics = self.store.get_collection_metrics(collection_id).await?
+            .unwrap_or_else(|| CollectionMetrics {
+                collection_id: collection_id.to_string(),
+                created_at: chrono::Utc::now().timestamp_millis(),
+                ..Default::default()
+            });
+        
+        metrics.total_searches += 1;
+        
+        // Update search latency average
+        metrics.avg_search_latency_us = if metrics.total_searches > 1 {
+            (metrics.avg_search_latency_us * ((metrics.total_searches - 1) as f64) + update.query_latency_us) / (metrics.total_searches as f64)
+        } else {
+            update.query_latency_us
+        };
+        
+        // Update cache hit ratio
+        let total_cache_hits = (metrics.cache_hit_ratio * (metrics.total_searches - 1) as f32) + if update.cache_hit { 1.0 } else { 0.0 };
+        metrics.cache_hit_ratio = total_cache_hits / (metrics.total_searches as f32);
+        
+        metrics.updated_at = chrono::Utc::now().timestamp_millis();
+        self.store.store_collection_metrics(&metrics).await?;
+        Ok(())
+    }
+    
+    async fn record_flush(
+        &self,
+        collection_id: &str,
+        update: FlushMetricsUpdate,
+    ) -> Result<()> {
+        let mut metrics = self.store.get_collection_metrics(collection_id).await?
+            .unwrap_or_else(|| CollectionMetrics {
+                collection_id: collection_id.to_string(),
+                created_at: chrono::Utc::now().timestamp_millis(),
+                ..Default::default()
+            });
+        
+        metrics.total_flushes += 1;
+        metrics.last_flush_timestamp = update.timestamp;
+        metrics.last_flush_duration_ms = update.duration_ms;
+        
+        // Update file counts based on engine type
+        match update.engine_type.as_str() {
+            "VIPER" => metrics.parquet_file_count += update.files_created,
+            "SST" => metrics.sstable_file_count += update.files_created,
+            _ => {},
+        }
+        
+        metrics.data_size_bytes += update.bytes_written;
+        metrics.updated_at = chrono::Utc::now().timestamp_millis();
+        self.store.store_collection_metrics(&metrics).await?;
+        Ok(())
+    }
+    
+    async fn record_compaction(
+        &self,
+        collection_id: &str,
+        update: CompactionMetricsUpdate,
+    ) -> Result<()> {
+        let mut metrics = self.store.get_collection_metrics(collection_id).await?
+            .unwrap_or_else(|| CollectionMetrics {
+                collection_id: collection_id.to_string(),
+                created_at: chrono::Utc::now().timestamp_millis(),
+                ..Default::default()
+            });
+        
+        metrics.total_compactions += 1;
+        metrics.last_compaction_timestamp = update.timestamp;
+        metrics.last_compaction_duration_ms = update.duration_ms;
+        
+        // Update file counts (compaction reduces files)
+        let file_reduction = update.files_before - update.files_after;
+        if metrics.parquet_file_count >= file_reduction {
+            metrics.parquet_file_count -= file_reduction;
+        }
+        
+        // Update size (compaction usually reduces size)
+        let size_reduction = update.bytes_before - update.bytes_after;
+        if size_reduction > 0 {
+            metrics.data_size_bytes = metrics.data_size_bytes.saturating_sub(size_reduction);
+        }
+        
+        metrics.updated_at = chrono::Utc::now().timestamp_millis();
+        self.store.store_collection_metrics(&metrics).await?;
+        Ok(())
+    }
+    
+    async fn update_storage_metrics(
+        &self,
+        collection_id: &str,
+        update: StorageMetricsUpdate,
+    ) -> Result<()> {
+        let mut metrics = self.store.get_collection_metrics(collection_id).await?
+            .unwrap_or_else(|| CollectionMetrics {
+                collection_id: collection_id.to_string(),
+                created_at: chrono::Utc::now().timestamp_millis(),
+                ..Default::default()
+            });
+        
+        if let Some(count) = update.parquet_file_count {
+            metrics.parquet_file_count = count;
+        }
+        if let Some(count) = update.sstable_file_count {
+            metrics.sstable_file_count = count;
+        }
+        if let Some(size) = update.wal_size_bytes {
+            metrics.wal_size_bytes = size;
+        }
+        if let Some(size) = update.memtable_size_bytes {
+            metrics.memtable_size_bytes = size;
+        }
+        
+        metrics.updated_at = chrono::Utc::now().timestamp_millis();
+        self.store.store_collection_metrics(&metrics).await?;
+        Ok(())
+    }
+    
+    async fn update_data_characteristics(
+        &self,
+        collection_id: &str,
+        update: DataCharacteristicsUpdate,
+    ) -> Result<()> {
+        let mut metrics = self.store.get_collection_metrics(collection_id).await?
+            .unwrap_or_else(|| CollectionMetrics {
+                collection_id: collection_id.to_string(),
+                created_at: chrono::Utc::now().timestamp_millis(),
+                ..Default::default()
+            });
+        
+        if let Some(sparsity) = update.sparsity_ratio {
+            metrics.sparsity_ratio = sparsity;
+        }
+        if let Some(magnitude) = update.avg_vector_magnitude {
+            metrics.avg_vector_magnitude = magnitude;
+        }
+        if let Some(keys) = update.distinct_metadata_keys {
+            metrics.distinct_metadata_keys = keys;
+        }
+        
+        metrics.updated_at = chrono::Utc::now().timestamp_millis();
+        self.store.store_collection_metrics(&metrics).await?;
+        Ok(())
+    }
+    
+    async fn update_column_stats(
+        &self,
+        collection_id: &str,
+        column_name: &str,
+        stats: FilterableColumnStats,
+    ) -> Result<()> {
+        let mut metrics = self.store.get_collection_metrics(collection_id).await?
+            .unwrap_or_else(|| CollectionMetrics {
+                collection_id: collection_id.to_string(),
+                created_at: chrono::Utc::now().timestamp_millis(),
+                ..Default::default()
+            });
+        
+        metrics.filterable_column_stats.insert(column_name.to_string(), stats);
+        metrics.updated_at = chrono::Utc::now().timestamp_millis();
+        self.store.store_collection_metrics(&metrics).await?;
+        Ok(())
     }
 }

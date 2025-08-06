@@ -609,6 +609,53 @@ impl UnifiedHandlers {
         Ok(metrics)
     }
     
+    /// Get collection-specific metrics (placeholder until metrics service is integrated)
+    pub async fn get_collection_metrics(&self, collection_id: &str, include_hints: bool) -> Result<serde_json::Value> {
+        debug!("📊 UnifiedHandlers: Getting metrics for collection {}", collection_id);
+        
+        // TODO: Replace with actual metrics query service
+        // For now, return basic collection info from collection service
+        if let Ok(Some(collection)) = self.collection_service.get_proto_collection(collection_id).await {
+            let response = serde_json::json!({
+                "collection_id": collection_id,
+                "metrics": {
+                    "basic": {
+                        "vector_count": collection.stats.as_ref().map(|s| s.vector_count).unwrap_or(0),
+                        "dimension": collection.config.as_ref().map(|c| c.dimension).unwrap_or(0),
+                        "data_size_bytes": collection.stats.as_ref().map(|s| s.data_size_bytes).unwrap_or(0),
+                        "index_size_bytes": collection.stats.as_ref().map(|s| s.index_size_bytes).unwrap_or(0),
+                    }
+                },
+                "placeholder": true,
+                "note": "Full metrics framework coming soon"
+            });
+            Ok(response)
+        } else {
+            Err(anyhow::anyhow!("Collection {} not found", collection_id))
+        }
+    }
+    
+    /// Get query optimization hints (placeholder until metrics service is integrated)
+    pub async fn get_query_hints(&self, collection_id: &str, query_type: Option<String>) -> Result<serde_json::Value> {
+        debug!("📊 UnifiedHandlers: Getting query hints for collection {}", collection_id);
+        
+        // TODO: Replace with actual metrics query service
+        let response = serde_json::json!({
+            "collection_id": collection_id,
+            "hints": [
+                {
+                    "type": "placeholder",
+                    "priority": "info",
+                    "recommendation": "Full query optimization hints coming soon",
+                    "reason": "Metrics framework under development"
+                }
+            ],
+            "generated_at": chrono::Utc::now().timestamp_millis()
+        });
+        
+        Ok(response)
+    }
+    
     /// Handle create collection operation
     async fn handle_create_collection(
         &self,

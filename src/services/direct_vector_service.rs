@@ -29,6 +29,7 @@ use crate::storage::persistence::write_buffer::optimized_write_buffer_writer::Op
 use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
 use crate::services::streaming_search::{StreamingSearchService, StreamingSearchConfig, SearchResultStream};
 use crate::storage::traits::UnifiedStorageEngine;
+use crate::storage::background_flush_context::BackgroundFlushContext;
 use crate::services::collection_service::CollectionService;
 use crate::proto::proximadb::{StorageEngine, metadata_item::Value as MetadataValue};
 
@@ -84,6 +85,9 @@ pub struct DirectVectorService {
     
     /// Collection service for metadata and engine routing (optional)
     collection_service: Option<Arc<CollectionService>>,
+    
+    /// Metrics updater for tracking vector operations
+    metrics_updater: Option<Arc<dyn crate::metrics::updater::InternalMetricsUpdater>>,
 }
 
 /// Optimized serialization format with intelligent defaults
@@ -335,6 +339,7 @@ impl DirectVectorService {
             failed_operations: Arc::new(AtomicU64::new(0)),
             optimized_write_buffer_writer,
             collection_service,
+            metrics_updater: None,
         };
         debug!("✅ DirectVectorService::with_workload_hint - Service instance created");
         
@@ -425,6 +430,12 @@ impl DirectVectorService {
     /// Get WAL behavior wrapper for direct memtable access (used by streaming search)
     pub fn get_write_buffer_behavior_wrapper(&self) -> Option<&WriteBufferBehaviorWrapper> {
         Some(&self.global_memtable)
+    }
+    
+    /// Set metrics updater for tracking vector operations
+    pub fn set_metrics_updater(&mut self, updater: Arc<dyn crate::metrics::updater::InternalMetricsUpdater>) {
+        self.metrics_updater = Some(updater);
+        info!("🔗 DirectVectorService: Metrics updater registered for operation tracking");
     }
     
     /// Determine the storage engine for a collection based on its configuration
@@ -923,46 +934,48 @@ impl DirectVectorService {
     
     /// Non-blocking background flush trigger with automatic compaction coordination
     async fn trigger_background_flush(&self, collection_id: &str) {
-        info!("🚨 THRESHOLD: Collection {} needs flushing, triggering background flush", collection_id);
+        info!("🚨 THRESHOLD: Collection {} needs flushing, triggering optimized background flush", collection_id);
         
-        let collection_id = collection_id.to_string();
+        // 🚀 OPTIMIZATION: Pre-compute ALL metadata upfront (eliminates redundant service calls)
+        let flush_context = match &self.collection_service {
+            Some(service) => {
+                match BackgroundFlushContext::from_collection_service(service, collection_id).await {
+                    Ok(context) => {
+                        info!("✅ PRE_COMPUTED: Context for collection {} - engine: {:?}, location: {}", 
+                              collection_id, context.storage_engine, context.data_location);
+                        context
+                    },
+                    Err(e) => {
+                        warn!("⚠️ CONTEXT_CREATION: Failed to get collection context for {}: {}", collection_id, e);
+                        return;
+                    }
+                }
+            },
+            None => {
+                warn!("⚠️ NO_SERVICE: No collection service available for flush context creation");
+                return;
+            }
+        };
+        
+        // Clone resources for background thread (context is self-contained)
         let flush_coordinator = self.flush_coordinator.clone();
         let compaction_coordinator = self.compaction_coordinator.clone();
         let global_memtable = self.global_memtable.clone();
-        let collection_service = self.collection_service.clone();
         
-        // Spawn background task to avoid blocking insert
+        // 🎯 Background thread is now COMPLETELY INDEPENDENT (no service calls needed)
         tokio::spawn(async move {
-            // Determine the storage engine for this collection
-            let storage_engine = if let Some(service) = &collection_service {
-                if let Ok(Some(collection)) = service.get_proto_collection(&collection_id).await {
-                    if let Some(config) = collection.config {
-                        match config.storage_engine {
-                            x if x == crate::proto::proximadb::StorageEngine::Sst as i32 => "SST",
-                            x if x == crate::proto::proximadb::StorageEngine::Viper as i32 => "VIPER",
-                            _ => "VIPER",
-                        }
-                    } else {
-                        "VIPER"
-                    }
-                } else {
-                    "VIPER"
-                }
-            } else {
-                "VIPER"
-            };
-            
-            info!("🔍 FLUSH_ENGINE: Collection {} will flush to {} engine", collection_id, storage_engine);
+            info!("🔍 OPTIMIZED_FLUSH: Collection {} will flush to {} engine with pre-computed context", 
+                  flush_context.collection_id, flush_context.engine_name());
             
             // Get vectors from memtable for flushing
-            let vectors_to_flush = match global_memtable.get_unflushed_batches(&collection_id).await {
+            let vectors_to_flush = match global_memtable.get_unflushed_batches(&flush_context.collection_id).await {
                 Ok(batches) => {
                     let mut all_vectors = Vec::new();
                     for batch in batches {
                         all_vectors.extend(batch.vector_records.iter().cloned());
                     }
-                    info!("📋 FLUSH_PREPARATION: Retrieved {} vectors from memtable for collection {}", 
-                          all_vectors.len(), collection_id);
+                    info!("📋 OPTIMIZED_PREP: Retrieved {} vectors for {} (threshold: {})", 
+                          all_vectors.len(), flush_context.collection_id, flush_context.flush_threshold());
                     all_vectors
                 }
                 Err(e) => {
@@ -972,14 +985,15 @@ impl DirectVectorService {
             };
             
             if vectors_to_flush.is_empty() {
-                info!("📋 FLUSH_SKIP: No vectors to flush for collection {}", collection_id);
+                info!("📋 FLUSH_SKIP: No vectors to flush for collection {}", flush_context.collection_id);
                 return;
             }
             
             let flush_data = crate::storage::persistence::write_buffer::flush_coordinator::FlushDataSource::VectorRecords(vectors_to_flush);
             
+            // 🚀 Use pre-computed engine name (no more service calls!)
             match flush_coordinator
-                .execute_coordinated_flush(&collection_id, flush_data, Some(storage_engine), None)
+                .execute_coordinated_flush(&flush_context.collection_id, flush_data, Some(flush_context.engine_name()), Some(&flush_context))
                 .await
             {
                 Ok(flush_result) => {
@@ -993,18 +1007,18 @@ impl DirectVectorService {
                     if flush_result.base.success && !flush_result.base.flushed_batch_ids.is_empty() {
                         // Mark batches as flushed
                         for batch_id in &flush_result.base.flushed_batch_ids {
-                            if let Err(e) = global_memtable.mark_batch_flushed(&collection_id, &batch_id.to_base62()).await {
+                            if let Err(e) = global_memtable.mark_batch_flushed(&flush_context.collection_id, &batch_id.to_base62()).await {
                                 warn!("⚠️ MEMTABLE_CLEANUP: Failed to mark batch {} as flushed: {}", batch_id.to_base62(), e);
                             }
                         }
                         
                         // Clear flushed batches from memtable  
-                        match global_memtable.clear_flushed_batches(&collection_id).await {
+                        match global_memtable.clear_flushed_batches(&flush_context.collection_id).await {
                             Ok(cleared_count) => {
-                                info!("🧹 MEMTABLE_CLEANUP: Cleared {} flushed batches from collection {}", cleared_count, collection_id);
+                                info!("🧹 MEMTABLE_CLEANUP: Cleared {} flushed batches from collection {}", cleared_count, flush_context.collection_id);
                             }
                             Err(e) => {
-                                warn!("⚠️ MEMTABLE_CLEANUP: Failed to clear flushed batches for {}: {}", collection_id, e);
+                                warn!("⚠️ MEMTABLE_CLEANUP: Failed to clear flushed batches for {}: {}", flush_context.collection_id, e);
                             }
                         }
                     }
@@ -1025,7 +1039,7 @@ impl DirectVectorService {
     
     /// Trigger intelligent global flush when global thresholds are exceeded
     async fn trigger_intelligent_global_flush(&self) {
-        info!("🌍 GLOBAL_FLUSH: Global memtable thresholds exceeded, selecting collections to flush");
+        info!("🌍 OPTIMIZED_GLOBAL_FLUSH: Global memtable thresholds exceeded, selecting collections with pre-computed contexts");
         
         let flush_coordinator = self.flush_coordinator.clone();
         let compaction_coordinator = self.compaction_coordinator.clone();
@@ -1053,46 +1067,42 @@ impl DirectVectorService {
             }
             
             info!(
-                "🎯 GLOBAL_FLUSH: Selected {} collections for flush to reduce memory pressure",
+                "🎯 OPTIMIZED_GLOBAL_FLUSH: Selected {} collections for context-based flush",
                 collections_to_flush.len()
             );
             
-            // Flush each selected collection
-            for collection_info in collections_to_flush {
-                let collection_id = &collection_info.collection_id;
-                
-                // Determine storage engine for this collection
-                let storage_engine = if let Some(service) = &collection_service {
-                    if let Ok(Some(collection)) = service.get_proto_collection(collection_id).await {
-                        if let Some(config) = collection.config {
-                            match config.storage_engine {
-                                x if x == crate::proto::proximadb::StorageEngine::Sst as i32 => "SST",
-                                x if x == crate::proto::proximadb::StorageEngine::Viper as i32 => "VIPER",
-                                _ => "VIPER",
-                            }
-                        } else {
-                            "VIPER"
+            // 🚀 Pre-compute contexts for ALL collections upfront (batch optimization)
+            let mut flush_contexts = Vec::new();
+            
+            if let Some(service) = &collection_service {
+                for collection_info in &collections_to_flush {
+                    match BackgroundFlushContext::from_collection_service(service, &collection_info.collection_id).await {
+                        Ok(context) => {
+                            info!("✅ CONTEXT_BATCH: Pre-computed context for {} - engine: {:?}", 
+                                  context.collection_id, context.storage_engine);
+                            flush_contexts.push(context);
+                        },
+                        Err(e) => {
+                            warn!("⚠️ CONTEXT_BATCH: Failed to create context for {}: {}", 
+                                  collection_info.collection_id, e);
                         }
-                    } else {
-                        "VIPER"
                     }
-                } else {
-                    "VIPER"
-                };
-                
+                }
+            }
+            
+            // Flush each collection with pre-computed context (no more service calls!)
+            for flush_context in flush_contexts {
                 info!(
-                    "💾 GLOBAL_FLUSH: Flushing collection {} ({} vectors, {}MB) to {} engine",
-                    collection_id,
-                    collection_info.vector_count,
-                    collection_info.total_size / (1024 * 1024),
-                    storage_engine
+                    "💾 GLOBAL_FLUSH: Flushing collection {} using {} engine",
+                    flush_context.collection_id,
+                    flush_context.engine_name()
                 );
                 
                 // Get vectors to flush
-                let vectors_to_flush = match global_memtable.get_collection_vectors(collection_id).await {
+                let vectors_to_flush = match global_memtable.get_collection_vectors(&flush_context.collection_id).await {
                     Ok(vectors) => vectors,
                     Err(e) => {
-                        warn!("⚠️ GLOBAL_FLUSH: Failed to get vectors for {}: {}", collection_id, e);
+                        warn!("⚠️ GLOBAL_FLUSH: Failed to get vectors for {}: {}", flush_context.collection_id, e);
                         continue;
                     }
                 };
@@ -1103,14 +1113,15 @@ impl DirectVectorService {
                 
                 let flush_data = crate::storage::persistence::write_buffer::flush_coordinator::FlushDataSource::VectorRecords(vectors_to_flush);
                 
+                // Use pre-computed context for flush - no more service calls needed!
                 match flush_coordinator
-                    .execute_coordinated_flush(collection_id, flush_data, Some(storage_engine), None)
+                    .execute_coordinated_flush(&flush_context.collection_id, flush_data, Some(flush_context.engine_name()), Some(&flush_context))
                     .await
                 {
                     Ok(flush_result) => {
                         info!(
                             "✅ GLOBAL_FLUSH: Collection {} flushed - {} entries, {} bytes",
-                            collection_id,
+                            flush_context.collection_id,
                             flush_result.base.entries_flushed,
                             flush_result.base.bytes_written
                         );
@@ -1118,14 +1129,14 @@ impl DirectVectorService {
                         // Clean up flushed batches
                         if flush_result.base.success && !flush_result.base.flushed_batch_ids.is_empty() {
                             for batch_id in &flush_result.base.flushed_batch_ids {
-                                if let Err(e) = global_memtable.mark_batch_flushed(collection_id, &batch_id.to_base62()).await {
+                                if let Err(e) = global_memtable.mark_batch_flushed(&flush_context.collection_id, &batch_id.to_base62()).await {
                                     warn!("⚠️ Failed to mark batch {} as flushed: {}", batch_id.to_base62(), e);
                                 }
                             }
                             
-                            match global_memtable.clear_flushed_batches(collection_id).await {
+                            match global_memtable.clear_flushed_batches(&flush_context.collection_id).await {
                                 Ok(cleared) => {
-                                    info!("🧹 Cleared {} flushed batches from {}", cleared, collection_id);
+                                    info!("🧹 Cleared {} flushed batches from {}", cleared, flush_context.collection_id);
                                 }
                                 Err(e) => {
                                     warn!("⚠️ Failed to clear flushed batches: {}", e);
@@ -1139,7 +1150,7 @@ impl DirectVectorService {
                         }
                     }
                     Err(e) => {
-                        warn!("⚠️ GLOBAL_FLUSH: Failed to flush collection {}: {}", collection_id, e);
+                        warn!("⚠️ GLOBAL_FLUSH: Failed to flush collection {}: {}", flush_context.collection_id, e);
                     }
                 }
             }

@@ -24,7 +24,7 @@ use crate::storage::persistence::filesystem::{
     FilesystemFactory
 };
 use crate::storage::atomic::{UnifiedAtomicCoordinator, StagingConfig, StagingOperationType};
-
+use crate::metrics::updater::{InternalMetricsUpdater, CompactionMetricsUpdate};
 
 use super::schema::SchemaManager;
 
@@ -78,7 +78,6 @@ pub struct CompactionPlan {
 }
 
 /// Compaction manager for VIPER storage engine with atomic writes
-#[derive(Debug)]
 pub struct CompactionManager {
     /// Schema manager for dynamic schema generation
     schema_manager: SchemaManager,
@@ -91,6 +90,21 @@ pub struct CompactionManager {
     
     /// Atomic coordinator for ACID operations
     atomic_coordinator: Arc<UnifiedAtomicCoordinator>,
+    
+    /// Optional metrics updater for non-critical metrics
+    metrics_updater: Option<Arc<dyn InternalMetricsUpdater>>,
+}
+
+impl std::fmt::Debug for CompactionManager {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CompactionManager")
+            .field("schema_manager", &self.schema_manager)
+            .field("collection_service", &self.collection_service)
+            .field("filesystem_factory", &self.filesystem_factory)
+            .field("atomic_coordinator", &self.atomic_coordinator)
+            .field("metrics_updater", &self.metrics_updater.is_some())
+            .finish()
+    }
 }
 
 impl CompactionManager {
@@ -110,7 +124,13 @@ impl CompactionManager {
             collection_service,
             filesystem_factory,
             atomic_coordinator,
+            metrics_updater: None, // Will be set via set_metrics_updater
         })
+    }
+    
+    /// Set the metrics updater (optional, for non-critical metrics)
+    pub fn set_metrics_updater(&mut self, updater: Arc<dyn InternalMetricsUpdater>) {
+        self.metrics_updater = Some(updater);
     }
 
     /// Discover files that can be compacted for a collection
@@ -850,6 +870,21 @@ impl CompactionManager {
             deleted_count,
             input_files.len()
         );
+        
+        // Record compaction metrics (non-blocking, failure-tolerant)
+        if let Some(ref metrics_updater) = self.metrics_updater {
+            let compaction_update = CompactionMetricsUpdate {
+                files_before: input_files.len() as i32,
+                files_after: output_files.len() as i32,
+                bytes_before: total_bytes_read as i64,
+                bytes_after: total_bytes_written as i64,
+                duration_ms: 0, // TODO: Track actual duration
+                timestamp: chrono::Utc::now().timestamp_millis(),
+            };
+            
+            // Fire and forget - never block compaction operation
+            metrics_updater.record_compaction(collection_id, compaction_update).await;
+        }
         
         Ok(ViperCompactionResult {
             input_files: discovered_input_files,

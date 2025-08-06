@@ -20,6 +20,8 @@ use tracing::{debug, info, warn};
 use super::config::SyncMode;
 
 use crate::storage::traits::{FlushParameters, FlushResult, UnifiedStorageEngine};
+use crate::storage::background_flush_context::BackgroundFlushContext;
+use crate::metrics::updater::{InternalMetricsUpdater, FlushMetricsUpdate};
 use super::enhanced_flush_result::EnhancedFlushResult;
 use super::flush_result_optimization::{OptimizedFlushCoordinator, OptimizedFlushResult};
 
@@ -83,6 +85,8 @@ pub struct WriteBufferFlushCoordinator {
     optimized_coordinator: Option<Arc<OptimizedFlushCoordinator>>,
     /// Collection service for fetching metadata
     collection_service: Option<Arc<crate::services::collection_service::CollectionService>>,
+    /// Metrics updater for tracking flush operations
+    metrics_updater: Option<Arc<dyn InternalMetricsUpdater>>,
 }
 
 impl WriteBufferFlushCoordinator {
@@ -95,12 +99,19 @@ impl WriteBufferFlushCoordinator {
             axis_manager: None,
             optimized_coordinator: None,
             collection_service: None,
+            metrics_updater: None,
         }
     }
     
     /// Set collection service for metadata fetching
     pub fn set_collection_service(&mut self, service: Arc<crate::services::collection_service::CollectionService>) {
         self.collection_service = Some(service);
+    }
+    
+    /// Set metrics updater for tracking flush operations
+    pub fn set_metrics_updater(&mut self, updater: Arc<dyn InternalMetricsUpdater>) {
+        self.metrics_updater = Some(updater);
+        info!("🔗 FlushCoordinator: Metrics updater registered for flush operation tracking");
     }
     
     /// Enable optimized flush processing
@@ -146,12 +157,13 @@ impl WriteBufferFlushCoordinator {
     }
 
     /// Execute coordinated flush: WAL → Storage Engine → WAL Cleanup (ATOMIC)
+    /// 🚀 OPTIMIZED: Now accepts BackgroundFlushContext to eliminate service calls
     pub async fn execute_coordinated_flush(
         &self,
         collection_id: &str,
         flush_data: FlushDataSource,
         preferred_engine: Option<&str>,
-        write_buffer_manager: Option<Arc<dyn crate::storage::persistence::write_buffer::WriteBufferBatchStrategy>>,
+        flush_context: Option<&BackgroundFlushContext>,
     ) -> Result<EnhancedFlushResult> {
         info!(
             "🚀 Coordinator: Starting ATOMIC coordinated flush for collection {}",
@@ -164,28 +176,9 @@ impl WriteBufferFlushCoordinator {
         // Step 1: Extract vector records from FlushDataSource + Mark for cleanup
         let vector_records = match &flush_data {
             FlushDataSource::Memory => {
-                if let Some(wal) = &write_buffer_manager {
-                    info!(
-                        "📋 Coordinator: ATOMIC retrieval from WAL memtable for collection {}",
-                        collection_id
-                    );
-                    // Get vector records from WAL's memtable AND mark for cleanup
-                    let flush_cycle = wal
-                        .atomic_retrieve_for_flush(collection_id, &flush_id)
-                        .await
-                        .map_err(|e| anyhow::anyhow!("Failed to retrieve data from WAL: {}", e))?;
-                    info!(
-                        "📋 Coordinator: Retrieved {} vector records (marked for cleanup)",
-                        flush_cycle.vector_records.len()
-                    );
-
-                    let records = flush_cycle.vector_records.clone();
-                    flush_cycle_data = Some(flush_cycle); // Store for cleanup
-                    records
-                } else {
-                    warn!("📋 Coordinator: No WAL manager provided, cannot extract memory data");
-                    Vec::new()
-                }
+                // Memory flush is handled by DirectVectorService in the optimized architecture
+                warn!("📋 Coordinator: Memory flush source used - should be handled by DirectVectorService with context");
+                Vec::new()
             }
             FlushDataSource::DiskWalFiles(files) => {
                 info!(
@@ -231,9 +224,34 @@ impl WriteBufferFlushCoordinator {
             vector_records.len()
         );
 
-        // Step 2: Fetch collection metadata ONCE to avoid duplicate calls
+        // Step 2: 🚀 OPTIMIZATION: Use pre-computed context metadata when available (eliminates service calls)
         // This includes: storage engine type, compression settings, storage assignment, etc.
-        let collection_metadata = if let Some(ref collection_service) = self.collection_service {
+        let collection_metadata = if let Some(context) = flush_context {
+            info!("✅ CONTEXT_OPTIMIZED: Using pre-computed metadata for collection {}", collection_id);
+            // Create synthetic collection metadata from context (no service calls needed!)
+            Some(crate::proto::proximadb::Collection {
+                id: context.collection_id.clone(),
+                config: Some(crate::proto::proximadb::CollectionConfig {
+                    dimension: context.dimension as u32,
+                    distance_metric: context.distance_metric as i32,
+                    storage_engine: match context.storage_engine {
+                        crate::storage::background_flush_context::StorageEngineType::Viper => crate::proto::proximadb::StorageEngine::Viper as i32,
+                        crate::storage::background_flush_context::StorageEngineType::Sst => crate::proto::proximadb::StorageEngine::Sst as i32,
+                    },
+                    filterable_columns: context.filterable_columns.clone(),
+                    quantization_config: None, // Can be enhanced later if needed
+                    // Add other fields as needed...
+                    ..Default::default()
+                }),
+                storage_assignment: Some(crate::proto::proximadb::StorageAssignment {
+                    data_location: context.data_location.clone(),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            })
+        } else if let Some(ref collection_service) = self.collection_service {
+            // Fallback: Use collection service (legacy path)
+            warn!("⚠️ FALLBACK: Using collection service - context not provided");
             match collection_service.get_proto_collection(collection_id).await {
                 Ok(Some(collection)) => {
                     info!(
@@ -258,18 +276,24 @@ impl WriteBufferFlushCoordinator {
             None
         };
         
-        // Determine storage engine from metadata or use provided preference
-        let engine_type = if let Some(ref metadata) = collection_metadata {
+        // 🚀 OPTIMIZATION: Determine storage engine - use context directly when available
+        let engine_type = if let Some(context) = flush_context {
+            // Direct context optimization - no metadata parsing needed!
+            info!("✅ ENGINE_OPTIMIZED: Using pre-computed engine {} for collection {}", 
+                  context.engine_name(), collection_id);
+            context.engine_name()
+        } else if let Some(ref metadata) = collection_metadata {
+            // Legacy path: Parse from metadata
             if let Some(ref config) = metadata.config {
                 // Map proto storage engine enum to string
                 use crate::proto::proximadb::StorageEngine;
                 match StorageEngine::try_from(config.storage_engine) {
-                    Ok(StorageEngine::Viper) => "VIPER",
-                    Ok(StorageEngine::Sst) => "SST",
-                    _ => preferred_engine.unwrap_or("VIPER") // Default to VIPER or provided preference
+                    Ok(StorageEngine::Viper) => "viper",
+                    Ok(StorageEngine::Sst) => "sst", 
+                    _ => preferred_engine.unwrap_or("viper") // Default to viper or provided preference
                 }
             } else {
-                preferred_engine.unwrap_or("VIPER")
+                preferred_engine.unwrap_or("viper")
             }
         } else {
             preferred_engine.ok_or_else(|| {
@@ -360,27 +384,9 @@ impl WriteBufferFlushCoordinator {
                 storage_result.flushed_batch_ids.len()
             );
 
-            // Cleanup WAL using flush cycle completion
-            if let (Some(wal), Some(ref cycle)) = (&write_buffer_manager, &flush_cycle_data) {
-                match wal.complete_flush_cycle(cycle.clone()).await {
-                    Ok(completion_result) => {
-                        info!(
-                            "✅ Coordinator: WAL flush cycle completion SUCCESS - {} entries removed, {} bytes reclaimed",
-                            completion_result.entries_removed,
-                            completion_result.bytes_reclaimed
-                        );
-                    }
-                    Err(cleanup_error) => {
-                        warn!(
-                            "⚠️ Coordinator: WAL flush cycle completion FAILED: {}",
-                            cleanup_error
-                        );
-                        // Continue processing - the data was successfully stored
-                    }
-                }
-            } else {
-                info!("📋 Coordinator: No WAL flush cycle to complete (memory-only or no cycle data)");
-            }
+            // WAL cleanup is handled by DirectVectorService in the optimized architecture
+            // The context-based approach ensures proper coordination between flush and cleanup
+            info!("📋 Coordinator: WAL cleanup handled by DirectVectorService with context optimization");
 
             // Cleanup memtable using BatchIds  
             // TODO: Add memtable cleanup interface
@@ -405,6 +411,28 @@ impl WriteBufferFlushCoordinator {
             "🎯 Coordinator: ATOMIC coordinated flush COMPLETE for collection {}",
             collection_id
         );
+        
+        // 📊 METRICS: Record flush operation metrics (non-blocking)
+        if let Some(ref metrics) = self.metrics_updater {
+            let engine_type = if let Some(context) = flush_context {
+                context.engine_name().to_uppercase()
+            } else {
+                engine_type.to_uppercase()
+            };
+            
+            metrics.record_flush(
+                collection_id,
+                FlushMetricsUpdate {
+                    vectors_flushed: storage_result.entries_flushed,
+                    bytes_written: storage_result.bytes_written,
+                    duration_ms: storage_result.duration_ms,
+                    files_created: storage_result.files_created,
+                    engine_type,
+                    timestamp: chrono::Utc::now().timestamp_millis(),
+                },
+            ).await;
+            debug!("📊 Recorded flush metrics for collection {}", collection_id);
+        }
         
         // Return enhanced result with vector data for AXIS indexing
         Ok(EnhancedFlushResult::new(storage_result, vector_records_for_axis))

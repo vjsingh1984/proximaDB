@@ -469,9 +469,13 @@ pub struct SstableHeader {
     pub min_key: String,
     pub max_key: String,
     pub created_at: i64,
-    // Engine optimizations (optional fields with defaults for backward compatibility)
+    // Compression configuration (backward compatible)
     #[serde(default)]
-    pub compression_enabled: bool,
+    pub compression_enabled: bool,  // Kept for backward compatibility
+    #[serde(default)]
+    pub compression_algorithm: CompressionAlgorithmSst,  // New: specific algorithm
+    #[serde(default)]
+    pub compression_level: u8,  // New: compression level (e.g., ZSTD 1-22)
     #[serde(default)]
     pub has_bloom_filter: bool,
     #[serde(default = "default_block_size")]
@@ -487,6 +491,21 @@ pub struct SstableHeader {
     pub data_size: u32,
     #[serde(default)]
     pub block_count: u32,
+}
+
+/// Compression algorithm for SST storage (separate from proto to avoid dependency)
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub enum CompressionAlgorithmSst {
+    None = 0,
+    Zstd = 1,
+    Lz4 = 2,
+    Snappy = 3,
+}
+
+impl Default for CompressionAlgorithmSst {
+    fn default() -> Self {
+        CompressionAlgorithmSst::None
+    }
 }
 
 /// Index entry for fast key lookups in SSTable with block organization and metadata statistics

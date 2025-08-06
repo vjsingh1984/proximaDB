@@ -154,7 +154,7 @@ impl ViperEngine {
         );
         
         // Delegate to the flush manager
-        self.flush_manager.flush_vectors(collection_id, vector_records, batch_ids, force, synchronous, &self.core_config).await
+        self.flush_manager.flush_vectors(collection_id, vector_records, batch_ids, force, synchronous, &self.core_config, None).await
     }
     
     /// Direct flush vectors to storage during WAL recovery (bypasses normal flush pipeline)

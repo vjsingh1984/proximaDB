@@ -19,6 +19,9 @@ pub mod query_service;
 pub mod schema;
 pub mod aggregator;
 
+#[cfg(test)]
+mod tests;
+
 pub use store::{PersistentMetricsStore, MetricsSnapshot};
 pub use updater::{InternalMetricsUpdater, MetricsUpdate};
 pub use query_service::{MetricsQueryService, MetricsQueryOptions};
@@ -32,23 +35,20 @@ use std::time::Duration;
 /// Configuration for the metrics system
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MetricsConfig {
+    /// Enable or disable the entire metrics system
+    pub enabled: bool,
+    
+    /// Number of partitions for collection-based metrics storage
+    pub collection_partitions: usize,
+    
     /// Base path for metrics storage (e.g., "s3://bucket/metrics" or "file:///data/metrics")
     pub storage_path: String,
     
-    /// Snapshot frequency in seconds (min: 300/5min, default: 1800/30min)
-    pub snapshot_interval_seconds: u64,
+    /// Flush interval for metrics updates in seconds
+    pub flush_interval_seconds: u64,
     
     /// Retention period in days (max: 30, default: 7)
     pub retention_days: u32,
-    
-    /// Maximum memory for metrics cache in MB (max: 1024, default: 100)
-    pub max_memory_mb: usize,
-    
-    /// Enable query optimization hints
-    pub enable_query_hints: bool,
-    
-    /// Enable automatic aggregations (hourly, daily)
-    pub enable_aggregations: bool,
     
     /// Threshold for parallel scan optimization (number of files)
     pub parallel_scan_threshold: usize,
@@ -58,20 +58,27 @@ pub struct MetricsConfig {
     
     /// Size threshold for quantization recommendations (bytes)
     pub quantization_size_threshold: u64,
+    
+    /// Snapshot interval for metrics aggregation in seconds
+    pub snapshot_interval_seconds: u64,
+    
+    /// Maximum memory usage in MB for metrics cache
+    pub max_memory_mb: usize,
 }
 
 impl Default for MetricsConfig {
     fn default() -> Self {
         Self {
+            enabled: true,
+            collection_partitions: 16,
             storage_path: "file:///data/proximadb/metrics".to_string(),
-            snapshot_interval_seconds: 1800, // 30 minutes
+            flush_interval_seconds: 30, // 30 seconds
             retention_days: 7,
-            max_memory_mb: 100,
-            enable_query_hints: true,
-            enable_aggregations: true,
             parallel_scan_threshold: 10, // Suggest parallel scan if >10 files
             sparsity_threshold: 0.3,     // Consider sparse if >30% zeros
             quantization_size_threshold: 100 * 1024 * 1024, // 100MB
+            snapshot_interval_seconds: 60, // 1 minute snapshots
+            max_memory_mb: 512, // 512MB max memory for metrics cache
         }
     }
 }
@@ -79,11 +86,11 @@ impl Default for MetricsConfig {
 impl MetricsConfig {
     /// Validate and adjust configuration to safe bounds
     pub fn validate(&mut self) -> Result<()> {
-        // Enforce minimum snapshot interval
-        if self.snapshot_interval_seconds < 300 {
-            tracing::warn!("Snapshot interval {} too low, setting to minimum 300 seconds", 
-                self.snapshot_interval_seconds);
-            self.snapshot_interval_seconds = 300;
+        // Enforce minimum flush interval
+        if self.flush_interval_seconds < 10 {
+            tracing::warn!("Flush interval {} too low, setting to minimum 10 seconds", 
+                self.flush_interval_seconds);
+            self.flush_interval_seconds = 10;
         }
         
         // Enforce maximum retention
@@ -93,11 +100,18 @@ impl MetricsConfig {
             self.retention_days = 30;
         }
         
-        // Enforce maximum memory
-        if self.max_memory_mb > 1024 {
-            tracing::warn!("Max memory {}MB too high, setting to maximum 1024MB", 
-                self.max_memory_mb);
-            self.max_memory_mb = 1024;
+        // Enforce minimum partitions
+        if self.collection_partitions < 1 {
+            tracing::warn!("Collection partitions {} too low, setting to minimum 1", 
+                self.collection_partitions);
+            self.collection_partitions = 1;
+        }
+        
+        // Enforce maximum partitions
+        if self.collection_partitions > 256 {
+            tracing::warn!("Collection partitions {} too high, setting to maximum 256", 
+                self.collection_partitions);
+            self.collection_partitions = 256;
         }
         
         Ok(())

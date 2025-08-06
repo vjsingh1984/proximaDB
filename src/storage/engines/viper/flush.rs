@@ -25,10 +25,10 @@ use crate::storage::atomic::{UnifiedAtomicCoordinator, StagingConfig, StagingOpe
 
 use crate::core::{String, VectorRecord};
 use crate::storage::optimization::{MetadataSorter, SortingStats};
+use crate::metrics::updater::{InternalMetricsUpdater, FlushMetricsUpdate};
 use super::schema::SchemaManager;
 
 /// Flush manager for VIPER storage engine with atomic writes
-#[derive(Debug)]
 pub struct FlushManager {
     /// Schema manager for dynamic schema generation
     schema_manager: SchemaManager,
@@ -41,6 +41,21 @@ pub struct FlushManager {
     
     /// Atomic coordinator for ACID operations
     atomic_coordinator: Arc<UnifiedAtomicCoordinator>,
+    
+    /// Optional metrics updater for non-critical metrics
+    metrics_updater: Option<Arc<dyn InternalMetricsUpdater>>,
+}
+
+impl std::fmt::Debug for FlushManager {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("FlushManager")
+            .field("schema_manager", &self.schema_manager)
+            .field("collection_service", &self.collection_service)
+            .field("filesystem_factory", &self.filesystem_factory)
+            .field("atomic_coordinator", &self.atomic_coordinator)
+            .field("metrics_updater", &self.metrics_updater.is_some())
+            .finish()
+    }
 }
 
 impl FlushManager {
@@ -60,7 +75,13 @@ impl FlushManager {
             collection_service,
             filesystem_factory,
             atomic_coordinator,
+            metrics_updater: None, // Will be set via set_metrics_updater
         })
+    }
+    
+    /// Set the metrics updater (optional, for non-critical metrics)
+    pub fn set_metrics_updater(&mut self, updater: Arc<dyn InternalMetricsUpdater>) {
+        self.metrics_updater = Some(updater);
     }
 
     /// Core flush operation using proper staging pattern
@@ -239,6 +260,21 @@ impl FlushManager {
         // Step 5: Update collection metadata
         info!("🔄 VIPER: Step 5 - Updating collection metadata");
         self.update_collection_metadata_after_flush(collection_id, vector_records.len(), parquet_data.len()).await?;
+
+        // Step 5.1: Record metrics (non-blocking, failure-tolerant)
+        if let Some(ref metrics_updater) = self.metrics_updater {
+            let flush_update = FlushMetricsUpdate {
+                vectors_flushed: vector_records.len() as i64,
+                bytes_written: parquet_data.len() as i64,
+                duration_ms: 0, // TODO: Track actual duration
+                files_created: 1,
+                engine_type: "VIPER".to_string(),
+                timestamp: chrono::Utc::now().timestamp_millis(),
+            };
+            
+            // Fire and forget - never block flush operation
+            metrics_updater.record_flush(collection_id, flush_update).await;
+        }
 
         // Step 6: Return successful flush result with BatchId coordination
         Ok(crate::storage::traits::FlushResult {
@@ -576,25 +612,120 @@ impl FlushManager {
         // Write to Parquet with configuration-based compression
         let mut buffer = Vec::new();
         
-        // Create compression based on config
-        let compression = if viper_config.compression_enabled {
-            match viper_config.compression.as_str() {
-                "zstd" => parquet::basic::Compression::ZSTD(
-                    parquet::basic::ZstdLevel::try_new(viper_config.compression_level)?
-                ),
-                "snappy" => parquet::basic::Compression::SNAPPY,
-                "lz4" => parquet::basic::Compression::LZ4,
-                "gzip" => parquet::basic::Compression::GZIP(parquet::basic::GzipLevel::default()),
-                _ => parquet::basic::Compression::UNCOMPRESSED,
+        // Get compression from collection config if available, otherwise use viper defaults
+        let (compression_algo, compression_level) = if let Some(ref collection) = collection_config {
+            if let Some(ref config) = collection.config {
+                if let Some(ref compression) = config.compression {
+                    use crate::proto::proximadb::CompressionAlgorithm;
+                    match CompressionAlgorithm::try_from(compression.algorithm) {
+                        Ok(CompressionAlgorithm::CompressionZstd) => {
+                            let level = compression.level.unwrap_or(viper_config.compression_level);
+                            (parquet::basic::Compression::ZSTD(
+                                parquet::basic::ZstdLevel::try_new(level)?
+                            ), true)
+                        }
+                        Ok(CompressionAlgorithm::CompressionLz4) => {
+                            (parquet::basic::Compression::LZ4, true)
+                        }
+                        Ok(CompressionAlgorithm::CompressionSnappy) => {
+                            (parquet::basic::Compression::SNAPPY, true)
+                        }
+                        _ => (parquet::basic::Compression::UNCOMPRESSED, false)
+                    }
+                } else {
+                    // No compression config, use viper defaults
+                    if viper_config.compression_enabled {
+                        match viper_config.compression.as_str() {
+                            "zstd" => (parquet::basic::Compression::ZSTD(
+                                parquet::basic::ZstdLevel::try_new(viper_config.compression_level)?
+                            ), true),
+                            "snappy" => (parquet::basic::Compression::SNAPPY, true),
+                            "lz4" => (parquet::basic::Compression::LZ4, true),
+                            _ => (parquet::basic::Compression::UNCOMPRESSED, false),
+                        }
+                    } else {
+                        (parquet::basic::Compression::UNCOMPRESSED, false)
+                    }
+                }
+            } else {
+                (parquet::basic::Compression::UNCOMPRESSED, false)
             }
         } else {
-            parquet::basic::Compression::UNCOMPRESSED
+            (parquet::basic::Compression::UNCOMPRESSED, false)
         };
         
-        let props = WriterProperties::builder()
-            .set_compression(compression)
-            .set_max_row_group_size(viper_config.row_group_size)
-            .build();
+        // Build writer properties with optimal encodings for different column types
+        let mut props_builder = WriterProperties::builder()
+            .set_compression(compression_algo)
+            .set_max_row_group_size(viper_config.row_group_size);
+        
+        // Set optimal encoding for vector column based on quantization
+        // Check if vectors are quantized (detected via collection config)
+        let is_quantized = if let Some(ref collection) = collection_config {
+            collection.config.as_ref()
+                .and_then(|c| c.quantization_config.as_ref())
+                .map(|q| q.enabled)
+                .unwrap_or(false)
+        } else {
+            false
+        };
+        
+        if is_quantized {
+            // For quantized vectors (INT8/INT16 or custom bit-width via bytemuck)
+            // Use BIT_PACKED encoding for maximum compression
+            props_builder = props_builder.set_column_encoding(
+                parquet::schema::types::ColumnPath::from("vector"),
+                parquet::basic::Encoding::BIT_PACKED
+            );
+            debug!("🔧 VIPER: Using BIT_PACKED encoding for quantized vectors");
+        } else {
+            // For full precision f32 vectors
+            // BYTE_STREAM_SPLIT splits floating point bytes for better compression
+            props_builder = props_builder.set_column_encoding(
+                parquet::schema::types::ColumnPath::from("vector"),
+                parquet::basic::Encoding::BYTE_STREAM_SPLIT
+            );
+            debug!("🔧 VIPER: Using BYTE_STREAM_SPLIT encoding for f32 vectors");
+        }
+        
+        // Set dictionary encoding for low-cardinality string columns
+        props_builder = props_builder.set_column_dictionary_enabled(
+            parquet::schema::types::ColumnPath::from("collection_id"),
+            true
+        );
+        props_builder = props_builder.set_column_dictionary_enabled(
+            parquet::schema::types::ColumnPath::from("id"),
+            true
+        );
+        
+        // Apply column-specific encodings from filterable metadata
+        for filterable_column in &filterable_metadata {
+            if let Some(encoding_hint) = filterable_column.encoding_hint {
+                use crate::proto::proximadb::ColumnEncoding;
+                let column_path = parquet::schema::types::ColumnPath::from(filterable_column.name.as_str());
+                
+                match ColumnEncoding::try_from(encoding_hint) {
+                    Ok(ColumnEncoding::EncodingDictionary) => {
+                        props_builder = props_builder.set_column_dictionary_enabled(column_path, true);
+                    }
+                    Ok(ColumnEncoding::EncodingDelta) => {
+                        props_builder = props_builder.set_column_encoding(
+                            column_path,
+                            parquet::basic::Encoding::DELTA_BINARY_PACKED
+                        );
+                    }
+                    Ok(ColumnEncoding::EncodingRle) => {
+                        props_builder = props_builder.set_column_encoding(
+                            column_path,
+                            parquet::basic::Encoding::RLE
+                        );
+                    }
+                    _ => {} // Use default encoding
+                }
+            }
+        }
+        
+        let props = props_builder.build();
         
         let mut writer = ArrowWriter::try_new(&mut buffer, batch.schema(), Some(props))?;
         writer.write(&batch)?;

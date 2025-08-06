@@ -8,6 +8,9 @@ pub mod traits;
 pub mod types;
 pub mod validation;
 
+// Background operation context (optimization)
+pub mod background_flush_context;
+
 // Core storage engines (organized)
 pub mod engines;
 
