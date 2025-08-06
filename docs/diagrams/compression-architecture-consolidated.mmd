@@ -1,0 +1,70 @@
+graph TB
+    subgraph "Core Principles"
+        P1["100% Vector Fidelity<br/>Non-Negotiable"]
+        P2["Lossless Only for FP32<br/>ZSTD Compression"]
+        P3["Quantization = Secondary Index<br/>Optional, User Choice"]
+        P4["Engine-Specific Strategy<br/>SST vs VIPER"]
+    end
+    
+    subgraph "SST Engine Strategy"
+        direction TB
+        SST1["❌ NEVER Quantize<br/>Row storage = read entire record"]
+        SST2["✅ FP32 + ZSTD Only<br/>20-40% compression"]
+        SST3["Dynamic Block Size<br/>4-16MB based on dimensions"]
+        
+        SST1 --> SSTBlock["Block Format<br/>2000-2500 vectors/block<br/>ZSTD Level 1-9"]
+    end
+    
+    subgraph "VIPER Engine Strategy"
+        direction TB
+        VIP1["✅ Dual Storage<br/>FP32 (100% fidelity) + Quantized"]
+        VIP2["FP32 Column<br/>Lossless ZSTD only"]
+        VIP3["Quantized Column<br/>Normalization + PQ allowed"]
+        
+        VIP1 --> VIPNorm["Normalization (Quantized Only)<br/>Mean: 2-3x boost<br/>Trimmed Mean: 3-4x boost<br/>Median: 4-5x boost"]
+        VIPNorm --> VIPQuant["Quantization<br/>INT8: 24x reduction<br/>PQ8: 48x reduction<br/>PQ4: 96x reduction"]
+    end
+    
+    subgraph "Two-Stage Search"
+        direction LR
+        Q1["Query"] --> Q2["Stage 1: Quantized<br/>Fast candidates"]
+        Q2 --> Q3["Stage 2: FP32<br/>Precise reranking"]
+        Q3 --> Q4["Results<br/>100% accuracy"]
+    end
+    
+    subgraph "Compression Profiles"
+        direction TB
+        Prof1["Write-Optimized<br/>ZSTD-1, 4MB blocks"]
+        Prof2["Balanced (Default)<br/>ZSTD-3, 8MB blocks"]
+        Prof3["Storage-Optimized<br/>ZSTD-9, 16MB blocks"]
+    end
+    
+    subgraph "Implementation Phases"
+        direction LR
+        Ph1["Phase 1<br/>SST Compression"] --> Ph2["Phase 2<br/>VIPER Dual Storage"]
+        Ph2 --> Ph3["Phase 3<br/>Query Support"]
+        Ph3 --> Ph4["Phase 4<br/>SDK Integration"]
+    end
+    
+    %% Connections
+    P1 --> SST1
+    P1 --> VIP1
+    P4 --> SST1
+    P4 --> VIP1
+    
+    VIP3 --> Q2
+    VIP2 --> Q3
+    SST2 --> Q3
+    
+    %% Styling
+    classDef principle fill:#e8f5e9
+    classDef sst fill:#ffebee
+    classDef viper fill:#e1f5fe
+    classDef search fill:#fff3e0
+    classDef profile fill:#f3e5f5
+    
+    class P1,P2,P3,P4 principle
+    class SST1,SST2,SST3,SSTBlock sst
+    class VIP1,VIP2,VIP3,VIPNorm,VIPQuant viper
+    class Q1,Q2,Q3,Q4 search
+    class Prof1,Prof2,Prof3 profile
