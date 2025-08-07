@@ -59,10 +59,13 @@ cd proximadb && docker compose up -d
 
 [source,python]
 ----
+# Using Python SDK (recommended)
 from proximadb import ProximaDBClient
-
-# Connect to ProximaDB
 client = ProximaDBClient("http://localhost:5678")
+
+# Or use REST API directly from any language
+# POST http://localhost:5678/v1/collections
+# POST http://localhost:5678/v1/vectors/insert
 
 # Create a collection
 collection = client.create_collection(
@@ -207,23 +210,50 @@ _Benchmarks performed on AWS c6i.8xlarge with 1M 1536-dimensional vectors_
 
 == 🔧 Integration
 
-=== Language Support
+=== API Access & SDKs
 
-Official SDKs with full feature parity:
-- ✅ **Python** - `pip install proximadb-client`
-- ✅ **JavaScript/TypeScript** - `npm install @proximadb/client`
-- ✅ **Go** - `go get github.com/proximadb/go-client`
-- ✅ **Java** - Maven/Gradle support
-- ✅ **Rust** - Native integration
+**Production-Ready Access:**
+- ✅ **REST API** - Universal HTTP/JSON interface (Port 5678)
+  * Works with any programming language
+  * OpenAPI/Swagger documentation included
+  * Built-in compression support
+  
+- ✅ **gRPC API** - High-performance Protocol Buffers (Port 5679)
+  * 3x faster than REST for bulk operations
+  * Native streaming support
+  * Proto definitions included
 
-=== Framework Integration
+- ✅ **Python SDK** - Full-featured client library
+  ```python
+  # Install from source (PyPI package coming soon)
+  pip install -e clients/python/
+  ```
+  * SDK-driven compression configuration
+  * Connection pooling and batching
+  * Async/await support
 
-Seamless integration with AI ecosystems:
-- 🤖 **LangChain** - Vector store implementation
-- 🦜 **LlamaIndex** - Index and retrieval
-- 🤗 **HuggingFace** - Embedding models
-- 🎯 **OpenAI** - GPT embeddings
-- ⚡ **FastAPI** - REST API framework
+**Language Examples:**
+```python
+# Python (using SDK)
+from proximadb import ProximaDBClient
+client = ProximaDBClient("http://localhost:5678")
+
+# Any language (using REST)
+curl -X POST http://localhost:5678/v1/collections \
+  -H "Content-Type: application/json" \
+  -d '{"name":"vectors","dimension":1536}'
+
+# Any language (using gRPC)
+# Use generated client from proto/proximadb.proto
+```
+
+=== Integration Ready
+
+**Compatible with AI Frameworks:**
+- 🐍 **Python** - Direct SDK support
+- 🌐 **Any HTTP Client** - REST API access
+- ⚡ **Any gRPC Client** - Protocol Buffer access
+- 🔧 **Custom Integration** - Well-documented APIs
 
 == 📊 SQL + Vector Hybrid Queries
 
