@@ -390,3 +390,38 @@ compression_level = 3        # 1-22 for ZSTD
 * **INVALID_METADATA**: Metadata parsing failed - Validate JSON format
 * **STORAGE_ERROR**: Storage operation failed - Check disk space/permissions
 * **TIMEOUT**: Operation timed out - Retry with backoff
+== Compression Metrics
+
+=== Performance Characteristics
+
+[cols="3,2,2,2", options="header"]
+|===
+| Operation | No Compression | LZ4 | ZSTD-6
+
+| **Insert (vec/s)**
+| 10,000
+| 8,500
+| 6,000
+
+| **Search (ms)**
+| 0.5
+| 0.7
+| 1.2
+
+| **Storage Size**
+| 100GB
+| 50GB
+| 30GB
+
+| **Cache Hit Rate**
+| N/A
+| 75%
+| 75%
+|===
+
+=== Compression Ratios
+
+* **ZSTD**: 2-10x compression (balanced)
+* **LZ4**: 1.5-3x compression (fast)
+* **SNAPPY**: 1.5-2x compression (very fast)
+

@@ -1,0 +1,332 @@
+= Magic Bytes Architecture
+:toc:
+:toclevels: 3
+
+== Overview
+
+ProximaDB uses magic bytes for file format identification and validation across its dual storage engine architecture. This document details the magic byte system implementation.
+
+== Magic Bytes Specification
+
+=== SST Engine Magic Bytes
+
+The SST (Sorted String Table) engine uses a hierarchical magic byte system for format validation:
+
+[cols="1,1,2,2", options="header"]
+|===
+| Magic Bytes | Hex Value | Component | Purpose
+
+| **SST1**
+| `0x53535431`
+| SSTable File Header
+| Main file format identifier for SST files
+
+| **BF01**
+| `0x42463031`
+| Bloom Filter
+| Bloom filter data validation
+
+| **BLK1**
+| `0x424C4B31`
+| Data Block
+| Individual data block marker
+
+| **IDX1**
+| `0x49445831`
+| Index Block
+| B-tree/Skip list index marker
+|===
+
+==== SST File Structure
+
+[source]
+----
+┌─────────────────────────────────────────────┐
+│ SST1 (4 bytes) - File Magic Header          │
+├─────────────────────────────────────────────┤
+│ Header Length (4 bytes) - uint32            │
+├─────────────────────────────────────────────┤
+│ Header Data (variable)                      │
+│ - Version, Compression, Metadata            │
+├─────────────────────────────────────────────┤
+│ Bloom Length (4 bytes) - uint32             │
+├─────────────────────────────────────────────┤
+│ BF01 (4 bytes) + Bloom Filter Data          │
+├─────────────────────────────────────────────┤
+│ Index Length (4 bytes) - uint32             │
+├─────────────────────────────────────────────┤
+│ IDX1 (4 bytes) + Index Data                 │
+├─────────────────────────────────────────────┤
+│ Data Blocks (variable)                      │
+│ Each: BLK1 (4 bytes) + Block Data           │
+└─────────────────────────────────────────────┘
+----
+
+=== VIPER Engine Format Detection
+
+The VIPER engine handles Apache Parquet files using standard format detection:
+
+[cols="1,1,2,2", options="header"]
+|===
+| Format | Magic Bytes | Location | Detection Method
+
+| **Parquet**
+| `PAR1`
+| File footer (last 4 bytes)
+| Apache Parquet standard
+
+| **Arrow IPC**
+| `ARROW1`
+| File header
+| Apache Arrow standard
+|===
+
+==== Parquet File Structure
+
+[source]
+----
+┌─────────────────────────────────────────────┐
+│ File Header (optional)                      │
+├─────────────────────────────────────────────┤
+│ Row Group 1                                 │
+│ - Column Chunks                             │
+│ - Metadata                                  │
+├─────────────────────────────────────────────┤
+│ Row Group 2                                 │
+│ - Column Chunks                             │
+│ - Metadata                                  │
+├─────────────────────────────────────────────┤
+│ ...                                         │
+├─────────────────────────────────────────────┤
+│ File Footer                                 │
+│ - File Metadata                            │
+│ - Schema                                   │
+│ - PAR1 (4 bytes) - Magic at end            │
+└─────────────────────────────────────────────┘
+----
+
+== Implementation Details
+
+=== SST Magic Byte Validation
+
+[source,rust]
+----
+// SSTable Writer - src/storage/engines/sst/sstable_writer.rs
+const SST_MAGIC: &[u8; 4] = b"SST1";
+
+pub fn write_sstable(&self) -> Result<Vec<u8>> {
+    let mut buffer = Vec::new();
+    
+    // Write magic bytes first
+    buffer.extend_from_slice(SST_MAGIC);
+    
+    // Write header length and data
+    buffer.extend_from_slice(&header_len.to_le_bytes());
+    buffer.extend_from_slice(&header_data);
+    
+    // Continue with bloom filter, index, and data blocks
+    // Each component has its own magic bytes
+}
+
+// SSTable Reader - src/storage/engines/sst/readers/unified_sstable_reader.rs
+pub fn validate_format(data: &[u8]) -> Result<()> {
+    if data.len() < 8 {
+        return Err(anyhow!("File too small to be valid SSTable"));
+    }
+    
+    // Check SST1 magic bytes
+    if &data[0..4] != b"SST1" {
+        return Err(anyhow!("Invalid SSTable format: missing SST1 magic bytes"));
+    }
+    
+    Ok(())
+}
+----
+
+=== File Extension Routing
+
+[source,rust]
+----
+// src/storage/assignment_service.rs
+pub fn determine_engine_from_extension(path: &str) -> StorageEngine {
+    let extension = Path::new(path)
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .unwrap_or("");
+    
+    match extension {
+        // SST formats
+        "sst" | "lsm" => StorageEngine::SST,
+        
+        // VIPER formats
+        "parquet" | "vpr" => StorageEngine::VIPER,
+        
+        // WAL formats
+        "avro" | "bincode" | "proto" => StorageEngine::WAL,
+        
+        // Index formats
+        "idx" | "hnsw" | "ivf" => StorageEngine::Index,
+        
+        // Default
+        _ => StorageEngine::SST
+    }
+}
+----
+
+== Magic Byte Detection Flow
+
+[source,mermaid]
+----
+graph TD
+    Start[File Read Request] --> Read[Read First 8 Bytes]
+    Read --> CheckSST{Check SST1<br/>at offset 0}
+    
+    CheckSST -->|Match| SST[Process as SSTable]
+    CheckSST -->|No Match| CheckExt[Check File Extension]
+    
+    CheckExt --> IsParquet{.parquet?}
+    IsParquet -->|Yes| ReadFooter[Read Last 4 Bytes]
+    ReadFooter --> CheckPAR1{Check PAR1}
+    CheckPAR1 -->|Match| VIPER[Process as Parquet]
+    CheckPAR1 -->|No Match| Error1[Invalid Parquet]
+    
+    IsParquet -->|No| Other[Check Other Formats]
+    
+    SST --> ValidateComponents[Validate Sub-components]
+    ValidateComponents --> CheckBF01[Check BF01 for Bloom]
+    ValidateComponents --> CheckIDX1[Check IDX1 for Index]
+    ValidateComponents --> CheckBLK1[Check BLK1 for Blocks]
+    
+    VIPER --> ParseParquet[Parse with Arrow]
+----
+
+== Error Handling
+
+=== Invalid Magic Bytes
+
+When invalid magic bytes are detected:
+
+1. **Descriptive Error**: Return specific error message indicating which magic bytes were expected
+2. **No Fallback**: No automatic format conversion or fallback
+3. **Logging**: Log the error with file path and detected bytes for debugging
+4. **Recovery**: Suggest recovery actions (e.g., re-export, format conversion)
+
+[source,rust]
+----
+pub enum MagicByteError {
+    InvalidSST { found: [u8; 4], path: String },
+    InvalidBloom { found: [u8; 4], offset: u64 },
+    InvalidBlock { found: [u8; 4], block_id: u32 },
+    InvalidParquet { path: String },
+    FileTooSmall { size: usize, minimum: usize },
+}
+----
+
+== Performance Considerations
+
+=== Magic Byte Checking Overhead
+
+- **SST Files**: Single 4-byte read at file start (negligible overhead)
+- **Parquet Files**: Two reads - header and footer (minimal overhead)
+- **Caching**: Magic bytes cached after first validation
+- **Parallel Validation**: Multiple files validated concurrently
+
+=== Optimization Strategies
+
+1. **Lazy Validation**: Validate magic bytes only on first access
+2. **Batch Validation**: Validate multiple files in parallel
+3. **Memory Mapping**: Use mmap for large file validation
+4. **Skip Validation**: Option to skip validation for trusted sources
+
+== Security Implications
+
+=== Magic Byte Security
+
+Magic bytes provide:
+
+1. **Format Validation**: Prevent processing of malformed files
+2. **Version Control**: Ensure compatibility with file version
+3. **Corruption Detection**: Early detection of corrupted files
+4. **Type Safety**: Prevent cross-engine file processing
+
+=== Attack Vectors Mitigated
+
+- **File Format Confusion**: Prevents processing wrong file types
+- **Buffer Overflow**: Early size validation prevents overflows
+- **Injection Attacks**: Magic byte validation stops malicious payloads
+- **Version Mismatch**: Ensures correct parser version
+
+== Migration and Compatibility
+
+=== Version Evolution
+
+[cols="1,1,2", options="header"]
+|===
+| Version | Magic Bytes | Notes
+
+| **Current**
+| SST1
+| Clean room implementation, no legacy
+
+| **Future**
+| SST2
+| Reserved for major format changes
+
+| **Legacy**
+| N/A
+| No legacy support by design
+|===
+
+=== Format Migration
+
+For format migrations:
+
+1. **Export**: Export data to neutral format (JSON, CSV)
+2. **Transform**: Convert using migration tools
+3. **Import**: Import with new format magic bytes
+4. **Validate**: Verify all magic bytes post-migration
+
+== Best Practices
+
+=== For Developers
+
+1. **Always Validate**: Never skip magic byte validation
+2. **Clear Errors**: Provide specific error messages
+3. **Document Changes**: Update this document for any magic byte changes
+4. **Test Coverage**: Include magic byte tests in unit tests
+
+=== For Operations
+
+1. **Monitor Failures**: Track magic byte validation failures
+2. **Backup Strategy**: Keep backups with verified magic bytes
+3. **Migration Planning**: Plan for format migrations
+4. **Security Scanning**: Regular scans for corrupted magic bytes
+
+== Monitoring and Metrics
+
+=== Key Metrics
+
+[source,prometheus]
+----
+# Magic byte validation success rate
+proximadb_magic_byte_validation_total{status="success|failure", engine="sst|viper"}
+
+# File format distribution
+proximadb_file_format_count{format="sst1|parquet|avro"}
+
+# Validation latency
+proximadb_magic_byte_validation_duration_seconds{engine="sst|viper"}
+
+# Corruption detection
+proximadb_corrupted_files_detected_total{reason="invalid_magic|truncated|checksum"}
+----
+
+== Future Enhancements
+
+=== Planned Improvements
+
+1. **Magic Byte Registry**: Central registry for all magic bytes
+2. **Format Auto-Detection**: Intelligent format detection beyond magic bytes
+3. **Compression Magic**: Additional magic bytes for compression types
+4. **Streaming Validation**: Validate magic bytes during streaming
+5. **Custom Magic Bytes**: Allow user-defined magic bytes for custom formats

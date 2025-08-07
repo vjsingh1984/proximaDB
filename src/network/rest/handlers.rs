@@ -1264,6 +1264,7 @@ fn convert_to_proto_config(config: RestCollectionConfig) -> Result<CollectionCon
                 indexed: col.indexed,
                 supports_range: col.supports_range,
                 estimated_cardinality: col.estimated_cardinality,
+                encoding_hint: None,  // SDK-driven encoding hints (2025-08-06)
             }
         })
         .collect();
@@ -1291,6 +1292,8 @@ fn convert_to_proto_config(config: RestCollectionConfig) -> Result<CollectionCon
         description: config.description,
         tags: config.tags.unwrap_or_default(),
         owner: config.owner,
+        compression: None,  // SDK-driven compression (2025-08-06)
+        optimization_hints: None,  // SDK-driven optimization (2025-08-06)
     })
 }
 

@@ -1,0 +1,99 @@
+graph TB
+    subgraph "Client SDK Layer"
+        SDK[Client SDK<br/>Python/Go/Java]
+        COMP[CompressionConfig]
+        OPT[SearchOptimization]
+    end
+
+    subgraph "API Gateway"
+        REST[REST API<br/>Port 5678]
+        GRPC[gRPC API<br/>Port 5679]
+    end
+
+    subgraph "Service Layer"
+        DVS[DirectVectorService<br/>40-60% latency reduction]
+        QP[UnifiedQueryPlanner<br/>Compression-aware routing]
+    end
+
+    subgraph "Magic Byte Detection"
+        MB{Magic Bytes?}
+        SST1[SST1: 0x53535431<br/>Header position]
+        PAR1[PAR1: 0x50415231<br/>Footer position]
+    end
+
+    subgraph "Storage Engines"
+        SSTE[SST Engine<br/>Row-based OLTP]
+        VIPERE[VIPER Engine<br/>Columnar Analytics]
+    end
+
+    subgraph "Compression"
+        SSTCOMP[SST Compression<br/>ZSTD/LZ4/Snappy]
+        VIPERCOMP[Parquet Compression<br/>Native + Dual Columns]
+    end
+
+    subgraph "Cache Layer"
+        DC[Decompression Cache<br/>LRU + Auto Invalidation]
+        QC[Query Cache<br/>TTL-based]
+    end
+
+    subgraph "Search Execution"
+        DIRECT[Direct Search<br/>Uncompressed]
+        TWOSTAGE[Two-Stage Search<br/>Coarse + Rerank]
+        HYBRID[Hybrid Search<br/>Mixed Strategy]
+    end
+
+    subgraph "Results"
+        RES[Search Results<br/>< 1ms latency]
+    end
+
+    %% Flow connections
+    SDK --> COMP
+    SDK --> OPT
+    COMP --> REST
+    COMP --> GRPC
+    OPT --> REST
+    OPT --> GRPC
+    
+    REST --> DVS
+    GRPC --> DVS
+    
+    DVS --> QP
+    QP --> MB
+    
+    MB --> SST1
+    MB --> PAR1
+    
+    SST1 --> SSTE
+    PAR1 --> VIPERE
+    
+    SSTE --> SSTCOMP
+    VIPERE --> VIPERCOMP
+    
+    SSTCOMP --> DC
+    VIPERCOMP --> DC
+    
+    QP --> QC
+    
+    DC --> DIRECT
+    DC --> TWOSTAGE
+    DC --> HYBRID
+    
+    DIRECT --> RES
+    TWOSTAGE --> RES
+    HYBRID --> RES
+
+    %% Professional neutral color scheme
+    %% Light backgrounds with subtle borders for visibility in both themes
+    classDef clientStyle fill:#f0f4f8,stroke:#6b7280,stroke-width:2px,color:#1f2937
+    classDef serviceStyle fill:#f9fafb,stroke:#60a5fa,stroke-width:2px,color:#1f2937
+    classDef storageStyle fill:#fef3c7,stroke:#f59e0b,stroke-width:2px,color:#1f2937
+    classDef cacheStyle fill:#ede9fe,stroke:#8b5cf6,stroke-width:2px,color:#1f2937
+    classDef searchStyle fill:#dcfce7,stroke:#22c55e,stroke-width:2px,color:#1f2937
+    classDef resultStyle fill:#fee2e2,stroke:#ef4444,stroke-width:2px,color:#1f2937
+
+    class SDK,COMP,OPT clientStyle
+    class REST,GRPC,DVS,QP serviceStyle
+    class MB,SST1,PAR1,SSTE,VIPERE storageStyle
+    class DC,QC cacheStyle
+    class DIRECT,TWOSTAGE,HYBRID searchStyle
+    class RES resultStyle

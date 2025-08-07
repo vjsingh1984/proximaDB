@@ -18,6 +18,7 @@ pub mod updater;
 pub mod query_service;
 pub mod schema;
 pub mod aggregator;
+pub mod compression;
 
 #[cfg(test)]
 mod tests;
@@ -27,6 +28,7 @@ pub use updater::{InternalMetricsUpdater, MetricsUpdate};
 pub use query_service::{MetricsQueryService, MetricsQueryOptions};
 pub use schema::{CollectionMetrics, GlobalMetrics, QueryOptimizationHints};
 pub use aggregator::{MetricsAggregator, AggregationWindow};
+pub use compression::{CompressionMetrics, CompressionMetricsTracker, CompressionResult, DecompressionResult};
 
 use anyhow::Result;
 use serde::{Deserialize, Serialize};

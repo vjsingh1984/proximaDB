@@ -309,8 +309,17 @@ enum DataDensity {
 message CompressionConfig {
   CompressionAlgorithm algorithm = 1;     // Compression algorithm to use
   optional int32 level = 2;               // Algorithm-specific level (e.g., ZSTD 1-22)
-  bool adaptive = 3;                      // Enable adaptive compression based on data
+  bool adaptive = 3;                      // Enable adaptive compression based on data (default: false)
   optional float min_ratio = 4;           // Minimum compression ratio (e.g., 1.5 = 50% reduction)
+  
+  // VIPER-specific quantization for dual storage
+  bool enable_quantization = 5;           // VIPER only - creates quantized column (default: false)
+  optional string quantization_type = 6;  // "int8", "pq8", "pq4"
+  optional string normalization_method = 7; // "mean", "trimmed_mean", "median" - for quantized only
+  
+  // SST-specific block sizing
+  optional int32 block_size_mb = 8;       // SST block size in MB (4-16, default 8)
+  bool dynamic_block_sizing = 9;          // Auto-adjust based on vector dimensions (default: false)
 }
 
 // Storage optimization hints to guide compression selection

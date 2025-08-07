@@ -5,6 +5,7 @@
 
 pub mod bloom_filter;
 pub mod compaction;
+pub mod decompression_cache;
 pub mod mmap;
 pub mod readers;
 pub mod sstable_writer;
@@ -494,7 +495,7 @@ pub struct SstableHeader {
 }
 
 /// Compression algorithm for SST storage (separate from proto to avoid dependency)
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum CompressionAlgorithmSst {
     None = 0,
     Zstd = 1,
@@ -730,6 +731,47 @@ impl DataBlockCompressionConfig {
             },
         }
     }
+    
+    /// Create from proto CompressionConfig
+    pub fn from_proto_config(config: Option<&crate::proto::proximadb::CompressionConfig>, vector_dim: usize) -> Self {
+        if let Some(config) = config {
+            let block_size = if config.dynamic_block_sizing {
+                Self::optimal_block_size(vector_dim)
+            } else {
+                config.block_size_mb.unwrap_or(8) as usize * 1024 * 1024
+            };
+            
+            Self {
+                enable_compression: config.algorithm != crate::proto::proximadb::CompressionAlgorithm::CompressionNone as i32,
+                compression_threshold: block_size / 1000, // Use 0.1% of block size as threshold
+                compression_level: config.level.unwrap_or(3),
+                vector_config: VectorSerializationConfig {
+                    use_bytemuck: true,
+                    compression_threshold: 256,
+                    compression_algorithm: match config.algorithm {
+                        x if x == crate::proto::proximadb::CompressionAlgorithm::CompressionZstd as i32 => CompressionAlgorithm::Zstd,
+                        x if x == crate::proto::proximadb::CompressionAlgorithm::CompressionLz4 as i32 => CompressionAlgorithm::Lz4,
+                        _ => CompressionAlgorithm::None,
+                    },
+                    compression_level: config.level.unwrap_or(3),
+                    adaptive_compression: config.adaptive,
+                },
+            }
+        } else {
+            Self::default()
+        }
+    }
+    
+    /// Calculate optimal block size based on vector dimensions
+    /// Target: 2000-2500 vectors per block
+    pub fn optimal_block_size(vector_dim: usize) -> usize {
+        let vector_size = vector_dim * 4 + 100; // FP32 + metadata overhead
+        let target_vectors = 2250;
+        let block_size = target_vectors * vector_size;
+        
+        // Clamp between 4MB and 16MB
+        block_size.max(4 * 1024 * 1024).min(16 * 1024 * 1024)
+    }
 }
 
 impl DataBlock {
@@ -959,6 +1001,8 @@ pub struct SstStorage {
     search_engine: Arc<SstUnifiedSearchEngine>,
     // Distance computation engine
     distance_compute: Arc<UnifiedDistanceCompute>,
+    // Decompression cache for frequently accessed blocks
+    decompression_cache: Option<Arc<decompression_cache::DecompressionCache>>,
 }
 
 impl SstStorage {
@@ -1032,6 +1076,16 @@ impl SstStorage {
             storage_url.clone(),
             filesystem.clone(),
         ));
+        
+        // Initialize decompression cache if configured
+        let decompression_cache = if let Some(cache_config) = config.decompression_cache_config.as_ref() {
+            info!("🗂️ Initializing SST decompression cache for collection: {}", collection_id);
+            Some(Arc::new(decompression_cache::DecompressionCache::from_config(
+                cache_config.clone()
+            )))
+        } else {
+            None
+        };
 
         Ok(Self {
             config,
@@ -1042,6 +1096,7 @@ impl SstStorage {
             atomic_coordinator,
             search_engine,
             distance_compute,
+            decompression_cache,
         })
     }
     
@@ -1173,10 +1228,10 @@ impl SstStorage {
             .await
             .context("Failed to begin atomic flush operation")?;
         
-        // Write to staging using SSTable writer
+        // Write to staging using SSTable writer (legacy path - no compression config available)
         let staging_url = format!("{}/{}", atomic_op.staging_url, sst_filename);
         let block_size = (self.config.block_size_kb * 1024) as usize;
-        let writer = SstableWriter::new(&staging_url, block_size, Arc::clone(&self.filesystem));
+        let writer = SstableWriter::with_compression(&staging_url, block_size, Arc::clone(&self.filesystem), None); // No compression in legacy flush_vectors_direct path
         // Use bloom filter config from SST config if available
         let writer = if let Some(ref bloom_config) = self.config.bloom_filter_config {
             writer.with_bloom_config(bloom_config.clone())
@@ -1354,10 +1409,21 @@ impl UnifiedStorageEngine for SstStorage {
                 i, lr.id, lr.level, lr.sequence_number);
         }
 
+        // Extract compression configuration from collection metadata (SDK-driven)
+        let compression_config = params.collection_config.as_ref()
+            .and_then(|collection| collection.config.as_ref())
+            .and_then(|config| config.compression.clone());
+            
+        if let Some(ref compression) = compression_config {
+            info!("🗜️ SST: Using SDK-driven compression for collection {}", collection_id);
+        } else {
+            info!("🗜️ SST: No compression configuration from SDK for collection {}", collection_id);
+        }
+
         // Step 2: Process extracted records using row-by-row storage approach
         info!("🔍 DEBUG SST: About to flush {} LSM records to SSTable", sst_records.len());
         let flush_result = self
-            .flush_sst_records_to_sstable(sst_records, params.force)
+            .flush_sst_records_to_sstable(sst_records, params.force, compression_config)
             .await
             .context("Failed to flush SST records to SSTable with row-by-row storage")?;
         info!("🔍 DEBUG SST: Flush completed - success={}, entries_flushed={}, bytes_written={}", 
@@ -1809,6 +1875,7 @@ impl SstStorage {
         &self,
         sst_records: Vec<SstRecord>,
         _force_flush: bool,
+        compression_config: Option<crate::proto::proximadb::CompressionConfig>,
     ) -> Result<FlushResult> {
         let flush_start = std::time::Instant::now();
 
@@ -1896,9 +1963,9 @@ impl SstStorage {
                 entries.insert(key, record.clone());
             }
 
-            // Use SstableWriter for consistent format
+            // Use SstableWriter for consistent format with SDK-driven compression
             let block_size = (self.config.block_size_kb * 1024) as usize;
-            let writer = sstable_writer::SstableWriter::new(&sst_path, block_size, Arc::clone(&self.filesystem));
+            let writer = sstable_writer::SstableWriter::with_compression(&sst_path, block_size, Arc::clone(&self.filesystem), compression_config.clone());
             
             // Use bloom filter config from SST config if available
             let writer = if let Some(ref bloom_config) = self.config.bloom_filter_config {
@@ -1944,7 +2011,14 @@ impl SstStorage {
             .await?;
         let metadata_time = metadata_start.elapsed().as_millis() as u64;
 
-        // Stage 5: Trigger compaction if threshold exceeded
+        // Stage 5: Invalidate decompression cache for this collection
+        // This ensures cached blocks are refreshed after new data is flushed
+        if let Some(ref cache) = self.decompression_cache {
+            cache.invalidate_collection(&self.collection_id).await;
+            debug!("🔄 SST: Invalidated decompression cache after flush for collection: {}", self.collection_id);
+        }
+        
+        // Stage 6: Trigger compaction if threshold exceeded
         let compaction_check_start = std::time::Instant::now();
         let compaction_triggered = self.check_compaction_threshold().await?;
         let compaction_check_time = compaction_check_start.elapsed().as_millis() as u64;
@@ -2064,6 +2138,8 @@ impl SstStorage {
             created_at: Utc::now().timestamp(),
             // Engine optimizations
             compression_enabled: true,
+            compression_algorithm: CompressionAlgorithmSst::Zstd,  // Default to ZSTD
+            compression_level: 3,  // Default compression level
             has_bloom_filter: true,
             block_size: (self.config.block_size_kb * 1024) as u32, // Use configured block size
             batch_size: records.len() as u32,

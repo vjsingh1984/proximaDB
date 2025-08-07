@@ -686,14 +686,19 @@ impl UnifiedSstableReader {
         }
         
         // To find the block offset, we need to calculate the data section offset
-        // Read header length to calculate offsets
-        let header_len_data = fs.read_range(&context.file_path, 0, 4).await?;
+        // Read and verify SST1 magic bytes
+        let first_8_bytes = fs.read_range(&context.file_path, 0, 8).await?;
+        if &first_8_bytes[0..4] != b"SST1" {
+            return Err(anyhow::anyhow!("Invalid SSTable format: missing SST1 magic bytes"));
+        }
+        
         let header_len = u32::from_le_bytes([
-            header_len_data[0], header_len_data[1], header_len_data[2], header_len_data[3]
+            first_8_bytes[4], first_8_bytes[5], first_8_bytes[6], first_8_bytes[7]
         ]) as u64;
+        let header_offset = 8u64; // Skip magic + header_len
         
         // Read bloom filter length to skip it
-        let bloom_offset = 4 + header_len;
+        let bloom_offset = header_offset + header_len;
         let bloom_len_data = fs.read_range(&context.file_path, bloom_offset, 4).await?;
         let bloom_len = u32::from_le_bytes([
             bloom_len_data[0], bloom_len_data[1], bloom_len_data[2], bloom_len_data[3]
@@ -747,20 +752,27 @@ impl UnifiedSstableReader {
         };
         let fs = self.filesystem.get_filesystem(&format!("{}:///", scheme))?;
         
-        // Read header length
-        let header_len_data = fs.read_range(file_path, 0, 4).await?;
-        if header_len_data.len() < 4 {
+        // Read and verify SST1 magic bytes
+        let first_8_bytes = fs.read_range(file_path, 0, 8).await?;
+        if first_8_bytes.len() < 8 {
             return Err(anyhow::anyhow!(
-                "SSTable file too small: expected at least 4 bytes for header length, got {}",
-                header_len_data.len()
+                "SSTable file too small: expected at least 8 bytes, got {}",
+                first_8_bytes.len()
             ));
         }
+        
+        if &first_8_bytes[0..4] != b"SST1" {
+            return Err(anyhow::anyhow!("Invalid SSTable format: missing SST1 magic bytes"));
+        }
+        
+        debug!("SST1 format detected");
         let header_len = u32::from_le_bytes([
-            header_len_data[0], header_len_data[1], header_len_data[2], header_len_data[3]
+            first_8_bytes[4], first_8_bytes[5], first_8_bytes[6], first_8_bytes[7]
         ]) as u64;
+        let header_offset = 8u64; // Skip magic + header_len
         
         // Read header
-        let header_data = fs.read_range(file_path, 4, header_len).await?;
+        let header_data = fs.read_range(file_path, header_offset, header_len).await?;
         if header_data.len() < header_len as usize {
             return Err(anyhow::anyhow!(
                 "Failed to read complete header: expected {} bytes, got {}",
@@ -771,7 +783,7 @@ impl UnifiedSstableReader {
             .map_err(|e| anyhow::anyhow!("Failed to deserialize header: {}", e))?;
         
         // Calculate bloom filter offset and read its length
-        let bloom_offset = 4 + header_len;
+        let bloom_offset = header_offset + header_len;
         let bloom_len_data = fs.read_range(file_path, bloom_offset, 4).await?;
         if bloom_len_data.len() < 4 {
             return Err(anyhow::anyhow!(
@@ -1121,12 +1133,19 @@ impl UnifiedSstableReader {
         let data = fs.read(path).await?;
         let mut offset = 0usize;
         
-        // Skip header
-        if data.len() < 4 {
+        // Verify SST1 magic bytes
+        if data.len() < 8 {
             return Ok(vec![]);
         }
-        let header_len = u32::from_le_bytes([data[0], data[1], data[2], data[3]]) as usize;
-        offset += 4 + header_len;
+        
+        if &data[0..4] != b"SST1" {
+            return Err(anyhow::anyhow!("Invalid SSTable format: missing SST1 magic bytes"));
+        }
+        
+        offset += 4; // Skip magic
+        let header_len = u32::from_le_bytes([data[4], data[5], data[6], data[7]]) as usize;
+        offset += 4; // Skip header length field
+        offset += header_len;
         
         // Skip bloom filter
         if offset + 4 > data.len() {
@@ -1151,8 +1170,9 @@ impl UnifiedSstableReader {
         debug!("Starting to read data blocks at offset {}", offset);
         debug!("Total file size: {}, remaining data: {}", data.len(), data.len() - offset);
         
-        // Decode header to get block count
-        let header: SstableHeader = bincode::deserialize(&data[4..4+header_len])
+        // Decode header to get block count (accounting for magic bytes if present)
+        let header_start = if &data[0..4] == b"SST1" { 8 } else { 4 };
+        let header: SstableHeader = bincode::deserialize(&data[header_start..header_start+header_len])
             .map_err(|e| anyhow::anyhow!("Failed to deserialize header for block count: {}", e))?;
         debug!("Header info: {} blocks expected, {} index entries", header.block_count, index.entries.len());
         

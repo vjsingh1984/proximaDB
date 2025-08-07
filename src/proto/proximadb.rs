@@ -169,6 +169,16 @@ pub struct CollectionConfig {
     /// Owner/creator of the collection
     #[prost(string, optional, tag = "13")]
     pub owner: ::core::option::Option<::prost::alloc::string::String>,
+    /// Compression configuration (field 14)
+    ///
+    /// Per-collection compression settings
+    #[prost(message, optional, tag = "14")]
+    pub compression: ::core::option::Option<CompressionConfig>,
+    /// Storage optimization hints (field 15)
+    ///
+    /// Hints for automatic optimization
+    #[prost(message, optional, tag = "15")]
+    pub optimization_hints: ::core::option::Option<StorageOptimizationHints>,
 }
 /// Advanced index configuration with per-collection customization
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -370,6 +380,64 @@ pub struct LshConfig {
     /// Projection type (default: GAUSSIAN)
     #[prost(enumeration = "RandomProjectionType", tag = "6")]
     pub projection: i32,
+}
+/// Compression configuration for collections
+#[derive(serde::Serialize, serde::Deserialize)]
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct CompressionConfig {
+    /// Compression algorithm to use
+    #[prost(enumeration = "CompressionAlgorithm", tag = "1")]
+    pub algorithm: i32,
+    /// Algorithm-specific level (e.g., ZSTD 1-22)
+    #[prost(int32, optional, tag = "2")]
+    pub level: ::core::option::Option<i32>,
+    /// Enable adaptive compression based on data (default: false)
+    #[prost(bool, tag = "3")]
+    pub adaptive: bool,
+    /// Minimum compression ratio (e.g., 1.5 = 50% reduction)
+    #[prost(float, optional, tag = "4")]
+    pub min_ratio: ::core::option::Option<f32>,
+    /// VIPER-specific quantization for dual storage
+    ///
+    /// VIPER only - creates quantized column (default: false)
+    #[prost(bool, tag = "5")]
+    pub enable_quantization: bool,
+    /// "int8", "pq8", "pq4"
+    #[prost(string, optional, tag = "6")]
+    pub quantization_type: ::core::option::Option<::prost::alloc::string::String>,
+    /// "mean", "trimmed_mean", "median" - for quantized only
+    #[prost(string, optional, tag = "7")]
+    pub normalization_method: ::core::option::Option<::prost::alloc::string::String>,
+    /// SST-specific block sizing
+    ///
+    /// SST block size in MB (4-16, default 8)
+    #[prost(int32, optional, tag = "8")]
+    pub block_size_mb: ::core::option::Option<i32>,
+    /// Auto-adjust based on vector dimensions (default: false)
+    #[prost(bool, tag = "9")]
+    pub dynamic_block_sizing: bool,
+}
+/// Storage optimization hints to guide compression selection
+#[derive(serde::Serialize, serde::Deserialize)]
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct StorageOptimizationHints {
+    /// Expected access pattern
+    #[prost(enumeration = "AccessPattern", tag = "1")]
+    pub access_pattern: i32,
+    /// Data density characteristics
+    #[prost(enumeration = "DataDensity", tag = "2")]
+    pub data_density: i32,
+    /// Whether data is frequently updated
+    #[prost(bool, tag = "3")]
+    pub frequent_updates: bool,
+    /// Expected collection size in GB
+    #[prost(int64, optional, tag = "4")]
+    pub expected_size_gb: ::core::option::Option<i64>,
+    /// Read/write ratio (1.0 = balanced)
+    #[prost(float, optional, tag = "5")]
+    pub read_write_ratio: ::core::option::Option<f32>,
 }
 /// Comprehensive quantization configuration with storage-aware strategies
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -622,6 +690,9 @@ pub struct FilterableColumnSpec {
     /// Estimated cardinality for optimization
     #[prost(int32, optional, tag = "5")]
     pub estimated_cardinality: ::core::option::Option<i32>,
+    /// Column-specific encoding for VIPER (RLE, Dictionary, etc.)
+    #[prost(enumeration = "ColumnEncoding", optional, tag = "6")]
+    pub encoding_hint: ::core::option::Option<i32>,
 }
 #[derive(serde::Serialize, serde::Deserialize)]
 #[allow(clippy::derive_partial_eq_without_eq)]
@@ -1440,6 +1511,122 @@ impl RandomProjectionType {
         }
     }
 }
+/// Compression algorithms supported by storage engines
+#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum CompressionAlgorithm {
+    /// No compression
+    CompressionNone = 0,
+    /// Zstandard compression (levels 1-22)
+    CompressionZstd = 1,
+    /// LZ4 fast compression (future)
+    CompressionLz4 = 2,
+    /// Snappy balanced compression (future)
+    CompressionSnappy = 3,
+}
+impl CompressionAlgorithm {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            CompressionAlgorithm::CompressionNone => "COMPRESSION_NONE",
+            CompressionAlgorithm::CompressionZstd => "COMPRESSION_ZSTD",
+            CompressionAlgorithm::CompressionLz4 => "COMPRESSION_LZ4",
+            CompressionAlgorithm::CompressionSnappy => "COMPRESSION_SNAPPY",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "COMPRESSION_NONE" => Some(Self::CompressionNone),
+            "COMPRESSION_ZSTD" => Some(Self::CompressionZstd),
+            "COMPRESSION_LZ4" => Some(Self::CompressionLz4),
+            "COMPRESSION_SNAPPY" => Some(Self::CompressionSnappy),
+            _ => None,
+        }
+    }
+}
+/// Access patterns for optimization hints
+#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum AccessPattern {
+    Unknown = 0,
+    /// High write throughput
+    WriteHeavy = 1,
+    /// High read throughput
+    ReadHeavy = 2,
+    /// Mixed read/write
+    Balanced = 3,
+    /// Rarely accessed, maximum compression
+    Archive = 4,
+}
+impl AccessPattern {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            AccessPattern::Unknown => "ACCESS_PATTERN_UNKNOWN",
+            AccessPattern::WriteHeavy => "ACCESS_PATTERN_WRITE_HEAVY",
+            AccessPattern::ReadHeavy => "ACCESS_PATTERN_READ_HEAVY",
+            AccessPattern::Balanced => "ACCESS_PATTERN_BALANCED",
+            AccessPattern::Archive => "ACCESS_PATTERN_ARCHIVE",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "ACCESS_PATTERN_UNKNOWN" => Some(Self::Unknown),
+            "ACCESS_PATTERN_WRITE_HEAVY" => Some(Self::WriteHeavy),
+            "ACCESS_PATTERN_READ_HEAVY" => Some(Self::ReadHeavy),
+            "ACCESS_PATTERN_BALANCED" => Some(Self::Balanced),
+            "ACCESS_PATTERN_ARCHIVE" => Some(Self::Archive),
+            _ => None,
+        }
+    }
+}
+/// Data density characteristics
+#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum DataDensity {
+    DensityUnknown = 0,
+    /// >80% non-zero values
+    DensityDense = 1,
+    /// <20% non-zero values
+    DensitySparse = 2,
+    /// Mixed density
+    DensityMixed = 3,
+}
+impl DataDensity {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            DataDensity::DensityUnknown => "DENSITY_UNKNOWN",
+            DataDensity::DensityDense => "DENSITY_DENSE",
+            DataDensity::DensitySparse => "DENSITY_SPARSE",
+            DataDensity::DensityMixed => "DENSITY_MIXED",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "DENSITY_UNKNOWN" => Some(Self::DensityUnknown),
+            "DENSITY_DENSE" => Some(Self::DensityDense),
+            "DENSITY_SPARSE" => Some(Self::DensitySparse),
+            "DENSITY_MIXED" => Some(Self::DensityMixed),
+            _ => None,
+        }
+    }
+}
 #[derive(serde::Serialize, serde::Deserialize)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
 #[repr(i32)]
@@ -1474,6 +1661,52 @@ impl StorageEngineCompatibility {
             "VIPER_ONLY" => Some(Self::ViperOnly),
             "ALL_ENGINES" => Some(Self::AllEngines),
             "LSM_AND_VIPER" => Some(Self::LsmAndViper),
+            _ => None,
+        }
+    }
+}
+/// Column-specific encoding hints for VIPER Parquet storage
+#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum ColumnEncoding {
+    /// Let Parquet decide based on data
+    EncodingAuto = 0,
+    /// No encoding, just compress
+    EncodingPlain = 1,
+    /// Dictionary encoding for low cardinality
+    EncodingDictionary = 2,
+    /// Run-length encoding for repeated values
+    EncodingRle = 3,
+    /// Delta encoding for sequential values
+    EncodingDelta = 4,
+    /// Bit-packing for small integers
+    EncodingBitpacked = 5,
+}
+impl ColumnEncoding {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            ColumnEncoding::EncodingAuto => "ENCODING_AUTO",
+            ColumnEncoding::EncodingPlain => "ENCODING_PLAIN",
+            ColumnEncoding::EncodingDictionary => "ENCODING_DICTIONARY",
+            ColumnEncoding::EncodingRle => "ENCODING_RLE",
+            ColumnEncoding::EncodingDelta => "ENCODING_DELTA",
+            ColumnEncoding::EncodingBitpacked => "ENCODING_BITPACKED",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "ENCODING_AUTO" => Some(Self::EncodingAuto),
+            "ENCODING_PLAIN" => Some(Self::EncodingPlain),
+            "ENCODING_DICTIONARY" => Some(Self::EncodingDictionary),
+            "ENCODING_RLE" => Some(Self::EncodingRle),
+            "ENCODING_DELTA" => Some(Self::EncodingDelta),
+            "ENCODING_BITPACKED" => Some(Self::EncodingBitpacked),
             _ => None,
         }
     }

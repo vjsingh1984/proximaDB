@@ -746,6 +746,11 @@ impl CollectionService {
                                 level: Some(3),
                                 adaptive: config.adaptive,
                                 min_ratio: config.min_ratio,
+                                enable_quantization: config.enable_quantization,
+                                quantization_type: config.quantization_type.clone(),
+                                normalization_method: config.normalization_method.clone(),
+                                block_size_mb: config.block_size_mb,
+                                dynamic_block_sizing: config.dynamic_block_sizing,
                             });
                         }
                     }
@@ -755,56 +760,13 @@ impl CollectionService {
             return Some(config.clone());
         }
         
-        // If not specified, use server defaults based on storage engine
-        let engine = StorageEngine::try_from(storage_engine).unwrap_or(StorageEngine::Viper);
+        // SDK-DRIVEN COMPRESSION (2025-08-06): No server defaults!
+        // Compression must be specified by the SDK/client
+        // Return None to indicate no compression if not specified by SDK
+        None
         
-        match engine {
-            StorageEngine::Viper => {
-                // VIPER: Default to ZSTD level 3 if compression enabled in config
-                if self.storage_config.viper_config.compression_enabled {
-                    Some(CompressionConfig {
-                        algorithm: CompressionAlgorithm::CompressionZstd as i32,
-                        level: Some(self.storage_config.viper_config.compression_level),
-                        adaptive: false,
-                        min_ratio: Some(1.5),
-                    })
-                } else {
-                    Some(CompressionConfig {
-                        algorithm: CompressionAlgorithm::CompressionNone as i32,
-                        level: None,
-                        adaptive: false,
-                        min_ratio: None,
-                    })
-                }
-            }
-            StorageEngine::Sst => {
-                // SST: Default to ZSTD level 3 if compression enabled
-                if self.storage_config.sst_config.compression_enabled {
-                    Some(CompressionConfig {
-                        algorithm: CompressionAlgorithm::CompressionZstd as i32,
-                        level: Some(3),
-                        adaptive: false,
-                        min_ratio: Some(1.5),
-                    })
-                } else {
-                    Some(CompressionConfig {
-                        algorithm: CompressionAlgorithm::CompressionNone as i32,
-                        level: None,
-                        adaptive: false,
-                        min_ratio: None,
-                    })
-                }
-            }
-            _ => {
-                // Other engines: No compression by default
-                Some(CompressionConfig {
-                    algorithm: CompressionAlgorithm::CompressionNone as i32,
-                    level: None,
-                    adaptive: false,
-                    min_ratio: None,
-                })
-            }
-        }
+        // SDK-DRIVEN: All compression config removed from server.
+        // Compression is 100% controlled by SDK/client through collection metadata.
     }
     
     /// Update collection compression configuration

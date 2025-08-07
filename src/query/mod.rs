@@ -1,5 +1,7 @@
 pub mod sql_engine;
 pub mod vector_search;
+pub mod compression_aware_planner;
+pub mod unified_query_planner;
 
 use crate::storage::StorageEngine;
 use crate::services::DirectVectorService;

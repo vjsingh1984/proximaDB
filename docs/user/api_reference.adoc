@@ -128,3 +128,37 @@ curl -X POST http://localhost:5678/api/v1/vector/search \
   -H "Content-Type: application/json" \
   -d '{"collection_id": "uuid", "queries": [{"vector": [0.1, 0.2]}], "top_k": 10}'
 ----
+=== Compression Configuration API
+
+==== CompressionConfig Model
+
+[source,python]
+----
+class CompressionConfig(BaseModel):
+    # SST compression settings
+    sst_block_size: Optional[int] = 16384
+    sst_compression_algorithm: Optional[CompressionAlgorithm] = None
+    sst_compression_level: Optional[int] = None
+    
+    # VIPER compression settings  
+    viper_compression_algorithm: Optional[CompressionAlgorithm] = None
+    viper_compression_level: Optional[int] = None
+    viper_enable_dual_columns: Optional[bool] = False
+    
+    # Global settings
+    adaptive_compression: Optional[bool] = False
+    compression_threshold_kb: Optional[int] = 100
+----
+
+==== SearchOptimization Model
+
+[source,python]
+----
+class SearchOptimization(BaseModel):
+    # Compression-aware search hints
+    prefer_compressed_search: Optional[bool] = None
+    decompression_budget_ms: Optional[int] = None
+    use_decompression_cache: Optional[bool] = True
+    compression_aware_routing: Optional[bool] = None
+----
+

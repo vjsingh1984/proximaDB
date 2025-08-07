@@ -456,6 +456,8 @@ pub struct SstConfig {
     pub prefetch_enabled: bool,
     /// Prefetch size in KB
     pub prefetch_size_kb: u32,
+    /// Decompression cache configuration
+    pub decompression_cache_config: Option<crate::storage::engines::sst::decompression_cache::CacheConfig>,
 }
 
 /// VIPER (columnar storage) engine configuration
@@ -525,6 +527,7 @@ impl Default for SstConfig {
             mmap_enabled: true,
             prefetch_enabled: true,
             prefetch_size_kb: 64,
+            decompression_cache_config: Some(crate::storage::engines::sst::decompression_cache::CacheConfig::default()),
         }
     }
 }

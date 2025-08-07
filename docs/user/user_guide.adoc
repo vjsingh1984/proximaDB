@@ -746,3 +746,61 @@ except ProximaDBException as e:
 * Add meaningful metadata for filtering
 * Implement retry logic for production use
 * Use appropriate distance metrics for your data type
+== Compression Configuration
+
+=== SDK-Driven Compression
+
+ProximaDB's compression is entirely controlled from the client SDK, with no server-side defaults:
+
+[source,python]
+----
+from proximadb import ProximaDBClient
+from proximadb.models import (
+    CollectionConfig,
+    CompressionConfig,
+    CompressionAlgorithm,
+    StorageEngine
+)
+
+# Configure compression
+compression_config = CompressionConfig(
+    sst_compression_algorithm=CompressionAlgorithm.ZSTD,
+    sst_compression_level=6,
+    sst_block_size=32768,
+    adaptive_compression=True
+)
+
+# Create collection with compression
+collection_config = CollectionConfig(
+    name="my_collection",
+    dimension=1536,
+    storage_engine=StorageEngine.SST,
+    compression_config=compression_config
+)
+
+collection = client.create_collection(collection_config)
+----
+
+=== Compression-Aware Search
+
+Optimize searches with compression hints:
+
+[source,python]
+----
+from proximadb.models import SearchOptimization
+
+optimization = SearchOptimization(
+    enable_two_stage=True,
+    use_decompression_cache=True,
+    prefer_compressed_search=True,
+    compression_aware_routing=True
+)
+
+results = client.search_vectors(
+    collection_id="my_collection",
+    query_vector=query_vector,
+    top_k=10,
+    search_optimization=optimization
+)
+----
+

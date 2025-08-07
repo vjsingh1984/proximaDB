@@ -253,6 +253,8 @@ impl CollectionRequestBuilder {
                 .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
                 .unwrap_or_default(),
             owner: json.get("owner").and_then(|v| v.as_str()).map(String::from),
+            compression: None,  // SDK-driven compression (2025-08-06)
+            optimization_hints: None,  // Storage optimization hints (2025-08-06)
         })
     }
 }

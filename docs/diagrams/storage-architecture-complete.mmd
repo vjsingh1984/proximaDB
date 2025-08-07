@@ -1,0 +1,118 @@
+graph TB
+    subgraph "Client Layer"
+        SDK[Python/Go/Java SDK]
+        REST[REST API Client]
+        GRPC[gRPC Client]
+    end
+
+    subgraph "API Gateway"
+        APIG[API Gateway<br/>Load Balancing & Auth]
+    end
+
+    subgraph "Service Layer"
+        DVS[DirectVectorService<br/>Proto-First Pipeline]
+        QP[UnifiedQueryPlanner<br/>Compression-Aware Routing]
+        CS[CollectionService<br/>Metadata Management]
+    end
+
+    subgraph "Storage Router"
+        SR[Storage Router<br/>Magic Byte Detection]
+        FD1[SST1 Detection<br/>Header: 0x53535431]
+        FD2[PAR1 Detection<br/>Footer: 0x50415231]
+    end
+
+    subgraph "SST Engine"
+        SSTW[SST Writer<br/>SDK-Driven Compression]
+        SSTR[SST Reader<br/>Decompression Cache]
+        SSTF[SST1 Format<br/>├─ BF01: Bloom<br/>├─ IDX1: Index<br/>└─ BLK1: Blocks]
+    end
+
+    subgraph "VIPER Engine"
+        VIPERW[Parquet Writer<br/>Columnar Storage]
+        VIPERR[Parquet Reader<br/>Arrow Integration]
+        VIPERF[Dual Columns<br/>├─ FP32: Full Precision<br/>└─ Q8: Quantized]
+    end
+
+    subgraph "Compression Layer"
+        COMP[Compression Manager]
+        ZSTD[ZSTD<br/>2-10x ratio]
+        LZ4[LZ4<br/>1.5-3x ratio]
+        SNAPPY[Snappy<br/>1.5-2x ratio]
+    end
+
+    subgraph "Cache Layer"
+        DC[Decompression Cache<br/>LRU + Auto Invalidation]
+        QC[Query Cache<br/>TTL-based]
+        MC[Metadata Cache<br/>Collection Info]
+    end
+
+    subgraph "Storage Backend"
+        FS[Local Filesystem]
+        S3[AWS S3]
+        GCS[Google Cloud Storage]
+        AZURE[Azure Blob]
+    end
+
+    %% Client connections
+    SDK --> APIG
+    REST --> APIG
+    GRPC --> APIG
+
+    %% API to Service
+    APIG --> DVS
+    DVS --> QP
+    DVS --> CS
+
+    %% Query Planning
+    QP --> SR
+
+    %% Storage Routing
+    SR --> FD1
+    SR --> FD2
+    FD1 --> SSTW
+    FD1 --> SSTR
+    FD2 --> VIPERW
+    FD2 --> VIPERR
+
+    %% SST Processing
+    SSTW --> SSTF
+    SSTR --> SSTF
+    SSTF --> COMP
+
+    %% VIPER Processing
+    VIPERW --> VIPERF
+    VIPERR --> VIPERF
+
+    %% Compression
+    COMP --> ZSTD
+    COMP --> LZ4
+    COMP --> SNAPPY
+
+    %% Caching
+    SSTR --> DC
+    VIPERR --> DC
+    QP --> QC
+    CS --> MC
+
+    %% Storage
+    SSTF --> FS
+    SSTF --> S3
+    SSTF --> GCS
+    SSTF --> AZURE
+    VIPERF --> FS
+    VIPERF --> S3
+    VIPERF --> GCS
+    VIPERF --> AZURE
+
+    %% Professional styling with neutral colors
+    classDef client fill:#e8f4f8,stroke:#5e9cae,stroke-width:2px,color:#1a1a1a
+    classDef service fill:#f0f7e8,stroke:#7da65e,stroke-width:2px,color:#1a1a1a
+    classDef storage fill:#f8f0e8,stroke:#ae8c5e,stroke-width:2px,color:#1a1a1a
+    classDef cache fill:#f4e8f8,stroke:#9c5eae,stroke-width:2px,color:#1a1a1a
+    classDef compression fill:#e8f0f8,stroke:#5e7dae,stroke-width:2px,color:#1a1a1a
+
+    class SDK,REST,GRPC client
+    class DVS,QP,CS,SR service
+    class SSTW,SSTR,SSTF,VIPERW,VIPERR,VIPERF storage
+    class DC,QC,MC cache
+    class COMP,ZSTD,LZ4,SNAPPY compression

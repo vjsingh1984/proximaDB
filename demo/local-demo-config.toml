@@ -36,6 +36,19 @@ compaction_threshold = 5
 write_buffer_size_mb = 8192
 block_size_kb = 4096
 
+# Decompression cache configuration
+[storage.sst_config.decompression_cache]
+# Maximum cache size in MB (default: 512MB, max: 8192MB)
+max_size_mb = 512
+# Enable automatic prefetching of related blocks
+enable_prefetch = true
+# Number of accesses before prefetching related blocks (default: 3)
+prefetch_threshold = 3
+# TTL for cached entries in seconds (0 = no expiration, default: 0)
+ttl_seconds = 0
+# Cache invalidation check interval in seconds (default: 60)
+invalidation_check_interval_seconds = 60
+
 [storage.viper_config]
 row_group_size = 50000
 compression = "zstd"

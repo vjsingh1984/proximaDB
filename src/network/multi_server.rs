@@ -447,6 +447,8 @@ impl SharedServices {
                     description: None,
                     tags: vec![],
                     owner: None,
+                    compression: None,  // SDK-driven compression (added 2025-08-06)
+                    optimization_hints: None,  // Storage optimization hints (added 2025-08-06)
                 };
 
                 let proto_collection = crate::proto::proximadb::Collection {

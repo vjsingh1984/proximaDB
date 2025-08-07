@@ -105,6 +105,22 @@ class FilterableDataType(str, Enum):
     ARRAY_FLOAT = "array_float"
 
 
+class CompressionAlgorithm(str, Enum):
+    """Compression algorithms for SDK-driven compression"""
+    NONE = "none"
+    ZSTD = "zstd"
+    LZ4 = "lz4"
+    SNAPPY = "snappy"
+
+
+class CompressionLevel(int, Enum):
+    """Compression levels (1-9 for ZSTD, ignored for others)"""
+    FASTEST = 1
+    FAST = 3
+    BALANCED = 6
+    HIGH = 9
+
+
 class ServerCapabilities(BaseModel):
     """Server capabilities and fallback behavior for configuration validation"""
     
@@ -295,6 +311,51 @@ class QuantizationValidation(BaseModel):
     retraining_threshold: float = 0.90
 
 
+class CompressionConfig(BaseModel):
+    """SDK-driven compression configuration for collections
+    
+    This configuration is passed from the SDK to the server, allowing
+    client-side control over compression settings without server-side defaults.
+    """
+    # SST compression settings
+    sst_block_size: Optional[int] = Field(
+        default=16384,
+        description="Target block size for SST files (16KB default)"
+    )
+    sst_compression_algorithm: Optional[CompressionAlgorithm] = Field(
+        default=CompressionAlgorithm.NONE,
+        description="Compression algorithm for SST blocks"
+    )
+    sst_compression_level: Optional[int] = Field(
+        default=None,
+        description="Compression level (1-9 for ZSTD)"
+    )
+    
+    # VIPER compression settings  
+    viper_compression_algorithm: Optional[CompressionAlgorithm] = Field(
+        default=CompressionAlgorithm.NONE,
+        description="Compression algorithm for VIPER Parquet files"
+    )
+    viper_compression_level: Optional[int] = Field(
+        default=None,
+        description="Compression level for VIPER"
+    )
+    viper_enable_dual_columns: Optional[bool] = Field(
+        default=False,
+        description="Enable dual column storage (FP32 + quantized) in VIPER"
+    )
+    
+    # Global settings
+    adaptive_compression: Optional[bool] = Field(
+        default=False,
+        description="Enable adaptive compression based on data characteristics"
+    )
+    compression_threshold_kb: Optional[int] = Field(
+        default=100,
+        description="Minimum file size in KB before applying compression"
+    )
+
+
 class QuantizationConfig(BaseModel):
     """Quantization configuration"""
     enabled: bool = False
@@ -444,6 +505,7 @@ class CollectionConfig(BaseModel):
     filterable_columns: Optional[List[FilterableColumn]] = None
     index_configs: Optional[List[IndexConfiguration]] = None
     quantization_config: Optional[QuantizationConfig] = None
+    compression_config: Optional[CompressionConfig] = None  # SDK-driven compression
     primary_index_name: Optional[str] = None
     enable_automatic_index_selection: Optional[bool] = None
     description: Optional[str] = None
@@ -591,7 +653,7 @@ class QuantizationHint(BaseModel):
 
 
 class SearchOptimization(BaseModel):
-    """Search optimization hints"""
+    """Search optimization hints including compression-aware options"""
     top_k: Optional[int] = None
     filters: Optional[Dict[str, Any]] = None
     accuracy_threshold: Optional[float] = None
@@ -601,6 +663,25 @@ class SearchOptimization(BaseModel):
     quantization_hint: Optional[QuantizationHint] = None
     enable_clustering_hint: Optional[bool] = None
     enable_metadata_filtering_hint: Optional[bool] = None
+    
+    # Compression-aware search hints
+    prefer_compressed_search: Optional[bool] = Field(
+        default=None,
+        description="Prefer searching compressed data when available"
+    )
+    decompression_budget_ms: Optional[int] = Field(
+        default=None,
+        description="Maximum time budget for decompression operations"
+    )
+    use_decompression_cache: Optional[bool] = Field(
+        default=True,
+        description="Use decompression cache for repeated searches"
+    )
+    compression_aware_routing: Optional[bool] = Field(
+        default=None,
+        description="Enable compression-aware query routing"
+    )
+    
     custom_hints: Optional[Dict[str, Any]] = None
 
 

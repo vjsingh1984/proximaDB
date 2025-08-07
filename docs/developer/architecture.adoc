@@ -9,260 +9,414 @@
 
 ProximaDB is a **proto-first, hardware-accelerated vector database** designed for enterprise AI applications.
 
-image::proximadb-unified-architecture.svg[ProximaDB Architecture, align=center, width=800]
+image::storage-architecture-complete.svg[ProximaDB Architecture, align=center, width=900]
 
 === Core Design Principles
 
 * **Proto-first**: Zero double serialization - VectorRecord flows natively as proto types
 * **Hardware acceleration**: Automatic GPU/SIMD detection and usage
 * **Dual storage engines**: VIPER (columnar/analytics) + SST (row-based/OLTP)
-* **Direct vector service**: Eliminates abstraction layers for 40-60% latency improvement
+* **SDK-driven compression**: Client-controlled compression without server defaults
+* **Magic byte validation**: Automatic format detection via magic bytes
 
-=== Key Performance Metrics (2025-08-05)
+=== Key Performance Metrics (2025-08-07)
 [cols="2,1,1,1"]
 |===
-|Operation |REST |gRPC |Speedup
+|Operation |REST |gRPC |Improvement
 
 |Bulk Insert
 |6K vec/s
 |17K vec/s
-|2.9x
+|2.9x faster
 
 |Search + Metadata
 |2.6ms
 |0.9ms
-|2.9x
+|65% lower latency
 
 |Concurrent Search
 |842 QPS
 |1,770 QPS
-|2.1x
+|2.1x throughput
+
+|Storage Efficiency
+|Baseline
+|50-80% reduction
+|Compression ratio
 |===
+
+== 🗄️ Storage Architecture
+
+=== Dual Engine Design
+
+ProximaDB implements two specialized storage engines with automatic format detection:
+
+==== SST Engine (Row-Based Storage)
+**Format Identification**: SST1 magic bytes at header
+
+[cols="1,1,2", options="header"]
+|===
+| Magic Bytes | Location | Purpose
+
+| `SST1` (0x53535431)
+| File header (offset 0)
+| Main SSTable format identifier
+
+| `BF01` (0x42463031)
+| Bloom filter section
+| Bloom filter validation
+
+| `IDX1` (0x49445831)
+| Index section
+| B-tree/Skip list index
+
+| `BLK1` (0x424C4B31)
+| Data blocks
+| Individual block markers
+|===
+
+**Optimized For**: 
+* OLTP workloads
+* Point queries and updates
+* Real-time ingestion
+* Small batch operations
+
+==== VIPER Engine (Columnar Storage)
+**Format Identification**: Standard Apache Parquet (PAR1)
+
+[cols="1,1,2", options="header"]
+|===
+| Format | Magic Bytes | Location
+
+| Apache Parquet
+| `PAR1` (0x50415231)
+| File footer (last 4 bytes)
+
+| Apache Arrow IPC
+| `ARROW1`
+| File header (optional)
+|===
+
+**Optimized For**:
+* Analytics workloads
+* Batch processing
+* Columnar scans
+* Compression efficiency
+
+=== File Format Detection Flow
+
+[source]
+----
+File Access Request
+    ├─ Read magic bytes
+    │   ├─ Header check: "SST1" → Route to SST Engine
+    │   ├─ Footer check: "PAR1" → Route to VIPER Engine
+    │   └─ Extension fallback → Use file extension
+    └─ Validate sub-components
+        ├─ SST: Check BF01, IDX1, BLK1
+        └─ VIPER: Validate Parquet schema
+----
 
 == 🔧 Core Components
 
 === DirectVectorService
 **Location**: `/src/services/direct_vector_service.rs`
 
-Direct memtable access eliminating abstraction layers:
+Enhanced with UnifiedQueryPlanner integration:
+
 ```rust
-// Proto-first pipeline
-Proto → DirectVectorService → Memtable → Storage
-```
-
-**Benefits**:
-* 40-60% latency reduction
-* Zero serialization overhead
-* Direct memory access patterns
-* Integrated WAL recovery using collection metadata
-
-=== CollectionService (Updated 2025-08-06)
-**Location**: `/src/services/collection_service.rs`
-
-Manages collection metadata with integrated storage assignment:
-```rust
-// Storage assignment now embedded in Collection proto
-Collection {
-    id: String,
-    config: CollectionConfig,
-    stats: CollectionStats,
-    storage_assignment: Option<StorageAssignment>, // NEW
+pub struct DirectVectorService {
+    memtables: Arc<DashMap<String, Arc<RwLock<Memtable>>>>,
+    query_planner: Arc<UnifiedQueryPlanner>,
+    decompression_cache: Arc<DecompressionCache>,
 }
 ```
 
-**Key Changes**:
-* Removed separate AssignmentService
-* Storage locations managed within collection metadata
-* WAL discovery through collection service
-* Automatic storage assignment on collection creation
+**Key Features**:
+* Direct memtable access (40-60% latency reduction)
+* Integrated query planning
+* SDK-driven compression routing
+* Automatic cache management
 
-=== Hardware Capabilities System
+=== UnifiedQueryPlanner
+**Location**: `/src/storage/engines/sst/unified_query_planner.rs`
+
+Intelligent query routing with compression awareness:
+
+```rust
+pub struct UnifiedQueryPlanner {
+    compression_stats: DashMap<CompressionAlgorithm, CompressionStats>,
+    quantization_stats: DashMap<QuantizationType, QuantizationStats>,
+    cache_hit_rates: Arc<RwLock<HashMap<String, f64>>>,
+}
+```
+
+**Capabilities**:
+* Compression cost estimation (ZSTD: ~30ms/GB, LZ4: ~10ms/GB, Snappy: ~5ms/GB)
+* Two-stage search coordination for quantized data
+* Adaptive routing based on historical performance
+* Cache-aware query planning
+
+=== Decompression Cache
+**Location**: `/src/storage/engines/sst/decompression_cache.rs`
+
+LRU cache with automatic invalidation:
+
+```toml
+[cache.decompression]
+max_size_mb = 512
+ttl_seconds = 300
+enable_prefetch = true
+prefetch_threshold = 5
+invalidation_check_interval_seconds = 30
+```
+
+**Features**:
+* Algorithm-specific sub-caches
+* Automatic invalidation on data changes
+* Prefetching for sequential access
+* Hit rate monitoring and reporting
+
+=== CollectionService
+**Location**: `/src/services/collection_service.rs`
+
+Manages collection metadata with integrated storage assignment:
+
+```rust
+Collection {
+    id: String,
+    config: CollectionConfig {
+        compression_config: Option<CompressionConfig>,
+        storage_engine: String,
+        distance_metric: DistanceMetric,
+    },
+    storage_assignment: Option<StorageAssignment>,
+}
+```
+
+== 💾 Compression System
+
+=== SDK-Driven Compression
+
+All compression is controlled from the client SDK:
+
+```python
+from proximadb import ProximaDBClient
+from proximadb.models import CompressionConfig
+
+config = CompressionConfig(
+    sst_compression_algorithm="zstd",
+    sst_compression_level=6,
+    sst_block_size=32768,
+    viper_enable_dual_columns=True,
+    adaptive_compression=True,
+    compression_threshold_kb=100
+)
+
+collection = client.create_collection(
+    name="vectors",
+    dimension=1536,
+    compression_config=config
+)
+```
+
+=== Compression Algorithms
+
+[cols="1,1,1,2", options="header"]
+|===
+| Algorithm | Compression Ratio | Speed | Use Case
+
+| **ZSTD**
+| 2-10x
+| Medium
+| Best compression ratio
+
+| **LZ4**
+| 1.5-3x
+| Fast
+| Balanced performance
+
+| **Snappy**
+| 1.5-2x
+| Very Fast
+| Low latency priority
+|===
+
+=== Two-Stage Search
+
+For quantized/compressed data:
+
+1. **Coarse Search**: Fast search on quantized vectors
+2. **Reranking**: Precise search on decompressed candidates
+3. **Result Merging**: Combine and deduplicate results
+
+== 🔍 Indexing System (AXIS)
+
+=== Supported Algorithms
+
+All 6 algorithms fully supported with hardware acceleration:
+
+[cols="1,1,2,1", options="header"]
+|===
+| Algorithm | Type | Best For | Memory
+
+| **HNSW**
+| Graph
+| High recall, general purpose
+| High
+
+| **IVF**
+| Clustering
+| Large datasets, balanced
+| Medium
+
+| **PQ**
+| Quantization
+| Memory constrained
+| Low
+
+| **FLAT**
+| Brute force
+| Perfect recall
+| High
+
+| **ANNOY**
+| Tree-based
+| Read-heavy workloads
+| Medium
+
+| **LSH**
+| Hash-based
+| High dimensions
+| Low
+|===
+
+== 📏 Distance Metrics
+
+All 13 metrics hardware accelerated:
+
+**Core Metrics**:
+* `cosine` - Semantic similarity
+* `euclidean` - Geometric distance
+* `dot_product` - Magnitude-aware similarity
+
+**Extended Metrics**:
+* `manhattan`, `hamming`, `jaccard`
+* `chebyshev`, `canberra`, `minkowski`
+* `angular`, `bray_curtis`, `hellinger`
+* `custom` - User-defined metrics
+
+== 🚀 Performance Optimizations
+
+=== Hardware Acceleration
 **Location**: `/src/core/hardware_capabilities.rs`
 
-Centralized hardware detection using `OnceLock` pattern:
 ```rust
 // Initialize once at startup
 initialize_hardware_capabilities_default()?;
 let caps = get_hardware_capabilities();
-```
 
-**Features**:
-* GPU detection (CUDA, ROCm, MPS, OpenCL)
-* SIMD capabilities (AVX2, SSE4.1)
-* Memory and CPU optimization
-
-=== Unified Atomic Coordinator
-**Location**: `/src/storage/atomic.rs`
-
-ACID transaction support for all write operations:
-* Multi-collection consistency
-* Write buffer coordination
-* Rollback capabilities
-
-== 🗄️ Storage Engines
-
-=== VIPER Engine (Columnar)
-**Optimized for**: Analytics, read-heavy workloads
-
-**Features**:
-* Parquet format with ZSTD compression
-* Predicate pushdown (60-90% I/O reduction)
-* Quantization support
-* Adaptive reading strategies
-
-**File Structure**:
-```
-/src/storage/engines/viper/
-├── unified_parquet_reader.rs    # Adaptive reading
-├── quantization/               # Compression support
-└── tests/                     # Engine tests
-```
-
-=== SST Engine (Row-based)
-**Optimized for**: OLTP, write-heavy workloads
-
-**Features**:
-* SSTable format with bloom filters
-* Three-stage filtering (Bloom → Index → Row)
-* Bytemuck serialization (5-10x speedup)
-* Intelligent compaction
-
-**File Structure**:
-```
-/src/storage/engines/sst/
-├── unified_search_engine.rs     # Search optimization
-├── bloom_filter/               # Fast filtering
-└── tests/                     # Engine tests
-```
-
-== 🔍 Indexing System (AXIS)
-
-=== Supported Algorithms (All 6 fully supported)
-[cols="2,2,3"]
-|===
-|Algorithm |Type |Use Case
-
-|**HNSW**
-|Graph-based
-|General purpose, high recall
-
-|**IVF**
-|Clustering
-|Large datasets, good recall/speed balance
-
-|**PQ**
-|Quantization
-|Memory-constrained environments
-
-|**FLAT**
-|Brute force
-|Small datasets, perfect recall
-
-|**ANNOY**
-|Tree-based
-|Read-heavy workloads
-
-|**LSH**
-|Hash-based
-|High-dimensional sparse vectors
-|===
-
-=== Adaptive Selection
-**Location**: `/src/index/axis/`
-
-Automatic algorithm selection based on:
-* Vector dimension and count
-* Query patterns
-* Hardware capabilities
-* Memory constraints
-
-== 📏 Distance Metrics
-
-=== All 13 Metrics Supported (2025-08-05)
-**Core**: cosine, euclidean, dot_product
-**Extended**: manhattan, hamming, jaccard, chebyshev, canberra, minkowski, angular, bray_curtis, hellinger, custom
-
-**Hardware Acceleration**: SIMD/GPU optimized implementations for all metrics
-
-== 🚀 Performance Optimizations
-
-=== Search Optimizations
-1. **Bloom Filters**: Skip 95%+ irrelevant batches in memtable
-2. **Parallel SSTable Reading**: 3-5x speedup for multi-file searches  
-3. **Early Termination**: Stop when k results found (unordered queries)
-4. **Query Result Caching**: LRU cache at service level
-5. **Predicate Pushdown**: Reduce data transfer by 50-80%
-
-=== SQL Engine (High-Performance)
-**Location**: `/src/query/sql_engine/`
-
-**Features**:
-* Lock-free parser pool (1M+ queries/sec)
-* SIMD-accelerated vector parsing (AVX2/SSE4.1)
-* Query result caching with DashMap
-* GPU-accelerated parsing support
-
-**Architecture**:
-```rust
-// Lock-free concurrent parsing
-LockFreeParserPool → SIMD VectorParser → QueryCache
-```
-
-=== Compression System
-**Automatic compression** for both REST and gRPC:
-* **REST**: deflate, gzip, zstd, brotli via tower-http
-* **gRPC**: Native gzip compression  
-* **Bandwidth savings**: 50-80% reduction
-* **Zero configuration**: Transparent to clients
-
-== 🧪 Testing Architecture
-
-=== Test Requirements
-All tests must initialize hardware capabilities:
-```rust
-#[test]
-fn test_example() {
-    let _ = proximadb::core::hardware_capabilities::initialize_hardware_capabilities_default();
-    // Test code here
+if caps.has_gpu {
+    // Use GPU acceleration
+} else if caps.has_avx2 {
+    // Use SIMD optimization
 }
 ```
 
-=== Test Structure
-* **Unit tests**: Component-specific (900+ tests)
-* **Integration tests**: Cross-component workflows
-* **Performance tests**: Benchmark validation
-* **Stress tests**: Concurrent load validation
+=== Search Optimizations
 
-== 🔧 Development Guidelines
+1. **Bloom Filters**: Skip 95%+ irrelevant data
+2. **Parallel Reading**: 3-5x speedup for multi-file searches
+3. **Early Termination**: Stop when k results found
+4. **Query Caching**: LRU cache for repeated queries
+5. **Predicate Pushdown**: 60-90% I/O reduction
 
-=== Code Patterns
-* **Proto-first**: Use proto types directly, avoid conversions
-* **Atomic writes**: Always use UnifiedAtomicCoordinator
-* **Storage-aware**: Let engines select optimal strategies
-* **Hardware-aware**: Use capabilities system for optimization
+=== SQL Engine Performance
+**Location**: `/src/query/sql_engine/`
 
-=== Key File Structure
+* Lock-free parser pool (1M+ queries/sec)
+* SIMD vector parsing (AVX2/SSE4.1)
+* Query result caching with DashMap
+* GPU acceleration support
+
+== 🧪 Testing Requirements
+
+=== Hardware Initialization
+
+All tests must initialize capabilities:
+
+```rust
+#[test]
+fn test_example() {
+    let _ = proximadb::core::hardware_capabilities::
+        initialize_hardware_capabilities_default();
+    // Test code
+}
+```
+
+=== Test Coverage
+
+* **Unit Tests**: 900+ component tests
+* **Integration Tests**: 200+ workflow tests
+* **Performance Tests**: Benchmark validation
+* **Compression Tests**: Format validation
+
+== 📁 Project Structure
+
 ```
 src/
 ├── services/
-│   └── direct_vector_service.rs     # Main service layer
-├── core/
-│   └── hardware_capabilities.rs     # Hardware detection
+│   ├── direct_vector_service.rs    # Main service with planner
+│   └── collection_service.rs       # Metadata management
 ├── storage/
-│   ├── atomic.rs                    # ACID coordinator
-│   ├── engines/viper/               # Columnar engine
-│   └── engines/sst/                 # Row engine
-├── index/axis/                      # Adaptive indexing
-├── query/sql_engine/               # SQL processing
-└── handlers/conversions.rs         # REST API layer
+│   ├── engines/
+│   │   ├── sst/                   # SST1 format engine
+│   │   │   ├── sstable_writer.rs  # SST1 magic bytes
+│   │   │   ├── unified_query_planner.rs
+│   │   │   └── decompression_cache.rs
+│   │   └── viper/                 # Parquet engine
+│   │       └── unified_parquet_reader.rs
+│   └── atomic.rs                  # ACID coordinator
+├── core/
+│   └── hardware_capabilities.rs   # Hardware detection
+├── index/axis/                    # Adaptive indexing
+└── query/sql_engine/             # SQL processing
 ```
 
-== 📚 Further Reading
+== 🔧 Development Guidelines
 
-* **User Guide**: link:../user/user_guide.adoc[Complete usage examples]
+=== Best Practices
+
+1. **Proto-First**: Use proto types directly
+2. **Magic Byte Validation**: Always validate file formats
+3. **SDK-Driven**: No server-side compression defaults
+4. **Cache-Aware**: Utilize decompression cache
+5. **Hardware-Aware**: Use capabilities system
+
+=== Common Patterns
+
+```rust
+// Compression-aware search
+let plan = query_planner.plan_proto_query(&query, &files).await?;
+if plan.use_two_stage {
+    // Coarse + reranking
+} else {
+    // Direct search
+}
+
+// Magic byte validation
+if &data[0..4] != b"SST1" {
+    return Err(anyhow!("Invalid SST format"));
+}
+```
+
+== 📚 Related Documentation
+
+* **Magic Bytes**: link:magic_bytes_architecture.adoc[Format Detection Guide]
+* **User Guide**: link:../user/user_guide.adoc[Usage Examples]
 * **API Reference**: link:../user/api_reference.adoc[REST/gRPC APIs]
-* **Performance**: link:../appendices/appendix_performance_metrics.adoc[Benchmarks and tuning]
-* **Multi-disk**: link:../admin/multi_disk_guide.adoc[Enterprise deployment]
+* **Performance**: link:../appendices/appendix_performance_metrics.adoc[Benchmarks]
+* **Compression**: link:../compression_guide.adoc[Compression Guide]
 
 ---
-*Last updated: 2025-08-05*
+*Last updated: 2025-08-07*

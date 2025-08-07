@@ -446,6 +446,8 @@ impl ProximaDb for ProximaDbGrpcService {
                         quantization_config: None,
                         primary_index_name: String::new(),
                         enable_automatic_index_selection: false,
+                        compression: None,  // SDK-driven (2025-08-06)
+                        optimization_hints: None,  // SDK-driven (2025-08-06)
                     })
                 } else {
                     None

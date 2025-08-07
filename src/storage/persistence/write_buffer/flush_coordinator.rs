@@ -171,7 +171,6 @@ impl WriteBufferFlushCoordinator {
         );
 
         let flush_id = uuid::Uuid::new_v4().to_string();
-        let mut flush_cycle_data = None;
 
         // Step 1: Extract vector records from FlushDataSource + Mark for cleanup
         let vector_records = match &flush_data {
@@ -232,7 +231,7 @@ impl WriteBufferFlushCoordinator {
             Some(crate::proto::proximadb::Collection {
                 id: context.collection_id.clone(),
                 config: Some(crate::proto::proximadb::CollectionConfig {
-                    dimension: context.dimension as u32,
+                    dimension: context.dimension as i32,
                     distance_metric: context.distance_metric as i32,
                     storage_engine: match context.storage_engine {
                         crate::storage::background_flush_context::StorageEngineType::Viper => crate::proto::proximadb::StorageEngine::Viper as i32,
@@ -327,12 +326,7 @@ impl WriteBufferFlushCoordinator {
         );
 
         // Step 3: Create flush parameters with actual vector data + BatchId coordination
-        let batch_ids = if let Some(ref cycle) = flush_cycle_data {
-            // Extract BatchIDs from flush cycle data if available
-            cycle.batch_ids.clone()
-        } else {
-            Vec::new()
-        };
+        let batch_ids = Vec::new();  // No cycle data needed in this simplified flow
 
         // Clone vector records for AXIS indexing before moving into flush params
         let vector_records_for_axis = vector_records.clone();
@@ -423,10 +417,10 @@ impl WriteBufferFlushCoordinator {
             metrics.record_flush(
                 collection_id,
                 FlushMetricsUpdate {
-                    vectors_flushed: storage_result.entries_flushed,
-                    bytes_written: storage_result.bytes_written,
-                    duration_ms: storage_result.duration_ms,
-                    files_created: storage_result.files_created,
+                    vectors_flushed: storage_result.entries_flushed as i64,
+                    bytes_written: storage_result.bytes_written as i64,
+                    duration_ms: storage_result.duration_ms as i64,
+                    files_created: storage_result.files_created as i32,
                     engine_type,
                     timestamp: chrono::Utc::now().timestamp_millis(),
                 },

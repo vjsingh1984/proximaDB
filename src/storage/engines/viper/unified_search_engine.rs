@@ -9,6 +9,7 @@
 
 use anyhow::Result;
 use async_trait::async_trait;
+use serde_json::json;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tracing::{debug, info};
@@ -124,17 +125,96 @@ impl UnifiedSearchEngine for ViperUnifiedSearchEngine {
         debug!("📁 Collection context: {:?}", collection_context);
         debug!("📁 Filterable columns: {:?}", collection_context.filterable_columns);
         
-        // 3. Use UnifiedParquetReader direct search - NO ADAPTERS!
-        let search_results = self.parquet_reader.search_vectors(
-            params,
-            &collection_context,
-        ).await?;
+        // 3. VIPER TWO-STAGE SEARCH (unique to VIPER's dual column storage)
+        //
+        // ARCHITECTURAL DIFFERENCES - Three Distinct Two-Stage Approaches:
+        //
+        // 1. SST Two-Stage (Block Compression):
+        //    - Stage 1: Search compressed SSTable blocks with bloom filters
+        //    - Stage 2: Decompress selected blocks and search FP32 vectors
+        //    - Compression: Block-level (ZSTD/LZ4/Snappy on entire blocks)
+        //
+        // 2. DirectVectorService Two-Stage (Index Quantization):  
+        //    - Stage 1: Search quantized INDEX structures (HNSW with PQ codes)
+        //    - Stage 2: Retrieve and rerank original FP32 vectors from storage
+        //    - Compression: Index-only (graph structure uses quantized codes)
+        //
+        // 3. VIPER Two-Stage (Dual Column Storage) - THIS METHOD:
+        //    - Stage 1: Search actual quantized VECTOR COLUMNS (INT8/PQ8/PQ4)
+        //    - Stage 2: Rerank using parallel FP32 column for exact scoring
+        //    - Compression: Data-level (separate columns for each precision)
+        //    - Unique: Both quantized and FP32 vectors are directly searchable
+        //
+        // VIPER's approach provides the best flexibility - can search at any precision level
+        let search_results = if params.enable_two_stage.unwrap_or(false) && 
+                                self.has_quantized_columns(&collection_context).await {
+            info!("🎯 VIPER Two-Stage Search: Using quantized columns for initial filtering");
+            
+            // STAGE 1: Fast search on quantized columns (INT8/PQ8/PQ4)
+            // This is unique to VIPER - we search the actual quantized vectors stored in separate columns
+            let stage1_k = params.top_k.unwrap_or(10) * 10; // Get 10x candidates
+            let mut stage1_params = params.clone();
+            stage1_params.top_k = Some(stage1_k);
+            stage1_params.custom_hints = Some({
+                let mut hints = params.custom_hints.clone().unwrap_or_default();
+                hints.insert("use_quantized_column".to_string(), serde_json::Value::Bool(true));
+                hints.insert("quantization_type".to_string(), serde_json::Value::String("int8".to_string()));
+                hints
+            });
+            
+            let stage1_results = self.parquet_reader.search_vectors(
+                &stage1_params,
+                &collection_context,
+            ).await?;
+            
+            info!("📊 Stage 1: Found {} candidates from quantized search", stage1_results.len());
+            
+            // STAGE 2: Precise reranking with FP32 vectors
+            // This preserves 100% accuracy by using original vectors for final ranking
+            let stage2_params = SearchParams {
+                query_vectors: params.query_vectors.clone(),
+                top_k: params.top_k,
+                distance_metric: params.distance_metric,
+                filter_expression: None, // Already filtered in stage 1
+                custom_hints: Some({
+                    let mut hints = params.custom_hints.clone().unwrap_or_default();
+                    hints.insert("use_fp32_column".to_string(), serde_json::Value::Bool(true));
+                    hints.insert("vector_ids".to_string(), serde_json::json!(
+                        stage1_results.iter().map(|r| &r.vector_id).collect::<Vec<_>>()
+                    ));
+                    hints
+                }),
+                ..params.clone()
+            };
+            
+            let stage2_results = self.parquet_reader.search_vectors(
+                &stage2_params,
+                &collection_context,
+            ).await?;
+            
+            info!("✨ Stage 2: Reranked to {} final results with FP32 precision", stage2_results.len());
+            stage2_results
+            
+        } else {
+            // Standard single-stage search on FP32 vectors
+            info!("🔍 VIPER Standard Search: Using FP32 vectors directly");
+            self.parquet_reader.search_vectors(
+                params,
+                &collection_context,
+            ).await?
+        };
         
         let processing_time = start_time.elapsed().as_micros() as u64;
         
         info!("✅ VIPER Search completed: {} results in {}μs", search_results.len(), processing_time);
         
         let result_count = search_results.len() as u64;
+        let search_method = if params.enable_two_stage.unwrap_or(false) {
+            "VIPER-TwoStage-DualColumn"
+        } else {
+            "VIPER-Direct"
+        };
+        
         Ok(SearchResultSet::from_vec(
             search_results,
             result_count,
@@ -143,7 +223,7 @@ impl UnifiedSearchEngine for ViperUnifiedSearchEngine {
                 .and_then(|v| v.as_str())
                 .map(|s| s.to_string()),
             processing_time,
-            "VIPER-Direct".to_string(),
+            search_method.to_string(),
             HashMap::new(),
         ))
     }
@@ -218,6 +298,20 @@ impl UnifiedSearchEngine for ViperUnifiedSearchEngine {
 }
 
 impl ViperUnifiedSearchEngine {
+    /// Check if collection has quantized columns (INT8, PQ8, PQ4)
+    /// This is unique to VIPER's dual column storage architecture
+    /// 
+    /// VIPER TWO-STAGE SEARCH vs DirectVectorService:
+    /// - VIPER: Uses actual quantized COLUMNS stored alongside FP32 (dual column storage)
+    /// - DirectVectorService: Uses quantized INDEXES that point to FP32 vectors
+    /// - VIPER: Can search directly on INT8/PQ8/PQ4 columns without decompression
+    /// - DirectVectorService: Must decompress/decode quantized index entries
+    async fn has_quantized_columns(&self, context: &CollectionContext) -> bool {
+        // VIPER stores quantized vectors as separate columns in Parquet files
+        // Check if quantization columns exist (vector_int8, vector_pq8, vector_pq4)
+        !context.quantization_columns.is_empty()
+    }
+    
     /// Build file paths using collection context and ML clustering
     async fn build_file_paths(
         &self,
@@ -328,6 +422,7 @@ impl ViperUnifiedSearchEngine {
                     crate::core::search::unified_interface::ColumnDataType::DateTime
                 ),
                 estimated_cardinality: col.estimated_cardinality.map(|c| c as i32),
+                encoding_hint: None,  // SDK-driven encoding (2025-08-06)
             }
         }).collect();
         

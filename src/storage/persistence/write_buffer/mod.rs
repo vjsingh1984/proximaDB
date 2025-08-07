@@ -27,8 +27,7 @@ use crate::storage::assignment_service::{AssignmentService, StorageAssignmentCon
 use crate::storage::atomic::UnifiedAtomicCoordinator;
 
 // Sub-modules  
-pub mod background_manager_clean;
-pub use background_manager_clean as background_manager;
+pub mod background_manager;
 pub mod batch_strategy;
 pub mod batch_sync_coordinator;
 pub mod batch_factory;

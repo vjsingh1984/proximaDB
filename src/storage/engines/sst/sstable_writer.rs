@@ -28,6 +28,7 @@ use crate::core::bloom::{
 };
 use crate::core::bloom::strategies::composite::CompositeBloomFilterBuilder;
 use super::bloom_filter::SstableBloomFilter;
+use crate::proto::proximadb::CompressionConfig;
 
 /// SSTable writer with atomic write optimization
 pub struct SstableWriter {
@@ -39,6 +40,8 @@ pub struct SstableWriter {
     bloom_config: BloomFilterConfig,
     /// Filesystem factory for atomic writes
     filesystem: Arc<FilesystemFactory>,
+    /// SDK-driven compression configuration
+    compression_config: Option<CompressionConfig>,
 }
 
 impl SstableWriter {
@@ -49,6 +52,23 @@ impl SstableWriter {
             block_size,
             bloom_config: BloomFilterConfig::default(),
             filesystem,
+            compression_config: None,
+        }
+    }
+    
+    /// Create a new SSTable writer with compression configuration from SDK
+    pub fn with_compression<P: AsRef<Path>>(
+        path: P, 
+        block_size: usize, 
+        filesystem: Arc<FilesystemFactory>,
+        compression_config: Option<CompressionConfig>
+    ) -> Self {
+        Self {
+            path: path.as_ref().to_path_buf(),
+            block_size,
+            bloom_config: BloomFilterConfig::default(),
+            filesystem,
+            compression_config,
         }
     }
     
@@ -183,6 +203,24 @@ impl SstableWriter {
             .map(|b| b.serialize().map(|v| v.len() as u64).unwrap_or(0))
             .sum();
         
+        // SDK-DRIVEN COMPRESSION (2025-08-06): Use compression config from collection metadata
+        let (compression_enabled, compression_algorithm, compression_level) = 
+            if let Some(ref compression) = self.compression_config {
+                use crate::proto::proximadb::CompressionAlgorithm;
+                let algorithm = match CompressionAlgorithm::try_from(compression.algorithm) {
+                    Ok(CompressionAlgorithm::CompressionZstd) => super::CompressionAlgorithmSst::Zstd,
+                    Ok(CompressionAlgorithm::CompressionLz4) => super::CompressionAlgorithmSst::Lz4,
+                    Ok(CompressionAlgorithm::CompressionSnappy) => super::CompressionAlgorithmSst::Snappy,
+                    _ => super::CompressionAlgorithmSst::None,
+                };
+                let level = compression.level.unwrap_or(3) as u8; // Default compression level
+                debug!("🗜️ SST: Using SDK-driven compression: {:?} level {}", algorithm, level);
+                (true, algorithm, level)
+            } else {
+                debug!("🗜️ SST: No compression configuration from SDK, using uncompressed");
+                (false, super::CompressionAlgorithmSst::None, 0)
+            };
+
         // Create header with correct sizes
         let mut header = SstableHeader {
             version: 1,
@@ -191,7 +229,9 @@ impl SstableWriter {
             min_key,
             max_key,
             created_at: chrono::Utc::now().timestamp(),
-            compression_enabled: false,
+            compression_enabled,
+            compression_algorithm,
+            compression_level,
             has_bloom_filter: true,
             block_size: self.block_size as u32,
             batch_size: 0,
@@ -208,14 +248,20 @@ impl SstableWriter {
         // Re-serialize with correct header_size
         let header_data = bincode::serialize(&header)?;
         
-        // Build complete SSTable bytes: header_len + header + bloom_len + bloom + index_len + index + data_blocks
+        // Build complete SSTable bytes: magic + header_len + header + bloom_len + bloom + index_len + index + data_blocks
+        // SST1 magic bytes for version 1 (as requested, not SST2 since v1 was never released)
+        const SST_MAGIC: &[u8; 4] = b"SST1";
+        
         debug!("SSTable Writer - File layout:");
+        debug!("  - Magic bytes (4 bytes): SST1");
         debug!("  - Header length (4 bytes): {}", header_data.len());
         debug!("  - Header data ({} bytes)", header_data.len());
         debug!("  - Bloom length (4 bytes): {}", bloom_data.len());
         debug!("  - Bloom data ({} bytes)", bloom_data.len());
-        debug!("  - Bloom offset will be: {}", 4 + header_data.len());
+        debug!("  - Bloom offset will be: {}", 8 + header_data.len()); // 8 = magic + header_len
         
+        // Write magic bytes first
+        sstable_bytes.extend_from_slice(SST_MAGIC);
         sstable_bytes.extend_from_slice(&(header_data.len() as u32).to_le_bytes());
         sstable_bytes.extend_from_slice(&header_data);
         
@@ -354,6 +400,12 @@ impl SstableWriter {
     /// Set bloom filter configuration
     pub fn with_bloom_config(mut self, config: BloomFilterConfig) -> Self {
         self.bloom_config = config;
+        self
+    }
+    
+    /// Set compression configuration (SDK-driven)
+    pub fn with_compression_config(mut self, config: Option<CompressionConfig>) -> Self {
+        self.compression_config = config;
         self
     }
     

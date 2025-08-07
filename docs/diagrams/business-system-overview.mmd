@@ -1,149 +1,106 @@
-%%{init: {'theme':'base', 'themeVariables': { 
-  'primaryColor':'#1e293b', 
-  'primaryTextColor':'#ffffff', 
-  'primaryBorderColor':'#334155', 
-  'lineColor':'#64748b', 
-  'fontSize':'12px', 
-  'fontFamily':'Inter, -apple-system, sans-serif',
-  'secondaryColor':'#0f172a',
-  'tertiaryColor':'#1e40af',
-  'background':'#ffffff',
-  'mainBkg':'#f8fafc',
-  'secondBkg':'#e2e8f0',
-  'tertiaryBkg':'#cbd5e1'
-}}}%%
-
 graph TB
-    %% ===========================================
-    %% ProximaDB Business System Overview
-    %% Executive & Decision Maker Focused
-    %% ===========================================
+    %% Business-focused system overview with neutral professional colors
     
-    subgraph BusinessValue["Business Value Proposition"]
-        direction TB
-        
-        subgraph ROI["Measurable ROI"]
-            Performance["Performance<br/>49K vectors/sec<br/>40-60% latency reduction<br/>80% memory savings<br/><2ms search response"]
+    subgraph BusinessValue["📊 Business Value Proposition"]
+        subgraph ROI["Return on Investment"]
+            Performance["🚀 Superior Performance<br/>• 17K+ vectors/sec throughput<br/>• Sub-millisecond search<br/>• 3x faster than alternatives<br/>• Hardware acceleration"]
             
-            CostSavings["Cost Efficiency<br/>30-50% storage reduction<br/>Zero-config deployment<br/>Multi-cloud optimization<br/>Auto-scaling capabilities"]
+            Efficiency["💰 Resource Efficiency<br/>• 50-80% storage reduction<br/>• Lower compute requirements<br/>• Reduced network transfer<br/>• Optimized memory usage"]
             
-            Productivity["Developer Productivity<br/>Python SDK ready<br/>REST/gRPC/SQL APIs<br/>Zero-downtime operations<br/>Enterprise documentation"]
+            Productivity["⚡ Developer Velocity<br/>• Production-ready SDKs<br/>• SQL + Vector queries<br/>• Comprehensive docs<br/>• Quick integration"]
         end
         
-        subgraph Competitive["Competitive Advantages"]
-            Innovation["Innovation Edge<br/>AI-native architecture<br/>ML-optimized storage<br/>Adaptive indexing<br/>BERT integration ready"]
+        subgraph Advantages["Competitive Edge"]
+            Technology["🔬 Technology Leadership<br/>• Proto-first architecture<br/>• Dual storage engines<br/>• SDK-driven compression<br/>• Magic byte validation"]
             
-            Scalability["Enterprise Scale<br/>Multi-cloud ready<br/>Horizontal scaling<br/>ACID compliance<br/>Production hardened"]
+            Scale["📈 Enterprise Scale<br/>• Horizontal scaling<br/>• Multi-cloud support<br/>• ACID compliance<br/>• Production proven"]
             
-            Integration["Easy Integration<br/>Drop-in replacement<br/>Standard protocols<br/>SQL compatibility<br/>Zero vendor lock-in"]
+            Flexibility["🔄 Future Proof<br/>• No vendor lock-in<br/>• Open standards<br/>• Extensible design<br/>• Active development"]
         end
     end
     
-    subgraph UseCases["Primary Use Cases"]
-        direction TB
-        
-        subgraph AIApplications["AI & ML Applications"]
-            Recommendation["Recommendation Systems<br/>E-commerce personalization<br/>Content discovery<br/>Media recommendations<br/>99.9% accuracy improvement"]
+    subgraph Applications["🎯 Key Applications"]
+        subgraph AI["AI/ML Workloads"]
+            Semantic["Semantic Search<br/>• Document retrieval<br/>• Similar item finding<br/>• Content discovery"]
             
-            Search["Semantic Search<br/>Document retrieval<br/>Voice assistants<br/>Image search<br/>Multi-modal search"]
+            RAG["RAG Systems<br/>• Knowledge bases<br/>• Chatbots & Q&A<br/>• Context retrieval"]
             
-            RAG["RAG Applications<br/>Chatbots & Q&A<br/>Knowledge bases<br/>Research assistance<br/>Document analysis"]
+            Recommendation["Recommendations<br/>• Personalization<br/>• Content suggestions<br/>• User matching"]
         end
         
-        subgraph EnterpriseData["Enterprise Data"]
-            Analytics["Real-time Analytics<br/>Business intelligence<br/>Customer insights<br/>Operational metrics<br/>Sub-second queries"]
+        subgraph Enterprise["Enterprise Systems"]
+            Analytics["Analytics<br/>• Real-time insights<br/>• Pattern detection<br/>• Anomaly detection"]
             
-            DataLakes["Data Lake Integration<br/>Modern data stack<br/>Cloud-native storage<br/>ETL/ELT pipelines<br/>Unified data access"]
+            DataPlatform["Data Platform<br/>• Unified storage<br/>• Multi-modal data<br/>• ETL pipelines"]
         end
     end
     
-    subgraph TechnicalExcellence[" Technical Excellence"]
-        direction TB
-        
-        subgraph Reliability["Reliability & Performance"]
-            Uptime["High Availability<br/>99.99% uptime SLA<br/>Zero-downtime upgrades<br/>Automatic failover<br/>Real-time monitoring"]
+    subgraph Architecture["🏗️ Technical Architecture"]
+        subgraph Core["Core Components"]
+            Engines["Storage Engines<br/>• SST: Row-based (SST1)<br/>• VIPER: Columnar (PAR1)<br/>• Automatic routing"]
             
-            Security["Enterprise Security<br/>Encryption at rest/transit<br/>Role-based access<br/>Audit logging<br/>SOC 2 compliance ready"]
+            Acceleration["Acceleration<br/>• GPU detection<br/>• SIMD optimization<br/>• Cache management"]
             
-            Monitoring["Observability<br/>Performance metrics<br/>Intelligent alerting<br/>Distributed tracing<br/>Custom dashboards"]
+            Compression["Compression<br/>• ZSTD, LZ4, Snappy<br/>• Client-controlled<br/>• Adaptive sizing"]
         end
         
-        subgraph Operations["Operational Excellence"]
-            Deployment["Deployment Options<br/>Docker containers<br/>Kubernetes ready<br/>Cloud marketplace<br/>On-premises support"]
+        subgraph Operations["Operations"]
+            Deployment["Deployment<br/>• Docker/K8s<br/>• Cloud native<br/>• On-premises"]
             
-            Maintenance["Maintenance<br/>Auto-optimization<br/>Self-compaction<br/>Automated backups<br/>Schema evolution"]
+            Monitoring["Observability<br/>• Prometheus metrics<br/>• OpenTelemetry<br/>• Custom dashboards"]
             
-            Support["Enterprise Support<br/>24/7 technical support<br/>Training programs<br/>Migration assistance<br/>Success management"]
+            Management["Management<br/>• Auto-optimization<br/>• Self-healing<br/>• Zero downtime"]
         end
     end
     
-    subgraph Implementation["Implementation Strategy"]
-        direction TB
-        
-        subgraph Phase1["Phase 1: Foundation (Week 1-2)"]
-            Setup["Quick Setup<br/>Docker deployment<br/>Standard configuration<br/>Health verification<br/>Basic monitoring"]
+    subgraph Adoption["🚀 Adoption Path"]
+        subgraph Quick["Quick Start (Day 1)"]
+            Docker["Docker Deploy<br/>• Single command<br/>• Pre-configured<br/>• Health checks"]
             
-            Migration["Data Migration<br/>Import utilities<br/>Validation tools<br/>Performance testing<br/>Acceptance criteria"]
+            SDK["SDK Integration<br/>• pip install<br/>• Sample code<br/>• Documentation"]
         end
         
-        subgraph Phase2["Phase 2: Integration (Week 3-4)"]
-            AppIntegration["Application Integration<br/>Python SDK integration<br/>API endpoint setup<br/>Testing framework<br/>Performance benchmarks"]
+        subgraph Pilot["Pilot Phase (Week 1-2)"]
+            Migration["Data Migration<br/>• Import tools<br/>• Validation<br/>• Performance test"]
             
-            Optimization["Optimization<br/>Index configuration<br/>Query optimization<br/>Storage tuning<br/>Performance analysis"]
+            Integration["Integration<br/>• API setup<br/>• Testing<br/>• Optimization"]
         end
         
-        subgraph Phase3["Phase 3: Production (Week 5-6)"]
-            Production["Production Readiness<br/>Load testing<br/>Security hardening<br/>Monitoring setup<br/>Alert configuration"]
+        subgraph Production["Production (Week 3-4)"]
+            Rollout["Rollout<br/>• Load testing<br/>• Monitoring<br/>• Scaling"]
             
-            Scale["Scale & Monitor<br/>Usage analytics<br/>Performance optimization<br/>Continuous improvement<br/>ROI measurement"]
+            Success["Success Metrics<br/>• Performance gains<br/>• Cost reduction<br/>• User satisfaction"]
         end
     end
     
-    %% ===========================================
-    %% Business Flow Connections
-    %% ===========================================
+    %% Flow connections
+    Performance --> Semantic
+    Efficiency --> Analytics
+    Technology --> Engines
+    Scale --> Deployment
     
-    %% Value to Use Cases
-    Performance --> Recommendation
-    CostSavings --> Analytics
-    Innovation --> RAG
-    Scalability --> DataLakes
-    Integration --> Search
+    Semantic --> Engines
+    RAG --> Acceleration
+    Analytics --> Compression
+    DataPlatform --> Monitoring
     
-    %% Use Cases to Technical Excellence
-    Recommendation --> Uptime
-    Search --> Security
-    RAG --> Monitoring
-    Analytics --> Deployment
-    DataLakes --> Maintenance
+    Engines --> Docker
+    Acceleration --> SDK
+    Deployment --> Migration
+    Management --> Rollout
     
-    %% Technical to Implementation
-    Uptime --> Setup
-    Security --> Migration
-    Monitoring --> AppIntegration
-    Deployment --> Optimization
-    Maintenance --> Production
-    Support --> Scale
+    Docker --> Migration
+    Migration --> Integration
+    Integration --> Rollout
+    Rollout --> Success
     
-    %% Implementation Flow
-    Setup --> Migration
-    Migration --> AppIntegration
-    AppIntegration --> Optimization
-    Optimization --> Production
-    Production --> Scale
+    %% Professional neutral color scheme
+    classDef valueClass fill:#f0f9ff,stroke:#0369a1,stroke-width:2px,color:#0c4a6e
+    classDef appClass fill:#f0fdf4,stroke:#16a34a,stroke-width:2px,color:#14532d
+    classDef techClass fill:#fefce8,stroke:#ca8a04,stroke-width:2px,color:#713f12
+    classDef adoptClass fill:#faf5ff,stroke:#9333ea,stroke-width:2px,color:#581c87
     
-    %% ===========================================
-    %% Executive-Grade Styling
-    %% ===========================================
-    
-    classDef valueStyle fill:#10b981,stroke:#059669,stroke-width:4px,color:#ffffff,font-weight:bold,font-size:13px
-    classDef useCaseStyle fill:#3b82f6,stroke:#1d4ed8,stroke-width:4px,color:#ffffff,font-weight:bold,font-size:13px
-    classDef technicalStyle fill:#8b5cf6,stroke:#7c3aed,stroke-width:4px,color:#ffffff,font-weight:bold,font-size:13px
-    classDef implementationStyle fill:#f59e0b,stroke:#d97706,stroke-width:4px,color:#ffffff,font-weight:bold,font-size:13px
-    classDef criticalStyle fill:#ef4444,stroke:#dc2626,stroke-width:4px,color:#ffffff,font-weight:bold,font-size:13px
-    
-    %% Apply Business-Focused Styling
-    class Performance,CostSavings,Productivity,Innovation,Scalability,Integration valueStyle
-    class Recommendation,Search,RAG,Analytics,DataLakes useCaseStyle
-    class Uptime,Security,Monitoring,Deployment,Maintenance,Support technicalStyle
-    class Setup,Migration,AppIntegration,Optimization,Production,Scale implementationStyle
+    class Performance,Efficiency,Productivity,Technology,Scale,Flexibility valueClass
+    class Semantic,RAG,Recommendation,Analytics,DataPlatform appClass
+    class Engines,Acceleration,Compression,Deployment,Monitoring,Management techClass
+    class Docker,SDK,Migration,Integration,Rollout,Success adoptClass

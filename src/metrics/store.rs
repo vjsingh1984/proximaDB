@@ -258,7 +258,7 @@ impl PersistentMetricsStore {
         let snapshot_json = serde_json::to_string(&snapshot)
             .context("Failed to serialize metrics snapshot")?;
             
-        self.filesystem_factory.write_file(&path, snapshot_json.as_bytes()).await
+        self.filesystem_factory.write(&path, snapshot_json.as_bytes(), None).await
             .context("Failed to write metrics snapshot to storage")?;
             
         debug!("Stored collection metrics for {} to {}", metrics.collection_id, path);
