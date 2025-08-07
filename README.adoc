@@ -343,18 +343,18 @@ LIMIT 10;
 | Sequential, cache-friendly access
 |===
 
-== 🤝 Support & Community
+== 🤝 Support & Resources
 
-=== Enterprise Support
-- 📞 **24/7 Support**: Enterprise SLA available
-- 🎓 **Training**: On-site and virtual options
-- 🔧 **Professional Services**: Migration and optimization
-
-=== Resources
+=== Getting Help
 - 📚 **Documentation**: link:docs/index.adoc[Comprehensive Guide]
-- 💬 **Community**: link:https://discord.gg/proximadb[Discord Server]
-- 🐛 **Issues**: link:https://github.com/vjsingh1984/proximadb/issues[GitHub Tracker]
-- 📧 **Contact**: enterprise@proximadb.io
+- 🐛 **Bug Reports**: link:https://github.com/vjsingh1984/proximadb/issues[GitHub Issues]
+- 💡 **Feature Requests**: link:https://github.com/vjsingh1984/proximadb/discussions[GitHub Discussions]
+- 📖 **Wiki**: link:https://github.com/vjsingh1984/proximadb/wiki[GitHub Wiki]
+
+=== Contributing
+- 🔧 **Pull Requests**: Contributions welcome via GitHub PRs
+- 📝 **Development Guide**: link:docs/developer/developer_guide.adoc[Contributing Guide]
+- 🧪 **Testing**: All PRs must pass CI/CD checks
 
 == 🎯 Why ProximaDB?
 
@@ -387,8 +387,6 @@ LIMIT 10;
 
 ---
 
-**🏆 Trusted by Fortune 500 companies for mission-critical AI applications**
-
 _ProximaDB - Where vectors meet velocity._
 
-link:LICENSE[Apache 2.0 License] | link:SECURITY.md[Security Policy] | link:CONTRIBUTING.adoc[Contributing Guide]
+link:LICENSE[Apache 2.0 License] | link:CONTRIBUTING.adoc[Contributing Guide] | link:https://github.com/vjsingh1984/proximadb/issues[Report Issues]
