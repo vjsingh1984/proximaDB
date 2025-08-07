@@ -22,20 +22,10 @@ ProximaDB implements a sophisticated SDK-driven compression system that gives cl
 
 === Compression Flow
 
-[source,mermaid]
-----
-graph TD
-    SDK[Python SDK] -->|CompressionConfig| API[REST/gRPC API]
-    API -->|Proto Message| DS[DirectVectorService]
-    DS -->|UnifiedQueryPlanner| QP[Query Planning]
-    QP -->|Routing Decision| SE{Storage Engine}
-    SE -->|SST| SST[SST Engine]
-    SE -->|VIPER| VIPER[VIPER Engine]
-    SST -->|Block Compression| SSTW[SSTable Writer]
-    VIPER -->|Parquet Compression| PW[Parquet Writer]
-    SSTW -->|SST1 Format| FS[Filesystem]
-    PW -->|Arrow Format| FS
-----
+image::diagrams/images/compression-architecture.svg[Compression Architecture, align=center, width=800]
+_link:diagrams/compression-architecture.mmd[View source diagram]_
+
+The compression flow shows how SDK configuration drives compression through the system:
 
 === Key Components
 
@@ -77,6 +67,10 @@ LRU cache for decompressed blocks:
 * Per-algorithm sub-caches for better locality
 
 ==== 4. SST1 Format
+
+image::diagrams/images/sst1-format.svg[SST1 Format Structure, align=center, width=700]
+_link:diagrams/sst1-format.mmd[View source diagram]_
+
 Modern SSTable format with version identification:
 
 [source]
@@ -292,6 +286,9 @@ invalidation_check_interval_seconds = 60  # Check interval
 ----
 
 === 4. Two-Stage Search Strategy
+
+image::diagrams/images/two-stage-search.svg[Two-Stage Search Architecture, align=center, width=800]
+_link:diagrams/two-stage-search.mmd[View source diagram]_
 
 For VIPER with dual columns:
 

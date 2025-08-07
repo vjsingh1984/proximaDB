@@ -65,6 +65,9 @@ flush_interval_secs = 30
 
 == Cloud Storage Configuration
 
+image::deployment-architecture.svg[Deployment Architecture, align=center, width=900]
+_link:../diagrams/deployment-architecture.mmd[View source diagram]_
+
 === Supported Providers
 
 **AWS S3:**

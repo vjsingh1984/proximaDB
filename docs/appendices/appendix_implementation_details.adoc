@@ -252,6 +252,22 @@ Performance comparison (50 iterations, 100 vectors/iter):
 
 Essential implementation patterns and code examples for ProximaDB.
 
+== VIPER Engine Implementation
+
+=== Compression Architecture
+
+image::viper-compression-architecture.svg[VIPER Compression Architecture, align=center, width=800]
+_link:../diagrams/viper-compression-architecture.mmd[View source diagram]_
+
+The VIPER engine implements columnar storage with advanced compression:
+
+* **Dual Column Storage**: FP32 original + quantized columns
+* **Native Parquet Compression**: ZSTD, LZ4, Snappy
+* **Predicate Pushdown**: 60-90% I/O reduction
+* **Arrow Integration**: Zero-copy reads
+
+=== Unified Reader
+
 image::unified-parquet-reader-architecture.svg[Unified Parquet Reader Architecture]
 
 .Unified Parquet Reader Architecture Source

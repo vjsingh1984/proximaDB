@@ -122,6 +122,9 @@ File Access Request
 === DirectVectorService
 **Location**: `/src/services/direct_vector_service.rs`
 
+image::direct-vector-service.svg[DirectVectorService Architecture, align=center, width=800]
+_link:../diagrams/direct-vector-service.mmd[View source diagram]_
+
 Enhanced with UnifiedQueryPlanner integration:
 
 ```rust
@@ -180,6 +183,9 @@ invalidation_check_interval_seconds = 30
 === CollectionService
 **Location**: `/src/services/collection_service.rs`
 
+image::collection-service-architecture.svg[Collection Service Architecture, align=center, width=800]
+_link:../diagrams/collection-service-architecture.mmd[View source diagram]_
+
 Manages collection metadata with integrated storage assignment:
 
 ```rust
@@ -195,6 +201,9 @@ Collection {
 ```
 
 == 💾 Compression System
+
+image::compression-decisions-final.svg[Compression Decision Flow, align=center, width=800]
+_link:../diagrams/compression-decisions-final.mmd[View source diagram]_
 
 === SDK-Driven Compression
 
@@ -249,6 +258,13 @@ For quantized/compressed data:
 1. **Coarse Search**: Fast search on quantized vectors
 2. **Reranking**: Precise search on decompressed candidates
 3. **Result Merging**: Combine and deduplicate results
+
+== 🔗 Service Interactions
+
+image::service-interactions.svg[Service Interaction Flow, align=center, width=900]
+_link:../diagrams/service-interactions.mmd[View source diagram]_
+
+The service layer coordinates all operations between API endpoints and storage engines.
 
 == 🔍 Indexing System (AXIS)
 

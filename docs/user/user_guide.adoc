@@ -173,6 +173,9 @@ print(f"✅ Upserted {len(result.upserted_ids)} vectors")
 
 === Searching Vectors
 
+image::query-flow-complete.svg[Query Execution Flow, align=center, width=900]
+_link:../diagrams/query-flow-complete.mmd[View source diagram]_
+
 **Basic Similarity Search:**
 
 [source,python]
