@@ -135,29 +135,29 @@ results = client.search("products", query_vector, top_k=10)
 
 _Benchmarks performed on AWS c6i.8xlarge with 1M 1536-dimensional vectors_
 
-== 🏗️ Enterprise Features
+== 🏗️ Current Capabilities
 
-=== Production Readiness
+=== What's Available Now
 
-✅ **High Availability**
-- Multi-region replication
-- Automatic failover
-- Point-in-time recovery
+✅ **Core Features**
+- ACID transactions for write operations
+- Basic Prometheus metrics for monitoring
+- Single-node deployment
+- Local filesystem and cloud storage support
 
-✅ **Security**
-- TLS encryption in transit
-- At-rest encryption
-- RBAC with fine-grained permissions
+✅ **Performance**
+- Hardware acceleration (GPU/SIMD)
+- Compression and quantization
+- Caching and prefetching
+- Parallel processing
 
-✅ **Observability**
-- Prometheus metrics
-- OpenTelemetry tracing
-- Custom business metrics
+🚧 **Enterprise Features (Planned)**
+- High availability and replication
+- Security enhancements (TLS, encryption, RBAC)
+- Advanced observability (OpenTelemetry, custom metrics)
+- Compliance features (audit logging, data lineage)
 
-✅ **Compliance**
-- ACID transactions
-- Audit logging
-- Data lineage tracking
+_See link:docs/enhancements/enterprise_production_features.adoc[Enterprise Roadmap] for detailed plans_
 
 === Supported Capabilities
 

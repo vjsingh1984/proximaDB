@@ -541,31 +541,113 @@ dimension_grouping = true # Group similar dimensions
 | Fast
 |===
 
-== Implementation Plan
+== Technical Implementation Architecture
 
-=== Phase 1: Foundation (Week 1)
-1. Implement basic mean normalization
-2. Add FP32-as-binary storage format
-3. Create metadata sidecar structure
-4. Update flush pipeline
+=== Core Normalization Pipeline
 
-=== Phase 2: Robustness (Week 2)
-1. Add trimmed mean normalization
-2. Implement denormalization for search
-3. Update compaction strategy
-4. Add configuration system
+```rust
+pub struct NormalizationPipeline {
+    // Stage 1: Analysis
+    analyzer: DistributionAnalyzer,
+    
+    // Stage 2: Transform
+    transformer: VectorTransformer,
+    
+    // Stage 3: Quantization
+    quantizer: AdaptiveQuantizer,
+    
+    // Stage 4: Storage
+    storage_writer: CompressedWriter,
+}
 
-=== Phase 3: Optimization (Week 3)
-1. Add parallel processing
-2. Implement caching layer
-3. Add SIMD optimizations
-4. Performance benchmarking
+impl NormalizationPipeline {
+    pub fn process_batch(&mut self, vectors: &[Vec<f32>]) -> CompressedBatch {
+        // Analyze distribution characteristics
+        let stats = self.analyzer.analyze(vectors);
+        
+        // Select optimal transform
+        let transform = self.select_transform(&stats);
+        
+        // Apply normalization
+        let normalized = self.transformer.apply(vectors, &transform);
+        
+        // Quantize based on precision requirements
+        let quantized = self.quantizer.quantize(normalized, &stats);
+        
+        // Write with optimal compression
+        self.storage_writer.write(quantized)
+    }
+}
+```
 
-=== Phase 4: Advanced Features (Week 4)
-1. Implement adaptive method selection
-2. Add dimension grouping
-3. Multi-precision storage
-4. Production hardening
+=== Metadata Sidecar Architecture
+
+```rust
+pub struct MetadataSidecar {
+    // Per-batch normalization parameters
+    normalization_params: Vec<NormalizationParams>,
+    
+    // Dimension-specific scales
+    dimension_scales: Vec<f32>,
+    
+    // Central tendency values
+    central_values: CentralTendencyStore,
+    
+    // Quantization thresholds
+    quantization_maps: QuantizationLookup,
+}
+
+// Efficient storage: ~100 bytes per 10K vectors
+impl MetadataSidecar {
+    pub fn serialize(&self) -> Vec<u8> {
+        // Use variable-length encoding
+        let mut buffer = Vec::new();
+        
+        // Write header with version
+        buffer.write_u32(SIDECAR_VERSION);
+        
+        // Compress params using delta encoding
+        self.write_delta_encoded(&mut buffer);
+        
+        // Apply ZSTD to entire sidecar
+        zstd::compress(&buffer, 6)
+    }
+}
+```
+
+=== SIMD-Optimized Operations
+
+```rust
+pub struct SimdNormalizer {
+    // AVX-512 for 16 floats at once
+    avx512_enabled: bool,
+    
+    // Fallback to AVX2 (8 floats)
+    avx2_enabled: bool,
+}
+
+impl SimdNormalizer {
+    #[target_feature(enable = "avx512f")]
+    unsafe fn normalize_avx512(
+        &self,
+        vectors: &mut [f32],
+        central: f32,
+        scale: f32,
+    ) {
+        let central_vec = _mm512_set1_ps(central);
+        let scale_vec = _mm512_set1_ps(scale);
+        
+        for chunk in vectors.chunks_exact_mut(16) {
+            let v = _mm512_loadu_ps(chunk.as_ptr());
+            let normalized = _mm512_mul_ps(
+                _mm512_sub_ps(v, central_vec),
+                scale_vec
+            );
+            _mm512_storeu_ps(chunk.as_mut_ptr(), normalized);
+        }
+    }
+}
+```
 
 == Risk Mitigation
 
@@ -590,13 +672,57 @@ dimension_grouping = true # Group similar dimensions
 | Use global collection statistics
 |===
 
-== Success Metrics
+== Technical Validation Criteria
 
-1. **Compression Ratio**: Achieve 4-6x compression on typical datasets
-2. **Accuracy**: Maintain 99.9% recall@10 compared to exact search
-3. **Performance**: No more than 10% search latency increase
-4. **Storage**: 75% reduction in disk usage for vector data
-5. **I/O**: 2-3x improvement in read/write throughput
+=== Correctness Verification
+
+```rust
+pub struct CompressionValidator {
+    tolerance: f32, // Typically 1e-6 for FP32
+    
+    pub fn validate_round_trip(
+        &self,
+        original: &[f32],
+        compressed: &CompressedVector,
+    ) -> ValidationResult {
+        let decompressed = compressed.decompress();
+        
+        // Check L2 distance preservation
+        let error = self.calculate_error(original, &decompressed);
+        
+        ValidationResult {
+            max_error: error.max,
+            mean_error: error.mean,
+            percentile_99: error.p99,
+            passes: error.max < self.tolerance,
+        }
+    }
+}
+```
+
+=== Performance Benchmarks
+
+```rust
+pub struct CompressionBenchmark {
+    pub fn measure_throughput(&self) -> BenchmarkResults {
+        // Measure compression speed
+        let compress_throughput = self.measure_compress_mb_per_sec();
+        
+        // Measure decompression speed
+        let decompress_throughput = self.measure_decompress_mb_per_sec();
+        
+        // Measure search performance impact
+        let search_overhead = self.measure_search_overhead_percent();
+        
+        BenchmarkResults {
+            compress_mb_s: compress_throughput,
+            decompress_mb_s: decompress_throughput,
+            search_overhead_pct: search_overhead,
+            memory_reduction_pct: self.measure_memory_savings(),
+        }
+    }
+}
+```
 
 == Conclusion
 
