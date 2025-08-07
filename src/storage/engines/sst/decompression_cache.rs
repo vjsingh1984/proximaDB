@@ -37,7 +37,7 @@ pub struct CachedBlock {
     /// Number of times accessed
     pub access_count: u64,
     /// Original compression algorithm
-    pub compression_algorithm: Option<super::CompressionAlgorithmSst>,
+    pub compression_algorithm: Option<crate::storage::engines::sst::CompressionAlgorithmSst>,
 }
 
 /// Decompression cache for SSTable blocks with automatic invalidation
@@ -51,7 +51,7 @@ pub struct DecompressionCache {
     /// Cache statistics
     stats: Arc<RwLock<CacheStats>>,
     /// Compression-specific sub-caches for better locality
-    compression_caches: Arc<RwLock<HashMap<super::CompressionAlgorithmSst, Vec<BlockCacheKey>>>>,
+    compression_caches: Arc<RwLock<HashMap<crate::storage::engines::sst::CompressionAlgorithmSst, Vec<BlockCacheKey>>>>,
     /// File modification timestamps for invalidation
     file_timestamps: Arc<dashmap::DashMap<String, i64>>,
     /// Configuration from TOML
@@ -300,7 +300,7 @@ impl DecompressionCache {
         &self,
         key: BlockCacheKey,
         data: DataBlock,
-        compression_algorithm: Option<super::CompressionAlgorithmSst>,
+        compression_algorithm: Option<crate::storage::engines::sst::CompressionAlgorithmSst>,
     ) -> Result<()> {
         // Calculate block size
         let size_bytes = Self::calculate_block_size(&data);
@@ -411,12 +411,12 @@ impl DecompressionCache {
     /// Estimate decompression time based on algorithm and size
     fn estimate_decompression_time(
         size_bytes: usize,
-        algorithm: Option<super::CompressionAlgorithmSst>,
+        algorithm: Option<crate::storage::engines::sst::CompressionAlgorithmSst>,
     ) -> u64 {
         // Rough estimates based on typical decompression speeds
         match algorithm {
-            Some(super::CompressionAlgorithmSst::Zstd) => (size_bytes as u64) / 1000,   // ~1GB/s
-            Some(super::CompressionAlgorithmSst::Lz4) => (size_bytes as u64) / 2000,    // ~2GB/s
+            Some(crate::storage::engines::sst::CompressionAlgorithmSst::Zstd) => (size_bytes as u64) / 1000,   // ~1GB/s
+            Some(crate::storage::engines::sst::CompressionAlgorithmSst::Lz4) => (size_bytes as u64) / 2000,    // ~2GB/s
             Some(super::CompressionAlgorithmSst::Snappy) => (size_bytes as u64) / 1500, // ~1.5GB/s
             _ => 0,
         }
@@ -541,7 +541,7 @@ mod tests {
         
         // Test put and hit
         let block = DataBlock::new(1, vec![]);
-        cache.put(key.clone(), block.clone(), Some(super::CompressionAlgorithmSst::Zstd))
+        cache.put(key.clone(), block.clone(), Some(crate::storage::engines::sst::CompressionAlgorithmSst::Zstd))
             .await
             .unwrap();
         

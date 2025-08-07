@@ -24,12 +24,15 @@ mod tests {
             parallel_scan_threshold: 10,
             sparsity_threshold: 0.3,
             quantization_size_threshold: 1_000_000,
+            snapshot_interval_seconds: 60,
+            max_memory_mb: 512,
         };
         
         // Clean up test directory
         let _ = fs::remove_dir_all(&config.storage_path).await;
         
-        PersistentMetricsStore::new(config).await
+        let filesystem_factory = Arc::new(FilesystemFactory::new()?);
+        PersistentMetricsStore::new(filesystem_factory, config).await
     }
 
     #[tokio::test]

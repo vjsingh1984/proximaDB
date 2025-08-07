@@ -14,7 +14,7 @@ mod tests {
     use crate::storage::background_flush_context::{
         BackgroundFlushContext, StorageEngineType, CompressionConfig, OperationPriority
     };
-    use crate::storage::persistence::write_buffer::background_manager_clean::BackgroundMaintenanceManager;
+    use crate::storage::persistence::write_buffer::background_manager::BackgroundMaintenanceManager;
     use crate::storage::persistence::write_buffer::flush_coordinator::{
         WriteBufferFlushCoordinator, FlushDataSource
     };

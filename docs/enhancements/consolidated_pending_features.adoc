@@ -1,0 +1,609 @@
+= ProximaDB Pending Enterprise Features - Consolidated Technical Design
+:toc:
+:toclevels: 3
+:imagesdir: ../diagrams/images
+
+== Executive Summary
+
+This document consolidates all pending enterprise features for ProximaDB based on comprehensive review of enhancement proposals and current implementation status. Features already implemented have been excluded.
+
+=== Implementation Status Summary
+
+[cols="2,1,3", options="header"]
+|===
+| Feature Category | Status | Notes
+
+| **VIPER Compression**
+| ✅ Implemented
+| Dual column storage with FP32 + INT8 + PQ8 + PQ4 quantization
+
+| **Basic TLS/SSL**
+| ⚠️ Partial
+| Config structure exists but needs full implementation
+
+| **Basic Auth**
+| ⚠️ Partial  
+| API key authentication exists, needs RBAC
+
+| **Prometheus Metrics**
+| ✅ Implemented
+| Basic metrics with Prometheus export
+
+| **Distributed/HA**
+| ❌ Not Started
+| No consensus, replication, or clustering
+
+| **Advanced Security**
+| ❌ Not Started
+| No encryption at rest, HSM, audit logging
+
+| **OpenTelemetry**
+| ❌ Not Started
+| No distributed tracing
+
+| **Multi-tenancy**
+| ❌ Not Started
+| No resource isolation or quotas
+
+| **Compliance**
+| ❌ Not Started
+| No audit trail, GDPR features
+|===
+
+== Priority 1: High Availability & Distributed Architecture
+
+=== Technical Design
+
+image::distributed-architecture.svg[Distributed Architecture, align=center, width=900]
+
+[source,mermaid]
+----
+graph TB
+    subgraph "Consensus Layer"
+        RC[Raft Consensus]
+        LE[Leader Election]
+        LR[Log Replication]
+    end
+    
+    subgraph "Data Distribution"
+        CH[Consistent Hashing]
+        SR[Shard Routing]
+        RB[Rebalancing]
+    end
+    
+    subgraph "Replication"
+        WAL[WAL Shipping]
+        SS[Snapshot Sync]
+        CR[Conflict Resolution]
+    end
+    
+    subgraph "Coordination"
+        SD[Service Discovery]
+        HM[Health Monitor]
+        FD[Failure Detector]
+    end
+    
+    RC --> LE
+    LE --> LR
+    LR --> WAL
+    CH --> SR
+    SR --> RB
+    SD --> HM
+    HM --> FD
+    
+    style RC fill:#ff9,stroke:#333,stroke-width:2px
+    style CH fill:#9f9,stroke:#333,stroke-width:2px
+----
+
+==== Raft Consensus Implementation
+
+```rust
+pub struct RaftNode {
+    // Core Raft state
+    current_term: AtomicU64,
+    voted_for: Option<NodeId>,
+    log: RaftLog,
+    
+    // Volatile state
+    commit_index: AtomicU64,
+    last_applied: AtomicU64,
+    
+    // Leader state
+    next_index: HashMap<NodeId, u64>,
+    match_index: HashMap<NodeId, u64>,
+    
+    // Configuration
+    cluster_config: ClusterConfig,
+    election_timeout: Duration,
+}
+
+impl RaftNode {
+    pub async fn handle_request_vote(&self, req: RequestVote) -> VoteResponse {
+        // Raft paper section 5.2 implementation
+        let current_term = self.current_term.load(Ordering::SeqCst);
+        
+        if req.term < current_term {
+            return VoteResponse { term: current_term, vote_granted: false };
+        }
+        
+        if req.term > current_term {
+            self.become_follower(req.term);
+        }
+        
+        // Grant vote if haven't voted and candidate's log is up-to-date
+        let vote_granted = self.voted_for.is_none() 
+            && self.log.is_up_to_date(req.last_log_index, req.last_log_term);
+            
+        if vote_granted {
+            self.voted_for = Some(req.candidate_id);
+        }
+        
+        VoteResponse { term: current_term, vote_granted }
+    }
+}
+```
+
+==== Distributed Query Routing
+
+```rust
+pub struct DistributedQueryRouter {
+    // Consistent hashing for data distribution
+    hash_ring: ConsistentHashRing<NodeId>,
+    
+    // Query optimization
+    query_planner: DistributedQueryPlanner,
+    
+    // Result aggregation
+    aggregator: ResultAggregator,
+    
+    // Connection pool to other nodes
+    node_connections: HashMap<NodeId, NodeClient>,
+}
+
+impl DistributedQueryRouter {
+    pub async fn execute_distributed_search(
+        &self,
+        query: SearchQuery,
+    ) -> Result<Vec<SearchResult>> {
+        // 1. Determine which shards contain relevant data
+        let target_shards = self.hash_ring.get_shards_for_query(&query);
+        
+        // 2. Create distributed execution plan
+        let plan = self.query_planner.create_plan(query, target_shards);
+        
+        // 3. Execute in parallel across nodes
+        let futures: Vec<_> = plan.sub_queries
+            .into_iter()
+            .map(|(node_id, sub_query)| {
+                let client = self.node_connections.get(&node_id).unwrap();
+                client.execute_search(sub_query)
+            })
+            .collect();
+        
+        let results = futures::future::join_all(futures).await;
+        
+        // 4. Aggregate and re-rank results
+        self.aggregator.merge_and_rank(results)
+    }
+}
+```
+
+=== Architecture Tradeoffs
+
+[cols="2,3,3", options="header"]
+|===
+| Decision | Option A | Option B
+
+| **Consensus**
+| Raft: Simpler, well-understood, leader-based
+| Multi-Paxos: More complex, proven at scale
+
+| **Data Distribution**
+| Consistent Hashing: Simple, handles node changes well
+| Range Partitioning: Better locality, complex rebalancing
+
+| **Replication**
+| Synchronous: Strong consistency, higher latency
+| Asynchronous: Lower latency, eventual consistency
+
+| **Failure Detection**
+| Heartbeat: Simple, may have false positives
+| Phi Accrual: Adaptive, more accurate
+|===
+
+== Priority 2: Advanced Security Implementation
+
+=== Zero-Trust Security Architecture
+
+[source,mermaid]
+----
+graph LR
+    subgraph "Authentication"
+        JWT[JWT Tokens]
+        OIDC[OIDC Provider]
+        MTLS[mTLS Certs]
+    end
+    
+    subgraph "Authorization"
+        RBAC[Role-Based Access]
+        ABAC[Attribute-Based]
+        POL[Policy Engine]
+    end
+    
+    subgraph "Encryption"
+        TLS[TLS 1.3]
+        AES[AES-256-GCM]
+        KMS[Key Management]
+    end
+    
+    subgraph "Audit"
+        AUDIT[Audit Logger]
+        SIGN[Digital Signatures]
+        IMM[Immutable Storage]
+    end
+    
+    JWT --> RBAC
+    OIDC --> RBAC
+    MTLS --> ABAC
+    RBAC --> POL
+    ABAC --> POL
+    POL --> AUDIT
+    
+    style POL fill:#f99,stroke:#333,stroke-width:2px
+    style KMS fill:#ff9,stroke:#333,stroke-width:2px
+----
+
+==== RBAC Implementation
+
+```rust
+pub struct RbacEngine {
+    // Role definitions
+    roles: HashMap<RoleId, Role>,
+    
+    // Permission definitions
+    permissions: HashMap<PermissionId, Permission>,
+    
+    // User-role bindings
+    role_bindings: HashMap<UserId, Vec<RoleId>>,
+    
+    // Policy evaluation cache
+    policy_cache: TTLCache<(UserId, Resource, Action), bool>,
+}
+
+pub struct Role {
+    id: RoleId,
+    name: String,
+    permissions: Vec<PermissionId>,
+    inherited_roles: Vec<RoleId>,
+}
+
+pub struct Permission {
+    id: PermissionId,
+    resource: ResourcePattern,
+    actions: Vec<Action>,
+    conditions: Vec<Condition>,
+}
+
+impl RbacEngine {
+    pub fn evaluate_access(
+        &self,
+        user_id: &UserId,
+        resource: &Resource,
+        action: &Action,
+    ) -> AccessDecision {
+        // Check cache first
+        if let Some(cached) = self.policy_cache.get(&(user_id, resource, action)) {
+            return if cached { AccessDecision::Allow } else { AccessDecision::Deny };
+        }
+        
+        // Get user's effective permissions
+        let roles = self.role_bindings.get(user_id).unwrap_or(&vec![]);
+        let permissions = self.get_effective_permissions(roles);
+        
+        // Evaluate against resource and action
+        for permission in permissions {
+            if permission.matches(resource, action) {
+                self.policy_cache.insert((user_id, resource, action), true);
+                return AccessDecision::Allow;
+            }
+        }
+        
+        self.policy_cache.insert((user_id, resource, action), false);
+        AccessDecision::Deny
+    }
+}
+```
+
+==== Encryption at Rest
+
+```rust
+pub struct EncryptionManager {
+    // Key encryption key (master key)
+    kek: Arc<SecretKey>,
+    
+    // Data encryption keys
+    deks: RotatingKeySet,
+    
+    // Encryption algorithm
+    cipher: AesGcm256,
+    
+    // Key derivation
+    kdf: Argon2,
+}
+
+impl EncryptionManager {
+    pub fn encrypt_block(&self, data: &[u8], context: &EncryptionContext) -> EncryptedBlock {
+        // Generate unique nonce
+        let nonce = generate_nonce();
+        
+        // Derive data encryption key
+        let dek = self.deks.current_key();
+        
+        // Add authenticated data
+        let aad = context.to_aad();
+        
+        // Encrypt with AES-GCM
+        let ciphertext = self.cipher.encrypt(dek, nonce, data, &aad);
+        
+        EncryptedBlock {
+            version: ENCRYPTION_VERSION,
+            key_id: dek.id(),
+            nonce,
+            ciphertext,
+            auth_tag: ciphertext.auth_tag(),
+        }
+    }
+}
+```
+
+== Priority 3: Observability & Distributed Tracing
+
+=== OpenTelemetry Integration
+
+[source,mermaid]
+----
+graph TB
+    subgraph "Instrumentation"
+        SPAN[Span Creation]
+        CTX[Context Propagation]
+        ATTR[Attributes]
+    end
+    
+    subgraph "Collection"
+        OTEL[OTel Collector]
+        BATCH[Batching]
+        SAMPLE[Sampling]
+    end
+    
+    subgraph "Export"
+        JAEGER[Jaeger]
+        TEMPO[Grafana Tempo]
+        DD[DataDog]
+    end
+    
+    subgraph "Analysis"
+        TRACE[Trace View]
+        DEPS[Dependencies]
+        PERF[Performance]
+    end
+    
+    SPAN --> CTX
+    CTX --> ATTR
+    ATTR --> OTEL
+    OTEL --> BATCH
+    BATCH --> SAMPLE
+    SAMPLE --> JAEGER
+    JAEGER --> TRACE
+    TRACE --> DEPS
+    DEPS --> PERF
+    
+    style OTEL fill:#9f9,stroke:#333,stroke-width:2px
+----
+
+```rust
+pub struct TracingContext {
+    trace_id: TraceId,
+    span_id: SpanId,
+    parent_span_id: Option<SpanId>,
+    baggage: HashMap<String, String>,
+    sampling_decision: SamplingDecision,
+}
+
+#[instrument(skip(self), fields(
+    collection_id = %collection_id,
+    vector_count = vectors.len(),
+    operation = "flush"
+))]
+pub async fn flush_collection(
+    &self,
+    collection_id: &str,
+    vectors: Vec<VectorRecord>,
+) -> Result<FlushResult> {
+    let span = Span::current();
+    span.record("compression.enabled", true);
+    
+    // Create child span for I/O
+    let io_span = span.child("flush.io");
+    let _guard = io_span.enter();
+    
+    // Actual flush operation
+    let result = self.storage_engine.flush(collection_id, vectors).await?;
+    
+    // Record metrics
+    span.record("bytes_written", result.bytes_written);
+    span.record("duration_ms", result.duration.as_millis());
+    
+    Ok(result)
+}
+```
+
+== Priority 4: Compliance & Audit
+
+=== Immutable Audit Trail
+
+```rust
+pub struct AuditLog {
+    // Merkle tree for tamper detection
+    merkle_tree: MerkleTree<Blake3>,
+    
+    // Signed checkpoints
+    checkpoints: Vec<SignedCheckpoint>,
+    
+    // Write-ahead log
+    wal: WriteAheadLog,
+}
+
+pub struct AuditEntry {
+    id: Uuid,
+    timestamp: DateTime<Utc>,
+    user: UserId,
+    action: Action,
+    resource: Resource,
+    outcome: Outcome,
+    metadata: HashMap<String, Value>,
+    signature: Signature,
+}
+
+impl AuditLog {
+    pub async fn record(&mut self, entry: AuditEntry) -> Result<MerkleProof> {
+        // Serialize and hash
+        let data = bincode::serialize(&entry)?;
+        let hash = Blake3::hash(&data);
+        
+        // Add to Merkle tree
+        let proof = self.merkle_tree.insert(hash);
+        
+        // Persist to WAL
+        self.wal.append(entry).await?;
+        
+        // Create checkpoint if needed
+        if self.should_checkpoint() {
+            self.create_checkpoint().await?;
+        }
+        
+        Ok(proof)
+    }
+}
+```
+
+== Priority 5: Multi-Tenancy
+
+=== Resource Isolation Architecture
+
+```rust
+pub struct TenantManager {
+    // Tenant configurations
+    tenants: HashMap<TenantId, TenantConfig>,
+    
+    // Resource quotas
+    quotas: HashMap<TenantId, ResourceQuota>,
+    
+    // Isolation enforcement
+    isolator: ResourceIsolator,
+}
+
+pub struct ResourceQuota {
+    max_collections: u32,
+    max_vectors: u64,
+    max_storage_gb: u32,
+    max_qps: u32,
+    max_memory_gb: u32,
+}
+
+pub struct ResourceIsolator {
+    // CPU isolation via cgroups
+    cpu_controller: CgroupController,
+    
+    // Memory isolation
+    memory_controller: MemoryController,
+    
+    // Network isolation
+    network_controller: NetworkController,
+}
+
+impl TenantManager {
+    pub fn enforce_quota(&self, tenant_id: &TenantId, request: &Request) -> Result<()> {
+        let quota = self.quotas.get(tenant_id).ok_or(Error::TenantNotFound)?;
+        let usage = self.get_current_usage(tenant_id)?;
+        
+        // Check various quotas
+        match request {
+            Request::CreateCollection => {
+                if usage.collections >= quota.max_collections {
+                    return Err(Error::QuotaExceeded("collections"));
+                }
+            }
+            Request::InsertVectors(count) => {
+                if usage.vectors + count > quota.max_vectors {
+                    return Err(Error::QuotaExceeded("vectors"));
+                }
+            }
+            _ => {}
+        }
+        
+        Ok(())
+    }
+}
+```
+
+== Implementation Roadmap
+
+=== Technical Dependencies
+
+[source,mermaid]
+----
+graph TD
+    HA[High Availability]
+    SEC[Security]
+    OBS[Observability]
+    COMP[Compliance]
+    MT[Multi-tenancy]
+    
+    HA --> SEC
+    SEC --> COMP
+    OBS --> COMP
+    SEC --> MT
+    HA --> MT
+    
+    style HA fill:#f99,stroke:#333,stroke-width:2px
+    style SEC fill:#ff9,stroke:#333,stroke-width:2px
+----
+
+=== Critical Path
+
+1. **High Availability** - Foundation for all distributed features
+2. **Security** - Required for enterprise deployments
+3. **Observability** - Essential for production operations
+4. **Compliance** - Regulatory requirements
+5. **Multi-tenancy** - Efficient resource utilization
+
+== Technical Decisions Required
+
+[cols="2,3,3", options="header"]
+|===
+| Decision | Options | Recommendation
+
+| **Consensus Library**
+| Build custom vs Use etcd/raft-rs
+| Use raft-rs for faster implementation
+
+| **Encryption Library**
+| OpenSSL vs BoringSSL vs ring
+| Use ring for pure Rust safety
+
+| **Tracing Backend**
+| Jaeger vs Tempo vs DataDog
+| Start with Jaeger, support pluggable
+
+| **Audit Storage**
+| Local vs S3 vs Dedicated DB
+| S3 with local cache for immutability
+
+| **Tenant Isolation**
+| Process vs Thread vs Container
+| Thread-level with cgroup controls
+|===
+
+---
+*Document Status: Technical Design - Pending Implementation*
+*Last Updated: 2025-08-07*

@@ -1,0 +1,83 @@
+graph TB
+    subgraph "External Access"
+        USER[User]
+        API[API Client]
+        ADMIN[Admin]
+    end
+    
+    subgraph "Edge Security"
+        WAF[Web Application Firewall]
+        DDOS[DDoS Protection]
+        TLS[TLS Termination]
+    end
+    
+    subgraph "Authentication Layer"
+        IDP[Identity Provider]
+        JWT[JWT Validator]
+        MTLS[mTLS Handler]
+        APIKEY[API Key Manager]
+    end
+    
+    subgraph "Authorization Layer"
+        RBAC[RBAC Engine]
+        POLICY[Policy Engine]
+        CACHE[Permission Cache]
+    end
+    
+    subgraph "Application Security"
+        AUDIT[Audit Logger]
+        ENCRYPT[Encryption Manager]
+        SIGN[Request Signing]
+    end
+    
+    subgraph "Data Security"
+        KMS[Key Management Service]
+        HSM[Hardware Security Module]
+        VAULT[Secret Vault]
+    end
+    
+    subgraph "Storage Layer"
+        ENC_STORE[Encrypted Storage]
+        BACKUP[Encrypted Backups]
+    end
+    
+    USER --> WAF
+    API --> WAF
+    ADMIN --> WAF
+    
+    WAF --> DDOS
+    DDOS --> TLS
+    
+    TLS --> IDP
+    TLS --> JWT
+    TLS --> MTLS
+    TLS --> APIKEY
+    
+    JWT --> RBAC
+    MTLS --> RBAC
+    APIKEY --> RBAC
+    
+    RBAC --> POLICY
+    POLICY --> CACHE
+    
+    CACHE --> AUDIT
+    AUDIT --> SIGN
+    SIGN --> ENCRYPT
+    
+    ENCRYPT --> KMS
+    KMS --> HSM
+    HSM --> VAULT
+    
+    ENCRYPT --> ENC_STORE
+    ENC_STORE --> BACKUP
+    
+    %% Styling
+    classDef external fill:#ffe6e6,stroke:#cc0000,stroke-width:2px
+    classDef auth fill:#e6f3ff,stroke:#0066cc,stroke-width:2px
+    classDef security fill:#fff9e6,stroke:#cc9900,stroke-width:2px
+    classDef storage fill:#e6ffe6,stroke:#009900,stroke-width:2px
+    
+    class USER,API,ADMIN external
+    class IDP,JWT,MTLS,APIKEY auth
+    class RBAC,POLICY,AUDIT,ENCRYPT,KMS,HSM security
+    class ENC_STORE,BACKUP storage

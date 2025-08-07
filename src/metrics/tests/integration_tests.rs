@@ -10,7 +10,7 @@ mod tests {
     use crate::services::direct_vector_service::DirectVectorService;
     use crate::storage::persistence::write_buffer::{
         flush_coordinator::WriteBufferFlushCoordinator,
-        background_manager_clean::BackgroundMaintenanceManager,
+        background_manager::BackgroundMaintenanceManager,
         WriteBufferConfig,
     };
     use crate::storage::background_flush_context::{BackgroundFlushContext, StorageEngineType, CompressionConfig, OperationPriority};

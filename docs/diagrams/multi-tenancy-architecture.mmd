@@ -1,0 +1,90 @@
+graph TB
+    subgraph "Tenant A"
+        TA_APP[Application A]
+        TA_QUOTA[Quota: 100GB, 1000 QPS]
+    end
+    
+    subgraph "Tenant B"
+        TB_APP[Application B]
+        TB_QUOTA[Quota: 50GB, 500 QPS]
+    end
+    
+    subgraph "Tenant C"
+        TC_APP[Application C]
+        TC_QUOTA[Quota: 200GB, 2000 QPS]
+    end
+    
+    subgraph "Resource Management"
+        TENANT_MGR[Tenant Manager]
+        QUOTA_ENF[Quota Enforcer]
+        RATE_LIMIT[Rate Limiter]
+        SCHEDULER[Resource Scheduler]
+    end
+    
+    subgraph "Isolation Layer"
+        CPU_ISO[CPU Isolation<br/>cgroups]
+        MEM_ISO[Memory Isolation<br/>limits]
+        NET_ISO[Network Isolation<br/>traffic shaping]
+        IO_ISO[I/O Isolation<br/>bandwidth limits]
+    end
+    
+    subgraph "Data Isolation"
+        NS_A[Namespace A]
+        NS_B[Namespace B]
+        NS_C[Namespace C]
+    end
+    
+    subgraph "Physical Resources"
+        CPU[CPU Cores]
+        MEM[Memory]
+        DISK[Storage]
+        NET[Network]
+    end
+    
+    TA_APP --> TENANT_MGR
+    TB_APP --> TENANT_MGR
+    TC_APP --> TENANT_MGR
+    
+    TENANT_MGR --> QUOTA_ENF
+    QUOTA_ENF --> RATE_LIMIT
+    RATE_LIMIT --> SCHEDULER
+    
+    SCHEDULER --> CPU_ISO
+    SCHEDULER --> MEM_ISO
+    SCHEDULER --> NET_ISO
+    SCHEDULER --> IO_ISO
+    
+    CPU_ISO --> NS_A
+    CPU_ISO --> NS_B
+    CPU_ISO --> NS_C
+    
+    MEM_ISO --> NS_A
+    MEM_ISO --> NS_B
+    MEM_ISO --> NS_C
+    
+    NS_A --> CPU
+    NS_B --> CPU
+    NS_C --> CPU
+    
+    NS_A --> MEM
+    NS_B --> MEM
+    NS_C --> MEM
+    
+    NS_A --> DISK
+    NS_B --> DISK
+    NS_C --> DISK
+    
+    NS_A --> NET
+    NS_B --> NET
+    NS_C --> NET
+    
+    %% Styling
+    classDef tenant fill:#e6f3ff,stroke:#0066cc,stroke-width:2px
+    classDef management fill:#fff9e6,stroke:#cc9900,stroke-width:2px
+    classDef isolation fill:#ffe6e6,stroke:#cc0000,stroke-width:2px
+    classDef resource fill:#e6ffe6,stroke:#009900,stroke-width:2px
+    
+    class TA_APP,TB_APP,TC_APP tenant
+    class TENANT_MGR,QUOTA_ENF,RATE_LIMIT,SCHEDULER management
+    class CPU_ISO,MEM_ISO,NET_ISO,IO_ISO isolation
+    class CPU,MEM,DISK,NET resource

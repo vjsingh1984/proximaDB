@@ -1,0 +1,77 @@
+graph TB
+    subgraph "Client Layer"
+        C1[Client 1]
+        C2[Client 2]
+        C3[Client N]
+        LB[Load Balancer]
+    end
+    
+    subgraph "ProximaDB Cluster"
+        subgraph "Node 1 (Leader)"
+            L[Leader]
+            LS[Local Storage]
+            LW[WAL]
+        end
+        
+        subgraph "Node 2 (Follower)"
+            F1[Follower]
+            F1S[Local Storage]
+            F1W[WAL]
+        end
+        
+        subgraph "Node 3 (Follower)"
+            F2[Follower]
+            F2S[Local Storage]
+            F2W[WAL]
+        end
+        
+        RC[Raft Consensus]
+    end
+    
+    subgraph "Shared Services"
+        SD[Service Discovery]
+        HM[Health Monitor]
+        MS[Metrics Store]
+    end
+    
+    C1 --> LB
+    C2 --> LB
+    C3 --> LB
+    
+    LB --> L
+    LB -.-> F1
+    LB -.-> F2
+    
+    L <--> RC
+    F1 <--> RC
+    F2 <--> RC
+    
+    L --> LW
+    L --> LS
+    F1 --> F1W
+    F1 --> F1S
+    F2 --> F2W
+    F2 --> F2S
+    
+    L -.-> SD
+    F1 -.-> SD
+    F2 -.-> SD
+    
+    HM --> L
+    HM --> F1
+    HM --> F2
+    
+    L --> MS
+    F1 --> MS
+    F2 --> MS
+    
+    %% Styling
+    classDef leader fill:#ff9999,stroke:#333,stroke-width:3px
+    classDef follower fill:#99ccff,stroke:#333,stroke-width:2px
+    classDef client fill:#f0f4f8,stroke:#333,stroke-width:1px
+    classDef consensus fill:#ffcc99,stroke:#333,stroke-width:2px
+    
+    class L leader
+    class F1,F2 follower
+    class C1,C2,C3,LB client
+    class RC consensus
