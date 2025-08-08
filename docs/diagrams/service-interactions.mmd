@@ -1,4 +1,17 @@
-%%{init: {'theme':'default'}}%%
+%%{init: {'theme':'base', 'themeVariables': { 
+  'primaryColor':'#1e293b', 
+  'primaryTextColor':'#ffffff', 
+  'primaryBorderColor':'#334155', 
+  'lineColor':'#64748b', 
+  'fontSize':'12px', 
+  'fontFamily':'Inter, -apple-system, sans-serif',
+  'secondaryColor':'#0f172a',
+  'tertiaryColor':'#1e40af',
+  'background':'#ffffff',
+  'mainBkg':'#f8fafc',
+  'secondBkg':'#e2e8f0',
+  'tertiaryBkg':'#cbd5e1'
+}}}%%
 sequenceDiagram
     participant Client as  Client
     participant REST as  REST API
@@ -9,7 +22,7 @@ sequenceDiagram
     participant Engine as  StorageEngine
     participant VIPER as  VIPER Engine
     participant SST as  SST Engine
-    participant Atomic as  AtomicCoordinator
+    participant TxCoord as  TransactionCoordinator
     participant SQL as  SQL Engine
     participant GPU as  GPU Parser
     participant SIMD as  SIMD Parser
@@ -31,17 +44,17 @@ sequenceDiagram
     
     alt VIPER Engine (Default)
         DVS->>+VIPER: do_flush()<br/> Columnar Storage
-        VIPER->>+Atomic: begin_atomic_operation()<br/> ACID Transaction
-        Atomic->>+Cloud: write_to_staging()<br/> Creates .parquet files
-        Cloud-->>-Atomic:  Write Confirmed
-        Atomic-->>-VIPER:  Transaction ID
+        VIPER->>+TxCoord: begin_atomic_operation()<br/> ACID Transaction
+        TxCoord->>+Cloud: write_to_staging()<br/> Creates .parquet files
+        Cloud-->>-TxCoord:  Write Confirmed
+        TxCoord-->>-VIPER:  Transaction ID
         VIPER-->>-DVS:  Insert Complete
     else SST Engine (If Configured)  
         DVS->>+SST: do_flush()<br/> Row-based Storage
-        SST->>+Atomic: begin_atomic_operation()<br/> ACID Transaction
-        Atomic->>+Cloud: write_sstables()<br/> Creates .sst files
-        Cloud-->>-Atomic:  Write Confirmed
-        Atomic-->>-SST:  Transaction ID
+        SST->>+TxCoord: begin_atomic_operation()<br/> ACID Transaction
+        TxCoord->>+Cloud: write_sstables()<br/> Creates .sst files
+        Cloud-->>-TxCoord:  Write Confirmed
+        TxCoord-->>-SST:  Transaction ID
         SST-->>-DVS:  Insert Complete
     end
     
@@ -86,10 +99,10 @@ sequenceDiagram
     CS->>CS: Assign storage location<br/>Create StorageAssignment
     CS->>+Engine: initialize_storage()<br/> With storage_assignment
     Engine->>Engine: Create directories at<br/>assigned locations
-    Engine->>+Atomic: setup_collection_storage()<br/> data_location, wal_location
-    Atomic->>+Cloud: create_collection_dirs()<br/> At specified paths
-    Cloud-->>-Atomic:  Directories Created
-    Atomic-->>-Engine:  Storage Ready
+    Engine->>+TxCoord: setup_collection_storage()<br/> data_location, wal_location
+    TxCoord->>+Cloud: create_collection_dirs()<br/> At specified paths
+    Cloud-->>-TxCoord:  Directories Created
+    TxCoord-->>-Engine:  Storage Ready
     Engine-->>-CS:  Collection Initialized<br/>with StorageAssignment
     CS->>CS: Persist metadata<br/>with storage_assignment
     CS-->>-Handler:  Collection Created

@@ -1,4 +1,17 @@
-%%{init: {'theme':'default'}}%%
+%%{init: {'theme':'base', 'themeVariables': { 
+  'primaryColor':'#1e293b', 
+  'primaryTextColor':'#ffffff', 
+  'primaryBorderColor':'#334155', 
+  'lineColor':'#64748b', 
+  'fontSize':'12px', 
+  'fontFamily':'Inter, -apple-system, sans-serif',
+  'secondaryColor':'#0f172a',
+  'tertiaryColor':'#1e40af',
+  'background':'#ffffff',
+  'mainBkg':'#f8fafc',
+  'secondBkg':'#e2e8f0',
+  'tertiaryBkg':'#cbd5e1'
+}}}%%
 classDiagram
     %% Core Storage Engine Architecture - Updated 2025-08-02
     
@@ -9,7 +22,7 @@ classDiagram
         -mvcc_resolver: MvccResolver
         -multi_tier_deduplicator: MultiTierDeduplicator
         -collection_service: Option~Arc~CollectionService~~
-        -write_buffer_config: WriteBufferConfig
+        -write_ahead_log_config: WriteAheadLogConfig
         +insert_vectors_direct(collection_id: String, vectors: Arc~Vec~VectorRecord~~) Result~()~
         +search_vectors(collection_id: String, query: Vec~f32~, k: usize) Result~Vec~SearchResult~~
         +force_flush_collection(collection_id: String) Result~()~
@@ -130,8 +143,8 @@ classDiagram
          Parallel AND/OR Evaluation
     }
     
-    class UnifiedAtomicCoordinator {
-         storage/atomic.rs
+    class TransactionCoordinator {
+         storage/transaction_coordinator.rs
         -active_operations: DashMap~OperationId, AtomicOperation~
         -storage_backends: Vec~Arc~dyn StorageBackend~~
         -staging_operations: StagingOperationManager
@@ -194,16 +207,16 @@ classDiagram
          Filterable Column Configuration
     }
     
-    class WriteBufferBehaviorWrapper {
-         storage/memtable/specialized/write_buffer_behavior.rs
+    class WriteAheadLogBehaviorWrapper {
+         storage/memtable/specialized/write_ahead_log_behavior.rs
         -inner_memtable: Box~dyn MemtableImplementation~
-        -write_buffer_manager: Arc~WriteBufferManager~
+        -write_ahead_log_manager: Arc~WriteAheadLogManager~
         -serialization_strategy: SerializationStrategy
         +insert() Result~()~
-        +flush_to_write_buffer() Result~()~
+        +flush_to_write_ahead_log() Result~()~
         +sync_with_persistence() Result~()~
         +get_unflushed_data() Result~Vec~VectorRecord~~
-         Memtable → WriteBuffer Bridge
+         Memtable → WriteAheadLog Bridge
          Persistence Coordination
          Batch Processing
     }
@@ -250,7 +263,7 @@ classDiagram
     DirectVectorService --> ViperEngine : coordinates
     DirectVectorService --> SstEngine : coordinates
     DirectVectorService --> CollectionService : optional
-    DirectVectorService --> WriteBufferBehaviorWrapper : manages
+    DirectVectorService --> WriteAheadLogBehaviorWrapper : manages
     DirectVectorService --> MvccResolver : uses
     DirectVectorService --> MultiTierDeduplicator : uses
     
@@ -269,7 +282,7 @@ classDiagram
     
     SqlExecutor --> DirectVectorService : executes via
     
-    WriteBufferBehaviorWrapper --> UnifiedAtomicCoordinator : persists via
+    WriteAheadLogBehaviorWrapper --> TransactionCoordinator : persists via
     
     %% Performance Annotations
     note for ViperEngine " VIPER Performance\n• Columnar Storage\n• Predicate Pushdown\n• 60-90% I/O Reduction\n• ML-Optimized"
@@ -363,8 +376,8 @@ classDiagram
     class ThreeStageFilterPipeline filterStyle
     class VectorSerializationConfig serializationStyle
     class OptimizedVectorWriter serializationStyle
-    class WriteBufferBehaviorWrapper optimizationStyle
-    class UnifiedAtomicCoordinator optimizationStyle
+    class WriteAheadLogBehaviorWrapper optimizationStyle
+    class TransactionCoordinator optimizationStyle
     class MvccResolver optimizationStyle
     class MultiTierDeduplicator optimizationStyle
     class SqlExecutor sqlStyle

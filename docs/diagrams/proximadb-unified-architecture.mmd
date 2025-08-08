@@ -59,9 +59,9 @@ graph TB
         StorageCoordinator[" Storage Coordinator<br/> storage/engine.rs<br/> Intelligent Engine Selection<br/> Workload-Based Routing"]
         
         subgraph MemoryLayer[" Memory Management Layer"]
-            WriteBufferWrapper[" WriteBuffer Wrapper<br/> storage/memtable/specialized/<br/> DashMap Global Partitioning<br/> Persistence Coordination<br/> Batch Processing Optimization"]
+            WriteAheadLogWrapper[" WriteAheadLog Wrapper<br/> storage/memtable/specialized/<br/> DashMap Global Partitioning<br/> Persistence Coordination<br/> Batch Processing Optimization"]
             
-            WriteBufferMgr[" WriteBuffer Manager<br/> storage/persistence/write_buffer/<br/> Proto/Avro/Bincode Support<br/> Multi-Format Serialization"]
+            WriteAheadLogMgr[" WriteAheadLog Manager<br/> storage/persistence/write_ahead_log/<br/> Proto/Avro/Bincode Support<br/> Multi-Format Serialization"]
         end
         
         subgraph DualEngines[" Dual Storage Engines"]
@@ -132,12 +132,12 @@ graph TB
     CollectionSvc --> StorageCoordinator
     
     %% Storage Architecture Flow
-    StorageCoordinator --> WriteBufferWrapper
+    StorageCoordinator --> WriteAheadLogWrapper
     StorageCoordinator --> ViperEngine
     StorageCoordinator --> SstEngine
     
-    WriteBufferWrapper --> WriteBufferMgr
-    WriteBufferMgr --> AtomicCoordinator
+    WriteAheadLogWrapper --> WriteAheadLogMgr
+    WriteAheadLogMgr --> AtomicCoordinator
     
     %% Engine to Search Optimization
     ViperEngine --> ViperSearch
@@ -176,6 +176,6 @@ graph TB
     class PythonSDK,RestAPI,GrpcAPI,SQLEngine clientTier
     class MultiServer,SharedServices,UnifiedHandlers apiTier
     class DirectVectorSvc,CollectionSvc serviceTier
-    class StorageCoordinator,ViperEngine,SstEngine,WriteBufferWrapper,WriteBufferMgr,ViperSearch,SstSearch,AxisManager,IndexTypes storageTier
+    class StorageCoordinator,ViperEngine,SstEngine,WriteAheadLogWrapper,WriteAheadLogMgr,ViperSearch,SstSearch,AxisManager,IndexTypes storageTier
     class AtomicCoordinator,S3Backend,AzureBackend,GCSBackend,LocalBackend,MVCCSystem,Quantization,Compression enterpriseTier
     class VectorMemPool,QueryCache,HardwareAccel performanceTier
