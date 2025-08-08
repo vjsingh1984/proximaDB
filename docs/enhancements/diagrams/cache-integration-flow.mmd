@@ -1,26 +1,45 @@
 sequenceDiagram
     participant C as Client
     participant DVS as DirectVectorService
-    participant QC as QueryCache
-    participant DC as DataCache
+    participant CC as CacheCoordinator
+    participant QRC as QueryResultCache
+    participant VDC as VectorDataCache
+    participant FBC as FilterBitmapCache
+    participant ISC as IndexStructureCache
     participant SE as Storage Engine
-    
+
     C->>DVS: search_vectors(query)
-    DVS->>QC: check_cache(query_key)
+    DVS->>CC: coordinate_cache_check(query)
     
-    alt Cache Hit and Fresh
-        QC-->>DVS: cached_results
+    par Parallel Cache Checks
+        CC->>QRC: get_if_fresh(query_key)
+        QRC-->>CC: cached_result/none
+    and Filter Check
+        CC->>FBC: evaluate_filter(filter)
+        FBC-->>CC: bitmap/none
+    and Index Check
+        CC->>ISC: get_index_nodes(query)
+        ISC-->>CC: nodes/none
+    end
+    
+    alt All Cache Hits
+        CC-->>DVS: cached_results
         DVS-->>C: return results
-    else Cache Miss or Stale
-        DVS->>DC: get_vectors(ids)
-        alt Data Cache Hit
-            DC-->>DVS: cached_vectors
-        else Data Cache Miss
-            DVS->>SE: fetch_from_storage()
-            SE-->>DVS: vectors
-            DVS->>DC: cache_vectors()
+    else Cache Miss
+        DVS->>SE: fetch_vectors()
+        SE-->>DVS: vector_data
+        
+        par Update Caches
+            DVS->>VDC: cache_vectors(data)
+            and
+            DVS->>QRC: cache_results(results)
+            and
+            DVS->>FBC: cache_filter(bitmap)
         end
-        DVS->>DVS: compute_distances()
-        DVS->>QC: cache_results()
+        
+        Note over CC: Cross-cache prefetching
+        CC->>VDC: prefetch_similar()
+        CC->>ISC: prefetch_paths()
+        
         DVS-->>C: return results
     end

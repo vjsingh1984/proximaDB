@@ -15,6 +15,9 @@ This document outlines the comprehensive enhancement strategy for ProximaDB's ca
 
 The existing `UnifiedCrossEngineCache` provides multi-tier caching with cross-engine data sharing between SST and VIPER storage engines.
 
+image::current-cache-architecture.svg[Current Cache Architecture, width=800, link="current-cache-architecture.mmd"]
+_Source: link:diagrams/current-cache-architecture.mmd[current-cache-architecture.mmd]_
+
 .Current Capabilities
 [cols="2,3,1", options="header"]
 |===
@@ -64,6 +67,9 @@ The existing `UnifiedCrossEngineCache` provides multi-tier caching with cross-en
 |===
 
 == Proposed Architecture: Specialized Caches with Shared Infrastructure
+
+image::unified-cache-architecture.svg[Unified Cache Architecture, width=1000, link="unified-cache-architecture.mmd"]
+_Source: link:diagrams/unified-cache-architecture.mmd[unified-cache-architecture.mmd]_
 
 === Design Philosophy
 
@@ -324,6 +330,9 @@ impl FilterBitmapCache {
 ----
 
 === Cross-Cache Synergies
+
+image::cache-integration-flow.svg[Cache Integration Flow, width=800, link="cache-integration-flow.mmd"]
+_Source: link:diagrams/cache-integration-flow.mmd[cache-integration-flow.mmd]_
 
 ==== Unified Memory Management
 

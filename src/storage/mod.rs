@@ -35,6 +35,9 @@ pub mod strategy;
 // Restored to improve query performance through intelligent caching
 pub mod unified_cache;
 
+// New specialized cache system with shared infrastructure
+pub mod cache;
+
 // Lock-free implementations have been integrated into the main implementations
 // UnifiedAtomicCoordinator now uses DashMap for active_operations
 // StorageEngine now uses DashMap for lsm_trees and mmap_readers

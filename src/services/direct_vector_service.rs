@@ -30,7 +30,8 @@ use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactor
 use crate::services::streaming_search::{StreamingSearchService, StreamingSearchConfig, SearchResultStream};
 use crate::storage::traits::UnifiedStorageEngine;
 use crate::storage::background_flush_context::BackgroundFlushContext;
-use crate::storage::search_cache::SearchResultCache;
+// TODO: Replace with new specialized cache
+// use crate::storage::cache::specialized::QueryResultCache;
 // use crate::index::axis::manager::AxisManager;  // TODO: Integrate AxisManager properly
 use crate::services::collection_service::CollectionService;
 use crate::proto::proximadb::{StorageEngine, metadata_item::Value as MetadataValue};
@@ -96,8 +97,8 @@ pub struct DirectVectorService {
     // TODO: Add AxisManager for index-based search operations
     // axis_manager: Option<Arc<AxisManager>>,
     
-    /// Simple cache for search result caching (restored for performance)
-    search_cache: Arc<SearchResultCache>,
+    // TODO: Replace with new QueryResultCache from specialized cache module
+    // search_cache: Arc<QueryResultCache>,
     
     /// Unified query planner for all query optimization
     query_planner: Arc<UnifiedQueryPlanner>,
@@ -359,10 +360,8 @@ impl DirectVectorService {
             collection_service,
             // metrics_updater: None,  // 🔴 UNUSED - metrics module commented out
             // axis_manager: None,  // TODO: Add AxisManager initialization
-            search_cache: Arc::new(SearchResultCache::new(
-                300,   // 5 minute TTL
-                10000  // Max 10,000 cached queries
-            )),
+            // TODO: Replace with new QueryResultCache
+            // search_cache: Arc::new(QueryResultCache::new(256)),
             query_planner,
         };
         debug!("✅ DirectVectorService::with_workload_hint - Service instance created");
@@ -900,7 +899,10 @@ impl DirectVectorService {
         );
         
         // Check cache first
-        if let Some(cached_results) = self.search_cache.get(&cache_key).await {
+        // TODO: Re-enable with new QueryResultCache
+        // if let Some(cached_results) = self.search_cache.get(&cache_key).await {
+        if false {
+            let cached_results: Vec<SearchResult> = vec![];
             debug!("🎯 CACHE_HIT: Returning cached results for key: {}", cache_key);
             return Ok(cached_results);
         }
@@ -1075,7 +1077,10 @@ impl DirectVectorService {
         );
         
         // Store in cache for future queries
-        if let Err(e) = self.search_cache.put(cache_key.clone(), final_results.clone()).await {
+        // TODO: Re-enable with new QueryResultCache
+        // if let Err(e) = self.search_cache.put(cache_key.clone(), final_results.clone()).await {
+        if false {
+            let e = "disabled";
             debug!("⚠️ Failed to cache search results: {}", e);
         } else {
             debug!("💾 Cached search results for key: {}", cache_key);

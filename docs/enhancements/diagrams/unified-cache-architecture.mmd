@@ -1,0 +1,120 @@
+graph TB
+    subgraph "Specialized Cache System"
+        subgraph "Shared Infrastructure"
+            SI1[Base Cache Traits]
+            SI2[Eviction Strategies]
+            SI3[Storage Backend]
+            SI4[Metrics System]
+            SI5[Invalidation Coordinator]
+        end
+        
+        subgraph "Specialized Caches"
+            subgraph "VectorDataCache"
+                VDC1[L1: Memory]
+                VDC2[L2: NVMe]
+                VDC3[L3: Network]
+                VDC4[Batch Operations]
+                VDC5[Similarity Prefetch]
+            end
+            
+            subgraph "QueryResultCache"
+                QRC1[Search Results]
+                QRC2[Execution Plans]
+                QRC3[LSH Index]
+                QRC4[Subquery Cache]
+            end
+            
+            subgraph "FilterBitmapCache"
+                FBC1[Roaring Bitmaps]
+                FBC2[Filter Decomposition]
+                FBC3[Incremental Updates]
+            end
+            
+            subgraph "IndexStructureCache"
+                ISC1[Index Nodes]
+                ISC2[Hot Path Cache]
+                ISC3[Traversal Prefetch]
+            end
+            
+            subgraph "MetadataCache"
+                MC1[Collection Metadata]
+                MC2[Column Stats]
+                MC3[Schema Cache]
+            end
+        end
+        
+        subgraph "Cross-Cache Synergies"
+            CCS1[Unified Memory Manager]
+            CCS2[Cross-Cache Prefetcher]
+            CCS3[Pattern Analyzer]
+            CCS4[Coordinated Invalidation]
+        end
+    end
+    
+    subgraph "External Components"
+        DVS[DirectVectorService]
+        SST[SST Engine]
+        VIPER[VIPER Engine]
+        AM[AxisManager]
+    end
+    
+    %% Connections from shared infrastructure to specialized caches
+    SI1 --> VDC1
+    SI1 --> QRC1
+    SI1 --> FBC1
+    SI1 --> ISC1
+    SI1 --> MC1
+    
+    SI2 --> VDC1
+    SI2 --> QRC1
+    SI2 --> FBC1
+    
+    SI3 --> VDC2
+    SI3 --> VDC3
+    
+    SI4 --> CCS1
+    SI5 --> CCS4
+    
+    %% External connections
+    DVS --> QRC1
+    DVS --> VDC1
+    DVS --> FBC1
+    
+    SST --> VDC1
+    SST --> MC1
+    VIPER --> VDC1
+    VIPER --> MC1
+    AM --> ISC1
+    
+    %% Cross-cache synergies
+    CCS1 --> VDC1
+    CCS1 --> QRC1
+    CCS1 --> FBC1
+    CCS1 --> ISC1
+    CCS1 --> MC1
+    
+    CCS2 --> VDC5
+    CCS2 --> ISC3
+    CCS2 --> QRC4
+    
+    CCS3 --> CCS2
+    CCS4 --> QRC1
+    CCS4 --> FBC3
+    
+    %% Styling
+    style SI1 fill:#e1f5e1
+    style SI2 fill:#e1f5e1
+    style SI3 fill:#e1f5e1
+    style SI4 fill:#e1f5e1
+    style SI5 fill:#e1f5e1
+    
+    style VDC1 fill:#e1e1ff
+    style QRC1 fill:#ffe1e1
+    style FBC1 fill:#fff4e1
+    style ISC1 fill:#f5e1ff
+    style MC1 fill:#e1fff4
+    
+    style CCS1 fill:#d4edda
+    style CCS2 fill:#d4edda
+    style CCS3 fill:#d4edda
+    style CCS4 fill:#d4edda
