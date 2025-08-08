@@ -1,13 +1,13 @@
 %%{init: {'theme':'default'}}%%
 classDiagram
-    %% Strategy Pattern Implementation for Write Buffer Serialization
+    %% Strategy Pattern Implementation for Write-Ahead Log Serialization
     
-    class WriteBufferManager {
-         storage/persistence/write_buffer/mod.rs
+    class WriteAheadLogManager {
+         storage/persistence/write_ahead_log/mod.rs
         -strategy: Box~dyn SerializationStrategy~
         -batch_coordinator: BatchSyncCoordinator
         -flush_coordinator: FlushCoordinator
-        +new(strategy: SerializationStrategy) WriteBufferManager
+        +new(strategy: SerializationStrategy) WriteAheadLogManager
         +write_batch(vectors: Vec~VectorRecord~) Result~()~
         +flush_to_storage() Result~FlushResult~
         +set_strategy(strategy: SerializationStrategy)
@@ -16,7 +16,7 @@ classDiagram
     
     class SerializationStrategy {
         <<interface>>
-         storage/persistence/write_buffer/
+         storage/persistence/write_ahead_log/
         +serialize(data: &VectorBatch) Result~Vec~u8~~
         +deserialize(bytes: &[u8]) Result~VectorBatch~
         +get_format_name() &str
@@ -75,16 +75,16 @@ classDiagram
     class FlushCoordinator {
          flush_coordinator.rs
         -flush_strategy: FlushStrategy
-        -atomic_coordinator: Arc~UnifiedAtomicCoordinator~
+        -transaction_coordinator: Arc~TransactionCoordinator~
         +schedule_flush(trigger: FlushTrigger) Result~()~
         +execute_flush() Result~FlushResult~
         +get_flush_stats() FlushStatistics
-         Manages write buffer flushes
+         Manages write-ahead log flushes
          Performance monitoring
     }
     
     class VectorBatch {
-         storage/persistence/write_buffer/
+         storage/persistence/write_ahead_log/
         +collection_id: String
         +vectors: Vec~VectorRecord~
         +metadata: BatchMetadata
@@ -104,20 +104,20 @@ classDiagram
     }
     
     %% Strategy Pattern Relationships
-    WriteBufferManager --> SerializationStrategy : uses
+    WriteAheadLogManager --> SerializationStrategy : uses
     SerializationStrategy <|-- ProtoSerializationStrategy : implements
     SerializationStrategy <|-- AvroSerializationStrategy : implements  
     SerializationStrategy <|-- BincodeSerializationStrategy : implements
     
     %% Composition Relationships
-    WriteBufferManager --> BatchSyncCoordinator : coordinates
-    WriteBufferManager --> FlushCoordinator : manages
+    WriteAheadLogManager --> BatchSyncCoordinator : coordinates
+    WriteAheadLogManager --> FlushCoordinator : manages
     BatchSyncCoordinator --> VectorBatch : processes
     VectorBatch --> BatchMetadata : contains
     
     %% Strategy Selection Logic
-    WriteBufferManager : +select_strategy_by_workload()
-    WriteBufferManager : +get_optimal_strategy(requirements)
+    WriteAheadLogManager : +select_strategy_by_workload()
+    WriteAheadLogManager : +get_optimal_strategy(requirements)
     
     %% Performance Annotations
     ProtoSerializationStrategy :  15MB/s throughput
@@ -140,7 +140,7 @@ classDiagram
     classDef optimizationStyle fill:#cffafe,stroke:#0e7490,stroke-width:3px,color:#1e293b,font-weight:bold
     
     %% Apply Styling (one per line to avoid parser issues)
-    class WriteBufferManager managerStyle
+    class WriteAheadLogManager managerStyle
     class ProtoSerializationStrategy strategyStyle
     class AvroSerializationStrategy strategyStyle
     class BincodeSerializationStrategy strategyStyle

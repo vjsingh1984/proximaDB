@@ -423,7 +423,7 @@ similar_users = client.search(
 ----
 # Configuration for memory-constrained environments
 [storage.memory]
-write_buffer_size_mb = 512  # Smaller buffer
+write_ahead_log_size_mb = 512  # Smaller WAL
 flush_threshold_mb = 64     # More frequent flushes
 
 [indexing.pq]
@@ -441,7 +441,7 @@ bloom_filter_memory_mb = 32 # Efficient filtering
 ----
 # Configuration for high-throughput scenarios  
 [storage.memory]
-write_buffer_size_mb = 2048  # Larger buffers
+write_ahead_log_size_mb = 2048  # Larger WAL
 batch_size = 1000           # Bigger batches
 
 [indexing.hnsw]
@@ -497,7 +497,7 @@ scrape_configs:
 proximadb_query_duration_seconds{operation="search"}
 proximadb_vector_insert_total{engine="viper"}  
 proximadb_index_build_duration_seconds{algorithm="hnsw"}
-proximadb_memory_usage_bytes{component="write_buffer"}
+proximadb_memory_usage_bytes{component="write_ahead_log"}
 proximadb_cache_hit_ratio{cache_type="query_results"}
 ----
 

@@ -106,10 +106,10 @@ sequenceDiagram
         SE-->>Main: Collections recovered
         deactivate SE
         
-        Main->>SS: 10. Recover vectors from write buffer
+        Main->>SS: 10. Recover vectors from write-ahead log
         activate SS
         SS->>SE: Get recovered collections
-        SS->>SS: Scan write buffer directories
+        SS->>SS: Scan write-ahead log directories
         SS->>SS: Load unflushed vectors into memtable
         SS-->>Main: Vectors recovered
         deactivate SS

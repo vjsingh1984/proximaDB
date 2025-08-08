@@ -283,7 +283,7 @@ include::../diagrams/unified-parquet-reader-architecture.mmd[]
 
 === DirectVectorService
 
-Main service handling vector operations with engine routing and atomic insertions.
+Main service handling vector operations with engine routing and transaction coordination.
 
 === Atomic Operations
 
@@ -291,7 +291,7 @@ Three-phase commit pattern: Prepare → Execute → Commit for consistency acros
 
 === Search Coordination
 
-Parallel search across WriteBuffer, memtable, and storage layers with MVCC deduplication by version.
+Parallel search across WriteAheadLog, memtable, and storage layers with MVCC deduplication by version.
 
 == Storage Engine Details
 
@@ -410,7 +410,7 @@ Query → DirectVectorService → Parallel Search:
 === Implemented Optimizations (2025-08)
 
 **Bloom Filters for Memtable** ✅:
-- CompositeBloomFilter integrated into WriteBufferVectorBatch
+- CompositeBloomFilter integrated into WriteAheadLogVectorBatch
 - Supports both metadata key and key-value filtering
 - Skip 95%+ of irrelevant batches for metadata queries
 - 30-50% latency reduction for filtered searches

@@ -95,7 +95,7 @@ image::proximadb-unified-architecture.svg[ProximaDB Unified Architecture, align=
 === Technical Architecture Diagrams
 
 ==== Write Buffer Strategy Pattern
-image::write-buffer-strategy-pattern.svg[Write Buffer Strategy, width=700]
+image::write-ahead-log-strategy-pattern.svg[Write-Ahead Log Strategy, width=700]
 
 ==== Bloom Filter Architecture  
 image::bloom-filter-architecture.svg[Bloom Filter Architecture, width=700]
@@ -395,7 +395,7 @@ src/
 │   │   │   └── decompression_cache.rs
 │   │   └── viper/                 # Parquet engine
 │   │       └── unified_parquet_reader.rs
-│   └── atomic.rs                  # ACID coordinator
+│   └── transaction_coordinator.rs    # ACID coordinator
 ├── core/
 │   └── hardware_capabilities.rs   # Hardware detection
 ├── index/axis/                    # Adaptive indexing
@@ -429,6 +429,56 @@ if &data[0..4] != b"SST1" {
 }
 ```
 
+== 🗄️ Cache Enhancement System
+
+=== Overview
+
+ProximaDB implements specialized caches with shared infrastructure for optimal vector database performance:
+
+[cols="2,2,1,1", options="header"]
+|===
+| Cache Type | Purpose | Hit Rate Target | Memory Budget
+
+| **VectorDataCache**
+| Raw vector data with cross-engine sharing
+| >80%
+| 40%
+
+| **QueryResultCache** 
+| Search results with staleness detection
+| >70%
+| 30%
+
+| **FilterBitmapCache**
+| Roaring bitmap filter results
+| >85%
+| 20%
+
+| **IndexStructureCache**
+| Hot path index node caching
+| >90%
+| 10%
+|===
+
+=== Architecture Design
+
+The cache system uses specialized cache types with shared base infrastructure:
+
+* **Template Method Pattern**: Common cache operations in base traits
+* **Multi-Tier Storage**: L1 (Memory), L2 (NVMe), L3 (Network)
+* **Eviction Strategies**: LRU, LFU, ARC with unified metrics
+* **Cross-Cache Coordination**: Central CacheCoordinator for synergies
+
+=== Implementation Phases
+
+1. **Foundation**: Shared cache traits and base infrastructure
+2. **Specialization**: Refactor existing UnifiedCrossEngineCache
+3. **New Caches**: QueryResult, FilterBitmap, IndexStructure caches  
+4. **Coordination**: Cross-cache prefetching and invalidation
+5. **Production**: Monitoring, configuration, deployment
+
+For detailed implementation status, see link:../enhancements/consolidated_pending_features.adoc[Consolidated Pending Features].
+
 == 📚 Related Documentation
 
 * **Magic Bytes**: link:magic_bytes_architecture.adoc[Format Detection Guide]
@@ -436,6 +486,7 @@ if &data[0..4] != b"SST1" {
 * **API Reference**: link:../user/api_reference.adoc[REST/gRPC APIs]
 * **Performance**: link:../appendices/appendix_performance_metrics.adoc[Benchmarks]
 * **Compression**: link:../compression_guide.adoc[Compression Guide]
+* **Enhancements**: link:../enhancements/consolidated_pending_features.adoc[Future Features]
 
 ---
-*Last updated: 2025-08-07*
+*Last updated: 2025-08-08*

@@ -50,7 +50,7 @@ graph TD
     
     %% Background Processes
     V[CompactionCoordinator] --> W[BackgroundCompaction]
-    X[WriteBufferFlushCoordinator] --> Y[FlushToParquet]
+    X[WriteAheadLogFlushCoordinator] --> Y[FlushToParquet]
     W --> Z[CompactedParquetFiles]
     Y --> AA[FreshParquetFiles]
     

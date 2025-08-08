@@ -30,7 +30,7 @@ This directory contains all Mermaid diagram sources (`.mmd`) and their generated
 * link:unified-parquet-reader-architecture.mmd[Parquet Reader] - VIPER reader implementation
 * link:unified-handlers-architecture.mmd[Unified Handlers] - Request handling architecture
 * link:sql-acceleration-architecture.mmd[SQL Acceleration] - SQL engine optimizations
-* link:write-buffer-strategy-pattern.mmd[Write Buffer] - Strategy pattern implementation
+* link:write-ahead-log-strategy-pattern.mmd[Write-Ahead Log] - Strategy pattern implementation
 
 === Deployment & Operations
 * link:deployment-architecture.mmd[Deployment Architecture] - Cloud deployment options

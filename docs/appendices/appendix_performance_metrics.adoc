@@ -278,9 +278,9 @@ max_result_size_bytes = 1048576  # Max 1MB per result
 
 **Configuration**:
 ```toml
-[storage.write_buffer_config]
+[storage.write_ahead_log_config]
 memory_flush_size_bytes = 16777216  # 16MB per collection
-write_buffer_size_mb = 8192         # 8GB global limit
+write_ahead_log_size_mb = 8192      # 8GB global limit
 
 [memory]
 vector_pool_size_mb = 512
