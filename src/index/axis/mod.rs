@@ -15,8 +15,9 @@ pub mod annoy_index;
 pub mod clustering;
 pub mod hnsw_index;
 pub mod index_factory;
-pub mod ivf_index;
-pub mod ivf_tier_aware;
+pub mod ivf_index;      // Legacy - will deprecate
+pub mod ivf_tier_aware; // Legacy - will deprecate  
+pub mod ivf_unified;    // New unified implementation
 pub mod lsh_index;
 pub mod manager;
 pub mod migration_engine;
