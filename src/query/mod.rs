@@ -4,7 +4,7 @@ pub mod compression_aware_planner;
 pub mod unified_query_planner;
 
 use crate::storage::StorageEngine;
-use crate::services::DirectVectorService;
+use crate::services::VectorOperationsService;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use anyhow::Result;
@@ -19,7 +19,7 @@ pub struct QueryEngine {
     /// SQL query engine
     sql_engine: Option<Arc<SqlEngine>>,
     /// Direct vector service reference
-    vector_service: Option<Arc<DirectVectorService>>,
+    vector_service: Option<Arc<VectorOperationsService>>,
 }
 
 impl QueryEngine {
@@ -48,7 +48,7 @@ impl QueryEngine {
     }
     
     /// Create with vector service
-    pub fn new_with_vector_service(vector_service: Arc<DirectVectorService>) -> Self {
+    pub fn new_with_vector_service(vector_service: Arc<VectorOperationsService>) -> Self {
         let sql_engine = Arc::new(SqlEngine::new(vector_service.clone()));
         
         Self {
@@ -67,7 +67,7 @@ impl QueryEngine {
     }
     
     /// Get vector service reference
-    pub fn vector_service(&self) -> Option<&Arc<DirectVectorService>> {
+    pub fn vector_service(&self) -> Option<&Arc<VectorOperationsService>> {
         self.vector_service.as_ref()
     }
 }

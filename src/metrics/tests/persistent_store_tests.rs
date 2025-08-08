@@ -1,9 +1,9 @@
-//! Comprehensive tests for PersistentMetricsStore
+//! Comprehensive tests for MetricsPersistenceLayer
 
 #[cfg(test)]
 mod tests {
     use super::super::super::{
-        store::PersistentMetricsStore,
+        store::MetricsPersistenceLayer,
         schema::{CollectionMetrics, GlobalMetrics, FilterableColumnStats},
         MetricsConfig,
     };
@@ -13,7 +13,7 @@ mod tests {
     use tokio::fs;
     use anyhow::Result;
 
-    async fn create_test_store() -> Result<PersistentMetricsStore> {
+    async fn create_test_store() -> Result<MetricsPersistenceLayer> {
         let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
         
         let config = MetricsConfig {
@@ -34,12 +34,12 @@ mod tests {
         
         let filesystem_config = Default::default();
         let filesystem_factory = Arc::new(FilesystemFactory::new(filesystem_config).await?);
-        PersistentMetricsStore::new(filesystem_factory, config).await
+        MetricsPersistenceLayer::new(filesystem_factory, config).await
     }
 
     #[tokio::test]
     async fn test_metrics_store_creation() {
-        println!("🧪 TEST: PersistentMetricsStore creation and initialization");
+        println!("🧪 TEST: MetricsPersistenceLayer creation and initialization");
         
         let store = create_test_store().await.unwrap();
         

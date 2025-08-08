@@ -16,7 +16,7 @@ use std::time::Instant;
 use tokio::sync::{mpsc, RwLock};
 use tracing::{debug, warn};
 
-use super::{schema::{CollectionMetrics, FilterableColumnStats}, store::PersistentMetricsStore};
+use super::{schema::{CollectionMetrics, FilterableColumnStats}, store::MetricsPersistenceLayer};
 
 /// Internal interface for updating metrics - not exposed to external users
 #[async_trait]
@@ -214,7 +214,7 @@ impl AsyncMetricsUpdater {
     pub async fn process_updates(
         &self,
         mut rx: mpsc::UnboundedReceiver<MetricsUpdate>,
-        store: Arc<super::store::PersistentMetricsStore>,
+        store: Arc<super::store::MetricsPersistenceLayer>,
     ) {
         while let Some(update) = rx.recv().await {
             self.update_count.fetch_add(1, Ordering::Relaxed);
@@ -498,23 +498,23 @@ impl InternalMetricsUpdater for AsyncMetricsUpdater {
     }
 }
 
-/// Default metrics updater implementation for testing and simple use cases
-pub struct DefaultMetricsUpdater {
-    store: Arc<PersistentMetricsStore>,
+/// Metrics update service implementation for testing and simple use cases
+pub struct MetricsUpdateService {
+    store: Arc<MetricsPersistenceLayer>,
 }
 
-impl DefaultMetricsUpdater {
-    pub fn new(store: Arc<PersistentMetricsStore>) -> Self {
+impl MetricsUpdateService {
+    pub fn new(store: Arc<MetricsPersistenceLayer>) -> Self {
         Self { store }
     }
     
-    pub fn get_store(&self) -> &Arc<PersistentMetricsStore> {
+    pub fn get_store(&self) -> &Arc<MetricsPersistenceLayer> {
         &self.store
     }
 }
 
 #[async_trait]
-impl InternalMetricsUpdater for DefaultMetricsUpdater {
+impl InternalMetricsUpdater for MetricsUpdateService {
     async fn record_operation(
         &self,
         collection_id: &str,

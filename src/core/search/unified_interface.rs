@@ -10,7 +10,7 @@ use std::sync::Arc;
 
 use crate::core::search::{SearchParams, SearchResult, SearchResultSet};
 use crate::compute::distance::DistanceMetric;
-use crate::compute::unified_distance::UnifiedDistanceCompute;
+use crate::compute::distance_compute_engine::UnifiedDistanceCompute;
 use crate::compute::unified_quantization::{UnifiedQuantizationEngine, UnifiedQuantizationLevel};
 use crate::services::collection_service::CollectionService;
 
@@ -122,7 +122,7 @@ pub enum OptimizationHint {
     UseCaching { cache_key: String },
 }
 
-/// Unified search orchestrator - replaces DirectVectorService search logic
+/// Unified search orchestrator - replaces VectorOperationsService search logic
 pub struct UnifiedSearchOrchestrator {
     engines: Vec<Arc<dyn UnifiedSearchEngine>>,
     distance_compute: Arc<UnifiedDistanceCompute>,

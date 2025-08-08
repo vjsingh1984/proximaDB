@@ -20,17 +20,24 @@ pub mod schema;
 pub mod aggregator;
 pub mod compression;
 pub mod cache;
+pub mod exporters;
+pub mod collectors;
 
 #[cfg(test)]
 mod tests;
 
-pub use store::{PersistentMetricsStore, MetricsSnapshot};
+pub use store::{MetricsPersistenceLayer};
 pub use updater::{InternalMetricsUpdater, MetricsUpdate};
 pub use query_service::{MetricsQueryService, MetricsQueryOptions};
 pub use schema::{CollectionMetrics, GlobalMetrics, QueryOptimizationHints};
-pub use aggregator::{MetricsAggregator, AggregationWindow};
+pub use aggregator::{MetricsAggregationEngine, AggregationWindow};
 pub use compression::{CompressionMetrics, CompressionMetricsTracker, CompressionResult, DecompressionResult};
-pub use cache::{IntegratedCacheMetrics, CacheMetricsAggregator, CacheOptimizationHints};
+pub use cache::{CacheMetricsSnapshot, CacheMetricsCollector, CacheOptimizationHints};
+pub use exporters::{MetricsExporter, ExportFormat, PrometheusExporter, JsonExporter};
+
+// Re-export common types for compatibility
+pub use exporters::{SystemMetrics, MetricsSnapshot};
+pub use self::schema::Alert;
 
 use anyhow::Result;
 use serde::{Deserialize, Serialize};

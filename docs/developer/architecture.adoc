@@ -477,16 +477,16 @@ The cache system uses specialized cache types with shared base infrastructure:
 4. **Coordination**: Cross-cache prefetching and invalidation
 5. **Production**: Monitoring, configuration, deployment
 
-For detailed implementation status, see link:../enhancements/consolidated_pending_features.adoc[Consolidated Pending Features].
+For detailed implementation status, see link:../enterprise_features.adoc[Enterprise Features].
 
 == 📚 Related Documentation
 
 * **Magic Bytes**: link:magic_bytes_architecture.adoc[Format Detection Guide]
 * **User Guide**: link:../user/user_guide.adoc[Usage Examples]
 * **API Reference**: link:../user/api_reference.adoc[REST/gRPC APIs]
-* **Performance**: link:../appendices/appendix_performance_metrics.adoc[Benchmarks]
+* **Performance**: link:../performance_reference.adoc[Performance Reference]
 * **Compression**: link:../compression_guide.adoc[Compression Guide]
-* **Enhancements**: link:../enhancements/consolidated_pending_features.adoc[Future Features]
+* **Enhancements**: link:../enterprise_features.adoc[Enterprise Features]
 
 ---
 *Last updated: 2025-08-08*

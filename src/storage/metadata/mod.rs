@@ -12,6 +12,7 @@
 //! - Abstracts storage backends (file:, s3:, adls:, gcs:)
 //! - Enables compute-storage separation for serverless deployment
 
+pub use crate::storage::transaction_coordinator;
 pub mod atomic;
 pub mod backends;
 pub mod checkpoint;
@@ -20,7 +21,7 @@ pub mod indexes;
 pub mod single_index;
 pub mod store;
 pub mod unified_index;
-pub mod write_buffer;
+pub mod write_ahead_log;
 
 #[cfg(test)]
 mod atomic_tests;
@@ -34,9 +35,9 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 // Re-exports
-pub use atomic::{AtomicMetadataStore, MetadataTransaction, TransactionId};
+pub use transaction_coordinator::TransactionId;
 pub use store::{MetadataStore, MetadataStoreConfig};
-pub use write_buffer::{MetadataWriteBufferConfig, MetadataWriteBufferManager, SystemMetadata, VersionedCollectionMetadata};
+pub use write_ahead_log::{MetadataWALConfig, MetadataWriteAheadLogManager, SystemMetadata, VersionedCollectionMetadata};
 
 // Re-export strategy types for convenience
 pub use crate::storage::strategy::{StorageEngineType, IndexingAlgorithm, DistanceMetric};

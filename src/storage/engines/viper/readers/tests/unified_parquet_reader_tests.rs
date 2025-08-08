@@ -9,7 +9,7 @@ mod tests {
     };
     use crate::core::search::{SearchParams, FilterExpression, ComparisonOperator};
     use crate::compute::distance::DistanceMetric;
-    use crate::compute::unified_distance::SimilarityResult;
+    use crate::compute::distance_compute_engine::SimilarityResult;
     use crate::storage::persistence::filesystem::{FilesystemFactory, FilesystemConfig};
     use crate::core::{VectorRecord, String};
     use crate::proto::proximadb::MetadataItem;

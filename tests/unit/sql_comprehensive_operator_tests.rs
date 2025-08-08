@@ -21,20 +21,11 @@ mod tests {
     
     // Inline test assignment helper to avoid import issues
     async fn setup_test_assignment(collection_id: &str, temp_dir: &TempDir) -> anyhow::Result<()> {
-        let assignment_service = proximadb::storage::assignment_service::get_assignment_service();
+        // Assignment service removed - collections now embed storage_assignment
+        // let assignment_service = proximadb::storage::assignment_service::get_assignment_service();
         
-        // Create a simple storage location for tests
-        let storage_location = proximadb::core::config::StorageLocation {
-            url: format!("file://{}", temp_dir.path().display()),
-            weight: 1,
-            tags: Default::default(),
-        };
-        
-        // Register with assignment service
-        assignment_service
-            .assign_collection(collection_id, &[storage_location], "hash")
-            .await?;
-        
+        // Storage assignment now happens when creating collection via CollectionConfig
+        // No need to manually assign - just return Ok
         Ok(())
     }
     
@@ -97,7 +88,6 @@ mod tests {
                 proximadb::compute::distance::DistanceMetric::Cosine
             ));
             let sst_engine = Arc::new(proximadb::storage::engines::sst::SstStorage::new(
-                collection_id.clone(),
                 sst_config,
                 filesystem.clone(),
                 distance_compute

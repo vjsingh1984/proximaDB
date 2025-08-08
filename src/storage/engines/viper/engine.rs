@@ -42,7 +42,7 @@ use super::flush::FlushManager;
 // use super::ml_clustering::MLClusteringEngine; // Moved to AXIS
 use super::utilities::ViperUtilities;
 use super::unified_search_engine::ViperUnifiedSearchEngine;
-use crate::compute::unified_distance::UnifiedDistanceCompute;
+use crate::compute::distance_compute_engine::UnifiedDistanceCompute;
 use super::types::CollectionMetadata;
 
 /// VIPER Engine - Main coordination point for the modular VIPER storage engine
@@ -92,7 +92,7 @@ impl ViperEngine {
         collection_id: String,  // Used for logging and initial setup
         core_config: crate::core::config::ViperConfig,
         filesystem: Arc<FilesystemFactory>,
-        _distance_compute: Arc<crate::compute::unified_distance::UnifiedDistanceCompute>,  // VIPER creates its own internally
+        _distance_compute: Arc<crate::compute::distance_compute_engine::UnifiedDistanceCompute>,  // VIPER creates its own internally
     ) -> Result<Self> {
         info!("🔧 Creating VIPER engine with initial collection: {}", collection_id);
         // VIPER manages multiple collections, so we just log the initial one
@@ -107,7 +107,7 @@ impl ViperEngine {
         collection_id: String,  // Used for logging and initial setup
         core_config: crate::core::config::ViperConfig,
         filesystem: Arc<FilesystemFactory>,
-        _distance_compute: Arc<crate::compute::unified_distance::UnifiedDistanceCompute>,
+        _distance_compute: Arc<crate::compute::distance_compute_engine::UnifiedDistanceCompute>,
         base_location: String,  // Can be used to override default storage paths
     ) -> Result<Self> {
         info!("🔧 Creating VIPER engine for collection: {} with base location: {}", 
@@ -920,7 +920,7 @@ impl UnifiedStorageEngine for ViperEngine {
         let result_set = match self.search_engine.search_unified(
                 &search_context,
                 &search_params,
-                &crate::compute::unified_distance::UnifiedDistanceCompute::default(),
+                &crate::compute::distance_compute_engine::UnifiedDistanceCompute::default(),
                 None, // TODO: Add quantization engine when needed
             ).await {
             Ok(rs) => rs,

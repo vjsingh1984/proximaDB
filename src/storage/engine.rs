@@ -1,7 +1,7 @@
 use crate::core::search::SearchResult;
 use crate::core::{BatchSearchRequest, String, StorageConfig, VectorId, VectorRecord};
 use crate::index::{AxisConfig, AxisManager};
-use crate::storage::persistence::write_buffer::{WriteBufferConfig, WriteBufferManager};
+use crate::storage::persistence::write_ahead_log::{WALConfig, WriteAheadLogManager};
 use crate::storage::{
     engines::sst::{CompactionManager, SstStorage, mmap::MmapReader},
     persistence::disk_manager::DiskManager,
@@ -68,13 +68,13 @@ pub struct StorageEngine {
     sst_storages: Arc<DashMap<String, Arc<SstStorage>>>,
     mmap_readers: Arc<DashMap<String, Arc<MmapReader>>>,
     disk_manager: Arc<DiskManager>,
-    write_buffer_manager: Arc<WriteBufferManager>,
+    write_ahead_log_manager: Arc<WriteAheadLogManager>,
     axis_index_manager: Arc<AxisManager>,
     compaction_manager: Arc<CompactionManager>,
     filesystem: Arc<crate::storage::persistence::filesystem::FilesystemFactory>,
 
     /// Shared distance computation engine for all storage operations
-    distance_compute: Arc<crate::compute::unified_distance::UnifiedDistanceCompute>,
+    distance_compute: Arc<crate::compute::distance_compute_engine::UnifiedDistanceCompute>,
 
     /// Collection metadata provider - injected after construction to break circular dependency
     metadata_provider: Arc<RwLock<Option<Arc<dyn CollectionMetadataProvider>>>>,
@@ -118,8 +118,8 @@ impl StorageEngine {
         let disk_manager = Arc::new(DiskManager::new(data_dirs.clone())?);
 
         // Initialize WAL configuration from storage locations
-        let mut write_buffer_config = WriteBufferConfig::default();
-        write_buffer_config.multi_disk.data_directories = config.storage_locations.iter()
+        let mut wal_config = WALConfig::default();
+        wal_config.multi_disk.data_directories = config.storage_locations.iter()
             .map(|loc| {
                 // Ensure proper file:// URL format
                 let url = if loc.url.starts_with("file://") {
@@ -149,10 +149,10 @@ impl StorageEngine {
         );
 
         // Create WAL manager using modern batch factory pattern
-        let write_buffer_manager = Arc::new(
-            WriteBufferManager::create_with_batch_factory(
-                write_buffer_config.strategy_type.clone(),
-                write_buffer_config,
+        let write_ahead_log_manager = Arc::new(
+            WriteAheadLogManager::create_with_batch_factory(
+                wal_config.strategy_type.clone(),
+                wal_config,
                 filesystem.clone(),
             )
             .await
@@ -178,7 +178,7 @@ impl StorageEngine {
         let sst_storage = Arc::new(SstStorage::new(
             config.sst_config.clone(),
             filesystem.clone(),
-            Arc::new(crate::compute::unified_distance::UnifiedDistanceCompute::default()),
+            Arc::new(crate::compute::distance_compute_engine::UnifiedDistanceCompute::default()),
         ).await?);
 
         Ok(Self {
@@ -186,11 +186,11 @@ impl StorageEngine {
             sst_storages: Arc::new(DashMap::new()),  // Now uses DashMap for per-collection storages
             mmap_readers: Arc::new(DashMap::new()),
             disk_manager,
-            write_buffer_manager,
+            write_ahead_log_manager,
             axis_index_manager,
             compaction_manager,
             filesystem,
-            distance_compute: Arc::new(crate::compute::unified_distance::UnifiedDistanceCompute::default()),
+            distance_compute: Arc::new(crate::compute::distance_compute_engine::UnifiedDistanceCompute::default()),
             metadata_provider: Arc::new(RwLock::new(metadata_provider)),
         })
     }
@@ -241,7 +241,7 @@ impl StorageEngine {
 
         // Force WAL flush during shutdown
         tracing::debug!("🧹 Forcing WAL flush during storage engine shutdown");
-        if let Err(e) = self.write_buffer_manager.flush(None).await {
+        if let Err(e) = self.write_ahead_log_manager.flush(None).await {
             tracing::warn!("Failed to flush WAL during shutdown: {}", e);
         }
 
@@ -249,8 +249,8 @@ impl StorageEngine {
     }
 
     /// Get WAL manager for sharing between services
-    pub fn get_write_buffer_manager(&self) -> Arc<WriteBufferManager> {
-        self.write_buffer_manager.clone()
+    pub fn get_write_ahead_log_manager(&self) -> Arc<WriteAheadLogManager> {
+        self.write_ahead_log_manager.clone()
     }
 
     /// Write a vector to storage through WAL → memtable → flush pipeline
@@ -277,7 +277,7 @@ impl StorageEngine {
         let vectors = Arc::new(vec![record.clone()]);
         
         // Write to WAL (which handles memtable insertion)
-        self.write_buffer_manager.write_vector_batch_native_arc(collection_id, vectors).await
+        self.write_ahead_log_manager.write_vector_batch_native_arc(collection_id, vectors).await
             .map_err(|e| crate::core::StorageError::WalError(format!("Failed to write to WAL: {}", e)))?;
         
         tracing::debug!(
@@ -344,7 +344,7 @@ impl StorageEngine {
         id: &VectorId,
     ) -> crate::storage::Result<bool> {
         // Write delete marker to WAL using new interface
-        self.write_buffer_manager
+        self.write_ahead_log_manager
             .delete(collection_id.to_string(), id.clone())
             .await
             .map_err(|e| crate::core::StorageError::WalError(e.to_string()))?;
@@ -553,8 +553,8 @@ impl StorageEngine {
         };
 
         // Use the new WAL interface to recover
-        tracing::info!("📊 STORAGE_ENGINE: About to call write_buffer_manager.recover()");
-        match self.write_buffer_manager.recover().await {
+        tracing::info!("📊 STORAGE_ENGINE: About to call write_ahead_log_manager.recover()");
+        match self.write_ahead_log_manager.recover().await {
             Ok(recovered_entries) => {
                 tracing::info!(
                     "✅ STORAGE_ENGINE: WAL recovery completed successfully, recovered {} entries",
@@ -592,7 +592,7 @@ impl StorageEngine {
         let mut seen_collections = std::collections::HashSet::new();
 
         // Get all collections that have entries in the WAL
-        match self.write_buffer_manager.stats().await {
+        match self.write_ahead_log_manager.stats().await {
             Ok(stats) => {
                 tracing::info!(
                     "📊 WAL stats: {} total entries across {} collections",
@@ -615,7 +615,7 @@ impl StorageEngine {
 
                 for collection_id in potential_collection_names {
                     match self
-                        .write_buffer_manager
+                        .write_ahead_log_manager
                         .get_collection_entries(&collection_id.to_string())
                         .await
                     {
@@ -686,7 +686,7 @@ impl StorageEngine {
                 collection_id
             );
             // Note: WAL no longer handles collection operations - handled by CollectionService
-            if let Err(e) = self.write_buffer_manager.flush(Some(&collection_id.to_string())).await {
+            if let Err(e) = self.write_ahead_log_manager.flush(Some(&collection_id.to_string())).await {
                 tracing::warn!(
                     "Failed to cleanup WAL entries for collection {}: {}",
                     collection_id,
@@ -711,7 +711,7 @@ impl StorageEngine {
     }
 
     /// Get the shared distance computation engine
-    pub fn distance_compute(&self) -> &Arc<crate::compute::unified_distance::UnifiedDistanceCompute> {
+    pub fn distance_compute(&self) -> &Arc<crate::compute::distance_compute_engine::UnifiedDistanceCompute> {
         &self.distance_compute
     }
 
@@ -931,7 +931,7 @@ impl StorageEngine {
         );
 
         // Get all entries for the collection from WAL/memtable
-        let entries = match self.write_buffer_manager.get_collection_entries(collection_id).await {
+        let entries = match self.write_ahead_log_manager.get_collection_entries(collection_id).await {
             Ok(entries) => entries,
             Err(e) => {
                 tracing::debug!("🔍 No entries in memtable: {}", e);
@@ -1196,7 +1196,7 @@ impl StorageEngine {
             );
             for collection_id in &collection_ids {
                 // Note: WAL no longer handles collection operations - handled by CollectionService
-                if let Err(e) = self.write_buffer_manager.flush(Some(collection_id)).await {
+                if let Err(e) = self.write_ahead_log_manager.flush(Some(collection_id)).await {
                     tracing::warn!(
                         "Failed to cleanup WAL entries for collection {}: {}",
                         collection_id,
@@ -1207,7 +1207,7 @@ impl StorageEngine {
         } else {
             // If no collections found, flush all WAL data
             tracing::debug!("🧹 No collections found, performing WAL flush");
-            if let Err(e) = self.write_buffer_manager.flush(None).await {
+            if let Err(e) = self.write_ahead_log_manager.flush(None).await {
                 tracing::warn!("Failed to flush WAL: {}", e);
             }
         }

@@ -22,12 +22,11 @@ use tracing::{debug, error, info, warn};
 use crate::storage::persistence::filesystem::{
     FilesystemFactory
 };
-use crate::storage::atomic::{UnifiedAtomicCoordinator, StagingConfig, StagingOperationType};
+use crate::storage::transaction_coordinator::{TransactionCoordinator, StagingConfig, TransactionStageType};
 
 use crate::core::{String, VectorRecord};
 use crate::storage::optimization::{MetadataSorter, SortingStats};
-// 🔴 UNUSED IMPORT - Metrics module is unused
-use crate::monitoring::metrics::updater::{InternalMetricsUpdater, FlushMetricsUpdate};
+use crate::metrics::{InternalMetricsUpdater, MetricsUpdate};
 use super::schema::SchemaManager;
 
 /// Flush manager for VIPER storage engine with atomic writes
@@ -42,7 +41,7 @@ pub struct FlushManager {
     filesystem_factory: Arc<FilesystemFactory>,
     
     /// Atomic coordinator for ACID operations
-    atomic_coordinator: Arc<UnifiedAtomicCoordinator>,
+    atomic_coordinator: Arc<TransactionCoordinator>,
     
     // 🔴 UNUSED FIELD - Metrics module is unused
     // /// Optional metrics updater for non-critical metrics
@@ -68,7 +67,7 @@ impl FlushManager {
     ) -> Result<Self> {
         // Create atomic coordinator
         let atomic_coordinator = Arc::new(
-            UnifiedAtomicCoordinator::new(filesystem_factory.clone(), None)
+            TransactionCoordinator::new(filesystem_factory.clone(), None)
                 .await
                 .context("Failed to create atomic coordinator")?
         );
@@ -292,7 +291,7 @@ impl FlushManager {
             completed_at: chrono::Utc::now(),
             flushed_batch_ids: batch_ids.iter().map(|_id| {
                 // Use compact BatchId for minimal storage overhead (10 bytes vs 100+ bytes)
-                crate::storage::persistence::write_buffer::BatchId::default()
+                crate::storage::persistence::write_ahead_log::BatchId::default()
             }).collect(), // ✅ Include for WAL cleanup
             engine_metrics: {
                 let mut metrics = std::collections::HashMap::new();
@@ -983,7 +982,7 @@ impl FlushManager {
         let staging_config = StagingConfig {
             base_url: data_url.clone(),
             collection_id: None,  // Don't duplicate collection path
-            operation_type: StagingOperationType::Flush,
+            operation_type: TransactionStageType::Flush,
             custom_staging_dir: None,
             auto_cleanup: true,
             max_orphaned_age_hours: 24,

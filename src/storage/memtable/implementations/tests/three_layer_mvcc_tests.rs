@@ -6,8 +6,8 @@
 use super::super::global_partitioned::GlobalPartitionedMemtable;
 use crate::compute::distance::DistanceMetric as CoreDistanceMetric;
 use crate::core::VectorRecord;
-use crate::storage::memtable::specialized::write_buffer_behavior::WriteBufferVectorBatch;
-use crate::storage::persistence::write_buffer::BatchId;
+use crate::storage::memtable::specialized::wal_behavior::WALVectorBatch;
+use crate::storage::persistence::write_ahead_log::BatchId;
 use std::sync::Arc;
 
 /// Helper function to create a vector record with specific parameters
@@ -37,14 +37,14 @@ fn create_wal_batch(
     collection_id: &str,
     sequence: u64,
     vectors: Vec<VectorRecord>,
-) -> WriteBufferVectorBatch {
+) -> WALVectorBatch {
     let vector_count = vectors.len() as u64;
     let end_sequence = if vector_count > 0 {
         sequence + vector_count - 1
     } else {
         sequence
     };
-    WriteBufferVectorBatch {
+    WALVectorBatch {
         batch_id: BatchId::new(),
         vector_records: Arc::new(vectors),
         created_at: std::time::SystemTime::now(),

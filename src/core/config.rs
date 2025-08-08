@@ -107,7 +107,7 @@ pub struct StorageConfig {
 
     /// Write buffer configuration (global memtable settings)
     #[serde(default)]
-    pub write_buffer_config: WriteBufferUserConfig,
+    pub wal_config: WriteBufferUserConfig,
 
     /// Storage engine configurations
     pub mmap_enabled: bool,
@@ -239,7 +239,7 @@ pub struct FilesystemOptimizationConfig {
     pub temp_strategy: TempStrategy,
 
     /// Atomic operations configuration
-    pub atomic_config: AtomicOperationsConfig,
+    pub atomic_config: TransactionalOperationsConfig,
 }
 
 /// Temp strategy configuration
@@ -257,7 +257,7 @@ pub enum TempStrategy {
 
 /// Atomic operations configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AtomicOperationsConfig {
+pub struct TransactionalOperationsConfig {
     /// Enable atomic writes for local filesystem
     pub enable_local_atomic: bool,
 
@@ -273,12 +273,12 @@ impl Default for FilesystemOptimizationConfig {
         Self {
             enable_write_strategy_cache: true,
             temp_strategy: TempStrategy::SameDirectory,
-            atomic_config: AtomicOperationsConfig::default(),
+            atomic_config: TransactionalOperationsConfig::default(),
         }
     }
 }
 
-impl Default for AtomicOperationsConfig {
+impl Default for TransactionalOperationsConfig {
     fn default() -> Self {
         Self {
             enable_local_atomic: true,
@@ -333,7 +333,7 @@ impl Default for StorageConfig {
             ],
             metadata_url: "file:///data/proximadb/disk1/metadata".to_string(),
             assignment_config: AssignmentConfig::default(),
-            write_buffer_config: WriteBufferUserConfig::default(),
+            wal_config: WriteBufferUserConfig::default(),
             mmap_enabled: true,
             sst_config: SstConfig::default(),
             viper_config: Some(ViperConfig::default()),
@@ -347,7 +347,7 @@ impl Default for StorageConfig {
 
 /// User-facing write buffer configuration (from TOML files)
 /// This is the simple configuration that users specify in their config files.
-/// It gets converted to the internal WriteBufferConfig for the engine.
+/// It gets converted to the internal WALConfig for the engine.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WriteBufferUserConfig {
     /// Total write buffer size across all collections in MB
@@ -382,13 +382,13 @@ impl Default for WriteBufferUserConfig {
 
 impl WriteBufferUserConfig {
     /// Convert user configuration to internal engine configuration
-    pub fn to_engine_config(&self) -> crate::storage::persistence::write_buffer::WriteBufferConfig {
-        use crate::storage::persistence::write_buffer::{
-            WriteBufferConfig, WriteBufferStrategyType, 
+    pub fn to_engine_config(&self) -> crate::storage::persistence::write_ahead_log::WALConfig {
+        use crate::storage::persistence::write_ahead_log::{
+            WALConfig, WriteBufferStrategyType, 
             config::{MemTableConfig, MultiDiskConfig, CompressionConfig, PerformanceConfig}
         };
         
-        WriteBufferConfig {
+        WALConfig {
             strategy_type: WriteBufferStrategyType::default(),
             memtable: MemTableConfig::default(),
             multi_disk: MultiDiskConfig::default(),

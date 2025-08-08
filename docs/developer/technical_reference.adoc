@@ -290,18 +290,12 @@ enable_compression = true   # Default: true
 max_frame_size_mb = 16
 ----
 
-==== Storage Compression
+==== Storage Configuration
 [source,toml]
 ----
-[storage.sst_config]
-compression = "zstd"
-compression_enabled = true   # Default: true
-compression_level = 3        # 1-22 for ZSTD
-
-[storage.viper_config]
-compression = "zstd"  
-compression_enabled = true   # Default: true
-compression_level = 3        # 1-22 for ZSTD
+# Note: Compression is now SDK-driven via CompressionConfig
+# No server-level compression configuration required
+# See compression_guide.adoc for SDK-driven compression setup
 ----
 
 == Distance Metrics

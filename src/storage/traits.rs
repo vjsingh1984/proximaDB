@@ -650,7 +650,7 @@ pub struct FlushParameters {
     pub trigger_compaction: bool,
 
     /// Batch IDs involved in this flush operation (for coordination)
-    pub batch_ids: Vec<crate::storage::persistence::write_buffer::BatchId>,
+    pub batch_ids: Vec<crate::storage::persistence::write_ahead_log::BatchId>,
     
     /// Collection configuration to avoid redundant lookups
     pub collection_config: Option<Collection>,
@@ -758,7 +758,7 @@ pub struct FlushResult {
     pub compaction_triggered: bool,
 
     /// Batch IDs that were successfully flushed (for WAL cleanup coordination)
-    pub flushed_batch_ids: Vec<crate::storage::persistence::write_buffer::BatchId>,
+    pub flushed_batch_ids: Vec<crate::storage::persistence::write_ahead_log::BatchId>,
 }
 
 /// Unified compaction result that accommodates different engine types

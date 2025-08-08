@@ -29,9 +29,10 @@ async fn test_quantization_config_fields() -> Result<()> {
         description: Some("Test collection".to_string()),
         tags: vec![],
         owner: Some("test".to_string()),
-                compression: None,
-                optimization_hints: None,
-            };
+        compression: None,
+        optimization_hints: None,
+        storage_location: None,
+    };
     
     assert_eq!(basic_config.name, "basic_collection");
     assert!(basic_config.quantization_config.is_none());
@@ -59,9 +60,10 @@ async fn test_index_config_field() -> Result<()> {
         description: Some("Test collection".to_string()),
         tags: vec![],
         owner: Some("test".to_string()),
-                compression: None,
-                optimization_hints: None,
-            };
+        compression: None,
+        optimization_hints: None,
+        storage_location: None,
+    };
     
     assert_eq!(config_with_index.name, "indexed_collection");
     assert!(config_with_index.index_configs.is_empty());

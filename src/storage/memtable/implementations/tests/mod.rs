@@ -7,7 +7,7 @@ pub mod global_partitioned_tests;
 // pub mod global_partitioned_distance_tests;
 
 // #[cfg(test)]
-// pub mod unified_distance_tests;
+// pub mod distance_compute_engine_tests;
 
 #[cfg(test)]
 pub mod three_layer_mvcc_tests;

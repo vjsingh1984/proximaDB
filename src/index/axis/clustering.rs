@@ -12,7 +12,7 @@ use tokio::sync::RwLock;
 use crate::index::axis::types::{DataType, IndexAlgorithm, IndexSpecification};
 
 use crate::compute::distance::DistanceMetric;
-use crate::compute::unified_distance::UnifiedDistanceCompute;
+use crate::compute::distance_compute_engine::UnifiedDistanceCompute;
 use crate::core::VectorRecord;
 
 /// Clustering configuration

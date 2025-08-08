@@ -16,7 +16,7 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
-use crate::monitoring::metrics::{MetricsCollector, SystemMetrics};
+use crate::monitoring::MetricsCollector;
 
 /// Dashboard server state
 #[derive(Clone)]
@@ -192,7 +192,7 @@ async fn metrics_endpoint(
         }
         "prometheus" | _ => {
             let metrics = state.metrics_collector.get_current_metrics().await;
-            use crate::monitoring::metrics::exporters::{MetricsExporter, PrometheusExporter};
+            use crate::metrics::exporters::{MetricsExporter, PrometheusExporter};
             let exporter = PrometheusExporter::new();
             exporter
                 .export_system_metrics(&metrics)
@@ -205,7 +205,7 @@ async fn metrics_endpoint(
 async fn api_metrics_endpoint(
     Query(params): Query<MetricsQuery>,
     State(state): State<DashboardState>,
-) -> Json<SystemMetrics> {
+) -> Json<crate::metrics::SystemMetrics> {
     let _since = params.since; // TODO: Use this for historical data
     let metrics = state.metrics_collector.get_current_metrics().await;
     Json(metrics)
@@ -214,7 +214,7 @@ async fn api_metrics_endpoint(
 /// Alerts endpoint
 async fn alerts_endpoint(
     State(state): State<DashboardState>,
-) -> Json<Vec<crate::monitoring::metrics::Alert>> {
+) -> Json<Vec<crate::metrics::Alert>> {
     let alerts = state.metrics_collector.get_active_alerts().await;
     Json(alerts)
 }
@@ -238,15 +238,21 @@ async fn alerts_page(State(state): State<DashboardState>) -> Result<Html<String>
                 </div>
             "#,
                     match alert.level {
-                        crate::monitoring::metrics::AlertLevel::Critical => "critical",
-                        crate::monitoring::metrics::AlertLevel::Warning => "warning",
-                        crate::monitoring::metrics::AlertLevel::Info => "info",
+                        crate::metrics::schema::AlertLevel::Critical => "critical",
+                        crate::metrics::schema::AlertLevel::Warning => "warning",
+                        crate::metrics::schema::AlertLevel::Info => "info",
                     },
                     alert.metric_name,
                     alert.message,
                     alert.current_value,
                     alert.threshold_value,
-                    alert.timestamp.format("%Y-%m-%d %H:%M:%S UTC")
+                    {
+                        use std::time::UNIX_EPOCH;
+                        let duration = alert.timestamp.duration_since(UNIX_EPOCH).unwrap_or_default();
+                        let datetime = chrono::DateTime::<chrono::Utc>::from_timestamp(duration.as_secs() as i64, 0)
+                            .unwrap_or_else(chrono::Utc::now);
+                        datetime.format("%Y-%m-%d %H:%M:%S UTC")
+                    }
                 )
             })
             .collect::<Vec<_>>()

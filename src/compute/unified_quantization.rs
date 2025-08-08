@@ -17,7 +17,7 @@ use std::sync::Arc;
 use tracing::debug;
 
 use super::distance::DistanceMetric;
-use super::unified_distance::{UnifiedDistanceCompute, SimilarityResult, MetricProperties};
+use super::distance_compute_engine::{UnifiedDistanceCompute, SimilarityResult, MetricProperties};
 
 // Use proto types as the single source of truth
 pub use crate::proto::proximadb::{

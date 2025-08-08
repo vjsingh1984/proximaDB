@@ -13,13 +13,13 @@ use tokio::sync::RwLock;
 use tracing::{debug, info};
 
 use super::schema::{CollectionMetrics, GlobalMetrics, QueryOptimizationHints, OptimizationHint};
-use super::store::PersistentMetricsStore;
+use super::store::MetricsPersistenceLayer;
 use super::MetricsConfig;
 
 /// Read-only service for querying metrics
 pub struct MetricsQueryService {
     /// Persistent store
-    store: Arc<PersistentMetricsStore>,
+    store: Arc<MetricsPersistenceLayer>,
     
     /// Configuration
     config: MetricsConfig,
@@ -90,7 +90,7 @@ impl Default for MetricsQueryOptions {
 impl MetricsQueryService {
     /// Create a new metrics query service
     pub async fn new(
-        store: Arc<PersistentMetricsStore>,
+        store: Arc<MetricsPersistenceLayer>,
         config: MetricsConfig,
     ) -> Result<Self> {
         let max_cache_bytes = config.max_memory_mb * 1024 * 1024;

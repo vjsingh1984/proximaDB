@@ -34,17 +34,17 @@ pub use pool::{LockFreeParserPool, get_global_pool, parse_sql_global, PoolStats}
 pub use simd_parser::{SimdVectorParser, SimdCapabilities, parse_vector_simd, get_global_simd_parser};
 pub use gpu_parser::{GpuSqlParser, parse_sql_gpu, get_global_gpu_parser};
 pub use crate::core::hardware_capabilities::GpuBackend;
-pub use query_result_cache::{QueryResultCache, QueryCacheKey, get_global_query_cache, cache_query_result, get_cached_query_result};
+pub use query_result_cache::{QueryCache, QueryCacheKey, get_global_query_cache, cache_query_result, get_cached_query_result};
 pub use executor::{SqlExecutor, SqlExecutionResult};
 pub use planner::{QueryPlanner, ExecutionPlan};
 
 use anyhow::Result;
 use std::sync::Arc;
-use crate::services::{DirectVectorService, CollectionService};
+use crate::services::{VectorOperationsService, CollectionService};
 
 /// SQL Engine for ProximaDB with unified caching
 pub struct SqlEngine {
-    vector_service: Arc<DirectVectorService>,
+    vector_service: Arc<VectorOperationsService>,
     collection_service: Option<Arc<CollectionService>>,
     planner: QueryPlanner,
     executor: SqlExecutor,
@@ -54,7 +54,7 @@ pub struct SqlEngine {
 
 impl SqlEngine {
     /// Create new SQL engine
-    pub fn new(vector_service: Arc<DirectVectorService>) -> Self {
+    pub fn new(vector_service: Arc<VectorOperationsService>) -> Self {
         Self {
             vector_service: vector_service.clone(),
             collection_service: None,
@@ -66,7 +66,7 @@ impl SqlEngine {
     
     /// Create new SQL engine with collection service for name resolution
     pub fn with_collection_service(
-        vector_service: Arc<DirectVectorService>,
+        vector_service: Arc<VectorOperationsService>,
         collection_service: Arc<CollectionService>,
     ) -> Self {
         Self {

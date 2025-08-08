@@ -37,8 +37,8 @@ pub mod unified_cache_test;
 // pub mod lockfree_test; // Removed - lockfree is now integrated in main implementation
 
 // Coverage improvement tests
-pub mod storage_assignment_tests;
-pub mod assignment_service_advanced_tests;
+// pub mod storage_assignment_tests; // File not found - commented for now
+// pub mod assignment_service_advanced_tests; // File not found - commented for now
 
 // Threshold trigger tests
 pub mod test_threshold_triggers;
@@ -50,4 +50,4 @@ pub mod test_threshold_triggers;
 pub mod mvcc_resolution_tests;
 
 // Assignment service recovery tests
-pub mod assignment_service_recovery_test;
+// pub mod assignment_service_recovery_test; // File not found - commented for now

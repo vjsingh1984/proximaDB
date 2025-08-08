@@ -214,7 +214,7 @@ pub enum MigrationStrategy {
 
 /// Atomic operations configuration
 #[derive(Debug, Clone)]
-pub struct AtomicOperationsConfig {
+pub struct TransactionalOperationsConfig {
     pub staging_directory: String,
     pub atomic_writes: bool,
     pub fsync_on_commit: bool,
@@ -386,7 +386,7 @@ impl Default for SchemaConfig {
     }
 }
 
-impl Default for AtomicOperationsConfig {
+impl Default for TransactionalOperationsConfig {
     fn default() -> Self {
         Self {
             staging_directory: "/tmp/viper_staging".to_string(),

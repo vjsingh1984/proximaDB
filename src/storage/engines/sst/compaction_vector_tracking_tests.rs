@@ -11,7 +11,7 @@
 mod tests {
     use super::super::*;
     use crate::core::{SstConfig, VectorRecord, VectorId};
-    use crate::storage::atomic::UnifiedAtomicCoordinator;
+    use crate::storage::transaction_coordinator::TransactionCoordinator;
     use std::collections::{BTreeMap, HashMap};
     use std::sync::Arc;
     use std::path::PathBuf;

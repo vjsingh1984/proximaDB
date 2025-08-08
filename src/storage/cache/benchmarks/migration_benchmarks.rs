@@ -6,27 +6,27 @@ use std::collections::HashMap;
 use tokio::runtime::Runtime;
 
 use proximadb::storage::cache::{
-    VectorDataCache, MetadataCache, UnifiedCacheAdapter,
+    VectorStore, MetadataStore, UnifiedCacheAdapter,
     BaseCache,
 };
-use proximadb::storage::unified_cache::{
-    UnifiedCrossEngineCache, UnifiedCacheConfig, CacheKey as OldCacheKey,
+use proximadb::storage::legacy_cache::{
+    LegacyCrossEngineCache, LegacyCacheConfig, CacheKey as OldCacheKey,
 };
 use proximadb::proto::proximadb::VectorRecord;
 
-fn setup_caches() -> (Arc<UnifiedCrossEngineCache>, Arc<VectorDataCache>, Arc<MetadataCache>) {
-    let config = UnifiedCacheConfig {
+fn setup_caches() -> (Arc<LegacyCrossEngineCache>, Arc<VectorStore>, Arc<MetadataStore>) {
+    let config = LegacyCacheConfig {
         l1_memory_mb: 256,
         l2_nvme_gb: 1,
         l3_network_enabled: false,
         cross_engine_sharing: true,
         promotion_threshold: 3,
-        eviction_policy: proximadb::storage::unified_cache::EvictionPolicy::LRU,
+        eviction_policy: proximadb::storage::legacy_cache::EvictionPolicy::LRU,
     };
     
-    let legacy_cache = Arc::new(UnifiedCrossEngineCache::new(config));
-    let vector_cache = Arc::new(VectorDataCache::new(128 * 1024 * 1024)); // 128MB
-    let metadata_cache = Arc::new(MetadataCache::new(64 * 1024 * 1024)); // 64MB
+    let legacy_cache = Arc::new(LegacyCrossEngineCache::new(config));
+    let vector_cache = Arc::new(VectorStore::new(128 * 1024 * 1024)); // 128MB
+    let metadata_cache = Arc::new(MetadataStore::new(64 * 1024 * 1024)); // 64MB
     
     (legacy_cache, vector_cache, metadata_cache)
 }
@@ -44,7 +44,7 @@ fn benchmark_legacy_cache_operations(c: &mut Criterion) {
                 let key = OldCacheKey {
                     engine: "sst".to_string(),
                     collection_id: "bench_collection".to_string(),
-                    data_type: proximadb::storage::unified_cache::CacheDataType::Vector,
+                    data_type: proximadb::storage::legacy_cache::CacheDataType::Vector,
                     item_id: "vec1".to_string(),
                 };
                 
@@ -67,7 +67,7 @@ fn benchmark_legacy_cache_operations(c: &mut Criterion) {
         let key = OldCacheKey {
             engine: "sst".to_string(),
             collection_id: "bench_collection".to_string(),
-            data_type: proximadb::storage::unified_cache::CacheDataType::Vector,
+            data_type: proximadb::storage::legacy_cache::CacheDataType::Vector,
             item_id: "vec1".to_string(),
         };
         
@@ -149,7 +149,7 @@ fn benchmark_adapter_migration(c: &mut Criterion) {
                         let key = OldCacheKey {
                             engine: "sst".to_string(),
                             collection_id: "bench_collection".to_string(),
-                            data_type: proximadb::storage::unified_cache::CacheDataType::Vector,
+                            data_type: proximadb::storage::legacy_cache::CacheDataType::Vector,
                             item_id: format!("vec{}", i),
                         };
                         

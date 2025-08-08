@@ -17,8 +17,8 @@ use super::schema::{CollectionMetrics, GlobalMetrics};
 use super::updater::MetricsUpdate;
 use super::MetricsConfig;
 
-/// Persistent storage for metrics with cross-cloud support
-pub struct PersistentMetricsStore {
+/// Metrics persistence layer with cross-cloud support
+pub struct MetricsPersistenceLayer {
     /// Filesystem factory for cross-cloud storage operations
     filesystem_factory: Arc<FilesystemFactory>,
     
@@ -55,7 +55,7 @@ pub struct GlobalMetricsSnapshot {
     pub version: u32,
 }
 
-impl PersistentMetricsStore {
+impl MetricsPersistenceLayer {
     /// Create a new persistent metrics store
     pub async fn new(
         filesystem_factory: Arc<FilesystemFactory>,
@@ -75,7 +75,7 @@ impl PersistentMetricsStore {
         filesystem_factory.create_dir_all(&format!("{}/snapshots/collections", normalized_base)).await?;
         filesystem_factory.create_dir_all(&format!("{}/incremental", normalized_base)).await?;
         
-        info!("Initialized PersistentMetricsStore at {}", base_path);
+        info!("Initialized MetricsPersistenceLayer at {}", base_path);
         
         Ok(Self {
             filesystem_factory,
@@ -245,7 +245,7 @@ impl PersistentMetricsStore {
         });
     }
     
-    /// Store collection metrics directly (used by DefaultMetricsUpdater)
+    /// Store collection metrics directly (used by MetricsUpdateService)
     pub async fn store_collection_metrics(&self, metrics: &CollectionMetrics) -> Result<()> {
         // Update cache first
         self.update_cache(metrics.collection_id.clone(), metrics.clone()).await;

@@ -14,7 +14,7 @@ use url::Url;
 
 use super::builder::{DataStorageConfig, StorageLayoutStrategy, StorageSystemConfig};
 use super::persistence::filesystem::FilesystemConfig;
-use super::persistence::write_buffer::WriteBufferConfig;
+use super::persistence::write_ahead_log::WALConfig;
 //use super::wal::WalSystemConfig;
 
 /// Comprehensive configuration validator
@@ -86,7 +86,7 @@ impl ConfigValidator {
     }
 
     /// Validate Write Buffer system configuration
-    pub fn validate_wal_system(config: &WriteBufferConfig) -> Result<()> {
+    pub fn validate_wal_system(config: &WALConfig) -> Result<()> {
         // Validate multi-disk configuration
         if config.multi_disk.data_directories.is_empty() {
             bail!("Write Buffer system must have at least one data directory");

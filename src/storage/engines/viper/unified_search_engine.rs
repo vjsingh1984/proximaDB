@@ -5,7 +5,7 @@
 //!
 //! - UnifiedParquetReader = Pure data access with strategy optimization
 //! - ViperUnifiedSearchEngine = Search logic, ranking, filtering
-//! - DirectVectorService = Search orchestration across engines
+//! - VectorOperationsService = Search orchestration across engines
 
 use anyhow::Result;
 use async_trait::async_trait;
@@ -18,7 +18,7 @@ use crate::core::search::{
     SearchParams, SearchResultSet, UnifiedSearchEngine, UnifiedSearchContext,
     OptimizationHint
 };
-use crate::compute::unified_distance::UnifiedDistanceCompute;
+use crate::compute::distance_compute_engine::UnifiedDistanceCompute;
 use crate::compute::unified_quantization::{UnifiedQuantizationEngine, UnifiedQuantizationLevel};
 use super::readers::unified_parquet_reader::{UnifiedParquetReader, CollectionContext};
 
@@ -134,7 +134,7 @@ impl UnifiedSearchEngine for ViperUnifiedSearchEngine {
         //    - Stage 2: Decompress selected blocks and search FP32 vectors
         //    - Compression: Block-level (ZSTD/LZ4/Snappy on entire blocks)
         //
-        // 2. DirectVectorService Two-Stage (Index Quantization):  
+        // 2. VectorOperationsService Two-Stage (Index Quantization):  
         //    - Stage 1: Search quantized INDEX structures (HNSW with PQ codes)
         //    - Stage 2: Retrieve and rerank original FP32 vectors from storage
         //    - Compression: Index-only (graph structure uses quantized codes)
@@ -301,11 +301,11 @@ impl ViperUnifiedSearchEngine {
     /// Check if collection has quantized columns (INT8, PQ8, PQ4)
     /// This is unique to VIPER's dual column storage architecture
     /// 
-    /// VIPER TWO-STAGE SEARCH vs DirectVectorService:
+    /// VIPER TWO-STAGE SEARCH vs VectorOperationsService:
     /// - VIPER: Uses actual quantized COLUMNS stored alongside FP32 (dual column storage)
-    /// - DirectVectorService: Uses quantized INDEXES that point to FP32 vectors
+    /// - VectorOperationsService: Uses quantized INDEXES that point to FP32 vectors
     /// - VIPER: Can search directly on INT8/PQ8/PQ4 columns without decompression
-    /// - DirectVectorService: Must decompress/decode quantized index entries
+    /// - VectorOperationsService: Must decompress/decode quantized index entries
     async fn has_quantized_columns(&self, context: &CollectionContext) -> bool {
         // VIPER stores quantized vectors as separate columns in Parquet files
         // Check if quantization columns exist (vector_int8, vector_pq8, vector_pq4)

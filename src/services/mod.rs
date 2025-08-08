@@ -6,7 +6,7 @@
 //! Service layer modules
 
 pub mod collection_service;
-pub mod direct_vector_service;
+pub mod vector_operations_service;
 // 🔴 UNUSED SERVICES - Never imported or used
 // pub mod migration;
 // pub mod storage_path_service;
@@ -16,7 +16,7 @@ pub mod streaming_search;
 pub mod comprehensive_search_tests;
 
 #[cfg(test)]
-mod direct_vector_service_tests;
+mod vector_operations_service_tests;
 
 #[cfg(test)]
 pub mod tests {
@@ -24,5 +24,5 @@ pub mod tests {
 }
 
 pub use collection_service::CollectionService;
-pub use direct_vector_service::DirectVectorService;
+pub use vector_operations_service::VectorOperationsService;
 pub use streaming_search::{StreamingSearchService, StreamingSearchConfig, SearchResultStream};

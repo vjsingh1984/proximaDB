@@ -49,7 +49,7 @@ pub enum ProtoOperationType {
     Update = 2,
     Delete = 3,
 }
-use crate::storage::atomic::{UnifiedAtomicCoordinator, StagingConfig, StagingOperationType};
+use crate::storage::transaction_coordinator::{TransactionCoordinator, StagingConfig, TransactionStageType};
 use crate::storage::traits::CollectionMetadataProvider;
 
 /// Configuration for filestore metadata backend
@@ -155,7 +155,7 @@ pub struct FilestoreMetadataBackend {
     atomic_operations_enabled: bool,
     
     /// Unified atomic coordinator for metadata operations
-    atomic_coordinator: Arc<UnifiedAtomicCoordinator>,
+    atomic_coordinator: Arc<TransactionCoordinator>,
 }
 
 impl FilestoreMetadataBackend {
@@ -179,7 +179,7 @@ impl FilestoreMetadataBackend {
         
         // Create atomic coordinator for metadata operations
         let atomic_coordinator = Arc::new(
-            UnifiedAtomicCoordinator::new(
+            TransactionCoordinator::new(
                 filesystem_factory.clone(),
                 config.temp_dir.clone(),
             ).await
@@ -236,7 +236,7 @@ impl FilestoreMetadataBackend {
         
         // Create atomic coordinator for metadata operations
         let atomic_coordinator = Arc::new(
-            UnifiedAtomicCoordinator::new(
+            TransactionCoordinator::new(
                 filesystem_factory.clone(),
                 config.temp_dir.clone(),
             ).await
@@ -519,7 +519,7 @@ impl FilestoreMetadataBackend {
         self.sequence.fetch_add(1, Ordering::SeqCst) + 1
     }
     
-    /// Atomic write operation using UnifiedAtomicCoordinator for ACID guarantees
+    /// Atomic write operation using TransactionCoordinator for ACID guarantees
     async fn atomic_persist_operation(&self, operation: &IncrementalOperation) -> Result<()> {
         if !self.atomic_operations_enabled {
             return self.execute_simple_persist(operation).await;
@@ -549,7 +549,7 @@ impl FilestoreMetadataBackend {
         
         let staging_config = StagingConfig {
             base_url: base_url.clone(),
-            operation_type: StagingOperationType::Metadata,
+            operation_type: TransactionStageType::Metadata,
             collection_id: None, // No collection-specific directories for metadata
             custom_staging_dir: Some("__staging".to_string()), // Use staging directory within current
             auto_cleanup: true,
@@ -1081,7 +1081,7 @@ impl FilestoreMetadataBackend {
         let staging_config = StagingConfig {
             base_url: self.config.storage_url.clone(),
             collection_id: None, // Checkpoint is not collection-specific
-            operation_type: StagingOperationType::Metadata,
+            operation_type: TransactionStageType::Metadata,
             custom_staging_dir: Some("__metadata".to_string()),
             auto_cleanup: true,
             max_orphaned_age_hours: 24,
@@ -1608,9 +1608,8 @@ mod integration_tests {
                 tags: vec!["test".to_string()],
                 owner: Some("test_user".to_string()),
                 compression: None,
-            storage_location: None,
+                storage_location: None,
                 optimization_hints: None,
-            storage_location: None,
             
             }),
             stats: Some(CollectionStats {
@@ -1684,9 +1683,8 @@ mod integration_tests {
                 tags: vec!["test".to_string()],
                 owner: Some("test_user".to_string()),
                 compression: None,
-            storage_location: None,
+                storage_location: None,
                 optimization_hints: None,
-            storage_location: None,
             
             }),
             stats: Some(CollectionStats {

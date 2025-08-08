@@ -23,9 +23,8 @@ use crate::core::VectorRecord;
 use crate::storage::persistence::filesystem::{
     FilesystemFactory
 };
-use crate::storage::atomic::{UnifiedAtomicCoordinator, StagingConfig, StagingOperationType};
-// 🔴 UNUSED IMPORT - Metrics module is unused
-use crate::monitoring::metrics::updater::{InternalMetricsUpdater, CompactionMetricsUpdate};
+use crate::storage::transaction_coordinator::{TransactionCoordinator, StagingConfig, TransactionStageType};
+use crate::metrics::{InternalMetricsUpdater, MetricsUpdate};
 
 use super::schema::SchemaManager;
 
@@ -90,7 +89,7 @@ pub struct CompactionManager {
     filesystem_factory: Arc<FilesystemFactory>,
     
     /// Atomic coordinator for ACID operations
-    atomic_coordinator: Arc<UnifiedAtomicCoordinator>,
+    atomic_coordinator: Arc<TransactionCoordinator>,
     
     // 🔴 UNUSED FIELD - Metrics module is unused
     // /// Optional metrics updater for non-critical metrics
@@ -116,7 +115,7 @@ impl CompactionManager {
     ) -> Result<Self> {
         // Create atomic coordinator
         let atomic_coordinator = Arc::new(
-            UnifiedAtomicCoordinator::new(filesystem_factory.clone(), None)
+            TransactionCoordinator::new(filesystem_factory.clone(), None)
                 .await
                 .context("Failed to create atomic coordinator")?
         );
@@ -743,7 +742,7 @@ impl CompactionManager {
         let staging_config = StagingConfig {
             base_url: base_storage_url.clone(),
             collection_id: None,  // Don't duplicate collection path
-            operation_type: StagingOperationType::Compaction,
+            operation_type: TransactionStageType::Compaction,
             custom_staging_dir: None,
             auto_cleanup: true,
             max_orphaned_age_hours: 24,

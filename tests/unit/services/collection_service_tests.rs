@@ -63,9 +63,10 @@ async fn test_create_collection() -> Result<()> {
         description: Some("Test collection".to_string()),
         tags: vec!["test".to_string()],
         owner: Some("test_user".to_string()),
-                compression: None,
-                optimization_hints: None,
-            };
+        compression: None,
+        optimization_hints: None,
+        storage_location: None,
+    };
     
     let response = service.create_collection(&config).await?;
     
@@ -94,9 +95,10 @@ async fn test_get_collection() -> Result<()> {
         description: None,
         tags: vec![],
         owner: None,
-                compression: None,
-                optimization_hints: None,
-            };
+        compression: None,
+        optimization_hints: None,
+        storage_location: None,
+    };
     
     let create_response = service.create_collection(&config).await?;
     assert!(create_response.success);
@@ -121,6 +123,7 @@ async fn test_list_collections() -> Result<()> {
             name: format!("collection_{}", i),
             compression: None,
             optimization_hints: None,
+            storage_location: None,
             dimension: 128,
             distance_metric: DistanceMetric::Cosine as i32,
             storage_engine: StorageEngine::Viper as i32,
@@ -165,9 +168,10 @@ async fn test_delete_collection() -> Result<()> {
         description: None,
         tags: vec![],
         owner: None,
-                compression: None,
-                optimization_hints: None,
-            };
+        compression: None,
+        optimization_hints: None,
+        storage_location: None,
+    };
     
     let create_response = service.create_collection(&config).await?;
     assert!(create_response.success);

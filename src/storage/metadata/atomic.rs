@@ -20,7 +20,7 @@ use tokio::sync::{Mutex, RwLock};
 use uuid::Uuid;
 
 use super::{
-    write_buffer::{MetadataWriteBufferConfig, MetadataWriteBufferManager, VersionedCollectionMetadata},
+    write_ahead_log::{MetadataWALConfig, MetadataWriteAheadLogManager, VersionedCollectionMetadata},
     CollectionMetadata, MetadataFilter, MetadataOperation, MetadataStorageStats,
     MetadataStoreInterface, SystemMetadata,
 };
@@ -119,7 +119,7 @@ enum LockType {
 /// Atomic metadata store with MVCC and transactions
 pub struct AtomicMetadataStore {
     /// Write buffer manager for persistence
-    write_buffer_manager: Arc<MetadataWriteBufferManager>,
+    write_buffer_manager: Arc<MetadataWriteAheadLogManager>,
 
     /// Version store for MVCC
     version_store: Arc<RwLock<HashMap<String, Vec<VersionInfo>>>>,
@@ -165,12 +165,12 @@ struct AtomicStoreStats {
 impl AtomicMetadataStore {
     /// Create new atomic metadata store
     pub async fn new(
-        config: MetadataWriteBufferConfig,
+        config: MetadataWALConfig,
         filesystem: Arc<FilesystemFactory>,
     ) -> Result<Self> {
         tracing::debug!("🚀 Creating AtomicMetadataStore with MVCC and Write Buffer backing");
 
-        let write_buffer_manager = Arc::new(MetadataWriteBufferManager::new(config, filesystem).await?);
+        let write_buffer_manager = Arc::new(MetadataWriteAheadLogManager::new(config, filesystem).await?);
 
         let store = Self {
             write_buffer_manager,
@@ -302,7 +302,7 @@ impl AtomicMetadataStore {
                         description: metadata.description.clone(),
                         tags: metadata.tags.clone(),
                         owner: metadata.owner.clone(),
-                        access_pattern: super::write_buffer::AccessPattern::Normal, // Use write_buffer enum
+                        access_pattern: super::write_ahead_log::AccessPattern::Normal, // Use write_buffer enum
                         retention_policy: None, // TODO: Convert retention policy
                     };
 
@@ -332,7 +332,7 @@ impl AtomicMetadataStore {
                         description: metadata.description.clone(),
                         tags: metadata.tags.clone(),
                         owner: metadata.owner.clone(),
-                        access_pattern: super::write_buffer::AccessPattern::Normal,
+                        access_pattern: super::write_ahead_log::AccessPattern::Normal,
                         retention_policy: None,
                     };
 
@@ -601,10 +601,10 @@ impl MetadataStoreInterface for AtomicMetadataStore {
                 total_size_bytes: versioned.total_size_bytes,
                 config: versioned.config,
                 access_pattern: match versioned.access_pattern {
-                    super::write_buffer::AccessPattern::Hot => super::AccessPattern::Hot,
-                    super::write_buffer::AccessPattern::Normal => super::AccessPattern::Normal,
-                    super::write_buffer::AccessPattern::Cold => super::AccessPattern::Cold,
-                    super::write_buffer::AccessPattern::Archive => super::AccessPattern::Archive,
+                    super::write_ahead_log::AccessPattern::Hot => super::AccessPattern::Hot,
+                    super::write_ahead_log::AccessPattern::Normal => super::AccessPattern::Normal,
+                    super::write_ahead_log::AccessPattern::Cold => super::AccessPattern::Cold,
+                    super::write_ahead_log::AccessPattern::Archive => super::AccessPattern::Archive,
                 },
                 retention_policy: None,                       // TODO: Convert back
                 tags: versioned.tags,
@@ -689,10 +689,10 @@ impl MetadataStoreInterface for AtomicMetadataStore {
                     total_size_bytes: versioned.total_size_bytes,
                     config: versioned.config,
                     access_pattern: match versioned.access_pattern {
-                        super::write_buffer::AccessPattern::Hot => super::AccessPattern::Hot,
-                        super::write_buffer::AccessPattern::Normal => super::AccessPattern::Normal,
-                        super::write_buffer::AccessPattern::Cold => super::AccessPattern::Cold,
-                        super::write_buffer::AccessPattern::Archive => super::AccessPattern::Archive,
+                        super::write_ahead_log::AccessPattern::Hot => super::AccessPattern::Hot,
+                        super::write_ahead_log::AccessPattern::Normal => super::AccessPattern::Normal,
+                        super::write_ahead_log::AccessPattern::Cold => super::AccessPattern::Cold,
+                        super::write_ahead_log::AccessPattern::Archive => super::AccessPattern::Archive,
                     },
                     retention_policy: None,
                     tags: versioned.tags,

@@ -37,12 +37,10 @@ pub mod compute;
 // pub mod consensus;  // Disabled - requires raft dependency
 pub mod core;
 // pub mod distributed;  // Temporarily disabled for single-node optimization
-pub mod handlers;
+pub mod api_handlers;
 pub mod index;
-// 🔴 UNUSED MODULE - COMMENTED OUT FOR REMOVAL
-// Complete duplicate of working monitoring/metrics system
-// ~2,687 lines of unused code - Safe to remove completely
-// pub mod metrics;
+// Unified metrics module - combines advanced persistent metrics with real-time monitoring
+pub mod metrics;
 pub mod monitoring;
 pub mod network;
 pub mod proto;
@@ -83,9 +81,8 @@ impl ProximaDB {
 
         // Step 1: Create metrics collector first
         tracing::debug!("🔧 ProximaDB::new - Creating metrics collector...");
-        let metrics_config = monitoring::metrics::MetricsConfig::default();
-        let (metrics_collector, _receiver) = monitoring::MetricsCollector::new(metrics_config)?;
-        let metrics_collector = Arc::new(metrics_collector);
+        let metrics_config = metrics::MetricsConfig::default();
+        let metrics_collector = Arc::new(monitoring::MetricsCollector::new());
         tracing::debug!("✅ ProximaDB::new - Metrics collector created successfully");
 
         // Step 2: Create SharedServices FIRST (owns all services)
@@ -110,7 +107,7 @@ impl ProximaDB {
 
         // 🔴 UNUSED MODULE - Query engine is only a placeholder
         // The entire SQL engine infrastructure appears unused
-        // Vector search functionality is handled by DirectVectorService
+        // Vector search functionality is handled by VectorOperationsService
         // Note: query_engine needs to be updated to work with Arc<RwLock<StorageEngine>>
         // For now, we'll create a placeholder
         // tracing::debug!("🔧 ProximaDB::new - Creating query engine...");

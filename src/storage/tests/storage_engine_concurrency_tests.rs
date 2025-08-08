@@ -63,7 +63,7 @@ mod tests {
     };
         
         // Configure write buffer separately
-        config.write_buffer_config = WriteBufferUserConfig {
+        config.wal_config = WriteBufferUserConfig {
             write_buffer_size_mb: 1,
             memory_flush_size_bytes: 1024 * 1024,
             vector_count_threshold: 100_000,
@@ -101,7 +101,7 @@ mod tests {
 
     // Helper to ensure collection directories exist
     async fn ensure_collection_dirs(base_path: &std::path::Path, collection_id: &str) {
-        // WriteBuffer structure is: {base_path}/{collection_id}/write_buffer/
+        // WriteBuffer structure is: {base_path}/{collection_id}/write_ahead_log/
         let collection_dir = base_path.join(collection_id);
         let write_buffer_dir = collection_dir.join("write_buffer");
         let data_dir = collection_dir.join("data");

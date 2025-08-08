@@ -15,8 +15,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use super::{
-    atomic::AtomicMetadataStore,
-    write_buffer::{MetadataWriteBufferConfig, MetadataWriteBufferManager},
+    write_ahead_log::{MetadataWALConfig, MetadataWriteAheadLogManager},
     CollectionMetadata, MetadataFilter, MetadataOperation, MetadataStorageStats,
     MetadataStoreInterface, SystemMetadata,
 };
@@ -160,11 +159,11 @@ pub struct MetadataStore {
     /// Configuration
     config: MetadataStoreConfig,
 
-    /// Atomic store for transactional operations
-    atomic_store: Option<Arc<AtomicMetadataStore>>,
+    /// Atomic store for transactional operations  
+    transaction_coordinator: Option<Arc<crate::storage::transaction_coordinator::AtomicMetadataStore>>,
 
     /// Direct WAL manager for simple operations
-    write_buffer_manager: Arc<MetadataWriteBufferManager>,
+    write_buffer_manager: Arc<MetadataWriteAheadLogManager>,
 
     /// Filesystem factory
     filesystem: Arc<FilesystemFactory>,
@@ -201,21 +200,22 @@ impl MetadataStore {
         let filesystem = Arc::new(FilesystemFactory::new(filesystem_config).await?);
 
         // Create WAL configuration for metadata
-        let mut metadata_write_buffer_config = MetadataWriteBufferConfig::default();
+        let mut metadata_wal_config = MetadataWALConfig::default();
 
         // Override data directories to use metadata-specific locations
-        metadata_write_buffer_config.base_config.multi_disk.data_directories =
+        metadata_wal_config.base_config.multi_disk.data_directories =
             vec![format!("file://{}", config.metadata_base_dir.display())];
 
         // Create WAL manager
         let write_buffer_manager = Arc::new(
-            MetadataWriteBufferManager::new(metadata_write_buffer_config.clone(), filesystem.clone()).await?,
+            MetadataWriteAheadLogManager::new(metadata_wal_config.clone(), filesystem.clone()).await?,
         );
 
-        // Create atomic store if enabled
-        let atomic_store = if config.enable_atomic_operations {
+        // Create atomic metadata store if enabled
+        let transaction_coordinator = if config.enable_atomic_operations {
+            use crate::storage::transaction_coordinator::AtomicMetadataStore;
             Some(Arc::new(
-                AtomicMetadataStore::new(metadata_write_buffer_config, filesystem.clone()).await?,
+                AtomicMetadataStore::new(metadata_wal_config.clone(), filesystem.clone()).await?,
             ))
         } else {
             None
@@ -228,7 +228,7 @@ impl MetadataStore {
 
         let mut store = Self {
             config,
-            atomic_store,
+            transaction_coordinator,
             write_buffer_manager,
             filesystem,
             system_metadata,
@@ -346,7 +346,7 @@ impl MetadataStore {
 
     /// Perform metadata backup
     async fn perform_backup(
-        write_buffer_manager: &MetadataWriteBufferManager,
+        write_buffer_manager: &MetadataWriteAheadLogManager,
         _filesystem: &FilesystemFactory,
         backup_config: &MetadataBackupConfig,
     ) -> Result<()> {
@@ -373,7 +373,7 @@ impl MetadataStore {
     }
 
     /// Get underlying WAL manager (for advanced operations)
-    pub fn write_buffer_manager(&self) -> &Arc<MetadataWriteBufferManager> {
+    pub fn write_buffer_manager(&self) -> &Arc<MetadataWriteAheadLogManager> {
         &self.write_buffer_manager
     }
 
@@ -443,12 +443,12 @@ impl MetadataStoreInterface for MetadataStore {
     async fn create_collection(&self, metadata: CollectionMetadata) -> Result<()> {
         tracing::debug!("📝 Creating collection metadata: {}", metadata.id);
 
-        if let Some(atomic_store) = &self.atomic_store {
+        if let Some(atomic_store) = &self.transaction_coordinator {
             // Use atomic operations if available
             atomic_store.create_collection(metadata).await
         } else {
             // Direct WAL operation
-            let versioned = super::write_buffer::VersionedCollectionMetadata {
+            let versioned = super::write_ahead_log::VersionedCollectionMetadata {
                 id: metadata.id,
                 name: metadata.name,
                 dimension: metadata.dimension,
@@ -462,7 +462,7 @@ impl MetadataStoreInterface for MetadataStore {
                 description: metadata.description,
                 tags: metadata.tags,
                 owner: metadata.owner,
-                access_pattern: super::write_buffer::AccessPattern::Normal,
+                access_pattern: super::write_ahead_log::AccessPattern::Normal,
                 retention_policy: None,
             };
 
@@ -474,7 +474,7 @@ impl MetadataStoreInterface for MetadataStore {
         &self,
         collection_id: &str,
     ) -> Result<Option<CollectionMetadata>> {
-        if let Some(atomic_store) = &self.atomic_store {
+        if let Some(atomic_store) = &self.transaction_coordinator {
             atomic_store.get_collection(collection_id).await
         } else {
             // Direct WAL read
@@ -512,13 +512,13 @@ impl MetadataStoreInterface for MetadataStore {
         collection_id: &str,
         metadata: CollectionMetadata,
     ) -> Result<()> {
-        if let Some(atomic_store) = &self.atomic_store {
+        if let Some(atomic_store) = &self.transaction_coordinator {
             atomic_store
                 .update_collection(collection_id, metadata)
                 .await
         } else {
             // Direct WAL operation
-            let versioned = super::write_buffer::VersionedCollectionMetadata {
+            let versioned = super::write_ahead_log::VersionedCollectionMetadata {
                 id: metadata.id,
                 name: metadata.name,
                 dimension: metadata.dimension,
@@ -532,7 +532,7 @@ impl MetadataStoreInterface for MetadataStore {
                 description: metadata.description,
                 tags: metadata.tags,
                 owner: metadata.owner,
-                access_pattern: super::write_buffer::AccessPattern::Normal,
+                access_pattern: super::write_ahead_log::AccessPattern::Normal,
                 retention_policy: None,
             };
 
@@ -541,7 +541,7 @@ impl MetadataStoreInterface for MetadataStore {
     }
 
     async fn delete_collection(&self, collection_id: &str) -> Result<bool> {
-        if let Some(atomic_store) = &self.atomic_store {
+        if let Some(atomic_store) = &self.transaction_coordinator {
             atomic_store.delete_collection(collection_id).await
         } else {
             self.write_buffer_manager.delete_collection(collection_id).await
@@ -552,7 +552,7 @@ impl MetadataStoreInterface for MetadataStore {
         &self,
         filter: Option<MetadataFilter>,
     ) -> Result<Vec<CollectionMetadata>> {
-        if let Some(atomic_store) = &self.atomic_store {
+        if let Some(atomic_store) = &self.transaction_coordinator {
             atomic_store.list_collections(filter).await
         } else {
             // TODO: Implement filtering for direct WAL access
@@ -599,7 +599,7 @@ impl MetadataStoreInterface for MetadataStore {
     }
 
     async fn batch_operations(&self, operations: Vec<MetadataOperation>) -> Result<()> {
-        if let Some(atomic_store) = &self.atomic_store {
+        if let Some(atomic_store) = &self.transaction_coordinator {
             atomic_store.batch_operations(operations).await
         } else {
             // Execute operations sequentially without transactions
@@ -659,7 +659,7 @@ impl MetadataStoreInterface for MetadataStore {
     }
 
     async fn get_storage_stats(&self) -> Result<MetadataStorageStats> {
-        if let Some(atomic_store) = &self.atomic_store {
+        if let Some(atomic_store) = &self.transaction_coordinator {
             atomic_store.get_storage_stats().await
         } else {
             let wal_stats = self.write_buffer_manager.get_stats().await?;

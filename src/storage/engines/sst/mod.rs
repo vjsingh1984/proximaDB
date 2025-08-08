@@ -42,8 +42,8 @@ use crate::storage::traits::{
     CompactionParameters, CompactionResult, FlushParameters, FlushResult, StorageEngineStrategy,
     UnifiedStorageEngine,
 };
-use crate::storage::atomic::{UnifiedAtomicCoordinator, StagingConfig, StagingOperationType};
-use crate::compute::unified_distance::UnifiedDistanceCompute;
+use crate::storage::transaction_coordinator::{TransactionCoordinator, StagingConfig, TransactionStageType};
+use crate::compute::distance_compute_engine::UnifiedDistanceCompute;
 use crate::compute::unified_quantization::{UnifiedQuantizationEngine, CodebookStore, InMemoryCodebookStore};
 use crate::core::search::UnifiedSearchEngine;
 use crate::proto::proximadb::MetadataItem;
@@ -471,9 +471,7 @@ pub struct SstableHeader {
     pub min_key: String,
     pub max_key: String,
     pub created_at: i64,
-    // Compression configuration (backward compatible)
-    #[serde(default)]
-    pub compression_enabled: bool,  // Kept for backward compatibility
+    // Compression configuration
     #[serde(default)]
     pub compression_algorithm: CompressionAlgorithmSst,  // New: specific algorithm
     #[serde(default)]
@@ -700,7 +698,7 @@ pub struct DataBlock {
     pub records: Vec<SstRecord>,
     pub uncompressed_size: u32,
     #[serde(default)]
-    pub compression_enabled: bool,
+    pub compression_algorithm: CompressionAlgorithmSst,
     #[serde(default)]
     pub compression_ratio: f32,
 }
@@ -731,7 +729,7 @@ impl DataBlockCompressionConfig {
     /// Create from SstConfig settings
     pub fn from_sst_config(config: &SstConfig) -> Self {
         Self {
-            enable_compression: config.compression_enabled,
+            enable_compression: false, // Will be determined by algorithm (None = disabled)
             compression_threshold: 8192, // 8KB threshold
             compression_level: config.compression_level,
             vector_config: VectorSerializationConfig {
@@ -817,7 +815,7 @@ impl DataBlock {
             block_id,
             records,
             uncompressed_size,
-            compression_enabled: false,
+            compression_algorithm: CompressionAlgorithmSst::None,
             compression_ratio: 1.0,
         }
     }
@@ -1067,7 +1065,7 @@ impl DataBlock {
                 // Bincode format for backward compatibility
                 let mut block: DataBlock = bincode::deserialize(data)
                     .map_err(|e| anyhow::anyhow!("Failed to deserialize DataBlock: {}", e))?;
-                block.compression_enabled = false;
+                block.compression_algorithm = CompressionAlgorithmSst::None;
                 block.compression_ratio = 1.0;
                 Ok(block)
             }
@@ -1176,7 +1174,7 @@ impl DataBlock {
         }
         
         let mut block = Self::deserialize_uncompressed(&decompressed)?;
-        block.compression_enabled = true;
+        block.compression_algorithm = CompressionAlgorithmSst::Zstd;
         block.compression_ratio = compressed_data.len() as f32 / original_size as f32;
         
         Ok(block)
@@ -1221,7 +1219,7 @@ impl DataBlock {
             block_id: metadata.block_id,
             records,
             uncompressed_size: metadata.uncompressed_size,
-            compression_enabled: false,
+            compression_algorithm: CompressionAlgorithmSst::None,
             compression_ratio: 1.0,
         })
     }
@@ -1229,7 +1227,7 @@ impl DataBlock {
     /// Get compression statistics
     pub fn compression_stats(&self) -> (bool, f32, usize) {
         (
-            self.compression_enabled,
+            self.compression_algorithm != CompressionAlgorithmSst::None,
             self.compression_ratio,
             self.uncompressed_size as usize,
         )
@@ -1268,7 +1266,7 @@ pub struct SstStorage {
     compaction_manager: Option<Arc<CompactionManager>>,
     filesystem: Arc<FilesystemFactory>,
     // Atomic coordinator for safe flush and compaction operations
-    atomic_coordinator: Arc<UnifiedAtomicCoordinator>,
+    atomic_coordinator: Arc<TransactionCoordinator>,
     // Shared reader across all collections
     sstable_reader: Arc<UnifiedSstableReader>,
     // Distance computation engine
@@ -1283,7 +1281,7 @@ impl SstStorage {
     pub async fn new(
         config: SstConfig,
         filesystem: Arc<FilesystemFactory>,
-        distance_compute: Arc<crate::compute::unified_distance::UnifiedDistanceCompute>,
+        distance_compute: Arc<crate::compute::distance_compute_engine::UnifiedDistanceCompute>,
     ) -> Result<Self> {
         info!("🌲 Creating SST storage engine (collection-agnostic singleton)");
         
@@ -1292,7 +1290,7 @@ impl SstStorage {
         
         // Always create atomic coordinator for safe operations
         let atomic_coordinator = Arc::new(
-            UnifiedAtomicCoordinator::new(filesystem.clone(), None)
+            TransactionCoordinator::new(filesystem.clone(), None)
                 .await
                 .context("Failed to create atomic coordinator")?
         );
@@ -1479,7 +1477,7 @@ impl SstStorage {
         let staging_config = StagingConfig {
             base_url: collection_storage_url.clone(),
             collection_id: None, // Already included in base_url
-            operation_type: StagingOperationType::Flush,
+            operation_type: TransactionStageType::Flush,
             custom_staging_dir: None,
             auto_cleanup: true,
             max_orphaned_age_hours: 24,
@@ -2451,10 +2449,9 @@ impl SstStorage {
             min_key: records.first().map(|r| r.id.clone()).unwrap_or_default(),
             max_key: records.last().map(|r| r.id.clone()).unwrap_or_default(),
             created_at: Utc::now().timestamp(),
-            // Engine optimizations
-            compression_enabled: true,
-            compression_algorithm: CompressionAlgorithmSst::Zstd,  // Default to ZSTD
-            compression_level: 3,  // Default compression level
+            // Engine optimizations - compression determined by algorithm (None = disabled)
+            compression_algorithm: CompressionAlgorithmSst::None,  // No compression by default
+            compression_level: 0,  // No compression level by default
             has_bloom_filter: true,
             block_size: (self.config.block_size_kb * 1024) as u32, // Use configured block size
             batch_size: records.len() as u32,
@@ -2874,7 +2871,7 @@ impl SstStorage {
             let final_data = serialized_block;
             
             // Determine if block was compressed
-            let is_compressed = block.compression_enabled;
+            let is_compressed = block.compression_algorithm != CompressionAlgorithmSst::None;
 
             // Create index entries for each record in this block using unified IndexEntry
             let mut block_offset = 0u32;

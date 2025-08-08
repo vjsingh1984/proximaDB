@@ -8,22 +8,10 @@
 //! - Search on compressed VIPER files
 //! - Configuration-based compression control
 
-// Inline test assignment helper to avoid import issues
-async fn setup_test_assignment(collection_id: &str) -> anyhow::Result<()> {
-    let assignment_service = proximadb::storage::assignment_service::get_assignment_service();
-    
-    // Create a simple storage location for tests
-    let storage_location = proximadb::core::config::StorageLocation {
-        url: format!("file:///tmp/proximadb_test_{}", collection_id),
-        weight: 1,
-        tags: Default::default(),
-    };
-    
-    // Register with assignment service
-    assignment_service
-        .assign_collection(collection_id, &[storage_location], "hash")
-        .await?;
-    
+// Inline test assignment helper - no longer needed with embedded storage_assignment
+async fn setup_test_assignment(_collection_id: &str) -> anyhow::Result<()> {
+    // Assignment service removed - collections now embed storage_assignment
+    // Storage assignment happens when creating collection via CollectionConfig
     Ok(())
 }
 
@@ -336,9 +324,8 @@ async fn test_viper_flush_with_compression() -> anyhow::Result<()> {
     info!("Flushed {} records", flush_result.entries_flushed);
     
     // Verify compression by reading Parquet file from actual storage location
-    let assignment_service = proximadb::storage::assignment_service::get_assignment_service();
-    let assignment = assignment_service.get_assignment("test_collection").await.unwrap();
-    let data_path = assignment.data_url.replace("file://", "");
+    // Assignment service removed - use temp dir directly
+    let data_path = format!("/tmp/proximadb_test_test_collection");
     
     let parquet_files = find_parquet_files_recursive(&data_path);
     
@@ -496,10 +483,9 @@ async fn test_viper_compaction_with_compression() -> anyhow::Result<()> {
         engine.do_flush(&flush_params).await?;
     }
     
-    // Get file count before compaction using actual storage assignment
-    let assignment_service = proximadb::storage::assignment_service::get_assignment_service();
-    let assignment = assignment_service.get_assignment("compaction_test").await.unwrap();
-    let storage_path = assignment.data_url.replace("file://", "");
+    // Get file count before compaction
+    // Assignment service removed - use temp dir directly
+    let storage_path = format!("/tmp/proximadb_test_compaction_test");
     
     let files_before = find_parquet_files_recursive(&storage_path);
     
@@ -591,10 +577,9 @@ async fn test_compression_algorithms_comparison() -> anyhow::Result<()> {
         engine.do_flush(&flush_params).await?;
         let duration = start.elapsed();
         
-        // Get file size using actual storage assignment
-        let assignment_service = proximadb::storage::assignment_service::get_assignment_service();
-        let assignment = assignment_service.get_assignment("algo_test").await.unwrap();
-        let storage_path = assignment.data_url.replace("file://", "");
+        // Get file size
+        // Assignment service removed - use temp dir directly
+        let storage_path = format!("/tmp/proximadb_test_algo_test");
         
         let parquet_files = find_parquet_files_recursive(&storage_path);
         let total_size: u64 = parquet_files.iter()
@@ -680,10 +665,9 @@ async fn test_compression_enabled_vs_disabled() -> anyhow::Result<()> {
         };
         engine.do_flush(&flush_params).await?;
         
-        // Get total file size using actual storage assignment
-        let assignment_service = proximadb::storage::assignment_service::get_assignment_service();
-        let assignment = assignment_service.get_assignment("compression_test").await.unwrap();
-        let storage_path = assignment.data_url.replace("file://", "");
+        // Get total file size
+        // Assignment service removed - use temp dir directly
+        let storage_path = format!("/tmp/proximadb_test_compression_test");
         
         let parquet_files = find_parquet_files_recursive(&storage_path);
         let total_size: u64 = parquet_files.iter()

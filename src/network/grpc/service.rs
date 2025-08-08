@@ -16,7 +16,7 @@ use crate::proto::proximadb::{
     VectorOperationResponse, VectorSearchRequest, VectorGetRequest,
 };
 use crate::services::collection_service::CollectionService;
-use crate::services::direct_vector_service::DirectVectorService;
+use crate::services::vector_operations_service::VectorOperationsService;
 use crate::network::grpc::conversions::convert_search_results;
 use crate::storage::persistence::filesystem::FilesystemFactory;
 use crate::core::{
@@ -30,7 +30,7 @@ use crate::core::{
 /// - Vector mutations: Regular gRPC for flexibility
 /// - Vector search: Smart payload selection (compact gRPC vs Avro binary)
 pub struct ProximaDbGrpcService {
-    direct_vector_service: Arc<DirectVectorService>,
+    vector_operations_service: Arc<VectorOperationsService>,
     collection_service: Arc<CollectionService>,
 }
 
@@ -109,7 +109,7 @@ impl ProximaDbGrpcService {
         info!("🚀 Creating ProximaDbGrpcService with shared services (multi-server pattern)");
 
         Self {
-            direct_vector_service: services.direct_vector_service,
+            vector_operations_service: services.vector_operations_service,
             collection_service: services.collection_service,
         }
     }
@@ -588,9 +588,9 @@ impl ProximaDb for ProximaDbGrpcService {
         );
 
         // Use UnifiedHandlers to properly resolve collection name to ID
-        let unified_handlers = crate::handlers::UnifiedHandlers::new(
+        let unified_handlers = crate::api_handlers::UnifiedHandlers::new(
             self.collection_service.clone(),
-            self.direct_vector_service.clone(),
+            self.vector_operations_service.clone(),
         );
         
         let proto_response = unified_handlers
@@ -748,9 +748,9 @@ impl ProximaDb for ProximaDbGrpcService {
                 None
             };
             
-            info!("🚀 gRPC: Using DirectVectorService unified search");
+            info!("🚀 gRPC: Using VectorOperationsService unified search");
             
-            // Use DirectVectorService with full capabilities: metadata filtering, distance metrics, unified distance
+            // Use VectorOperationsService with full capabilities: metadata filtering, distance metrics, unified distance
             
             // Create search params with distance metric override if provided
             let search_params = if req.distance_metric_override.is_some() {
@@ -773,14 +773,14 @@ impl ProximaDb for ProximaDbGrpcService {
                 None // Will use collection's default
             };
             
-            // Enhanced DirectVectorService search with metadata predicates and unified distance
+            // Enhanced VectorOperationsService search with metadata predicates and unified distance
             // Pass Cosine as fallback, but search_params will override if present
             let combined_search_params = search_params;
             
             // Use UnifiedHandlers for search to ensure collection resolution
-            let unified_handlers = crate::handlers::UnifiedHandlers::new(
+            let unified_handlers = crate::api_handlers::UnifiedHandlers::new(
                 self.collection_service.clone(),
-                self.direct_vector_service.clone(),
+                self.vector_operations_service.clone(),
             );
             
             // Build the VectorSearchRequest
@@ -959,7 +959,7 @@ impl ProximaDb for ProximaDbGrpcService {
                 let mut all_proto_results = Vec::new();
                 
                 for (index, query) in req.queries.iter().enumerate() {
-                    let search_results = self.direct_vector_service
+                    let search_results = self.vector_operations_service
                         .search_vectors(
                             &req.collection_id,
                             &query.vector,
@@ -1064,7 +1064,7 @@ impl ProximaDb for ProximaDbGrpcService {
                     if filters.is_empty() { None } else { Some(filters) }
                 };
 
-                // Use DirectVectorService unified search with full capabilities
+                // Use VectorOperationsService unified search with full capabilities
                 // Create search params with metadata filters if present
                 let search_params = if let Some(filters) = metadata_filters {
                     Some(crate::core::search::SearchParams::default().with_simple_filters(filters))
@@ -1073,7 +1073,7 @@ impl ProximaDb for ProximaDbGrpcService {
                 };
                 
                 let search_results = self
-                    .direct_vector_service
+                    .vector_operations_service
                     .search_vectors(
                         &req.collection_id,
                         &query.vector,
@@ -1302,9 +1302,9 @@ impl ProximaDb for ProximaDbGrpcService {
         let include_metadata = include_fields.map_or(true, |f| f.metadata);
 
         // Use UnifiedHandlers for the actual get operation
-        let unified_handlers = crate::handlers::UnifiedHandlers::new(
+        let unified_handlers = crate::api_handlers::UnifiedHandlers::new(
             self.collection_service.clone(),
-            self.direct_vector_service.clone(),
+            self.vector_operations_service.clone(),
         );
 
         match unified_handlers.handle_get_vector(
@@ -1380,5 +1380,5 @@ impl ProximaDb for ProximaDbGrpcService {
 // #[cfg(test)]
 // mod tests;
 // Note: Tests are currently disabled because ProximaDbGrpcService requires
-// real DirectVectorService and CollectionService instances, not mocks.
+// real VectorOperationsService and CollectionService instances, not mocks.
 // TODO: Refactor to use trait abstractions or integration tests.

@@ -11,4 +11,19 @@ mod metrics_tests;
 mod backend_tests;
 
 #[cfg(test)]
-mod migration_tests;
+mod phase1_foundation_tests;
+
+#[cfg(test)]
+mod phase2_specialization_tests;
+
+#[cfg(test)]
+mod phase3_specialized_cache_tests;
+
+#[cfg(test)]
+mod phase4_coordination_tests;
+
+#[cfg(test)]
+mod phase5_production_tests;
+
+#[cfg(test)]
+mod integration_tests;

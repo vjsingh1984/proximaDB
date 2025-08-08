@@ -12,7 +12,7 @@
 
 pub mod generic_wrappers;
 pub mod lsm_behavior;
-pub mod write_buffer_behavior;
+pub mod wal_behavior;
 
 // 🔴 UNUSED TYPE ALIASES - Commented out as these memtable implementations are never used
 // Type aliases for convenience - these expose the actual data structures
@@ -35,9 +35,9 @@ use crate::storage::memtable::core::MemtableConfig;
 pub struct SpecializedMemtableFactory;
 
 impl SpecializedMemtableFactory {
-    /// Create global partitioned memtable with Write Buffer-specific behavior
-    pub fn create_global_partitioned_for_wal(config: MemtableConfig) -> write_buffer_behavior::WriteBufferBehaviorWrapper {
-        write_buffer_behavior::WriteBufferBehaviorWrapper::new(config)
+    /// Create global partitioned memtable with WAL-specific behavior
+    pub fn create_global_partitioned_for_wal(config: MemtableConfig) -> wal_behavior::WALBehaviorWrapper {
+        wal_behavior::WALBehaviorWrapper::new(config)
     }
 
     // 🔴 UNUSED METHOD - SkipList memtable is never used

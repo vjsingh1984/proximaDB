@@ -167,7 +167,6 @@ async fn create_direct_vector_service(config: &WalOptimizationTestConfig) -> Res
     };
     let distance_compute = Arc::new(proximadb::compute::unified_distance::UnifiedDistanceCompute::new(proximadb::compute::distance::DistanceMetric::Cosine));
     let lsm_engine = Arc::new(SstStorage::new(
-        format!("test_collection_{}", std::process::id()), 
         lsm_config, 
         filesystem_factory,
         distance_compute

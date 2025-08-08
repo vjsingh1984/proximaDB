@@ -13,8 +13,8 @@ use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
-use super::persistence::write_buffer::config::{MemTableType, WriteBufferStrategyType};
-use super::persistence::write_buffer::{WriteBufferConfig, WriteBufferManager};
+use super::persistence::write_ahead_log::config::{MemTableType, WriteBufferStrategyType};
+use super::persistence::write_ahead_log::{WALConfig, WriteAheadLogManager};
 use crate::core::CompressionAlgorithm;
 use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
 
@@ -121,7 +121,7 @@ pub struct StorageSystemConfig {
     pub data_storage: DataStorageConfig,
 
     /// Write Buffer system configuration
-    pub wal_system: WriteBufferConfig,
+    pub wal_system: WALConfig,
 
     /// Filesystem configuration
     pub filesystem: FilesystemConfig,
@@ -203,7 +203,7 @@ impl Default for StorageSystemConfig {
                     compaction_interval_seconds: 300,
                 },
             },
-            wal_system: WriteBufferConfig::default(),
+            wal_system: WALConfig::default(),
             filesystem: FilesystemConfig::default(),
             metadata_backend: None, // Use default filestore backend
             storage_performance: StoragePerformanceConfig {
@@ -332,7 +332,7 @@ impl StorageSystemBuilder {
     }
 
     /// Configure Write Buffer system
-    pub fn with_write_buffer_config(mut self, config: WriteBufferConfig) -> Self {
+    pub fn with_wal_config(mut self, config: WALConfig) -> Self {
         self.config.wal_system = config;
         self
     }
@@ -363,31 +363,31 @@ impl StorageSystemBuilder {
 
     /// Configure high-throughput WAL
     pub fn with_high_throughput_wal(mut self) -> Self {
-        self.config.wal_system = WriteBufferConfig::high_throughput();
+        self.config.wal_system = WALConfig::high_throughput();
         self
     }
 
     /// Configure low-latency WAL
     pub fn with_low_latency_wal(mut self) -> Self {
-        self.config.wal_system = WriteBufferConfig::low_latency();
+        self.config.wal_system = WALConfig::low_latency();
         self
     }
 
     /// Configure storage-optimized WAL
     pub fn with_storage_optimized_wal(mut self) -> Self {
-        self.config.wal_system = WriteBufferConfig::storage_optimized();
+        self.config.wal_system = WALConfig::storage_optimized();
         self
     }
 
     /// Configure range-query optimized WAL
     pub fn with_range_query_wal(mut self) -> Self {
-        self.config.wal_system = WriteBufferConfig::range_query_optimized();
+        self.config.wal_system = WALConfig::range_query_optimized();
         self
     }
 
     /// Configure high-concurrency WAL
     pub fn with_high_concurrency_wal(mut self) -> Self {
-        self.config.wal_system = WriteBufferConfig::high_concurrency();
+        self.config.wal_system = WALConfig::high_concurrency();
         self
     }
 
@@ -613,7 +613,7 @@ impl StorageSystemBuilder {
             self.config.wal_system.memtable.memtable_type
         );
 
-        let write_buffer_manager = WriteBufferManager::create_with_batch_factory(
+        let write_buffer_manager = WriteAheadLogManager::create_with_batch_factory(
             self.config.wal_system.strategy_type.clone(),
             self.config.wal_system.clone(),
             filesystem.clone()
@@ -654,7 +654,7 @@ impl Default for StorageSystemBuilder {
 pub struct StorageSystem {
     config: StorageSystemConfig,
     filesystem: Arc<FilesystemFactory>,
-    write_buffer_manager: Arc<WriteBufferManager>,
+    write_buffer_manager: Arc<WriteAheadLogManager>,
 }
 
 impl StorageSystem {
@@ -669,7 +669,7 @@ impl StorageSystem {
     }
 
     /// Get WAL manager
-    pub fn write_buffer_manager(&self) -> &Arc<WriteBufferManager> {
+    pub fn write_buffer_manager(&self) -> &Arc<WriteAheadLogManager> {
         &self.write_buffer_manager
     }
 

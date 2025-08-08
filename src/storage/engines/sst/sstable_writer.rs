@@ -213,7 +213,7 @@ impl SstableWriter {
             .sum();
         
         // SDK-DRIVEN COMPRESSION (2025-08-06): Use compression config from collection metadata
-        let (compression_enabled, compression_algorithm, compression_level) = 
+        let (compression_algorithm, compression_level) = 
             if let Some(ref compression) = self.compression_config {
                 use crate::proto::proximadb::CompressionAlgorithm;
                 // Convert from proto-generated enum value to SST internal enum
@@ -234,10 +234,10 @@ impl SstableWriter {
                 };
                 let level = compression.level.unwrap_or(3) as u8; // Default compression level
                 debug!("🗜️ SST: Using SDK-driven compression: {:?} level {}", algorithm, level);
-                (true, algorithm, level)
+                (algorithm, level)
             } else {
                 debug!("🗜️ SST: No compression configuration from SDK, using uncompressed");
-                (false, super::CompressionAlgorithmSst::None, 0)
+                (super::CompressionAlgorithmSst::None, 0)
             };
 
         // Create header with correct sizes
@@ -248,7 +248,6 @@ impl SstableWriter {
             min_key,
             max_key,
             created_at: chrono::Utc::now().timestamp(),
-            compression_enabled,
             compression_algorithm,
             compression_level,
             has_bloom_filter: true,

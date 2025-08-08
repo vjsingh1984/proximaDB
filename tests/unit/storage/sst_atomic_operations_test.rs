@@ -21,7 +21,8 @@ use super::sst_test_config::{
     create_test_filesystem_config,
     setup_test_directories,
     setup_storage_assignment,
-    cleanup_assignment
+    cleanup_assignment,
+    get_test_assignments
 };
 
 #[tokio::test]
@@ -41,29 +42,21 @@ async fn test_lsm_atomic_flush_creates_staging_directory() {
     let sst_config = create_test_sst_config(base_path.to_str().unwrap());
     let collection_id = &unique_collection_id("test_collection");
     
-    // Remove any existing assignment first to ensure clean state
-// 🔴 OBSOLETE - Assignment service removed
-    let _ = assignment_service.remove_assignment(collection_id).await; // Ignore error if doesn't exist
-    
     // Setup storage assignment BEFORE creating SST storage
-    setup_storage_assignment(collection_id, base_path.to_str().unwrap()).await.unwrap();
+    let test_assignment = setup_storage_assignment(collection_id, base_path.to_str().unwrap()).await.unwrap();
     
     // Wait a bit to ensure any background operations complete
     tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
     
     let distance_compute = Arc::new(UnifiedDistanceCompute::new(proximadb::compute::distance::DistanceMetric::Cosine));
     let lsm_tree = SstStorage::new(
-        collection_id.to_string(),
         sst_config,
         filesystem.clone(),
         distance_compute.clone()
     ).await.unwrap();
     
     // Check if any files exist immediately after creation
-// 🔴 OBSOLETE - Assignment service removed
-    let assignment = assignment_service.get_assignment(collection_id).await
-        .expect("Storage assignment should exist");
-    let data_dir = assignment.data_url.strip_prefix("file://").unwrap_or(&assignment.data_url);
+    let data_dir = test_assignment.data_url.strip_prefix("file://").unwrap_or(&test_assignment.data_url);
     let fs = filesystem.get_filesystem("file:///").unwrap();
     
     if fs.exists(&data_dir).await.unwrap() {
@@ -118,11 +111,8 @@ async fn test_lsm_atomic_flush_creates_staging_directory() {
     assert_eq!(result.entries_flushed, 1);
     
     // Get the storage assignment to find the actual data directory
-// 🔴 OBSOLETE - Assignment service removed
-    let assignment = assignment_service.get_assignment(collection_id).await
-        .expect("Storage assignment should exist");
-    let data_dir = assignment.data_url.strip_prefix("file://").unwrap_or(&assignment.data_url);
-    println!("DEBUG: Storage assignment data URL: {}", assignment.data_url);
+    let data_dir = test_assignment.data_url.strip_prefix("file://").unwrap_or(&test_assignment.data_url);
+    println!("DEBUG: Storage assignment data URL: {}", test_assignment.data_url);
     println!("DEBUG: Data directory: {}", data_dir);
     println!("DEBUG: Base path: {}", base_path.to_str().unwrap());
     println!("DEBUG: Collection ID: {}", collection_id);
@@ -186,11 +176,10 @@ async fn test_lsm_atomic_flush_rollback_on_failure() {
     let collection_id = &unique_collection_id("test_collection");
     
     // Setup storage assignment BEFORE creating SST storage
-    setup_storage_assignment(collection_id, base_path.to_str().unwrap()).await.unwrap();
+    let test_assignment = setup_storage_assignment(collection_id, base_path.to_str().unwrap()).await.unwrap();
     
     let distance_compute = Arc::new(UnifiedDistanceCompute::new(proximadb::compute::distance::DistanceMetric::Cosine));
     let lsm_tree = SstStorage::new(
-        collection_id.to_string(),
         sst_config,
         filesystem.clone(),
         distance_compute.clone()
@@ -236,10 +225,7 @@ async fn test_lsm_atomic_flush_rollback_on_failure() {
     
     // Verify SSTable file was created (since empty vectors are allowed)
     // Get the actual data directory from the assignment service
-// 🔴 OBSOLETE - Assignment service removed
-    let assignment = assignment_service.get_assignment(collection_id).await
-        .expect("Storage assignment should exist");
-    let data_dir = assignment.data_url.strip_prefix("file://").unwrap_or(&assignment.data_url);
+    let data_dir = test_assignment.data_url.strip_prefix("file://").unwrap_or(&test_assignment.data_url);
     let fs = filesystem.get_filesystem("file:///").unwrap();
     
     if fs.exists(&data_dir).await.unwrap() {
@@ -276,16 +262,11 @@ async fn test_lsm_atomic_compaction_with_staging() {
     sst_config.compaction_threshold = 2; // Low threshold for testing
     let collection_id = &unique_collection_id("test_collection");
     
-    // Remove any existing assignment first to ensure clean state
-// 🔴 OBSOLETE - Assignment service removed
-    let _ = assignment_service.remove_assignment(collection_id).await; // Ignore error if doesn't exist
-    
     // Setup storage assignment BEFORE creating SST storage
-    setup_storage_assignment(collection_id, base_path.to_str().unwrap()).await.unwrap();
+    let test_assignment = setup_storage_assignment(collection_id, base_path.to_str().unwrap()).await.unwrap();
     
     let distance_compute = Arc::new(UnifiedDistanceCompute::new(proximadb::compute::distance::DistanceMetric::Cosine));
     let mut lsm_tree = SstStorage::new(
-        collection_id.to_string(),
         sst_config,
         filesystem.clone(),
         distance_compute.clone()
@@ -370,11 +351,8 @@ async fn test_lsm_atomic_compaction_with_staging() {
     
     // Verify SSTable files exist
     // Get the storage assignment to find the actual data directory
-// 🔴 OBSOLETE - Assignment service removed
-    let assignment = assignment_service.get_assignment(collection_id).await
-        .expect("Storage assignment should exist");
-    let data_dir = assignment.data_url.strip_prefix("file://").unwrap_or(&assignment.data_url);
-    println!("DEBUG TEST: Storage assignment data URL: {}", assignment.data_url);
+    let data_dir = test_assignment.data_url.strip_prefix("file://").unwrap_or(&test_assignment.data_url);
+    println!("DEBUG TEST: Storage assignment data URL: {}", test_assignment.data_url);
     println!("DEBUG TEST: Looking for SSTable files in: {}", data_dir);
     
     // First check if the directory exists
@@ -420,11 +398,10 @@ async fn test_lsm_sequential_flush_within_collection() {
     let collection_id = &unique_collection_id("test_collection");
     
     // Setup storage assignment BEFORE creating SST storage
-    setup_storage_assignment(collection_id, base_path.to_str().unwrap()).await.unwrap();
+    let test_assignment = setup_storage_assignment(collection_id, base_path.to_str().unwrap()).await.unwrap();
     
     let distance_compute = Arc::new(UnifiedDistanceCompute::new(proximadb::compute::distance::DistanceMetric::Cosine));
     let lsm_tree = SstStorage::new(
-        collection_id.to_string(),
         sst_config,
         filesystem.clone(),
         distance_compute.clone()
@@ -475,10 +452,7 @@ async fn test_lsm_sequential_flush_within_collection() {
     assert_eq!(flush_results.len(), 5, "All sequential flushes should complete");
     
     // Verify all vectors were written
-// 🔴 OBSOLETE - Assignment service removed
-    let assignment = assignment_service.get_assignment(collection_id).await
-        .expect("Storage assignment should exist");
-    let data_dir = assignment.data_url.strip_prefix("file://").unwrap_or(&assignment.data_url);
+    let data_dir = test_assignment.data_url.strip_prefix("file://").unwrap_or(&test_assignment.data_url);
     let fs = filesystem.get_filesystem("file:///").unwrap();
     let entries = fs.list(&data_dir).await.unwrap();
     let sst_files: Vec<_> = entries.iter()
@@ -521,11 +495,10 @@ async fn test_concurrent_flushes_across_collections() {
             let collection_id = unique_collection_id(&format!("collection_{}", i));
             
             // Setup storage assignment for this collection
-            setup_storage_assignment(&collection_id, &base_path_str).await.unwrap();
+            let test_assignment = setup_storage_assignment(&collection_id, &base_path_str).await.unwrap();
             
             // Create SST storage for this collection
             let lsm_tree = SstStorage::new(
-                collection_id.clone(),
                 config_clone,
                 fs_clone,
                 dc_clone
@@ -585,11 +558,13 @@ async fn test_concurrent_flushes_across_collections() {
     assert_eq!(success_count, 5, "All concurrent cross-collection flushes should succeed");
     
     // Verify each collection has its data
-// 🔴 OBSOLETE - Assignment service removed
     let fs = filesystem.get_filesystem("file:///").unwrap();
     
+    // Get test assignments to retrieve assignment data
+    let test_assignments = get_test_assignments();
+    
     for collection_id in collection_ids {
-        let assignment = assignment_service.get_assignment(&collection_id).await
+        let assignment = test_assignments.get_or_create_assignment(&collection_id).await
             .expect("Storage assignment should exist");
         let data_dir = assignment.data_url.strip_prefix("file://").unwrap_or(&assignment.data_url);
         

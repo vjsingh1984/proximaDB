@@ -24,7 +24,7 @@ mod tests {
             mmap_enabled: true,
             sst_config: Default::default(),
             viper_config: Default::default(),
-            write_buffer_config: Default::default(),
+            wal_config: Default::default(),
             cache_size_mb: 2048,
             bloom_filter_config: Some(BloomFilterConfig {
                 bits_per_key: 12,
@@ -59,7 +59,7 @@ mod tests {
             ],
             metadata_url: "file:///fast-ssd/metadata".to_string(),
             viper_config: Default::default(),
-            write_buffer_config: Default::default(),
+            wal_config: Default::default(),
             ..Default::default()
         };
         
@@ -106,7 +106,7 @@ mod tests {
             ],
             metadata_url: "file:///fast-ssd/metadata".to_string(),
             viper_config: Default::default(),
-            write_buffer_config: Default::default(),
+            wal_config: Default::default(),
             ..Default::default()
         };
         
@@ -142,7 +142,7 @@ mod tests {
                 affinity: true,
             },
             viper_config: Default::default(),
-            write_buffer_config: Default::default(),
+            wal_config: Default::default(),
             ..Default::default()
         };
         
@@ -167,9 +167,9 @@ mod tests {
     }
     
     #[test]
-    fn test_write_buffer_config_values() {
+    fn test_wal_config_values() {
         // Test with custom values that should be used instead of defaults
-        let write_buffer_config = WriteBufferUserConfig {
+        let wal_config = WriteBufferUserConfig {
             write_buffer_size_mb: 8192,  // 8GB
             memory_flush_size_bytes: 16777216,  // 16MB
             vector_count_threshold: 100_000,  // 100k vectors
@@ -180,16 +180,16 @@ mod tests {
         };
         
         // Verify the values are set correctly
-        assert_eq!(write_buffer_config.write_buffer_size_mb, 8192);
-        assert_eq!(write_buffer_config.memory_flush_size_bytes, 16777216); // 16MB not 2MB!
-        assert_eq!(write_buffer_config.memtable_type, "BTree");
-        assert_eq!(write_buffer_config.sync_mode, "PerBatch");
-        assert_eq!(write_buffer_config.write_buffer_directory, "./test_wal");
-        assert!(write_buffer_config.enable_wal);
+        assert_eq!(wal_config.write_buffer_size_mb, 8192);
+        assert_eq!(wal_config.memory_flush_size_bytes, 16777216); // 16MB not 2MB!
+        assert_eq!(wal_config.memtable_type, "BTree");
+        assert_eq!(wal_config.sync_mode, "PerBatch");
+        assert_eq!(wal_config.write_buffer_directory, "./test_wal");
+        assert!(wal_config.enable_wal);
     }
     
     #[test]
-    fn test_write_buffer_config_from_toml() {
+    fn test_wal_config_from_toml() {
         // Test loading from TOML string
         let toml_str = r#"
             write_buffer_size_mb = 4096
@@ -201,14 +201,14 @@ mod tests {
             enable_wal = false
         "#;
         
-        let write_buffer_config: WriteBufferUserConfig = toml::from_str(toml_str).unwrap();
+        let wal_config: WriteBufferUserConfig = toml::from_str(toml_str).unwrap();
         
-        assert_eq!(write_buffer_config.write_buffer_size_mb, 4096);
-        assert_eq!(write_buffer_config.memory_flush_size_bytes, 33554432); // 32MB
-        assert_eq!(write_buffer_config.vector_count_threshold, 10000);
-        assert_eq!(write_buffer_config.memtable_type, "SkipList");
-        assert_eq!(write_buffer_config.sync_mode, "Periodic");
-        assert_eq!(write_buffer_config.write_buffer_directory, "/tmp/wal");
-        assert!(!write_buffer_config.enable_wal);
+        assert_eq!(wal_config.write_buffer_size_mb, 4096);
+        assert_eq!(wal_config.memory_flush_size_bytes, 33554432); // 32MB
+        assert_eq!(wal_config.vector_count_threshold, 10000);
+        assert_eq!(wal_config.memtable_type, "SkipList");
+        assert_eq!(wal_config.sync_mode, "Periodic");
+        assert_eq!(wal_config.write_buffer_directory, "/tmp/wal");
+        assert!(!wal_config.enable_wal);
     }
 }

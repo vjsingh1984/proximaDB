@@ -322,12 +322,6 @@ pub struct ViperSchemaStrategy {
     filterable_fields: Vec<String>,
 }
 
-/// Legacy schema strategy for backward compatibility
-pub struct LegacySchemaStrategy {
-    collection_id: String,
-    #[allow(dead_code)]
-    config: ViperSchemaConfig,
-}
 
 /// Time-series optimized schema strategy
 pub struct TimeSeriesSchemaStrategy {
@@ -440,8 +434,6 @@ impl ViperFactory {
     fn register_default_strategies(&mut self) {
         self.strategy_registry
             .insert("viper".to_string(), Box::new(ViperSchemaStrategyFactory));
-        self.strategy_registry
-            .insert("legacy".to_string(), Box::new(LegacySchemaStrategyFactory));
         self.strategy_registry.insert(
             "timeseries".to_string(),
             Box::new(TimeSeriesSchemaStrategyFactory),
@@ -483,7 +475,7 @@ impl ViperFactory {
             if !config.filterable_metadata_fields.is_empty() {
                 "viper".to_string()
             } else {
-                "legacy".to_string()
+                "viper".to_string()
             }
         } else {
             "viper".to_string()
@@ -722,56 +714,7 @@ impl SchemaGenerationStrategy for ViperSchemaStrategy {
     }
 }
 
-impl LegacySchemaStrategy {
-    pub fn new(collection_id: String, config: ViperSchemaConfig) -> Self {
-        Self {
-            collection_id,
-            config,
-        }
-    }
-}
 
-impl SchemaGenerationStrategy for LegacySchemaStrategy {
-    fn generate_schema(&self) -> Result<Arc<Schema>> {
-        let fields = vec![
-            Field::new("id", DataType::Utf8, true),  // Nullable for legacy compatibility
-            Field::new(
-                "vectors",
-                DataType::List(Arc::new(Field::new("item", DataType::Float32, true))),
-                true,  // Nullable for sparse vectors
-            ),
-            Field::new("version", DataType::Int8, true), // Version field for MVCC
-            Field::new("updated_at", DataType::Int64, true), // Audit field
-            Field::new(
-                "expires_at",
-                DataType::Timestamp(TimeUnit::Millisecond, None),
-                true,  // Can be null for TTL support
-            ),
-        ];
-
-        Ok(Arc::new(Schema::new(fields)))
-    }
-
-    fn get_filterable_fields(&self) -> &[String] {
-        &[]
-    }
-
-    fn get_collection_id(&self) -> &String {
-        &self.collection_id
-    }
-
-    fn supports_ttl(&self) -> bool {
-        false
-    }
-
-    fn get_version(&self) -> u32 {
-        1
-    }
-
-    fn name(&self) -> &'static str {
-        "LegacySchemaStrategy"
-    }
-}
 
 // Processor Implementations
 
@@ -818,7 +761,6 @@ impl VectorProcessor for StandardVectorProcessor {
 // Factory Implementations
 
 pub struct ViperSchemaStrategyFactory;
-pub struct LegacySchemaStrategyFactory;
 pub struct TimeSeriesSchemaStrategyFactory;
 
 pub struct StandardProcessorFactory;
@@ -843,22 +785,6 @@ impl SchemaStrategyFactory for ViperSchemaStrategyFactory {
     }
 }
 
-impl SchemaStrategyFactory for LegacySchemaStrategyFactory {
-    fn create_strategy(
-        &self,
-        config: &ViperSchemaConfig,
-        collection_id: &str,
-    ) -> Box<dyn SchemaGenerationStrategy> {
-        Box::new(LegacySchemaStrategy::new(
-            collection_id.to_string(),
-            config.clone(),
-        ))
-    }
-
-    fn name(&self) -> &'static str {
-        "LegacySchemaStrategyFactory"
-    }
-}
 
 impl SchemaStrategyFactory for TimeSeriesSchemaStrategyFactory {
     fn create_strategy(
@@ -866,10 +792,11 @@ impl SchemaStrategyFactory for TimeSeriesSchemaStrategyFactory {
         config: &ViperSchemaConfig,
         collection_id: &str,
     ) -> Box<dyn SchemaGenerationStrategy> {
-        // Placeholder implementation
-        Box::new(LegacySchemaStrategy::new(
+        // Use ViperSchemaStrategy as placeholder for now
+        Box::new(ViperSchemaStrategy::new(
             collection_id.to_string(),
             config.clone(),
+            vec!["timestamp".to_string()], // Time-series specific field
         ))
     }
 

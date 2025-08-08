@@ -112,7 +112,7 @@ pub enum CompressionDataType {
     Mixed,
 }
 
-/// Global compression metrics tracker
+/// Global compression stats tracker
 pub struct CompressionMetricsTracker {
     metrics: Arc<DashMap<String, CompressionMetrics>>,
     operation_buffer: Arc<DashMap<String, Vec<CompressionResult>>>,

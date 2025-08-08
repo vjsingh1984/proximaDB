@@ -25,7 +25,7 @@ mod tests {
     use serde_json::Value;
     
     use crate::compute::distance::{DistanceMetric, PlatformCapability};
-    use crate::compute::unified_distance::UnifiedDistanceCompute;
+    use crate::compute::distance_compute_engine::UnifiedDistanceCompute;
     use crate::core::hardware_capabilities::HardwareBackend;
     use crate::query::sql_engine::{
         SqlEngine, SqlParser, ParsedQuery, SqlExecutor, SqlExecutionResult,
@@ -38,7 +38,7 @@ mod tests {
     use crate::query::sql_engine::planner::{
         MetadataFilter, VectorSearchParams,
     };
-    use crate::services::direct_vector_service::DirectVectorService;
+    use crate::services::vector_operations_service::VectorOperationsService;
     use crate::proto::proximadb::{VectorRecord, MetadataItem};
 
     /// Test vector data structure for SQL testing

@@ -36,9 +36,10 @@ fn create_test_collection(id: &str, name: &str) -> Collection {
             description: Some("Test collection".to_string()),
             tags: vec![],
             owner: Some("test_user".to_string()),
-                compression: None,
-                optimization_hints: None,
-            }),
+            compression: None,
+            optimization_hints: None,
+            storage_location: None,
+        }),
         stats: Some(CollectionStats {
             vector_count: 100,
             index_size_bytes: 1024,

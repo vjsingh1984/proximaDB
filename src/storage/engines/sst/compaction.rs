@@ -24,7 +24,7 @@ use crate::core::{String, SstConfig, VectorId, VectorRecord};
 use crate::core::search::mvcc_resolution::MvccResolver;
 use crate::storage::optimization::{MetadataSorter, SortingStats};
 use crate::storage::Result;
-use crate::storage::atomic::{UnifiedAtomicCoordinator, StagingConfig, StagingOperationType};
+use crate::storage::transaction_coordinator::{TransactionCoordinator, StagingConfig, TransactionStageType};
 use chrono::Utc;
 use rand::Rng;
 use std::collections::{BTreeMap, HashMap, VecDeque};
@@ -91,7 +91,7 @@ pub struct CompactionManager {
     shutdown_signal: Arc<AtomicBool>,
     stats: Arc<RwLock<CompactionStats>>,
     active_compactions: Arc<RwLock<HashMap<String, CompactionTask>>>,
-    atomic_coordinator: Option<Arc<UnifiedAtomicCoordinator>>,
+    atomic_coordinator: Option<Arc<TransactionCoordinator>>,
     // manifest: Option<Arc<super::SstManifest>>, // Removed - using directory discovery
 }
 
@@ -126,7 +126,7 @@ impl CompactionManager {
     /// Create a new compaction manager with atomic coordinator
     pub fn with_atomic_coordinator(
         config: SstConfig,
-        atomic_coordinator: Option<Arc<UnifiedAtomicCoordinator>>,
+        atomic_coordinator: Option<Arc<TransactionCoordinator>>,
     ) -> Self {
         Self {
             config,
@@ -296,7 +296,7 @@ impl CompactionManager {
         stats: Arc<RwLock<CompactionStats>>,
         active_compactions: Arc<RwLock<HashMap<String, CompactionTask>>>,
         config: SstConfig,
-        atomic_coordinator: Option<Arc<UnifiedAtomicCoordinator>>,
+        atomic_coordinator: Option<Arc<TransactionCoordinator>>,
     ) {
         debug!("Compaction worker {} started", worker_id);
 
@@ -384,7 +384,7 @@ impl CompactionManager {
         &self,
         task: &CompactionTask,
         _config: &SstConfig,
-        atomic_coordinator: Option<Arc<UnifiedAtomicCoordinator>>,
+        atomic_coordinator: Option<Arc<TransactionCoordinator>>,
     ) -> Result<CompactionStats> {
         let enhanced_stats = self.perform_compaction_enhanced(task, _config, atomic_coordinator).await?;
         Ok(enhanced_stats.base_stats)
@@ -395,7 +395,7 @@ impl CompactionManager {
         &self,
         task: &CompactionTask,
         _config: &SstConfig,
-        atomic_coordinator: Option<Arc<UnifiedAtomicCoordinator>>,
+        atomic_coordinator: Option<Arc<TransactionCoordinator>>,
     ) -> Result<EnhancedCompactionStats> {
         let start_time = std::time::Instant::now();
         // Use Vec instead of BTreeMap for merge-sort approach
@@ -651,7 +651,7 @@ impl CompactionManager {
                     .to_string_lossy()
                     .to_string(),
                 collection_id: None,  // Don't add /collections/{id} structure
-                operation_type: StagingOperationType::Compaction,
+                operation_type: TransactionStageType::Compaction,
                 skip_uuid_subdir: true,  // Use simple __compact directory without UUID subdirectory
                 ..Default::default()
             };

@@ -37,7 +37,7 @@ pub mod serialization;
 pub mod specialized;
 
 // Lock-free implementations have been integrated into the main codebase
-// DashMap is now used in UnifiedAtomicCoordinator and StorageEngine
+// DashMap is now used in TransactionCoordinator and StorageEngine
 
 // Re-export core traits
 pub use core::{MemtableConfig, MemtableCore, MemtableMVCC, MemtableMetrics};
@@ -50,11 +50,11 @@ use tracing::debug;
 // Re-export implementations
 pub use implementations::{
     // bplustree::BPlusTreeMemtable,  // UNUSED - Never instantiated
-    // btree::BTreeMemtable,          // UNUSED - Never instantiated
+    btree::BTreeMemtable,          // Needed for tests
     // dashmap::DashMapMemtable,      // UNUSED - Never instantiated
     // artmap::ArtMemtable,           // Already commented out
     // hashmap::HashMapMemtable,      // UNUSED - Never instantiated
-    // skiplist::SkipListMemtable,    // UNUSED - Never instantiated
+    skiplist::SkipListMemtable,    // Needed for tests
 };
 
 // Re-export specialized wrappers (using proper OOP composition)
@@ -126,7 +126,7 @@ pub struct MemtableFactory;
 
 impl MemtableFactory {
     /// Create WAL-optimized memtable (global partitioned for collection isolation + vector content search)
-    pub fn create_for_wal(config: MemtableConfig) -> specialized::write_buffer_behavior::WriteBufferBehaviorWrapper {
+    pub fn create_for_wal(config: MemtableConfig) -> specialized::wal_behavior::WALBehaviorWrapper {
         specialized::SpecializedMemtableFactory::create_global_partitioned_for_wal(config)
     }
 

@@ -8,7 +8,7 @@ use anyhow::Result;
 use chrono::Utc;
 
 use super::*;
-use crate::compute::unified_distance::UnifiedDistanceCompute;
+use crate::compute::distance_compute_engine::UnifiedDistanceCompute;
 use crate::compute::unified_quantization::{UnifiedQuantizationEngine, InMemoryCodebookStore};
 use crate::core::search::{SearchParams, UnifiedSearchContext};
 

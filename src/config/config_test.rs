@@ -35,16 +35,16 @@ mod tests {
         assert!(bloom_config.bits_per_key > 0, "Bloom filter bits_per_key should be positive");
         
         // WAL configuration
-        assert!(!config.storage.write_buffer_config.write_buffer_urls.is_empty(), "WAL write_buffer_urls should not be empty");
-        assert!(config.storage.write_buffer_config.memory_flush_size_bytes > 0, "WAL memory_flush_size_bytes should be positive");
-        assert!(config.storage.write_buffer_config.global_flush_threshold > 0, "WAL global_flush_threshold should be positive");
-        assert!(config.storage.write_buffer_config.global_shrink_factor > 0.0, "WAL global_shrink_factor should be positive");
-        assert!(!config.storage.write_buffer_config.strategy_type.is_empty(), "WAL strategy_type should not be empty");
-        assert!(!config.storage.write_buffer_config.memtable_type.is_empty(), "WAL memtable_type should not be empty");
-        assert!(!config.storage.write_buffer_config.sync_mode.is_empty(), "WAL sync_mode should not be empty");
-        assert!(config.storage.write_buffer_config.batch_threshold > 0, "WAL batch_threshold should be positive");
-        assert!(config.storage.write_buffer_config.write_buffer_size_mb > 0, "WAL write_buffer_size_mb should be positive");
-        assert!(config.storage.write_buffer_config.concurrent_flushes > 0, "WAL concurrent_flushes should be positive");
+        assert!(!config.storage.wal_config.write_buffer_urls.is_empty(), "WAL write_buffer_urls should not be empty");
+        assert!(config.storage.wal_config.memory_flush_size_bytes > 0, "WAL memory_flush_size_bytes should be positive");
+        assert!(config.storage.wal_config.global_flush_threshold > 0, "WAL global_flush_threshold should be positive");
+        assert!(config.storage.wal_config.global_shrink_factor > 0.0, "WAL global_shrink_factor should be positive");
+        assert!(!config.storage.wal_config.strategy_type.is_empty(), "WAL strategy_type should not be empty");
+        assert!(!config.storage.wal_config.memtable_type.is_empty(), "WAL memtable_type should not be empty");
+        assert!(!config.storage.wal_config.sync_mode.is_empty(), "WAL sync_mode should not be empty");
+        assert!(config.storage.wal_config.batch_threshold > 0, "WAL batch_threshold should be positive");
+        assert!(config.storage.wal_config.write_buffer_size_mb > 0, "WAL write_buffer_size_mb should be positive");
+        assert!(config.storage.wal_config.concurrent_flushes > 0, "WAL concurrent_flushes should be positive");
         
         // LSM configuration
         assert!(config.storage.lsm_config.memtable_size_mb > 0, "LSM memtable_size_mb should be positive");
@@ -134,7 +134,7 @@ port = 9999
 [storage]
 cache_size_mb = 2048
 
-[storage.write_buffer_config]
+[storage.wal_config]
 memory_flush_size_bytes = 20971520  # 20MB
 
 [api]
@@ -153,7 +153,7 @@ rest_port = 9997
         assert_eq!(config.server.node_id, "test-override-node");
         assert_eq!(config.server.port, 9999);
         assert_eq!(config.storage.cache_size_mb, 2048);
-        assert_eq!(config.storage.write_buffer_config.memory_flush_size_bytes, 20971520);
+        assert_eq!(config.storage.wal_config.memory_flush_size_bytes, 20971520);
         assert_eq!(config.api.grpc_port, 9998);
         assert_eq!(config.api.rest_port, 9997);
         
@@ -161,7 +161,7 @@ rest_port = 9997
         assert!(!config.server.bind_address.is_empty(), "Default bind_address should be preserved");
         assert!(!config.server.data_dir.is_empty(), "Default data_dir should be preserved");
         assert!(config.storage.bloom_filter_config.is_some(), "Default bloom_filter_config should be preserved");
-        assert!(!config.storage.write_buffer_config.strategy_type.is_empty(), "Default WAL strategy_type should be preserved");
+        assert!(!config.storage.wal_config.strategy_type.is_empty(), "Default WAL strategy_type should be preserved");
         assert!(config.storage.lsm_config.memtable_size_mb > 0, "Default LSM memtable_size_mb should be preserved");
         assert!(config.api.timeout_seconds > 0, "Default API timeout_seconds should be preserved");
         
@@ -195,7 +195,7 @@ node_id = "minimal-test"
         // Verify all required fields are still present from defaults
         assert!(!config.server.bind_address.is_empty());
         assert!(config.server.port > 0);
-        assert!(!config.storage.write_buffer_config.strategy_type.is_empty());
+        assert!(!config.storage.wal_config.strategy_type.is_empty());
         assert!(config.storage.lsm_config.memtable_size_mb > 0);
         assert!(config.api.grpc_port > 0);
         
@@ -252,7 +252,7 @@ timeout_seconds = 0  # Invalid timeout
         
         // Check that all major sections have comments
         let required_sections = [
-            "server", "storage", "write_buffer_config", "lsm_config", 
+            "server", "storage", "wal_config", "lsm_config", 
             "bloom_filter_config", "storage_layout", "base_paths",
             "filesystem_config", "metadata_backend", "api", 
             "monitoring", "consensus"
@@ -317,7 +317,7 @@ rest_port = 15678
         
         // Verify defaults are preserved
         assert!(config.storage.cache_size_mb > 0);
-        assert!(!config.storage.write_buffer_config.strategy_type.is_empty());
+        assert!(!config.storage.wal_config.strategy_type.is_empty());
         assert!(config.storage.lsm_config.memtable_size_mb > 0);
         
         println!("✅ Server startup configuration test passed");

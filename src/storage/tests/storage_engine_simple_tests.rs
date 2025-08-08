@@ -81,10 +81,10 @@ async fn test_write_buffer_manager_access() {
     let (storage_engine, _temp_dir) = create_basic_storage_engine().await;
     
     // Test get write buffer manager  
-    let write_buffer_manager = storage_engine.get_write_buffer_manager();
+    let write_buffer_manager = storage_engine.get_write_ahead_log_manager();
     
     // Test that the write buffer manager is accessible (basic functionality test)
-    // WriteBufferManager is wrapped in Arc, so we just check it's accessible
+    // WriteAheadLogManager is wrapped in Arc, so we just check it's accessible
     use std::sync::Arc;
     assert!(Arc::strong_count(&write_buffer_manager) > 0, "Write buffer manager should be accessible");
 }

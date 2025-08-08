@@ -5,12 +5,13 @@
 
 #[cfg(test)]
 mod tests {
-    use super::super::atomic::*;
+    use super::super::transaction_coordinator::{TransactionCoordinator, StagingConfig, TransactionStageType};
     use super::super::{
         AccessPattern, CollectionMetadata, MetadataFilter, MetadataOperation,
-        MetadataStoreInterface, write_buffer::MetadataWriteBufferConfig,
+        MetadataStoreInterface, write_ahead_log::MetadataWALConfig,
         SystemMetadata, MetadataStorageStats,
     };
+    use crate::storage::metadata::atomic::{TransactionState, TransactionId, MetadataTransaction, IsolationLevel};
     use crate::storage::persistence::filesystem::FilesystemFactory;
     use anyhow::{anyhow, Result};
     use async_trait::async_trait;
@@ -23,11 +24,11 @@ mod tests {
     use uuid::Uuid;
 
     /// Helper to create test metadata write buffer config
-    fn create_test_write_buffer_config(temp_dir: &TempDir) -> MetadataWriteBufferConfig {
-        use crate::storage::persistence::write_buffer::{WriteBufferConfig, config::WriteBufferStrategyType};
-        use crate::storage::persistence::write_buffer::config::MemTableType;
+    fn create_test_wal_config(temp_dir: &TempDir) -> MetadataWALConfig {
+        use crate::storage::persistence::write_ahead_log::{WALConfig, config::WriteBufferStrategyType};
+        use crate::storage::persistence::write_ahead_log::config::MemTableType;
         
-        let mut base_config = WriteBufferConfig::default();
+        let mut base_config = WALConfig::default();
         // Set the temp directory for testing
         base_config.multi_disk.data_directories = vec![temp_dir.path().to_string_lossy().to_string().into()];
         base_config.performance.memory_flush_size_bytes = 1024 * 1024; // 1MB for test
@@ -36,7 +37,7 @@ mod tests {
         base_config.strategy_type = WriteBufferStrategyType::ProtoBatch;
         base_config.memtable.memtable_type = MemTableType::BTree;
         
-        MetadataWriteBufferConfig {
+        MetadataWALConfig {
             base_config,
             keep_all_in_memory: true,
             metadata_flush_threshold: 1000,

@@ -3,8 +3,8 @@
 #[cfg(test)]
 mod tests {
     use super::super::super::{
-        updater::{InternalMetricsUpdater, FlushMetricsUpdate, CompactionMetricsUpdate, SearchMetricsUpdate, OperationMetricsUpdate, DefaultMetricsUpdater},
-        store::PersistentMetricsStore,
+        updater::{InternalMetricsUpdater, FlushMetricsUpdate, CompactionMetricsUpdate, SearchMetricsUpdate, OperationMetricsUpdate, MetricsUpdateService},
+        store::MetricsPersistenceLayer,
         MetricsConfig,
     };
     use crate::storage::persistence::filesystem::FilesystemFactory;
@@ -12,7 +12,7 @@ mod tests {
     use tokio::time::{sleep, Duration};
     use anyhow::Result;
 
-    async fn create_test_updater() -> Result<Arc<DefaultMetricsUpdater>> {
+    async fn create_test_updater() -> Result<Arc<MetricsUpdateService>> {
         let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
         
         let config = MetricsConfig {
@@ -33,8 +33,8 @@ mod tests {
         
         let filesystem_config = Default::default();
         let filesystem_factory = Arc::new(FilesystemFactory::new(filesystem_config).await?);
-        let store = PersistentMetricsStore::new(filesystem_factory, config).await?;
-        Ok(Arc::new(DefaultMetricsUpdater::new(Arc::new(store))))
+        let store = MetricsPersistenceLayer::new(filesystem_factory, config).await?;
+        Ok(Arc::new(MetricsUpdateService::new(Arc::new(store))))
     }
 
     #[tokio::test]

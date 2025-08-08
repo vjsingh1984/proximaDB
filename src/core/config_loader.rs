@@ -217,8 +217,8 @@ impl ConfigLoader {
         config.storage.metadata_url = to_file_url(&config.storage.metadata_url)?;
         
         // Resolve write buffer directory
-        config.storage.write_buffer_config.write_buffer_directory = 
-            resolve_path(&config.storage.write_buffer_config.write_buffer_directory)?;
+        config.storage.wal_config.write_buffer_directory = 
+            resolve_path(&config.storage.wal_config.write_buffer_directory)?;
         
         // Resolve SST data directory
         config.storage.sst_config.data_directory = 

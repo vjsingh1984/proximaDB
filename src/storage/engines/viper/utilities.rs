@@ -272,7 +272,7 @@ pub struct StagingConfig {
 #[derive(Debug)]
 pub struct StagingOperation {
     pub operation_id: String,
-    pub operation_type: StagingOperationType,
+    pub operation_type: TransactionStageType,
     pub staging_path: String,
     pub target_path: String,
     pub started_at: DateTime<Utc>,
@@ -281,7 +281,7 @@ pub struct StagingOperation {
 
 /// Staging operation type
 #[derive(Debug, Clone)]
-pub enum StagingOperationType {
+pub enum TransactionStageType {
     Flush,
     Compaction,
     Migration,
@@ -635,7 +635,7 @@ impl ViperUtilities {
     /// Create staging operation
     pub async fn create_staging_operation(
         &self,
-        operation_type: StagingOperationType,
+        operation_type: TransactionStageType,
         records: Vec<VectorRecord>,
     ) -> Result<StagingOperationResult> {
         self.staging_coordinator
@@ -762,7 +762,7 @@ impl StagingOperationsCoordinator {
 
     async fn create_operation(
         &self,
-        _operation_type: StagingOperationType,
+        _operation_type: TransactionStageType,
         _records: Vec<VectorRecord>,
     ) -> Result<StagingOperationResult> {
         Ok(StagingOperationResult {

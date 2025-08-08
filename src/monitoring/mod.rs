@@ -1,8 +1,6 @@
 pub mod dashboard;
-pub mod metrics;
+
+// Re-export from unified metrics module for compatibility
+pub use crate::metrics::collectors::UnifiedMetricsCollector as MetricsCollector;
 
 pub use dashboard::{create_dashboard_router, DashboardState};
-pub use metrics::{
-    Alert, AlertLevel, IndexMetrics, MetricsCollector, MetricsConfig, MetricsRegistry,
-    QueryMetrics, ServerMetrics, StorageMetrics, SystemMetrics,
-};

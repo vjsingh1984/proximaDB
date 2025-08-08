@@ -21,7 +21,7 @@ use std::fmt;
 use tracing::{debug, info};
 
 use crate::storage::persistence::filesystem::FilesystemFactory;
-use crate::storage::atomic::{UnifiedAtomicCoordinator, StagingConfig, StagingOperationType};
+use crate::storage::transaction_coordinator::{TransactionCoordinator, StagingConfig, TransactionStageType};
 
 /// SSTable file metadata in the manifest
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -82,7 +82,7 @@ pub struct SstManifest {
     /// Filesystem for I/O
     filesystem: Arc<FilesystemFactory>,
     /// Atomic coordinator for safe updates
-    atomic_coordinator: Option<Arc<UnifiedAtomicCoordinator>>,
+    atomic_coordinator: Option<Arc<TransactionCoordinator>>,
     /// Version history (limited to last N versions)
     version_history: Arc<RwLock<Vec<ManifestVersion>>>,
     /// Maximum versions to keep in history
@@ -94,7 +94,7 @@ impl SstManifest {
     pub fn new(
         storage_url: String,
         filesystem: Arc<FilesystemFactory>,
-        atomic_coordinator: Option<Arc<UnifiedAtomicCoordinator>>,
+        atomic_coordinator: Option<Arc<TransactionCoordinator>>,
     ) -> Self {
         // Construct manifest URL by appending filename to storage URL
         let manifest_url = format!("{}/{}_manifest.json", 

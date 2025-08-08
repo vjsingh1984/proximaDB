@@ -1,6 +1,6 @@
-//! Comprehensive tests for UnifiedAtomicCoordinator
+//! Comprehensive tests for TransactionCoordinator
 //!
-//! These tests ensure the UnifiedAtomicCoordinator correctly handles:
+//! These tests ensure the TransactionCoordinator correctly handles:
 //! - Atomic operations across storage systems
 //! - Transaction management
 //! - Staging operations
@@ -10,9 +10,9 @@
 use std::sync::Arc;
 use tempfile::TempDir;
 
-use crate::storage::atomic::{
-    UnifiedAtomicCoordinator, AtomicOperationStatus,
-    StagingConfig, StagingOperationType, TransactionState,
+use crate::storage::transaction_coordinator::{
+    TransactionCoordinator, TransactionalOperationStatus,
+    StagingConfig, TransactionStageType, TransactionState,
 };
 use crate::storage::persistence::filesystem::FilesystemFactory;
 use crate::core::VectorRecord;
@@ -50,7 +50,7 @@ async fn test_atomic_coordinator_creation() {
         .unwrap();
     let filesystem_factory = Arc::new(FilesystemFactory::new(Default::default()).await.unwrap());
     
-    let coordinator = UnifiedAtomicCoordinator::new(
+    let coordinator = TransactionCoordinator::new(
         filesystem_factory,
         Some(temp_dir.path().to_str().unwrap().to_string()),
     ).await.expect("Failed to create coordinator");
@@ -72,13 +72,13 @@ async fn test_begin_atomic_operation() {
         .tempdir_in("/tmp")
         .unwrap();
     let filesystem_factory = Arc::new(FilesystemFactory::new(Default::default()).await.unwrap());
-    let coordinator = UnifiedAtomicCoordinator::new(
+    let coordinator = TransactionCoordinator::new(
         filesystem_factory,
         Some(temp_dir.path().to_str().unwrap().to_string()),
     ).await.unwrap();
     
     let config = StagingConfig {
-        operation_type: StagingOperationType::Flush,
+        operation_type: TransactionStageType::Flush,
         collection_id: Some("test_collection".to_string()),
         base_url: temp_dir.path().to_str().unwrap().to_string(),
         custom_staging_dir: None,
@@ -92,7 +92,7 @@ async fn test_begin_atomic_operation() {
     
     assert!(!operation.operation_id.is_empty());
     match operation.status {
-        AtomicOperationStatus::Preparing | AtomicOperationStatus::Staging => {},
+        TransactionalOperationStatus::Preparing | TransactionalOperationStatus::Staging => {},
         _ => panic!("Operation should be Preparing or Staging"),
     }
 }
@@ -109,14 +109,14 @@ async fn test_write_to_staging() {
         .tempdir_in("/tmp")
         .unwrap();
     let filesystem_factory = Arc::new(FilesystemFactory::new(Default::default()).await.unwrap());
-    let coordinator = UnifiedAtomicCoordinator::new(
+    let coordinator = TransactionCoordinator::new(
         filesystem_factory,
         Some(temp_dir.path().to_str().unwrap().to_string()),
     ).await.unwrap();
     
     // Begin operation
     let config = StagingConfig {
-        operation_type: StagingOperationType::Flush,
+        operation_type: TransactionStageType::Flush,
         collection_id: Some("staging_test".to_string()),
         base_url: temp_dir.path().to_str().unwrap().to_string(),
         custom_staging_dir: None,
@@ -138,7 +138,7 @@ async fn test_write_to_staging() {
     
     // Status should have progressed beyond Preparing
     match status {
-        AtomicOperationStatus::Staging | AtomicOperationStatus::Finalizing => {},
+        TransactionalOperationStatus::Staging | TransactionalOperationStatus::Finalizing => {},
         _ => panic!("Operation should be in Staging or Finalizing state"),
     }
 }
@@ -155,14 +155,14 @@ async fn test_finalize_atomic_operation() {
         .tempdir_in("/tmp")
         .unwrap();
     let filesystem_factory = Arc::new(FilesystemFactory::new(Default::default()).await.unwrap());
-    let coordinator = UnifiedAtomicCoordinator::new(
+    let coordinator = TransactionCoordinator::new(
         filesystem_factory,
         Some(temp_dir.path().to_str().unwrap().to_string()),
     ).await.unwrap();
     
     // Begin operation
     let config = StagingConfig {
-        operation_type: StagingOperationType::Flush,
+        operation_type: TransactionStageType::Flush,
         collection_id: Some("finalize_test".to_string()),
         base_url: temp_dir.path().to_str().unwrap().to_string(),
         custom_staging_dir: Some("final".to_string()),
@@ -204,14 +204,14 @@ async fn test_abort_atomic_operation() {
         .tempdir_in("/tmp")
         .unwrap();
     let filesystem_factory = Arc::new(FilesystemFactory::new(Default::default()).await.unwrap());
-    let coordinator = UnifiedAtomicCoordinator::new(
+    let coordinator = TransactionCoordinator::new(
         filesystem_factory,
         Some(temp_dir.path().to_str().unwrap().to_string()),
     ).await.unwrap();
     
     // Begin operation
     let config = StagingConfig {
-        operation_type: StagingOperationType::Flush,
+        operation_type: TransactionStageType::Flush,
         collection_id: Some("abort_test".to_string()),
         base_url: temp_dir.path().to_str().unwrap().to_string(),
         custom_staging_dir: None,
@@ -234,7 +234,7 @@ async fn test_abort_atomic_operation() {
     
     // After abort, the operation might be cleaned up (None) or marked as Failed
     match status {
-        Some(AtomicOperationStatus::Failed(reason)) => {
+        Some(TransactionalOperationStatus::Failed(reason)) => {
             assert_eq!(reason, "Test abort");
         },
         None => {
@@ -256,7 +256,7 @@ async fn test_transaction_lifecycle() {
         .tempdir_in("/tmp")
         .unwrap();
     let filesystem_factory = Arc::new(FilesystemFactory::new(Default::default()).await.unwrap());
-    let coordinator = UnifiedAtomicCoordinator::new(
+    let coordinator = TransactionCoordinator::new(
         filesystem_factory,
         Some(temp_dir.path().to_str().unwrap().to_string()),
     ).await.unwrap();
@@ -296,7 +296,7 @@ async fn test_transaction_rollback() {
         .tempdir_in("/tmp")
         .unwrap();
     let filesystem_factory = Arc::new(FilesystemFactory::new(Default::default()).await.unwrap());
-    let coordinator = UnifiedAtomicCoordinator::new(
+    let coordinator = TransactionCoordinator::new(
         filesystem_factory.clone(),
         Some(temp_dir.path().to_str().unwrap().to_string()),
     ).await.unwrap();
@@ -313,7 +313,7 @@ async fn test_transaction_rollback() {
     // Register rollback action
     tx_handle.register_rollback(
         "test_participant",
-        crate::storage::atomic::RollbackAction::DeleteFile {
+        crate::storage::transaction_coordinator::RollbackAction::DeleteFile {
             path: format!("file://{}", test_file_path),
         },
     ).await.expect("Failed to register rollback");
@@ -349,7 +349,7 @@ async fn test_concurrent_operations() {
         .tempdir_in("/tmp")
         .unwrap();
     let filesystem_factory = Arc::new(FilesystemFactory::new(Default::default()).await.unwrap());
-    let coordinator = Arc::new(UnifiedAtomicCoordinator::new(
+    let coordinator = Arc::new(TransactionCoordinator::new(
         filesystem_factory,
         Some(temp_dir.path().to_str().unwrap().to_string()),
     ).await.unwrap());
@@ -363,7 +363,7 @@ async fn test_concurrent_operations() {
         
         let handle = tokio::spawn(async move {
             let config = StagingConfig {
-                operation_type: StagingOperationType::Flush,
+                operation_type: TransactionStageType::Flush,
                 collection_id: Some(format!("concurrent_{}", i)),
                 base_url: base_path,
                 custom_staging_dir: None,
@@ -415,7 +415,7 @@ async fn test_cleanup_orphaned_operations() {
         .tempdir_in("/tmp")
         .unwrap();
     let filesystem_factory = Arc::new(FilesystemFactory::new(Default::default()).await.unwrap());
-    let coordinator = UnifiedAtomicCoordinator::new(
+    let coordinator = TransactionCoordinator::new(
         filesystem_factory,
         Some(temp_dir.path().to_str().unwrap().to_string()),
     ).await.unwrap();
@@ -423,7 +423,7 @@ async fn test_cleanup_orphaned_operations() {
     // Create some operations but don't finalize them
     for i in 0..3 {
         let config = StagingConfig {
-            operation_type: StagingOperationType::Flush,
+            operation_type: TransactionStageType::Flush,
             collection_id: Some(format!("orphaned_{}", i)),
             base_url: temp_dir.path().to_str().unwrap().to_string(),
             custom_staging_dir: None,
@@ -465,12 +465,12 @@ async fn test_viper_atomic_operations() {
         .tempdir_in("/tmp")
         .unwrap();
     let filesystem_factory = Arc::new(FilesystemFactory::new(Default::default()).await.unwrap());
-    let coordinator = UnifiedAtomicCoordinator::new(
+    let coordinator = TransactionCoordinator::new(
         filesystem_factory,
         Some(temp_dir.path().to_str().unwrap().to_string()),
     ).await.unwrap();
     
-    let viper_ops = crate::storage::atomic::ViperAtomicOperations::new(Arc::new(coordinator));
+    let viper_ops = crate::storage::transaction_coordinator::ViperTransactionalOperations::new(Arc::new(coordinator));
     
     // Test VIPER-specific flush operation
     let operation = viper_ops.begin_flush_operation(
@@ -490,23 +490,23 @@ async fn test_viper_atomic_operations() {
 
 #[tokio::test]
 async fn test_staging_operation_type_variants() {
-    // Test all StagingOperationType variants and their staging_dir_name() method
-    let flush_type = StagingOperationType::Flush;
+    // Test all TransactionStageType variants and their staging_dir_name() method
+    let flush_type = TransactionStageType::Flush;
     assert_eq!(flush_type.staging_dir_name(), "__flush");
     
-    let compaction_type = StagingOperationType::Compaction;
+    let compaction_type = TransactionStageType::Compaction;
     assert_eq!(compaction_type.staging_dir_name(), "__compact");
     
-    let metadata_type = StagingOperationType::Metadata;
+    let metadata_type = TransactionStageType::Metadata;
     assert_eq!(metadata_type.staging_dir_name(), "__metadata");
     
-    let wal_type = StagingOperationType::Wal;
+    let wal_type = TransactionStageType::Wal;
     assert_eq!(wal_type.staging_dir_name(), "__wal");
     
-    let transaction_type = StagingOperationType::Transaction;
+    let transaction_type = TransactionStageType::Transaction;
     assert_eq!(transaction_type.staging_dir_name(), "__transaction");
     
-    let custom_type = StagingOperationType::Custom("custom_staging".to_string());
+    let custom_type = TransactionStageType::Custom("custom_staging".to_string());
     assert_eq!(custom_type.staging_dir_name(), "custom_staging");
 }
 
@@ -515,7 +515,7 @@ async fn test_staging_config_default() {
     let config = StagingConfig::default();
     assert_eq!(config.base_url, "file://./data");
     assert!(config.collection_id.is_none());
-    assert_eq!(config.operation_type, StagingOperationType::Flush);
+    assert_eq!(config.operation_type, TransactionStageType::Flush);
     assert!(config.custom_staging_dir.is_none());
     assert!(config.auto_cleanup);
     assert_eq!(config.max_orphaned_age_hours, 24);
@@ -532,13 +532,13 @@ async fn test_staging_config_with_custom_staging_dir() {
         .tempdir_in("/tmp")
         .unwrap();
     let filesystem_factory = Arc::new(FilesystemFactory::new(Default::default()).await.unwrap());
-    let coordinator = UnifiedAtomicCoordinator::new(
+    let coordinator = TransactionCoordinator::new(
         filesystem_factory,
         Some(temp_dir.path().to_str().unwrap().to_string()),
     ).await.unwrap();
     
     let config = StagingConfig {
-        operation_type: StagingOperationType::Custom("my_custom_op".to_string()),
+        operation_type: TransactionStageType::Custom("my_custom_op".to_string()),
         collection_id: Some("test_collection".to_string()),
         base_url: temp_dir.path().to_str().unwrap().to_string(),
         custom_staging_dir: Some("__custom_dir".to_string()),
@@ -564,13 +564,13 @@ async fn test_operation_without_collection_id() {
         .tempdir_in("/tmp")
         .unwrap();
     let filesystem_factory = Arc::new(FilesystemFactory::new(Default::default()).await.unwrap());
-    let coordinator = UnifiedAtomicCoordinator::new(
+    let coordinator = TransactionCoordinator::new(
         filesystem_factory,
         Some(temp_dir.path().to_str().unwrap().to_string()),
     ).await.unwrap();
     
     let config = StagingConfig {
-        operation_type: StagingOperationType::Metadata,
+        operation_type: TransactionStageType::Metadata,
         collection_id: None, // No collection ID
         base_url: temp_dir.path().to_str().unwrap().to_string(),
         custom_staging_dir: None,
@@ -596,7 +596,7 @@ async fn test_invalid_operation_id_handling() {
         .tempdir_in("/tmp")
         .unwrap();
     let filesystem_factory = Arc::new(FilesystemFactory::new(Default::default()).await.unwrap());
-    let coordinator = UnifiedAtomicCoordinator::new(
+    let coordinator = TransactionCoordinator::new(
         filesystem_factory,
         Some(temp_dir.path().to_str().unwrap().to_string()),
     ).await.unwrap();
@@ -632,13 +632,13 @@ async fn test_double_finalize_operation() {
         .tempdir_in("/tmp")
         .unwrap();
     let filesystem_factory = Arc::new(FilesystemFactory::new(Default::default()).await.unwrap());
-    let coordinator = UnifiedAtomicCoordinator::new(
+    let coordinator = TransactionCoordinator::new(
         filesystem_factory,
         Some(temp_dir.path().to_str().unwrap().to_string()),
     ).await.unwrap();
     
     let config = StagingConfig {
-        operation_type: StagingOperationType::Flush,
+        operation_type: TransactionStageType::Flush,
         collection_id: Some("test_collection".to_string()),
         base_url: temp_dir.path().to_str().unwrap().to_string(),
         custom_staging_dir: None,
@@ -672,13 +672,13 @@ async fn test_write_after_finalize() {
         .tempdir_in("/tmp")
         .unwrap();
     let filesystem_factory = Arc::new(FilesystemFactory::new(Default::default()).await.unwrap());
-    let coordinator = UnifiedAtomicCoordinator::new(
+    let coordinator = TransactionCoordinator::new(
         filesystem_factory,
         Some(temp_dir.path().to_str().unwrap().to_string()),
     ).await.unwrap();
     
     let config = StagingConfig {
-        operation_type: StagingOperationType::Flush,
+        operation_type: TransactionStageType::Flush,
         collection_id: Some("test_collection".to_string()),
         base_url: temp_dir.path().to_str().unwrap().to_string(),
         custom_staging_dir: None,
@@ -716,7 +716,7 @@ async fn test_operation_status_transitions() {
         .tempdir_in("/tmp")
         .unwrap();
     let filesystem_factory = Arc::new(FilesystemFactory::new(Default::default()).await.unwrap());
-    let coordinator = UnifiedAtomicCoordinator::new(
+    let coordinator = TransactionCoordinator::new(
         filesystem_factory,
         Some(temp_dir.path().to_str().unwrap().to_string()),
     ).await.unwrap();
@@ -729,13 +729,13 @@ async fn test_operation_status_transitions() {
     
     // Check initial status
     let initial_status = coordinator.get_operation_status(&operation.operation_id).await.unwrap();
-    assert!(matches!(initial_status, AtomicOperationStatus::Preparing | AtomicOperationStatus::Staging));
+    assert!(matches!(initial_status, TransactionalOperationStatus::Preparing | TransactionalOperationStatus::Staging));
     
     // Write data (should keep it in staging)
     coordinator.write_to_staging(&operation.operation_id, "test_file.txt", b"test data").await.unwrap();
     
     let staging_status = coordinator.get_operation_status(&operation.operation_id).await.unwrap();
-    assert!(matches!(staging_status, AtomicOperationStatus::Staging));
+    assert!(matches!(staging_status, TransactionalOperationStatus::Staging));
     
     // Finalize (should mark as completed)
     coordinator.finalize_atomic_operation(&operation.operation_id).await.unwrap();
@@ -743,7 +743,7 @@ async fn test_operation_status_transitions() {
     let final_status = coordinator.get_operation_status(&operation.operation_id).await;
     // After finalization, the operation might be cleaned up, so it might not exist
     // This tests both successful finalization and cleanup behavior
-    assert!(final_status.is_none() || matches!(final_status.unwrap(), AtomicOperationStatus::Completed));
+    assert!(final_status.is_none() || matches!(final_status.unwrap(), TransactionalOperationStatus::Completed));
 }
 
 #[tokio::test]
@@ -757,7 +757,7 @@ async fn test_empty_data_write() {
         .tempdir_in("/tmp")
         .unwrap();
     let filesystem_factory = Arc::new(FilesystemFactory::new(Default::default()).await.unwrap());
-    let coordinator = UnifiedAtomicCoordinator::new(
+    let coordinator = TransactionCoordinator::new(
         filesystem_factory,
         Some(temp_dir.path().to_str().unwrap().to_string()),
     ).await.unwrap();
@@ -790,12 +790,12 @@ async fn test_wal_atomic_operations() {
         .tempdir_in("/tmp")
         .unwrap();
     let filesystem_factory = Arc::new(FilesystemFactory::new(Default::default()).await.unwrap());
-    let coordinator = UnifiedAtomicCoordinator::new(
+    let coordinator = TransactionCoordinator::new(
         filesystem_factory,
         Some(temp_dir.path().to_str().unwrap().to_string()),
     ).await.unwrap();
     
-    let wal_ops = crate::storage::atomic::WalAtomicOperations::new(Arc::new(coordinator));
+    let wal_ops = crate::storage::transaction_coordinator::WalTransactionalOperations::new(Arc::new(coordinator));
     
     // Test WAL segment rotation
     let operation = wal_ops.begin_segment_rotation(temp_dir.path().to_str().unwrap()).await

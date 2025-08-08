@@ -1,7 +1,7 @@
 use crate::storage::cache::base::BaseCacheImpl;
 use crate::storage::cache::traits::{BaseCache, CacheKey, CacheValue};
 
-impl CacheKey for String {}
+// CacheKey for String already implemented in vector_data.rs
 impl CacheKey for u64 {}
 
 #[derive(Debug, Clone)]

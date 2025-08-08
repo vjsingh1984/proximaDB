@@ -670,7 +670,7 @@ impl FileSystem for GcsFileSystem {
     
     async fn sync_file(&self, path: &str) -> FsResult<()> {
         // GCS doesn't support or need file-level sync
-        // When using UnifiedAtomicCoordinator pattern:
+        // When using TransactionCoordinator pattern:
         // 1. Data is written to staging location (possibly local)
         // 2. Move operation from staging to final location is atomic
         // 3. Once move completes, data is durable in GCS

@@ -5,13 +5,13 @@
  * you may not use this file except in compliance with the License.
  */
 
-//! Concurrency tests for UnifiedAtomicCoordinator (which uses DashMap internally)
+//! Concurrency tests for TransactionCoordinator (which uses DashMap internally)
 
 #[cfg(test)]
 mod tests {
-    use crate::storage::atomic::{
-        UnifiedAtomicCoordinator, StagingConfig, StagingOperationType, 
-        AtomicOperationStatus, generate_transaction_id
+    use crate::storage::transaction_coordinator::{
+        TransactionCoordinator, StagingConfig, TransactionStageType, 
+        TransactionalOperationStatus, generate_transaction_id
     };
     use crate::storage::persistence::filesystem::{FilesystemFactory, FilesystemConfig};
     use std::sync::Arc;
@@ -19,7 +19,7 @@ mod tests {
     use tokio::task::JoinSet;
     use std::time::Duration;
 
-    async fn create_test_coordinator() -> (UnifiedAtomicCoordinator, TempDir) {
+    async fn create_test_coordinator() -> (TransactionCoordinator, TempDir) {
         let temp_dir = TempDir::new().unwrap();
         let filesystem = Arc::new(
             FilesystemFactory::new(FilesystemConfig::default())
@@ -27,7 +27,7 @@ mod tests {
                 .unwrap()
         );
         
-        let coordinator = UnifiedAtomicCoordinator::new(
+        let coordinator = TransactionCoordinator::new(
             filesystem,
             Some(temp_dir.path().to_str().unwrap().to_string()),
         )
@@ -51,7 +51,7 @@ mod tests {
                 let config = StagingConfig {
                     base_url: format!("file:///tmp/test_{}", i),
                     collection_id: Some(format!("collection_{}", i)),
-                    operation_type: StagingOperationType::Flush,
+                    operation_type: TransactionStageType::Flush,
                     custom_staging_dir: None,
                     auto_cleanup: true,
                     max_orphaned_age_hours: 24,
@@ -147,7 +147,7 @@ mod tests {
                     let config = StagingConfig {
                         base_url: format!("file:///tmp/tx_{}_{}", i, j),
                         collection_id: Some(format!("tx_collection_{}_{}", i, j)),
-                        operation_type: StagingOperationType::Transaction,
+                        operation_type: TransactionStageType::Transaction,
                         custom_staging_dir: None,
                         auto_cleanup: true,
                         max_orphaned_age_hours: 24,
@@ -195,11 +195,11 @@ mod tests {
                     base_url: "file:///tmp/high_contention".to_string(),
                     collection_id: Some(coll_id),
                     operation_type: if i % 3 == 0 {
-                        StagingOperationType::Flush
+                        TransactionStageType::Flush
                     } else if i % 3 == 1 {
-                        StagingOperationType::Compaction
+                        TransactionStageType::Compaction
                     } else {
-                        StagingOperationType::Metadata
+                        TransactionStageType::Metadata
                     },
                     custom_staging_dir: None,
                     auto_cleanup: true,
@@ -255,7 +255,7 @@ mod tests {
             let config = StagingConfig {
                 base_url: format!("file:///tmp/consistency_{}", i),
                 collection_id: Some(format!("consistency_collection_{}", i)),
-                operation_type: StagingOperationType::Flush,
+                operation_type: TransactionStageType::Flush,
                 custom_staging_dir: None,
                 auto_cleanup: false, // Disable auto cleanup for this test
                 max_orphaned_age_hours: 24,
@@ -268,7 +268,7 @@ mod tests {
             // Immediately verify the operation is visible
             let status = coordinator.get_operation_status(&op.operation_id).await;
             assert!(status.is_some());
-            assert_eq!(status.unwrap(), AtomicOperationStatus::Preparing);
+            assert_eq!(status.unwrap(), TransactionalOperationStatus::Preparing);
         }
         
         // Verify all operations are listed

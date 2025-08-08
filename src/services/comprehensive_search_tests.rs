@@ -25,7 +25,7 @@ mod tests {
     use tracing::debug;
     
     use crate::compute::distance::{DistanceMetric, PlatformCapability};
-    use crate::compute::unified_distance::{UnifiedDistanceCompute, DistanceMode};
+    use crate::compute::distance_compute_engine::{UnifiedDistanceCompute, DistanceMode};
     use crate::core::hardware_capabilities::HardwareBackend;
     use crate::core::search::{
         SearchParams, SearchResultSet, UnifiedSearchContext, UnifiedSearchEngine,
@@ -34,7 +34,7 @@ mod tests {
     };
     use crate::storage::engines::viper::FilterValue;
     use crate::proto::proximadb::{VectorRecord, MetadataItem};
-    use crate::services::direct_vector_service::DirectVectorService;
+    use crate::services::vector_operations_service::VectorOperationsService;
     use crate::storage::engines::viper::unified_search_engine::{ViperUnifiedSearchEngine, ViperSearchConfig};
     use crate::storage::engines::sst::unified_search_engine::{SstUnifiedSearchEngine, SstSearchConfig};
     use crate::storage::engines::viper::readers::unified_parquet_reader::UnifiedParquetReader;

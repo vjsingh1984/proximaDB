@@ -28,7 +28,7 @@ pub mod distance;
 // pub mod hardware_detection;
 // pub mod indexing;  // Removed - all indexing now in AXIS package
 // pub mod quantization;  // Removed - use unified_quantization instead
-pub mod unified_distance;
+pub mod distance_compute_engine;
 pub mod memory_layout;
 pub mod memory_pool;
 pub mod unified_quantization;
@@ -45,7 +45,7 @@ pub use distance::*;
 // pub use indexing::*;  // Commented out as indexing module is empty
 // Old quantization module removed - use unified_quantization types instead
 pub use memory_pool::*;
-pub use unified_distance::*;
+pub use distance_compute_engine::*;
 pub use unified_quantization::*;
 
 #[cfg(test)]

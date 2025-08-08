@@ -26,7 +26,7 @@
 pub mod test_utils;
 
 // Isolated integration tests with individual collections
-pub mod isolated_storage_assignment_test;
+// pub mod isolated_storage_assignment_test; // File not found - commented for now
 pub mod isolated_filesystem_test;
 // SST engine integration tests
 pub mod isolated_sst_engine_test;
@@ -74,8 +74,8 @@ pub mod sst_collection_test;
 pub mod mvcc_logic_integration_test;
 
 // Assignment service recovery integration tests
-pub mod assignment_service_recovery_integration_test;
-pub mod assignment_discovery_simple_test;
+// pub mod assignment_service_recovery_integration_test; // File not found - commented for now
+// pub mod assignment_discovery_simple_test; // File not found - commented for now
 
 // Storage-aware search integration tests - REMOVED (obsolete APIs)
 // pub mod storage_aware_search_tests;

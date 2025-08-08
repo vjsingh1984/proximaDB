@@ -26,7 +26,7 @@ use tower_http::compression::CompressionLayer;
 use tower_http::decompression::DecompressionLayer;
 
 use super::handlers::{create_router, AppState};
-use crate::handlers::UnifiedHandlers;
+use crate::api_handlers::UnifiedHandlers;
 
 /// REST server for ProximaDB
 pub struct RestServer {

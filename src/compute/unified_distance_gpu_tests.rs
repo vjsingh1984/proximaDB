@@ -9,7 +9,7 @@
 
 #[cfg(test)]
 mod tests {
-    use crate::compute::unified_distance::{UnifiedDistanceCompute, HardwareBackend, DistanceMode};
+    use crate::compute::distance_compute_engine::{UnifiedDistanceCompute, HardwareBackend, DistanceMode};
     use crate::compute::distance::{DistanceMetric, PlatformCapability};
     use std::time::Instant;
 

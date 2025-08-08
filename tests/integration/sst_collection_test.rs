@@ -100,9 +100,10 @@ async fn test_lsm_collection_with_proper_routing() {
         description: None,
         tags: vec![],
         owner: None,
-                compression: None,
-                optimization_hints: None,
-            };
+        compression: None,
+        optimization_hints: None,
+        storage_location: None,
+    };
     
     let create_response = collection_service.create_collection(&collection_config).await.unwrap();
     assert!(create_response.success, "Collection creation should succeed");
@@ -131,7 +132,7 @@ async fn test_lsm_collection_with_proper_routing() {
     let distance_compute = Arc::new(UnifiedDistanceCompute::new(proximadb::compute::distance::DistanceMetric::Cosine));
     
     let lsm_engine = Arc::new(
-        SstStorage::new(collection_id.clone(), lsm_config, filesystem.clone(), distance_compute.clone())
+        SstStorage::new(lsm_config, filesystem.clone(), distance_compute.clone())
             .await
             .unwrap()
     );
@@ -145,21 +146,15 @@ async fn test_lsm_collection_with_proper_routing() {
     let mut write_buffer_config = WriteBufferConfig::default();
     write_buffer_config.multi_disk.data_directories = vec![format!("file://{}/wal", base_path)];
     
-    // Get assignment service and create assignment for the collection
-    let assignment_service = get_assignment_service();
+    // Assignment service removed - collections now embed storage_assignment
     let storage_locations: Vec<StorageLocation> = vec![StorageLocation {
         url: format!("file://{}", base_path),
         weight: 1,
         tags: vec![],
     }];
     
-    // Create assignment for the collection
-    let assignment = assignment_service
-        .assign_collection(&collection_id, &storage_locations, "hash")
-        .await
-        .unwrap();
-    
-    println!("Created assignment for collection {} at {}", collection_id, assignment.data_url);
+    // Storage assignment happens through collection creation now
+    println!("Setting up storage for collection {}", collection_id);
     
     // Create DirectVectorService with collection service for proper engine routing
     let direct_service = Arc::new(
@@ -282,12 +277,8 @@ async fn test_lsm_collection_with_proper_routing() {
     let storage_url = lsm_engine.get_collection_storage_url(&collection_id).await.unwrap();
     println!("LSM storage URL: {}", storage_url);
     
-    // Also check the assignment URL to see where data is actually stored
-    let assignment_url = assignment.data_url.clone();
-    println!("Assignment URL: {}", assignment_url);
-    
-    // Check both locations
-    let urls_to_check = vec![storage_url.clone(), assignment_url.clone()];
+    // Check the storage location
+    let urls_to_check = vec![storage_url.clone()];
     let mut total_sst_files = 0;
     
     for url in &urls_to_check {

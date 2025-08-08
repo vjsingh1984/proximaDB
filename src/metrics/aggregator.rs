@@ -53,13 +53,13 @@ pub struct AggregatedMetrics {
     pub success_rate: f32,
 }
 
-/// Metrics aggregator for time-series analysis
-pub struct MetricsAggregator {
+/// Metrics aggregation engine for time-series analysis
+pub struct MetricsAggregationEngine {
     /// Time-series data points
     time_series: HashMap<String, Vec<CollectionMetrics>>,
 }
 
-impl MetricsAggregator {
+impl MetricsAggregationEngine {
     /// Create a new aggregator
     pub fn new() -> Self {
         Self {

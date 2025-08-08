@@ -1,13 +1,13 @@
-pub mod lru;
-pub mod lfu;
-pub mod arc;
+pub mod least_recently_used;
+pub mod least_frequently_used;
+pub mod adaptive_replacement;
 
 use std::collections::HashMap;
 use std::hash::Hash;
 
-pub use lru::LRUStrategy;
-pub use lfu::LFUStrategy;
-pub use arc::ARCStrategy;
+pub use least_recently_used::LRUStrategy;
+pub use least_frequently_used::LFUStrategy;
+pub use adaptive_replacement::ARCStrategy;
 
 /// Cache state information for eviction decisions
 pub struct CacheState {

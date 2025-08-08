@@ -21,7 +21,7 @@ use std::sync::Arc;
 use tracing::{debug, info, warn};
 
 use super::distance::{DistanceCompute, DistanceMetric};
-use crate::compute::unified_distance::{GpuAccelerator, HardwareBackend};
+use crate::compute::distance_compute_engine::{GpuAccelerator, HardwareBackend};
 use crate::core::hardware_capabilities::GpuBackend;
 
 // Using central GpuBackend enum from hardware_capabilities module

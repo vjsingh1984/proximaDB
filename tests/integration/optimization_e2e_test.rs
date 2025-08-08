@@ -212,7 +212,6 @@ async fn test_optimization_end_to_end() -> anyhow::Result<()> {
     // Create SST engine
     let distance_compute = Arc::new(UnifiedDistanceCompute::new(proximadb::compute::distance::DistanceMetric::Cosine));
     let sst_engine = SstStorage::new(
-        "optimization_test".to_string(),
         (*sst_config).clone(),
         filesystem.clone(),
         distance_compute
@@ -250,9 +249,7 @@ async fn test_optimization_end_to_end() -> anyhow::Result<()> {
             ..Default::default()
         }),
         storage_assignment: Some(proximadb::proto::proximadb::StorageAssignment {
-            data_location: format!("{}/optimization_test/data", temp_dir.path().display()),
-            wal_location: format!("{}/optimization_test/write_buffer", temp_dir.path().display()),
-            location_index: 0,
+            base_location: format!("{}/optimization_test", temp_dir.path().display()),
             assigned_at: chrono::Utc::now().timestamp(),
         }),
         ..Default::default()

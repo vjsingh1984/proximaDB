@@ -281,7 +281,7 @@ pub async fn setup_test_directories(base_path: &Path) -> anyhow::Result<()> {
 
 /// Setup storage assignment for a collection with persistent directory management
 /// This ensures the same collection always gets the same directory across test runs
-pub async fn setup_storage_assignment(collection_id: &str, _base_path: &str) -> anyhow::Result<()> {
+pub async fn setup_storage_assignment(collection_id: &str, _base_path: &str) -> anyhow::Result<TestAssignmentData> {
     use proximadb::core::config::StorageLocation;
     
     // Get persistent assignment (creates new one if doesn't exist)
@@ -301,7 +301,9 @@ pub async fn setup_storage_assignment(collection_id: &str, _base_path: &str) -> 
     // 🔴 OBSOLETE - Assignment service removed, using test assignment directly
     // No need to register with service - just use the test assignment paths
     
-    // Verify assignment was created - use the test assignment directly
+    // Assignment service removed - collections now embed storage_assignment
+    // Use the test assignment directly
+    /*
     let assignment = assignment_service.get_assignment(collection_id).await;
     if let Some(assignment) = assignment {
         // If assignment differs from our persistent one, update the persistent storage
@@ -333,8 +335,14 @@ pub async fn setup_storage_assignment(collection_id: &str, _base_path: &str) -> 
     } else {
         return Err(anyhow::anyhow!("Assignment was not created for collection {}", collection_id));
     }
+    */
     
-    Ok(())
+    // Just use the test assignment directly
+    let data_path = test_assignment.data_url.strip_prefix("file://").unwrap_or(&test_assignment.data_url);
+    tokio::fs::create_dir_all(data_path).await?;
+    println!("Created data directory: {}", data_path);
+    
+    Ok(test_assignment)
 }
 
 /// Cleanup test directories  

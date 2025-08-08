@@ -45,19 +45,13 @@ fn generate_test_vectors(count: usize, dimension: usize, sparsity: f32) -> Vec<V
 /// Create test VectorRecord
 fn create_vector_record(id: &str, vector: Vec<f32>) -> VectorRecord {
     VectorRecord {
-        id: Some(Some(id.to_string())),
+        id: Some(id.to_string()),
         vector,
         metadata: vec![
             MetadataItem {
                 key: "category".to_string(),
                 value: Some(proximadb::proto::proximadb::metadata_item::Value::StringValue("benchmark".to_string())),
-            timestamp: 0,
-            updated_at: None,
-            expires_at: None,
-            distance: None,
-            rank: None,
-            score: None,
-        },
+            },
         ],
         timestamp: 1234567890,
         updated_at: Some(1234567890),
@@ -312,10 +306,12 @@ fn bench_streaming_compression(c: &mut Criterion) {
             BenchmarkId::new("streaming", format!("{}workers", worker_count)),
             &worker_count,
             |b, _| {
-                b.to_async(&rt).iter(|| async {
-                    let compressor = StreamingCompressor::new(config.clone()).unwrap();
-                    let _results = compressor.compress_stream(vectors.clone(), vector_config.clone()).await.unwrap();
-                    compressor.shutdown().await.unwrap();
+                b.iter(|| {
+                    rt.block_on(async {
+                        let compressor = StreamingCompressor::new(config.clone()).unwrap();
+                        let _results = compressor.compress_stream(vectors.clone(), vector_config.clone()).await.unwrap();
+                        compressor.shutdown().await.unwrap();
+                    })
                 });
             },
         );
@@ -364,14 +360,16 @@ fn bench_end_to_end_performance(c: &mut Criterion) {
     
     // Streaming pipeline
     group.bench_function("streaming_pipeline", |b| {
-        b.to_async(&rt).iter(|| async {
-            let config = StreamingConfig::default();
-            let compressor = StreamingCompressor::new(config).unwrap();
-            let vector_config = VectorSerializationConfig::default();
-            
-            let vectors: Vec<Vec<f32>> = records.iter().map(|r| r.vector.clone()).collect();
-            let _results = compressor.compress_stream(vectors, vector_config).await.unwrap();
-            compressor.shutdown().await.unwrap();
+        b.iter(|| {
+            rt.block_on(async {
+                let config = StreamingConfig::default();
+                let compressor = StreamingCompressor::new(config).unwrap();
+                let vector_config = VectorSerializationConfig::default();
+                
+                let vectors: Vec<Vec<f32>> = records.iter().map(|r| r.vector.clone()).collect();
+                let _results = compressor.compress_stream(vectors, vector_config).await.unwrap();
+                compressor.shutdown().await.unwrap();
+            })
         });
     });
     

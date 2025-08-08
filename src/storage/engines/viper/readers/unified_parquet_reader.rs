@@ -11,7 +11,7 @@ use tracing::{debug, info, warn};
 use crate::core::VectorRecord;
 use crate::core::search::FilterExpression;
 use crate::compute::distance::DistanceMetric;
-use crate::compute::unified_distance::UnifiedDistanceCompute;
+use crate::compute::distance_compute_engine::UnifiedDistanceCompute;
 use crate::storage::persistence::filesystem::FilesystemFactory;
 
 /// Unified Parquet Reader with automatic strategy selection
@@ -184,7 +184,7 @@ pub enum FilterValue {
     EndsWith(String),
     IsNull,
     IsNotNull,
-    Range(std::ops::Range<i64>), // Backward compatibility
+    Range(std::ops::Range<i64>),
 }
 
 impl Default for ReaderConfig {

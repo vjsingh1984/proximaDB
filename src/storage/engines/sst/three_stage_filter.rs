@@ -12,7 +12,7 @@ use tracing::{debug, info, warn};
 
 use crate::core::VectorRecord;
 use crate::core::search::{FilterExpression, ComparisonOperator};
-use crate::storage::engines::sst::{IndexEntry, DataBlock, SstRecord};
+use crate::storage::engines::sst::{IndexEntry, DataBlock, SstRecord, CompressionAlgorithmSst};
 use crate::storage::engines::sst::bloom_filter::SstableBloomFilter;
 use crate::storage::engines::sst::optimized_row_filter::{SSTRowFilterEvaluator, SSTBatchFilterEvaluator};
 use crate::proto::proximadb::{MetadataItem, metadata_item};
@@ -523,7 +523,7 @@ mod tests {
                     },
                 ],
                 uncompressed_size: 1024,
-                compression_enabled: false,
+                compression_algorithm: CompressionAlgorithmSst::None,
                 compression_ratio: 1.0,
             },
         ]

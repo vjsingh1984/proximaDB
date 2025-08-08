@@ -144,7 +144,7 @@ impl CachedQueryResult {
 
 /// Cache configuration
 #[derive(Debug, Clone)]
-pub struct QueryResultCacheConfig {
+pub struct QueryCacheConfig {
     /// Maximum number of cache entries
     pub max_entries: usize,
     /// Time-to-live for cache entries in seconds
@@ -155,7 +155,7 @@ pub struct QueryResultCacheConfig {
     pub max_result_size_bytes: usize,
 }
 
-impl Default for QueryResultCacheConfig {
+impl Default for QueryCacheConfig {
     fn default() -> Self {
         Self {
             max_entries: DEFAULT_MAX_CACHE_ENTRIES,
@@ -168,7 +168,7 @@ impl Default for QueryResultCacheConfig {
 
 /// Cache statistics for monitoring
 #[derive(Debug, Default)]
-pub struct QueryResultCacheStats {
+pub struct QueryCacheStats {
     /// Total cache hits
     pub hits: AtomicU64,
     /// Total cache misses
@@ -183,7 +183,7 @@ pub struct QueryResultCacheStats {
     pub memory_usage_bytes: AtomicUsize,
 }
 
-impl QueryResultCacheStats {
+impl QueryCacheStats {
     /// Get hit ratio as percentage
     pub fn hit_ratio(&self) -> f64 {
         let hits = self.hits.load(Ordering::Relaxed) as f64;
@@ -210,24 +210,24 @@ impl QueryResultCacheStats {
 }
 
 /// High-performance query result cache with lock-free concurrent access
-pub struct QueryResultCache {
+pub struct QueryCache {
     /// Lock-free concurrent cache storage
     cache: DashMap<QueryCacheKey, CachedQueryResult>,
     /// Cache configuration
-    config: QueryResultCacheConfig,
+    config: QueryCacheConfig,
     /// Cache statistics
-    stats: Arc<QueryResultCacheStats>,
+    stats: Arc<QueryCacheStats>,
     /// Last cleanup timestamp
     last_cleanup: AtomicU64,
 }
 
-impl QueryResultCache {
+impl QueryCache {
     /// Create new query result cache
-    pub fn new(config: QueryResultCacheConfig) -> Self {
+    pub fn new(config: QueryCacheConfig) -> Self {
         Self {
             cache: DashMap::new(),
             config,
-            stats: Arc::new(QueryResultCacheStats::default()),
+            stats: Arc::new(QueryCacheStats::default()),
             last_cleanup: AtomicU64::new(0),
         }
     }
@@ -323,7 +323,7 @@ impl QueryResultCache {
     }
     
     /// Get cache statistics
-    pub fn stats(&self) -> Arc<QueryResultCacheStats> {
+    pub fn stats(&self) -> Arc<QueryCacheStats> {
         Arc::clone(&self.stats)
     }
     
@@ -415,23 +415,23 @@ impl QueryResultCache {
     }
 }
 
-impl Default for QueryResultCache {
+impl Default for QueryCache {
     fn default() -> Self {
-        Self::new(QueryResultCacheConfig::default())
+        Self::new(QueryCacheConfig::default())
     }
 }
 
 // Thread-safe: DashMap is lock-free and thread-safe
-unsafe impl Send for QueryResultCache {}
-unsafe impl Sync for QueryResultCache {}
+unsafe impl Send for QueryCache {}
+unsafe impl Sync for QueryCache {}
 
 /// Global query result cache instance
 use std::sync::OnceLock;
-static GLOBAL_QUERY_CACHE: OnceLock<QueryResultCache> = OnceLock::new();
+static GLOBAL_QUERY_CACHE: OnceLock<QueryCache> = OnceLock::new();
 
 /// Get global query result cache
-pub fn get_global_query_cache() -> &'static QueryResultCache {
-    GLOBAL_QUERY_CACHE.get_or_init(QueryResultCache::default)
+pub fn get_global_query_cache() -> &'static QueryCache {
+    GLOBAL_QUERY_CACHE.get_or_init(QueryCache::default)
 }
 
 /// Convenience function to cache query result globally
@@ -471,7 +471,7 @@ mod tests {
     
     #[test]
     fn test_basic_cache_operations() {
-        let cache = QueryResultCache::default();
+        let cache = QueryCache::default();
         
         let key = QueryCacheKey::new("SELECT * FROM test", "test_collection", None);
         let result_data = b"test result data".to_vec();
@@ -490,11 +490,11 @@ mod tests {
     
     #[test]
     fn test_cache_expiration() {
-        let config = QueryResultCacheConfig {
+        let config = QueryCacheConfig {
             ttl_seconds: 1, // 1 second TTL
             ..Default::default()
         };
-        let cache = QueryResultCache::new(config);
+        let cache = QueryCache::new(config);
         
         let key = QueryCacheKey::new("SELECT * FROM test", "test_collection", None);
         let result_data = b"test result data".to_vec();
@@ -514,7 +514,7 @@ mod tests {
     
     #[test]
     fn test_collection_invalidation() {
-        let cache = QueryResultCache::default();
+        let cache = QueryCache::default();
         
         let key1 = QueryCacheKey::new("SELECT * FROM test1", "collection_1", None);
         let key2 = QueryCacheKey::new("SELECT * FROM test2", "collection_2", None);
@@ -538,11 +538,11 @@ mod tests {
     
     #[test]
     fn test_lru_eviction() {
-        let config = QueryResultCacheConfig {
+        let config = QueryCacheConfig {
             max_entries: 3,
             ..Default::default()
         };
-        let cache = QueryResultCache::new(config);
+        let cache = QueryCache::new(config);
         
         // Insert 4 entries (exceeds max)
         for i in 0..4 {
@@ -566,7 +566,7 @@ mod tests {
     
     #[test]
     fn test_concurrent_access() {
-        let cache = Arc::new(QueryResultCache::default());
+        let cache = Arc::new(QueryCache::default());
         
         let handles: Vec<_> = (0..10).map(|i| {
             let cache_clone = Arc::clone(&cache);
@@ -597,7 +597,7 @@ mod tests {
     
     #[test]
     fn test_memory_usage_tracking() {
-        let cache = QueryResultCache::default();
+        let cache = QueryCache::default();
         
         let key = QueryCacheKey::new("SELECT * FROM test", "collection", None);
         let result_data = b"test result data with some length".to_vec();
@@ -632,11 +632,11 @@ mod tests {
     
     #[test]
     fn test_cache_disabled() {
-        let config = QueryResultCacheConfig {
+        let config = QueryCacheConfig {
             enabled: false,
             ..Default::default()
         };
-        let cache = QueryResultCache::new(config);
+        let cache = QueryCache::new(config);
         
         let key = QueryCacheKey::new("SELECT * FROM test", "collection", None);
         let result_data = b"test result data".to_vec();
@@ -651,11 +651,11 @@ mod tests {
     
     #[test]
     fn test_large_result_filtering() {
-        let config = QueryResultCacheConfig {
+        let config = QueryCacheConfig {
             max_result_size_bytes: 10, // Very small limit
             ..Default::default()
         };
-        let cache = QueryResultCache::new(config);
+        let cache = QueryCache::new(config);
         
         let key = QueryCacheKey::new("SELECT * FROM test", "collection", None);
         let large_result = b"this is a very large result that exceeds the limit".to_vec();

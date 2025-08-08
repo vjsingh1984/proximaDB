@@ -17,7 +17,7 @@ use uuid::Uuid;
 
 
 use crate::storage::{
-    metadata::{StrategyChangeStatus, StrategyChangeType},
+    metadata_store::{StrategyChangeStatus, StrategyChangeType},
     strategy::{CollectionStrategyConfig, StorageEngineType, IndexingAlgorithm, DistanceMetric},
     MetadataStore,
 };

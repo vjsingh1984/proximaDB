@@ -3,7 +3,7 @@
 use super::*;
 use anyhow::Result;
 use std::sync::Arc;
-use crate::storage::atomic::{UnifiedAtomicCoordinator, StagingConfig, StagingOperationType};
+use crate::storage::transaction_coordinator::{TransactionCoordinator, StagingConfig, TransactionStageType};
 
 /// Test basic filesystem operations across all backends
 #[cfg(test)]
@@ -11,7 +11,7 @@ mod filesystem_api_tests {
     use super::*;
 
     /// Helper to create test filesystem factory with atomic coordinator
-    async fn create_test_factory() -> Result<(Arc<FilesystemFactory>, Arc<UnifiedAtomicCoordinator>)> {
+    async fn create_test_factory() -> Result<(Arc<FilesystemFactory>, Arc<TransactionCoordinator>)> {
         let mut config = FilesystemConfig::default();
         config.default_fs = Some("file:///tmp/proximadb-fs-tests".to_string());
         
@@ -27,7 +27,7 @@ mod filesystem_api_tests {
         });
         
         let factory = Arc::new(FilesystemFactory::new(config).await?);
-        let coordinator = Arc::new(UnifiedAtomicCoordinator::new(factory.clone(), None).await?);
+        let coordinator = Arc::new(TransactionCoordinator::new(factory.clone(), None).await?);
         
         Ok((factory, coordinator))
     }
@@ -43,7 +43,7 @@ mod filesystem_api_tests {
         let staging_config = StagingConfig {
             base_url: "file:///tmp/proximadb-fs-tests".to_string(),
             collection_id: None,
-            operation_type: StagingOperationType::Custom("test".to_string()),
+            operation_type: TransactionStageType::Custom("test".to_string()),
             auto_cleanup: true,
             ..Default::default()
         };

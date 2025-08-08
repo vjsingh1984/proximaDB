@@ -18,9 +18,10 @@
 //!
 //! Provides HTTP/JSON endpoints that delegate to the unified service layer
 
+pub use crate::api_handlers;
 pub mod handlers;
 pub mod server;
 
 
-pub use handlers::*;
+pub use api_handlers::*;
 pub use server::*;

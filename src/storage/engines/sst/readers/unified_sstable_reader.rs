@@ -19,7 +19,7 @@ use std::ptr;
 
 use crate::core::VectorRecord;
 use crate::core::search::{SearchParams, SearchResult, FilterExpression};
-use crate::compute::unified_distance::UnifiedDistanceCompute;
+use crate::compute::distance_compute_engine::UnifiedDistanceCompute;
 use crate::storage::persistence::filesystem::FilesystemFactory;
 use crate::storage::engines::sst::bloom_filter::SstableBloomFilter;
 use crate::storage::engines::sst::{SstableHeader, DataBlock, IndexEntry};

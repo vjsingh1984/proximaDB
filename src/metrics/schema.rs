@@ -7,6 +7,28 @@
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::time::SystemTime;
+
+/// Alert for threshold violations
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Alert {
+    pub id: String,
+    pub level: AlertLevel,
+    pub message: String,
+    pub metric_name: String,
+    pub current_value: f64,
+    pub threshold_value: f64,
+    pub timestamp: SystemTime,
+    pub acknowledged: bool,
+}
+
+/// Alert severity level
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum AlertLevel {
+    Info,
+    Warning,
+    Critical,
+}
 
 /// Comprehensive metrics for a single collection
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]

@@ -22,9 +22,9 @@ use tokio::sync::mpsc;
 use tracing::{debug, info, warn};
 
 use crate::compute::distance::DistanceMetric;
-use crate::compute::unified_distance::UnifiedDistanceCompute;
+use crate::compute::distance_compute_engine::UnifiedDistanceCompute;
 use crate::core::search::{SearchResult, SearchDebugInfo};
-use crate::services::direct_vector_service::DirectVectorService;
+use crate::services::vector_operations_service::VectorOperationsService;
 
 /// Configuration for streaming search
 #[derive(Debug, Clone)]
@@ -64,7 +64,7 @@ impl Default for StreamingSearchConfig {
 /// Lock-free streaming search service
 pub struct StreamingSearchService {
     /// Direct vector service for optimized access
-    direct_service: Arc<DirectVectorService>,
+    direct_service: Arc<VectorOperationsService>,
     
     /// Configuration
     config: StreamingSearchConfig,
@@ -142,7 +142,7 @@ pub struct SearchMetadata {
 impl StreamingSearchService {
     /// Create new streaming search service
     pub fn new(
-        direct_service: Arc<DirectVectorService>,
+        direct_service: Arc<VectorOperationsService>,
         config: Option<StreamingSearchConfig>,
     ) -> Self {
         let config = config.unwrap_or_default();
@@ -390,7 +390,7 @@ impl StreamingSearchService {
         debug!("🔍 STREAMING_WAL: Searching unflushed vectors");
         
         // Get direct access to WAL memtable
-        if let Some(wal_behavior) = self.direct_service.get_write_buffer_behavior_wrapper() {
+        if let Some(wal_behavior) = self.direct_service.get_wal_behavior_wrapper() {
             let unflushed_batches = wal_behavior
                 .get_unflushed_batches(collection_id)
                 .await?;

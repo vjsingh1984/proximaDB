@@ -20,7 +20,7 @@ pub mod engines;
 pub mod persistence;
 
 // Unified atomic operations
-pub mod atomic;
+pub mod transaction_coordinator;
 
 // Core modules
 pub mod engine;
@@ -31,15 +31,11 @@ pub mod metadata;
 pub mod optimization;
 // Strategy module for collection lifecycle configuration
 pub mod strategy;
-// Unified cross-engine cache system for performance optimization
-// Restored to improve query performance through intelligent caching
-pub mod unified_cache;
-
-// New specialized cache system with shared infrastructure
+// Specialized cache system with shared infrastructure
 pub mod cache;
 
 // Lock-free implementations have been integrated into the main implementations
-// UnifiedAtomicCoordinator now uses DashMap for active_operations
+// TransactionCoordinator now uses DashMap for active_operations
 // StorageEngine now uses DashMap for lsm_trees and mmap_readers
 
 
@@ -61,25 +57,18 @@ pub use engines::{sst::SstStorage, viper::ViperEngine};
 pub use persistence::{DiskManager, FilesystemConfig, FilesystemFactory};
 
 // Atomic operations exports
-pub use atomic::{
-    AtomicOperationMetadata, AtomicOperationStatus, StagingConfig, StagingOperationType,
-    UnifiedAtomicCoordinator, ViperAtomicOperations, WalAtomicOperations,
+pub use transaction_coordinator::{
+    TransactionalOperationMetadata, TransactionalOperationStatus, StagingConfig, TransactionStageType,
+    TransactionCoordinator, ViperTransactionalOperations, WalTransactionalOperations,
 };
 
-// 🔴 UNUSED EXPORTS - COMMENTED OUT FOR REMOVAL  
-// Cache system never integrated, only used in test files
-// Unified cache system exports (Phase 2 optimization)
-// pub use unified_cache::{
-//     UnifiedCrossEngineCache, UnifiedCacheConfig, CacheKey, CacheDataType,
-//     MemoryPressure, CrossEngineMetrics,
-// };
 
 // Storage engine exports
 pub use engine::StorageEngine;
 // Write Buffer system exports
 use crate::core::StorageError;
 pub use metadata::{CollectionMetadata, MetadataStore, SystemMetadata};
-pub use persistence::write_buffer::{BatchId, WriteBufferConfig, WriteBufferManager, WriteBufferOperation};
+pub use persistence::write_ahead_log::{BatchId, WALConfig, WriteAheadLogManager, WALOperation};
 
 // ResultProcessor has naming conflicts, import explicitly when needed
 

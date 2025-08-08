@@ -12,10 +12,10 @@ use tokio::sync::{Mutex, RwLock};
 use tracing::{debug, info, warn};
 use uuid::Uuid;
 
-use crate::handlers::UnifiedHandlers;
+use crate::api_handlers::UnifiedHandlers;
 use crate::monitoring::MetricsCollector;
 use crate::services::collection_service::CollectionService;
-use crate::services::DirectVectorService;
+use crate::services::VectorOperationsService;
 use crate::storage::metadata::backends::filestore_backend::{
     FilestoreMetadataBackend, FilestoreMetadataConfig,
 };
@@ -288,7 +288,7 @@ impl MultiServerConfig {
 #[derive(Clone)]
 pub struct SharedServices {
     pub collection_service: Arc<CollectionService>,
-    pub direct_vector_service: Arc<DirectVectorService>,
+    pub vector_operations_service: Arc<VectorOperationsService>,
     pub unified_handlers: Arc<UnifiedHandlers>,
     pub metrics_collector: Option<Arc<MetricsCollector>>,
     // Removed circular dependency: storage field removed
@@ -368,10 +368,10 @@ impl SharedServices {
         // Collection service will be injected into StorageEngine by ProximaDB::new
         info!("✅ SharedServices: Collection service created for injection into StorageEngine");
 
-        // 🚀 Create DirectVectorService directly for 40-60% performance improvement
+        // 🚀 Create VectorOperationsService directly for 40-60% performance improvement
         // Use WAL config from TOML configuration
         debug!("🔧 SharedServices::new - Converting WAL config from TOML...");
-        let write_buffer_config = Self::convert_toml_to_write_buffer_config(&storage_config.write_buffer_config);
+        let wal_config = Self::convert_toml_to_wal_config(&storage_config.wal_config);
         debug!("✅ SharedServices::new - WAL config converted successfully from TOML");
         
         // Create filesystem factory for engines
@@ -396,19 +396,19 @@ impl SharedServices {
             crate::storage::engines::sst::SstStorage::new(
                 storage_config.sst_config.clone(),
                 filesystem_factory.clone(),
-                Arc::new(crate::compute::unified_distance::UnifiedDistanceCompute::default()),
+                Arc::new(crate::compute::distance_compute_engine::UnifiedDistanceCompute::default()),
             ).await?
         );
         debug!("✅ SharedServices::new - SST engine created successfully");
         
-        // Create DirectVectorService with optimized architecture
-        debug!("🔧 SharedServices::new - About to create DirectVectorService...");
-        let direct_vector_service = Arc::new(
-            DirectVectorService::new(write_buffer_config, viper_engine, sst_engine).await?
+        // Create VectorOperationsService with optimized architecture
+        debug!("🔧 SharedServices::new - About to create VectorOperationsService...");
+        let vector_operations_service = Arc::new(
+            VectorOperationsService::new(wal_config, viper_engine, sst_engine).await?
         );
         
-        info!("✅ SharedServices: DirectVectorService created successfully - 40-60% performance boost enabled");
-        debug!("🔧 SharedServices::new - DirectVectorService created successfully");
+        info!("✅ SharedServices: VectorOperationsService created successfully - 40-60% performance boost enabled");
+        debug!("🔧 SharedServices::new - VectorOperationsService created successfully");
         
         // Collection recovery will be handled by StorageEngine::start()
         // SharedServices no longer tries to recover before storage starts
@@ -498,17 +498,17 @@ impl SharedServices {
             info!("📋 SharedServices: No collections found in WAL to restore");
         }
 
-        // Create unified handlers with DirectVectorService
+        // Create unified handlers with VectorOperationsService
         let unified_handlers = Arc::new(UnifiedHandlers::new(
             collection_service.clone(),
-            direct_vector_service.clone(),
+            vector_operations_service.clone(),
         ));
 
         info!("✅ SharedServices: Business logic hub ready for ALL protocols (gRPC, REST, WebSocket, etc.)");
 
         Ok((Self {
             collection_service: collection_service.clone(),
-            direct_vector_service,
+            vector_operations_service,
             unified_handlers,
             metrics_collector,
         }, collection_service))
@@ -536,24 +536,24 @@ impl SharedServices {
         // TODO: Implement actual vector recovery from write buffer
         // This would involve:
         // 1. For each collection, check if write buffer has unflushed data
-        // 2. Load vectors from write buffer into DirectVectorService memtable
+        // 2. Load vectors from write buffer into VectorOperationsService memtable
         // 3. Mark recovery complete for each collection
         
         info!("✅ SharedServices: Vector recovery completed");
         Ok(())
     }
     
-    /// Convert TOML WriteBufferConfig to internal WriteBufferConfig
-    fn convert_toml_to_write_buffer_config(
+    /// Convert TOML WALConfig to internal WALConfig
+    fn convert_toml_to_wal_config(
         toml_config: &crate::core::config::WriteBufferUserConfig
-    ) -> crate::storage::persistence::write_buffer::config::WriteBufferConfig {
-        use crate::storage::persistence::write_buffer::config::{
-            WriteBufferConfig, PerformanceConfig, MemTableConfig, MemTableType, SyncMode
+    ) -> crate::storage::persistence::write_ahead_log::config::WALConfig {
+        use crate::storage::persistence::write_ahead_log::config::{
+            WALConfig, PerformanceConfig, MemTableConfig, MemTableType, SyncMode
         };
         
         // Create performance config with values from TOML
         info!(
-            "📋 Converting WriteBufferConfig from TOML: memory_flush_size_bytes={} ({}MB), vector_count_threshold={}, write_buffer_size_mb={}MB",
+            "📋 Converting WALConfig from TOML: memory_flush_size_bytes={} ({}MB), vector_count_threshold={}, write_buffer_size_mb={}MB",
             toml_config.memory_flush_size_bytes,
             toml_config.memory_flush_size_bytes / (1024 * 1024),
             toml_config.vector_count_threshold,
@@ -585,13 +585,13 @@ impl SharedServices {
         };
         
         // Create multi-disk config with WAL directory
-        let multi_disk = crate::storage::persistence::write_buffer::config::MultiDiskConfig {
+        let multi_disk = crate::storage::persistence::write_ahead_log::config::MultiDiskConfig {
             data_directories: vec![toml_config.write_buffer_directory.clone()],
-            distribution_strategy: crate::storage::persistence::write_buffer::config::DiskDistributionStrategy::RoundRobin,
+            distribution_strategy: crate::storage::persistence::write_ahead_log::config::DiskDistributionStrategy::RoundRobin,
             collection_affinity: true,
         };
         
-        WriteBufferConfig {
+        WALConfig {
             performance,
             memtable,
             multi_disk,

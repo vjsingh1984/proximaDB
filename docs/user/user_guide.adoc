@@ -1,1181 +1,207 @@
 = ProximaDB User Guide
 :toc: left
-:toclevels: 3
+:toclevels: 2
 :imagesdir: ../diagrams/images
 
-**Complete guide to building AI applications with ProximaDB.**
+**Complete guide for AI applications with ProximaDB.**
 
-== 🎯 Overview
+== Overview
 
-ProximaDB is designed for AI applications that need fast, accurate vector search with rich metadata filtering. This guide covers everything from basic operations to advanced patterns.
+ProximaDB: High-performance vector database for AI applications with rich metadata filtering.
 
-**What you'll learn:**
+**Topics**: Collections | Vector Operations | SQL Engine | Performance | Production
 
-* Collection management and configuration
-* Vector operations (insert, search, update, delete) 
-* SQL queries for complex filtering
-* Client libraries and integrations
-* Performance optimization
-* Production deployment patterns
+== Collections
 
-== 📚 Collection Management
-
-=== Creating Collections
-
-**Basic Collection Creation:**
-
+**Create Collection:**
 [source,python]
 ----
 from proximadb import ProximaDBClient
+from proximadb.models import CompressionConfig, CompressionAlgorithm
 
-# Connect to ProximaDB
 client = ProximaDBClient("http://localhost:5678")
 
-# Create a collection for document embeddings
+# Basic collection
 collection = client.create_collection(
-    name="ai_documents",
-    dimension=384,                    # BERT-base embedding size
-    distance_metric="cosine",        # Best for normalized embeddings
-    engine="viper",                  # Columnar storage for analytics
-    description="Document embeddings for RAG system"
-)
-print(f"✅ Created collection: {collection.name}")
-----
-
-**Advanced Collection Configuration:**
-
-[source,python]
-----
-from proximadb.models import (
-    CollectionConfig, StorageEngine, DistanceMetric,
-    CompressionConfig, CompressionAlgorithm, IndexingAlgorithm
+    name="documents", dimension=384, distance_metric="cosine", engine="viper"
 )
 
-# Enterprise VIPER configuration with compression
-config = CollectionConfig(
-    name="enterprise_vectors",
-    dimension=1536,                   # OpenAI ada-002 size
-    distance_metric=DistanceMetric.COSINE,
-    storage_engine=StorageEngine.VIPER,  # Columnar analytics engine
-    primary_indexing_algorithm=IndexingAlgorithm.HNSW,
-    
-    # Unified compression config (engine-specific features auto-applied)
-    compression=CompressionConfig(
-        algorithm=CompressionAlgorithm.ZSTD,
-        level=6,                      # ZSTD compression level (1-22)
-        enable_quantization=True,     # VIPER: dual columns (FP32 + quantized)
-        quantization_type="int8",     # VIPER: quantization method
-        block_size_mb=8              # SST: block size (ignored by VIPER)
-    )
+# With compression
+compression = CompressionConfig(
+    algorithm=CompressionAlgorithm.ZSTD, level=6, enable_quantization=True
 )
-
-collection = client.create_collection(config=config)
-----
-
-=== Managing Collections
-
-[source,python]
-----
-# List all collections with metadata
-collections = client.list_collections()
-for coll in collections:
-    print(f"📁 {coll.name}: {coll.vector_count} vectors, {coll.dimension}D")
-
-# Get detailed collection information
-collection_info = client.get_collection("ai_documents")
-print(f"Collection size: {collection_info.storage_size_mb} MB")
-print(f"Index type: {collection_info.index_algorithm}")
-
-# Update collection configuration
-client.update_collection(
-    name="ai_documents",
-    description="Updated description",
-    index_config={"ef_construction": 400}  # Improve recall
+collection = client.create_collection(
+    name="enterprise", dimension=1536, compression=compression
 )
-
-# Delete collection (⚠️  irreversible)
-client.delete_collection("ai_documents")
 ----
 
-== 🔧 Vector Operations
-
-=== Inserting Vectors
-
-**Single Vector Insert:**
-
+**Manage Collections:**
 [source,python]
 ----
-# Insert a single document vector
-result = client.insert_vector(
-    collection_id="ai_documents",
-    vector_id="article_123",
-    vector=[0.1, 0.2, 0.3] * 128,  # 384-dimensional vector
-    metadata={
-        "title": "Introduction to Vector Databases",
-        "author": "Jane Smith",
-        "category": "technology",
-        "published_date": "2024-01-15",
-        "word_count": 1500,
-        "tags": ["database", "AI", "vectors"]
-    }
-)
-print(f"✅ Inserted vector {result.vector_id}")
+collections = client.list_collections()  # List all
+info = client.get_collection("documents")  # Get details
+client.update_collection("documents", description="Updated")
+client.delete_collection("documents")  # Delete
 ----
 
-**Batch Insert (Recommended for Performance):**
+== Vector Operations
 
+**Insert Vectors:**
 [source,python]
 ----
-# Prepare batch of vectors
-vectors = []
-for i in range(1000):  # Insert 1000 vectors efficiently
-    vectors.append({
-        "id": f"doc_{i:04d}",
-        "vector": np.random.rand(384).tolist(),  # Random 384D vector
-        "metadata": {
-            "title": f"Document {i}",
-            "category": "research" if i % 3 == 0 else "tutorial",
-            "priority": "high" if i % 10 == 0 else "normal",
-            "created_at": datetime.now().isoformat()
-        }
-    })
+# Single vector
+vector_data = {
+    "id": "doc_001",
+    "vector": [0.1, 0.2, 0.3] * 128,
+    "metadata": {"title": "ML Fundamentals", "category": "education"}
+}
+client.insert_vectors("documents", [vector_data])
 
-# Batch insert for optimal performance
-results = client.insert_vectors(
-    collection_id="ai_documents",
-    vectors=vectors,
-    batch_size=100  # Process in chunks of 100
-)
-print(f"✅ Inserted {len(results)} vectors successfully")
+# Batch insert (recommended)
+vectors = [{"id": f"doc_{i}", "vector": vector_data[i], 
+           "metadata": metadata[i]} for i in range(1000)]
+results = client.insert_vectors("documents", vectors, batch_size=100)
+
+# Upsert (insert or update)
+client.upsert_vectors("documents", upsert_data)
 ----
 
-**Upsert Operations (Insert or Update):**
-
+**Search Vectors:**
 [source,python]
 ----
-# Upsert will insert new or update existing vectors
-upsert_data = [
-    {
-        "id": "doc_001",  # Will update if exists, insert if new
-        "vector": [0.5, 0.6, 0.7] * 128,
-        "metadata": {
-            "title": "Updated Title",
-            "version": 2,
-            "last_modified": datetime.now().isoformat()
-        }
-    }
-]
-
-result = client.upsert_vectors("ai_documents", upsert_data)
-print(f"✅ Upserted {len(result.upserted_ids)} vectors")
-----
-
-=== Searching Vectors
-
-image::query-flow-complete.svg[Query Execution Flow, align=center, width=900]
-_link:../diagrams/query-flow-complete.mmd[View source diagram]_
-
-**Basic Similarity Search:**
-
-[source,python]
-----
-# Simple vector search
-query_vector = [0.1, 0.2, 0.3] * 128  # Your query embedding
-
+# Basic search
 results = client.search_vectors(
-    collection_id="ai_documents",
-    query_vector=query_vector,
-    top_k=10,  # Return top 10 most similar
-    include_metadata=True,
-    include_vectors=False  # Don't return vectors to save bandwidth
-)
-
-print("🔍 Search Results:")
-for i, result in enumerate(results, 1):
-    print(f"{i}. {result.metadata['title']} (score: {result.score:.3f})")
-----
-
-**Advanced Search with Filtering:**
-
-[source,python]
-----
-# Search with complex metadata filtering
-filtered_results = client.search_vectors(
     collection_id="documents",
-    query_vector=query_vector,
-    top_k=20,
-    
-    # Metadata filters
-    metadata_filter={
-        "category": "research",           # Exact match
-        "priority": "high",              # Exact match  
-        "word_count": {">=": 1000},       # Numeric comparison
-        "published_date": {">=": "2024-01-01"}  # Date comparison
-    },
-    
-    # Distance threshold
-    distance_threshold=0.8,  # Only return results with similarity > 0.8
-    
-    # Include additional data
-    include_metadata=True,
-    include_distances=True
-)
-
-for result in filtered_results:
-    metadata = result.metadata
-    print(f"📄 {metadata['title']}")
-    print(f"   Category: {metadata['category']}, Score: {result.score:.3f}")
-    print(f"   Words: {metadata['word_count']}, Date: {metadata['published_date']}")
-    print()
-----
-
-**Multi-Vector Search (Batch Queries):**
-
-[source,python]
-----
-# Search multiple queries efficiently
-query_vectors = [
-    [0.1, 0.2, 0.3] * 128,  # Query 1
-    [0.4, 0.5, 0.6] * 128,  # Query 2
-    [0.7, 0.8, 0.9] * 128   # Query 3
-]
-
-batch_results = client.batch_search_vectors(
-    collection_id="documents",
-    query_vectors=query_vectors,
-    top_k=5,
+    query_vector=[0.1, 0.2, 0.3] * 128,
+    top_k=10,
     include_metadata=True
 )
 
-for i, results in enumerate(batch_results):
-    print(f"Query {i+1} results:")
-    for result in results:
-        print(f"  - {result.metadata['title']} ({result.score:.3f})")
+# With metadata filtering
+results = client.search_vectors(
+    collection_id="documents",
+    query_vector=query_vector,
+    metadata_filter={
+        "category": "research",
+        "word_count": {">=": 1000}
+    },
+    distance_threshold=0.8
+)
+
+# Batch search
+batch_results = client.batch_search_vectors(
+    collection_id="documents",
+    query_vectors=[query1, query2, query3],
+    top_k=5
+)
 ----
 
-== 🔍 SQL Query Engine
+== SQL Engine
 
-ProximaDB includes a complete SQL engine optimized for vector operations with metadata filtering.
-
-=== Basic SQL Queries
-
+**Vector SQL Queries:**
 [source,python]
 ----
-# Simple vector similarity search with SQL
+# Basic vector similarity
 results = client.execute_sql("""
-    SELECT 
-        id,
-        metadata->>'title' as title,
-        VECTOR_SIMILARITY(vector, [0.1, 0.2, 0.3, ...], 'cosine') as score
-    FROM documents
-    WHERE score > 0.8
-    ORDER BY score DESC
-    LIMIT 10
+    SELECT id, metadata->>'title', 
+           VECTOR_SIMILARITY(vector, [...], 'cosine') as score
+    FROM documents WHERE score > 0.8
+    ORDER BY score DESC LIMIT 10
 """)
 
-for doc in results:
-    print(f"{doc['title']}: {doc['score']:.3f}")
-----
-
-=== Advanced SQL Features
-
-**Complex Metadata Filtering:**
-
-[source,python]
-----
-# Full AND/OR/NOT operator support
-complex_query = """
-    SELECT id, metadata->>'title', metadata->>'category'
-    FROM documents  
-    WHERE (
-        (metadata->>'category' = 'research' AND metadata->>'priority' = 'high')
-        OR metadata->>'author' IN ('Dr. Smith', 'Prof. Johnson')
-    )
-    AND NOT metadata->>'archived' = 'true'
-    AND metadata->>'word_count' BETWEEN 1000 AND 5000
+# Complex filtering
+results = client.execute_sql("""
+    SELECT id, metadata->>'title'
+    FROM documents 
+    WHERE (metadata->>'category' = 'research' AND metadata->>'priority' = 'high')
+      AND metadata->>'word_count' BETWEEN 1000 AND 5000
     ORDER BY VECTOR_SIMILARITY(vector, [...], 'cosine') DESC
-    LIMIT 20
-"""
-
-results = client.execute_sql(complex_query)
+""")
 ----
 
-**Supported SQL Operators:**
-- **Logical**: `AND`, `OR`, `NOT` with proper precedence
-- **Comparison**: `=`, `!=`, `<`, `>`, `<=`, `>=`
-- **Set Operations**: `IN`, `BETWEEN`
-- **JSON Access**: `->>'field'` for metadata access
-- **Vector Functions**: `VECTOR_SIMILARITY(vector, query, metric)`
+**Supported**: 13 distance metrics (cosine, euclidean, dot_product, etc.) | Full SQL operators (AND/OR/NOT, comparisons, JSON access)
 
-=== Distance Metrics (13 Supported)
+== Performance
 
-[cols="2,3"]
-|===
-|**Metric** |**Best For**
+**Benchmarks**:
+- **Insert**: gRPC 49K/sec, REST 20K/sec
+- **Search**: VIPER ~1.5ms, SST ~1.8ms
+- **SQL**: ~3ms average latency
 
-|`cosine` |Normalized embeddings (most common)
-|`euclidean` |Spatial data, image features
-|`dot_product` |Raw embeddings, recommendation systems
-|`manhattan` |High-dimensional sparse data
-|`hamming` |Binary vectors, fingerprints
-|`jaccard` |Set similarity, document comparison
-|===
-
-Plus 7 additional metrics: Chebyshev, Canberra, Minkowski, Angular, Bray-Curtis, Hellinger, Chi-squared.
-
-== ⚡ Performance Optimization
-
-=== Benchmark Results
-
-**Insert Performance:**
-- **gRPC**: 49,650 vectors/sec (batch 500), 10,314 vectors/sec (batch 100)
-- **REST**: 20,245 vectors/sec (batch 100), 2,187 vectors/sec (batch 10)
-
-**Search Latency:**
-- **SST Engine**: P50: 1.8ms, P95: 4.5ms, P99: 9.2ms
-- **VIPER Engine**: P50: 1.5ms, P95: 3.8ms, P99: 7.5ms
-- **SQL Queries**: P50: 3.2ms, P95: 12ms, P99: 28ms
-
-=== Optimization Guidelines
-
-**Choose the Right Storage Engine:**
-
+**Engine Selection:**
 [source,python]
 ----
-# Write-heavy workloads: Use SST engine
+# Write-heavy: SST engine
 collection = client.create_collection(
-    name="write_heavy",
-    dimension=384,
-    engine="sst",  # Optimized for writes
-    index_config={"algorithm": "ivf"}  # Good for large scale
+    name="writes", engine="sst", index_config={"algorithm": "hnsw"}
 )
 
-# Analytics workloads: Use VIPER engine  
+# Analytics: VIPER engine  
 collection = client.create_collection(
-    name="analytics", 
-    dimension=384,
-    engine="viper",  # Columnar storage
-    index_config={"algorithm": "hnsw"}  # Best recall
+    name="analytics", engine="viper", dimension=384
 )
 ----
 
-**Batch Operations for Performance:**
+**Optimization:**
+- **Batch Sizes**: gRPC (500), REST (100), SQL (50)
+- **Protocol**: Use gRPC for high throughput
+- **Compression**: ZSTD level 6 for balanced performance
+- **Caching**: Enable vector cache (512MB) and metadata cache (128MB)
 
-[source,python]
-----
-# Optimal batch sizes
-batch_sizes = {
-    "gRPC": 500,  # Maximum throughput
-    "REST": 100,  # Balance latency/throughput
-    "SQL": 50     # Complex queries
-}
+== Client Libraries
 
-# Use gRPC for high-throughput scenarios
-from proximadb import ProximaDBClient, Protocol
-
-grpc_client = ProximaDBClient(
-    url="http://localhost:5679", 
-    protocol=Protocol.GRPC
-)
-
-# Batch insert for optimal performance
-vectors = prepare_batch(500)  # 500 vectors per batch
-result = grpc_client.insert_vectors("collection", vectors)
-----
-
-**Memory and Resource Optimization:**
-
-[source,python]
-----
-# Configure for your workload
-collection_config = {
-    "memory_config": {
-        "vector_cache_mb": 512,      # Vector cache
-        "metadata_cache_mb": 128,    # Metadata cache
-        "bloom_filter_mb": 64        # Bloom filter memory
-    },
-    "storage_config": {
-        "compression": "zstd",       # Best compression
-        "compression_level": 6,      # Balance speed/size
-        "block_size_kb": 8          # SST block size
-    }
-}
-----
-
-== 🛠️ Client Libraries
-
-=== Python Client (Primary)
-
+**Python Client:**
 [source,bash]
 ----
 pip install proximadb-client
 ----
 
-**Key Features:**
-- Full REST and gRPC support
-- Async operations with `asyncio`
-- Rich metadata filtering
-- SQL query execution
-- Connection pooling
-- Automatic retries
-
-=== Integration Examples
-
-**With Sentence Transformers:**
-
+**Integration Examples:**
 [source,python]
 ----
+# With Sentence Transformers
 from sentence_transformers import SentenceTransformer
-from proximadb import ProximaDBClient
-
-# Initialize embedding model
 model = SentenceTransformer('all-MiniLM-L6-v2')
-client = ProximaDBClient("http://localhost:5678")
-
-# Create collection
-collection = client.create_collection(
-    name="embeddings",
-    dimension=384,  # MiniLM dimension
-    engine="viper"
-)
-
-# Embed and store documents
-documents = ["AI is transforming industries", "Machine learning enables automation"]
 embeddings = model.encode(documents)
 
-vectors = []
-for i, (doc, embedding) in enumerate(zip(documents, embeddings)):
-    vectors.append({
-        "id": f"doc_{i}",
-        "vector": embedding.tolist(),
-        "metadata": {"text": doc, "source": "demo"}
-    })
-
-client.insert_vectors("embeddings", vectors)
-
-# Search with natural language
-query = "artificial intelligence applications"
-query_embedding = model.encode([query])[0]
-results = client.search_vectors("embeddings", query_embedding.tolist(), top_k=5)
-----
-
-**With OpenAI Embeddings:**
-
-[source,python]
-----
+# With OpenAI
 import openai
-from proximadb import ProximaDBClient
-
-# Setup clients
-openai.api_key = "your-api-key"
-client = ProximaDBClient("http://localhost:5678")
-
-# Create collection for OpenAI embeddings
-collection = client.create_collection(
-    name="openai_docs",
-    dimension=1536,  # OpenAI ada-002 dimension
-    engine="viper"
+response = openai.Embedding.create(
+    input=texts, model="text-embedding-ada-002"
 )
-
-def embed_and_store(texts, metadata_list):
-    # Get embeddings from OpenAI
-    response = openai.Embedding.create(
-        input=texts,
-        model="text-embedding-ada-002"
-    )
-    
-    vectors = []
-    for i, (text, metadata, embedding_data) in enumerate(zip(texts, metadata_list, response['data'])):
-        vectors.append({
-            "id": f"openai_{i}",
-            "vector": embedding_data['embedding'],
-            "metadata": {**metadata, "text": text}
-        })
-    
-    return client.insert_vectors("openai_docs", vectors)
-
-# Usage
-texts = ["ProximaDB is fast", "Vector search is powerful"]
-metadata = [{"category": "product"}, {"category": "technology"}]
-embed_and_store(texts, metadata)
 ----
 
-== 🔧 Advanced Configuration
+== Production Deployment
 
-=== Hardware Acceleration
-
-ProximaDB automatically detects and uses available hardware acceleration:
-
+**Hardware Configuration:**
 [source,toml]
 ----
-# config.toml
 [hardware]
 enable_gpu = true        # Auto-detect CUDA/ROCm/MPS
 enable_simd = true       # Auto-detect AVX-512/AVX2/NEON
-fallback_to_cpu = true   # Graceful degradation
+worker_threads = 8
 
 [performance]
-worker_threads = 8       # CPU cores for parallel processing
 connection_pool_size = 100
 query_cache_size_mb = 256
 ----
 
-=== Storage Compression Configuration
-
-ProximaDB provides comprehensive compression support with SDK-driven configuration. Compression is configured at collection creation time and tailored to each storage engine's capabilities.
-
-==== Supported Compression Algorithms
-
-[cols="3,2,2,3,2", options="header"]
-|===
-| Algorithm | SST Engine | VIPER Engine | Best For | Compression Ratio
-
-| **ZSTD**
-| ✅ Supported
-| ✅ Supported
-| Balanced speed/ratio
-| 3-5x
-
-| **LZ4**
-| ✅ Supported
-| ✅ Supported
-| Maximum speed
-| 2-3x
-
-| **Snappy**
-| ✅ Supported
-| ✅ Supported
-| Low latency
-| 2x
-
-| **Gzip**
-| ✅ Supported
-| ✅ Supported
-| Compatibility
-| 3-4x
-
-| **Brotli**
-| ✅ Supported
-| ✅ Supported
-| Maximum compression
-| 4-6x
-
-| **Bzip2**
-| ✅ Supported
-| ❌ Not Supported
-| High compression
-| 4-5x
-
-| **Deflate**
-| ✅ Supported
-| ❌ Not Supported
-| Legacy support
-| 3x
-
-| **XZ**
-| ✅ Supported
-| ❌ Not Supported
-| Maximum ratio
-| 5-7x
-
-| **Zlib**
-| ✅ Supported
-| ❌ Not Supported
-| Standard compression
-| 3x
-
-| **LZO**
-| ❌ Not Supported
-| ❌ Not Supported
-| (License constraints)
-| N/A
-
-| **LZ4HC**
-| ✅ Supported
-| ❌ Not Supported
-| Higher compression LZ4
-| 2.5-3.5x
-
-| **LZMA**
-| ✅ Supported
-| ❌ Not Supported
-| Extreme compression
-| 5-8x
-|===
-
-**Note:** VIPER engine has limited algorithm support due to Parquet format constraints. SST engine supports most algorithms through self-contained block compression.
-
-==== Algorithm Selection Summary
-
-**Choose by Priority:**
-
-- **Speed First**: LZ4 or Snappy (< 10% latency impact)
-- **Compatibility First**: Gzip or Deflate (universal support)
-- **Balance**: ZSTD Level 3-6 (best speed/ratio balance)  
-- **Storage First**: Brotli, XZ, or LZMA (maximum compression)
-
-**Choose by Engine:**
-
-- **VIPER Engine**: Limited to 6 algorithms (ZSTD, LZ4, Snappy, Gzip, Brotli + None)
-  - Best: ZSTD for balanced performance
-  - Add quantization for analytics workloads
-- **SST Engine**: Supports 12/13 algorithms (all except LZO)
-  - Best: Choose any algorithm based on requirements
-  - Use LZMA/XZ for extreme compression needs
-
-**Choose by Use Case:**
-
-- **Real-time Search**: LZ4 or Snappy
-- **General Production**: ZSTD Level 3
-- **Cross-platform Integration**: Gzip Level 6  
-- **Archival Storage**: LZMA or XZ Level 6-9
-- **Legacy System Support**: Deflate or Zlib
-
-==== Compression Decision Tree
-
-image::compression-decision-tree.svg[Compression Decision Tree, width=100%]
-
-==== Configuration Examples
-
-**Speed-Optimized Configuration (Low Latency):**
-[source,python]
-----
-from proximadb.models import CompressionConfig, CompressionAlgorithm
-
-# For real-time applications requiring minimal latency
-speed_config = CompressionConfig(
-    algorithm=CompressionAlgorithm.LZ4,      # Fastest algorithm
-    level=1,                                  # Minimum compression level
-    dynamic_block_sizing=True,                # Adaptive block sizes
-    block_size_mb=4                          # Smaller blocks for faster access
-)
-
-collection = client.create_collection(
-    name="realtime_vectors",
-    dimension=768,
-    engine="sst",                            # SST for row-based access
-    compression=speed_config
-)
-----
-
-**Balanced Configuration (Default Recommendation):**
-[source,python]
-----
-# For most production workloads
-balanced_config = CompressionConfig(
-    algorithm=CompressionAlgorithm.ZSTD,     # Best speed/ratio balance
-    level=3,                                  # Default ZSTD level
-    dynamic_block_sizing=True,                # Optimize based on data
-    block_size_mb=8                          # Standard block size
-)
-
-collection = client.create_collection(
-    name="production_vectors",
-    dimension=1536,
-    engine="viper",                          # VIPER for analytics
-    compression=balanced_config
-)
-----
-
-**Storage-Optimized Configuration (Maximum Compression):**
-[source,python]
-----
-# For archival or cost-sensitive deployments
-storage_config = CompressionConfig(
-    algorithm=CompressionAlgorithm.BROTLI,   # Maximum compression
-    level=11,                                 # Highest Brotli level
-    dynamic_block_sizing=True,                # Maximize compression
-    block_size_mb=16                         # Larger blocks for better ratio
-)
-
-collection = client.create_collection(
-    name="archive_vectors",
-    dimension=2048,
-    engine="sst",                            # SST supports all algorithms
-    compression=storage_config
-)
-----
-
-**VIPER with Quantization (Advanced):**
-[source,python]
-----
-# VIPER dual-column storage with quantization
-viper_config = CompressionConfig(
-    algorithm=CompressionAlgorithm.ZSTD,     # Base compression
-    level=6,                                  # Higher level for cold data
-    enable_quantization=True,                 # Enable dual columns
-    quantization_type="pq8",                 # Product quantization
-    normalization="trimmed_mean"             # Pre-quantization normalization
-)
-
-collection = client.create_collection(
-    name="analytics_vectors",
-    dimension=768,
-    engine="viper",                          # Required for quantization
-    compression=viper_config
-)
-----
-
-**Cross-Platform Compatibility Configuration:**
-[source,python]
-----
-# For maximum compatibility across systems
-compatibility_config = CompressionConfig(
-    algorithm=CompressionAlgorithm.GZIP,     # Universal support
-    level=6,                                  # Standard compression level
-    dynamic_block_sizing=True,                # Optimize for different vector sizes
-    block_size_mb=8                          # Standard block size
-)
-
-collection = client.create_collection(
-    name="compatible_vectors",
-    dimension=1024,
-    engine="sst",                            # SST for broad algorithm support
-    compression=compatibility_config
-)
-----
-
-**Extreme Compression Configuration (Cold Storage):**
-[source,python]
-----
-# For archival/cold storage with maximum compression
-extreme_config = CompressionConfig(
-    algorithm=CompressionAlgorithm.LZMA,     # Maximum compression ratio
-    level=9,                                  # Highest LZMA level
-    dynamic_block_sizing=True,                # Optimize block size for compression
-    block_size_mb=16                         # Larger blocks for better ratio
-)
-
-collection = client.create_collection(
-    name="archive_vectors",
-    dimension=2048,
-    engine="sst",                            # Required for LZMA support
-    compression=extreme_config
-)
-----
-
-**Legacy System Support Configuration:**
-[source,python]
-----
-# For integration with legacy systems using deflate/zlib
-legacy_config = CompressionConfig(
-    algorithm=CompressionAlgorithm.DEFLATE,  # Raw deflate compression
-    level=5,                                  # Balanced deflate level
-    dynamic_block_sizing=False,               # Fixed block sizing for consistency
-    block_size_mb=4                          # Smaller blocks for legacy compatibility
-)
-
-collection = client.create_collection(
-    name="legacy_vectors",
-    dimension=512,
-    engine="sst",                            # SST supports deflate/zlib
-    compression=legacy_config
-)
-----
-
-==== Compression Level Recommendations
-
-[cols="2,3,3,3", options="header"]
-|===
-| Priority | Algorithm | Level | Use Case
-
-| **Speed**
-| LZ4
-| N/A (no levels)
-| Real-time search, streaming
-
-| **Speed**
-| LZ4HC
-| N/A (no levels)
-| Faster than LZ4 with better ratio
-
-| **Speed**
-| Snappy
-| N/A (no levels)
-| Low-latency operations
-
-| **Speed**
-| ZSTD
-| 1-2
-| High-throughput ingestion
-
-| **Speed**
-| Deflate
-| 1-3
-| Fast compression with good compatibility
-
-| **Balanced**
-| ZSTD
-| 3-6
-| General production use
-
-| **Balanced**
-| Gzip
-| 4-6
-| Cross-platform compatibility
-
-| **Balanced**
-| Zlib
-| 4-6
-| Standard zlib compression
-
-| **Balanced**
-| Deflate
-| 4-6
-| Raw deflate compression
-
-| **Balanced**
-| Bzip2
-| 3-5
-| Good ratio with moderate speed
-
-| **Storage**
-| ZSTD
-| 7-9
-| Warm/cold data tiers
-
-| **Storage**
-| Brotli
-| 4-7
-| Archival with query needs
-
-| **Storage**
-| Brotli
-| 8-11
-| Maximum compression
-
-| **Storage**
-| Bzip2
-| 6-9
-| High compression for archives
-
-| **Storage**
-| XZ
-| 6-9
-| LZMA2-based maximum compression
-
-| **Storage**
-| LZMA
-| 6-9
-| Extreme compression (SST only)
-|===
-
-==== Performance Impact Analysis
-
-**Compression Ratio by Algorithm (1536-dim vectors):**
-```
-Algorithm      | Ratio | Write Speed | Read Speed | CPU Usage | Engine Support
----------------|-------|-------------|------------|-----------|---------------
-None           | 1.0x  | 100%        | 100%       | Baseline  | SST + VIPER
-LZ4            | 2.3x  | 95%         | 98%        | +5%       | SST + VIPER
-LZ4HC          | 2.8x  | 88%         | 96%        | +8%       | SST only
-Snappy         | 2.1x  | 93%         | 97%        | +7%       | SST + VIPER
-ZSTD-3         | 3.8x  | 85%         | 94%        | +15%      | SST + VIPER
-Gzip-6         | 3.5x  | 75%         | 90%        | +25%      | SST + VIPER
-Deflate-6      | 3.2x  | 78%         | 91%        | +22%      | SST only
-Zlib-6         | 3.4x  | 76%         | 90%        | +24%      | SST only
-Bzip2-5        | 4.8x  | 45%         | 85%        | +60%      | SST only
-Brotli-4       | 4.2x  | 65%         | 88%        | +35%      | SST + VIPER
-Brotli-11      | 5.8x  | 35%         | 85%        | +80%      | SST + VIPER
-XZ-6           | 6.2x  | 30%         | 83%        | +110%     | SST only
-LZMA-6         | 6.5x  | 25%         | 82%        | +120%     | SST only
-```
-
-**Key Performance Insights:**
-
-- **Real-time Applications**: Use LZ4 or Snappy for minimal latency impact
-- **Balanced Workloads**: ZSTD-3 provides excellent speed/ratio balance
-- **High Compatibility**: Gzip-6 works across all platforms and tools
-- **Maximum Compression**: LZMA offers extreme ratios but high CPU cost
-- **VIPER Optimized**: Limited to Parquet-supported algorithms for columnar analytics
-- **SST Flexible**: Supports all algorithms for maximum compression choice
-
-==== Block Size Optimization
-
-**SST Engine Block Sizing Formula:**
-```
-Optimal Block Size = (dimension × 4 + 100) × target_vectors_per_block
-
-Where:
-- dimension: Vector dimensionality
-- 4: Bytes per float32
-- 100: Metadata overhead estimate
-- target_vectors_per_block: 2000-2500 (optimal range)
-```
-
-**Examples:**
-- 384-dim vectors: ~4MB blocks (2250 vectors)
-- 768-dim vectors: ~7MB blocks (2250 vectors)
-- 1536-dim vectors: ~14MB blocks (2250 vectors)
-
-==== Migration and Compatibility
-
-**Updating Compression for Existing Collections:**
-[source,python]
-----
-# Compression can be updated through collection update
-client.update_collection(
-    name="my_collection",
-    compression=CompressionConfig(
-        algorithm=CompressionAlgorithm.ZSTD,
-        level=6
-    )
-)
-
-# Note: Existing data remains with old compression
-# New data uses updated settings
-# Compaction will gradually migrate all data
-----
-
-**Mixed Compression Handling:**
-- ProximaDB transparently handles mixed compression within collections
-- Each block/file maintains self-describing compression markers
-- No performance penalty for mixed compression scenarios
-- Automatic detection and decompression at query time
-
-==== Network Compression Configuration
-
-**SDK Network Compression (Transport Layer):**
-[source,python]
-----
-from proximadb import ProximaDBClient, ClientConfig, CompressionConfig
-
-# Configure network compression separately from storage
-config = ClientConfig(
-    url="http://localhost:5678",
-    compression=CompressionConfig(
-        # REST compression settings
-        rest_enabled=False,       # Default: False (better debugging)
-        rest_algorithm="gzip",    # Options: deflate, gzip, zstd, br
-        
-        # gRPC compression settings
-        grpc_enabled=True,        # Default: True (better performance)
-        grpc_algorithm="gzip",    # Currently only gzip supported
-        
-        # Common settings
-        threshold_bytes=1024,     # Only compress if larger than 1KB
-        level=6                   # Compression level 1-9
-    )
-)
-client = ProximaDBClient(config=config)
-----
-
-**Network Compression Performance:**
-- **Bandwidth Savings**: 50-80% for vector data
-- **Latency Impact**: < 3% overhead
-- **Best Algorithms**: 
-  - deflate: Fastest, lowest CPU
-  - gzip: Best compatibility
-  - zstd/brotli: Maximum compression
-
-=== Multi-Cloud Storage
-
-[source,toml]
-----
-# S3 Configuration
-[storage.s3]
-bucket = "proximadb-vectors"
-region = "us-west-2"
-access_key_id = "your-key"
-secret_access_key = "your-secret"
-
-# GCS Configuration  
-[storage.gcs]
-bucket = "proximadb-vectors"
-credentials_path = "/path/to/credentials.json"
-
-# Azure Configuration
-[storage.azure]
-account_name = "proximadb"
-container_name = "vectors"
-account_key = "your-key"
-----
-
-== 🚨 Troubleshooting
-
-=== Common Issues
-
-**Connection Errors:**
-[source,bash]
-----
-# Check if ProximaDB is running
-curl http://localhost:5678/health
-
-# Check logs
-docker logs proximadb-server
-----
-
-**Performance Issues:**
-[source,python]
-----
-# Monitor collection statistics
-stats = client.get_collection_stats("my_collection")
-print(f"Index build progress: {stats['index_progress']}%")
-print(f"Memory usage: {stats['memory_usage_mb']} MB")
-----
-
-**Memory Issues:**
-[source,toml]
-----
-# Reduce memory usage in config.toml
-[storage]
-memory_limit_mb = 2048
-flush_threshold_mb = 128
-compaction_memory_mb = 512
-----
-
-=== Getting Help
-
-- **📚 Documentation**: Complete guides at `docs/`
-- **🐛 Bug Reports**: GitHub Issues
-- **💬 Community**: GitHub Discussions  
-- **🏢 Enterprise**: Contact for production support
-
-== 📈 Monitoring & Metrics
-
-=== Prometheus Integration
-
-[source,toml]
-----
-# Enable metrics endpoint
-[monitoring]
-enable_metrics = true
-metrics_port = 9090
-----
-
-**Key Metrics to Monitor:**
-- `proximadb_insert_rate_total` - Vector insertion rate
-- `proximadb_search_latency_seconds` - Search latency percentiles
-- `proximadb_memory_usage_bytes` - Memory consumption
-- `proximadb_storage_size_bytes` - Disk usage per collection
-
-=== Health Checks
-
-[source,bash]
-----
-# Basic health check
-curl http://localhost:5678/health
-
-# Detailed system status
-curl http://localhost:5678/status
-
-# Collection-specific metrics
-curl http://localhost:5678/collections/my_collection/stats
-----
-
-== 🚀 BERT Integration
-
-=== Basic Setup
-[source,python]
-----
-from transformers import AutoTokenizer, AutoModel
-from proximadb import ProximaDBClient
-
-# BERT embedding service
-class BERTEmbeddings:
-    def __init__(self, model="bert-base-uncased"):
-        self.tokenizer = AutoTokenizer.from_pretrained(model)
-        self.model = AutoModel.from_pretrained(model)
-    
-    def encode(self, text):
-        inputs = self.tokenizer(text, return_tensors="pt", truncation=True)
-        outputs = self.model(**inputs)
-        return outputs.last_hidden_state[:, 0, :].squeeze().tolist()
-
-# Usage
-bert = BERTEmbeddings()
-client = ProximaDBClient("http://localhost:5678")
-
-# Create collection for BERT
-collection = client.create_collection({
-    "name": "bert_docs",
-    "dimension": 768,
-    "distance_metric": "cosine"
-})
-
-# Generate and insert embeddings
-text = "Machine learning is transforming data processing"
-embedding = bert.encode(text)
-client.insert_vector("bert_docs", "doc_1", embedding, {"text": text})
-----
-
-== Error Handling
-
-=== Basic Error Handling
-[source,python]
-----
-from proximadb.exceptions import ProximaDBException, CollectionNotFoundError
-
-try:
-    collection = client.get_collection("my_collection")
-except CollectionNotFoundError:
-    print("Collection not found")
-except ProximaDBException as e:
-    print(f"Error: {e}")
-----
-
-== Best Practices
-
-* Use batch operations for better performance
-* Normalize vectors when using cosine similarity  
-* Add meaningful metadata for filtering
-* Implement retry logic for production use
-* Use appropriate distance metrics for your data type
-== Compression Configuration
-
-=== SDK-Driven Compression
-
-ProximaDB's compression is entirely controlled from the client SDK, with no server-side defaults:
-
-[source,python]
-----
-from proximadb import ProximaDBClient
-from proximadb.models import (
-    CollectionConfig,
-    CompressionConfig,
-    CompressionAlgorithm,
-    StorageEngine
-)
-
-# Configure compression
-compression_config = CompressionConfig(
-    sst_compression_algorithm=CompressionAlgorithm.ZSTD,
-    sst_compression_level=6,
-    sst_block_size=32768,
-    adaptive_compression=True
-)
-
-# Create collection with compression
-collection_config = CollectionConfig(
-    name="my_collection",
-    dimension=1536,
-    storage_engine=StorageEngine.SST,
-    compression_config=compression_config
-)
-
-collection = client.create_collection(collection_config)
-----
-
-=== Compression-Aware Search
-
-Optimize searches with compression hints:
-
-[source,python]
-----
-from proximadb.models import SearchOptimization
-
-optimization = SearchOptimization(
-    enable_two_stage=True,
-    use_decompression_cache=True,
-    prefer_compressed_search=True,
-    compression_aware_routing=True
-)
-
-results = client.search_vectors(
-    collection_id="my_collection",
-    query_vector=query_vector,
-    top_k=10,
-    search_optimization=optimization
-)
-----
-
+**Compression Algorithms:**
+- **ZSTD**: Balanced speed/ratio (3-5x compression)
+- **LZ4**: Maximum speed (2-3x compression)
+- **Snappy**: Low latency (2x compression)
+- **Brotli**: Maximum compression (4-6x compression)
+
+**Best Practices:**
+- Use VIPER for analytics, SST for write-heavy workloads
+- Enable compression for storage savings (especially VIPER with quantization)
+- Batch operations for optimal throughput
+- Use appropriate distance metrics for your data
+- Monitor performance with built-in metrics
+
+== Support
+
+- **Documentation**: `/docs/` directory
+- **API Reference**: link:api_reference.adoc[Complete API Guide]
+- **Performance Guide**: link:../performance_reference.adoc[Performance Reference]
+- **GitHub**: Issues and feature requests

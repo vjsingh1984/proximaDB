@@ -29,7 +29,7 @@ fn setup_hardware_capabilities() {
 pub struct IsolatedTestEnvironment {
     pub collection_id: String,
     pub temp_dir: TempDir,
-    pub assignment_service: Arc<HashBasedAssignmentService>,
+    // Assignment service removed - collections now embed storage_assignment
     pub filesystem: Arc<FilesystemFactory>,
     pub sst_config: SstConfig,
     pub storage_locations: Vec<StorageLocation>,
@@ -46,7 +46,6 @@ impl IsolatedTestEnvironment {
         
         // Create isolated assignment service (no global singleton)
         let filesystem_factory = Arc::new(FilesystemFactory::new(FilesystemConfig::default()).await?);
-        let assignment_service = Arc::new(HashBasedAssignmentService::new(filesystem_factory, "round_robin"));
         
         // Create isolated filesystem
         let filesystem = Arc::new(FilesystemFactory::new(FilesystemConfig::default()).await?);
@@ -72,7 +71,6 @@ impl IsolatedTestEnvironment {
         Ok(Self {
             collection_id,
             temp_dir,
-            assignment_service,
             filesystem,
             sst_config,
             storage_locations,
@@ -82,33 +80,10 @@ impl IsolatedTestEnvironment {
     /// Create an SST storage engine for this environment
     pub async fn create_sst_engine(&self) -> Result<SstStorage> {
         
-        // Inject our isolated assignment service into the global singleton only once
-        // If it fails, use the existing global service and add our collection to it
-        if let Err(_) = set_assignment_service(self.assignment_service.clone()) {
-            // Already set, add our collection to the existing global service
-            println!("⚠️ Assignment service already set, adding collection to global service");
-            let global_service = get_assignment_service();
-            let assignment = global_service.assign_collection(
-                &self.collection_id,
-                &self.storage_locations,
-                "hash"
-            ).await?;
-            
-            // Ensure directories exist
-            let data_path = assignment.data_url.strip_prefix("file://").unwrap_or(&assignment.data_url);
-            tokio::fs::create_dir_all(data_path).await?;
-        } else {
-            // Successfully set our service, proceed normally
-            let assignment = self.assignment_service.assign_collection(
-                &self.collection_id,
-                &self.storage_locations,
-                "hash"
-            ).await?;
-            
-            // Ensure directories exist
-            let data_path = assignment.data_url.strip_prefix("file://").unwrap_or(&assignment.data_url);
-            tokio::fs::create_dir_all(data_path).await?;
-        }
+        // Assignment service removed - create directories directly
+        // Collections now embed storage_assignment
+        let data_path = self.temp_dir.path().join("data");
+        tokio::fs::create_dir_all(&data_path).await?;
         
         println!("🔧 Created isolated SST engine for collection: {}", self.collection_id);
         
@@ -117,7 +92,6 @@ impl IsolatedTestEnvironment {
         
         // Create SST storage engine
         SstStorage::new(
-            self.collection_id.clone(),
             self.sst_config.clone(),
             self.filesystem.clone(),
             distance_compute
@@ -175,10 +149,7 @@ impl IsolatedTestEnvironment {
         &self.collection_id
     }
     
-    /// Get assignment service
-    pub fn assignment_service(&self) -> &Arc<HashBasedAssignmentService> {
-        &self.assignment_service
-    }
+    // Assignment service removed - collections now embed storage_assignment
     
     /// Create test SST configuration optimized for testing
     fn create_test_sst_config() -> SstConfig {

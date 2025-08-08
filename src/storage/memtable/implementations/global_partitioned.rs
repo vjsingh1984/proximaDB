@@ -16,7 +16,7 @@ use tokio::sync::RwLock;
 
 use super::super::core::MemtableMetrics;
 use crate::compute::distance::DistanceMetric as CoreDistanceMetric;
-use crate::compute::unified_distance::{
+use crate::compute::distance_compute_engine::{
     DistanceComputeProvider, UnifiedDistanceCompute, SimilarityResult,
 };
 use crate::core::VectorRecord;
@@ -25,7 +25,7 @@ use crate::core::VectorRecord;
 #[derive(Debug)]
 struct CollectionPartition {
     /// WAL Batches stored as native deserialized batches (PRIMARY STORAGE)
-    wal_batches: HashMap<String, crate::storage::memtable::specialized::write_buffer_behavior::WriteBufferVectorBatch>,
+    wal_batches: HashMap<String, crate::storage::memtable::specialized::wal_behavior::WALVectorBatch>,
 
     /// Vector ID to batch lookup index for fast get operations
     vector_id_index: HashMap<String, String>, // vector_id -> batch_id
@@ -54,7 +54,7 @@ impl CollectionPartition {
     /// Add WAL batch to this collection partition
     /// Add batch to collection partition - CRITICAL HOT PATH
     #[inline(always)]
-    fn add_batch(&mut self, mut batch: crate::storage::memtable::specialized::write_buffer_behavior::WriteBufferVectorBatch) -> Result<()> {
+    fn add_batch(&mut self, mut batch: crate::storage::memtable::specialized::wal_behavior::WALVectorBatch) -> Result<()> {
         let batch_id = batch.batch_id.to_base62();
         let batch_size = batch.total_size_bytes;
         let vector_count = batch.vector_records.len();
@@ -428,7 +428,7 @@ impl GlobalPartitionedMemtable {
     /// Add native WAL batch to the appropriate collection partition - CRITICAL HOT PATH
     /// STREAMLINED ARCHITECTURE with optimized atomic operations
     #[inline(always)]
-    pub async fn add_wal_batch(&self, collection_id: &str, wal_batch: crate::storage::memtable::specialized::write_buffer_behavior::WriteBufferVectorBatch) -> Result<Vec<u64>> {
+    pub async fn add_wal_batch(&self, collection_id: &str, wal_batch: crate::storage::memtable::specialized::wal_behavior::WALVectorBatch) -> Result<Vec<u64>> {
         let batch_id = wal_batch.batch_id.to_base62();
         let vector_count = wal_batch.vector_records.len();
         let batch_size = wal_batch.total_size_bytes;

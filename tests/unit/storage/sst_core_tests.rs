@@ -59,12 +59,7 @@ async fn test_lsm_basic_operations() {
     }
     
     // Setup storage assignment and get the persistent assignment data
-    setup_storage_assignment(&collection_id, base_path.to_str().unwrap()).await.unwrap();
-    
-    // Get the assignment service to access the assignment data
-// 🔴 OBSOLETE - Assignment service removed
-    let test_assignment = assignment_service.get_assignment(&collection_id).await
-        .expect("Assignment should exist after setup");
+    let test_assignment = setup_storage_assignment(&collection_id, base_path.to_str().unwrap()).await.unwrap();
     println!("DEBUG: Using assignment: {}", test_assignment.data_url);
     
     // Ensure the data directory is clean before starting the test
@@ -84,7 +79,6 @@ async fn test_lsm_basic_operations() {
     
     // Create SST storage
     let engine = SstStorage::new(
-        collection_id.clone(),
         sst_config.clone(),
         filesystem.clone(),
         distance_compute.clone()
@@ -289,18 +283,12 @@ async fn test_lsm_compaction() {
     
     let collection_id = &unique_collection_id("compact_test");
     
-    // Setup storage assignment
-    setup_storage_assignment(collection_id, base_path.to_str().unwrap()).await.unwrap();
-    
-    // Get the assignment service to access the assignment data
-// 🔴 OBSOLETE - Assignment service removed
-    let test_assignment = assignment_service.get_assignment(collection_id).await
-        .expect("Assignment should exist after setup");
+    // Setup storage assignment and get the assignment data
+    let test_assignment = setup_storage_assignment(collection_id, base_path.to_str().unwrap()).await.unwrap();
     println!("DEBUG: Using assignment: {}", test_assignment.data_url);
     
     let distance_compute = Arc::new(UnifiedDistanceCompute::new(proximadb::compute::distance::DistanceMetric::Cosine));
     let engine = SstStorage::new(
-        collection_id.to_string(),
         sst_config.clone(),
         filesystem.clone(),
         distance_compute.clone()
@@ -386,7 +374,6 @@ async fn test_lsm_recovery() {
         
         let distance_compute = Arc::new(UnifiedDistanceCompute::new(proximadb::compute::distance::DistanceMetric::Cosine));
         let engine = SstStorage::new(
-            collection_id.to_string(),
             sst_config,
             filesystem.clone(),
             distance_compute
@@ -443,7 +430,6 @@ async fn test_lsm_recovery() {
         
         let distance_compute = Arc::new(UnifiedDistanceCompute::new(proximadb::compute::distance::DistanceMetric::Cosine));
         let engine = SstStorage::new(
-            collection_id.to_string(),
             sst_config,
             filesystem.clone(),
             distance_compute

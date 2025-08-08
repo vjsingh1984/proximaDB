@@ -7,7 +7,7 @@ mod tests {
     use anyhow::Result;
     use crate::compute::distance::DistanceMetric;
     use crate::core::search::{SearchParams, SearchResult, SearchResultSet, SemanticDistance};
-    use crate::compute::unified_distance::UnifiedDistanceCompute;
+    use crate::compute::distance_compute_engine::UnifiedDistanceCompute;
     use crate::compute::unified_quantization::{UnifiedQuantizationEngine, UnifiedQuantizationLevel};
     use crate::services::collection_service::CollectionService;
 

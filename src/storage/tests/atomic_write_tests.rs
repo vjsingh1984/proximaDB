@@ -14,9 +14,9 @@
  * limitations under the License.
  */
 
-//! Integration tests for atomic write patterns with UnifiedAtomicCoordinator
+//! Integration tests for atomic write patterns with TransactionCoordinator
 
-use crate::storage::atomic::{UnifiedAtomicCoordinator, StagingConfig, StagingOperationType};
+use crate::storage::transaction_coordinator::{TransactionCoordinator, StagingConfig, TransactionStageType};
 use crate::storage::persistence::filesystem::{FilesystemFactory};
 use crate::storage::persistence::filesystem::FilesystemConfig;
 use crate::core::{VectorId, VectorRecord};
@@ -24,14 +24,14 @@ use tempfile::TempDir;
 use tokio;
 use std::sync::Arc;
 
-async fn create_test_environment() -> (Arc<UnifiedAtomicCoordinator>, TempDir) {
+async fn create_test_environment() -> (Arc<TransactionCoordinator>, TempDir) {
     let temp_dir = TempDir::new().unwrap();
     let base_path = temp_dir.path().to_str().unwrap();
     
     let fs_config = FilesystemConfig::default();
     let fs_factory = Arc::new(FilesystemFactory::new(fs_config).await.expect("Failed to create filesystem factory"));
     
-    let coordinator = Arc::new(UnifiedAtomicCoordinator::new(
+    let coordinator = Arc::new(TransactionCoordinator::new(
         fs_factory,
         Some(base_path.to_string()),
     ).await.expect("Failed to create coordinator"));
@@ -51,7 +51,7 @@ async fn test_atomic_write_with_sync() {
     let config = StagingConfig {
         base_url: storage_url.clone(),
         collection_id: Some(collection_id.to_string()),
-        operation_type: StagingOperationType::Flush,
+        operation_type: TransactionStageType::Flush,
         ..Default::default()
     };
     
@@ -89,7 +89,7 @@ async fn test_atomic_write_failure_rollback() {
     let config = StagingConfig {
         base_url: storage_url.clone(),
         collection_id: Some(collection_id.to_string()),
-        operation_type: StagingOperationType::Flush,
+        operation_type: TransactionStageType::Flush,
         ..Default::default()
     };
     
@@ -132,7 +132,7 @@ async fn test_concurrent_atomic_operations() {
             let config = StagingConfig {
                 base_url: url_clone,
                 collection_id: Some(coll_id),
-                operation_type: StagingOperationType::Flush,
+                operation_type: TransactionStageType::Flush,
                 ..Default::default()
             };
             
@@ -172,7 +172,7 @@ async fn test_atomic_wal_to_storage_flow() {
     let config = StagingConfig {
         base_url: storage_url.clone(),
         collection_id: Some(collection_id.to_string()),
-        operation_type: StagingOperationType::Flush,
+        operation_type: TransactionStageType::Flush,
         ..Default::default()
     };
     
@@ -241,7 +241,7 @@ async fn test_cloud_storage_atomic_pattern() {
     let config = StagingConfig {
         base_url: storage_url.clone(),
         collection_id: Some(collection_id.to_string()),
-        operation_type: StagingOperationType::Flush,
+        operation_type: TransactionStageType::Flush,
         // Cloud storage might use local staging
         auto_cleanup: true,
         ..Default::default()
@@ -278,7 +278,7 @@ async fn test_partial_write_prevention() {
     let config = StagingConfig {
         base_url: storage_url.clone(),
         collection_id: Some(collection_id.to_string()),
-        operation_type: StagingOperationType::Flush,
+        operation_type: TransactionStageType::Flush,
         ..Default::default()
     };
     
@@ -311,7 +311,7 @@ async fn test_metadata_consistency_during_atomic_write() {
     let config = StagingConfig {
         base_url: storage_url.clone(),
         collection_id: Some(collection_id.to_string()),
-        operation_type: StagingOperationType::Flush,
+        operation_type: TransactionStageType::Flush,
         ..Default::default()
     };
     

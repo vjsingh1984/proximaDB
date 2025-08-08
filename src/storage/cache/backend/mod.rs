@@ -1,14 +1,14 @@
-pub mod memory;
-pub mod nvme;
-pub mod network;
+pub mod memory_tier;
+pub mod nvme_tier;
+pub mod network_tier;
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::fmt::Debug;
 
-pub use memory::MemoryBackend;
-pub use nvme::NvmeBackend;
-pub use network::NetworkBackend;
+pub use memory_tier::MemoryBackend;
+pub use nvme_tier::NvmeBackend;
+pub use network_tier::NetworkBackend;
 
 /// Cache storage tier
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]

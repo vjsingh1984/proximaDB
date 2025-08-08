@@ -27,8 +27,8 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
-use crate::monitoring::metrics::exporters::{MetricsExporter, PrometheusExporter};
-use crate::monitoring::metrics::{Alert, SystemMetrics};
+use crate::metrics::exporters::{MetricsExporter, PrometheusExporter};
+use crate::metrics::{MetricsSnapshot};
 use crate::monitoring::MetricsCollector;
 
 /// Metrics Service configuration
@@ -142,7 +142,7 @@ async fn metrics_endpoint(
 async fn json_metrics_endpoint(
     Query(params): Query<MetricsQuery>,
     State(metrics_collector): State<Arc<MetricsCollector>>,
-) -> Json<SystemMetrics> {
+) -> Json<crate::metrics::SystemMetrics> {
     let _since = params.since; // TODO: Use for historical data
     let metrics = metrics_collector.get_current_metrics().await;
     Json(metrics)
@@ -176,7 +176,7 @@ async fn metrics_health_endpoint(
 /// Active alerts endpoint
 async fn alerts_endpoint(
     State(metrics_collector): State<Arc<MetricsCollector>>,
-) -> Json<Vec<Alert>> {
+) -> Json<Vec<crate::metrics::Alert>> {
     let alerts = metrics_collector.get_active_alerts().await;
     Json(alerts)
 }

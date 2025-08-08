@@ -144,7 +144,6 @@ async fn test_sst_flush_with_compression() -> anyhow::Result<()> {
     ).await.unwrap());
     
     let engine = SstStorage::new(
-        "test_collection".to_string(),
         (*config).clone(),
         filesystem.clone(),
         distance_compute
@@ -210,7 +209,6 @@ async fn test_sst_compaction_with_compression() -> anyhow::Result<()> {
     
     
     let engine = SstStorage::new(
-        "test_compaction".to_string(),
         (*config).clone(),
         filesystem.clone(),
         distance_compute
@@ -282,7 +280,6 @@ async fn test_sst_search_compressed_blocks() -> anyhow::Result<()> {
     ).await.unwrap());
     
     let engine = SstStorage::new(
-        "test_search".to_string(),
         (*config).clone(),
         filesystem.clone(),
         distance_compute
@@ -423,7 +420,6 @@ async fn test_compression_enabled_vs_disabled() -> anyhow::Result<()> {
     
     
     let compressed_engine = SstStorage::new(
-        "compressed_test".to_string(),
         (*config_compressed).clone(),
         filesystem.clone(),
         distance_compute.clone()
@@ -442,7 +438,6 @@ async fn test_compression_enabled_vs_disabled() -> anyhow::Result<()> {
     
     
     let uncompressed_engine = SstStorage::new(
-        "uncompressed_test".to_string(),
         (*config_uncompressed).clone(),
         filesystem.clone(),
         distance_compute
@@ -505,7 +500,6 @@ async fn test_compression_levels() -> anyhow::Result<()> {
         let filesystem = Arc::new(FilesystemFactory::new(Default::default()).await?);
         let distance_compute = Arc::new(UnifiedDistanceCompute::new(proximadb::compute::distance::DistanceMetric::Cosine));
         let engine = SstStorage::new(
-            format!("test_level_{}", level),
             config,
             filesystem.clone(),
             distance_compute.clone()

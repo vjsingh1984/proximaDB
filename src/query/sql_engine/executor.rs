@@ -16,7 +16,7 @@
 
 //! SQL Query Executor
 //! 
-//! Executes query plans using the DirectVectorService.
+//! Executes query plans using the VectorOperationsService.
 
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
@@ -24,7 +24,7 @@ use std::sync::Arc;
 use std::collections::HashMap;
 
 use super::planner::ExecutionPlan;
-use crate::services::DirectVectorService;
+use crate::services::VectorOperationsService;
 use crate::proto::proximadb::DistanceMetric;
 
 /// SQL execution result
@@ -58,12 +58,12 @@ pub struct ExecutionStats {
 
 /// SQL query executor
 pub struct SqlExecutor {
-    vector_service: Arc<DirectVectorService>,
+    vector_service: Arc<VectorOperationsService>,
 }
 
 impl SqlExecutor {
     /// Create new executor
-    pub fn new(vector_service: Arc<DirectVectorService>) -> Self {
+    pub fn new(vector_service: Arc<VectorOperationsService>) -> Self {
         Self { vector_service }
     }
     

@@ -30,7 +30,7 @@ use serde_json::json;
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use crate::handlers::{UnifiedHandlers, conversions};
+use crate::api_handlers::{UnifiedHandlers, conversions};
 use crate::core::search::SearchResult;
 use crate::proto::proximadb::{
     self, 
@@ -586,7 +586,7 @@ pub fn create_router(state: AppState) -> Router {
 pub async fn health_check(
     State(state): State<AppState>,
 ) -> Result<JsonResponse<ApiResponse<HashMap<String, serde_json::Value>>>, StatusCode> {
-    match state.unified_handlers.direct_vector_service.health_check().await {
+    match state.unified_handlers.vector_operations_service.health_check().await {
         Ok(health_bytes) => {
             match serde_json::from_slice::<serde_json::Value>(&health_bytes) {
                 Ok(health_data) => {
@@ -1900,7 +1900,7 @@ pub async fn debug_list_unflushed_vectors(
 ) -> Result<JsonResponse<serde_json::Value>, ErrorResponse> {
     tracing::info!("🔍 DEBUG REST: Listing unflushed vectors for collection: {}", collection_id);
     
-    match state.unified_handlers.direct_vector_service.debug_list_all_unflushed_vectors(&collection_id).await {
+    match state.unified_handlers.vector_operations_service.debug_list_all_unflushed_vectors(&collection_id).await {
         Ok(vectors) => {
             let debug_info = serde_json::json!({
                 "collection_id": collection_id,

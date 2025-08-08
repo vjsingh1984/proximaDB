@@ -365,7 +365,7 @@ data_dir = "."
 
 [storage]
 metadata_url = "./metadata"
-write_buffer_config.write_buffer_directory = "./write_buffer"
+wal_config.write_buffer_directory = "./write_buffer"
 sst_config.data_directory = "./sst_data"
 
 [[storage.storage_locations]]
@@ -386,7 +386,7 @@ url = "./storage"
         assert!(config.server.data_dir.is_absolute());
         assert!(config.storage.metadata_url.starts_with("file://"));
         assert!(config.storage.metadata_url.contains(temp_dir.path().to_str().unwrap()));
-        assert!(config.storage.write_buffer_config.write_buffer_directory.contains(temp_dir.path().to_str().unwrap()));
+        assert!(config.storage.wal_config.write_buffer_directory.contains(temp_dir.path().to_str().unwrap()));
         assert!(config.storage.sst_config.data_directory.contains(temp_dir.path().to_str().unwrap()));
         assert!(config.storage.storage_locations[0].url.starts_with("file://"));
     }
@@ -412,7 +412,7 @@ data_dir = ".."
 
 [storage]
 metadata_url = "../metadata"
-write_buffer_config.write_buffer_directory = "../write_buffer"
+wal_config.write_buffer_directory = "../write_buffer"
 sst_config.data_directory = "../sst_data"
 
 [[storage.storage_locations]]
@@ -439,8 +439,8 @@ url = "../storage"
         assert!(!config.storage.metadata_url.contains("subdir"));
         
         // Other paths should also point to parent directory
-        assert!(config.storage.write_buffer_config.write_buffer_directory.contains(temp_dir.path().to_str().unwrap()));
-        assert!(!config.storage.write_buffer_config.write_buffer_directory.contains("subdir"));
+        assert!(config.storage.wal_config.write_buffer_directory.contains(temp_dir.path().to_str().unwrap()));
+        assert!(!config.storage.wal_config.write_buffer_directory.contains("subdir"));
     }
 
     #[test]
@@ -455,7 +455,7 @@ data_dir = "./data"
 
 [storage]
 metadata_url = "/absolute/path/metadata"
-write_buffer_config.write_buffer_directory = "../sibling/write_buffer"
+wal_config.write_buffer_directory = "../sibling/write_buffer"
 sst_config.data_directory = "./sst_data"
 
 [[storage.storage_locations]]

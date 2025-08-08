@@ -61,7 +61,6 @@ async fn test_lsm_do_flush_with_bloom_filter() {
     
     let distance_compute = Arc::new(UnifiedDistanceCompute::new(proximadb::compute::distance::DistanceMetric::Cosine));
     let lsm_engine = SstStorage::new(
-        collection_id.to_string(),
         sst_config.clone(),
         filesystem.clone(),
         distance_compute.clone(),

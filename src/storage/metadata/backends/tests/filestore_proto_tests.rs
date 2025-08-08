@@ -14,7 +14,7 @@ mod tests {
         CollectionStats, CollectionMetadata, DistanceMetric, StorageEngine, 
         IndexingAlgorithm, FilterableColumnSpec, FilterableDataType,
     };
-    use crate::storage::atomic::{UnifiedAtomicCoordinator, generate_transaction_id};
+    use crate::storage::transaction_coordinator::{TransactionCoordinator, generate_transaction_id};
     use crate::storage::persistence::filesystem::FilesystemFactory;
     use std::sync::Arc;
     use tempfile::TempDir;

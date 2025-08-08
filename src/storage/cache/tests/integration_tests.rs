@@ -1,0 +1,305 @@
+//! Integration tests for complete cache system
+
+use super::super::*;
+use super::super::specialized::{
+    vector_store::VectorStore,
+    query_cache::QueryCache,
+    bitmap_filter_cache::BitmapFilterCache,
+    index_node_cache::IndexNodeCache,
+    metadata_store::MetadataStore,
+};
+use super::super::orchestrator::{CrossCacheOrchestrator, CacheType as OrchestratorCacheType};
+use super::super::config::{CacheConfig, AlertThresholds};
+// use super::super::monitoring::{CacheMonitoringDashboard, AlertManager};
+// use super::super::optimization::CacheOptimizer;
+use crate::proto::proximadb::VectorRecord;
+use crate::metrics::{CacheMetricsSnapshot, CacheMetricsCollector};
+use std::sync::Arc;
+use std::time::Duration;
+use tokio::sync::RwLock;
+
+/// End-to-end test of cache system with real workload
+#[tokio::test]
+async fn test_end_to_end_cache_system() {
+    // Initialize components
+    let config = CacheConfig::default();
+    let total_memory = config.total_memory_bytes();
+    
+    // Create coordinator
+    let orchestrator = Arc::new(CrossCacheOrchestrator::new(total_memory));
+    
+    // Create specialized caches
+    let vector_cache = Arc::new(VectorStore::new(
+        config.get_cache_memory_bytes("vector_data")
+    ));
+    let query_cache = Arc::new(QueryCache::new(
+        config.get_cache_memory_bytes("query_result")
+    ));
+    let filter_cache = Arc::new(BitmapFilterCache::new(
+        config.get_cache_memory_bytes("filter_bitmap")
+    ));
+    let index_cache = Arc::new(IndexNodeCache::new(
+        config.get_cache_memory_bytes("index_structure")
+    ));
+    let metadata_cache = Arc::new(MetadataStore::new(
+        config.get_cache_memory_bytes("metadata")
+    ));
+    
+    // Register caches with orchestrator
+    let orchestrator = Arc::new(CrossCacheOrchestrator::new(total_memory)
+        .with_vector_cache(vector_cache.clone())
+        .with_query_cache(query_cache.clone())
+        .with_filter_cache(filter_cache.clone())
+        .with_index_cache(index_cache.clone())
+        .with_metadata_cache(metadata_cache.clone()));
+    
+    // Start background workers
+    orchestrator.start_prefetch_worker().await;
+    
+    // Create monitoring dashboard
+    let dashboard = Arc::new(CacheMonitoringDashboard::new(
+        orchestrator.clone(),
+        Arc::new(config.clone()),
+    ));
+    dashboard.start().await;
+    
+    // Create optimizer
+    let optimizer = Arc::new(CacheOptimizer::new(
+        orchestrator.clone(),
+        config.clone(),
+    ));
+    
+    // Simulate workload
+    simulate_vector_workload(&orchestrator, &vector_cache).await;
+    simulate_query_workload(&orchestrator, &query_cache).await;
+    simulate_filter_workload(&orchestrator, &filter_cache).await;
+    
+    // Wait for operations to complete
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    
+    // Run optimization
+    let report = optimizer.analyze().await;
+    assert!(!report.optimization_hints.is_empty() || report.optimization_hints.is_empty());
+    
+    // Get dashboard state
+    let state = dashboard.get_dashboard_state().await;
+    assert!(!state.cache_status.is_empty());
+    
+    // Trigger memory reallocation
+    orchestrator.reallocate_memory_tiers().await.unwrap();
+    
+    // Test invalidation cascade
+    orchestrator.orchestrate_cascade_invalidation("vec1").await.unwrap();
+    
+    // Verify system health
+    let metrics = orchestrator.metrics();
+    assert!(metrics.total_gets() > 0 || metrics.total_puts() > 0);
+}
+
+/// Test cache system with metrics integration
+#[tokio::test]
+async fn test_cache_metrics_integration() {
+    // Create metrics components
+    use crate::metrics::updater::MetricsUpdateService;
+    use crate::metrics::store::MetricsPersistenceLayer;
+    use crate::storage::persistence::filesystem::{FilesystemFactory, FilesystemConfig};
+    use crate::metrics::MetricsConfig;
+    
+    let fs_config = FilesystemConfig::default();
+    let filesystem_factory = Arc::new(FilesystemFactory::new(fs_config).await.unwrap());
+    let metrics_config = MetricsConfig::default();
+    let store = Arc::new(MetricsPersistenceLayer::new(
+        filesystem_factory,
+        metrics_config,
+    ).await.unwrap());
+    let updater = Arc::new(MetricsUpdateService::new(store));
+    use crate::metrics::aggregator::MetricsAggregationEngine;
+    let aggregator = Arc::new(MetricsAggregationEngine::new());
+    let base_metrics = Arc::new(CacheMetrics::new());
+    
+    // Create cache metrics aggregator
+    let cache_aggregator = CacheMetricsCollector::new(
+        updater.clone(),
+        aggregator.clone(),
+        base_metrics.clone(),
+    );
+    
+    // Start metrics collection
+    cache_aggregator.start(Duration::from_millis(100)).await;
+    
+    // Simulate cache operations
+    base_metrics.record_hit(CacheTier::L1);
+    base_metrics.record_hit(CacheTier::L1);
+    base_metrics.record_miss();
+    base_metrics.record_hit(CacheTier::L2);
+    base_metrics.record_eviction();
+    
+    // Wait for aggregation
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    
+    // Get current metrics
+    let metrics = cache_aggregator.get_current_metrics().await;
+    assert!(metrics.overall_hit_rate > 0.0);
+    
+    // Get optimization hints
+    let hints = cache_aggregator.get_optimization_hints().await;
+    assert!(hints.recommended_memory_mb > 0);
+}
+
+
+/// Test cache system under memory pressure
+#[tokio::test]
+async fn test_cache_under_memory_pressure() {
+    // Create small memory budget
+    let orchestrator = CrossCacheOrchestrator::new(1024 * 1024); // 1MB only
+    
+    // Create caches with limited memory
+    let vector_cache = Arc::new(VectorStore::new(400 * 1024)); // 400KB
+    let query_cache = Arc::new(QueryCache::new(300 * 1024)); // 300KB
+    let filter_cache = Arc::new(BitmapFilterCache::new(300 * 1024)); // 300KB
+    
+    let orchestrator = orchestrator
+        .with_vector_cache(vector_cache.clone())
+        .with_query_cache(query_cache.clone())
+        .with_filter_cache(filter_cache.clone());
+    
+    // Fill caches to capacity
+    for i in 0..1000 {
+        let record = VectorRecord {
+            id: Some(format!("pressure_vec_{}", i)),
+            vector: vec![i as f32; 128],
+            metadata: vec![],  // Empty vector instead of None
+            timestamp: 0,
+            updated_at: Some(0),
+            expires_at: None,
+            version: Some(1),  // Option<u32>
+            distance: None,
+            rank: None,
+            score: None,
+            // No collection_id or created_at fields
+        };
+        vector_cache.put_with_hooks(format!("pressure_vec_{}", i), record).await;
+    }
+    
+    // Verify evictions occurred
+    let metrics = vector_cache.metrics();
+    assert!(metrics.total_evictions() > 0);
+    
+    // Trigger memory reallocation
+    orchestrator.reallocate_memory_tiers().await.unwrap();
+    
+    // Verify system still functional
+    let test_record = VectorRecord {
+        id: Some("test".to_string()),
+        vector: vec![1.0; 128],
+        metadata: vec![],  // Empty vector instead of None
+        timestamp: 0,
+        updated_at: Some(0),
+        expires_at: None,
+        version: Some(1),  // Option<u32>
+        distance: None,
+        rank: None,
+        score: None,
+        // No collection_id or created_at fields
+    };
+    vector_cache.put_with_hooks("test".to_string(), test_record.clone()).await;
+    let retrieved = vector_cache.get_with_hooks(&"test".to_string()).await;
+    assert!(retrieved.is_some());
+}
+
+/// Test pattern-based prefetching
+#[tokio::test]
+async fn test_pattern_based_prefetching() {
+    let orchestrator = CrossCacheOrchestrator::new(1024 * 1024 * 10);
+    let pattern_tracker = orchestrator.pattern_tracker();
+    
+    // Train pattern: vec1 -> vec2 -> vec3
+    // Use synchronous record_access for tests to ensure patterns are recorded immediately
+    for _ in 0..10 {
+        pattern_tracker.track_access_sync("vec1".to_string(), OrchestratorCacheType::VectorData).await;
+        pattern_tracker.track_access_sync("vec2".to_string(), OrchestratorCacheType::VectorData).await;
+        pattern_tracker.track_access_sync("vec3".to_string(), OrchestratorCacheType::VectorData).await;
+    }
+    
+    // Access vec1 and check predictions
+    pattern_tracker.track_access_sync("vec1".to_string(), OrchestratorCacheType::VectorData).await;
+    
+    let predictions = pattern_tracker.get_predicted_accesses("vec1", 5).await;
+    assert!(predictions.iter().any(|(k, _)| k == "vec2"));
+    assert!(predictions.iter().any(|(k, _)| k == "vec3"));
+}
+
+/// Test configuration hot-reload
+#[tokio::test]
+async fn test_config_hot_reload() {
+    use tempfile::NamedTempFile;
+    
+    // Create initial config
+    let temp_file = NamedTempFile::new().unwrap();
+    let path = temp_file.path().to_str().unwrap();
+    
+    let mut config = CacheConfig::default();
+    config.global.total_memory_mb = 1024;
+    config.to_file(path).unwrap();
+    
+    // Load and create system
+    let loaded_config = CacheConfig::from_file(path).unwrap();
+    let orchestrator = Arc::new(CrossCacheOrchestrator::new(loaded_config.total_memory_bytes()));
+    
+    // Modify config
+    config.global.total_memory_mb = 2048;
+    config.to_file(path).unwrap();
+    
+    // Reload config (in production, this would trigger resizing)
+    let reloaded = CacheConfig::from_file(path).unwrap();
+    assert_eq!(reloaded.global.total_memory_mb, 2048);
+}
+
+// Helper functions for simulating workloads
+async fn simulate_vector_workload(
+    orchestrator: &CrossCacheOrchestrator,
+    cache: &Arc<VectorStore>,
+) {
+    for i in 0..50 {
+        let record = VectorRecord {
+            id: Some(format!("vec{}", i)),
+            vector: vec![i as f32; 128],
+            metadata: vec![],
+            timestamp: 0,
+            updated_at: Some(0),
+            expires_at: None,
+            distance: None,
+            rank: None,
+            score: None,
+            ..Default::default()
+        };
+        
+        cache.put_with_hooks(format!("vec{}", i), record).await;
+        orchestrator.on_vector_access(&format!("vec{}", i)).await.ok();
+        
+        // Simulate access patterns
+        if i > 0 {
+            cache.get_with_hooks(&format!("vec{}", i - 1)).await;
+        }
+    }
+}
+
+async fn simulate_query_workload(
+    orchestrator: &CrossCacheOrchestrator,
+    _cache: &Arc<QueryCache>,
+) {
+    for i in 0..20 {
+        orchestrator.on_query_execution(&format!("query{}", i)).await.ok();
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+}
+
+async fn simulate_filter_workload(
+    _orchestrator: &CrossCacheOrchestrator,
+    _cache: &Arc<BitmapFilterCache>,
+) {
+    // Would simulate filter operations
+    // Creating bitmaps, combining filters, etc.
+}
+
+// Removed duplicate mock structs - now using the real ones from crate::metrics

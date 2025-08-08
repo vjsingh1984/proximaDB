@@ -5,7 +5,7 @@ mod tests {
     use super::super::config::*;
     
     #[test]
-    fn test_write_buffer_config_defaults() {
+    fn test_wal_config_defaults() {
         let config = WriteBufferUserConfig::default();
         
         // Test size thresholds
@@ -38,7 +38,7 @@ mod tests {
     }
     
     #[test]
-    fn test_write_buffer_config_custom_values() {
+    fn test_wal_config_custom_values() {
         let config = WriteBufferUserConfig {
             write_buffer_size_mb: 16384, // 16GB
             memory_flush_size_bytes: 32 * 1024 * 1024, // 32MB
@@ -58,7 +58,7 @@ mod tests {
     }
     
     #[test]
-    fn test_write_buffer_config_values_propagate() {
+    fn test_wal_config_values_propagate() {
         // Test that TOML config values would propagate correctly
         let toml_config = WriteBufferUserConfig {
             write_buffer_size_mb: 8192,
@@ -129,7 +129,7 @@ mod tests {
         // 1. Per-collection size: 16MB
         // 2. Per-collection count: 20k vectors
         // 3. Global size: 8GB
-        // 4. Global count: 1M vectors (hardcoded in DirectVectorService)
+        // 4. Global count: 1M vectors (hardcoded in VectorOperationsService)
         
         let config = WriteBufferUserConfig::default();
         

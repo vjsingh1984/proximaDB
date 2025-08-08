@@ -1,11 +1,11 @@
-pub mod vector_data;
-pub mod query_result;
-pub mod filter_bitmap;
-pub mod index_structure;
-pub mod metadata;
+pub mod vector_store;
+pub mod query_cache;
+pub mod bitmap_filter_cache;
+pub mod index_node_cache;
+pub mod metadata_store;
 
-pub use vector_data::VectorDataCache;
-pub use query_result::QueryResultCache;
-pub use filter_bitmap::FilterBitmapCache;
-pub use index_structure::IndexStructureCache;
-pub use metadata::MetadataCache;
+pub use vector_store::VectorStore;
+pub use query_cache::QueryCache;
+pub use bitmap_filter_cache::BitmapFilterCache;
+pub use index_node_cache::IndexNodeCache;
+pub use metadata_store::MetadataStore;

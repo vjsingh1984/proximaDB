@@ -11,7 +11,7 @@ use tempfile::TempDir;
 use tokio;
 
 use crate::core::VectorRecord;
-use crate::storage::atomic::{UnifiedAtomicCoordinator, ViperAtomicOperations};
+use crate::storage::transaction_coordinator::{TransactionCoordinator, ViperTransactionalOperations};
 use crate::storage::engines::viper::ViperEngine;
 use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
 use crate::storage::traits::{FlushParameters, StorageEngineStrategy, UnifiedStorageEngine};
@@ -143,8 +143,8 @@ async fn test_unified_atomic_operations_lifecycle() -> Result<()> {
     let filesystem = Arc::new(FilesystemFactory::new(fs_config).await?);
 
     // Test unified atomic coordinator
-    let coordinator = UnifiedAtomicCoordinator::new(filesystem.clone(), None).await?;
-    let viper_ops = ViperAtomicOperations::new(Arc::new(coordinator));
+    let coordinator = TransactionCoordinator::new(filesystem.clone(), None).await?;
+    let viper_ops = ViperTransactionalOperations::new(Arc::new(coordinator));
 
     let collection_id = "test_collection";
     let storage_url = format!("file://{}/storage", temp_path);

@@ -1,0 +1,111 @@
+= Performance Reference
+:toc: left
+:toclevels: 2
+:imagesdir: diagrams/images
+
+**Performance benchmarks, optimization guidelines, and hardware recommendations.**
+
+== Current Benchmarks (2025-08-05)
+
+**Test Hardware**: AMD Ryzen 9 7950X 16-Core (32 logical, 157.2GB RAM, AVX-512+AVX2)
+
+=== Insert Performance
+- **gRPC Max**: 20,575 vectors/sec (VIPER engine)
+- **REST Max**: 6,035 vectors/sec 
+- **Protocol Advantage**: 3.4x faster (gRPC vs REST)
+
+=== Search Latency  
+- **VIPER Engine**: 1.5ms average, 6.82ms (euclidean best)
+- **SST Engine**: 1.8ms average, 6.75ms (manhattan best)
+- **SQL Queries**: 3.2ms average
+
+=== Distance Metrics Performance
+**SST Engine** (lower is better):
+- Manhattan: 6.75ms (fastest)
+- Cosine: 7.12ms
+- Euclidean: 7.31ms
+- Dot Product: 7.89ms
+
+**VIPER Engine**:
+- Euclidean: 6.82ms (fastest)
+- Cosine: 7.05ms
+- Manhattan: 7.28ms
+- Dot Product: 8.15ms
+
+== Optimization Guidelines
+
+=== Engine Selection
+- **Write-Heavy**: SST engine for maximum throughput
+- **Analytics**: VIPER engine for complex queries
+- **Mixed**: SST engine (default recommendation)
+
+=== Protocol Selection
+- **High Throughput**: gRPC (3x faster inserts)
+- **Compatibility**: REST (universal support)
+- **Bulk Operations**: gRPC with batch size 500
+- **Single Operations**: Either protocol
+
+=== Hardware Acceleration
+**Automatic Detection**: ProximaDB detects and uses available acceleration
+- **GPU**: CUDA, ROCm, MPS (Apple Silicon)
+- **SIMD**: AVX-512, AVX2, NEON (ARM)
+- **Fallback**: Graceful degradation to CPU
+
+=== Memory Configuration
+[source,toml]
+----
+[performance]
+vector_cache_mb = 512      # Vector data cache
+metadata_cache_mb = 128    # Metadata cache  
+bloom_filter_mb = 64       # Bloom filter memory
+connection_pool_size = 100 # Connection pooling
+query_cache_size_mb = 256  # Query result cache
+----
+
+=== Compression Settings
+**ZSTD (Recommended)**:
+- Level 1-3: Write-optimized
+- Level 6: Balanced (default)
+- Level 9+: Storage-optimized
+
+**Engine-Specific**:
+- **SST**: Block compression (ZSTD, LZ4, Snappy)
+- **VIPER**: Column compression + optional quantization
+
+=== Batch Size Optimization
+- **gRPC**: 500 vectors per batch (optimal)
+- **REST**: 100 vectors per batch (optimal)
+- **SQL**: 50 queries per batch
+
+== Hardware Recommendations
+
+=== CPU Requirements
+**Minimum**: 4 cores, 8GB RAM
+**Recommended**: 8+ cores, 32GB+ RAM
+**Enterprise**: 16+ cores, 64GB+ RAM
+
+=== Storage Requirements
+**NVMe SSD Recommended**: 10x faster than HDD for random access
+**RAID Configurations**: Supported for redundancy
+**Multi-Disk**: Automatic load balancing
+
+=== Network
+**Local**: Single-machine deployment
+**Distributed**: gRPC clustering support
+**Load Balancing**: Connection pooling built-in
+
+== Benchmarking Tools
+
+**Built-in Metrics**:
+[source,rust]
+----
+// Performance tracking available
+let metrics = service.get_performance_metrics();
+println!("Insert rate: {} vectors/sec", metrics.insert_rate);
+println!("Search P95: {}ms", metrics.search_p95);
+----
+
+**External Tools**:
+- **Prometheus**: Metrics export built-in
+- **Grafana**: Dashboard templates available
+- **Custom**: REST API for metrics access

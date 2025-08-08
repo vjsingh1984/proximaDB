@@ -21,8 +21,7 @@ use proximadb::storage::engines::sst::SstStorage;
 use proximadb::storage::persistence::filesystem::{FilesystemFactory, FilesystemConfig};
 use proximadb::storage::UnifiedStorageEngine;
 // 🔴 OBSOLETE - Assignment service removed
-    get_assignment_service
-};
+// get_assignment_service
 use std::sync::Arc;
 use std::collections::HashMap;
 use tempfile::TempDir;
@@ -78,18 +77,7 @@ async fn test_lsm_search_with_flush() {
     // we should create a collection with LSM storage engine specified.
     // For now, we'll manually flush to LSM engine.
     
-    // Clear any existing assignment first to avoid conflicts
-    let assignment_service = get_assignment_service();
-    let _ = assignment_service.remove_assignment(collection_id).await;
-    assignment_service.assign_collection(
-        collection_id,
-        &[proximadb::core::config::StorageLocation {
-            url: format!("file://{}", base_path),
-            weight: 1,
-            tags: vec![],
-        }],
-        "hash"
-    ).await.unwrap();
+    // Assignment service removed - collections now embed storage_assignment
     
     // Create the expected data directory where assignment service will point to
     let expected_data_dir = format!("{}/{}/data", base_path, collection_id);
@@ -112,7 +100,7 @@ async fn test_lsm_search_with_flush() {
     
     // Reuse the same collection_id that was assigned storage
     let lsm_engine = Arc::new(
-        SstStorage::new(collection_id.to_string(), lsm_config.clone(), filesystem.clone(), distance_compute.clone())
+        SstStorage::new(lsm_config.clone(), filesystem.clone(), distance_compute.clone())
             .await
             .unwrap()
     );
@@ -344,18 +332,7 @@ async fn test_lsm_compaction_and_search() {
     let wal_path = format!("{}/{}/wal/{}/logs_dir", base_path, collection_id, collection_id);
     std::fs::create_dir_all(&wal_path).unwrap();
     
-    // Clear any existing assignment first to avoid conflicts
-    let assignment_service = get_assignment_service();
-    let _ = assignment_service.remove_assignment(collection_id).await;
-    assignment_service.assign_collection(
-        collection_id,
-        &[proximadb::core::config::StorageLocation {
-            url: format!("file://{}", base_path),
-            weight: 1,
-            tags: vec![],
-        }],
-        "hash"
-    ).await.unwrap();
+    // Assignment service removed - collections now embed storage_assignment
     
     // Create components
     let fs_config = FilesystemConfig::default();
@@ -373,7 +350,7 @@ async fn test_lsm_compaction_and_search() {
     
     // Reuse the same collection_id that was assigned storage
     let lsm_engine = Arc::new(
-        SstStorage::new(collection_id.to_string(), lsm_config.clone(), filesystem.clone(), distance_compute.clone())
+        SstStorage::new(lsm_config.clone(), filesystem.clone(), distance_compute.clone())
             .await
             .unwrap()
     );
@@ -526,18 +503,7 @@ async fn test_lsm_bloom_filter_efficiency() {
     let wal_path = format!("{}/{}/wal/{}/logs_dir", base_path, collection_id, collection_id);
     std::fs::create_dir_all(&wal_path).unwrap();
     
-    // Clear any existing assignment first to avoid conflicts
-    let assignment_service = get_assignment_service();
-    let _ = assignment_service.remove_assignment(collection_id).await;
-    assignment_service.assign_collection(
-        collection_id,
-        &[proximadb::core::config::StorageLocation {
-            url: format!("file://{}", base_path),
-            weight: 1,
-            tags: vec![],
-        }],
-        "hash"
-    ).await.unwrap();
+    // Assignment service removed - collections now embed storage_assignment
     
     // Create components
     let fs_config = FilesystemConfig::default();
@@ -553,7 +519,7 @@ async fn test_lsm_bloom_filter_efficiency() {
     
     let distance_compute = Arc::new(UnifiedDistanceCompute::new(DistanceMetric::Cosine));
     let lsm_engine = Arc::new(
-        SstStorage::new(collection_id.to_string(), lsm_config.clone(), filesystem.clone(), distance_compute.clone())
+        SstStorage::new(lsm_config.clone(), filesystem.clone(), distance_compute.clone())
             .await
             .unwrap()
     );
