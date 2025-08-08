@@ -1497,6 +1497,290 @@ pub enum BackendMetrics {
 
 ### Phase 4: Integration (Week 4)  
 - [ ] Integrate with existing HNSW, Annoy, IVF, LSH indexes
+
+## Final Architecture: Rule-Based Tier Management (2025-08-08)
+
+### Scaling Concerns Addressed
+
+After analyzing the per-collection policy approach, it became clear that storing individual `SmartTierPolicy` instances for each collection would cause significant scaling issues. Instead, we've implemented a **Rule-Based Tier Policy** system that:
+
+1. **Eliminates Per-Collection Storage**: No hash maps storing policies for thousands of collections
+2. **Uses Server-Wide Rules**: Single set of rules applied based on data characteristics  
+3. **Configurable via Server Config**: Rules can be configured through `config.toml` (not exposed via API initially)
+4. **Default Disk Paths**: Collections get predictable paths like `/tmp/{collection_id}/` by default
+5. **Future API Extensibility**: Architecture supports exposing configuration through Collection Create API if needed
+
+### Rule-Based Architecture
+
+```
+                    ProximaDB Server
+    ┌─────────────────────────────────────────────────────┐
+    │              GlobalTierManager                      │
+    │  ┌─────────────────────────────────────────────────┐│
+    │  │           RuleBasedTierPolicy                   ││
+    │  │                                                 ││
+    │  │  Rules:                      Target Tiers:     ││
+    │  │  • >100 accesses/day    →    Memory (L1)       ││
+    │  │  • 10-100 accesses/day  →    NVMe (L2)         ││
+    │  │  • 1-10 accesses/day    →    HDD (L3)          ││
+    │  │  • <1 access/day        →    Evict/Archive     ││
+    │  │                                                 ││
+    │  │  Paths: /tmp/{collection_id}/{tier}/            ││
+    │  └─────────────────────────────────────────────────┘│
+    └─────────────────────────────────────────────────────┘
+                          │
+              ┌───────────┼───────────┐
+              │           │           │
+        Collection1   Collection2  Collection3
+         (any tier)    (any tier)   (any tier)
+```
+
+### Data Flow Diagrams
+
+#### Index Workload - Data Promotion/Demotion
+
+```
+Index Data Lifecycle (Never Evicts - Always Promotes to Persistent Storage)
+
+Hot Data (>100 accesses/day)
+┌─────────────┐    Memory Pressure    ┌─────────────┐    Disk Full    ┌─────────────┐
+│   Memory    │ ───────────────────→  │    NVMe     │ ─────────────→  │     HDD     │
+│    (L1)     │                       │    (L2)     │                 │    (L3)     │
+│ /tmp/c1/mem │                       │/tmp/c1/nvme │                 │ /tmp/c1/hdd │
+└─────────────┘                       └─────────────┘                 └─────────────┘
+      ↑                                      ↑                               ↑
+      │ Access Frequency                     │ Access Frequency               │
+      │ Increases                            │ Increases                      │
+      │                                      │                                │
+┌─────────────┐    Access Promotion   ┌─────────────┐    Access Promotion   ┌─────────────┐
+│   Evicted   │ ←──────────────────   │    NVMe     │ ←────────────────────  │     HDD     │
+│   (Never)   │                       │    (L2)     │                        │    (L3)     │
+│     N/A     │                       │/tmp/c1/nvme │                        │ /tmp/c1/hdd │
+└─────────────┘                       └─────────────┘                        └─────────────┘
+
+Rule: Index backends NEVER evict data - always promote to persistent storage
+```
+
+#### Cache Workload - Data Eviction/Promotion
+
+```
+Cache Data Lifecycle (Can Evict or Promote Based on Access Patterns)
+
+Hot Data (>50 accesses/day)
+┌─────────────┐    Memory Pressure    ┌─────────────┐    Disk Full    ┌─────────────┐
+│   Memory    │ ───────────────────→  │    NVMe     │ ─────────────→  │     HDD     │
+│    (L1)     │   (Promote if hot)    │    (L2)     │  (Promote)      │    (L3)     │
+│ /tmp/c1/mem │                       │/tmp/c1/nvme │                 │ /tmp/c1/hdd │
+└─────────────┘                       └─────────────┘                 └─────────────┘
+      ↓                                      ↓                               ↓
+      │ Low Access Frequency                 │ Very Low Access               │ No Access
+      │ (<10 accesses/day)                   │ (<1 access/day)               │ (>90 days)
+      │                                      │                                │
+      ↓                                      ↓                               ↓
+┌─────────────┐                       ┌─────────────┐                 ┌─────────────┐
+│   EVICTED   │                       │   EVICTED   │                 │   EVICTED   │
+│  (Memory    │                       │ (Disk Space │                 │ (Archived   │
+│  Reclaimed) │                       │  Reclaimed) │                 │  or Purged) │
+└─────────────┘                       └─────────────┘                 └─────────────┘
+
+Rule: Cache backends can evict data to reclaim resources
+```
+
+#### Hybrid Workload - Adaptive Behavior
+
+```
+Hybrid Data Lifecycle (Switches Between Index and Cache Behaviors)
+
+              Workload Pattern Detection
+                        │
+            ┌───────────┼───────────┐
+            │                       │
+     Read-Heavy (>80%)      Write-Heavy (>50%)
+     Cache Behavior          Index Behavior
+            │                       │
+            ↓                       ↓
+    ┌─────────────┐           ┌─────────────┐
+    │ Moka Cache  │           │  DashMap    │
+    │ + Eviction  │           │ + Promotion │
+    │ + LRU/TTL   │           │ + Buffering │
+    └─────────────┘           └─────────────┘
+            │                       │
+            │     Mixed Pattern     │
+            │     (40-60% each)     │
+            └───────────┼───────────┘
+                        │
+                        ↓
+              ┌─────────────┐
+              │ Dual-Tier   │
+              │ Hot: Moka   │
+              │ Cold: Disk  │
+              └─────────────┘
+
+Rule: Hybrid backends adapt based on detected workload patterns
+```
+
+### Directory Structure Examples
+
+```bash
+# Default server configuration (base_disk_path = "/tmp")
+/tmp/
+├── collection_user_vectors/
+│   ├── nvme/          # L2 tier (if NVMe available)
+│   │   ├── index_data
+│   │   └── cache_data
+│   ├── hdd/           # L3 tier  
+│   │   ├── index_data
+│   │   └── cache_data
+│   └── archive/       # L4+ tiers (future cloud integration)
+│
+├── collection_product_embeddings/
+│   ├── nvme/
+│   ├── hdd/
+│   └── archive/
+│
+└── collection_search_cache/
+    ├── nvme/
+    ├── hdd/
+    └── archive/
+
+# Custom server configuration (base_disk_path = "/mnt/proximadb")  
+/mnt/proximadb/
+├── collection1/
+│   ├── nvme/
+│   ├── hdd/
+│   └── archive/
+└── collection2/
+    ├── nvme/
+    ├── hdd/
+    └── archive/
+```
+
+### Implementation Examples
+
+#### Creating Adaptive Stores
+
+```rust
+use proximadb::common::adaptive_structures::*;
+use proximadb::common::tier_policy_engine::*;
+
+// Server startup - create global tier manager
+let server_config = ServerTierConfig {
+    base_disk_path: "/mnt/proximadb".to_string(),
+    base_nvme_path: Some("/mnt/nvme".to_string()),
+    max_memory_bytes: 8 * 1024 * 1024 * 1024, // 8GB
+    enable_cloud_storage: false, // Disabled initially
+    default_cloud_provider: None,
+};
+
+let global_tier_manager = Arc::new(GlobalTierManager::with_config(server_config));
+let universal_tier_manager = Arc::new(UniversalTierManager::new(global_tier_manager).await?);
+let factory = AdaptiveStoreFactory::new(universal_tier_manager);
+
+// Create index store for HNSW
+let index_config = AdaptiveStoreConfig {
+    collection_id: "user_vectors".to_string(),
+    backend_type: BackendType::Index {
+        structure: IndexStructure::DashMap {
+            initial_capacity: 10000,
+            memory_limit_mb: Some(512),
+        },
+        tier_policy: IndexTierPolicy {
+            min_tier: StorageTier::Memory,
+            promotion_threshold: 100, // 100 accesses/day  
+            max_acceleration_tier: StorageTier::NvmeSsd,
+        },
+    },
+    // ... tier and metrics config
+};
+
+let index_store = factory.create_store::<String, VectorRecord>(
+    "user_vectors".to_string(), 
+    Some(index_config)
+).await?;
+
+// Create cache store for query results
+let cache_config = AdaptiveStoreConfig {
+    collection_id: "query_cache".to_string(),
+    backend_type: BackendType::Cache {
+        structure: CacheStructure::Moka {
+            max_capacity: 100000,
+            time_to_live: Some(Duration::from_secs(3600)),
+            time_to_idle: Some(Duration::from_secs(1800)),
+        },
+        tier_policy: CacheTierPolicy {
+            eviction_policy: EvictionPolicy::Lru { max_entries: 100000 },
+            // ... promotion/demotion criteria
+        },
+    },
+    // ... tier and metrics config
+};
+
+let cache_store = factory.create_store::<String, QueryResult>(
+    "query_cache".to_string(),
+    Some(cache_config)
+).await?;
+
+// Use the stores
+index_store.insert("vector1".to_string(), vector_record).await?;
+let result = cache_store.get(&query_key).await;
+
+// Trigger tier rebalancing
+index_store.rebalance_tiers().await?;
+cache_store.rebalance_tiers().await?;
+```
+
+#### Rule-Based Tier Decisions
+
+```rust
+// The RuleBasedTierPolicy determines tier placement automatically
+let rule_policy = RuleBasedTierPolicy::default();
+
+// For a frequently accessed vector (120 accesses/day, 2 days old)
+let target_tier = rule_policy.determine_tier(&WorkloadPattern::ReadHeavy, 120.0, 2);
+assert_eq!(target_tier, 1); // Memory tier
+
+// For a moderately accessed vector (25 accesses/day, 10 days old) 
+let target_tier = rule_policy.determine_tier(&WorkloadPattern::Mixed, 25.0, 10);
+assert_eq!(target_tier, 2); // NVMe tier
+
+// For a cold vector (0.5 accesses/day, 45 days old)
+let target_tier = rule_policy.determine_tier(&WorkloadPattern::WriteHeavy, 0.5, 45);
+assert_eq!(target_tier, 3); // HDD tier
+
+// Get storage path for collection
+let path = rule_policy.get_collection_path("user_vectors", 2);
+assert_eq!(path, "/tmp/nvme/user_vectors");
+```
+
+### Benefits of Rule-Based Approach
+
+1. **Scalability**: O(1) policy lookup regardless of number of collections
+2. **Simplicity**: Single set of rules to understand and configure
+3. **Consistency**: All collections follow same tier management principles  
+4. **Maintainability**: Rules can be updated server-wide without per-collection changes
+5. **Resource Efficiency**: No per-collection policy storage overhead
+6. **Future Extensibility**: Easy to add new rules or expose via API later
+
+### Configuration Integration
+
+```toml
+# proximadb server config.toml
+[tier_management]
+base_disk_path = "/mnt/proximadb"  # Override default /tmp
+base_nvme_path = "/mnt/nvme"       # Optional NVMe path
+max_memory_bytes = 8589934592      # 8GB memory limit
+enable_cloud_storage = false      # Disabled initially
+
+# Rule thresholds (future enhancement)
+[tier_management.rules]
+hot_memory_threshold = 100.0      # accesses/day for memory tier
+warm_nvme_threshold = 10.0        # accesses/day for NVMe tier  
+cold_hdd_threshold = 1.0          # accesses/day for HDD tier
+aging_hdd_days = 30               # days before considering HDD demotion
+aging_memory_hours = 24           # hours before considering memory demotion
+```
+
+This rule-based approach provides a scalable foundation that can be enhanced with more sophisticated rules and eventually exposed through APIs as needed, without the immediate overhead of per-collection policy management.
 - [ ] Migrate cache modules to use new infrastructure
 - [ ] Performance benchmarking with comprehensive metrics collection
 - [ ] Production readiness testing

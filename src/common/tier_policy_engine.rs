@@ -28,6 +28,83 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::time::{Duration, SystemTime};
 
+/// Workload pattern classification for adaptive structures
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum WorkloadPattern {
+    /// Read-heavy workload (>80% reads)
+    ReadHeavy,
+    /// Write-heavy workload (>50% writes)
+    WriteHeavy,
+    /// Mixed workload with balanced read/write
+    Mixed,
+    /// Bulk operations (large batches)
+    Bulk,
+}
+
+/// Workload metrics for performance analysis and optimization
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorkloadMetrics {
+    /// Current workload pattern
+    pub pattern: WorkloadPattern,
+    /// Read operations per second
+    pub reads_per_second: f64,
+    /// Write operations per second
+    pub writes_per_second: f64,
+    /// Average operation latency
+    pub avg_latency_ms: f64,
+    /// Memory pressure (0.0-1.0)
+    pub memory_pressure: f64,
+    /// Cache hit rate (0.0-1.0)
+    pub cache_hit_rate: f64,
+    /// Data age distribution (days)
+    pub avg_data_age_days: f64,
+    /// Access frequency distribution
+    pub avg_access_frequency: f64,
+}
+
+impl WorkloadMetrics {
+    pub fn new(pattern: WorkloadPattern) -> Self {
+        Self {
+            pattern,
+            reads_per_second: 0.0,
+            writes_per_second: 0.0,
+            avg_latency_ms: 0.0,
+            memory_pressure: 0.0,
+            cache_hit_rate: 0.0,
+            avg_data_age_days: 0.0,
+            avg_access_frequency: 0.0,
+        }
+    }
+}
+
+/// Access pattern metrics for tier management
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AccessPatternMetrics {
+    /// Hot data access rate
+    pub hot_access_rate: f64,
+    /// Warm data access rate  
+    pub warm_access_rate: f64,
+    /// Cold data access rate
+    pub cold_access_rate: f64,
+    /// Sequential access pattern percentage
+    pub sequential_access_pct: f64,
+    /// Random access pattern percentage
+    pub random_access_pct: f64,
+}
+
+/// Cost metrics for tier optimization
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CostMetrics {
+    /// Storage cost per GB per month
+    pub storage_cost_per_gb: f64,
+    /// I/O cost per thousand operations
+    pub io_cost_per_1k_ops: f64,
+    /// Data transfer cost per GB
+    pub transfer_cost_per_gb: f64,
+    /// Total monthly cost
+    pub total_monthly_cost: f64,
+}
+
 /// Complete tier hierarchy from fastest to most cost-effective
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum StorageTier {
@@ -464,6 +541,234 @@ pub struct CostOptimization {
     cost_tracking_window_days: u32,
 }
 
+/// Rule-based tier policy for scalable tier management
+/// Uses default rules instead of per-collection policies to avoid scaling issues
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RuleBasedTierPolicy {
+    /// Default disk partition path (configurable via server config)
+    default_disk_path: String,
+    
+    /// Maximum tier level for local storage (Memory=1, NVMe=2, HDD=3)
+    max_local_tier_level: u8,
+    
+    /// Default rules for data placement
+    default_rules: Vec<DefaultPlacementRule>,
+    
+    /// Memory pressure thresholds
+    memory_thresholds: MemoryPressureThresholds,
+    
+    /// Age-based rules for automatic demotion
+    aging_rules: AgingRules,
+}
+
+/// Default placement rules that apply to all collections
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DefaultPlacementRule {
+    /// Rule name for debugging
+    name: String,
+    
+    /// Target workload pattern
+    workload_pattern: WorkloadPattern,
+    
+    /// Placement condition
+    condition: PlacementCondition,
+    
+    /// Target tier
+    target_tier_level: u8,
+    
+    /// Rule priority (higher = more important)
+    priority: u32,
+}
+
+/// Memory pressure thresholds for tier decisions
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MemoryPressureThresholds {
+    /// Promote to faster tier threshold (0.0-1.0)
+    promote_threshold: f64,
+    
+    /// Demote to slower tier threshold (0.0-1.0)
+    demote_threshold: f64,
+    
+    /// Emergency eviction threshold (0.0-1.0)
+    emergency_threshold: f64,
+}
+
+/// Age-based automatic demotion rules
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgingRules {
+    /// Demote to HDD after this many days of no access
+    hdd_demotion_days: u32,
+    
+    /// Demote from memory after this many hours of no access
+    memory_demotion_hours: u32,
+    
+    /// Enable automatic aging (can be disabled)
+    enable_automatic_aging: bool,
+}
+
+/// Server configuration for tier management
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ServerTierConfig {
+    /// Base path for disk storage (/tmp by default, configurable via server config.toml)
+    base_disk_path: String,
+    
+    /// Base path for NVMe storage (if available)
+    base_nvme_path: Option<String>,
+    
+    /// Maximum memory allocation for tier management (bytes)
+    max_memory_bytes: usize,
+    
+    /// Enable cloud storage (requires cloud provider configuration)
+    enable_cloud_storage: bool,
+    
+    /// Default cloud provider (if enabled)
+    default_cloud_provider: Option<CloudProvider>,
+}
+
+impl Default for RuleBasedTierPolicy {
+    fn default() -> Self {
+        Self {
+            default_disk_path: "/tmp".to_string(),
+            max_local_tier_level: 3, // Up to HDD
+            default_rules: Self::create_default_rules(),
+            memory_thresholds: MemoryPressureThresholds {
+                promote_threshold: 0.7,   // Promote at 70% memory usage
+                demote_threshold: 0.85,   // Demote at 85% memory usage
+                emergency_threshold: 0.95, // Emergency eviction at 95%
+            },
+            aging_rules: AgingRules {
+                hdd_demotion_days: 30,
+                memory_demotion_hours: 24,
+                enable_automatic_aging: true,
+            },
+        }
+    }
+}
+
+impl RuleBasedTierPolicy {
+    /// Create with custom disk path from server config
+    pub fn with_disk_path(disk_path: String) -> Self {
+        Self {
+            default_disk_path: disk_path,
+            ..Default::default()
+        }
+    }
+    
+    /// Create default placement rules
+    fn create_default_rules() -> Vec<DefaultPlacementRule> {
+        vec![
+            // Hot data stays in memory
+            DefaultPlacementRule {
+                name: "hot_memory".to_string(),
+                workload_pattern: WorkloadPattern::ReadHeavy,
+                condition: PlacementCondition::AccessFrequency { 
+                    min_accesses_per_day: Some(100.0), 
+                    max_accesses_per_day: None 
+                },
+                target_tier_level: 1, // Memory
+                priority: 100,
+            },
+            
+            // Medium-hot data goes to NVMe (if available)
+            DefaultPlacementRule {
+                name: "warm_nvme".to_string(),
+                workload_pattern: WorkloadPattern::Mixed,
+                condition: PlacementCondition::AccessFrequency { 
+                    min_accesses_per_day: Some(10.0), 
+                    max_accesses_per_day: Some(100.0) 
+                },
+                target_tier_level: 2, // NVMe
+                priority: 80,
+            },
+            
+            // Cold data goes to HDD
+            DefaultPlacementRule {
+                name: "cold_hdd".to_string(),
+                workload_pattern: WorkloadPattern::WriteHeavy,
+                condition: PlacementCondition::AccessFrequency { 
+                    min_accesses_per_day: Some(1.0), 
+                    max_accesses_per_day: Some(10.0) 
+                },
+                target_tier_level: 3, // HDD
+                priority: 60,
+            },
+            
+            // Very old data can be evicted or moved to cloud (if enabled)
+            DefaultPlacementRule {
+                name: "ancient_evict".to_string(),
+                workload_pattern: WorkloadPattern::Mixed,
+                condition: PlacementCondition::Age { 
+                    min_age_days: Some(90), 
+                    max_age_days: None 
+                },
+                target_tier_level: 4, // Cloud or eviction
+                priority: 40,
+            },
+        ]
+    }
+    
+    /// Get storage path for a collection
+    pub fn get_collection_path(&self, collection_id: &str, tier_level: u8) -> String {
+        match tier_level {
+            1 => "memory".to_string(), // Special case for memory
+            2 => format!("{}/nvme/{}", self.default_disk_path, collection_id),
+            3 => format!("{}/hdd/{}", self.default_disk_path, collection_id),
+            _ => format!("{}/archive/{}", self.default_disk_path, collection_id),
+        }
+    }
+    
+    /// Determine target tier for data based on rules
+    pub fn determine_tier(&self, workload: &WorkloadPattern, access_frequency: f64, age_days: u32) -> u8 {
+        // Apply rules in priority order
+        for rule in &self.default_rules {
+            if self.rule_matches(rule, workload, access_frequency, age_days) {
+                return rule.target_tier_level.min(self.max_local_tier_level);
+            }
+        }
+        
+        // Default to HDD if no rules match
+        3
+    }
+    
+    /// Check if a rule matches the current data characteristics
+    fn rule_matches(&self, rule: &DefaultPlacementRule, workload: &WorkloadPattern, access_frequency: f64, age_days: u32) -> bool {
+        // Simple matching logic - can be enhanced
+        match &rule.condition {
+            PlacementCondition::AccessFrequency { min_accesses_per_day, max_accesses_per_day } => {
+                if let Some(min) = min_accesses_per_day {
+                    if access_frequency < *min { return false; }
+                }
+                if let Some(max) = max_accesses_per_day {
+                    if access_frequency > *max { return false; }
+                }
+                true
+            },
+            PlacementCondition::Age { min_age_days, max_age_days } => {
+                if let Some(min) = min_age_days {
+                    if age_days < *min { return false; }
+                }
+                if let Some(max) = max_age_days {
+                    if age_days > *max { return false; }
+                }
+                true
+            },
+            _ => false, // Other conditions not implemented yet
+        }
+    }
+}
+
+impl Default for ServerTierConfig {
+    fn default() -> Self {
+        Self {
+            base_disk_path: "/tmp".to_string(),
+            base_nvme_path: None,
+            max_memory_bytes: 1024 * 1024 * 1024, // 1GB default
+            enable_cloud_storage: false,
+            default_cloud_provider: None,
+        }
+    }
+}
+
 /// Global shared infrastructure manager for all collections
 /// ONE INSTANCE PER SERVER - shared across all collections
 #[derive(Debug)]
@@ -474,14 +779,17 @@ pub struct GlobalTierManager {
     /// Global tier configurations (capacity, cost, latency)
     tier_configs: HashMap<StorageTier, TierConfig>,
     
-    /// Per-collection policies and constraints
-    collection_policies: HashMap<String, SmartTierPolicy>,
+    /// Rule-based policy engine (scalable, not per-collection)
+    rule_based_policy: RuleBasedTierPolicy,
     
     /// Global memory management across all collections
     global_memory_manager: GlobalMemoryManager,
     
     /// Global metrics aggregation
     metrics_collector: GlobalMetricsCollector,
+    
+    /// Server configuration for default paths
+    server_config: ServerTierConfig,
 }
 
 #[derive(Debug)]
@@ -528,22 +836,93 @@ pub struct CollectionTierMetrics {
 impl GlobalTierManager {
     /// Create global tier manager for the entire server
     pub fn new() -> Self {
+        Self::with_config(ServerTierConfig::default())
+    }
+    
+    /// Create with specific server configuration
+    pub fn with_config(server_config: ServerTierConfig) -> Self {
         // Detect all available storage tiers on this server
-        let available_tiers = Self::detect_available_tiers();
+        let available_tiers = Self::detect_available_tiers(&server_config);
         
         // Create tier configurations based on server capabilities
         let tier_configs = Self::create_default_tier_configs(&available_tiers);
         
+        // Create rule-based policy with server config
+        let rule_based_policy = RuleBasedTierPolicy::with_disk_path(server_config.base_disk_path.clone());
+        
         Self {
             available_tiers,
             tier_configs,
-            collection_policies: HashMap::new(),
+            rule_based_policy,
             global_memory_manager: GlobalMemoryManager::new(),
             metrics_collector: GlobalMetricsCollector::new(),
+            server_config,
         }
     }
     
+    /// Initialize a collection for tier management
+    /// Uses rule-based policy instead of per-collection policies for scalability
+    pub async fn initialize_collection(&self, collection_id: &str) -> Result<()> {
+        // Create directory structure for this collection
+        self.create_collection_directories(collection_id).await?;
+        
+        // Update metrics
+        self.metrics_collector.register_collection(collection_id);
+        
+        Ok(())
+    }
+    
+    /// Create directory structure for a collection based on server config
+    async fn create_collection_directories(&self, collection_id: &str) -> Result<()> {
+        // Create directories for each available tier
+        for tier_level in 2..=3 { // NVMe and HDD tiers (Memory is virtual)
+            let path = self.rule_based_policy.get_collection_path(collection_id, tier_level);
+            if let Some(parent) = std::path::Path::new(&path).parent() {
+                std::fs::create_dir_all(parent)?;
+            }
+        }
+        Ok(())
+    }
+    
+    /// Rebalance tiers for a collection using rule-based policy
+    pub async fn rebalance_collection_tiers(
+        &self,
+        collection_id: &str,
+        _tier_policy: &SmartTierPolicy, // Keep for API compatibility, but use rule-based instead
+    ) -> Result<crate::common::adaptive_structures::TierRebalanceResult> {
+        use crate::common::adaptive_structures::TierRebalanceResult;
+        use std::time::Instant;
+        
+        let start = Instant::now();
+        
+        // Use rule-based policy for tier decisions
+        // This is much more scalable than per-collection policies
+        let promoted_count = 0; // Placeholder - real implementation would analyze data
+        let demoted_count = 0;   // and move data between tiers based on rules
+        let evicted_count = 0;
+        
+        Ok(TierRebalanceResult {
+            promoted_count,
+            demoted_count,
+            evicted_count,
+            duration: start.elapsed(),
+            memory_freed_bytes: 0,
+            memory_allocated_bytes: 0,
+        })
+    }
+    
+    /// Get rule-based policy
+    pub fn rule_based_policy(&self) -> &RuleBasedTierPolicy {
+        &self.rule_based_policy
+    }
+    
+    /// Get server configuration
+    pub fn server_config(&self) -> &ServerTierConfig {
+        &self.server_config
+    }
+    
     /// Register a collection with its storage configuration
+    /// DEPRECATED: Use rule-based approach instead
     pub fn register_collection(
         &mut self, 
         collection_id: String,
@@ -652,22 +1031,30 @@ impl GlobalTierManager {
     }
     
     /// Detect all available storage tiers on this server
-    fn detect_available_tiers() -> Vec<StorageTier> {
+    fn detect_available_tiers(server_config: &ServerTierConfig) -> Vec<StorageTier> {
         let mut tiers = vec![StorageTier::Memory]; // Memory always available
         
-        // Check for NVMe SSDs
-        if std::path::Path::new("/mnt/nvme").exists() || 
-           std::path::Path::new("/dev/nvme0n1").exists() {
+        // Check for NVMe SSDs based on server config
+        if let Some(nvme_path) = &server_config.base_nvme_path {
+            if std::path::Path::new(nvme_path).exists() {
+                tiers.push(StorageTier::NvmeSsd { 
+                    mount_path: nvme_path.clone() 
+                });
+            }
+        } else if std::path::Path::new("/mnt/nvme").exists() || 
+                  std::path::Path::new("/dev/nvme0n1").exists() {
             tiers.push(StorageTier::NvmeSsd { 
                 mount_path: "/mnt/nvme".to_string() 
             });
         }
         
-        // Check for HDDs
-        if std::path::Path::new("/mnt/disk").exists() || 
+        // Check for HDDs based on server config
+        let hdd_path = format!("{}/hdd", server_config.base_disk_path);
+        if std::path::Path::new(&hdd_path).exists() || 
+           std::path::Path::new("/mnt/disk").exists() || 
            std::path::Path::new("/data").exists() {
             tiers.push(StorageTier::HardDisk { 
-                mount_path: "/mnt/disk".to_string() 
+                mount_path: server_config.base_disk_path.clone() 
             });
         }
         

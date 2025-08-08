@@ -23,8 +23,20 @@
 //! - Network services (for request/response handling)
 
 pub mod concurrent_structures;
+pub mod tier_policy_engine;
+pub mod adaptive_structures;
 
 pub use concurrent_structures::{
     ConcurrentStorage, ConcurrentMapping, AtomicMetrics, MetricsSnapshot,
     TypedStorage, AccessInfo
+};
+
+pub use tier_policy_engine::{
+    GlobalTierManager, RuleBasedTierPolicy, ServerTierConfig, 
+    SmartTierPolicy, StorageTier, WorkloadPattern, WorkloadMetrics
+};
+
+pub use adaptive_structures::{
+    AdaptiveStore, UniversalTierManager, AdaptiveStoreFactory, 
+    AdaptiveStoreConfig, BackendType, TierRebalanceResult
 };
