@@ -1540,10 +1540,12 @@ After analyzing the per-collection policy approach, it became clear that storing
 #### Index Workload - Data Promotion/Demotion (REVISED)
 
 ```
-Index Cache Lifecycle (CAN EVICT - Durability Guaranteed by AXIS Storage)
+Index Cache Lifecycle (CAN EVICT - Indexes Rebuild from Vectors)
 
-CRITICAL INSIGHT: AXIS indexes maintain durability at {baseurl}/{collectionid}/indexes/
-Therefore, cache/memory tiers can safely evict since data can be reloaded from AXIS storage!
+CRITICAL INSIGHT: Indexes are DERIVED DATA built from FP32 vectors!
+- No separate durability needed - vectors are the source of truth
+- AXIS indexes can be rebuilt on-demand from SST/VIPER storage
+- ALL shared infrastructure is truly ephemeral - everything can evict!
 
 Hot Data (>100 accesses/day)
 ┌─────────────┐    Memory Pressure    ┌─────────────┐    Disk Full    ┌─────────────┐
