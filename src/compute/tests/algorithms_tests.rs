@@ -5,7 +5,8 @@
 
 #[cfg(test)]
 mod tests {
-    use crate::compute::algorithms::*;
+    // TODO: These tests need to be migrated to the index module
+    // use crate::compute::algorithms::*;
     use crate::compute::DistanceMetric;
     use crate::core::search::SearchResult;
     use std::collections::HashMap;
