@@ -65,6 +65,60 @@ Memory Pressure: Unpredictable, needs automatic eviction
 3. **Adaptive Behavior**: Runtime adaptation based on access patterns
 4. **Memory Safety**: Automatic memory management with configurable policies
 5. **Lock-Free Performance**: Minimize blocking operations
+6. **Multi-Tier Durability**: Guaranteed data persistence across memory, filesystem, and cloud
+7. **Cross-Collection Scalability**: Global resource management beyond individual collections
+
+### Key Architectural Insights
+
+#### Why Multi-Tier Storage is Essential
+
+You are absolutely correct to emphasize multi-tier storage. The design addresses several critical production requirements:
+
+1. **Data Durability**: Cache and index data that cannot be lost must have guaranteed persistence paths to filesystem and cloud storage.
+
+2. **Capacity Scaling**: When memory limits are exceeded across collections, the system needs automatic promotion/demotion strategies that preserve data integrity.
+
+3. **Cross-Collection Resource Management**: A global memory manager is essential because:
+   - Collections compete for shared system resources
+   - Memory pressure affects all collections simultaneously  
+   - Priority-based eviction ensures critical collections maintain performance
+   - Resource rebalancing prevents any single collection from starving others
+
+4. **Shared vs. Collection-Specific Logic**: The design provides both:
+   - **Shared Infrastructure**: `TierManager`, `GlobalMemoryManager`, `CloudStorageTier` - common across all collections
+   - **Collection-Specific Policies**: Each collection can have different tier policies, priority levels, and access patterns
+
+#### Implementation Strategy
+
+```rust
+// Shared infrastructure that all collections use
+pub struct SharedTierInfrastructure {
+    /// Global filesystem provider
+    filesystem: Arc<dyn FilesystemProvider>,
+    /// Global cloud storage
+    cloud_storage: Arc<dyn CloudStorageProvider>,
+    /// Cross-collection memory management
+    global_memory_manager: Arc<GlobalMemoryManager>,
+}
+
+// Collection-specific configuration
+pub struct CollectionTierConfig {
+    /// Collection ID
+    collection_id: String,
+    /// Collection priority (affects eviction order)
+    priority: CollectionPriority,
+    /// Memory allocation limits
+    memory_budget: MemoryBudget,
+    /// Tier promotion/demotion policies
+    tier_policies: TierPolicies,
+}
+```
+
+This approach ensures that:
+- **Index modules** get write-optimized tier management with bulk operation support
+- **Cache modules** get read-optimized tier management with fast promotion/demotion
+- **Both share** the same filesystem and cloud infrastructure, preventing code duplication
+- **Cross-collection coordination** prevents resource starvation and enables global optimization
 
 ### High-Level Architecture
 
@@ -86,36 +140,387 @@ Memory Pressure: Unpredictable, needs automatic eviction
     └───────────────────┘ └───────────────────┘ └───────────────┘
 ```
 
+### Global Shared Infrastructure with Per-Collection Policies (FINAL ARCHITECTURE)
+
+**Key Insights**: 
+1. **ONE shared infrastructure instance per server** - not per collection
+2. **Per-collection policies** determine storage constraints based on `base_location/{collection_id}/indexes/`
+3. **Hierarchical constraints**: Collection's durable baseline determines maximum acceleration tiers available
+4. **Never evict indexes**: Index workloads promote to persistent storage, cache workloads can evict
+
+**Architecture Overview**:
+- **GlobalTierManager**: Single instance per server managing all collections
+- **CollectionStorageConfig**: Per-collection constraints parsed from metadata base_location
+- **SmartTierPolicy**: Collection-specific policies within server constraints
+- **Storage Hierarchy**: Memory → NVMe → HDD → CloudExpress → CloudStandard → CloudIA → CloudArchive
+
+**Example Collection Constraints**:
+```
+s3://bucket/collection1/     → Baseline: CloudStandard, Max Acceleration: HDD
+/mnt/disk/collection2/       → Baseline: HDD, Max Acceleration: Memory  
+/mnt/nvme/collection3/       → Baseline: NVMe, Max Acceleration: Memory
+/tmp/cache_collection/       → Baseline: Memory, No Acceleration
+```
+
+```rust
+/// Global tier manager - ONE INSTANCE PER SERVER
+/// Manages storage tiers for ALL collections with per-collection policies
+pub struct GlobalTierManager {
+    /// All available storage tiers on this server (detected at startup)
+    available_tiers: Vec<StorageTier>,
+    
+    /// Global tier configurations (capacity, cost, latency per server)
+    tier_configs: HashMap<StorageTier, TierConfig>,
+    
+    /// Per-collection policies and constraints (many per server)
+    collection_policies: HashMap<String, SmartTierPolicy>,
+    
+    /// Global memory management across ALL collections
+    global_memory_manager: GlobalMemoryManager,
+    
+    /// Cross-collection metrics aggregation
+    metrics_collector: GlobalMetricsCollector,
+}
+
+/// Per-collection storage configuration from collection metadata
+pub struct CollectionStorageConfig {
+    /// Collection ID
+    collection_id: String,
+    
+    /// Base storage URL: {base_location}/{collection_id}/indexes/
+    base_location: String,
+    
+    /// Durable baseline tier (indexes can use faster tiers above this)
+    durable_baseline: StorageTier,
+    
+    /// Maximum acceleration tier allowed for this collection
+    max_acceleration_tier: Option<StorageTier>,
+    
+    /// Collection-specific resource limits
+    storage_limits: CollectionStorageLimits,
+}
+
+/// Usage example:
+impl GlobalTierManager {
+    pub fn register_collection(
+        &mut self,
+        collection_id: String,
+        base_location: String, // "s3://bucket/collection1/" or "/mnt/disk/collection2/"
+        workload_type: WorkloadType,
+    ) -> Result<()> {
+        // Parse collection constraints from base_location
+        let collection_config = CollectionStorageConfig::from_base_location(
+            collection_id.clone(), 
+            base_location
+        )?;
+        
+        // Create collection-specific policy within server constraints
+        let policy = SmartTierPolicy::for_workload_constrained(
+            workload_type,
+            collection_config,
+            &self.available_tiers, // Server's detected tiers
+            &self.tier_configs,    // Server's tier configurations
+        );
+        
+        self.collection_policies.insert(collection_id, policy);
+        Ok(())
+    }
+}
+
+/// Configurable policies for different storage types
+pub trait TierPolicyEngine<K, V>: Send + Sync {
+    /// Determine optimal tier placement
+    fn determine_placement(&self, key: &K, value: &V, access_pattern: AccessPattern) -> TierPlacement;
+    
+    /// Handle memory pressure (different strategies per store type)
+    fn handle_memory_pressure(&self, current_usage: MemoryUsage) -> TierPressureResponse;
+    
+    /// Data eviction policy (caches can evict, indexes cannot)
+    fn can_evict_data(&self, key: &K, access_info: &AccessInfo) -> bool;
+    
+    /// Promotion/demotion thresholds
+    fn get_promotion_threshold(&self) -> u64;
+    fn get_demotion_threshold(&self) -> u64;
+}
+
+/// Flexible tier policies with multiple criteria and storage providers
+#[derive(Debug, Clone)]
+pub struct FlexibleTierPolicy {
+    /// Eviction criteria (size, age, access patterns)
+    eviction_criteria: Vec<EvictionCriterion>,
+    
+    /// Promotion criteria (frequency, recency, size, business priority)
+    promotion_criteria: Vec<PromotionCriterion>,
+    
+    /// Storage provider configurations
+    storage_providers: StorageProviderConfig,
+    
+    /// Policy type (Index = never evict, Cache = can evict, Hybrid = adaptive)
+    policy_type: TierPolicyType,
+}
+
+#[derive(Debug, Clone)]
+pub enum EvictionCriterion {
+    /// Size-based: evict if object larger than threshold
+    Size { max_size_bytes: usize },
+    
+    /// Age-based: evict if older than threshold
+    Age { max_age_days: u32 },
+    
+    /// Access-based: evict if accessed less than threshold
+    AccessFrequency { min_accesses_per_day: u32 },
+    
+    /// Recency-based: evict if not accessed recently
+    LastAccess { max_idle_hours: u32 },
+    
+    /// Business priority: evict low-priority data first
+    Priority { min_priority_level: u8 },
+    
+    /// Memory pressure: evict when memory utilization exceeds threshold
+    MemoryPressure { utilization_threshold: f64 },
+    
+    /// Collection-specific: different rules per collection
+    CollectionSpecific { collection_rules: HashMap<String, Box<EvictionCriterion>> },
+}
+
+#[derive(Debug, Clone)]
+pub enum PromotionCriterion {
+    /// Frequency: promote frequently accessed data to faster tiers
+    Frequency { access_threshold: u32, window_hours: u32 },
+    
+    /// Size optimization: promote small objects to memory, large to cloud
+    SizeOptimized { memory_max_kb: usize, disk_max_mb: usize },
+    
+    /// Cost optimization: balance storage cost vs access speed
+    CostOptimized { max_cost_per_gb_per_month: f64 },
+    
+    /// Latency SLA: promote data needed for low-latency access
+    LatencySLA { max_access_time_ms: u32 },
+    
+    /// Geographic: promote data closer to access regions
+    Geographic { preferred_regions: Vec<String> },
+    
+    /// Predictive: promote data likely to be accessed soon
+    Predictive { ml_confidence_threshold: f64 },
+}
+
+#[derive(Debug, Clone)]
+pub struct StorageProviderConfig {
+    /// Cloud storage providers with different tiers
+    cloud_providers: Vec<CloudStorageProvider>,
+    
+    /// Local filesystem configurations
+    local_storage: LocalStorageConfig,
+    
+    /// Cross-provider replication settings
+    replication: ReplicationConfig,
+}
+
+#[derive(Debug, Clone)]
+pub enum CloudStorageProvider {
+    /// AWS S3 with multiple storage classes
+    AwsS3 {
+        bucket: String,
+        region: String,
+        storage_class: S3StorageClass, // Standard, IA, Glacier, Deep Archive
+        lifecycle_policies: Vec<S3LifecycleRule>,
+    },
+    
+    /// Azure Blob Storage with access tiers  
+    AzureBlob {
+        account: String,
+        container: String,
+        access_tier: AzureAccessTier, // Hot, Cool, Archive
+        geo_replication: bool,
+    },
+    
+    /// Google Cloud Storage with storage classes
+    GoogleCloud {
+        bucket: String,
+        location: String,
+        storage_class: GcsStorageClass, // Standard, Nearline, Coldline, Archive
+        auto_class: bool,
+    },
+    
+    /// Multi-cloud with automatic failover
+    MultiCloud {
+        primary: Box<CloudStorageProvider>,
+        secondaries: Vec<CloudStorageProvider>,
+        failover_strategy: FailoverStrategy,
+    },
+}
+
+#[derive(Debug, Clone)]
+pub enum S3StorageClass {
+    Standard,           // Most frequently accessed
+    StandardIA,         // Infrequently accessed (30+ days)
+    OneZoneIA,          // Single AZ, infrequent access
+    Glacier,            // Long-term archive (90+ days)
+    GlacierDeepArchive, // Rarely accessed (180+ days)
+    IntelligentTiering, // Automatic optimization
+}
+
+/// Example: Index policy that never evicts, uses cost-optimized cloud tiering
+impl TierPolicyEngine<K, V> for IndexTierPolicy {
+    fn can_evict_data(&self, _key: &K, _access_info: &AccessInfo) -> bool {
+        false // Indexes NEVER evict data - always promote to persistent storage
+    }
+    
+    fn determine_placement(&self, key: &K, value: &V, access_pattern: AccessPattern) -> TierPlacement {
+        let size = self.estimate_size(value);
+        let predicted_access = self.predict_access_frequency(key, access_pattern);
+        
+        match (size, predicted_access) {
+            // Small, frequently accessed -> Memory
+            (s, freq) if s < 1024 * 1024 && freq > 100 => TierPlacement::Memory,
+            
+            // Medium size, moderate access -> Local SSD
+            (s, freq) if s < 100 * 1024 * 1024 && freq > 10 => TierPlacement::LocalDisk,
+            
+            // Large or infrequent -> Cloud with appropriate tier
+            (s, freq) if s > 100 * 1024 * 1024 || freq < 1 => {
+                if freq < 0.1 {
+                    // Very rare access -> Archive tier (Glacier/Archive)
+                    TierPlacement::CloudArchive(CloudStorageProvider::AwsS3 {
+                        bucket: self.archive_bucket.clone(),
+                        region: self.region.clone(),
+                        storage_class: S3StorageClass::GlacierDeepArchive,
+                        lifecycle_policies: vec![],
+                    })
+                } else {
+                    // Occasional access -> Standard cloud tier
+                    TierPlacement::CloudStandard(CloudStorageProvider::AwsS3 {
+                        bucket: self.standard_bucket.clone(),
+                        region: self.region.clone(),
+                        storage_class: S3StorageClass::Standard,
+                        lifecycle_policies: vec![],
+                    })
+                }
+            }
+            
+            _ => TierPlacement::LocalDisk, // Default fallback
+        }
+    }
+    
+    fn handle_memory_pressure(&self, usage: MemoryUsage) -> TierPressureResponse {
+        // Index policy: Promote to persistent storage based on age + size
+        let mut promotion_candidates = usage.get_promotion_candidates();
+        
+        // Sort by: 1) Size (largest first), 2) Age (oldest first), 3) Access frequency (least first)
+        promotion_candidates.sort_by(|a, b| {
+            b.size.cmp(&a.size)
+                .then(b.age.cmp(&a.age))
+                .then(a.access_frequency.cmp(&b.access_frequency))
+        });
+        
+        TierPressureResponse::PromoteToStorage {
+            candidates: promotion_candidates,
+            target_bytes: usage.excess_memory(),
+            strategy: PromotionStrategy::SizeAndAgeBased,
+            destination: self.determine_optimal_storage_tier(&promotion_candidates),
+        }
+    }
+}
+
+/// Example: Cache policy with aggressive eviction but smart local disk usage
+impl TierPolicyEngine<K, V> for CacheTierPolicy {
+    fn can_evict_data(&self, key: &K, access_info: &AccessInfo) -> bool {
+        // Multi-criteria eviction decision
+        self.eviction_criteria.iter().any(|criterion| {
+            match criterion {
+                EvictionCriterion::Size { max_size_bytes } => 
+                    access_info.size_bytes > *max_size_bytes,
+                EvictionCriterion::Age { max_age_days } => 
+                    access_info.age_days() > *max_age_days,
+                EvictionCriterion::AccessFrequency { min_accesses_per_day } => 
+                    access_info.accesses_per_day() < *min_accesses_per_day,
+                EvictionCriterion::LastAccess { max_idle_hours } => 
+                    access_info.hours_since_last_access() > *max_idle_hours,
+                EvictionCriterion::MemoryPressure { utilization_threshold } => 
+                    self.current_memory_utilization() > *utilization_threshold,
+                _ => false,
+            }
+        })
+    }
+    
+    fn handle_memory_pressure(&self, usage: MemoryUsage) -> TierPressureResponse {
+        // Cache policy: Smart tiering based on access patterns and costs
+        if self.has_local_disk_capacity() {
+            TierPressureResponse::PromoteToFilesystem {
+                // Promote frequently accessed large objects to local disk
+                target_bytes: usage.excess_memory() * 60 / 100, // 60% to disk
+                strategy: PromotionStrategy::FrequencyAndSizeBased,
+            }
+        } else {
+            TierPressureResponse::Mixed {
+                // 20% to cloud (for later retrieval), 80% evict (can regenerate)
+                promote_to_cloud: usage.excess_memory() * 20 / 100,
+                evict: usage.excess_memory() * 80 / 100,
+                cloud_provider: CloudStorageProvider::GoogleCloud {
+                    bucket: self.cache_backup_bucket.clone(),
+                    location: "us-central1".to_string(),
+                    storage_class: GcsStorageClass::Nearline, // Cheap but accessible
+                    auto_class: true,
+                },
+            }
+        }
+    }
+}
+```
+
 ### Storage Backend Implementations
 
-#### 1. IndexBackend - Write-Optimized for Bulk Operations
+#### 1. IndexBackend - Write-Optimized with Universal Tiering
 
 ```rust
 pub struct IndexBackend<K, V> {
-    // Primary storage - DashMap for lock-free access
-    store: DashMap<K, V>,
+    // SHARED INFRASTRUCTURE: Universal tiering with index policies
+    tier_manager: UniversalTierManager<K, V>,
     
-    // Write optimization - batch writes before committing
+    // INDEX-SPECIFIC: Write optimization - batch writes before committing
     write_buffer: RwLock<Vec<(K, V)>>,
     flush_threshold: usize,
     
-    // Metrics for adaptive behavior
+    // INDEX-SPECIFIC: Metrics for bulk operations
     bulk_write_count: AtomicU64,
     individual_write_count: AtomicU64,
 }
 
 impl<K, V> IndexBackend<K, V> {
+    pub fn new(config: IndexConfig) -> Result<Self> {
+        // Create index-specific tier policy
+        let policy = Box::new(IndexTierPolicy {
+            // Index policy: NEVER evict, always promote to persistent storage
+            eviction_policy: EvictionPolicy::NeverEvict,
+            promotion_strategy: PromotionStrategy::LeastRecentlyUsed,
+            filesystem_buffer_size: config.filesystem_buffer_mb * 1024 * 1024,
+            cloud_archive_threshold_days: config.cloud_archive_days,
+        });
+        
+        // Create universal tier manager with index policy
+        let tier_manager = UniversalTierManager::new(policy, config.resource_limits)?;
+        
+        Ok(Self {
+            tier_manager,
+            write_buffer: RwLock::new(Vec::new()),
+            flush_threshold: config.flush_threshold,
+            bulk_write_count: AtomicU64::new(0),
+            individual_write_count: AtomicU64::new(0),
+        })
+    }
+
     pub fn insert(&self, key: K, value: V) -> Result<()> {
         let mut buffer = self.write_buffer.write().unwrap();
         buffer.push((key, value));
         
         if buffer.len() >= self.flush_threshold {
-            // Bulk flush to primary store
+            // Bulk flush using SHARED TIER INFRASTRUCTURE
             let batch: Vec<_> = buffer.drain(..).collect();
             drop(buffer); // Release lock early
             
             for (k, v) in batch {
-                self.store.insert(k, v);
+                // Universal tier manager handles placement (memory/disk/cloud)
+                self.tier_manager.insert_with_policy(k, v, AccessPattern::BulkWrite)?;
             }
             self.bulk_write_count.fetch_add(1, Ordering::Relaxed);
         }
@@ -132,8 +537,29 @@ impl<K, V> IndexBackend<K, V> {
             return Some(value);
         }
         
-        // Check primary store
-        self.store.get(key).map(|entry| entry.value().clone())
+        // Use SHARED TIER INFRASTRUCTURE for multi-tier lookup
+        // Will check: memory -> local disk -> cloud (based on index policy)
+        self.tier_manager.get_with_promotion(key, AccessPattern::IndexRead)
+    }
+    
+    pub fn handle_memory_pressure(&self) -> Result<usize> {
+        // Delegate to SHARED TIER INFRASTRUCTURE with index-specific policy
+        let response = self.tier_manager.handle_memory_pressure()?;
+        
+        match response {
+            TierPressureResponse::PromoteToFilesystem { items_moved, .. } => {
+                // Index policy: promote to disk instead of evicting
+                Ok(items_moved)
+            }
+            TierPressureResponse::PromoteToCloud { items_moved, .. } => {
+                // Very high pressure: promote to cloud
+                Ok(items_moved)
+            }
+            TierPressureResponse::Evict { .. } => {
+                // Index policy should NEVER evict - this indicates a policy bug
+                Err(anyhow!("Index backend should never evict data"))
+            }
+        }
     }
     
     pub fn force_flush(&self) -> usize {
@@ -144,7 +570,8 @@ impl<K, V> IndexBackend<K, V> {
         drop(buffer);
         
         for (k, v) in batch {
-            self.store.insert(k, v);
+            // Use shared tiering for immediate persistence
+            let _ = self.tier_manager.insert_with_policy(k, v, AccessPattern::FlushOperation);
         }
         
         count
@@ -239,28 +666,36 @@ impl<K, V> CacheBackend<K, V> {
 - **Eviction Support**: Automatic (LRU, LFU, or custom policies)
 - **Invalidation**: Cascade-aware with tracking
 
-#### 3. HybridBackend - Adaptive Multi-Tier
+#### 3. HybridBackend - Multi-Tier Storage with Filesystem and Cloud Support
 
 ```rust
 pub struct HybridBackend<K, V> {
-    // Hot tier - frequently accessed data
-    hot_tier: Moka<K, Arc<V>>,
+    // Memory tiers (fastest access)
+    hot_tier: Moka<K, Arc<V>>,           // L1: Most frequently accessed
+    warm_tier: DashMap<K, Arc<V>>,       // L2: Moderately accessed
     
-    // Cold tier - less frequently accessed data
-    cold_tier: DashMap<K, V>,
+    // Persistent tiers (guaranteed durability)
+    local_storage: LocalFilesystemTier<K, V>,    // L3: Local SSD/HDD storage
+    cloud_storage: CloudStorageTier<K, V>,       // L4: Cloud object storage
     
-    // Adaptive thresholds
-    promotion_threshold: AtomicU64,
-    demotion_threshold: AtomicU64,
+    // Tier management
+    tier_manager: TierManager<K, V>,
+    
+    // Adaptive thresholds per tier
+    hot_promotion_threshold: AtomicU64,
+    warm_promotion_threshold: AtomicU64,
+    cold_demotion_threshold: AtomicU64,
+    
+    // Cross-collection data management
+    collection_metadata: DashMap<String, CollectionTierState>,
+    global_memory_tracker: Arc<GlobalMemoryTracker>,
     
     // Access pattern tracking
     access_frequency: DashMap<K, AtomicU64>,
+    access_recency: DashMap<K, AtomicU64>,
     
-    // Performance metrics
-    promotions: AtomicU64,
-    demotions: AtomicU64,
-    hot_hits: AtomicU64,
-    cold_hits: AtomicU64,
+    // Performance metrics per tier
+    tier_metrics: TierMetrics,
 }
 
 impl<K, V> HybridBackend<K, V> {
@@ -335,12 +770,345 @@ impl<K, V> HybridBackend<K, V> {
 }
 ```
 
-**Performance Characteristics**:
-- **Insert**: Excellent (adaptive placement)
-- **Read Performance**: Excellent (hot path optimization)
-- **Memory Efficiency**: Good (tiered storage)
-- **Adaptability**: Excellent (runtime adjustment to access patterns)
-- **Complex Workloads**: Optimal (handles mixed patterns)
+### Multi-Tier Storage Architecture
+
+The hybrid backend supports comprehensive multi-tier storage spanning memory, local storage, and cloud storage to ensure data durability and handle capacity constraints across collections.
+
+#### Tier Hierarchy and Data Flow
+
+```rust
+/// Comprehensive tier management for data that cannot be lost
+pub struct TierManager<K, V> {
+    /// Tier configuration
+    config: MultiTierConfig,
+    
+    /// Filesystem integration
+    filesystem: Arc<dyn FilesystemProvider>,
+    
+    /// Cloud storage integration  
+    cloud_provider: Arc<dyn CloudStorageProvider>,
+    
+    /// Cross-collection memory management
+    global_memory_manager: Arc<GlobalMemoryManager>,
+    
+    /// Promotion/demotion policies
+    tier_policies: TierPolicies,
+}
+
+/// Multi-tier data flow strategy
+impl<K, V> TierManager<K, V> {
+    /// Comprehensive promotion/demotion logic
+    pub async fn manage_tier_placement(&self, key: &K, value: &V, access_pattern: AccessPattern) -> Result<TierPlacement> {
+        match self.analyze_optimal_placement(key, value, access_pattern) {
+            TierPlacement::Hot => {
+                // High-frequency access: keep in memory (Moka L1)
+                self.ensure_hot_tier_capacity().await?;
+                Ok(TierPlacement::Hot)
+            }
+            TierPlacement::Warm => {
+                // Moderate access: memory with potential eviction (DashMap L2)
+                self.ensure_warm_tier_capacity().await?;
+                Ok(TierPlacement::Warm)
+            }
+            TierPlacement::Cold => {
+                // Infrequent access: local filesystem (SSD/HDD L3)
+                self.promote_to_local_storage(key, value).await?;
+                Ok(TierPlacement::Cold)
+            }
+            TierPlacement::Archive => {
+                // Very rare access: cloud storage (S3/GCS/Azure L4)  
+                self.archive_to_cloud_storage(key, value).await?;
+                Ok(TierPlacement::Archive)
+            }
+        }
+    }
+    
+    /// Cross-collection memory pressure handling
+    pub async fn handle_global_memory_pressure(&self) -> Result<MemoryReclamationReport> {
+        let mut report = MemoryReclamationReport::new();
+        
+        // Strategy 1: Demote from hot to warm tier
+        let hot_demotions = self.demote_least_accessed_hot_items(1000).await?;
+        report.add_demotions("hot_to_warm", hot_demotions);
+        
+        // Strategy 2: Demote from warm to local filesystem  
+        let warm_demotions = self.demote_warm_to_local_storage(5000).await?;
+        report.add_demotions("warm_to_local", warm_demotions);
+        
+        // Strategy 3: Archive old local data to cloud
+        let archive_count = self.archive_old_local_data().await?;
+        report.add_demotions("local_to_cloud", archive_count);
+        
+        // Strategy 4: Cross-collection balancing
+        let balanced_collections = self.rebalance_across_collections().await?;
+        report.add_rebalancing(balanced_collections);
+        
+        Ok(report)
+    }
+}
+```
+
+#### Filesystem Integration
+
+```rust
+/// Local filesystem tier for guaranteed persistence
+pub struct LocalFilesystemTier<K, V> {
+    /// Base storage path
+    storage_path: PathBuf,
+    
+    /// Serialization strategy
+    serializer: Arc<dyn TierSerializer<K, V>>,
+    
+    /// File organization strategy  
+    file_manager: FileManager,
+    
+    /// Local caching for recent filesystem access
+    filesystem_cache: Moka<K, CachedFileEntry<V>>,
+    
+    /// Compression for storage efficiency
+    compression_engine: CompressionEngine,
+}
+
+impl<K, V> LocalFilesystemTier<K, V> 
+where
+    K: Serialize + DeserializeOwned + Hash + Eq + Clone,
+    V: Serialize + DeserializeOwned + Clone,
+{
+    /// Store data with guaranteed persistence
+    pub async fn store_persistent(&self, key: K, value: V, collection_id: &str) -> Result<()> {
+        let storage_key = self.generate_storage_key(&key, collection_id);
+        let file_path = self.file_manager.get_file_path(&storage_key);
+        
+        // Ensure directory exists
+        if let Some(parent) = file_path.parent() {
+            tokio::fs::create_dir_all(parent).await?;
+        }
+        
+        // Serialize and compress
+        let serialized = self.serializer.serialize(&key, &value)?;
+        let compressed = self.compression_engine.compress(&serialized)?;
+        
+        // Atomic write with backup
+        self.atomic_write_with_backup(&file_path, &compressed).await?;
+        
+        // Update filesystem cache
+        self.filesystem_cache.insert(key.clone(), CachedFileEntry {
+            value: value.clone(),
+            file_path: file_path.clone(),
+            last_modified: SystemTime::now(),
+        });
+        
+        Ok(())
+    }
+    
+    /// Retrieve with automatic promotion to memory if frequently accessed
+    pub async fn retrieve_with_promotion(&self, key: &K, collection_id: &str) -> Result<Option<V>> {
+        // Check filesystem cache first
+        if let Some(cached) = self.filesystem_cache.get(key) {
+            // Check if file was modified externally
+            if self.is_file_current(&cached.file_path, cached.last_modified).await? {
+                return Ok(Some(cached.value.clone()));
+            }
+        }
+        
+        // Load from disk
+        let storage_key = self.generate_storage_key(key, collection_id);
+        let file_path = self.file_manager.get_file_path(&storage_key);
+        
+        if !file_path.exists() {
+            return Ok(None);
+        }
+        
+        let compressed_data = tokio::fs::read(&file_path).await?;
+        let serialized_data = self.compression_engine.decompress(&compressed_data)?;
+        let (_, value) = self.serializer.deserialize(&serialized_data)?;
+        
+        // Update filesystem cache
+        self.filesystem_cache.insert(key.clone(), CachedFileEntry {
+            value: value.clone(),
+            file_path,
+            last_modified: SystemTime::now(),
+        });
+        
+        Ok(Some(value))
+    }
+}
+```
+
+#### Cloud Storage Integration
+
+```rust
+/// Cloud storage tier for archival and cross-region replication
+pub struct CloudStorageTier<K, V> {
+    /// Cloud provider implementation
+    provider: Arc<dyn CloudStorageProvider>,
+    
+    /// Bucket/container configuration
+    storage_config: CloudStorageConfig,
+    
+    /// Serialization with cloud-optimized compression
+    serializer: Arc<dyn CloudSerializer<K, V>>,
+    
+    /// Local cache for cloud data
+    cloud_cache: Moka<K, CloudCacheEntry<V>>,
+    
+    /// Asynchronous upload/download queue
+    transfer_queue: Arc<TransferQueue>,
+}
+
+impl<K, V> CloudStorageTier<K, V> 
+where
+    K: Serialize + DeserializeOwned + Hash + Eq + Clone,
+    V: Serialize + DeserializeOwned + Clone,
+{
+    /// Archive data to cloud with redundancy
+    pub async fn archive_with_redundancy(&self, key: K, value: V, collection_id: &str) -> Result<CloudArchiveResult> {
+        let cloud_key = self.generate_cloud_key(&key, collection_id);
+        
+        // Serialize with cloud-optimized compression
+        let serialized = self.serializer.serialize_for_cloud(&key, &value)?;
+        
+        // Multi-region upload for redundancy
+        let upload_tasks = self.storage_config.regions.iter().map(|region| {
+            let provider = self.provider.clone();
+            let key = cloud_key.clone();
+            let data = serialized.clone();
+            let region = region.clone();
+            
+            async move {
+                provider.upload_to_region(&key, &data, &region).await
+            }
+        });
+        
+        // Wait for majority of uploads to succeed
+        let results = futures::future::join_all(upload_tasks).await;
+        let successful_uploads = results.iter().filter(|r| r.is_ok()).count();
+        
+        if successful_uploads >= (self.storage_config.regions.len() / 2 + 1) {
+            // Update cloud cache
+            self.cloud_cache.insert(key.clone(), CloudCacheEntry {
+                value: value.clone(),
+                cloud_key: cloud_key.clone(),
+                regions: self.storage_config.regions.clone(),
+                uploaded_at: SystemTime::now(),
+            });
+            
+            Ok(CloudArchiveResult {
+                key: cloud_key,
+                regions_uploaded: successful_uploads,
+                total_regions: self.storage_config.regions.len(),
+                redundancy_level: successful_uploads as f64 / self.storage_config.regions.len() as f64,
+            })
+        } else {
+            Err(anyhow!("Failed to achieve minimum redundancy for cloud archive"))
+        }
+    }
+    
+    /// Retrieve from cloud with automatic failover
+    pub async fn retrieve_with_failover(&self, key: &K, collection_id: &str) -> Result<Option<V>> {
+        // Check cloud cache first
+        if let Some(cached) = self.cloud_cache.get(key) {
+            return Ok(Some(cached.value.clone()));
+        }
+        
+        let cloud_key = self.generate_cloud_key(key, collection_id);
+        
+        // Try regions in order of preference (latency-based)
+        for region in &self.storage_config.regions {
+            match self.provider.download_from_region(&cloud_key, region).await {
+                Ok(data) => {
+                    let (_, value) = self.serializer.deserialize_from_cloud(&data)?;
+                    
+                    // Update cloud cache
+                    self.cloud_cache.insert(key.clone(), CloudCacheEntry {
+                        value: value.clone(),
+                        cloud_key: cloud_key.clone(),
+                        regions: self.storage_config.regions.clone(),
+                        uploaded_at: SystemTime::now(), // Approximate
+                    });
+                    
+                    return Ok(Some(value));
+                }
+                Err(e) => {
+                    tracing::warn!("Failed to retrieve from region {}: {}", region, e);
+                    continue;
+                }
+            }
+        }
+        
+        Ok(None)
+    }
+}
+```
+
+#### Cross-Collection Memory Management
+
+```rust
+/// Global memory management across all collections
+pub struct GlobalMemoryManager {
+    /// Total memory budget
+    total_memory_budget: AtomicUsize,
+    
+    /// Current memory usage by collection
+    collection_usage: DashMap<String, AtomicUsize>,
+    
+    /// Memory allocation strategy
+    allocation_strategy: MemoryAllocationStrategy,
+    
+    /// Priority-based collection ranking
+    collection_priorities: DashMap<String, CollectionPriority>,
+}
+
+impl GlobalMemoryManager {
+    /// Rebalance memory across collections when pressure occurs
+    pub async fn rebalance_collections(&self, required_memory: usize) -> Result<RebalanceResult> {
+        let mut rebalance_result = RebalanceResult::new();
+        
+        // Get current usage by collection
+        let mut collection_stats: Vec<_> = self.collection_usage
+            .iter()
+            .map(|entry| {
+                let collection_id = entry.key().clone();
+                let usage = entry.value().load(Ordering::Relaxed);
+                let priority = self.collection_priorities.get(&collection_id)
+                    .map(|p| p.value().clone())
+                    .unwrap_or_default();
+                CollectionMemoryStats { collection_id, usage, priority }
+            })
+            .collect();
+            
+        // Sort by priority (low priority collections evicted first)
+        collection_stats.sort_by_key(|stats| stats.priority.value());
+        
+        let mut memory_reclaimed = 0;
+        for stats in collection_stats {
+            if memory_reclaimed >= required_memory {
+                break;
+            }
+            
+            // Calculate how much to reclaim from this collection
+            let target_reclaim = (required_memory - memory_reclaimed).min(stats.usage / 2);
+            
+            // Perform collection-specific memory reclaim
+            let reclaimed = self.reclaim_from_collection(&stats.collection_id, target_reclaim).await?;
+            memory_reclaimed += reclaimed;
+            
+            rebalance_result.add_collection_reclaim(stats.collection_id, reclaimed);
+        }
+        
+        Ok(rebalance_result)
+    }
+}
+```
+
+**Enhanced Performance Characteristics**:
+- **Insert**: Excellent (intelligent tier placement)
+- **Read Performance**: Excellent (multi-tier caching with promotion)
+- **Memory Efficiency**: Excellent (automatic tier management)
+- **Data Durability**: Guaranteed (filesystem + cloud redundancy)
+- **Cross-Collection Scalability**: Excellent (global memory management)
+- **Adaptability**: Excellent (runtime tier optimization)
+- **Complex Workloads**: Optimal (handles any scale and pattern)
 
 ## Unified Interface Implementation
 
@@ -709,32 +1477,45 @@ pub enum BackendMetrics {
 ### Phase 1: Foundation (Week 1)
 - [ ] Implement basic `AdaptiveStore` structure
 - [ ] Create `IndexBackend` with DashMap + write buffer
-- [ ] Add unified metrics collection
+- [ ] Add unified metrics collection with `MetricsUpdate` integration
 - [ ] Basic unit tests for index workloads
+- [x] **Metrics Framework Integration**: Complete integration specification with existing metrics system
 
 ### Phase 2: Cache Backend (Week 2)
 - [ ] Implement `CacheBackend` with Moka
-- [ ] Add invalidation cascade support
-- [ ] Memory pressure handling
+- [ ] Add invalidation cascade support with metrics tracking
+- [ ] Memory pressure handling with performance monitoring
 - [ ] Unit tests for cache workloads
+- [ ] **Metrics Integration**: Implement CacheMetricsSnapshot compatibility
 
 ### Phase 3: Hybrid Backend (Week 3)
 - [ ] Implement `HybridBackend` with dual tiers
-- [ ] Add adaptive promotion/demotion logic
-- [ ] Access pattern tracking
+- [ ] Add adaptive promotion/demotion logic with metrics-driven decisions
+- [ ] Access pattern tracking with real-time analytics
 - [ ] Unit tests for mixed workloads
+- [ ] **Metrics Integration**: Multi-tier performance tracking
 
-### Phase 4: Integration (Week 4)
+### Phase 4: Integration (Week 4)  
 - [ ] Integrate with existing HNSW, Annoy, IVF, LSH indexes
 - [ ] Migrate cache modules to use new infrastructure
-- [ ] Performance benchmarking
+- [ ] Performance benchmarking with comprehensive metrics collection
 - [ ] Production readiness testing
+- [ ] **Metrics Integration**: Prometheus export and alerting setup
 
 ### Phase 5: Advanced Features (Week 5)
-- [ ] Runtime workload detection and adaptation
-- [ ] Backend migration support
-- [ ] Advanced metrics and monitoring
+- [ ] Runtime workload detection and adaptation using metrics analysis
+- [ ] Backend migration support with migration performance tracking
+- [ ] Advanced metrics and monitoring dashboard integration
 - [ ] Documentation and examples
+- [ ] **Metrics Integration**: Auto-optimization based on metrics feedback
+
+### Phase 6: Metrics & Observability (Week 6)
+- [x] **Comprehensive Metrics Design**: Architecture and integration points defined
+- [ ] **Dashboard Integration**: Grafana dashboards for adaptive structures
+- [ ] **Alert Configuration**: Production-ready alerting rules
+- [ ] **Performance Profiling**: Metrics-driven performance optimization
+- [ ] **Cost Analysis**: Memory and CPU cost tracking per operation
+- [ ] **Predictive Analytics**: Workload prediction using metrics history
 
 ## Performance Expectations
 
@@ -777,23 +1558,334 @@ pub enum BackendMetrics {
 2. **Debugging Risk**: More complex architecture might be harder to debug
    - **Mitigation**: Rich metrics, structured logging, debug modes
 
+## Metrics Integration Framework
+
+### Core Metrics Architecture
+
+The adaptive data structures are deeply integrated with ProximaDB's metrics framework to provide comprehensive observability and performance optimization capabilities.
+
+```rust
+// Integration with existing metrics system
+use crate::metrics::{
+    InternalMetricsUpdater, MetricsUpdate, CacheMetricsSnapshot,
+    CompressionMetrics, GlobalMetrics, MetricsAggregationEngine
+};
+
+/// Comprehensive metrics collector for adaptive structures
+#[derive(Debug)]
+pub struct AdaptiveStructureMetrics {
+    /// Base metrics integration
+    internal_updater: Arc<dyn InternalMetricsUpdater>,
+    
+    /// Structure-specific metrics
+    workload_metrics: WorkloadMetrics,
+    performance_metrics: PerformanceMetrics,
+    memory_metrics: MemoryUsageMetrics,
+    
+    /// Adaptive behavior metrics
+    adaptation_metrics: AdaptationMetrics,
+    pattern_metrics: AccessPatternMetrics,
+}
+
+/// Workload characterization metrics
+#[derive(Debug, Clone)]
+pub struct WorkloadMetrics {
+    /// Operation distribution
+    pub read_ratio: f64,
+    pub write_ratio: f64,
+    pub delete_ratio: f64,
+    pub batch_ratio: f64,
+    
+    /// Temporal patterns
+    pub peak_hours: Vec<u8>,
+    pub load_variance: f64,
+    pub burst_frequency: f64,
+    
+    /// Access patterns
+    pub locality_score: f64,
+    pub hot_key_percentage: f64,
+    pub access_skew: f64,
+}
+```
+
+### MetricsUpdate Integration
+
+All adaptive structures implement MetricsUpdate for seamless integration with the existing metrics pipeline:
+
+```rust
+impl MetricsUpdate for AdaptiveStore<K, V> {
+    fn update_metrics(&self, updater: &dyn InternalMetricsUpdater) {
+        let snapshot = self.get_comprehensive_metrics();
+        
+        // Core operation metrics
+        updater.update_counter("adaptive_store.operations.total", 
+                              snapshot.total_operations as f64);
+        updater.update_histogram("adaptive_store.latency.avg", 
+                               snapshot.avg_latency_ms);
+        updater.update_gauge("adaptive_store.hit_rate", 
+                           snapshot.hit_rate);
+        
+        // Backend-specific metrics
+        match &self.backend {
+            StorageBackend::Index(backend) => {
+                updater.update_gauge("adaptive_store.index.buffer_utilization", 
+                                   backend.buffer_utilization());
+                updater.update_counter("adaptive_store.index.flush_count", 
+                                     backend.flush_count() as f64);
+            }
+            StorageBackend::Cache(backend) => {
+                updater.update_gauge("adaptive_store.cache.memory_utilization", 
+                                   backend.memory_utilization());
+                updater.update_counter("adaptive_store.cache.eviction_count", 
+                                     backend.eviction_count() as f64);
+            }
+            StorageBackend::Hybrid(backend) => {
+                updater.update_counter("adaptive_store.hybrid.promotions", 
+                                     backend.promotion_count() as f64);
+                updater.update_counter("adaptive_store.hybrid.demotions", 
+                                     backend.demotion_count() as f64);
+                updater.update_gauge("adaptive_store.hybrid.hot_tier_utilization", 
+                                   backend.hot_tier_utilization());
+            }
+        }
+        
+        // Adaptive behavior metrics
+        updater.update_counter("adaptive_store.adaptations.total", 
+                              snapshot.adaptation_count as f64);
+        updater.update_histogram("adaptive_store.adaptation.duration_ms", 
+                               snapshot.avg_adaptation_time_ms);
+    }
+}
+```
+
+### Metrics Collection Points
+
+#### 1. Operation-Level Metrics
+- **Latency tracking**: P50, P95, P99 for all operations
+- **Throughput measurement**: Operations per second by type
+- **Error rates**: Success/failure ratios with error categorization
+- **Queue depths**: Buffer sizes and wait times
+
+#### 2. Workload Pattern Metrics
+- **Access frequency distribution**: Hot/warm/cold key identification
+- **Temporal patterns**: Peak hours, load variance, burst detection
+- **Spatial locality**: Cache line utilization, prefetch effectiveness
+- **Operation correlation**: Sequential vs random access patterns
+
+#### 3. Memory Management Metrics
+- **Utilization tracking**: Per-tier memory usage and efficiency
+- **Pressure events**: Frequency and severity of memory pressure
+- **Allocation patterns**: Memory growth, fragmentation, cleanup effectiveness
+- **Cost analysis**: Memory cost per operation and per GB-hour
+
+#### 4. Adaptive Behavior Metrics
+- **Backend transitions**: Frequency and success rate of adaptations
+- **Migration performance**: Data movement speed and downtime
+- **Prediction accuracy**: Workload pattern prediction success rates
+- **Configuration drift**: How often configurations need adjustment
+
+### Integration with Existing Systems
+
+#### CacheMetricsSnapshot Integration
+```rust
+impl From<AdaptiveStructureMetricsSnapshot> for CacheMetricsSnapshot {
+    fn from(snapshot: AdaptiveStructureMetricsSnapshot) -> Self {
+        Self {
+            entries: snapshot.total_entries,
+            memory_bytes: snapshot.memory_usage_bytes,
+            operations: snapshot.total_operations,
+            hits: snapshot.cache_hits,
+            misses: snapshot.cache_misses,
+            hit_rate: snapshot.hit_rate,
+            avg_operation_time: Duration::from_nanos(
+                (snapshot.avg_latency_ms * 1_000_000.0) as u64
+            ),
+        }
+    }
+}
+```
+
+#### CompressionMetrics Integration
+```rust
+impl AdaptiveStore<K, V> {
+    pub fn get_compression_metrics(&self) -> CompressionMetrics {
+        match &self.backend {
+            StorageBackend::Index(backend) => backend.get_compression_metrics(),
+            StorageBackend::Cache(backend) => {
+                // Cache backends may use compressed serialization
+                backend.get_serialization_compression_metrics()
+            }
+            StorageBackend::Hybrid(backend) => {
+                // Combine metrics from both tiers
+                let hot_metrics = backend.hot_tier_compression_metrics();
+                let cold_metrics = backend.cold_tier_compression_metrics();
+                CompressionMetrics::combine(hot_metrics, cold_metrics)
+            }
+        }
+    }
+}
+```
+
+### Dashboard and Alerting Integration
+
+#### Prometheus Metrics Export
+```rust
+// Prometheus metric definitions for adaptive structures
+pub const ADAPTIVE_STORE_METRICS: &[MetricDefinition] = &[
+    MetricDefinition {
+        name: "proximadb_adaptive_store_operations_total",
+        help: "Total number of operations performed",
+        metric_type: MetricType::Counter,
+        labels: &["backend_type", "operation_type"],
+    },
+    MetricDefinition {
+        name: "proximadb_adaptive_store_latency_seconds",
+        help: "Operation latency distribution",
+        metric_type: MetricType::Histogram,
+        labels: &["backend_type", "operation_type"],
+    },
+    MetricDefinition {
+        name: "proximadb_adaptive_store_hit_rate",
+        help: "Cache hit rate for adaptive structures",
+        metric_type: MetricType::Gauge,
+        labels: &["backend_type"],
+    },
+    MetricDefinition {
+        name: "proximadb_adaptive_store_memory_utilization",
+        help: "Memory utilization percentage",
+        metric_type: MetricType::Gauge,
+        labels: &["backend_type", "tier"],
+    },
+    MetricDefinition {
+        name: "proximadb_adaptive_store_adaptations_total",
+        help: "Number of backend adaptations performed",
+        metric_type: MetricType::Counter,
+        labels: &["from_backend", "to_backend", "reason"],
+    },
+];
+```
+
+#### Alert Definitions
+```yaml
+# Adaptive structure performance alerts
+- alert: AdaptiveStoreHighLatency
+  expr: histogram_quantile(0.95, proximadb_adaptive_store_latency_seconds) > 0.010
+  for: 2m
+  labels:
+    severity: warning
+  annotations:
+    summary: "Adaptive store showing high latency"
+    description: "P95 latency is {{ $value }}s for {{ $labels.backend_type }}"
+
+- alert: AdaptiveStoreMemoryPressure
+  expr: proximadb_adaptive_store_memory_utilization > 0.90
+  for: 1m
+  labels:
+    severity: critical
+  annotations:
+    summary: "Adaptive store memory pressure"
+    description: "Memory utilization at {{ $value | humanizePercentage }}"
+
+- alert: AdaptiveStoreFrequentAdaptations
+  expr: rate(proximadb_adaptive_store_adaptations_total[5m]) > 0.1
+  for: 5m
+  labels:
+    severity: warning
+  annotations:
+    summary: "Frequent backend adaptations detected"
+    description: "{{ $value }} adaptations per second indicates workload instability"
+```
+
+### Performance Monitoring Integration
+
+#### Real-time Performance Tracking
+```rust
+impl AdaptiveStore<K, V> {
+    /// Integration point for real-time performance monitoring
+    pub fn register_performance_callbacks(&self, monitor: &PerformanceMonitor) {
+        // Register latency callback
+        monitor.register_latency_callback("adaptive_store", Box::new(|operation, duration| {
+            // Called on every operation completion
+            self.metrics.record_operation_latency(operation, duration);
+        }));
+        
+        // Register memory pressure callback
+        monitor.register_memory_pressure_callback("adaptive_store", Box::new(|| {
+            // Called when system memory pressure detected
+            self.handle_memory_pressure()
+        }));
+        
+        // Register workload pattern callback
+        monitor.register_pattern_change_callback("adaptive_store", Box::new(|pattern| {
+            // Called when workload pattern changes detected
+            self.consider_adaptation(pattern)
+        }));
+    }
+}
+```
+
+### Metrics-Driven Optimization
+
+#### Automatic Performance Tuning
+```rust
+impl AdaptiveStore<K, V> {
+    /// Use metrics to automatically optimize configuration
+    pub async fn auto_optimize(&mut self) -> Result<OptimizationReport> {
+        let metrics = self.get_comprehensive_metrics();
+        
+        // Analyze metrics for optimization opportunities
+        let optimizations = self.analyze_optimization_opportunities(&metrics);
+        
+        let mut report = OptimizationReport::new();
+        
+        for optimization in optimizations {
+            match optimization {
+                OptimizationOpportunity::BufferSizeIncrease { current, recommended } => {
+                    if let StorageBackend::Index(ref mut backend) = &mut self.backend {
+                        backend.set_buffer_size(recommended);
+                        report.add_change("buffer_size", current, recommended);
+                    }
+                }
+                OptimizationOpportunity::CacheEvictionPolicyChange { from, to } => {
+                    if let StorageBackend::Cache(ref mut backend) = &mut self.backend {
+                        backend.set_eviction_policy(to);
+                        report.add_change("eviction_policy", from, to);
+                    }
+                }
+                OptimizationOpportunity::PromotionThresholdAdjust { threshold } => {
+                    if let StorageBackend::Hybrid(ref mut backend) = &mut self.backend {
+                        backend.set_promotion_threshold(threshold);
+                        report.add_change("promotion_threshold", "auto", threshold);
+                    }
+                }
+            }
+        }
+        
+        Ok(report)
+    }
+}
+```
+
 ## Success Metrics
 
 ### Performance Metrics
 - [ ] **Latency**: P95 latency < 1ms for all operations
-- [ ] **Throughput**: > 100K ops/sec for read operations
+- [ ] **Throughput**: > 100K ops/sec for read operations  
 - [ ] **Memory**: < 15% memory overhead
 - [ ] **Scalability**: Linear scaling with core count
+- [ ] **Metrics Overhead**: < 1% performance impact from metrics collection
 
 ### Functional Metrics
 - [ ] **Reliability**: 99.99% operation success rate
 - [ ] **Consistency**: Zero data loss during pressure/invalidation
 - [ ] **Adaptability**: < 1 second adaptation to workload changes
+- [ ] **Observability**: 100% operation visibility through metrics
 
-### Operational Metrics
+### Operational Metrics  
 - [ ] **Migration**: Zero downtime migration from existing code
 - [ ] **Maintainability**: < 2 hour debugging time for issues
 - [ ] **Documentation**: 100% API coverage with examples
+- [ ] **Alerting**: < 30 second alert response time for performance issues
 
 ## Conclusion
 

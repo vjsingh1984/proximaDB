@@ -424,7 +424,7 @@ mod tests {
 
     #[test]
     fn test_concurrent_vector_store() {
-        let store = ConcurrentVectorStore::new(3);
+        let store = IndexVectorStore::new(3);
         
         let vector = Arc::new(VectorRecord {
             id: Some("test1".to_string()),
