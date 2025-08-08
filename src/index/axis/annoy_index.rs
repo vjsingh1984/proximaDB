@@ -414,8 +414,7 @@ impl AxisAnnoyIndex {
 
     /// Get statistics
     pub fn stats(&self) -> AnnoyStats {
-        let vectors = self.vectors.read();
-        let trees = self.trees.read();
+        let trees = self.trees.read().unwrap();
         
         let total_nodes = trees.iter().map(|t| t.nodes.len()).sum();
         let avg_tree_depth = if !trees.is_empty() {
@@ -425,11 +424,11 @@ impl AxisAnnoyIndex {
         };
 
         AnnoyStats {
-            vector_count: vectors.len(),
+            vector_count: self.vectors.len(),
             tree_count: trees.len(),
             total_nodes,
             avg_tree_depth,
-            is_built: *self.is_built.read(),
+            is_built: self.is_built.load(Ordering::Relaxed),
         }
     }
 
@@ -507,7 +506,7 @@ impl AxisVectorIndex for AxisAnnoyIndex {
         }
 
         // Get trees read lock
-        let trees = self.trees.read();
+        let trees = self.trees.read().unwrap();
         
         // Return empty results for empty index (valid case)
         if self.vectors.is_empty() {
@@ -569,8 +568,9 @@ impl AxisVectorIndex for AxisAnnoyIndex {
     fn stats(&self) -> IndexStats {
         // USING UTILS: Get standardized memory usage
         let vector_memory = self.vectors.memory_usage();
-        let tree_memory = memory::vec_memory::<AnnoyTree>(self.trees.len()) 
-            + self.trees.iter().map(|tree| tree.estimate_memory()).sum::<usize>();
+        let trees = self.trees.read().unwrap();
+        let tree_memory = memory::vec_memory::<AnnoyTree>(trees.len()) 
+            + trees.iter().map(|tree| tree.estimate_memory()).sum::<usize>();
         
         let total_memory = std::mem::size_of::<Self>() + vector_memory + tree_memory;
 
