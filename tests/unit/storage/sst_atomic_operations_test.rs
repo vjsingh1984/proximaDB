@@ -42,7 +42,7 @@ async fn test_lsm_atomic_flush_creates_staging_directory() {
     let collection_id = &unique_collection_id("test_collection");
     
     // Remove any existing assignment first to ensure clean state
-    let assignment_service = proximadb::storage::assignment_service::get_assignment_service();
+// 🔴 OBSOLETE - Assignment service removed
     let _ = assignment_service.remove_assignment(collection_id).await; // Ignore error if doesn't exist
     
     // Setup storage assignment BEFORE creating SST storage
@@ -60,7 +60,7 @@ async fn test_lsm_atomic_flush_creates_staging_directory() {
     ).await.unwrap();
     
     // Check if any files exist immediately after creation
-    let assignment_service = proximadb::storage::assignment_service::get_assignment_service();
+// 🔴 OBSOLETE - Assignment service removed
     let assignment = assignment_service.get_assignment(collection_id).await
         .expect("Storage assignment should exist");
     let data_dir = assignment.data_url.strip_prefix("file://").unwrap_or(&assignment.data_url);
@@ -91,6 +91,13 @@ async fn test_lsm_atomic_flush_creates_staging_directory() {
                     value: Some(proximadb::proto::proximadb::metadata_item::Value::StringValue("A".to_string())),
                 }
             ],
+            timestamp: 0,
+            updated_at: None,
+            expires_at: None,
+            distance: None,
+            rank: None,
+            score: None,
+            version: None,
             ..Default::default()
         }
     ];
@@ -111,7 +118,7 @@ async fn test_lsm_atomic_flush_creates_staging_directory() {
     assert_eq!(result.entries_flushed, 1);
     
     // Get the storage assignment to find the actual data directory
-    let assignment_service = proximadb::storage::assignment_service::get_assignment_service();
+// 🔴 OBSOLETE - Assignment service removed
     let assignment = assignment_service.get_assignment(collection_id).await
         .expect("Storage assignment should exist");
     let data_dir = assignment.data_url.strip_prefix("file://").unwrap_or(&assignment.data_url);
@@ -195,6 +202,13 @@ async fn test_lsm_atomic_flush_rollback_on_failure() {
             id: Some("vec1".to_string()),
             vector: vec![], // Empty vector should cause validation to fail
             metadata: vec![],
+            timestamp: 0,
+            updated_at: None,
+            expires_at: None,
+            distance: None,
+            rank: None,
+            score: None,
+            version: None,
             ..Default::default()
         }
     ];
@@ -222,7 +236,7 @@ async fn test_lsm_atomic_flush_rollback_on_failure() {
     
     // Verify SSTable file was created (since empty vectors are allowed)
     // Get the actual data directory from the assignment service
-    let assignment_service = proximadb::storage::assignment_service::get_assignment_service();
+// 🔴 OBSOLETE - Assignment service removed
     let assignment = assignment_service.get_assignment(collection_id).await
         .expect("Storage assignment should exist");
     let data_dir = assignment.data_url.strip_prefix("file://").unwrap_or(&assignment.data_url);
@@ -263,7 +277,7 @@ async fn test_lsm_atomic_compaction_with_staging() {
     let collection_id = &unique_collection_id("test_collection");
     
     // Remove any existing assignment first to ensure clean state
-    let assignment_service = proximadb::storage::assignment_service::get_assignment_service();
+// 🔴 OBSOLETE - Assignment service removed
     let _ = assignment_service.remove_assignment(collection_id).await; // Ignore error if doesn't exist
     
     // Setup storage assignment BEFORE creating SST storage
@@ -292,6 +306,13 @@ async fn test_lsm_atomic_compaction_with_staging() {
                         value: Some(proximadb::proto::proximadb::metadata_item::Value::StringValue(i.to_string())),
                     }
                 ],
+                timestamp: 0,
+                updated_at: None,
+                expires_at: None,
+                distance: None,
+                rank: None,
+                score: None,
+                version: None,
                 ..Default::default()
             }
         ];
@@ -349,7 +370,7 @@ async fn test_lsm_atomic_compaction_with_staging() {
     
     // Verify SSTable files exist
     // Get the storage assignment to find the actual data directory
-    let assignment_service = proximadb::storage::assignment_service::get_assignment_service();
+// 🔴 OBSOLETE - Assignment service removed
     let assignment = assignment_service.get_assignment(collection_id).await
         .expect("Storage assignment should exist");
     let data_dir = assignment.data_url.strip_prefix("file://").unwrap_or(&assignment.data_url);
@@ -423,6 +444,13 @@ async fn test_lsm_sequential_flush_within_collection() {
                         value: Some(proximadb::proto::proximadb::metadata_item::Value::StringValue(i.to_string())),
                     }
                 ],
+                timestamp: 0,
+                updated_at: None,
+                expires_at: None,
+                distance: None,
+                rank: None,
+                score: None,
+                version: None,
                 ..Default::default()
             }
         ];
@@ -447,7 +475,7 @@ async fn test_lsm_sequential_flush_within_collection() {
     assert_eq!(flush_results.len(), 5, "All sequential flushes should complete");
     
     // Verify all vectors were written
-    let assignment_service = proximadb::storage::assignment_service::get_assignment_service();
+// 🔴 OBSOLETE - Assignment service removed
     let assignment = assignment_service.get_assignment(collection_id).await
         .expect("Storage assignment should exist");
     let data_dir = assignment.data_url.strip_prefix("file://").unwrap_or(&assignment.data_url);
@@ -514,6 +542,13 @@ async fn test_concurrent_flushes_across_collections() {
                             value: Some(proximadb::proto::proximadb::metadata_item::Value::StringValue(format!("col_{}", i))),
                         }
                     ],
+                    timestamp: 0,
+                    updated_at: None,
+                    expires_at: None,
+                    distance: None,
+                    rank: None,
+                    score: None,
+                    version: None,
                     ..Default::default()
                 }
             ];
@@ -550,7 +585,7 @@ async fn test_concurrent_flushes_across_collections() {
     assert_eq!(success_count, 5, "All concurrent cross-collection flushes should succeed");
     
     // Verify each collection has its data
-    let assignment_service = proximadb::storage::assignment_service::get_assignment_service();
+// 🔴 OBSOLETE - Assignment service removed
     let fs = filesystem.get_filesystem("file:///").unwrap();
     
     for collection_id in collection_ids {

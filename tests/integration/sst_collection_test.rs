@@ -17,7 +17,7 @@ use proximadb::storage::persistence::write_buffer::WriteBufferConfig;
 use proximadb::storage::engines::sst::SstStorage;
 use proximadb::storage::engines::viper::ViperEngine;
 use proximadb::storage::traits::UnifiedStorageEngine;
-use proximadb::storage::assignment_service::get_assignment_service;
+// 🔴 OBSOLETE - Assignment service removed
 use proximadb::storage::persistence::write_buffer::WriteBufferFlushCoordinator;
 use proximadb::storage::traits::CollectionMetadataProvider;
 use std::sync::Arc;
@@ -100,7 +100,9 @@ async fn test_lsm_collection_with_proper_routing() {
         description: None,
         tags: vec![],
         owner: None,
-    };
+                compression: None,
+                optimization_hints: None,
+            };
     
     let create_response = collection_service.create_collection(&collection_config).await.unwrap();
     assert!(create_response.success, "Collection creation should succeed");
@@ -185,6 +187,13 @@ async fn test_lsm_collection_with_proper_routing() {
                     value: Some(proximadb::proto::proximadb::metadata_item::Value::StringValue("A".to_string())),
                 },
             ],
+            timestamp: 0,
+            updated_at: None,
+            expires_at: None,
+            distance: None,
+            rank: None,
+            score: None,
+            version: None,
             ..Default::default()
         },
         VectorRecord {
@@ -196,6 +205,13 @@ async fn test_lsm_collection_with_proper_routing() {
                     value: Some(proximadb::proto::proximadb::metadata_item::Value::StringValue("B".to_string())),
                 },
             ],
+            timestamp: 0,
+            updated_at: None,
+            expires_at: None,
+            distance: None,
+            rank: None,
+            score: None,
+            version: None,
             ..Default::default()
         },
         VectorRecord {
@@ -207,6 +223,13 @@ async fn test_lsm_collection_with_proper_routing() {
                     value: Some(proximadb::proto::proximadb::metadata_item::Value::StringValue("A".to_string())),
                 },
             ],
+            timestamp: 0,
+            updated_at: None,
+            expires_at: None,
+            distance: None,
+            rank: None,
+            score: None,
+            version: None,
             ..Default::default()
         },
     ];

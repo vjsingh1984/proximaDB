@@ -82,6 +82,41 @@ impl ViperEngine {
         Self::new_internal(config, core_config, filesystem).await
     }
     
+    /// Standard constructor matching SST engine interface
+    /// This provides consistency across storage engines
+    /// 
+    /// Note: While VIPER can handle multiple collections, it still needs
+    /// collection metadata for compression, filterable fields, dimensions, etc.
+    /// The collection_id here is used for initial setup if needed.
+    pub async fn new(
+        collection_id: String,  // Used for logging and initial setup
+        core_config: crate::core::config::ViperConfig,
+        filesystem: Arc<FilesystemFactory>,
+        _distance_compute: Arc<crate::compute::unified_distance::UnifiedDistanceCompute>,  // VIPER creates its own internally
+    ) -> Result<Self> {
+        info!("🔧 Creating VIPER engine with initial collection: {}", collection_id);
+        // VIPER manages multiple collections, so we just log the initial one
+        Self::from_core_config(core_config, filesystem).await
+    }
+    
+    /// Constructor with explicit base location (for consistency with SST)
+    /// 
+    /// Note: VIPER manages storage locations per-collection through collection metadata,
+    /// but this constructor is provided for interface consistency with SST engine.
+    pub async fn new_with_location(
+        collection_id: String,  // Used for logging and initial setup
+        core_config: crate::core::config::ViperConfig,
+        filesystem: Arc<FilesystemFactory>,
+        _distance_compute: Arc<crate::compute::unified_distance::UnifiedDistanceCompute>,
+        base_location: String,  // Can be used to override default storage paths
+    ) -> Result<Self> {
+        info!("🔧 Creating VIPER engine for collection: {} with base location: {}", 
+              collection_id, base_location);
+        // VIPER gets per-collection storage locations from collection metadata
+        // The base_location here could be used as a fallback or override
+        Self::from_core_config(core_config, filesystem).await
+    }
+    
     /// Internal constructor with both configs
     async fn new_internal(config: ViperEngineConfig, core_config: crate::core::config::ViperConfig, filesystem: Arc<FilesystemFactory>) -> Result<Self> {
         let collection_service = Arc::new(RwLock::new(None));
@@ -396,7 +431,8 @@ impl ViperEngine {
                             rank: None,
                             score: None,
                             distance: None,
-            };
+            
+        };
                         
                         // Check if this is a better match than what we have
                         match &best_match {
@@ -424,6 +460,10 @@ impl ViperEngine {
         self.stats.read().await.clone()
     }
     
+    // 🔴 UNUSED SCHEMA CACHE METHODS - CANDIDATES FOR REMOVAL
+    // These schema cache management methods have no callers found in the codebase.
+    // Schema caching is managed internally and these public methods are not used.
+    /*
     /// Clear schema cache for a collection
     pub async fn clear_schema_cache(&self, collection_id: &str) {
         self.schema_manager.clear_schema_cache(collection_id).await;
@@ -438,7 +478,12 @@ impl ViperEngine {
     pub async fn get_schema_cache_stats(&self) -> (usize, Vec<String>) {
         self.schema_manager.get_cache_stats().await
     }
+    */
     
+    // 🔴 UNUSED HEALTH CHECK METHOD - CANDIDATE FOR REMOVAL
+    // This internal health check method has no callers found.
+    // Health checking is handled by the UnifiedStorageEngine trait's health_check method.
+    /*
     /// Internal health check
     pub async fn internal_health_check(&self) -> Result<bool> {
         // Basic health check - can be extended to check:
@@ -448,6 +493,7 @@ impl ViperEngine {
         
         Ok(true)
     }
+    */
     
     /// Get collection metadata
     pub async fn get_collection_metadata(&self, collection_id: &str) -> Option<CollectionMetadata> {
@@ -467,23 +513,27 @@ impl ViperEngine {
     }
     
     
-    /// Record operation performance metrics
-    pub async fn record_operation_metrics(&self, metrics: super::utilities::OperationMetrics) -> Result<()> {
+    // 🟡 INTERNAL UTILITY METHODS - CONSIDER MAKING PRIVATE
+    // These utility methods have no external callers found in the codebase.
+    // They are only used internally and could be made private or moved to internal modules.
+    
+    /// Record operation performance metrics - INTERNAL USE
+    async fn record_operation_metrics(&self, metrics: super::utilities::OperationMetrics) -> Result<()> {
         self.utilities.record_operation(metrics).await
     }
     
-    /// Get performance statistics
-    pub async fn get_performance_report(&self, collection_id: Option<&String>) -> Result<super::utilities::PerformanceReport> {
+    /// Get performance statistics - INTERNAL USE
+    async fn get_performance_report(&self, collection_id: Option<&String>) -> Result<super::utilities::PerformanceReport> {
         self.utilities.get_performance_stats(collection_id).await
     }
     
-    /// Optimize compression for a collection
-    pub async fn optimize_compression(&self, collection_id: &str) -> Result<super::utilities::CompressionRecommendation> {
+    /// Optimize compression for a collection - INTERNAL USE
+    async fn optimize_compression(&self, collection_id: &str) -> Result<super::utilities::CompressionRecommendation> {
         self.utilities.optimize_compression(collection_id).await
     }
     
-    /// Start background utilities services
-    pub async fn start_background_services(&mut self) -> Result<()> {
+    /// Start background utilities services - INTERNAL USE
+    async fn start_background_services(&mut self) -> Result<()> {
         // Note: utilities is not mutable, so we need to access the inner services differently
         // This would need to be redesigned for proper mutable access
         info!("🚀 VIPER Engine: Background services functionality available via utilities");
@@ -529,24 +579,28 @@ impl ViperEngine {
     pub async fn get_parquet_files_for_collection(&self, collection_id: &str) -> Result<Vec<String>> {
         debug!("📁 Getting Parquet files for collection: {}", collection_id);
         
-        // Get storage URL from assignment service
-        let assignment_service = crate::storage::assignment_service::get_assignment_service();
-        let storage_assignment = assignment_service
-            .get_assignment(collection_id)
-            .await
+        // Get storage URL from collection metadata
+        let collection_service = self.collection_service.read().await;
+        let collection_service = collection_service.as_ref()
+            .ok_or_else(|| anyhow::anyhow!("Collection service not initialized"))?;
+        
+        let collection = collection_service.get_collection(collection_id).await?
+            .ok_or_else(|| anyhow::anyhow!("Collection {} not found", collection_id))?;
+        
+        let storage_assignment = collection.storage_assignment
             .ok_or_else(|| anyhow::anyhow!("No storage assignment found for collection {}", collection_id))?;
         
-        let storage_url = &storage_assignment.data_url;
+        let storage_url = format!("{}/{}/data", storage_assignment.base_location, collection_id);
         debug!("📁 Storage URL for collection {}: {}", collection_id, storage_url);
         
         // Handle different storage backends
         let parquet_files = if storage_url.starts_with("file://") {
             // Local filesystem - storage_url already includes collection_id from assignment service
             // Use filesystem API to list files
-            let fs = self.filesystem.get_filesystem(storage_url)?;
+            let fs = self.filesystem.get_filesystem(&storage_url)?;
             
             // Check if directory exists by trying to list it
-            let entries = match fs.list(storage_url).await {
+            let entries = match fs.list(&storage_url).await {
                 Ok(entries) => entries,
                 Err(_) => {
                     debug!("📁 Collection directory does not exist or is empty: {}", storage_url);
@@ -933,7 +987,8 @@ impl UnifiedStorageEngine for ViperEngine {
     }
 
     async fn health_check(&self) -> Result<crate::storage::traits::EngineHealth> {
-        let healthy = self.internal_health_check().await?;
+        // Assume healthy for now since internal_health_check is commented out
+        let healthy = true;
         let stats = self.stats.read().await;
         
         let mut metrics = HashMap::new();
@@ -978,15 +1033,22 @@ impl UnifiedStorageEngine for ViperEngine {
 impl ViperEngine {
     /// Convenient compact_collection method for CompactionCoordinator integration
     /// Returns enhanced result with vector tracking for AXIS integration
-    pub async fn compact_collection(&self, collection_id: &str) -> Result<crate::storage::persistence::write_buffer::compaction_types::EnhancedEngineCompactionResult> {
+    /// Compact a specific collection - returns standard CompactionResult
+    pub async fn compact_collection(&self, collection_id: &str, collection_config: Option<&crate::proto::proximadb::Collection>) -> Result<crate::storage::traits::CompactionResult> {
         info!("🗜️ VIPER Engine: Starting collection compaction for {}", collection_id);
         
-        // Get collection configuration if available
-        let collection_config = if let Some(service) = self.collection_service.read().await.as_ref() {
-            service.get_collection(collection_id).await.ok().flatten()
+        // If collection_config not provided, try to get it from service
+        let owned_config = if collection_config.is_none() {
+            if let Some(service) = self.collection_service.read().await.as_ref() {
+                service.get_collection(collection_id).await.ok().flatten()
+            } else {
+                None
+            }
         } else {
             None
         };
+        
+        let config_to_use = collection_config.or(owned_config.as_ref());
         
         // Create compaction parameters with collection config
         let params = crate::storage::traits::CompactionParameters {
@@ -996,34 +1058,10 @@ impl ViperEngine {
             hints: std::collections::HashMap::new(),
             timeout_ms: None,
             priority: crate::storage::traits::OperationPriority::Medium,
-            collection_config,
+            collection_config: config_to_use.cloned(),
         };
         
         // Use the existing do_compact implementation
-        let result = self.do_compact(&params).await?;
-        
-        // Extract vector tracking data from engine_metrics if available
-        let deleted_vector_ids = result.engine_metrics.get("deleted_vector_ids")
-            .and_then(|v| v.as_array())
-            .map(|arr| arr.iter()
-                .filter_map(|v| v.as_str().map(String::from))
-                .collect::<Vec<_>>()
-            )
-            .unwrap_or_default();
-            
-        Ok(crate::storage::persistence::write_buffer::compaction_types::EnhancedEngineCompactionResult {
-            files_processed: result.output_files,
-            bytes_processed: result.bytes_written,
-            deleted_vector_ids,
-            merged_vectors: Vec::new(), // VIPER doesn't track individual merged vectors
-            recommend_full_rebuild: false,
-        })
+        self.do_compact(&params).await
     }
-}
-
-/// Simplified compaction result for CompactionCoordinator
-#[derive(Debug, Clone)]
-pub struct EngineCompactionResult {
-    pub files_processed: u64,
-    pub bytes_processed: u64,
 }

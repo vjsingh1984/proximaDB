@@ -70,6 +70,12 @@ fn benchmark_lockfree_structures(c: &mut Criterion) {
                         tokio::spawn(async move {
                             let record = proximadb::core::VectorRecord {
                                 id: Some(format!("id_{}", i)),
+                                timestamp: 0,
+                                updated_at: None,
+                                expires_at: None,
+                                distance: None,
+                                rank: None,
+                                score: None,
                                 vector: vec![i as f32; 128],
                                 metadata: vec![],
                                 ..Default::default()
@@ -94,7 +100,14 @@ fn benchmark_lockfree_structures(c: &mut Criterion) {
                 // Pre-populate
                 for i in 0..100 {
                     let record = proximadb::core::VectorRecord {
-                        id: Some(format!("id_{}", i)),
+                        id: Some(format!("id_{,
+            timestamp: 0,
+            updated_at: None,
+            expires_at: None,
+            distance: None,
+            rank: None,
+            score: None,
+        }", i)),
                         vector: vec![i as f32; 128],
                         metadata: vec![],
                         ..Default::default()

@@ -45,13 +45,19 @@ fn generate_test_vectors(count: usize, dimension: usize, sparsity: f32) -> Vec<V
 /// Create test VectorRecord
 fn create_vector_record(id: &str, vector: Vec<f32>) -> VectorRecord {
     VectorRecord {
-        id: Some(id.to_string()),
+        id: Some(Some(id.to_string())),
         vector,
         metadata: vec![
             MetadataItem {
                 key: "category".to_string(),
                 value: Some(proximadb::proto::proximadb::metadata_item::Value::StringValue("benchmark".to_string())),
-            },
+            timestamp: 0,
+            updated_at: None,
+            expires_at: None,
+            distance: None,
+            rank: None,
+            score: None,
+        },
         ],
         timestamp: 1234567890,
         updated_at: Some(1234567890),

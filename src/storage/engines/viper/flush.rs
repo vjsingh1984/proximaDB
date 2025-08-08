@@ -26,7 +26,8 @@ use crate::storage::atomic::{UnifiedAtomicCoordinator, StagingConfig, StagingOpe
 
 use crate::core::{String, VectorRecord};
 use crate::storage::optimization::{MetadataSorter, SortingStats};
-use crate::metrics::updater::{InternalMetricsUpdater, FlushMetricsUpdate};
+// 🔴 UNUSED IMPORT - Metrics module is unused
+use crate::monitoring::metrics::updater::{InternalMetricsUpdater, FlushMetricsUpdate};
 use super::schema::SchemaManager;
 
 /// Flush manager for VIPER storage engine with atomic writes
@@ -43,8 +44,9 @@ pub struct FlushManager {
     /// Atomic coordinator for ACID operations
     atomic_coordinator: Arc<UnifiedAtomicCoordinator>,
     
-    /// Optional metrics updater for non-critical metrics
-    metrics_updater: Option<Arc<dyn InternalMetricsUpdater>>,
+    // 🔴 UNUSED FIELD - Metrics module is unused
+    // /// Optional metrics updater for non-critical metrics
+    // metrics_updater: Option<Arc<dyn InternalMetricsUpdater>>,
 }
 
 impl std::fmt::Debug for FlushManager {
@@ -54,7 +56,7 @@ impl std::fmt::Debug for FlushManager {
             .field("collection_service", &self.collection_service)
             .field("filesystem_factory", &self.filesystem_factory)
             .field("atomic_coordinator", &self.atomic_coordinator)
-            .field("metrics_updater", &self.metrics_updater.is_some())
+            // .field("metrics_updater", &self.metrics_updater.is_some())  // 🔴 UNUSED
             .finish()
     }
 }
@@ -76,14 +78,15 @@ impl FlushManager {
             collection_service,
             filesystem_factory,
             atomic_coordinator,
-            metrics_updater: None, // Will be set via set_metrics_updater
+            // metrics_updater: None, // Will be set via set_metrics_updater  // 🔴 UNUSED
         })
     }
     
-    /// Set the metrics updater (optional, for non-critical metrics)
-    pub fn set_metrics_updater(&mut self, updater: Arc<dyn InternalMetricsUpdater>) {
-        self.metrics_updater = Some(updater);
-    }
+    // 🔴 UNUSED METHOD - Metrics module is unused
+    // /// Set the metrics updater (optional, for non-critical metrics)
+    // pub fn set_metrics_updater(&mut self, updater: Arc<dyn InternalMetricsUpdater>) {
+    //     self.metrics_updater = Some(updater);
+    // }
 
     /// Core flush operation using proper staging pattern
     pub async fn flush_vectors(
@@ -262,20 +265,21 @@ impl FlushManager {
         info!("🔄 VIPER: Step 5 - Updating collection metadata");
         self.update_collection_metadata_after_flush(collection_id, vector_records.len(), parquet_data.len()).await?;
 
-        // Step 5.1: Record metrics (non-blocking, failure-tolerant)
-        if let Some(ref metrics_updater) = self.metrics_updater {
-            let flush_update = FlushMetricsUpdate {
-                vectors_flushed: vector_records.len() as i64,
-                bytes_written: parquet_data.len() as i64,
-                duration_ms: 0, // TODO: Track actual duration
-                files_created: 1,
-                engine_type: "VIPER".to_string(),
-                timestamp: chrono::Utc::now().timestamp_millis(),
-            };
-            
-            // Fire and forget - never block flush operation
-            metrics_updater.record_flush(collection_id, flush_update).await;
-        }
+        // 🔴 UNUSED METRICS - Metrics module is unused
+        // // Step 5.1: Record metrics (non-blocking, failure-tolerant)
+        // if let Some(ref metrics_updater) = self.metrics_updater {
+        //     let flush_update = FlushMetricsUpdate {
+        //         vectors_flushed: vector_records.len() as i64,
+        //         bytes_written: parquet_data.len() as i64,
+        //         duration_ms: 0, // TODO: Track actual duration
+        //         files_created: 1,
+        //         engine_type: "VIPER".to_string(),
+        //         timestamp: chrono::Utc::now().timestamp_millis(),
+        //     };
+        //     
+        //     // Fire and forget - never block flush operation
+        //     metrics_updater.record_flush(collection_id, flush_update).await;
+        // }
 
         // Step 6: Return successful flush result with BatchId coordination
         Ok(crate::storage::traits::FlushResult {
@@ -720,6 +724,7 @@ impl FlushManager {
             if let Some(ref config) = collection.config {
                 if let Some(ref compression) = config.compression {
                     use crate::proto::proximadb::CompressionAlgorithm;
+                    // Convert from proto-generated enum value to Parquet compression
                     match CompressionAlgorithm::try_from(compression.algorithm) {
                         Ok(CompressionAlgorithm::CompressionZstd) => {
                             let level = compression.level.unwrap_or(viper_config.compression_level);
@@ -732,6 +737,16 @@ impl FlushManager {
                         }
                         Ok(CompressionAlgorithm::CompressionSnappy) => {
                             (parquet::basic::Compression::SNAPPY, true)
+                        }
+                        Ok(CompressionAlgorithm::CompressionGzip) => {
+                            (parquet::basic::Compression::GZIP(
+                                parquet::basic::GzipLevel::try_new(compression.level.unwrap_or(6) as u32)?
+                            ), true)
+                        }
+                        Ok(CompressionAlgorithm::CompressionBrotli) => {
+                            (parquet::basic::Compression::BROTLI(
+                                parquet::basic::BrotliLevel::try_new(compression.level.unwrap_or(6) as u32)?
+                            ), true)
                         }
                         _ => (parquet::basic::Compression::UNCOMPRESSED, false)
                     }
@@ -964,9 +979,9 @@ impl FlushManager {
             ))?;
         
         // Begin atomic operation for flush
-        // Note: data_location already includes collection path, so don't set collection_id
+        let data_url = format!("{}/{}/data", storage_assignment.base_location, collection_id);
         let staging_config = StagingConfig {
-            base_url: storage_assignment.data_location.clone(),
+            base_url: data_url.clone(),
             collection_id: None,  // Don't duplicate collection path
             operation_type: StagingOperationType::Flush,
             custom_staging_dir: None,
@@ -994,13 +1009,13 @@ impl FlushManager {
             .await
             .context("Failed to finalize atomic flush")?;
         
-        let final_path = format!("{}/{}", storage_assignment.data_location, filename);
+        let final_path = format!("{}/{}", data_url, filename);
         
         info!("✅ VIPER: Atomically wrote Parquet file {} ({} KB)", 
               final_path, parquet_data.len() / 1024);
         
         // Verify file was written
-        let fs = self.filesystem_factory.get_filesystem(&storage_assignment.data_location)?;
+        let fs = self.filesystem_factory.get_filesystem(&data_url)?;
         if fs.exists(&final_path).await? {
             let metadata = fs.metadata(&final_path).await?;
             info!("✅ VIPER: Verified file exists at {} with size {} bytes", 

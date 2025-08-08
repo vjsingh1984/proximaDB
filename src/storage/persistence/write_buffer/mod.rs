@@ -23,7 +23,6 @@ use crate::compute::unified_distance::{DistanceComputeProvider, UnifiedDistanceC
 use crate::core::{String, VectorId, VectorRecord};
 use crate::storage::traits::{UnifiedStorageEngine, FlushResult};
 use crate::storage::memtable::specialized::write_buffer_behavior::WriteBufferVectorBatch;
-use crate::storage::assignment_service::{AssignmentService, StorageAssignmentConfig, StorageComponentType};
 use crate::storage::atomic::UnifiedAtomicCoordinator;
 
 // Sub-modules  
@@ -51,9 +50,12 @@ pub mod flush_result_optimization;
 
 // Optimized WAL components (Phase 1 implementation) - now consolidated into WriteBufferManager
 pub mod simple_atomic_sync;
-pub mod optimized_path_resolver;
-pub mod atomic_write_buffer_sync;
-pub mod parallel_recovery;
+// MARKED FOR REMOVAL: optimized_path_resolver uses assignment_service
+// pub mod optimized_path_resolver;
+// MARKED FOR REMOVAL: atomic_write_buffer_sync uses optimized_path_resolver
+// pub mod atomic_write_buffer_sync;
+// MARKED FOR REMOVAL: parallel_recovery uses assignment_service
+// pub mod parallel_recovery;
 
 
 // Unit tests
@@ -83,7 +85,8 @@ pub use compaction_coordinator::{
     CompactionStats, CompactionTask,
 };
 pub use compaction_axis_integration::{CompactionAxisUpdater, CompactionIndexStats};
-pub use compaction_types::EnhancedEngineCompactionResult;
+// 🔴 UNUSED EXPORT - EnhancedEngineCompactionResult marked for removal
+// pub use compaction_types::EnhancedEngineCompactionResult;
 pub use memtable_manager::{MemtableManager, MemtableStats};
 pub use disk_manager::{WriteBufferDiskManager, DiskStats, WriteBufferFileInfo};
 pub use recovery_manager::{RecoveryManager, RecoveryStats, ParallelRecoveryManager, RecoveryMode};
@@ -230,8 +233,25 @@ pub struct FlushCompletionResult {
 /// - **Horizontal scaling constraint** - One collection handled by exactly one WriteBufferManager (never split)
 /// - **Dynamic scaling** - Under heavy workload, new collections get new WalManagers
 /// - **Strategy-specific serialization** with shared deserialization in global memtable
-/// - **Assignment service integration** for multi-disk coordination and collection co-location
+/// - **Collection-specific storage locations** from collection metadata
 /// - **Atomic disk synchronization** using UnifiedAtomicCoordinator
+
+/// Collection assignment info with storage location and critical config
+/// The collection_id is the HashMap key, so not stored here
+#[derive(Debug, Clone)]
+pub struct CollectionAssignment {
+    /// Base storage location for this collection (e.g., "file:///data/disk1" or "s3://bucket/path")
+    pub base_location: String,
+    /// Storage engine type (affects flush strategy)
+    pub storage_engine: crate::proto::proximadb::StorageEngine,
+    /// Vector dimension (for buffer size calculations)
+    pub dimension: i32,
+    /// Compression config (if any) - critical for write operations
+    pub compression_config: Option<crate::proto::proximadb::CompressionConfig>,
+    /// Distance metric (for similarity operations in WAL)
+    pub distance_metric: crate::proto::proximadb::DistanceMetric,
+}
+
 pub struct WriteBufferManager {
     /// Active strategy for current operations
     strategy: Box<dyn WriteBufferBatchStrategy>,
@@ -241,14 +261,12 @@ pub struct WriteBufferManager {
     stats: Arc<tokio::sync::RwLock<WriteBufferStats>>,
     /// Distance computation for similarity operations
     distance_compute: UnifiedDistanceCompute,
-    /// **Collections assigned to this WriteBufferManager** - Each WriteBufferManager handles specific collections
-    assigned_collections: Arc<tokio::sync::RwLock<std::collections::HashSet<String>>>,
+    /// **Collections assigned to this WriteBufferManager with their storage locations**
+    assigned_collections: Arc<tokio::sync::RwLock<std::collections::HashMap<String, CollectionAssignment>>>,
     /// **SHARED REFERENCE**: Global WriteBufferBehaviorWrapper singleton shared across ALL WriteBufferManager instances
     shared_write_buffer_behavior: &'static GlobalWriteBufferBehaviorSingleton,
-    /// Assignment service for multi-disk coordination
-    assignment_service: Option<Arc<dyn AssignmentService>>,
-    /// Path resolver for collection-to-disk mapping
-    path_resolver: Option<Arc<optimized_path_resolver::OptimizedWalPathResolver>>,
+    // MARKED FOR REMOVAL: Path resolver no longer needed with simplified storage assignment
+    // path_resolver: Option<Arc<optimized_path_resolver::OptimizedWalPathResolver>>,
     /// Atomic sync coordinator for disk operations (temporarily disabled)
     // atomic_sync: Option<Arc<atomic_wal_sync::AtomicWalSync>>,
     /// Strategy type for routing and serialization decisions
@@ -274,8 +292,6 @@ pub struct WriteBufferManagerRegistry {
 pub struct WriteBufferManagerPoolEntry {
     /// The WriteBufferManager instance
     manager: Arc<WriteBufferManager>,
-    /// Collections assigned to this manager
-    assigned_collections: std::collections::HashSet<String>,
     /// Workload metrics for load balancing
     workload_metrics: WriteBufferManagerWorkload,
     /// Last rebalancing timestamp
@@ -547,7 +563,6 @@ impl WriteBufferManagerRegistry {
             
             let entry = WriteBufferManagerPoolEntry {
                 manager,
-                assigned_collections: std::collections::HashSet::new(),
                 workload_metrics: WriteBufferManagerWorkload::default(),
                 last_rebalance: std::time::Instant::now(),
             };
@@ -647,7 +662,6 @@ impl WriteBufferManagerRegistry {
         
         let entry = WriteBufferManagerPoolEntry {
             manager,
-            assigned_collections: std::collections::HashSet::new(),
             workload_metrics: WriteBufferManagerWorkload::default(),
             last_rebalance: std::time::Instant::now(),
         };
@@ -674,16 +688,17 @@ impl WriteBufferManagerRegistry {
         {
             let mut pool = self.manager_pool.write().await;
             if let Some(entry) = pool.get_mut(manager_id) {
-                entry.assigned_collections.insert(collection_id.to_string());
-                entry.workload_metrics.collection_count = entry.assigned_collections.len();
+                // Get current count from the manager's HashMap
+                let collection_count = {
+                    let assigned = entry.manager.assigned_collections.read().await;
+                    assigned.len() + 1  // +1 for the collection we're about to add
+                };
+                
+                entry.workload_metrics.collection_count = collection_count;
                 
                 // Update load score based on collection count
                 entry.workload_metrics.load_score = 
                     (entry.workload_metrics.collection_count as f64) / (self.pool_config.target_collections_per_manager as f64);
-                
-                // Add the collection to the manager's assigned set
-                let mut assigned = entry.manager.assigned_collections.write().await;
-                assigned.insert(collection_id.to_string());
             } else {
                 return Err(anyhow::anyhow!("Manager {} not found in pool", manager_id));
             }
@@ -884,9 +899,8 @@ impl WriteBufferManager {
             compression_ratio: 1.0,
         }));
 
-        // Initialize collection set for this manager
-        let mut assigned_collections = std::collections::HashSet::new();
-        assigned_collections.insert(collection_id.clone());
+        // Initialize with empty collection map - collections will be added with their metadata
+        let assigned_collections = std::collections::HashMap::new();
 
         tracing::info!(
             "✅ WriteBufferManager created for collection {} - per-collection scaling with shared memtable",
@@ -903,8 +917,7 @@ impl WriteBufferManager {
             distance_compute: UnifiedDistanceCompute::default(),
             assigned_collections: Arc::new(tokio::sync::RwLock::new(assigned_collections)),
             shared_write_buffer_behavior: &GLOBAL_WRITE_BUFFER_BEHAVIOR,
-            assignment_service: None,
-            path_resolver: None,
+            // path_resolver: None,
             // atomic_sync: None,
             strategy_type,
         })
@@ -942,7 +955,7 @@ impl WriteBufferManager {
         }));
 
         // Start with empty collection set (will be assigned dynamically)
-        let assigned_collections = std::collections::HashSet::new();
+        let assigned_collections = std::collections::HashMap::new();
 
         tracing::debug!("✅ Pool WriteBufferManager {} created - ready for adaptive collection assignment", manager_id);
 
@@ -956,8 +969,7 @@ impl WriteBufferManager {
             distance_compute: UnifiedDistanceCompute::default(),
             assigned_collections: Arc::new(tokio::sync::RwLock::new(assigned_collections)),
             shared_write_buffer_behavior: &GLOBAL_WRITE_BUFFER_BEHAVIOR,
-            assignment_service: None,
-            path_resolver: None,
+            // path_resolver: None,
             // atomic_sync: None,
             strategy_type,
         })
@@ -1402,51 +1414,6 @@ impl WriteBufferManager {
     // ================================================================================
 
     /// Initialize assignment service integration for multi-disk coordination
-    pub async fn initialize_assignment_service(
-        &mut self,
-        assignment_service: Arc<dyn AssignmentService>,
-        _atomic_coordinator: Arc<UnifiedAtomicCoordinator>,
-    ) -> Result<()> {
-        // Create assignment configs for WAL and storage components
-        let wal_assignment_config = StorageAssignmentConfig {
-            storage_urls: self.config.multi_disk.data_directories.clone(),
-            component_type: StorageComponentType::Wal,
-            collection_affinity: self.config.multi_disk.collection_affinity,
-        };
-
-        // Create storage assignment config (for co-location)
-        let storage_assignment_config = StorageAssignmentConfig {
-            storage_urls: vec!["storage_urls".to_string()], // TODO: Get from storage config
-            component_type: StorageComponentType::Storage,
-            collection_affinity: self.config.multi_disk.collection_affinity,
-        };
-
-        // Get filesystem factory from strategy
-        let filesystem_factory = self.strategy.get_filesystem()
-            .ok_or_else(|| anyhow::anyhow!("Strategy does not have filesystem factory"))?;
-
-        // Create path resolver
-        let path_resolver = Arc::new(optimized_path_resolver::OptimizedWalPathResolver::new(
-            assignment_service.clone(),
-            filesystem_factory,
-            wal_assignment_config,
-            storage_assignment_config,
-        ));
-
-        // TODO: Create atomic sync coordinator once compilation issues are resolved
-        // let atomic_sync = Arc::new(atomic_wal_sync::AtomicWalSync::new(
-        //     atomic_coordinator,
-        //     path_resolver.clone(),
-        // ));
-
-        // Update WriteBufferManager with assignment service integration
-        self.assignment_service = Some(assignment_service);
-        self.path_resolver = Some(path_resolver);
-        // self.atomic_sync = Some(atomic_sync);
-
-        tracing::info!("✅ WriteBufferManager enhanced with assignment service integration");
-        Ok(())
-    }
 
     /// Insert batch with atomic disk synchronization (enhanced version)
     pub async fn insert_batch_atomic(
@@ -1461,21 +1428,22 @@ impl WriteBufferManager {
             records.len(), collection_id, self.get_strategy_name()
         );
 
-        // 1. Assign collection to this WAL manager
-        self.assign_collection(&collection_id).await?;
+        // 1. Collection assignment no longer needed - handled by pool manager
+        // Collections are tracked via assigned_collections HashMap
 
-        // 2. Ensure collection directories exist (if assignment service is enabled)
-        if let Some(path_resolver) = &self.path_resolver {
-            let collection_paths = path_resolver
-                .resolve_collection_paths(&collection_id)
-                .await
-                .context("Failed to resolve collection paths")?;
-            
-            path_resolver
-                .ensure_collection_directories(&collection_paths)
-                .await
-                .context("Failed to ensure collection directories")?;
-        }
+        // MARKED FOR REMOVAL: Path resolution now handled via collection metadata
+        // // 2. Ensure collection directories exist (if assignment service is enabled)
+        // if let Some(path_resolver) = &self.path_resolver {
+        //     let collection_paths = path_resolver
+        //         .resolve_collection_paths(&collection_id)
+        //         .await
+        //         .context("Failed to resolve collection paths")?;
+        //     
+        //     path_resolver
+        //         .ensure_collection_directories(&collection_paths)
+        //         .await
+        //         .context("Failed to ensure collection directories")?;
+        // }
 
         // 3. Write to memory using existing strategy
         let vector_records: Vec<VectorRecord> = records.into_iter().map(|(_, record)| record).collect();
@@ -1494,15 +1462,6 @@ impl WriteBufferManager {
         Ok(sequences)
     }
 
-    /// Assign collection to this WAL manager
-    async fn assign_collection(&self, collection_id: &str) -> Result<()> {
-        let mut assigned_collections = self.assigned_collections.write().await;
-        if !assigned_collections.contains(collection_id) {
-            assigned_collections.insert(collection_id.to_string());
-            debug!("Assigned collection '{}' to WAL manager", collection_id);
-        }
-        Ok(())
-    }
 
     /// Determine if batch should be synced to disk
     async fn should_sync_to_disk(&self, _collection_id: &str) -> Result<bool> {
@@ -1579,7 +1538,12 @@ impl WriteBufferManager {
 
     /// Get assigned collections
     pub async fn get_assigned_collections(&self) -> Vec<String> {
-        self.assigned_collections.read().await.iter().cloned().collect()
+        self.assigned_collections.read().await.keys().cloned().collect()
+    }
+    
+    /// Get collection assignment with storage location
+    pub async fn get_collection_assignment(&self, collection_id: &str) -> Option<CollectionAssignment> {
+        self.assigned_collections.read().await.get(collection_id).cloned()
     }
 
     /// Recovery method using parallel recovery system if available
@@ -1617,9 +1581,17 @@ impl WriteBufferManager {
         }
     }
 
-    /// Check if assignment service integration is enabled
-    pub fn has_assignment_service(&self) -> bool {
-        self.assignment_service.is_some()
+    /// Assign a collection with its metadata to this WriteBufferManager
+    pub async fn assign_collection(&self, collection_id: String, assignment: CollectionAssignment) {
+        let mut assigned = self.assigned_collections.write().await;
+        assigned.insert(collection_id.clone(), assignment);
+        tracing::debug!("Assigned collection '{}' with storage location to WriteBufferManager", collection_id);
+    }
+    
+    /// Get storage location for a collection
+    pub async fn get_collection_storage(&self, collection_id: &str) -> Option<CollectionAssignment> {
+        let assigned = self.assigned_collections.read().await;
+        assigned.get(collection_id).cloned()
     }
 
     /// Check if atomic sync is enabled

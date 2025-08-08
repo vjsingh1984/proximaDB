@@ -199,10 +199,10 @@ mod tests {
             uptime_seconds: 86400 * 30, // 30 days
             cpu_usage_percent: 65.2,
             memory_usage_bytes: 16 * 1024 * 1024 * 1024, // 16GB
-            disk_io_read_bytes_per_sec: 100 * 1024 * 1024.0, // 100MB/s
-            disk_io_write_bytes_per_sec: 75 * 1024 * 1024.0,  // 75MB/s
-            network_rx_bytes_per_sec: 50 * 1024 * 1024.0,     // 50MB/s
-            network_tx_bytes_per_sec: 30 * 1024 * 1024.0,     // 30MB/s
+            disk_io_read_bytes_per_sec: (100 * 1024 * 1024) as f64, // 100MB/s
+            disk_io_write_bytes_per_sec: (75 * 1024 * 1024) as f64,  // 75MB/s
+            network_rx_bytes_per_sec: (50 * 1024 * 1024) as f64,     // 50MB/s
+            network_tx_bytes_per_sec: (30 * 1024 * 1024) as f64,     // 30MB/s
             active_connections: 250,
             error_rate_per_minute: 1.5,
             last_error_timestamp: Some(chrono::Utc::now().timestamp_millis()),
@@ -304,6 +304,8 @@ mod tests {
             parallel_scan_threshold: 10,
             sparsity_threshold: 0.3,
             quantization_size_threshold: 1_000_000,
+            snapshot_interval_seconds: 60,
+            max_memory_mb: 512,
         };
         
         let mut metrics = CollectionMetrics {

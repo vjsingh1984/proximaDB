@@ -26,7 +26,8 @@ async fn test_global_partitioned_batch_operations() {
         rank: None,
         score: None,
         distance: None,
-    };
+    
+        };
 
     let vector_record2 = VectorRecord {
         id: Some("test_vector_2".to_string()),
@@ -39,7 +40,8 @@ async fn test_global_partitioned_batch_operations() {
         rank: None,
         score: None,
         distance: None,
-    };
+    
+        };
 
     // Create a batch with multiple vectors
     let batch = WriteBufferVectorBatch {
@@ -95,6 +97,7 @@ async fn test_global_partitioned_multi_collection() {
             rank: None,
             score: None,
             distance: None,
+        
         }]),
         created_at: std::time::SystemTime::now(),
         total_size_bytes: 512,
@@ -116,6 +119,7 @@ async fn test_global_partitioned_multi_collection() {
             rank: None,
             score: None,
             distance: None,
+        
         }]),
         created_at: std::time::SystemTime::now(),
         total_size_bytes: 512,
@@ -169,7 +173,8 @@ async fn test_mvcc_and_logical_deletes() {
         rank: None,
         score: None,
         distance: None,
-    };
+    
+        };
 
     // Version 2: Update vector with new data
     let vector_v2 = VectorRecord {
@@ -183,7 +188,8 @@ async fn test_mvcc_and_logical_deletes() {
         rank: None,
         score: None,
         distance: None,
-    };
+    
+        };
 
     // Version 3: Logical delete (expires_at in past)
     let vector_v3_delete = VectorRecord {
@@ -197,7 +203,8 @@ async fn test_mvcc_and_logical_deletes() {
         rank: None,
         score: None,
         distance: None,
-    };
+    
+        };
 
     // Insert all versions in separate batches
     let batch1 = WriteBufferVectorBatch {
@@ -268,7 +275,8 @@ async fn test_global_partitioned_deletion_via_expiry() {
         rank: None,
         score: None,
         distance: None,
-    };
+    
+        };
 
     // Create a valid vector
     let valid_vector = VectorRecord {
@@ -282,7 +290,8 @@ async fn test_global_partitioned_deletion_via_expiry() {
         rank: None,
         score: None,
         distance: None,
-    };
+    
+        };
 
     let batch = WriteBufferVectorBatch {
         batch_id: BatchId::new(),
@@ -358,5 +367,6 @@ fn create_test_vector(id: &str, collection_id: &str, vector: Vec<f32>) -> Vector
         rank: None,
         score: None,
         distance: None,
-    }
+    
+        }
 }

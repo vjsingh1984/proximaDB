@@ -296,7 +296,9 @@ impl SstUnifiedSearchEngine {
                 } else {
                     // Check if it's an SSTable file for this collection
                     println!("🔍 DEBUG SST SCAN: Checking file: '{}'", filename);
-                    if super::SstFilenameGenerator::belongs_to_collection(filename, &context.collection_id) {
+                    // 🔴 UNUSED - belongs_to_collection method doesn't exist
+                    // if super::SstFilenameGenerator::belongs_to_collection(filename, &context.collection_id) {
+                    if filename.contains(&context.collection_id) {  // Simple check instead
                         println!("🔍 DEBUG SST SCAN: ✅ MATCH - filename '{}' matches pattern", filename);
                         
                         // Extract level from filename using centralized utility

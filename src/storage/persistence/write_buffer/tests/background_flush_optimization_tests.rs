@@ -52,8 +52,8 @@ mod tests {
 
     #[async_trait::async_trait]
     impl UnifiedStorageEngine for MockStorageEngine {
-        fn engine_name(&self) -> &str {
-            &self.engine_name
+        fn engine_name(&self) -> &'static str {
+            "mock_storage_engine"
         }
 
         async fn do_flush(&self, params: &FlushParameters) -> Result<FlushResult> {
@@ -62,14 +62,11 @@ mod tests {
             // Track that flush was called
             self.flush_calls.lock().await.push(collection_id.clone());
             
-            println!("🧪 MockEngine: Flush called for collection {} with {} vectors", 
-                     collection_id, params.vector_records.len());
-            
             Ok(FlushResult {
                 success: true,
                 collections_affected: vec![collection_id],
-                entries_flushed: params.vector_records.len(),
-                bytes_written: params.vector_records.len() * 1024, // Mock size
+                entries_flushed: params.vector_records.len() as u64,
+                bytes_written: (params.vector_records.len() * 1024) as u64, // Mock size
                 files_created: 1,
                 duration_ms: 10,
                 completed_at: chrono::Utc::now(),
@@ -85,17 +82,18 @@ mod tests {
             // Track that compaction was called
             self.compaction_calls.lock().await.push(collection_id.clone());
             
-            println!("🧪 MockEngine: Compaction called for collection {}", collection_id);
-            
             Ok(CompactionResult {
                 success: true,
+                collections_affected: vec![collection_id],
                 entries_processed: 1000,
+                entries_removed: 100,
+                bytes_read: 5000,
+                bytes_written: 3000,
                 input_files: 3,
                 output_files: 1,
-                bytes_before: 5000,
-                bytes_after: 3000,
                 duration_ms: 50,
-                compaction_level: 1,
+                completed_at: chrono::Utc::now(),
+                engine_metrics: HashMap::new(),
             })
         }
 
@@ -115,6 +113,19 @@ mod tests {
         async fn get_vector_by_id(&self, _collection_id: &str, _vector_id: &str) -> Result<Option<crate::core::VectorRecord>> {
             Ok(None)
         }
+
+        async fn search_vectors_unified(
+            &self,
+            _collection_id: &str,
+            _query_vector: &[f32],
+            _k: usize,
+            _distance_metric: &crate::compute::distance::DistanceMetric,
+            _filter_expression: Option<&crate::core::search::FilterExpression>,
+            _include_vectors: bool,
+            _include_metadata: bool,
+        ) -> Result<Vec<crate::core::search::SearchResult>> {
+            Ok(Vec::new())
+        }
         
         fn get_filesystem_factory(&self) -> &crate::storage::persistence::filesystem::FilesystemFactory {
             unimplemented!("Mock filesystem factory not needed for tests")
@@ -129,7 +140,7 @@ mod tests {
         BackgroundFlushContext {
             collection_id: collection_id.to_string(),
             storage_engine: engine_type,
-            data_location: format!("/tmp/test/{}", collection_id),
+            base_location: "file:///tmp/test".to_string(),
             dimension: 384,
             distance_metric: DistanceMetric::Cosine,
             compression_config: CompressionConfig::default(),
@@ -148,6 +159,14 @@ mod tests {
                 id: Some(format!("test_vector_{}", i)),
                 vector: vec![0.1; 384],
                 metadata: Vec::new(),
+                timestamp: 0,
+                updated_at: None,
+                expires_at: None,
+                distance: None,
+                rank: None,
+                score: None,
+                version: None,
+                ..Default::default()
             })
             .collect()
     }
@@ -156,7 +175,6 @@ mod tests {
     async fn test_background_flush_context_creation() {
         let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
         
-        println!("🧪 TEST: BackgroundFlushContext creation and validation");
         
         let context = create_test_context("test_collection", StorageEngineType::Viper);
         
@@ -171,14 +189,12 @@ mod tests {
         let sst_context = create_test_context("sst_collection", StorageEngineType::Sst);
         assert_eq!(sst_context.engine_name(), "sst");
         
-        println!("✅ BackgroundFlushContext creation test passed");
     }
 
     #[tokio::test]
     async fn test_context_optimized_compaction() {
         let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
         
-        println!("🧪 TEST: Context-optimized compaction eliminates service calls");
         
         // Create mock storage engines
         let viper_engine = Arc::new(MockStorageEngine::new("viper"));
@@ -200,7 +216,7 @@ mod tests {
             None, // No metrics updater in test
         ).await;
         
-        assert!(result.is_ok(), "VIPER compaction should succeed");
+        assert!(result.is_ok());
         
         // Verify VIPER engine was called
         let viper_calls = viper_engine.get_compaction_calls().await;
@@ -215,21 +231,19 @@ mod tests {
             None, // No metrics updater in test
         ).await;
         
-        assert!(result.is_ok(), "SST compaction should succeed");
+        assert!(result.is_ok());
         
         // Verify SST engine was called
         let sst_calls = sst_engine.get_compaction_calls().await;
         assert_eq!(sst_calls.len(), 1);
         assert_eq!(sst_calls[0], "sst_test");
         
-        println!("✅ Context-optimized compaction test passed");
     }
 
     #[tokio::test]
     async fn test_flush_coordinator_with_context_optimization() {
         let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
         
-        println!("🧪 TEST: FlushCoordinator context optimization eliminates service calls");
         
         // Create flush coordinator
         let mut coordinator = WriteBufferFlushCoordinator::new();
@@ -254,10 +268,10 @@ mod tests {
             "context_test",
             flush_data,
             None, // No preferred engine - should use context
-            Some(&viper_context), // ✅ OPTIMIZATION: Pre-computed context
+            Some(&viper_context), // OPTIMIZATION: Pre-computed context
         ).await;
         
-        assert!(result.is_ok(), "Context-optimized flush should succeed");
+        assert!(result.is_ok());
         
         let flush_result = result.unwrap();
         assert!(flush_result.base.success);
@@ -273,14 +287,12 @@ mod tests {
         let sst_calls = sst_engine.get_flush_calls().await;
         assert_eq!(sst_calls.len(), 0);
         
-        println!("✅ FlushCoordinator context optimization test passed");
     }
 
     #[tokio::test]
     async fn test_engine_selection_optimization() {
         let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
         
-        println!("🧪 TEST: Engine selection uses context instead of metadata parsing");
         
         let mut coordinator = WriteBufferFlushCoordinator::new();
         
@@ -325,14 +337,12 @@ mod tests {
         assert_eq!(sst_calls.len(), 1);
         assert_eq!(sst_calls[0], "sst_collection");
         
-        println!("✅ Engine selection optimization test passed");
     }
 
     #[tokio::test]
     async fn test_performance_configuration_from_context() {
         let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
         
-        println!("🧪 TEST: Performance configuration extracted from context");
         
         let context = create_test_context("perf_test", StorageEngineType::Viper);
         
@@ -361,14 +371,12 @@ mod tests {
         assert!(sst_row_group <= row_group_size);
         assert!(sst_threshold <= flush_threshold);
         
-        println!("✅ Performance configuration test passed");
     }
 
     #[tokio::test]
     async fn test_service_call_elimination() {
         let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
         
-        println!("🧪 TEST: Verify no collection service calls in optimized flow");
         
         // This test verifies that when context is provided, no collection service calls are made
         let mut coordinator = WriteBufferFlushCoordinator::new();
@@ -387,10 +395,10 @@ mod tests {
             "no_service_test",
             FlushDataSource::VectorRecords(test_vectors),
             None,
-            Some(&context), // ✅ Context eliminates need for service calls
+            Some(&context), // Context eliminates need for service calls
         ).await;
         
-        assert!(result.is_ok(), "Should succeed without collection service when context is provided");
+        assert!(result.is_ok());
         
         let flush_result = result.unwrap();
         assert!(flush_result.base.success);
@@ -401,14 +409,12 @@ mod tests {
         assert_eq!(engine_calls.len(), 1);
         assert_eq!(engine_calls[0], "no_service_test");
         
-        println!("✅ Service call elimination test passed");
     }
 
     #[tokio::test]
     async fn test_end_to_end_optimization_flow() {
         let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
         
-        println!("🧪 TEST: End-to-end optimized background flush flow");
         
         // Simulate the complete optimized flow:
         // DirectVectorService → BackgroundFlushContext → FlushCoordinator → BackgroundManager
@@ -460,9 +466,9 @@ mod tests {
         assert_eq!(flush_calls.len(), 1);
         assert_eq!(compaction_calls.len(), 1);
         assert_eq!(flush_calls[0], "e2e_test");
-        assert_eq!(compaction_calls[0], "e2e_test");
+        let expected = "e2e_test";
+        assert_eq!(compaction_calls[0], expected);
         
-        println!("✅ End-to-end optimization flow test passed");
-        println!("🎉 ALL BACKGROUND FLUSH OPTIMIZATION TESTS PASSED!");
+        // All tests completed
     }
 }

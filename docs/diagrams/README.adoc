@@ -9,12 +9,10 @@ This directory contains all Mermaid diagram sources (`.mmd`) and their generated
 === System Overview
 * link:business-system-overview.mmd[Business System Overview] - Executive-level system architecture
 * link:proximadb-unified-architecture.mmd[Unified Architecture] - Complete technical architecture
-* link:storage-architecture-complete.mmd[Storage Architecture] - Dual engine storage system
 
 === Storage & Compression
-* link:compression-architecture.mmd[Compression Architecture] - SDK-driven compression flow
+* link:compression-architecture-consolidated.mmd[Compression Architecture] - Comprehensive SDK-driven compression
 * link:sst1-format.mmd[SST1 Format] - SSTable file format with magic bytes
-* link:viper-compression-architecture.mmd[VIPER Compression] - Columnar compression strategy
 * link:two-stage-search.mmd[Two-Stage Search] - Quantized search architecture
 
 === Core Components
@@ -25,7 +23,6 @@ This directory contains all Mermaid diagram sources (`.mmd`) and their generated
 
 === Performance & Optimization
 * link:storage-performance-unified.mmd[Storage Performance] - Performance characteristics
-* link:compression-decision-tree.mmd[Compression Decisions] - Decision flow for compression
 * link:bloom-filter-architecture.mmd[Bloom Filter] - Fast filtering architecture
 * link:hardware-capabilities-flow.mmd[Hardware Capabilities] - Hardware detection flow
 

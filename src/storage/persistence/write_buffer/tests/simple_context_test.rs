@@ -18,7 +18,7 @@ mod tests {
         let context = BackgroundFlushContext {
             collection_id: "test_collection".to_string(),
             storage_engine: StorageEngineType::Viper,
-            data_location: "/tmp/test/test_collection".to_string(),
+            base_location: "file:///tmp/test".to_string(),
             dimension: 384,
             distance_metric: DistanceMetric::Cosine,
             compression_config: CompressionConfig::default(),
@@ -41,7 +41,7 @@ mod tests {
         let sst_context = BackgroundFlushContext {
             collection_id: "sst_collection".to_string(),
             storage_engine: StorageEngineType::Sst,
-            data_location: "/tmp/test/sst_collection".to_string(),
+            base_location: "file:///tmp/test".to_string(),
             dimension: 384,
             distance_metric: DistanceMetric::Cosine,
             compression_config: CompressionConfig::default(),
@@ -66,7 +66,7 @@ mod tests {
         let viper_context = BackgroundFlushContext {
             collection_id: "perf_test".to_string(),
             storage_engine: StorageEngineType::Viper,
-            data_location: "/tmp/test/perf_test".to_string(),
+            base_location: "file:///tmp/test".to_string(),
             dimension: 384,
             distance_metric: DistanceMetric::Cosine,
             compression_config: CompressionConfig::default(),

@@ -21,7 +21,14 @@ fn create_sized_vector_records(collection_id: &str, count: usize, size_per_vecto
     
     (0..count)
         .map(|i| VectorRecord {
-            id: format!("vector_{}", i),
+            id: format!("vector_{,
+            timestamp: 0,
+            updated_at: None,
+            expires_at: None,
+            distance: None,
+            rank: None,
+            score: None,
+        }", i),
             collection_id: collection_id.to_string(),
             vector: vector_data.clone(),
             metadata: std::collections::HashMap::new(),

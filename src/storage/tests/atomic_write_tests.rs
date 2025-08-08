@@ -184,12 +184,26 @@ async fn test_atomic_wal_to_storage_flow() {
             id: Some("vec1".to_string()),
             vector: vec![1.0, 2.0, 3.0],
             metadata: vec![],
+            timestamp: 0,
+            updated_at: None,
+            expires_at: None,
+            distance: None,
+            rank: None,
+            score: None,
+            version: None,
             ..Default::default()
         },
         VectorRecord {
             id: Some("vec2".to_string()),
             vector: vec![4.0, 5.0, 6.0],
             metadata: vec![],
+            timestamp: 0,
+            updated_at: None,
+            expires_at: None,
+            distance: None,
+            rank: None,
+            score: None,
+            version: None,
             ..Default::default()
         },
     ];

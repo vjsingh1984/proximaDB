@@ -246,6 +246,12 @@ async fn test_isolated_sst_concurrent_operations() -> Result<()> {
                         },
                     ],
                     timestamp: chrono::Utc::now().timestamp() as u32,
+                    updated_at: None,
+                    expires_at: None,
+                    distance: None,
+                    rank: None,
+                    score: None,
+                    version: None,
                     ..Default::default()
                 }
             }).collect();
@@ -283,11 +289,11 @@ async fn test_isolated_sst_concurrent_operations() -> Result<()> {
     }
     
     assert_eq!(successful_flushes, concurrent_batches, 
-        "All {} concurrent flushes should succeed", concurrent_batches);
+        "All concurrent flushes should complete");
     
     let expected_total = concurrent_batches * 3; // 3 vectors per batch
     assert_eq!(total_flushed, expected_total,
-        "Should have flushed {} total vectors", expected_total);
+        "Should have flushed expected total");
     
     // Verify all vectors are searchable
     let search_results = engine.search_vectors_unified(
@@ -301,10 +307,10 @@ async fn test_isolated_sst_concurrent_operations() -> Result<()> {
     ).await?;
     
     assert_eq!(search_results.len(), expected_total as usize,
-        "Should find all {} vectors after concurrent operations", expected_total);
+        "Should find all items after concurrent operations");
     
     println!("✅ Concurrent operations test passed for collection: {}", env.collection_id());
-    println!("   {} concurrent batches, {} total vectors flushed", successful_flushes, total_flushed);
+    println!("   {} concurrent batches, {} total items written", successful_flushes, total_flushed);
     Ok(())
 }
 
@@ -346,7 +352,7 @@ async fn test_isolated_sst_recovery_persistence() -> Result<()> {
         
         // Verify data persisted
         assert_eq!(results.len(), original_vectors.len(),
-            "Should find all {} persisted vectors", original_vectors.len());
+            "Should find all persisted records");
         
         // Verify vector IDs match original data
         let original_ids: HashSet<_> = original_vectors.iter()
@@ -361,7 +367,7 @@ async fn test_isolated_sst_recovery_persistence() -> Result<()> {
     }
     
     println!("✅ Recovery persistence test passed for collection: {}", env.collection_id());
-    println!("   Successfully recovered {} vectors after restart", original_vectors.len());
+    println!("   Successfully recovered {} items after system restart", original_vectors.len());
     Ok(())
 }
 
@@ -407,7 +413,7 @@ async fn test_isolated_multi_collection_isolation() -> Result<()> {
         ).await?;
         
         // Should find exactly the vectors from this collection
-        assert_eq!(results.len(), 5, "Collection {} should have exactly 5 vectors", i);
+        assert_eq!(results.len(), 5, "Collection {} should have exactly 5 records", i);
         
         // All results should belong to this collection
         for result in &results {
@@ -426,7 +432,7 @@ async fn test_isolated_multi_collection_isolation() -> Result<()> {
         }
     }
     
-    println!("✅ Multi-collection isolation test passed");
+    println!("✅ Multi-collection isolation test completed");
     for (i, env) in multi_env.environments.iter().enumerate() {
         println!("   Collection {}: {} (isolated)", i, env.collection_id());
     }
@@ -447,6 +453,12 @@ async fn test_isolated_sst_distance_metrics() -> Result<()> {
             vector: vec![1.0, 0.0, 0.0], // Identical to query
             metadata: vec![],
             timestamp: chrono::Utc::now().timestamp() as u32,
+            updated_at: None,
+            expires_at: None,
+            distance: None,
+            rank: None,
+            score: None,
+            version: None,
             ..Default::default()
         },
         proximadb::core::VectorRecord {
@@ -454,6 +466,12 @@ async fn test_isolated_sst_distance_metrics() -> Result<()> {
             vector: vec![0.0, 1.0, 0.0], // Orthogonal to query
             metadata: vec![],
             timestamp: chrono::Utc::now().timestamp() as u32,
+            updated_at: None,
+            expires_at: None,
+            distance: None,
+            rank: None,
+            score: None,
+            version: None,
             ..Default::default()
         },
         proximadb::core::VectorRecord {
@@ -461,6 +479,12 @@ async fn test_isolated_sst_distance_metrics() -> Result<()> {
             vector: vec![-1.0, 0.0, 0.0], // Opposite to query
             metadata: vec![],
             timestamp: chrono::Utc::now().timestamp() as u32,
+            updated_at: None,
+            expires_at: None,
+            distance: None,
+            rank: None,
+            score: None,
+            version: None,
             ..Default::default()
         },
     ];
@@ -551,6 +575,12 @@ async fn test_isolated_sst_large_dataset() -> Result<()> {
                     },
                 ],
                 timestamp: chrono::Utc::now().timestamp() as u32,
+                updated_at: None,
+                expires_at: None,
+                distance: None,
+                rank: None,
+                score: None,
+                version: None,
                 ..Default::default()
             }
         }).collect();
@@ -586,7 +616,7 @@ async fn test_isolated_sst_large_dataset() -> Result<()> {
         true
     ).await?;
     
-    assert_eq!(top_k_results.len(), 15, "Should return exactly 15 results");
+    assert_eq!(top_k_results.len(), 15, "Should return exactly 15 items");
     
     // 2. Search with metadata filter
     let batch_filter = FilterExpression::Comparison {
@@ -639,7 +669,7 @@ async fn test_isolated_sst_large_dataset() -> Result<()> {
     ).await?;
     
     assert_eq!(all_results.len(), total_vectors,
-        "Should find all {} vectors in the dataset", total_vectors);
+        "Should find all {} vectors in the collection", total_vectors);
     
     println!("✅ Large dataset test passed for collection: {}", env.collection_id());
     println!("   Dataset: {} vectors, Top-K: {}, Filtered: {}, All: {}", 

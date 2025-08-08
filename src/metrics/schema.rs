@@ -143,7 +143,7 @@ pub struct OptimizationHint {
 }
 
 /// Type of optimization hint
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum HintType {
     IndexSelection,
     ParallelScan,

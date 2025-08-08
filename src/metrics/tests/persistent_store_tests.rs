@@ -9,6 +9,7 @@ mod tests {
     };
     use crate::storage::persistence::filesystem::FilesystemFactory;
     use std::collections::HashMap;
+    use std::sync::Arc;
     use tokio::fs;
     use anyhow::Result;
 
@@ -18,7 +19,7 @@ mod tests {
         let config = MetricsConfig {
             enabled: true,
             collection_partitions: 4,
-            storage_path: "/tmp/proximadb_metrics_test".to_string(),
+            storage_path: "file:///tmp/proximadb_metrics_test".to_string(),
             flush_interval_seconds: 30,
             retention_days: 7,
             parallel_scan_threshold: 10,
@@ -29,9 +30,10 @@ mod tests {
         };
         
         // Clean up test directory
-        let _ = fs::remove_dir_all(&config.storage_path).await;
+        let _ = fs::remove_dir_all("/tmp/proximadb_metrics_test").await;
         
-        let filesystem_factory = Arc::new(FilesystemFactory::new()?);
+        let filesystem_config = Default::default();
+        let filesystem_factory = Arc::new(FilesystemFactory::new(filesystem_config).await?);
         PersistentMetricsStore::new(filesystem_factory, config).await
     }
 
@@ -47,7 +49,7 @@ mod tests {
         // Verify config is properly set
         let config = store.get_config();
         assert_eq!(config.collection_partitions, 4);
-        assert_eq!(config.storage_path, "/tmp/proximadb_metrics_test");
+        assert_eq!(config.storage_path, "file:///tmp/proximadb_metrics_test");
         assert!(config.enabled);
         
         println!("✅ MetricsStore creation test passed");
@@ -65,7 +67,7 @@ mod tests {
             vector_count: 10000,
             dimension: 384,
             index_size_bytes: 1024 * 1024,
-            data_size_bytes: 5 * 1024 * 1024,
+            data_size_bytes: (5 * 1024 * 1024) as i64,
             total_inserts: 10000,
             total_searches: 50000,
             total_flushes: 15,
@@ -88,7 +90,7 @@ mod tests {
             bloom_filter_size_bytes: 16 * 1024,
             bloom_filter_fpp: 0.01,
             cache_hit_ratio: 0.85,
-            cache_size_bytes: 128 * 1024 * 1024,
+            cache_size_bytes: (128 * 1024 * 1024) as i64,
             cache_entry_count: 25000,
             created_at: chrono::Utc::now().timestamp_millis(),
             updated_at: chrono::Utc::now().timestamp_millis(),
@@ -143,16 +145,16 @@ mod tests {
         let global_metrics = GlobalMetrics {
             total_collections: 15,
             total_vectors: 150000,
-            total_storage_bytes: 1024 * 1024 * 1024,
+            total_storage_bytes: (1024 * 1024 * 1024) as i64,
             total_operations: 1_000_000,
             operations_per_second: 1500.5,
             uptime_seconds: 86400 * 7, // 7 days
             cpu_usage_percent: 45.2,
-            memory_usage_bytes: 8 * 1024 * 1024 * 1024, // 8GB
-            disk_io_read_bytes_per_sec: 50 * 1024 * 1024.0, // 50MB/s
-            disk_io_write_bytes_per_sec: 30 * 1024 * 1024.0, // 30MB/s
-            network_rx_bytes_per_sec: 10 * 1024 * 1024.0, // 10MB/s
-            network_tx_bytes_per_sec: 5 * 1024 * 1024.0, // 5MB/s
+            memory_usage_bytes: (8i64 * 1024 * 1024 * 1024), // 8GB
+            disk_io_read_bytes_per_sec: (50 * 1024 * 1024) as f64, // 50MB/s
+            disk_io_write_bytes_per_sec: (30 * 1024 * 1024) as f64, // 30MB/s
+            network_rx_bytes_per_sec: (10 * 1024 * 1024) as f64, // 10MB/s
+            network_tx_bytes_per_sec: (5 * 1024 * 1024) as f64, // 5MB/s
             active_connections: 127,
             error_rate_per_minute: 0.25,
             last_error_timestamp: Some(chrono::Utc::now().timestamp_millis()),
@@ -163,7 +165,7 @@ mod tests {
         assert!(result.is_ok(), "Failed to store global metrics: {:?}", result);
         
         // Retrieve global metrics
-        let retrieved = store.get_global_metrics().await.unwrap();
+        let retrieved = store.get_global_metrics_stored().await.unwrap();
         assert!(retrieved.is_some(), "Failed to retrieve stored global metrics");
         
         let retrieved_metrics = retrieved.unwrap();
@@ -365,7 +367,7 @@ mod tests {
         
         // Test config access
         let config = store.get_config();
-        assert_eq!(config.storage_path, "/tmp/proximadb_metrics_test");
+        assert_eq!(config.storage_path, "file:///tmp/proximadb_metrics_test");
         assert_eq!(config.collection_partitions, 4);
         
         // Test storage operations through filesystem

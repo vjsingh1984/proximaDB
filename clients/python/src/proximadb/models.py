@@ -63,8 +63,10 @@ class StorageEngine(str, Enum):
     
     Note: Server supports VIPER and SST. Unsupported engines
     will fallback to VIPER (server behavior, not client validation).
+    
+    Default: VIPER (server default, columnar analytics engine)
     """
-    VIPER = "viper"  # Columnar storage with Parquet format
+    VIPER = "viper"  # Columnar storage with Parquet format (DEFAULT)
     SST = "sst"      # Row-based storage with SSTable format
     MMAP = "mmap"    # Fallback: VIPER (server decides)
     HYBRID = "hybrid" # Fallback: VIPER (server decides)
@@ -312,48 +314,97 @@ class QuantizationValidation(BaseModel):
 
 
 class CompressionConfig(BaseModel):
-    """SDK-driven compression configuration for collections
+    """Unified compression configuration matching proto definition
     
-    This configuration is passed from the SDK to the server, allowing
-    client-side control over compression settings without server-side defaults.
+    This configuration aligns with the proto CompressionConfig message,
+    providing a unified interface where engine-specific features are
+    automatically applied based on the collection's storage_engine.
+    
+    Defaults are optimized for VIPER engine (server default).
     """
-    # SST compression settings
-    sst_block_size: Optional[int] = Field(
-        default=16384,
-        description="Target block size for SST files (16KB default)"
-    )
-    sst_compression_algorithm: Optional[CompressionAlgorithm] = Field(
+    # Unified compression settings (proto fields 1-2)
+    algorithm: CompressionAlgorithm = Field(
         default=CompressionAlgorithm.NONE,
-        description="Compression algorithm for SST blocks"
+        description="Compression algorithm (ZSTD/LZ4/Snappy)"
     )
-    sst_compression_level: Optional[int] = Field(
+    level: Optional[int] = Field(
         default=None,
-        description="Compression level (1-9 for ZSTD)"
+        description="Compression level (1-22 for ZSTD, 1-9 for others)"
     )
     
-    # VIPER compression settings  
-    viper_compression_algorithm: Optional[CompressionAlgorithm] = Field(
-        default=CompressionAlgorithm.NONE,
-        description="Compression algorithm for VIPER Parquet files"
-    )
-    viper_compression_level: Optional[int] = Field(
-        default=None,
-        description="Compression level for VIPER"
-    )
-    viper_enable_dual_columns: Optional[bool] = Field(
-        default=False,
-        description="Enable dual column storage (FP32 + quantized) in VIPER"
-    )
-    
-    # Global settings
-    adaptive_compression: Optional[bool] = Field(
+    # Global settings (proto field 3-4)
+    adaptive: bool = Field(
         default=False,
         description="Enable adaptive compression based on data characteristics"
     )
-    compression_threshold_kb: Optional[int] = Field(
-        default=100,
-        description="Minimum file size in KB before applying compression"
+    min_ratio: Optional[float] = Field(
+        default=None,
+        description="Minimum compression ratio (e.g., 1.5 = 50% reduction)"
     )
+    
+    # VIPER-specific quantization (proto fields 5-7)
+    enable_quantization: bool = Field(
+        default=False,
+        description="Enable VIPER dual columns (FP32 + quantized). Ignored by SST engine."
+    )
+    quantization_type: Optional[str] = Field(
+        default=None,
+        description="VIPER quantization method: 'int8', 'pq8', 'pq4'. Ignored by SST engine."
+    )
+    normalization_method: Optional[str] = Field(
+        default=None,
+        description="VIPER normalization: 'mean', 'trimmed_mean', 'median'. Ignored by SST engine."
+    )
+    
+    # SST-specific block sizing (proto fields 8-9)
+    block_size_mb: Optional[int] = Field(
+        default=None,
+        description="SST block size in MB (4-16). Ignored by VIPER engine."
+    )
+    dynamic_block_sizing: bool = Field(
+        default=False,
+        description="Auto-adjust SST block size based on vector dimensions. Ignored by VIPER engine."
+    )
+    
+    @field_validator('level')
+    def validate_compression_level(cls, v):
+        """Validate compression level matches server-side validation"""
+        if v is not None and (v < 1 or v > 22):
+            raise ValueError("Compression level must be between 1-22 (1-9 for most algorithms, 1-22 for ZSTD)")
+        return v
+    
+    @field_validator('min_ratio')
+    def validate_compression_ratio(cls, v):
+        """Validate compression ratio matches server-side validation"""
+        if v is not None and (v < 0.0 or v > 1.0):
+            raise ValueError("Minimum compression ratio must be between 0.0 and 1.0")
+        return v
+    
+    @field_validator('quantization_type')
+    def validate_quantization_type(cls, v):
+        """Validate quantization type is supported"""
+        if v is not None:
+            valid_types = {'int8', 'pq8', 'pq4', 'uniform', 'pq', 'scalar', 'binary', 'none'}
+            if v not in valid_types:
+                raise ValueError(f"Quantization type must be one of: {', '.join(valid_types)}")
+        return v
+    
+    @field_validator('normalization_method')
+    def validate_normalization_method(cls, v):
+        """Validate normalization method is supported"""
+        if v is not None:
+            valid_methods = {'mean', 'trimmed_mean', 'median', 'none'}
+            if v not in valid_methods:
+                raise ValueError(f"Normalization method must be one of: {', '.join(valid_methods)}")
+        return v
+    
+    @field_validator('block_size_mb')
+    def validate_block_size(cls, v):
+        """Validate SST block size is within acceptable range"""
+        if v is not None and (v < 1 or v > 32):
+            raise ValueError("SST block size must be between 1-32 MB")
+        return v
+    
 
 
 class QuantizationConfig(BaseModel):
@@ -496,16 +547,16 @@ class FilterableColumn(BaseModel):
 
 
 class CollectionConfig(BaseModel):
-    """Collection configuration for REST API"""
+    """Collection configuration for REST API with server-aligned defaults"""
     name: str = Field(min_length=8)  # Minimum 8 characters to prevent collision with 7-char base62 IDs
-    dimension: int = Field(ge=1, le=100000)  # Relaxed: Server supports up to 100k dimensions
-    distance_metric: Optional[DistanceMetric] = None
-    storage_engine: Optional[StorageEngine] = None
-    primary_indexing_algorithm: Optional[IndexingAlgorithm] = None
+    dimension: int = Field(ge=1, le=100000)  # Server supports up to 100k dimensions
+    distance_metric: Optional[DistanceMetric] = DistanceMetric.COSINE  # Default to most common metric
+    storage_engine: Optional[StorageEngine] = StorageEngine.VIPER  # Align with server default
+    primary_indexing_algorithm: Optional[IndexingAlgorithm] = IndexingAlgorithm.HNSW  # Best for most use cases
     filterable_columns: Optional[List[FilterableColumn]] = None
     index_configs: Optional[List[IndexConfiguration]] = None
     quantization_config: Optional[QuantizationConfig] = None
-    compression_config: Optional[CompressionConfig] = None  # SDK-driven compression
+    compression: Optional[CompressionConfig] = None  # SDK-driven compression (proto field name)
     primary_index_name: Optional[str] = None
     enable_automatic_index_selection: Optional[bool] = None
     description: Optional[str] = None
@@ -524,6 +575,63 @@ class CollectionConfig(BaseModel):
             raise ValueError("Collection name must be at least 8 characters long to prevent collision with 7-character base62 collection IDs")
         return v
     
+    def model_post_init(self, __context):
+        """Post-initialization validation to align compression config with storage engine"""
+        super().model_post_init(__context) if hasattr(super(), 'model_post_init') else None
+        
+        # Apply engine-specific compression defaults and validation
+        if self.compression:
+            self._validate_compression_for_engine()
+    
+    def _validate_compression_for_engine(self):
+        """Validate compression configuration aligns with storage engine capabilities"""
+        if not self.compression:
+            return
+        
+        engine = self.storage_engine or StorageEngine.VIPER  # Use server default
+        
+        if engine == StorageEngine.VIPER:
+            # VIPER engine: quantization features are valid
+            if self.compression.block_size_mb is not None:
+                import warnings
+                warnings.warn(
+                    "block_size_mb is ignored by VIPER engine (only applies to SST engine)",
+                    UserWarning, stacklevel=2
+                )
+            
+            # Apply VIPER-optimized defaults
+            if self.compression.quantization_type and not self.compression.enable_quantization:
+                # Auto-enable quantization if type is specified
+                self.compression.enable_quantization = True
+                
+        elif engine == StorageEngine.SST:
+            # SST engine: quantization features are ignored
+            if self.compression.enable_quantization:
+                import warnings
+                warnings.warn(
+                    "enable_quantization is ignored by SST engine (only applies to VIPER engine)",
+                    UserWarning, stacklevel=2
+                )
+            
+            if self.compression.quantization_type:
+                import warnings
+                warnings.warn(
+                    "quantization_type is ignored by SST engine (only applies to VIPER engine)",
+                    UserWarning, stacklevel=2
+                )
+            
+            # Apply SST-optimized defaults
+            if self.compression.block_size_mb is None:
+                self.compression.block_size_mb = 8  # Reasonable default for SST
+        
+        # Validate algorithm-level compatibility
+        if self.compression.level is not None:
+            algo = self.compression.algorithm
+            if algo == CompressionAlgorithm.ZSTD and self.compression.level > 22:
+                raise ValueError("ZSTD compression level must be between 1-22")
+            elif algo != CompressionAlgorithm.ZSTD and self.compression.level > 9:
+                raise ValueError(f"{algo.value} compression level must be between 1-9")
+    
     @property
     def index_config(self):
         """Backward compatibility property for singular index_config access"""
@@ -531,13 +639,6 @@ class CollectionConfig(BaseModel):
             return self.index_configs[0]
         return None
     
-    @property 
-    def storage_config(self):
-        """Backward compatibility property for storage_config access"""
-        # This is used in tests but not defined in the model
-        # Return a mock object for now
-        from types import SimpleNamespace
-        return SimpleNamespace(compression=CompressionType.LZ4)
 
 
 class CollectionStats(BaseModel):

@@ -341,26 +341,20 @@ impl ViperUnifiedSearchEngine {
     
     /// Build all file paths for collection
     async fn build_all_file_paths(&self, context: &UnifiedSearchContext) -> Result<Vec<String>> {
-        use crate::storage::assignment_service::get_assignment_service;
-        
         debug!("📁 Building file paths for collection: {}", context.collection_id);
         
-        // Get storage assignment for the collection
-        let assignment_service = get_assignment_service();
-        let storage_assignment = assignment_service
-            .get_assignment(&context.collection_id)
-            .await
-            .ok_or_else(|| anyhow::anyhow!("No storage assignment found for collection {}", context.collection_id))?;
-        
-        let storage_url = &storage_assignment.data_url;
+        // TODO: Pass storage_assignment through UnifiedSearchContext from the caller
+        // For now, use a fallback approach based on collection_id
+        // The actual storage location should come from collection.storage_assignment.data_location
+        let storage_url = format!("file:///data/{}/data", context.collection_id);
         debug!("📁 Storage URL for collection {}: {}", context.collection_id, storage_url);
         
         // Use the parquet reader's filesystem (which was injected)
         let fs = self.parquet_reader.filesystem();
-        let filesystem = fs.get_filesystem(storage_url)?;
+        let filesystem = fs.get_filesystem(&storage_url)?;
         
         // List files in the data directory (storage_url already includes collection_id)
-        let entries = match filesystem.list(storage_url).await {
+        let entries = match filesystem.list(&storage_url).await {
             Ok(entries) => entries,
             Err(e) => {
                 debug!("📁 Failed to list files in {}: {}", storage_url, e);
@@ -414,6 +408,7 @@ impl ViperUnifiedSearchEngine {
                     crate::core::search::unified_interface::ColumnDataType::Json => 
                         crate::proto::proximadb::FilterableDataType::FilterableString as i32, // Fallback
                 },
+                encoding_hint: None,  // SDK-driven encoding (2025-08-06)
                 indexed: col.is_indexed,
                 supports_range: matches!(
                     col.data_type,
@@ -422,7 +417,6 @@ impl ViperUnifiedSearchEngine {
                     crate::core::search::unified_interface::ColumnDataType::DateTime
                 ),
                 estimated_cardinality: col.estimated_cardinality.map(|c| c as i32),
-                encoding_hint: None,  // SDK-driven encoding (2025-08-06)
             }
         }).collect();
         

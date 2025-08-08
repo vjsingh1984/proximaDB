@@ -197,6 +197,7 @@ async fn test_memtable_semantic_search() {
             rank: None,
             score: None,
             distance: None,
+            ..Default::default()
         },
         VectorRecord {
             id: Some("similar".to_string()),
@@ -209,6 +210,7 @@ async fn test_memtable_semantic_search() {
             rank: None,
             score: None,
             distance: None,
+            ..Default::default()
         },
         VectorRecord {
             id: Some("orthogonal".to_string()),
@@ -221,6 +223,7 @@ async fn test_memtable_semantic_search() {
             rank: None,
             score: None,
             distance: None,
+            ..Default::default()
         },
     ];
     

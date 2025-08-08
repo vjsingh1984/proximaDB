@@ -169,8 +169,11 @@ message CollectionConfig {
   // Compression configuration (field 14)
   optional CompressionConfig compression = 14;          // Per-collection compression settings
   
-  // Storage optimization hints (field 15)
-  optional StorageOptimizationHints optimization_hints = 15; // Hints for automatic optimization
+  // Storage location (field 15) - optional, if not provided, system picks from config
+  optional string storage_location = 15;                // Base storage URL (e.g., "file:///data/disk1")
+  
+  // Storage optimization hints (field 16)
+  optional StorageOptimizationHints optimization_hints = 16; // Hints for automatic optimization
   
   // Note: Use filterable_columns (field 6) for specifying filterable fields with proper types!
 }
@@ -284,8 +287,17 @@ enum RandomProjectionType {
 enum CompressionAlgorithm {
   COMPRESSION_NONE = 0;      // No compression
   COMPRESSION_ZSTD = 1;      // Zstandard compression (levels 1-22)
-  COMPRESSION_LZ4 = 2;       // LZ4 fast compression (future)
-  COMPRESSION_SNAPPY = 3;    // Snappy balanced compression (future)
+  COMPRESSION_LZ4 = 2;       // LZ4 fast compression
+  COMPRESSION_SNAPPY = 3;    // Snappy balanced compression
+  COMPRESSION_GZIP = 4;      // Gzip/Deflate compression (levels 1-9)
+  COMPRESSION_BROTLI = 5;    // Brotli compression (levels 0-11)
+  COMPRESSION_BZIP2 = 6;     // Bzip2 compression (levels 1-9)
+  COMPRESSION_DEFLATE = 7;   // Raw deflate compression (levels 1-9)
+  COMPRESSION_XZ = 8;        // XZ/LZMA2 compression (levels 0-9)
+  COMPRESSION_ZLIB = 9;      // Zlib compression (levels 1-9)
+  COMPRESSION_LZO = 10;      // LZO compression (fastest)
+  COMPRESSION_LZ4HC = 11;    // LZ4 high compression variant
+  COMPRESSION_LZMA = 12;     // LZMA compression (high ratio)
 }
 
 // Access patterns for optimization hints
@@ -482,10 +494,11 @@ message Collection {
 }
 
 message StorageAssignment {
-  string data_location = 1;      // Storage location URL for data (e.g., "file:///data/disk1")
-  string wal_location = 2;       // WAL location URL (e.g., "file:///data/disk1/{collection_id}/write_buffer")
-  uint32 location_index = 3;     // Location index in the storage_locations array
-  int64 assigned_at = 4;         // Assignment timestamp
+  string base_location = 1;      // Base storage URL (e.g., "file:///data/disk1" or "s3://bucket/path")
+  int64 assigned_at = 2;         // Assignment timestamp
+  // Data will be at: {base_location}/{collection_id}/data
+  // WAL will be at: {base_location}/{collection_id}/write_buffer
+  // Indexes will be at: {base_location}/{collection_id}/indexes
 }
 
 message CollectionStats {

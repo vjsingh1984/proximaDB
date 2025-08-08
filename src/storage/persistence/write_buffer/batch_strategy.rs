@@ -29,7 +29,7 @@ use crate::storage::traits::FlushResult;
 /// - Direct integration with native batch storage
 /// - Simplified API surface
 #[async_trait]
-pub trait WriteBufferBatchStrategy: Send + Sync + DistanceComputeProvider + std::fmt::Debug {
+pub trait WriteBufferBatchStrategy: Send + Sync + std::fmt::Debug {
     /// Strategy name for identification and logging
     fn strategy_name(&self) -> &'static str;
 
@@ -418,22 +418,16 @@ pub trait WriteBufferBatchStrategy: Send + Sync + DistanceComputeProvider + std:
                 sequences.len()
             );
             
-            // Use assignment service to get storage location
-            use crate::storage::assignment_service::get_assignment_service;
-            let assignment_service = get_assignment_service();
+            // TODO: Get storage location from collection metadata
+            // For now, use a default path structure
+            let base_location = "file:///data";
+            let wal_dir = format!("{}/{}/write_buffer/logs", base_location, collection_id);
+            let sequence_start = sequences.first().copied().unwrap_or(0);
+            let sequence_end = sequences.last().copied().unwrap_or(sequence_start);
+            let wal_file = format!("{}/batch_{:010}_{:010}.wal", wal_dir, sequence_start, sequence_end);
             
-            if let Some(assignment) = assignment_service
-                .get_assignment(collection_id)
-                .await 
-            {
-                // Use Write Buffer URL directly - it already includes collection_id/wal
-                let wal_dir = format!("{}/logs", assignment.write_buffer_url);
-                let sequence_start = sequences.first().copied().unwrap_or(0);
-                let sequence_end = sequences.last().copied().unwrap_or(sequence_start);
-                let wal_file = format!("{}/batch_{:010}_{:010}.wal", wal_dir, sequence_start, sequence_end);
-                
-                // Get filesystem for this storage URL
-                if let Ok(fs) = filesystem.get_filesystem(&assignment.location_url) {
+            // Get filesystem for this storage URL
+            if let Ok(fs) = filesystem.get_filesystem(base_location) {
                     // Ensure Write Buffer directory exists
                     if let Err(_) = fs.create_dir_all(&wal_dir).await {
                         tracing::warn!("Failed to create Write Buffer directory: {}", wal_dir);
@@ -464,11 +458,8 @@ pub trait WriteBufferBatchStrategy: Send + Sync + DistanceComputeProvider + std:
                         wal_file
                     );
                 } else {
-                    tracing::debug!("No filesystem available for storage URL: {}", assignment.location_url);
+                    tracing::debug!("No filesystem available for storage URL: {}", base_location);
                 }
-            } else {
-                tracing::debug!("No Write Buffer assignment found for collection: {}", collection_id);
-            }
             
             Ok(())
         } else {
@@ -728,7 +719,8 @@ pub trait WriteBufferBatchStrategy: Send + Sync + DistanceComputeProvider + std:
             rank: None,
             score: None,
             distance: None,
-            };
+            
+        };
 
         // Create single-vector batch for deletion
         use super::BatchId;

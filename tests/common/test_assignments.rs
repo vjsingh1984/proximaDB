@@ -274,55 +274,27 @@ pub async fn setup_persistent_test_assignment(collection_id: &str) -> Result<Tes
     let test_assignments = get_test_assignments();
     let assignment = test_assignments.get_or_create_assignment(collection_id).await?;
     
-    // Also register with the global assignment service for integration
-    let assignment_service = proximadb::storage::assignment_service::get_assignment_service();
+    // 🔴 UNUSED - Assignment service has been removed, storage assignment is now in Collection proto
+    // The global assignment service has been deprecated in favor of embedding
+    // storage assignments directly in the Collection proto message.
+    // Test assignments are now handled locally without the global service.
     
-    // Create storage location using the persistent assignment's base directory
-    let storage_location = proximadb::core::config::StorageLocation {
-        url: format!("file://{}", assignment.base_directory),
-        weight: 1,
-        tags: Default::default(),
-    };
-    
-    // Register with assignment service
-    let service_assignment = assignment_service
-        .assign_collection(collection_id, &[storage_location], "hash")
-        .await?;
-    
-    // If assignment service returns different URL, update our persistent assignment
-    if service_assignment.data_url != assignment.data_url {
-        println!("Assignment service returned different URL: {} vs persistent {}", 
-                service_assignment.data_url, assignment.data_url);
-        
-        let updated_assignment = TestAssignmentData {
-            collection_id: collection_id.to_string(),
-            base_directory: if service_assignment.data_url.starts_with("file://") {
-                service_assignment.data_url.strip_prefix("file://").unwrap()
-                    .trim_end_matches(&format!("/{}/data", collection_id))
-                    .to_string()
-            } else {
-                service_assignment.data_url.trim_end_matches(&format!("/{}/data", collection_id)).to_string()
-            },
-            data_url: service_assignment.data_url.clone(),
-            write_buffer_url: service_assignment.write_buffer_url.clone(),
-            index_url: service_assignment.index_url.clone(),
-            created_at: chrono::Utc::now(),
-        };
-        
-        test_assignments.update_assignment(collection_id, updated_assignment.clone()).await?;
-        return Ok(updated_assignment);
-    }
+    // Previously registered with global assignment service, now just use local assignment
+    // let assignment_service = proximadb::storage::assignment_service::get_assignment_service();
+    // ... service registration code removed ...
     
     println!("Using persistent test assignment for {}: {}", collection_id, assignment.data_url);
     Ok(assignment)
 }
 
-/// Cleanup assignment for a collection (removes from both persistent and global service)
+/// Cleanup assignment for a collection (removes from persistent storage)
 pub async fn cleanup_test_assignment(collection_id: &str) -> Result<()> {
-    let assignment_service = proximadb::storage::assignment_service::get_assignment_service();
+    // 🔴 UNUSED - Assignment service removed, only clean up local persistent storage
+    // let assignment_service = proximadb::storage::assignment_service::get_assignment_service();
     
-    // Remove from global assignment service
-    let _ = assignment_service.remove_assignment(collection_id).await;
+    // Remove from persistent storage only (global service no longer exists)
+    // 🔴 UNUSED - Assignment service removed
+    // let _ = assignment_service.remove_assignment(collection_id).await;
     
     // Remove from persistent test assignments
     let test_assignments = get_test_assignments();

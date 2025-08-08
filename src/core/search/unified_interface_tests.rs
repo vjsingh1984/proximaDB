@@ -72,6 +72,8 @@ mod tests {
                 enable_quantization: true,
                 enable_metadata_filtering: true,
                 estimated_document_count: 10000,
+                compression: None,
+                optimization_hints: None,
             }),
             filterable_columns: vec![
                 FilterableColumn {
@@ -161,7 +163,9 @@ mod tests {
             enable_quantization: false,
             enable_metadata_filtering: true,
             estimated_document_count: 5000,
-        };
+                compression: None,
+                optimization_hints: None,
+            };
         
         assert_eq!(config.default_distance_metric, DistanceMetric::Euclidean);
         assert_eq!(config.vector_dimension, 256);

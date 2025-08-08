@@ -36,7 +36,8 @@ mod tests {
             mmap_enabled: false,
             prefetch_enabled: false,
             prefetch_size_kb: 64,
-        }
+        decompression_cache_config: None,
+    }
     }
 
     fn create_test_sst_record(id: &str, is_tombstone: bool, expires_at: Option<u32>) -> SstRecord {
@@ -158,7 +159,8 @@ mod tests {
                     rank: None,
                     score: None,
                     distance: None,
-                },
+                
+        },
                 VectorRecord {
                     id: Some("vec_5".to_string()),
                     vector: vec![2.0; 128],
@@ -170,7 +172,8 @@ mod tests {
                     rank: None,
                     score: None,
                     distance: None,
-                },
+                
+        },
             ],
             recommend_full_rebuild: false,
         };
@@ -200,7 +203,8 @@ mod tests {
                 rank: None,
                 score: None,
                 distance: None,
-            },
+            
+        },
             VectorRecord {
                 id: Some("vec_a".to_string()),
                 vector: vec![1.0; 128],
@@ -212,7 +216,8 @@ mod tests {
                 rank: None,
                 score: None,
                 distance: None,
-            },
+            
+        },
             VectorRecord {
                 id: Some("vec_b".to_string()),
                 vector: vec![2.0; 128],
@@ -224,7 +229,8 @@ mod tests {
                 rank: None,
                 score: None,
                 distance: None,
-            },
+            
+        },
         ];
         
         // The actual sorting would happen in CompactionManager::sort_vectors_for_compaction

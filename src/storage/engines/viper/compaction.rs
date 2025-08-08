@@ -24,7 +24,8 @@ use crate::storage::persistence::filesystem::{
     FilesystemFactory
 };
 use crate::storage::atomic::{UnifiedAtomicCoordinator, StagingConfig, StagingOperationType};
-use crate::metrics::updater::{InternalMetricsUpdater, CompactionMetricsUpdate};
+// 🔴 UNUSED IMPORT - Metrics module is unused
+use crate::monitoring::metrics::updater::{InternalMetricsUpdater, CompactionMetricsUpdate};
 
 use super::schema::SchemaManager;
 
@@ -91,8 +92,9 @@ pub struct CompactionManager {
     /// Atomic coordinator for ACID operations
     atomic_coordinator: Arc<UnifiedAtomicCoordinator>,
     
-    /// Optional metrics updater for non-critical metrics
-    metrics_updater: Option<Arc<dyn InternalMetricsUpdater>>,
+    // 🔴 UNUSED FIELD - Metrics module is unused
+    // /// Optional metrics updater for non-critical metrics
+    // metrics_updater: Option<Arc<dyn InternalMetricsUpdater>>,
 }
 
 impl std::fmt::Debug for CompactionManager {
@@ -102,7 +104,7 @@ impl std::fmt::Debug for CompactionManager {
             .field("collection_service", &self.collection_service)
             .field("filesystem_factory", &self.filesystem_factory)
             .field("atomic_coordinator", &self.atomic_coordinator)
-            .field("metrics_updater", &self.metrics_updater.is_some())
+            // .field("metrics_updater", &self.metrics_updater.is_some())  // 🔴 UNUSED
             .finish()
     }
 }
@@ -124,22 +126,34 @@ impl CompactionManager {
             collection_service,
             filesystem_factory,
             atomic_coordinator,
-            metrics_updater: None, // Will be set via set_metrics_updater
+            // metrics_updater: None, // Will be set via set_metrics_updater  // 🔴 UNUSED
         })
     }
     
-    /// Set the metrics updater (optional, for non-critical metrics)
-    pub fn set_metrics_updater(&mut self, updater: Arc<dyn InternalMetricsUpdater>) {
-        self.metrics_updater = Some(updater);
-    }
+    // 🔴 UNUSED METHOD - Metrics module is unused
+    // /// Set the metrics updater (optional, for non-critical metrics)
+    // pub fn set_metrics_updater(&mut self, updater: Arc<dyn InternalMetricsUpdater>) {
+    //     self.metrics_updater = Some(updater);
+    // }
 
     /// Discover files that can be compacted for a collection
     async fn discover_compactable_files(&self, collection_id: &str) -> Result<Vec<String>> {
         debug!("Discovering compactable files for collection: {}", collection_id);
         
-        // Get storage assignment for the collection
-        let assignment_service = crate::storage::assignment_service::get_assignment_service();
-        let storage_assignment = match assignment_service.get_assignment(collection_id).await {
+        // Get storage assignment for the collection from metadata
+        let collection_service = self.collection_service.read().await;
+        let collection_service = collection_service.as_ref()
+            .ok_or_else(|| anyhow::anyhow!("Collection service not initialized"))?;
+        
+        let collection = match collection_service.get_proto_collection(collection_id).await? {
+            Some(col) => col,
+            None => {
+                debug!("🔍 Collection {} not found, skipping compaction", collection_id);
+                return Ok(vec![]); // Return empty list instead of failing
+            }
+        };
+        
+        let storage_assignment = match collection.storage_assignment {
             Some(assignment) => assignment,
             None => {
                 debug!("🔍 No storage assignment found for collection {}, skipping compaction", collection_id);
@@ -147,18 +161,19 @@ impl CompactionManager {
             }
         };
         
-        debug!("Storage assignment data_url: {}", storage_assignment.data_url);
-        info!("🔍 Looking for parquet files in data_url: {}", storage_assignment.data_url);
+        let data_url = format!("{}/{}/data", storage_assignment.base_location, collection_id);
+        debug!("Storage assignment base_location: {}", storage_assignment.base_location);
+        info!("🔍 Looking for parquet files in data directory: {}", data_url);
         
         // Get filesystem for the data directory
-        let fs = self.filesystem_factory.get_filesystem(&storage_assignment.data_url)?;
+        let fs = self.filesystem_factory.get_filesystem(&data_url)?;
         
         // List all .parquet files in the collection's data directory
         let mut parquet_files = Vec::new();
         
-        if fs.exists(&storage_assignment.data_url).await? {
+        if fs.exists(&data_url).await? {
             info!("📂 Data directory exists, listing contents...");
-            let entries = fs.list(&storage_assignment.data_url).await?;
+            let entries = fs.list(&data_url).await?;
             info!("📋 Found {} entries in data directory", entries.len());
             
             for entry in entries {
@@ -175,7 +190,7 @@ impl CompactionManager {
                 }
             }
         } else {
-            warn!("⚠️ Data directory does not exist: {}", storage_assignment.data_url);
+            warn!("⚠️ Data directory does not exist: {}", data_url);
         }
         
         info!("🔍 Discovered {} parquet files for compaction in collection {}", 
@@ -362,9 +377,27 @@ impl CompactionManager {
         
         info!("📋 Input files for compaction: {:?}", input_files);
         
-        // Determine base storage directory from storage assignment
-        let assignment_service = crate::storage::assignment_service::get_assignment_service();
-        let storage_assignment = match assignment_service.get_assignment(collection_id).await {
+        // Determine base storage directory from collection metadata
+        let collection_service = self.collection_service.read().await;
+        let collection_service = collection_service.as_ref()
+            .ok_or_else(|| anyhow::anyhow!("Collection service not initialized"))?;
+        
+        let collection = match collection_service.get_proto_collection(collection_id).await? {
+            Some(col) => col,
+            None => {
+                info!("🔍 Collection {} not found, compaction not needed", collection_id);
+                return Ok(ViperCompactionResult {
+                    input_files: vec![],
+                    output_files: vec![],
+                    entries_processed: 0,
+                    entries_removed: 0,
+                    bytes_read: 0,
+                    bytes_written: 0,
+                });
+            }
+        };
+        
+        let storage_assignment = match collection.storage_assignment {
             Some(assignment) => assignment,
             None => {
                 info!("🔍 No storage assignment found for collection {}, compaction not needed", collection_id);
@@ -380,7 +413,7 @@ impl CompactionManager {
         };
         
         // The output file should go in the same directory as the input files
-        let base_storage_url = &storage_assignment.data_url;
+        let base_storage_url = format!("{}/{}/data", storage_assignment.base_location, collection_id);
         
         // Atomic write will handle staging internally
         
@@ -570,7 +603,8 @@ impl CompactionManager {
                                 rank: None,
                                 score: None,
                                 distance: None,
-                            };
+                            
+        };
                             
                             let current_vector_record = VectorRecord {
                                 id: Some(id_str.clone()),
@@ -583,7 +617,8 @@ impl CompactionManager {
                                 rank: None,
                                 score: None,
                                 distance: None,
-                            };
+                            
+        };
                             
                             // Use centralized MVCC resolver for comparison
                             let resolver = MvccResolver::new();
@@ -871,20 +906,21 @@ impl CompactionManager {
             input_files.len()
         );
         
-        // Record compaction metrics (non-blocking, failure-tolerant)
-        if let Some(ref metrics_updater) = self.metrics_updater {
-            let compaction_update = CompactionMetricsUpdate {
-                files_before: input_files.len() as i32,
-                files_after: output_files.len() as i32,
-                bytes_before: total_bytes_read as i64,
-                bytes_after: total_bytes_written as i64,
-                duration_ms: 0, // TODO: Track actual duration
-                timestamp: chrono::Utc::now().timestamp_millis(),
-            };
-            
-            // Fire and forget - never block compaction operation
-            metrics_updater.record_compaction(collection_id, compaction_update).await;
-        }
+        // 🔴 UNUSED METRICS - Metrics module is unused
+        // // Record compaction metrics (non-blocking, failure-tolerant)
+        // if let Some(ref metrics_updater) = self.metrics_updater {
+        //     let compaction_update = CompactionMetricsUpdate {
+        //         files_before: input_files.len() as i32,
+        //         files_after: output_files.len() as i32,
+        //         bytes_before: total_bytes_read as i64,
+        //         bytes_after: total_bytes_written as i64,
+        //         duration_ms: 0, // TODO: Track actual duration
+        //         timestamp: chrono::Utc::now().timestamp_millis(),
+        //     };
+        //     
+        //     // Fire and forget - never block compaction operation
+        //     metrics_updater.record_compaction(collection_id, compaction_update).await;
+        // }
         
         Ok(ViperCompactionResult {
             input_files: discovered_input_files,

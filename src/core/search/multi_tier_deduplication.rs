@@ -408,7 +408,8 @@ mod tests {
                 rank: None,
                 score: None,
                 distance: None,
-            },
+            
+        },
             score: 0.5,
             tier: StorageTier::Compacted,
             engine: DeduplicationStorageEngine::VIPER,
@@ -430,7 +431,8 @@ mod tests {
                 rank: None,
                 score: None,
                 distance: None,
-            },
+            
+        },
             score: 0.4,
             tier: StorageTier::Flushed,
             engine: DeduplicationStorageEngine::SST,
@@ -452,7 +454,8 @@ mod tests {
                 rank: None,
                 score: None,
                 distance: None,
-            },
+            
+        },
             score: 0.3,
             tier: StorageTier::Unflushed,
             engine: DeduplicationStorageEngine::WAL,
@@ -491,7 +494,8 @@ mod tests {
                 rank: None,
                 score: None,
                 distance: None,
-            },
+            
+        },
             score: 0.5,
             tier: StorageTier::Unflushed,
             engine: DeduplicationStorageEngine::WAL,
@@ -512,7 +516,8 @@ mod tests {
                 rank: None,
                 score: None,
                 distance: None,
-            },
+            
+        },
             score: 0.4,
             tier: StorageTier::Unflushed,
             engine: DeduplicationStorageEngine::WAL,

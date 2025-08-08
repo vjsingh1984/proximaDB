@@ -170,11 +170,17 @@ async fn test_recovery_after_crash_simulation() {
         // Insert some vectors
         let vectors = vec![
             proximadb::core::VectorRecord {
-                id: Some("vec1".to_string()),
+                id: Some("vec1".to_string())),
                 vector: vec![0.1; 128],
                 metadata: vec![],
-                ..Default::default()
-            }
+                ..Default::default(),
+            timestamp: 0,
+            updated_at: None,
+            expires_at: None,
+            distance: None,
+            rank: None,
+            score: None,
+        }
         ];
         
         db.insert_vectors("test_collection", vectors).await.unwrap();

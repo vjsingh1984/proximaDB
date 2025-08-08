@@ -1,0 +1,26 @@
+sequenceDiagram
+    participant C as Client
+    participant DVS as DirectVectorService
+    participant QC as QueryCache
+    participant DC as DataCache
+    participant SE as Storage Engine
+    
+    C->>DVS: search_vectors(query)
+    DVS->>QC: check_cache(query_key)
+    
+    alt Cache Hit and Fresh
+        QC-->>DVS: cached_results
+        DVS-->>C: return results
+    else Cache Miss or Stale
+        DVS->>DC: get_vectors(ids)
+        alt Data Cache Hit
+            DC-->>DVS: cached_vectors
+        else Data Cache Miss
+            DVS->>SE: fetch_from_storage()
+            SE-->>DVS: vectors
+            DVS->>DC: cache_vectors()
+        end
+        DVS->>DVS: compute_distances()
+        DVS->>QC: cache_results()
+        DVS-->>C: return results
+    end

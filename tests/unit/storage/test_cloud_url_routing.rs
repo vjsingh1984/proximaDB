@@ -26,7 +26,14 @@ fn create_test_vector_records(collection_id: &str, count: usize) -> Vec<VectorRe
     
     (0..count)
         .map(|i| VectorRecord {
-            id: format!("vector_{}", i),
+            id: format!("vector_{,
+            timestamp: 0,
+            updated_at: None,
+            expires_at: None,
+            distance: None,
+            rank: None,
+            score: None,
+        }", i),
             collection_id: collection_id.to_string(),
             vector: vec![1.0f32; 100], // 100-dimensional vector
             metadata: HashMap::new(),

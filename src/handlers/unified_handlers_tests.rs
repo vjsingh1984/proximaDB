@@ -36,6 +36,9 @@ mod tests {
             description: Some(format!("Test collection {}", name)),
             tags: vec!["test".to_string()],
             owner: Some("test_user".to_string()),
+            compression: None,
+            optimization_hints: None,
+            storage_location: None,
         }
     }
 
@@ -52,6 +55,7 @@ mod tests {
             rank: None,
             score: None,
             distance: None,
+        
         }
     }
 
@@ -258,6 +262,7 @@ mod tests {
             rank: Some(1),
             score: Some(0.95),
             distance: Some(0.1),
+        
         };
         
         assert_eq!(record.id.unwrap(), "test_id");
@@ -291,7 +296,10 @@ mod tests {
             description: None,
             tags: vec![],
             owner: None,
-        };
+                compression: None,
+                optimization_hints: None,
+                storage_location: None,
+            };
         
         assert_eq!(config.dimension, 256);
         assert_eq!(config.distance_metric, DistanceMetric::Euclidean as i32);
@@ -387,7 +395,10 @@ mod tests {
             description: Some("Collection with tags".to_string()),
             tags: vec!["production".to_string(), "v1".to_string()],
             owner: Some("test_owner".to_string()),
-        };
+                compression: None,
+                optimization_hints: None,
+                storage_location: None,
+            };
         
         assert_eq!(config.tags.len(), 2);
         assert!(config.tags.contains(&"production".to_string()));
@@ -445,6 +456,7 @@ mod tests {
             rank: None,
             score: None,
             distance: None,
+        
         };
         
         assert_eq!(record.vector.len(), 7);

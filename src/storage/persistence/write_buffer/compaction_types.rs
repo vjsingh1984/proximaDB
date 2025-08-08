@@ -5,6 +5,13 @@
  * you may not use this file except in compliance with the License.
  */
 
+// 🔴 ENTIRE FILE MARKED FOR REMOVAL
+// User feedback: "EnhancedEngineCompactionResult this seems very excessive for release 1"
+// This entire file is redundant with storage/traits.rs CompactionResult
+// All engines now use the standard CompactionResult type from traits.rs
+// Vector tracking can be added to engine_metrics field if needed
+
+/*
 //! Extended compaction types for AXIS integration
 //!
 //! This module defines enhanced compaction result types that include
@@ -42,3 +49,4 @@ impl Default for EnhancedEngineCompactionResult {
 }
 
 // From implementations removed - engines now return EnhancedEngineCompactionResult directly
+*/

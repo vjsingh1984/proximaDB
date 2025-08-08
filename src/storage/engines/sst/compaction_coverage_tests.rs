@@ -18,6 +18,7 @@ mod tests {
         config.block_size_kb = 8;
         config.compaction_strategy = "tiered".to_string();
         config.compression = "lz4".to_string();
+        config.decompression_cache_config = None;
         config
     }
 
@@ -34,6 +35,7 @@ mod tests {
             rank: None,
             score: None,
             distance: None,
+            ..Default::default()
         }
     }
 

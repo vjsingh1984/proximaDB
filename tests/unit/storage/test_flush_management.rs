@@ -22,7 +22,14 @@ fn create_test_vector_records(collection_id: &str, count: usize, size_per_vector
     
     (0..count)
         .map(|i| VectorRecord {
-            id: Some(format!("vector_{}", i)),
+            id: Some(format!("vector_{,
+            timestamp: 0,
+            updated_at: None,
+            expires_at: None,
+            distance: None,
+            rank: None,
+            score: None,
+        }", i)),
             vector: vector_data.clone(),
             metadata: vec![],
             timestamp: now as u32,

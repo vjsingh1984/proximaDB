@@ -53,6 +53,7 @@ mod tests {
             rank: None,
             score: None,
             distance: None,
+        
         }
     }
 

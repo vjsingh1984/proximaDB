@@ -368,7 +368,8 @@ pub struct CompressionStats {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::storage::memtable::implementations::btree::BTreeMemtable;
+    // 🔴 UNUSED IMPORT - BTree memtable is unused
+// use crate::storage::memtable::implementations::btree::BTreeMemtable;
 
     #[tokio::test]
     async fn test_metrics_wrapper() {

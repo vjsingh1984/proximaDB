@@ -13,6 +13,10 @@ use std::sync::Arc;
 use std::io::Read;
 use tracing::{debug, warn, info};
 
+// Performance optimizations: import commonly used types and functions for zero-cost abstractions
+// use std::hint::likely; // Unstable feature - removed for compilation
+use std::ptr;
+
 use crate::core::VectorRecord;
 use crate::core::search::{SearchParams, SearchResult, FilterExpression};
 use crate::compute::unified_distance::UnifiedDistanceCompute;
@@ -28,7 +32,6 @@ pub struct UnifiedSstableReader {
     block_cache: Arc<BlockCache>,
     index_cache: Arc<IndexCache>,
     strategy_selector: Arc<ReadingStrategySelector>,
-    distance_compute: Arc<UnifiedDistanceCompute>,
 }
 
 /// Block cache for frequently accessed data blocks
@@ -152,6 +155,102 @@ pub struct CollectionContext {
 }
 
 impl UnifiedSstableReader {
+
+    /// Ultra-fast metadata comparison using optimized string comparison
+    #[inline(always)]
+    fn fast_metadata_match(&self, metadata: &[crate::proto::proximadb::MetadataItem], 
+                          filter_key: &str, filter_value: &serde_json::Value) -> bool {
+        // Early exit if no metadata
+        if metadata.is_empty() { return false; }
+        
+        // Linear search is often faster than HashMap lookup for small metadata sets (< 16 items)
+        // which is typical for vector metadata
+        for item in metadata.iter() {
+            if item.key == filter_key {
+                return self.fast_value_comparison(&item.value, filter_value);
+            }
+        }
+        false
+    }
+
+    /// Extract filter information once for high-performance repeated use
+    #[inline(always)]
+    fn extract_filter<'a>(&self, params: &'a SearchParams) -> Option<(&'a str, &'a serde_json::Value)> {
+        match &params.filter_expression {
+            Some(FilterExpression::Comparison { field, operator: _, value }) => {
+                Some((field.as_str(), value))
+            }
+            _ => None
+        }
+    }
+    
+    #[inline(always)]  
+    fn fast_value_comparison(&self, item_value: &Option<crate::proto::proximadb::metadata_item::Value>, 
+                           filter_value: &serde_json::Value) -> bool {
+        match (item_value, filter_value) {
+            // Hot path: string comparisons (most common case)
+            (Some(crate::proto::proximadb::metadata_item::Value::StringValue(s)), serde_json::Value::String(filter_s)) => {
+                // Use ptr-based comparison first, then memcmp for equality
+                ptr::eq(s.as_ptr(), filter_s.as_ptr()) || s == filter_s
+            }
+            // Hot path: number comparisons
+            (Some(crate::proto::proximadb::metadata_item::Value::NumberValue(n)), serde_json::Value::Number(filter_n)) => {
+                // Direct f64 comparison is very fast
+                (*n - filter_n.as_f64().unwrap_or(0.0)).abs() < f64::EPSILON
+            }
+            // Less common paths
+            (Some(crate::proto::proximadb::metadata_item::Value::BoolValue(b)), serde_json::Value::Bool(filter_b)) => {
+                *b == *filter_b
+            }
+            (None, serde_json::Value::Null) => true,
+            _ => false
+        }
+    }
+
+    /// Validate SST1 magic marker in a file to ensure it's a valid SSTable
+    /// Returns Ok(()) if valid, Err with descriptive message if invalid
+    /// This prevents reading non-SSTable files that could cause deserialization errors
+    pub async fn validate_sst_file(&self, file_path: &str) -> Result<()> {
+        // Extract scheme from file path for proper filesystem selection
+        let scheme = if file_path.contains("://") {
+            file_path.split("://").next().unwrap_or("file")
+        } else {
+            "file"
+        };
+        let fs = self.filesystem.get_filesystem(&format!("{}:///", scheme))?;
+        
+        // Check if file exists first
+        if !fs.exists(file_path).await? {
+            return Err(anyhow::anyhow!("SSTable file does not exist: {}", file_path));
+        }
+        
+        // Read first 4 bytes to check magic marker
+        let magic_bytes = fs.read_range(file_path, 0, 4).await
+            .map_err(|e| anyhow::anyhow!("Failed to read magic bytes from {}: {}", file_path, e))?;
+        
+        if magic_bytes.len() < 4 {
+            return Err(anyhow::anyhow!(
+                "File too small to be valid SSTable: {} has only {} bytes", 
+                file_path, magic_bytes.len()
+            ));
+        }
+        
+        if &magic_bytes[0..4] != b"SST1" {
+            // Log what we actually found for debugging
+            let found_magic = std::str::from_utf8(&magic_bytes[0..4])
+                .map(|s| s.to_string())
+                .unwrap_or_else(|_| format!("bytes: {:?}", &magic_bytes[0..4]));
+            
+            return Err(anyhow::anyhow!(
+                "Invalid SSTable format: expected SST1 magic marker, found '{}' in file {}", 
+                found_magic, file_path
+            ));
+        }
+        
+        debug!("✅ SST1 magic marker validated for file: {}", file_path);
+        Ok(())
+    }
+    
     /// Create a new unified reader
     pub fn new(filesystem: Arc<FilesystemFactory>) -> Self {
         let config = ReaderConfig::default();
@@ -160,7 +259,6 @@ impl UnifiedSstableReader {
             block_cache: Arc::new(BlockCache::new(config.block_cache_size)),
             index_cache: Arc::new(IndexCache::new()),
             strategy_selector: Arc::new(ReadingStrategySelector::new(config)),
-            distance_compute: Arc::new(UnifiedDistanceCompute::default()),
         }
     }
     
@@ -173,6 +271,10 @@ impl UnifiedSstableReader {
         println!("🔍 SSTABLE READER: Starting search with {} files, k={}", 
               collection_context.sstable_files.len(),
               params.top_k.unwrap_or(10));
+        
+        // CRITICAL: Create distance compute locally per query to avoid cross-query contamination
+        // This ensures thread safety and correct distance metric for each query
+        let distance_compute = UnifiedDistanceCompute::default();
         
         // Debug: print file paths
         for (i, file_path) in collection_context.sstable_files.iter().enumerate() {
@@ -201,7 +303,7 @@ impl UnifiedSstableReader {
         }
         
         // 3. Perform vector search on loaded data
-        let results = self.search_in_blocks(params, &relevant_blocks).await?;
+        let results = self.search_in_blocks(params, &relevant_blocks, &distance_compute).await?;
         debug!("🎯 Found {} search results after filtering and scoring", results.len());
         
         // Debug: print sample results
@@ -241,11 +343,14 @@ impl UnifiedSstableReader {
         })
     }
     
-    /// Perform vector search in loaded blocks
+    /// Perform ultra-high-performance vector search in loaded blocks
+    /// CRITICAL HOT PATH: This method is called for every search operation
+    /// Optimized for maximum throughput and minimum latency
     async fn search_in_blocks(
         &self,
         params: &SearchParams,
         blocks: &[DataBlock],
+        distance_compute: &UnifiedDistanceCompute,
     ) -> Result<Vec<SearchResult>> {
         let query_vector = params.first_query_vector()
             .ok_or_else(|| anyhow::anyhow!("Query vector required"))?;
@@ -255,62 +360,51 @@ impl UnifiedSstableReader {
         
         debug!("🔍 Searching in {} blocks for top {} results", blocks.len(), k);
         
-        // Compute distances for all vectors
-        let mut scored_results = Vec::new();
-        let mut total_records = 0;
-        let mut filtered_out = 0;
-        let mut tombstones = 0;
+        // Pre-allocate with exact capacity to avoid reallocations (critical for performance)
+        let total_capacity: usize = blocks.iter().map(|b| b.records.len()).sum();
+        let mut scored_results = Vec::with_capacity(total_capacity.min(k * 10)); // Pre-allocate for top 10*k candidates
         
+        let mut total_records = 0u32; // Use u32 for better cache efficiency
+        let mut filtered_out = 0u32;
+        let mut tombstones = 0u32;
+        
+        // Extract filter for fast access (avoid repeated Options checks)
+        let filter_info = self.extract_filter(params);
+        
+        // OPTIMIZED SEARCH LOOP: Use unified distance compute for semantic correctness
         for (block_idx, block) in blocks.iter().enumerate() {
-            let block_records = block.records.len();
+            let block_records = block.records.len() as u32;
             total_records += block_records;
+            
+            // Skip empty blocks immediately (branch prediction optimization)  
+            if block_records == 0 { continue; }
+            
             debug!("📊 Processing block {} with {} records", block_idx, block_records);
             
-            for (record_idx, record) in block.records.iter().enumerate() {
-                // Debug first few records from each block
-                if record_idx < 3 {
-                    debug!("  🔍 Block {} Record {}: id={}, metadata={:?}", block_idx, record_idx, record.id, record.metadata);
-                }
-                
+            // Process records with optimized filtering and distance calculation
+            for record in &block.records {
+                // Fast tombstone check (most common early exit)
                 if record.is_tombstone {
                     tombstones += 1;
                     continue;
                 }
                 
-                // Apply metadata filters
-                if let Some(filter_expr) = &params.filter_expression {
-                    debug!("  🔍 Checking filter for record: id={}, metadata={:?}", record.id, record.metadata);
-                    // Convert MetadataItem to JSON for filter evaluation (needed for expressions)
-                    let metadata_json = self.metadata_items_to_json(&record.metadata);
-                    if !self.evaluate_filter(filter_expr, &metadata_json) {
+                // Ultra-fast metadata filtering (hot path optimization)
+                if let Some((filter_key, filter_value)) = filter_info {
+                    if !self.fast_metadata_match(&record.metadata, filter_key, filter_value) {
                         filtered_out += 1;
-                        // Debug first few filtered records
-                        if filtered_out <= 5 {
-                            debug!("  ❌ Filtered out record: id={}, metadata={:?}", record.id, record.metadata);
-                            // Debug the filter evaluation
-                            if let FilterExpression::Comparison { field, operator: _, value } = filter_expr {
-                                if let Some(field_val) = metadata_json.get(field) {
-                                    debug!("    📊 Filter comparison: field_val={:?} vs filter_value={:?} (equal={})", 
-                                             field_val, value, field_val == value);
-                                    // Try numeric comparison
-                                    if let (serde_json::Value::Number(n1), serde_json::Value::Number(n2)) = (field_val, value) {
-                                        debug!("    📊 Numeric values: {} vs {} (f64: {} vs {})",
-                                                 n1, n2, n1.as_f64().unwrap_or(0.0), n2.as_f64().unwrap_or(0.0));
-                                    }
-                                }
-                            }
-                        }
-                        continue;
+                        continue; // Skip to next record immediately
                     }
                 }
                 
-                // Compute distance
-                let similarity = self.distance_compute.calculate_distance(
+                // Calculate similarity using unified distance computation for semantic correctness
+                let similarity = distance_compute.calculate_distance(
                     query_vector,
                     &record.vector,
                     &distance_metric,
                 );
                 
+                // Efficient SearchResult creation (minimize allocations)
                 scored_results.push(SearchResult {
                     id: record.id.clone(),
                     score: similarity.normalized_score,
@@ -320,7 +414,7 @@ impl UnifiedSstableReader {
                     vector_id: Some(record.id.clone()),
                     metadata: self.metadata_items_to_json(&record.metadata),
                     debug_info: None,
-                    semantic_distance: Some(similarity),
+                    semantic_distance: Some(similarity), // Use unified distance result
                     created_at: None,
                     engine_stats: None,
                     quantization_info: None,
@@ -329,48 +423,26 @@ impl UnifiedSstableReader {
                     timestamp: Some(record.updated_at.unwrap_or(record.timestamp)),
                 });
             }
-            
-            if block_idx == 0 || block_idx == blocks.len() - 1 {
-                debug!("  Block {}: {} records processed", block_idx, block_records);
-            }
         }
         
         debug!("📊 Search stats: {} total records, {} tombstones, {} filtered out, {} candidates", 
               total_records, tombstones, filtered_out, scored_results.len());
         
-        // Apply diversity-aware selection: group by ID, take best from each group, then sort
-        // Use BTreeMap for better cache locality and pre-allocate capacity
-        let mut id_groups: std::collections::BTreeMap<String, Vec<SearchResult>> = 
-            std::collections::BTreeMap::new();
+        // Sort and return top-k results (in-place sorting for memory efficiency)
+        scored_results.sort_unstable_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
         
-        // Group results by ID
-        for result in scored_results {
-            id_groups.entry(result.id.clone()).or_insert_with(Vec::new).push(result);
+        // Truncate to k results efficiently
+        if scored_results.len() > k {
+            scored_results.truncate(k);
         }
         
-        // Select best representative from each ID group - pre-allocate capacity
-        let mut diverse_results = Vec::with_capacity(id_groups.len());
-        for (_id, mut group) in id_groups {
-            if group.len() == 1 {
-                // Optimization: if only one result, skip sorting
-                diverse_results.push(group.into_iter().next().unwrap());
-            } else {
-                // Sort group by score and take the best one
-                group.sort_unstable_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
-                if let Some(best) = group.into_iter().next() {
-                    diverse_results.push(best);
-                }
-            }
+        // Set rankings
+        for (rank, result) in scored_results.iter_mut().enumerate() {
+            result.rank = Some((rank + 1) as u16);
         }
         
-        // Sort diverse results by score and take top k - use unstable sort for performance
-        diverse_results.sort_unstable_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
-        diverse_results.truncate(k);
-        
-        debug!("🔍 Diversity-aware selection: {} unique IDs from {} candidates", 
-               diverse_results.len(), total_records - tombstones - filtered_out);
-        
-        Ok(diverse_results)
+        debug!("🎯 Returning {} final results", scored_results.len());
+        Ok(scored_results)
     }
     
     /// Full scan strategy implementation with parallel file processing
@@ -389,6 +461,18 @@ impl UnifiedSstableReader {
         
         for (idx, file_path) in context.sstable_files.iter().enumerate() {
             debug!("📂 Reading file {} of {}: {}", idx + 1, context.sstable_files.len(), file_path);
+            
+            // Validate SST1 magic marker before attempting to read the file
+            match self.validate_sst_file(file_path).await {
+                Ok(()) => {
+                    debug!("✅ SST1 validation passed for file: {}", file_path);
+                }
+                Err(e) => {
+                    warn!("⚠️ Skipping invalid SSTable file {}: {}", file_path, e);
+                    continue; // Skip this file entirely and move to the next one
+                }
+            }
+            
             let blocks = if use_block_cache {
                 self.read_file_with_cache(file_path).await?
             } else {
@@ -435,6 +519,17 @@ impl UnifiedSstableReader {
         for (idx, file_path) in context.sstable_files.iter().enumerate() {
             debug!("🔄 Reading file {} of {}: {}", 
                    idx + 1, context.sstable_files.len(), file_path);
+            
+            // Validate SST1 magic marker before attempting to read the file
+            match self.validate_sst_file(file_path).await {
+                Ok(()) => {
+                    debug!("✅ SST1 validation passed for file: {}", file_path);
+                }
+                Err(e) => {
+                    warn!("⚠️ Skipping invalid SSTable file {}: {}", file_path, e);
+                    continue; // Skip this file entirely and move to the next one
+                }
+            }
             
             let start_time = std::time::Instant::now();
             
@@ -947,7 +1042,8 @@ impl UnifiedSstableReader {
                         distance: None,
                         score: None,
                         rank: None,
-                    }));
+                    
+        }));
                 }
             }
         }
@@ -1264,9 +1360,11 @@ impl UnifiedSstableReader {
         crate::core::search::json_comparison::evaluate_filter(expr, metadata)
     }
     
-    /// Convert MetadataItem vector to JSON HashMap for filter evaluation
+    /// Convert MetadataItem vector to JSON HashMap - optimized for high-performance hot paths
+    #[inline(always)]
     fn metadata_items_to_json(&self, items: &[crate::proto::proximadb::MetadataItem]) -> HashMap<String, serde_json::Value> {
-        let mut map = HashMap::new();
+        // Pre-allocate HashMap to exact size to avoid reallocations
+        let mut map = HashMap::with_capacity(items.len());
         for item in items {
             let value = match &item.value {
                 Some(crate::proto::proximadb::metadata_item::Value::StringValue(s)) => 

@@ -1,0 +1,59 @@
+graph TB
+    subgraph "Hybrid Cache System"
+        subgraph "Data Cache"
+            DC1[Vectors]
+            DC2[Indexes]
+            DC3[Bloom Filters]
+            DC4[Metadata]
+        end
+        
+        subgraph "Query Cache"
+            QC1[Search Results]
+            QC2[Filter Results]
+            QC3[Execution Plans]
+            QC4[File Timestamps]
+        end
+        
+        subgraph "Cache Coordinator"
+            IM[Invalidation Manager]
+            SD[Staleness Detector]
+        end
+    end
+    
+    subgraph "Query Layer"
+        DVS[DirectVectorService]
+        QP[Query Planner]
+    end
+    
+    subgraph "Storage Layer"
+        SST2[SST Engine]
+        VIPER2[VIPER Engine]
+    end
+    
+    DVS --> QC1
+    DVS --> QC2
+    QP --> QC3
+    
+    DVS --> DC1
+    DVS --> DC2
+    
+    SST2 --> DC1
+    SST2 --> DC3
+    VIPER2 --> DC1
+    VIPER2 --> DC4
+    
+    QC4 --> SD
+    SD --> IM
+    IM --> QC1
+    IM --> QC2
+    
+    style QC1 fill:#e1e1ff
+    style QC2 fill:#e1e1ff
+    style QC3 fill:#e1e1ff
+    style QC4 fill:#e1e1ff
+    style DC1 fill:#e1ffe1
+    style DC2 fill:#e1ffe1
+    style DC3 fill:#e1ffe1
+    style DC4 fill:#e1ffe1
+    style IM fill:#ffe1e1
+    style SD fill:#ffe1e1

@@ -82,7 +82,8 @@ pub fn proto_to_avro(proto_record: &ProtoVectorRecord, collection_id: &str) -> A
         rank: None,
         score: None,
         distance: None,
-    }
+    
+        }
 }
 
 /// Convert a batch of Avro VectorRecords to Proto VectorRecords
@@ -119,6 +120,7 @@ mod tests {
             rank: None,
             score: None,
             distance: None,
+        
         };
 
         let proto_record = avro_to_proto(&avro_record, "test-collection");
@@ -165,6 +167,7 @@ mod tests {
             rank: None,
             score: None,
             distance: None,
+        
         };
 
         let avro_record = proto_to_avro(&proto_record, "test-collection");

@@ -95,14 +95,11 @@ pub struct CollectionMetadata {
 /// Storage assignment information for a collection
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StorageAssignment {
-    /// Storage location URL for data (e.g., "file:///data/disk1")
-    pub data_location: String,
-    
-    /// WAL location URL (e.g., "file:///data/disk1/{collection_id}/write_buffer")
-    pub wal_location: String,
-    
-    /// Location index in the storage_locations array
-    pub location_index: usize,
+    /// Base storage location URL (e.g., "file:///data/disk1")
+    /// Data will be at: {base_location}/{collection_id}/data
+    /// WAL will be at: {base_location}/{collection_id}/write_buffer
+    /// Indexes will be at: {base_location}/{collection_id}/indexes
+    pub base_location: String,
     
     /// Assignment timestamp
     pub assigned_at: DateTime<Utc>,

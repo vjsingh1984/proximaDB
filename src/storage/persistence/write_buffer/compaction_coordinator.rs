@@ -492,15 +492,10 @@ impl CompactionCoordinator {
                     // Continue - compaction succeeded even if index update failed
                 }
                 
-                Ok(CompactionResult {
-                    success: true,
-                    collections_affected: vec![collection_id.to_string()],
-                    files_compacted: result.files_compacted,
-                    bytes_reclaimed: result.bytes_reclaimed,
-                    duration_ms: duration.as_millis() as u64,
-                    completed_at: Utc::now(),
-                    engine_type: engine_type.to_string(),
-                })
+                // Update the result with the actual duration and return it
+                let mut final_result = result;
+                final_result.duration_ms = duration.as_millis() as u64;
+                Ok(final_result)
             }
             Err(e) => {
                 warn!(
@@ -524,24 +519,28 @@ impl CompactionCoordinator {
     }
     
     /// Execute VIPER engine compaction
-    async fn execute_viper_compaction(&self, collection_id: &str) -> Result<EngineCompactionResult> {
+    async fn execute_viper_compaction(&self, collection_id: &str) -> Result<CompactionResult> {
         debug!("🔧 CompactionCoordinator: Executing VIPER compaction for {}", collection_id);
         
         // Use VIPER's consolidated compaction with vector tracking
-        match self.viper_engine.compact_collection(collection_id).await {
+        match self.viper_engine.compact_collection(collection_id, None).await {
             Ok(enhanced_result) => {
                 info!(
                     "✅ VIPER compaction completed: {} files compacted, {} bytes reclaimed, {} vectors deleted",
-                    enhanced_result.files_processed, 
-                    enhanced_result.bytes_processed,
-                    enhanced_result.deleted_vector_ids.len()
+                    enhanced_result.input_files, 
+                    enhanced_result.bytes_written,
+                    enhanced_result.entries_removed
                 );
                 
-                Ok(EngineCompactionResult {
-                    files_compacted: enhanced_result.files_processed,
-                    bytes_reclaimed: enhanced_result.bytes_processed,
-                    deleted_vector_ids: enhanced_result.deleted_vector_ids,
-                    merged_vectors: enhanced_result.merged_vectors,
+                // Return the CompactionResult directly - no need for intermediate type
+                Ok(CompactionResult {
+                    success: true,
+                    collections_affected: vec![collection_id.to_string()],
+                    files_compacted: enhanced_result.input_files,
+                    bytes_reclaimed: enhanced_result.bytes_written,
+                    duration_ms: 0,  // Will be filled by caller
+                    completed_at: Utc::now(),
+                    engine_type: "VIPER".to_string(),
                 })
             }
             Err(e) => {
@@ -551,25 +550,29 @@ impl CompactionCoordinator {
         }
     }
     
-    /// Execute LSM engine compaction
-    async fn execute_lsm_compaction(&self, collection_id: &str) -> Result<EngineCompactionResult> {
+    /// Execute LSM engine compaction  
+    async fn execute_lsm_compaction(&self, collection_id: &str) -> Result<CompactionResult> {
         debug!("🔧 CompactionCoordinator: Executing LSM compaction for {}", collection_id);
         
         // Use LSM's consolidated compaction with vector tracking
-        match self.sst_engine.compact_collection(collection_id).await {
+        match self.sst_engine.compact_collection(collection_id, None).await {
             Ok(enhanced_result) => {
                 info!(
                     "✅ LSM compaction completed: {} files compacted, {} bytes reclaimed, {} vectors deleted",
-                    enhanced_result.files_processed, 
-                    enhanced_result.bytes_processed,
-                    enhanced_result.deleted_vector_ids.len()
+                    enhanced_result.input_files, 
+                    enhanced_result.bytes_written,
+                    enhanced_result.entries_removed
                 );
                 
-                Ok(EngineCompactionResult {
-                    files_compacted: enhanced_result.files_processed,
-                    bytes_reclaimed: enhanced_result.bytes_processed,
-                    deleted_vector_ids: enhanced_result.deleted_vector_ids,
-                    merged_vectors: enhanced_result.merged_vectors,
+                // Return the CompactionResult directly - no need for intermediate type
+                Ok(CompactionResult {
+                    success: true,
+                    collections_affected: vec![collection_id.to_string()],
+                    files_compacted: enhanced_result.input_files,
+                    bytes_reclaimed: enhanced_result.bytes_written,
+                    duration_ms: 0,  // Will be filled by caller
+                    completed_at: Utc::now(),
+                    engine_type: "VIPER".to_string(),
                 })
             }
             Err(e) => {
@@ -701,6 +704,10 @@ impl CompactionCoordinator {
     }
 }
 
+// 🔴 OBSOLETE - Consolidated into storage::traits::CompactionResult
+// This was an internal type only used for returning results from engine-specific
+// compaction methods. Now using the unified CompactionResult directly.
+/*
 /// Engine-specific compaction result (internal)
 #[derive(Debug, Clone)]
 struct EngineCompactionResult {
@@ -709,6 +716,7 @@ struct EngineCompactionResult {
     pub deleted_vector_ids: Vec<String>,
     pub merged_vectors: Vec<VectorRecord>,
 }
+*/
 
 /// Trait for compaction coordination callbacks
 #[async_trait]

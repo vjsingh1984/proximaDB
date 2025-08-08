@@ -618,7 +618,7 @@ impl ViperPipeline {
         self.update_stats(&flush_result, processing_time).await?;
 
         info!(
-            "✅ VIPER Pipeline: Completed processing for collection {} in {}ms",
+            "VIPER Pipeline: Completed processing for collection {} in {}ms",
             collection_id, processing_time
         );
 
@@ -868,7 +868,7 @@ impl VectorRecordProcessor {
         }
 
         tracing::debug!(
-            "🌟 Starting cluster-then-sort: {} records → {} clusters",
+            "Starting cluster-then-sort: {} records → {} clusters",
             records.len(),
             cluster_count
         );
@@ -897,7 +897,7 @@ impl VectorRecordProcessor {
             }
         }
 
-        tracing::debug!("✅ Cluster-then-sort completed successfully");
+        tracing::debug!("Cluster-then-sort completed successfully");
         Ok(())
     }
 
@@ -1022,7 +1022,7 @@ impl VectorRecordProcessor {
             let train_result = quantization_engine.train_model(&training_vectors);
             match train_result {
                 Ok(model) => {
-                    info!("✅ {:?} quantization model trained: {:.1}x compression, {:.1}% quality retention",
+                    info!("{:?} quantization model trained: {:.1}x compression, {:.1}% quality retention",
                           quantization_level,
                           model.quality_metrics.compression_ratio,
                           model.quality_metrics.search_quality_retention * 100.0);
@@ -1042,7 +1042,7 @@ impl VectorRecordProcessor {
         match quantization_result {
             Ok(quantized_vectors) => {
                 debug!(
-                    "✅ Quantized {} vectors successfully",
+                    "Quantized {} vectors successfully",
                     quantized_vectors.len()
                 );
 
@@ -1092,7 +1092,7 @@ impl VectorRecordProcessor {
                 .await
             {
                 Ok(qvecs) if !qvecs.is_empty() => {
-                    info!("✅ Quantized {} vectors for hybrid storage", qvecs.len());
+                    info!("Quantized {} vectors for hybrid storage", qvecs.len());
                     Some(qvecs)
                 }
                 Ok(_) => {
@@ -1179,7 +1179,7 @@ impl VectorRecordProcessor {
         .context("Failed to create RecordBatch from VectorRecords")?;
 
         debug!(
-            "✅ Created RecordBatch with {} rows, quantization: {}",
+            "Created RecordBatch with {} rows, quantization: {}",
             batch.num_rows(),
             quantized_vectors
                 .as_ref()
@@ -1682,7 +1682,7 @@ impl VectorRecordProcessor {
         };
 
         tracing::debug!(
-            "🗜️ Compression hint: {} recommended for {} rows (avg size: {} bytes)",
+            "Compression hint: {} recommended for {} rows (avg size: {} bytes)",
             recommended_algorithm,
             row_count,
             avg_row_size
@@ -1886,7 +1886,7 @@ impl VectorProcessor for VectorRecordProcessor {
                 }
                 
                 tracing::info!(
-                    "🌟 Applied ClusterThenSort to {} records ({} clusters, inner: {:?})",
+                    "Applied ClusterThenSort to {} records ({} clusters, inner: {:?})",
                     record_count,
                     cluster_count,
                     inner_strategy
@@ -1969,7 +1969,7 @@ impl VectorProcessor for VectorRecordProcessor {
 
         let postprocess_duration = postprocess_start.elapsed();
         tracing::debug!(
-            "✅ Postprocessing completed for {} rows in {}ms",
+            "Postprocessing completed for {} rows in {}ms",
             row_count,
             postprocess_duration.as_millis()
         );
@@ -2289,7 +2289,7 @@ impl ParquetFlusher {
             .context("Failed to create augmented RecordBatch with quantized vectors")?;
 
         info!(
-            "✅ Augmented RecordBatch: {} → {} columns (added quantized storage)",
+            "Augmented RecordBatch: {} → {} columns (added quantized storage)",
             batch.schema().fields().len(),
             augmented_batch.schema().fields().len()
         );
@@ -2466,7 +2466,7 @@ impl CompactionEngine {
                         op.status = CompactionStatus::Completed;
                         op.progress = 1.0;
 
-                        tracing::info!("✅ Compaction task {} completed for collection {}: {} entries processed", 
+                        tracing::info!("Compaction task {} completed for collection {}: {} entries processed", 
                                       task.task_id, task.collection_id, compaction_result.entries_processed);
 
                         // Update statistics with actual results
@@ -2578,7 +2578,7 @@ impl CompactionEngine {
         let execution_duration = execution_start.elapsed();
 
         tracing::info!(
-            "✅ {} compaction completed in {}ms: {} entries processed, {} bytes saved",
+            "{} compaction completed in {}ms: {} entries processed, {} bytes saved",
             Self::compaction_type_name(&task.compaction_type),
             execution_duration.as_millis(),
             result.entries_processed,
@@ -2639,7 +2639,7 @@ impl CompactionEngine {
         quality_threshold: f32,
     ) -> Result<CompactionExecutionResult> {
         tracing::debug!(
-            "🌟 Reclustering: {} clusters, quality threshold {}",
+            "Reclustering: {} clusters, quality threshold {}",
             new_cluster_count,
             quality_threshold
         );
@@ -2707,7 +2707,7 @@ impl CompactionEngine {
         quality_threshold: f32,
     ) -> Result<CompactionExecutionResult> {
         tracing::debug!(
-            "🗜️ Compression optimization: {:?}, quality threshold {}",
+            "Compression optimization: {:?}, quality threshold {}",
             target_algorithm,
             quality_threshold
         );
@@ -2800,7 +2800,7 @@ impl CompactionEngine {
         let total_time = sorted_rewrite_start.elapsed().as_millis() as u64;
 
         tracing::info!(
-            "✅ SORTED REWRITE COMPLETED: {} entries, {:.1}% compression improvement, {}ms total",
+            "SORTED REWRITE COMPLETED: {} entries, {:.1}% compression improvement, {}ms total",
             rewrite_result.entries_processed,
             rewrite_result.compression_improvement * 100.0,
             total_time
@@ -2928,7 +2928,7 @@ impl CompactionEngine {
                     }
                 } else {
                     tracing::info!(
-                        "✅ Primary strategy sufficient (improvement {:.1}% >= {:.1}%)",
+                        "Primary strategy sufficient (improvement {:.1}% >= {:.1}%)",
                         primary_result.compression_improvement * 100.0,
                         trigger_threshold * 100.0
                     );
@@ -3003,7 +3003,7 @@ impl CompactionEngine {
             records.push(record);
         }
 
-        tracing::debug!("✅ Loaded {} simulated records", records.len());
+        tracing::debug!("Loaded {} simulated records", records.len());
         Ok(records)
     }
 
@@ -3120,7 +3120,7 @@ impl CompactionEngine {
         records: &[VectorRecord],
         cluster_count: usize,
     ) -> Result<Vec<Vec<VectorRecord>>> {
-        tracing::debug!("🌟 Reorganizing into {} similarity clusters", cluster_count);
+        tracing::debug!("Reorganizing into {} similarity clusters", cluster_count);
 
         // Validate cluster count
         if cluster_count == 0 {
@@ -3146,7 +3146,7 @@ impl CompactionEngine {
         time_window_hours: u32,
     ) -> Result<Vec<Vec<VectorRecord>>> {
         tracing::debug!(
-            "⏰ Reorganizing by temporal pattern: {} hour windows",
+            "Reorganizing by temporal pattern: {} hour windows",
             time_window_hours
         );
 
@@ -3168,7 +3168,7 @@ impl CompactionEngine {
     async fn reorganize_by_compression_ratio_impl(
         records: &[VectorRecord],
     ) -> Result<Vec<Vec<VectorRecord>>> {
-        tracing::debug!("🗜️ Reorganizing by compression ratio potential");
+        tracing::debug!("Reorganizing by compression ratio potential");
 
         // Group by estimated compression potential based on vector characteristics
         let mut high_compression = Vec::new();
@@ -3246,7 +3246,7 @@ impl CompactionEngine {
             }
 
             tracing::debug!(
-                "📄 Processing batch {} with {} records",
+                "Processing batch {} with {} records",
                 batch_idx,
                 batch.len()
             );
@@ -3265,7 +3265,7 @@ impl CompactionEngine {
             total_bytes_written += compressed_size as u64;
 
             tracing::debug!(
-                "✅ Batch {} compressed: {} bytes → {} bytes ({:.1}% compression)",
+                "Batch {} compressed: {} bytes -> {} bytes ({:.1}% compression)",
                 batch_idx,
                 estimated_original_size,
                 compressed_size,
@@ -3344,7 +3344,7 @@ impl CompactionEngine {
         // Simulate cleanup work
         tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
 
-        tracing::debug!("✅ Metadata updated and cleanup completed");
+        tracing::debug!("Metadata updated and cleanup completed");
         Ok(())
     }
 
@@ -3460,7 +3460,7 @@ impl SchemaAdapter {
         _records: &[VectorRecord],
     ) -> Result<Arc<Schema>> {
         // Placeholder implementation
-        Err(anyhow::anyhow!("Schema generation not implemented"))
+        Err(anyhow::anyhow!("Schema generation not available yet"))
     }
 }
 

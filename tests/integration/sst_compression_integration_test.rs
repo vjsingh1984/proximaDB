@@ -51,6 +51,7 @@ fn create_test_config(temp_dir: &TempDir, compression_enabled: bool) -> SstConfi
         mmap_enabled: false,
         prefetch_enabled: false,
         prefetch_size_kb: 64,
+        decompression_cache_config: None,
     }
 }
 
@@ -307,7 +308,13 @@ async fn test_sst_search_compressed_blocks() -> anyhow::Result<()> {
                     )),
                 },
             ],
-            ..Default::default()
+            timestamp: 0,
+            updated_at: None,
+            expires_at: None,
+            distance: None,
+            rank: None,
+            score: None,
+            version: None,
         });
     }
     

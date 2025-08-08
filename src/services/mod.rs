@@ -7,8 +7,9 @@
 
 pub mod collection_service;
 pub mod direct_vector_service;
-pub mod migration;
-pub mod storage_path_service;
+// 🔴 UNUSED SERVICES - Never imported or used
+// pub mod migration;
+// pub mod storage_path_service;
 pub mod streaming_search;
 
 #[cfg(test)]

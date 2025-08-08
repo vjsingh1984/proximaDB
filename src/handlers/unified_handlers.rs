@@ -121,9 +121,9 @@ impl UnifiedHandlers {
         
         // ✅ RESOLVE COLLECTION NAME/ID TO COLLECTION ID
         // This ensures all internal operations use collection ID, not name
-        let collection_id = match self.collection_service.resolve_collection_id(collection_identifier).await? {
+        let collection_id: String = match self.collection_service.resolve_collection_id(collection_identifier).await? {
             Some(id) => {
-                if id != *collection_identifier {
+                if &id != collection_identifier {
                     info!("🔄 Resolved collection '{}' -> ID: '{}'", collection_identifier, id);
                 }
                 id
@@ -320,7 +320,7 @@ impl UnifiedHandlers {
         let collection_identifier = &request.collection_id;
         
         // Resolve collection name/ID to collection ID
-        let collection_id = match self.collection_service.resolve_collection_id(collection_identifier).await? {
+        let collection_id: String = match self.collection_service.resolve_collection_id(collection_identifier).await? {
             Some(id) => id,
             None => {
                 return Ok(VectorOperationResponse {
@@ -353,7 +353,7 @@ impl UnifiedHandlers {
         let start_time = std::time::Instant::now();
         
         // Resolve collection name/ID to collection ID
-        let resolved_collection_id = match self.collection_service.resolve_collection_id(collection_id).await? {
+        let resolved_collection_id: String = match self.collection_service.resolve_collection_id(collection_id).await? {
             Some(id) => id,
             None => {
                 return Ok(VectorOperationResponse {

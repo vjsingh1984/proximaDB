@@ -1,52 +1,8 @@
-= Technical Reference
+= Technical API Reference
 :toc: left
 :imagesdir: ../diagrams/images
 
-Comprehensive technical documentation for ProximaDB.
-
-image::write-buffer-strategy-pattern.svg[Write Buffer Strategy Pattern]
-
-.Write Buffer Strategy Pattern Source
-[%collapsible]
-====
-[source,mermaid]
-----
-include::../../diagrams/write-buffer-strategy-pattern.mmd[]
-----
-====
-
-image::bloom-filter-architecture.svg[Bloom Filter Architecture]
-
-.Bloom Filter Architecture Source
-[%collapsible]
-====
-[source,mermaid]
-----
-include::../../diagrams/bloom-filter-architecture.mmd[]
-----
-====
-
-image::unified-handlers-architecture.svg[Unified Handlers Architecture]
-
-.Unified Handlers Architecture Source
-[%collapsible]
-====
-[source,mermaid]
-----
-include::../../diagrams/unified-handlers-architecture.mmd[]
-----
-====
-
-image::sql-acceleration-architecture.svg[SQL Acceleration Architecture]
-
-.SQL Acceleration Architecture Source
-[%collapsible]
-====
-[source,mermaid]
-----
-include::../../diagrams/sql-acceleration-architecture.mmd[]
-----
-====
+**Complete API documentation for ProximaDB core systems.**
 
 == Hardware Capabilities API
 

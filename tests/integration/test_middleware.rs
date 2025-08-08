@@ -59,7 +59,8 @@ async fn test_authentication_middleware() {
                 level_count: 7,
                 compaction_threshold: 4,
                 block_size_kb: 64,
-            },
+        decompression_cache_config: None,
+    },
             cache_size_mb: 10,
             bloom_filter_config: Some(BloomFilterConfig {
                 bits_per_key: 10,
@@ -171,7 +172,8 @@ async fn test_rate_limiting_middleware() {
                 level_count: 7,
                 compaction_threshold: 4,
                 block_size_kb: 64,
-            },
+        decompression_cache_config: None,
+    },
             cache_size_mb: 10,
             bloom_filter_config: Some(BloomFilterConfig {
                 bits_per_key: 10,

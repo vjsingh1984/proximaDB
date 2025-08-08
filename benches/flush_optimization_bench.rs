@@ -22,6 +22,13 @@ fn create_test_vectors(count: usize, dimension: usize) -> Vec<VectorRecord> {
     (0..count)
         .map(|i| VectorRecord {
             id: Some(format!("vec_{}", i)),
+            timestamp: 0,
+            updated_at: None,
+            expires_at: None,
+            distance: None,
+            rank: None,
+            score: None,
+        }", i)),
             vector: vec![i as f32; dimension],
             metadata: vec![],
             timestamp: now as u32,

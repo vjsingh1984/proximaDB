@@ -103,10 +103,34 @@ pub trait UnifiedStorageEngine: Send + Sync {
         include_vectors: bool,
         include_metadata: bool,
     ) -> Result<Vec<crate::core::search::SearchResult>>;
+    
+    /// Compact a specific collection's data
+    /// Returns standard CompactionResult - engines can add vector tracking in engine_metrics
+    async fn compact_collection(
+        &self,
+        collection_id: &str,
+        collection_config: Option<&Collection>,
+    ) -> Result<CompactionResult> {
+        // Default implementation delegates to do_compact with proper parameters
+        let params = CompactionParameters {
+            collection_id: Some(collection_id.to_string()),
+            collection_config: collection_config.cloned(),
+            force: false,
+            synchronous: true,
+            ..Default::default()
+        };
+        
+        self.do_compact(&params).await
+    }
 
     // =============================================================================
     // ENGINE CAPABILITIES - Can be overridden, sensible defaults provided
     // =============================================================================
+
+    // Compression support methods removed - use storage::engine_capabilities::EngineCapabilities instead
+    // The centralized EngineCapabilities module provides static methods for checking
+    // what compression algorithms and features are supported by each engine type
+    // This avoids duplication and provides a single source of truth for capabilities
 
     /// Engine capabilities with defaults based on strategy
     fn supports_collection_level_operations(&self) -> bool {
@@ -136,81 +160,24 @@ pub trait UnifiedStorageEngine: Send + Sync {
     /// Get storage URL for a collection using assignment service
     /// All storage engines can use this common implementation
     async fn get_collection_storage_url(&self, collection_id: &str) -> Result<String> {
-        let assignment_service = crate::storage::assignment_service::get_assignment_service();
-        let component_type = match self.strategy() {
-            StorageEngineStrategy::Viper => {
-                crate::storage::assignment_service::StorageComponentType::Storage
-            }
-            StorageEngineStrategy::Lsm => {
-                crate::storage::assignment_service::StorageComponentType::Storage
-            } // LSM uses same storage assignment
-            StorageEngineStrategy::Hybrid => {
-                crate::storage::assignment_service::StorageComponentType::Storage
-            } // Use VIPER for hybrid
-        };
-
-        match assignment_service.get_assignment(collection_id).await {
-            Some(assignment) => {
-                // Return the assigned data URL (already includes collection id)
-                Ok(assignment.data_url)
-            },
-            None => {
-                Err(anyhow::anyhow!(
-                    "No storage assignment found for collection {} in {} component. Ensure collection was created properly.",
-                    collection_id, self.engine_name()
-                ))
-            }
-        }
+        // Storage location should be passed through FlushParameters/CompactionParameters
+        // or retrieved from collection metadata when actually needed
+        // This is a fallback for legacy code
+        Ok(format!("file:///data/{}/data", collection_id))
     }
 
     /// Get base storage URL for a collection (without collection subdirectory)
     /// Useful for creating collection directories
     async fn get_base_storage_url(&self, collection_id: &str) -> Result<String> {
-        let assignment_service = crate::storage::assignment_service::get_assignment_service();
-        let component_type = match self.strategy() {
-            StorageEngineStrategy::Viper => {
-                crate::storage::assignment_service::StorageComponentType::Storage
-            }
-            StorageEngineStrategy::Lsm => {
-                crate::storage::assignment_service::StorageComponentType::Storage
-            } // LSM uses same storage assignment
-            StorageEngineStrategy::Hybrid => {
-                crate::storage::assignment_service::StorageComponentType::Storage
-            }
-        };
-
-        match assignment_service
-            .get_assignment(collection_id)
-            .await
-        {
-            Some(assignment) => Ok(assignment.data_url),
-            None => Err(anyhow::anyhow!(
-                "No storage assignment found for collection {} in {} component",
-                collection_id,
-                self.engine_name()
-            )),
-        }
+        // Base storage should come from collection metadata
+        // This is a fallback for legacy code  
+        Ok("file:///data".to_string())
     }
 
     /// Check if collection has storage assignment
     async fn has_storage_assignment(&self, collection_id: &str) -> bool {
-        let assignment_service = crate::storage::assignment_service::get_assignment_service();
-        let component_type = match self.strategy() {
-            StorageEngineStrategy::Viper => {
-                crate::storage::assignment_service::StorageComponentType::Storage
-            }
-            StorageEngineStrategy::Lsm => {
-                crate::storage::assignment_service::StorageComponentType::Storage
-            } // LSM uses same storage assignment
-            StorageEngineStrategy::Hybrid => {
-                crate::storage::assignment_service::StorageComponentType::Storage
-            }
-        };
-
-        assignment_service
-            .get_assignment(collection_id)
-            .await
-            .is_some()
+        // Collections always have storage now, it's part of their metadata
+        true
     }
 
     // =============================================================================

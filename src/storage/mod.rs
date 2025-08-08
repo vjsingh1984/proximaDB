@@ -2,7 +2,6 @@
 // ORGANIZED STORAGE MODULE STRUCTURE
 // =============================================================================
 
-pub mod assignment_service;
 pub mod builder;
 pub mod traits;
 pub mod types;
@@ -10,6 +9,9 @@ pub mod validation;
 
 // Background operation context (optimization)
 pub mod background_flush_context;
+
+// Engine capabilities and supportability checks
+pub mod engine_capabilities;
 
 // Core storage engines (organized)
 pub mod engines;
@@ -29,7 +31,8 @@ pub mod metadata;
 pub mod optimization;
 // Strategy module for collection lifecycle configuration
 pub mod strategy;
-// Unified cross-engine cache system (Phase 2 optimization)
+// Unified cross-engine cache system for performance optimization
+// Restored to improve query performance through intelligent caching
 pub mod unified_cache;
 
 // Lock-free implementations have been integrated into the main implementations
@@ -60,11 +63,13 @@ pub use atomic::{
     UnifiedAtomicCoordinator, ViperAtomicOperations, WalAtomicOperations,
 };
 
+// 🔴 UNUSED EXPORTS - COMMENTED OUT FOR REMOVAL  
+// Cache system never integrated, only used in test files
 // Unified cache system exports (Phase 2 optimization)
-pub use unified_cache::{
-    UnifiedCrossEngineCache, UnifiedCacheConfig, CacheKey, CacheDataType,
-    MemoryPressure, CrossEngineMetrics,
-};
+// pub use unified_cache::{
+//     UnifiedCrossEngineCache, UnifiedCacheConfig, CacheKey, CacheDataType,
+//     MemoryPressure, CrossEngineMetrics,
+// };
 
 // Storage engine exports
 pub use engine::StorageEngine;

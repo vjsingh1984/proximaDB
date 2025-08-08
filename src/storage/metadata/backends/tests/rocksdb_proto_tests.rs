@@ -58,6 +58,10 @@ mod tests {
                         indexed: true,
                         supports_range: false,
                         estimated_cardinality: Some(1000),
+                        encoding_hint: None,
+                compression: None,
+                optimization_hints: None,
+            
                     },
                     FilterableColumnSpec {
                         name: "date".to_string(),
@@ -65,6 +69,8 @@ mod tests {
                         indexed: true,
                         supports_range: true,
                         estimated_cardinality: None,
+                        encoding_hint: None,
+                    
                     },
                     FilterableColumnSpec {
                         name: "rating".to_string(),
@@ -72,6 +78,8 @@ mod tests {
                         indexed: true,
                         supports_range: true,
                         estimated_cardinality: Some(50),
+                        encoding_hint: None,
+                    
                     },
                 ],
                 index_configs: vec![
@@ -108,6 +116,11 @@ mod tests {
                 }),
                 primary_index_name: "primary_hnsw".to_string(),
                 enable_automatic_index_selection: true,
+                description: None,
+                tags: vec![],
+                owner: None,
+                compression: None,
+                optimization_hints: None,
             }),
             stats: Some(CollectionStats {
                 vector_count: 50000,
@@ -405,7 +418,9 @@ mod tests {
                 indexed: true,
                 supports_range: false,
                 estimated_cardinality: Some(2),
-            });
+                encoding_hint: None,
+            
+                    });
         }
         
         if let Some(ref mut stats) = proto_collection.stats {

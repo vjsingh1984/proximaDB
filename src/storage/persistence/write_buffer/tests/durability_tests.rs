@@ -79,6 +79,13 @@ async fn test_durability_level_no_sync() {
             id: Some("vec1".to_string()),
             vector: vec![1.0, 2.0, 3.0],
             metadata: vec![],
+            timestamp: 0,
+            updated_at: None,
+            expires_at: None,
+            distance: None,
+            rank: None,
+            score: None,
+            version: None,
             ..Default::default()
         },
     ];

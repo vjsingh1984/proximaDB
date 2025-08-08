@@ -96,7 +96,8 @@ fn test_deduplication_without_ids() {
                 rank: None,
                 score: None,
                 distance: None,
-            },
+            
+        },
             score: 0.9,
             tier: StorageTier::Flushed,
             engine: DeduplicationStorageEngine::VIPER,
@@ -116,7 +117,8 @@ fn test_deduplication_without_ids() {
                 rank: None,
                 score: None,
                 distance: None,
-            },
+            
+        },
             score: 0.85,
             tier: StorageTier::Flushed,
             engine: DeduplicationStorageEngine::VIPER,
@@ -275,7 +277,8 @@ fn test_mixed_engine_deduplication() {
         rank: None,
         score: None,
         distance: None,
-    };
+    
+        };
     
     // Add results from different engines
     let results = vec![
@@ -441,6 +444,7 @@ fn test_complex_deduplication_scenario() {
             rank: None,
             score: None,
             distance: None,
+        
         },
         score: 0.85,
         tier: StorageTier::Flushed,

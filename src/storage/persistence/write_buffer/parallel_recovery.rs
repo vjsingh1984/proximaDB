@@ -1,74 +1,73 @@
+// MARKED FOR REMOVAL: This file uses assignment_service which is being removed
+// Recovery should be handled through collection metadata
+/*
 // Copyright 2024 ProximaDB
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 
-//! Parallel WAL Recovery System with Assignment Service Integration
-//!
-//! This module implements fast WAL recovery using the assignment service for
-//! collection discovery and parallel recovery across multiple disks.
-
-use anyhow::{Context, Result};
+use anyhow::{anyhow, Context, Result};
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::Arc;
-use tokio::sync::RwLock;
-use tracing::{debug, info, warn};
+use tokio::sync::{RwLock, Semaphore};
+use tracing::{debug, error, info, warn};
 
-use crate::storage::assignment_service::AssignmentService;
-use crate::storage::persistence::filesystem::FilesystemFactory;
-use crate::storage::memtable::specialized::write_buffer_behavior::WriteBufferVectorBatch;
-// SimpleAtomicSync removed - using AtomicWalSync instead
+use crate::core::VectorRecord;
+use crate::storage::persistence::filesystem::{Filesystem, FilesystemFactory};
+use crate::storage::persistence::write_buffer::avro_serialization_strategy::AvroSerializationStrategy;
+use crate::storage::persistence::write_buffer::bincode_serialization_strategy::BincodeSerializationStrategy;
+use crate::storage::persistence::write_buffer::{OptimizedFormat, SerializationStrategy};
 
-/// Parallel recovery system for WAL data
+/// Parallel WAL recovery system using assignment service for multi-disk coordination
 pub struct ParallelRecoverySystem {
     assignment_service: Arc<dyn AssignmentService>,
     filesystem_factory: Arc<FilesystemFactory>,
     recovery_stats: Arc<RwLock<RecoveryStats>>,
 }
 
-/// Recovery statistics for monitoring
-#[derive(Debug, Clone, Default)]
+/// Recovery statistics for monitoring and diagnostics
+#[derive(Debug, Default, Clone)]
 pub struct RecoveryStats {
-    pub collections_discovered: usize,
-    pub collections_recovered: usize,
+    pub total_collections: usize,
+    pub successful_collections: usize,
+    pub failed_collections: usize,
     pub total_vectors_recovered: usize,
-    pub total_batches_recovered: usize,
+    pub total_sequences_recovered: usize,
+    pub total_files_processed: usize,
+    pub total_bytes_processed: u64,
     pub recovery_duration_ms: u64,
-    pub errors: Vec<RecoveryError>,
-    pub per_disk_stats: HashMap<String, DiskRecoveryStats>,
+    pub disk_stats: HashMap<String, DiskRecoveryStats>,
 }
 
-/// Recovery statistics per disk
-#[derive(Debug, Clone, Default)]
+/// Per-disk recovery statistics
+#[derive(Debug, Default, Clone)]
 pub struct DiskRecoveryStats {
     pub disk_id: String,
-    pub collections_on_disk: usize,
+    pub collections_recovered: usize,
     pub vectors_recovered: usize,
-    pub batches_recovered: usize,
-    pub recovery_duration_ms: u64,
+    pub files_processed: usize,
+    pub bytes_processed: u64,
     pub errors: Vec<String>,
 }
 
-/// Recovery error types
+/// Recovered WAL data for a collection
 #[derive(Debug, Clone)]
-pub enum RecoveryError {
-    CollectionDiscoveryFailed(String),
-    WalFileCorrupted(String),
-    DeserializationFailed(String),
-    AssignmentServiceError(String),
-    FilesystemError(String),
+pub struct RecoveredWalData {
+    pub collection_id: String,
+    pub vectors: Vec<VectorRecord>,
+    pub sequences: Vec<u64>,
+    pub last_sequence: u64,
+    pub file_count: usize,
+    pub total_bytes: u64,
 }
 
-impl std::fmt::Display for RecoveryError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            RecoveryError::CollectionDiscoveryFailed(msg) => write!(f, "Collection discovery failed: {}", msg),
-            RecoveryError::WalFileCorrupted(msg) => write!(f, "WAL file corrupted: {}", msg),
-            RecoveryError::DeserializationFailed(msg) => write!(f, "Deserialization failed: {}", msg),
-            RecoveryError::AssignmentServiceError(msg) => write!(f, "Assignment service error: {}", msg),
-            RecoveryError::FilesystemError(msg) => write!(f, "Filesystem error: {}", msg),
-        }
-    }
+/// Recovery task for parallel execution
+struct RecoveryTask {
+    collection_id: String,
+    wal_directory: String,
+    disk_id: String,
+    filesystem: Arc<dyn Filesystem>,
 }
 
 impl ParallelRecoverySystem {
@@ -98,353 +97,283 @@ impl ParallelRecoverySystem {
             info!("   Disk {}: {} collections", disk_id, collections.len());
         }
 
-        // Phase 2: Recover each disk in parallel
-        let disk_recovery_tasks: Vec<_> = collections_by_disk.into_iter()
-            .map(|(disk_id, collections)| {
-                let recovery_system = self.clone_for_task();
-                tokio::spawn(async move {
-                    recovery_system.recover_disk_collections(&disk_id, collections).await
-                })
-            })
-            .collect();
-
-        // Phase 3: Aggregate results from all disks
-        let mut total_stats = RecoveryStats {
-            recovery_duration_ms: start_time.elapsed().as_millis() as u64,
-            ..Default::default()
-        };
-
-        for task in disk_recovery_tasks {
-            match task.await {
-                Ok(Ok(disk_stats)) => {
-                    total_stats.collections_discovered += disk_stats.collections_on_disk;
-                    total_stats.collections_recovered += if disk_stats.errors.is_empty() { disk_stats.collections_on_disk } else { 0 };
-                    total_stats.total_vectors_recovered += disk_stats.vectors_recovered;
-                    total_stats.total_batches_recovered += disk_stats.batches_recovered;
-                    total_stats.per_disk_stats.insert(disk_stats.disk_id.clone(), disk_stats);
-                }
-                Ok(Err(e)) => {
-                    total_stats.errors.push(RecoveryError::CollectionDiscoveryFailed(e.to_string()));
-                }
-                Err(e) => {
-                    total_stats.errors.push(RecoveryError::AssignmentServiceError(e.to_string()));
+        // Phase 2: Create recovery tasks
+        let mut recovery_tasks = Vec::new();
+        for (disk_id, collections) in collections_by_disk {
+            for collection_id in collections {
+                // Get WAL directory from assignment service
+                let wal_assignment = self.assignment_service
+                    .get_assignment(&collection_id)
+                    .await;
+                
+                if let Some(assignment) = wal_assignment {
+                    let filesystem = self.filesystem_factory
+                        .get_filesystem(&assignment.wal_location)?;
+                    
+                    recovery_tasks.push(RecoveryTask {
+                        collection_id,
+                        wal_directory: assignment.wal_location,
+                        disk_id: disk_id.clone(),
+                        filesystem,
+                    });
+                } else {
+                    warn!("⚠️ No assignment found for collection: {}", collection_id);
                 }
             }
         }
 
-        // Update recovery stats
-        {
-            let mut stats = self.recovery_stats.write().await;
-            *stats = total_stats.clone();
+        let total_tasks = recovery_tasks.len();
+        info!("📋 Created {} recovery tasks", total_tasks);
+
+        // Phase 3: Execute recovery in parallel (limit concurrency per disk)
+        let max_concurrent_per_disk = 4;
+        let semaphore = Arc::new(Semaphore::new(max_concurrent_per_disk));
+        
+        let mut recovery_handles = Vec::new();
+        for task in recovery_tasks {
+            let permit = semaphore.clone().acquire_owned().await?;
+            let stats = self.recovery_stats.clone();
+            
+            let handle = tokio::spawn(async move {
+                let result = Self::recover_collection_task(task).await;
+                drop(permit); // Release semaphore
+                
+                // Update stats
+                let mut stats = stats.write().await;
+                match result {
+                    Ok(recovered_data) => {
+                        stats.successful_collections += 1;
+                        stats.total_vectors_recovered += recovered_data.vectors.len();
+                        stats.total_sequences_recovered += recovered_data.sequences.len();
+                        stats.total_files_processed += recovered_data.file_count;
+                        stats.total_bytes_processed += recovered_data.total_bytes;
+                        
+                        // Update per-disk stats
+                        let disk_stats = stats.disk_stats
+                            .entry(recovered_data.collection_id.clone())
+                            .or_insert_with(DiskRecoveryStats::default);
+                        disk_stats.collections_recovered += 1;
+                        disk_stats.vectors_recovered += recovered_data.vectors.len();
+                        disk_stats.files_processed += recovered_data.file_count;
+                        disk_stats.bytes_processed += recovered_data.total_bytes;
+                        
+                        Ok(recovered_data)
+                    }
+                    Err(e) => {
+                        stats.failed_collections += 1;
+                        error!("❌ Recovery failed: {}", e);
+                        Err(e)
+                    }
+                }
+            });
+            
+            recovery_handles.push(handle);
         }
 
-        info!(
-            "✅ Parallel WAL recovery completed: {} collections, {} vectors recovered in {}ms",
-            total_stats.collections_recovered,
-            total_stats.total_vectors_recovered,
-            total_stats.recovery_duration_ms
-        );
-
-        if !total_stats.errors.is_empty() {
-            warn!("⚠️ Recovery completed with {} errors", total_stats.errors.len());
-            for error in &total_stats.errors {
-                warn!("   - {}", error);
+        // Wait for all recovery tasks to complete
+        let results = futures::future::join_all(recovery_handles).await;
+        
+        // Collect successful recoveries
+        let mut all_recovered_data = Vec::new();
+        for result in results {
+            if let Ok(Ok(recovered_data)) = result {
+                all_recovered_data.push(recovered_data);
             }
         }
 
-        Ok(total_stats)
+        // Final stats update
+        let mut final_stats = self.recovery_stats.write().await;
+        final_stats.total_collections = total_tasks;
+        final_stats.recovery_duration_ms = start_time.elapsed().as_millis() as u64;
+
+        info!("✅ Parallel recovery complete:");
+        info!("   Total collections: {}", final_stats.total_collections);
+        info!("   Successful: {}", final_stats.successful_collections);
+        info!("   Failed: {}", final_stats.failed_collections);
+        info!("   Vectors recovered: {}", final_stats.total_vectors_recovered);
+        info!("   Duration: {}ms", final_stats.recovery_duration_ms);
+
+        Ok(final_stats.clone())
     }
 
-    /// Discover collections grouped by disk using assignment service
+    /// Discover collections using assignment service
     async fn discover_collections_by_assignment(&self) -> Result<HashMap<String, Vec<String>>> {
-        debug!("🔍 Discovering collections using assignment service");
-
-        // Get all assignments from the assignment service
-        let all_assignments = self.assignment_service
-            .get_all_assignments()
-            .await;
-
-        // Group collections by their assigned disk
         let mut collections_by_disk: HashMap<String, Vec<String>> = HashMap::new();
-
-        for (collection_id, assignment) in all_assignments {
-            let disk_id = self.extract_disk_id(&assignment.location_url);
-            collections_by_disk
-                .entry(disk_id)
-                .or_insert_with(Vec::new)
-                .push(collection_id);
+        
+        // Get all storage locations from assignment service
+        let storage_locations = self.assignment_service
+            .get_storage_locations()
+            .await?;
+        
+        for location in storage_locations {
+            let disk_id = Self::extract_disk_id(&location);
+            
+            // Get collections assigned to this location
+            let collections = self.assignment_service
+                .get_collections_at_location(&location)
+                .await?;
+            
+            if !collections.is_empty() {
+                collections_by_disk.insert(disk_id, collections);
+            }
         }
-
+        
         Ok(collections_by_disk)
     }
 
-    /// Recover collections from a specific disk
-    async fn recover_disk_collections(
-        &self,
-        disk_id: &str,
-        collections: Vec<String>,
-    ) -> Result<DiskRecoveryStats> {
-        let start_time = std::time::Instant::now();
-        debug!("🔄 Starting recovery for disk '{}' with {} collections", disk_id, collections.len());
-
-        let mut disk_stats = DiskRecoveryStats {
-            disk_id: disk_id.to_string(),
-            collections_on_disk: collections.len(),
-            ..Default::default()
-        };
-
-        // Recover collections sequentially on same disk to avoid disk thrashing
-        for collection_id in collections {
-            match self.recover_collection(&collection_id).await {
-                Ok(collection_recovery) => {
-                    disk_stats.vectors_recovered += collection_recovery.vectors_recovered;
-                    disk_stats.batches_recovered += collection_recovery.batches_recovered;
-                    debug!("✅ Recovered collection '{}': {} vectors, {} batches", 
-                           collection_id, collection_recovery.vectors_recovered, collection_recovery.batches_recovered);
-                }
-                Err(e) => {
-                    let error_msg = format!("Failed to recover collection '{}': {}", collection_id, e);
-                    disk_stats.errors.push(error_msg.clone());
-                    warn!("{}", error_msg);
-                }
-            }
-        }
-
-        disk_stats.recovery_duration_ms = start_time.elapsed().as_millis() as u64;
+    /// Recover a single collection (executed in parallel)
+    async fn recover_collection_task(task: RecoveryTask) -> Result<RecoveredWalData> {
+        debug!("🔄 Recovering collection {} from {}", task.collection_id, task.wal_directory);
         
-        info!(
-            "✅ Disk '{}' recovery completed: {}/{} collections, {} vectors, {} batches in {}ms",
-            disk_id,
-            disk_stats.collections_on_disk - disk_stats.errors.len(),
-            disk_stats.collections_on_disk,
-            disk_stats.vectors_recovered,
-            disk_stats.batches_recovered,
-            disk_stats.recovery_duration_ms
-        );
+        let mut all_vectors = Vec::new();
+        let mut all_sequences = Vec::new();
+        let mut file_count = 0;
+        let mut total_bytes = 0u64;
+        let mut last_sequence = 0u64;
 
-        Ok(disk_stats)
-    }
+        // List WAL files in the directory
+        let wal_files = task.filesystem
+            .list_files(&format!("{}/logs", task.wal_directory))
+            .await?;
+        
+        debug!("📁 Found {} WAL files for collection {}", wal_files.len(), task.collection_id);
 
-    /// Recover a single collection from WAL
-    async fn recover_collection(&self, collection_id: &str) -> Result<CollectionRecoveryInfo> {
-        debug!("🔄 Recovering collection '{}'", collection_id);
-
-        // Get collection assignment
-        let assignment = self.assignment_service
-            .get_assignment(collection_id)
-            .await
-            .context("Failed to get assignment for collection")?;
-
-        // Use the WAL URL directly - it already includes collection_id/wal
-        let collection_wal_path = &assignment.write_buffer_url;
-        let logs_path = format!("{}/logs", collection_wal_path);
-        let checkpoints_path = format!("{}/checkpoints", collection_wal_path);
-
-        let filesystem = self.filesystem_factory
-            .get_filesystem(&assignment.location_url)
-            .context("Failed to get filesystem for collection")?;
-
-        // Check if WAL directories exist
-        if !filesystem.exists(&logs_path).await? {
-            debug!("No WAL logs directory found for collection '{}', skipping", collection_id);
-            return Ok(CollectionRecoveryInfo {
-                collection_id: collection_id.to_string(),
-                vectors_recovered: 0,
-                batches_recovered: 0,
-                checkpoint_used: false,
-            });
-        }
-
-        // Read checkpoint (if exists) to determine recovery starting point
-        let checkpoint_info = self.read_checkpoint(&checkpoints_path, filesystem).await?;
-        let start_sequence = checkpoint_info.unwrap_or(0);
-
-        // Discover and read WAL batch files
-        let wal_files = self.discover_wal_files(&logs_path, filesystem).await?;
-        let mut batches_recovered = 0;
-        let mut vectors_recovered = 0;
-
+        // Process each WAL file
         for wal_file in wal_files {
-            // Skip files with sequences before checkpoint
-            if self.get_file_sequence(&wal_file) <= start_sequence {
+            if !wal_file.ends_with(".wal") {
                 continue;
             }
 
-            match self.recover_wal_file(&wal_file, filesystem).await {
-                Ok(batch) => {
-                    batches_recovered += 1;
-                    vectors_recovered += batch.vector_records.len();
-                    
-                    // For Phase 2, we'll add the batch to the global memtable
-                    // For now, we just count it as recovered
-                    debug!("📦 Recovered WAL batch: {} vectors", batch.vector_records.len());
-                }
-                Err(e) => {
-                    warn!("Failed to recover WAL file {}: {}", wal_file, e);
-                }
+            // Read file
+            let file_data = task.filesystem
+                .read_file(&wal_file)
+                .await
+                .context(format!("Failed to read WAL file: {}", wal_file))?;
+            
+            total_bytes += file_data.len() as u64;
+            file_count += 1;
+
+            // Detect format and deserialize
+            let format = Self::detect_format(&file_data);
+            let (vectors, sequences) = Self::deserialize_wal_data(&file_data, format)
+                .context(format!("Failed to deserialize WAL file: {}", wal_file))?;
+
+            // Track highest sequence number
+            if let Some(&max_seq) = sequences.iter().max() {
+                last_sequence = last_sequence.max(max_seq);
             }
+
+            all_vectors.extend(vectors);
+            all_sequences.extend(sequences);
         }
 
-        Ok(CollectionRecoveryInfo {
-            collection_id: collection_id.to_string(),
-            vectors_recovered,
-            batches_recovered,
-            checkpoint_used: checkpoint_info.is_some(),
+        info!("✅ Recovered collection {}: {} vectors, {} files", 
+            task.collection_id, all_vectors.len(), file_count);
+
+        Ok(RecoveredWalData {
+            collection_id: task.collection_id,
+            vectors: all_vectors,
+            sequences: all_sequences,
+            last_sequence,
+            file_count,
+            total_bytes,
         })
     }
 
-    /// Read checkpoint to get last processed sequence
-    async fn read_checkpoint(
-        &self,
-        checkpoints_path: &str,
-        filesystem: &dyn crate::storage::persistence::filesystem::FileSystem,
-    ) -> Result<Option<u64>> {
-        let checkpoint_file = format!("{}/latest.checkpoint", checkpoints_path);
-        
-        if !filesystem.exists(&checkpoint_file).await? {
-            return Ok(None);
+    /// Extract disk ID from storage path
+    fn extract_disk_id(path: &str) -> String {
+        // Extract disk identifier from path (e.g., "/mnt/disk1" -> "disk1")
+        if let Some(disk_part) = path.split('/').filter(|s| s.contains("disk")).next() {
+            disk_part.to_string()
+        } else {
+            "default".to_string()
         }
-
-        let checkpoint_data = filesystem.read(&checkpoint_file).await
-            .context("Failed to read checkpoint file")?;
-        
-        let checkpoint_json: serde_json::Value = serde_json::from_slice(&checkpoint_data)
-            .context("Failed to parse checkpoint JSON")?;
-        
-        let last_sequence = checkpoint_json
-            .get("last_sequence")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(0);
-        
-        debug!("📖 Read checkpoint: last sequence {}", last_sequence);
-        Ok(Some(last_sequence))
     }
 
-    /// Discover WAL files in logs directory
-    async fn discover_wal_files(
-        &self,
-        logs_path: &str,
-        filesystem: &dyn crate::storage::persistence::filesystem::FileSystem,
-    ) -> Result<Vec<String>> {
-        let mut wal_files = Vec::new();
-        
-        // List files in logs directory
-        match filesystem.list(logs_path).await {
-            Ok(entries) => {
-                for entry in entries {
-                    if entry.name.ends_with(".wal") && !entry.metadata.is_directory {
-                        wal_files.push(format!("{}/{}", logs_path, entry.name));
-                    }
-                }
-            }
-            Err(_) => {
-                // Directory doesn't exist or is empty
-                debug!("No WAL files found in {}", logs_path);
-            }
+    /// Detect WAL file format from content
+    fn detect_format(data: &[u8]) -> OptimizedFormat {
+        if data.starts_with(b"OBJ\x01") {
+            OptimizedFormat::Avro
+        } else if data.starts_with(&[0xDE, 0xAD, 0xBE, 0xEF]) {
+            OptimizedFormat::Bincode
+        } else {
+            OptimizedFormat::Json // Default fallback
         }
-
-        // Sort by sequence number for proper recovery order
-        wal_files.sort_by_key(|f| self.get_file_sequence(f));
-        
-        debug!("📁 Discovered {} WAL files in {}", wal_files.len(), logs_path);
-        Ok(wal_files)
     }
 
-    /// Extract sequence number from WAL filename
-    fn get_file_sequence(&self, file_path: &str) -> u64 {
-        // Extract sequence from filename like "batch_000000010_000000020.wal"
-        if let Some(filename) = file_path.split('/').last() {
-            if let Some(parts) = filename.strip_prefix("batch_").and_then(|s| s.strip_suffix(".wal")) {
-                if let Some(start_seq) = parts.split('_').next() {
-                    return start_seq.parse::<u64>().unwrap_or(0);
-                }
+    /// Deserialize WAL data based on format
+    fn deserialize_wal_data(
+        data: &[u8],
+        format: OptimizedFormat,
+    ) -> Result<(Vec<VectorRecord>, Vec<u64>)> {
+        match format {
+            OptimizedFormat::Avro => {
+                let strategy = AvroSerializationStrategy;
+                strategy.deserialize(data)
+            }
+            OptimizedFormat::Bincode => {
+                let strategy = BincodeSerializationStrategy;
+                strategy.deserialize(data)
+            }
+            OptimizedFormat::Json => {
+                // JSON deserialization
+                let json_str = std::str::from_utf8(data)?;
+                let parsed: serde_json::Value = serde_json::from_str(json_str)?;
+                
+                // Extract vectors and sequences from JSON
+                let vectors = parsed["vectors"]
+                    .as_array()
+                    .ok_or_else(|| anyhow!("Missing vectors field"))?
+                    .iter()
+                    .map(|v| serde_json::from_value(v.clone()))
+                    .collect::<Result<Vec<VectorRecord>, _>>()?;
+                
+                let sequences = parsed["sequences"]
+                    .as_array()
+                    .ok_or_else(|| anyhow!("Missing sequences field"))?
+                    .iter()
+                    .map(|s| s.as_u64().unwrap_or(0))
+                    .collect();
+                
+                Ok((vectors, sequences))
             }
         }
-        0
     }
 
-    /// Recover a single WAL file
-    async fn recover_wal_file(
-        &self,
-        file_path: &str,
-        filesystem: &dyn crate::storage::persistence::filesystem::FileSystem,
-    ) -> Result<WriteBufferVectorBatch> {
-        let file_data = filesystem.read(file_path).await
-            .context("Failed to read WAL file")?;
-
-        // For Phase 2, we'll implement proper deserialization
-        // For now, create a placeholder batch
-        use crate::storage::persistence::write_buffer::BatchId;
-        
-        let batch_id = BatchId::new();
-
-        let batch = WriteBufferVectorBatch {
-            batch_id,
-            vector_records: Arc::new(Vec::new()), // TODO: Deserialize actual vectors
-            created_at: std::time::SystemTime::now(),
-            total_size_bytes: file_data.len(),
-            is_flushed: false,
-            metadata_bloom_filter: None,
-        };
-
-        debug!("📦 Recovered WAL file: {} bytes", file_data.len());
-        Ok(batch)
-    }
-
-    /// Extract disk ID from storage URL
-    fn extract_disk_id(&self, storage_url: &str) -> String {
-        if let Some(file_path) = storage_url.strip_prefix("file://") {
-            if let Some(disk_part) = file_path.split('/').find(|part| part.starts_with("disk")) {
-                return disk_part.to_string();
-            }
-        }
-        
-        // Fallback: use hash of URL
-        use std::collections::hash_map::DefaultHasher;
-        use std::hash::{Hash, Hasher};
-        
-        let mut hasher = DefaultHasher::new();
-        storage_url.hash(&mut hasher);
-        format!("disk_{}", hasher.finish() % 1000)
-    }
-
-    /// Clone for task execution
-    fn clone_for_task(&self) -> Self {
-        Self {
-            assignment_service: self.assignment_service.clone(),
-            filesystem_factory: self.filesystem_factory.clone(),
-            recovery_stats: self.recovery_stats.clone(),
-        }
-    }
-
-    /// Get current recovery statistics
-    pub async fn get_recovery_stats(&self) -> RecoveryStats {
+    /// Get recovery progress (for monitoring)
+    pub async fn get_progress(&self) -> RecoveryStats {
         self.recovery_stats.read().await.clone()
     }
 }
 
-/// Recovery information for a single collection
-#[derive(Debug, Clone)]
-pub struct CollectionRecoveryInfo {
-    pub collection_id: String,
-    pub vectors_recovered: usize,
-    pub batches_recovered: usize,
-    pub checkpoint_used: bool,
-}
-
 #[cfg(test)]
 mod tests {
-    
-    
+    use super::*;
+
     #[tokio::test]
     async fn test_parallel_recovery() {
-        // TODO: Implement comprehensive recovery tests
-        assert!(true);
+        // Test will be implemented when assignment service is refactored
     }
-    
+
     #[tokio::test]
-    async fn test_collection_discovery() {
-        // TODO: Test assignment service-based collection discovery
-        assert!(true);
+    async fn test_format_detection() {
+        let avro_data = b"OBJ\x01test";
+        assert!(matches!(
+            ParallelRecoverySystem::detect_format(avro_data),
+            OptimizedFormat::Avro
+        ));
+
+        let bincode_data = &[0xDE, 0xAD, 0xBE, 0xEF, 0x00];
+        assert!(matches!(
+            ParallelRecoverySystem::detect_format(bincode_data),
+            OptimizedFormat::Bincode
+        ));
+
+        let json_data = b"{}";
+        assert!(matches!(
+            ParallelRecoverySystem::detect_format(json_data),
+            OptimizedFormat::Json
+        ));
     }
 }
+*/

@@ -35,6 +35,7 @@ async fn test_viper_metadata_filtering() -> anyhow::Result<()> {
             distance_metric: DistanceMetric::Cosine as i32,
             storage_engine: StorageEngine::Viper as i32,
             primary_indexing_algorithm: IndexingAlgorithm::Hnsw as i32,
+            storage_location: None,
             filterable_columns: vec![
                 FilterableColumnSpec {
                     name: "category".to_string(),
@@ -42,6 +43,7 @@ async fn test_viper_metadata_filtering() -> anyhow::Result<()> {
                     indexed: true,
                     supports_range: false,
                     estimated_cardinality: None,
+                    encoding_hint: None,
                 },
                 FilterableColumnSpec {
                     name: "brand".to_string(),
@@ -49,6 +51,7 @@ async fn test_viper_metadata_filtering() -> anyhow::Result<()> {
                     indexed: true,
                     supports_range: false,
                     estimated_cardinality: None,
+                    encoding_hint: None,
                 },
             ],
             index_configs: vec![],
@@ -58,6 +61,8 @@ async fn test_viper_metadata_filtering() -> anyhow::Result<()> {
             description: None,
             owner: None,
             tags: Default::default(),
+            compression: None,
+            optimization_hints: None,
         }),
         query_params: Default::default(),
         options: Default::default(),
@@ -83,7 +88,13 @@ async fn test_viper_metadata_filtering() -> anyhow::Result<()> {
                 value: Some(metadata_item::Value::StringValue("Apple".to_string())),
             },
         ],
-        ..Default::default()
+        timestamp: 0,
+        updated_at: None,
+        expires_at: None,
+        version: None,
+        distance: None,
+        rank: None,
+        score: None,
     });
     
     vectors.push(VectorRecord {
@@ -99,7 +110,13 @@ async fn test_viper_metadata_filtering() -> anyhow::Result<()> {
                 value: Some(metadata_item::Value::StringValue("Samsung".to_string())),
             },
         ],
-        ..Default::default()
+        timestamp: 0,
+        updated_at: None,
+        expires_at: None,
+        version: None,
+        distance: None,
+        rank: None,
+        score: None,
     });
     
     vectors.push(VectorRecord {
@@ -115,7 +132,13 @@ async fn test_viper_metadata_filtering() -> anyhow::Result<()> {
                 value: Some(metadata_item::Value::StringValue("Sony".to_string())),
             },
         ],
-        ..Default::default()
+        timestamp: 0,
+        updated_at: None,
+        expires_at: None,
+        version: None,
+        distance: None,
+        rank: None,
+        score: None,
     });
     
     // Books
@@ -132,7 +155,13 @@ async fn test_viper_metadata_filtering() -> anyhow::Result<()> {
                 value: Some(metadata_item::Value::StringValue("Penguin".to_string())),
             },
         ],
-        ..Default::default()
+        timestamp: 0,
+        updated_at: None,
+        expires_at: None,
+        version: None,
+        distance: None,
+        rank: None,
+        score: None,
     });
     
     vectors.push(VectorRecord {
@@ -148,7 +177,13 @@ async fn test_viper_metadata_filtering() -> anyhow::Result<()> {
                 value: Some(metadata_item::Value::StringValue("OReilly".to_string())),
             },
         ],
-        ..Default::default()
+        timestamp: 0,
+        updated_at: None,
+        expires_at: None,
+        version: None,
+        distance: None,
+        rank: None,
+        score: None,
     });
     
     let insert_request = VectorBatchRequest {

@@ -9,7 +9,7 @@ use proximadb::proto::proximadb::vector_operation_response::ResultPayload;
 #[tokio::test]
 #[ignore] // Requires server to be running
 async fn test_viper_metadata_filter_diagnosis() -> anyhow::Result<()> {
-    println!("🔍 Starting VIPER metadata filter diagnosis test");
+    println!(" Starting VIPER metadata filter diagnosis test");
     
     // Connect to running server
     let mut client = ProximaDbClient::connect("http://localhost:5679").await?;
@@ -37,6 +37,9 @@ async fn test_viper_metadata_filter_diagnosis() -> anyhow::Result<()> {
             distance_metric: DistanceMetric::Cosine as i32,
             storage_engine: StorageEngine::Viper as i32,
             primary_indexing_algorithm: IndexingAlgorithm::Hnsw as i32,
+            storage_location: None,
+            compression: None,
+            optimization_hints: None,
             filterable_columns: vec![
                 FilterableColumnSpec {
                     name: "category".to_string(),
@@ -44,21 +47,28 @@ async fn test_viper_metadata_filter_diagnosis() -> anyhow::Result<()> {
                     indexed: true,
                     supports_range: false,
                     estimated_cardinality: None,
-                },
+                    encoding_hint: None,
+                
+            
+                    },
                 FilterableColumnSpec {
                     name: "brand".to_string(),
                     data_type: FilterableDataType::FilterableString as i32,
                     indexed: true,
                     supports_range: false,
                     estimated_cardinality: None,
-                },
+                    encoding_hint: None,
+                
+                    },
                 FilterableColumnSpec {
                     name: "price".to_string(),
                     data_type: FilterableDataType::FilterableFloat as i32,
                     indexed: true,
                     supports_range: true,
                     estimated_cardinality: None,
-                },
+                    encoding_hint: None,
+                
+                    },
             ],
             index_configs: vec![],
             quantization_config: None,
@@ -73,7 +83,7 @@ async fn test_viper_metadata_filter_diagnosis() -> anyhow::Result<()> {
         migration_config: Default::default(),
     })).await?;
     
-    println!("✅ Created collection");
+    println!(" Created collection");
     
     // Insert test data - mix of electronics and books
     let mut vectors = Vec::new();
@@ -83,6 +93,13 @@ async fn test_viper_metadata_filter_diagnosis() -> anyhow::Result<()> {
         vectors.push(VectorRecord {
             id: Some(format!("elec_{}", i)),
             vector: vec![0.1 + (i as f32 * 0.01); 128],
+            timestamp: 0,
+            updated_at: None,
+            expires_at: None,
+            distance: None,
+            rank: None,
+            score: None,
+            version: None,
             metadata: vec![
                 MetadataItem {
                     key: "category".to_string(),
@@ -114,6 +131,12 @@ async fn test_viper_metadata_filter_diagnosis() -> anyhow::Result<()> {
         vectors.push(VectorRecord {
             id: Some(format!("book_{}", i)),
             vector: vec![0.5 + (i as f32 * 0.01); 128],
+            timestamp: 0,
+            updated_at: None,
+            expires_at: None,
+            distance: None,
+            rank: None,
+            score: None,
             metadata: vec![
                 MetadataItem {
                     key: "category".to_string(),
@@ -146,13 +169,13 @@ async fn test_viper_metadata_filter_diagnosis() -> anyhow::Result<()> {
     };
     
     let response = client.vector_batch(tonic::Request::new(insert_request)).await?;
-    println!("✅ Inserted {} vectors", response.get_ref().vector_ids.len());
+    println!(" Inserted {} items", response.get_ref().vector_ids.len());
     
     // Wait for indexing and flush
     tokio::time::sleep(tokio::time::Duration::from_secs(3)).await;
     
     // Test 1: Filter by category = 'electronics' (should return 5)
-    println!("\n🧪 Test 1: Filter by category = 'electronics'");
+    println!("Test 1: Filter by category = 'electronics'");
     
     let search_request = VectorSearchRequest {
         collection_id: collection_name.to_string(),
@@ -186,7 +209,7 @@ async fn test_viper_metadata_filter_diagnosis() -> anyhow::Result<()> {
     let search_results = if let Some(ResultPayload::CompactResults(ref compact)) = search_response.get_ref().result_payload {
         &compact.results
     } else {
-        println!("⚠️  No compact results found");
+        println!("  No compact results available");
         return Ok(());
     };
     
@@ -228,20 +251,20 @@ async fn test_viper_metadata_filter_diagnosis() -> anyhow::Result<()> {
         }
     }
     
-    println!("\n📈 Results Summary:");
+    println!("Results Summary:");
     println!("  - Correct (electronics): {}", electronics_count);
     println!("  - Wrong (books): {}", books_count);
     println!("  - Total: {}", search_results.len());
     
     if !wrong_results.is_empty() {
-        println!("❌ FILTER FAILURE: Found {} wrong results:", wrong_results.len());
+        println!(" FILTER FAILURE: Found {} wrong results:", wrong_results.len());
         for wrong in &wrong_results {
             println!("    - {}", wrong);
         }
     }
     
     // Test 2: Filter by brand = 'Apple' (should return 1)
-    println!("\n🧪 Test 2: Filter by brand = 'Apple'");
+    println!("Test 2: Filter by brand = 'Apple'");
     
     let search_request = VectorSearchRequest {
         collection_id: collection_name.to_string(),
@@ -275,7 +298,7 @@ async fn test_viper_metadata_filter_diagnosis() -> anyhow::Result<()> {
     let search_results = if let Some(ResultPayload::CompactResults(ref compact)) = search_response.get_ref().result_payload {
         &compact.results
     } else {
-        println!("⚠️  No compact results found");
+        println!("  No compact results available");
         return Ok(());
     };
     
@@ -306,12 +329,12 @@ async fn test_viper_metadata_filter_diagnosis() -> anyhow::Result<()> {
         }
     }
     
-    println!("\n📈 Results Summary:");
+    println!("Results Summary:");
     println!("  - Correct (Apple): {}", apple_count);
     println!("  - Wrong (non-Apple): {}", non_apple_results.len());
     
     if !non_apple_results.is_empty() {
-        println!("❌ FILTER FAILURE: Found {} wrong results:", non_apple_results.len());
+        println!(" FILTER FAILURE: Found {} wrong results:", non_apple_results.len());
         for wrong in &non_apple_results {
             println!("    - {}", wrong);
         }
@@ -328,14 +351,14 @@ async fn test_viper_metadata_filter_diagnosis() -> anyhow::Result<()> {
     })).await?;
     
     // Report results
-    println!("\n🔍 DIAGNOSIS COMPLETE:");
+    println!("DIAGNOSIS COMPLETE:");
     if wrong_results.is_empty() && non_apple_results.is_empty() {
-        println!("✅ VIPER metadata filtering is working correctly!");
+        println!(" VIPER metadata filtering is working correctly!");
     } else {
-        println!("❌ VIPER metadata filtering has critical issues:");
-        println!("  - Category filter returned {} wrong results", wrong_results.len());
-        println!("  - Brand filter returned {} wrong results", non_apple_results.len());
-        println!("This confirms the P0 issue: VIPER metadata filters return incorrect results");
+        println!(" VIPER metadata filtering has critical issues:");
+        println!("  - Category filter returned {} incorrect items", wrong_results.len());
+        println!("  - Brand filter returned {} incorrect items", non_apple_results.len());
+        println!("Critical issue detected in VIPER metadata system");
     }
     
     Ok(())

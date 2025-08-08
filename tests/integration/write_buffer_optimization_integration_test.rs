@@ -157,6 +157,7 @@ async fn create_direct_vector_service(config: &WalOptimizationTestConfig) -> Res
             enabled: true,
             ..Default::default()
         }),
+        decompression_cache_config: None,
         max_files_per_level: 10,
         level_size_multiplier: 10.0,
         background_thread_count: 2,

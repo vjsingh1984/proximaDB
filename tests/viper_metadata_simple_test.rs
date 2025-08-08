@@ -35,6 +35,9 @@ async fn test_metadata_filtering_simple() -> anyhow::Result<()> {
             distance_metric: DistanceMetric::Cosine as i32,
             storage_engine: StorageEngine::Viper as i32,
             primary_indexing_algorithm: IndexingAlgorithm::Hnsw as i32,
+            storage_location: None,
+            compression: None,
+            optimization_hints: None,
             filterable_columns: vec![
                 FilterableColumnSpec {
                     name: "category".to_string(),
@@ -42,7 +45,10 @@ async fn test_metadata_filtering_simple() -> anyhow::Result<()> {
                     indexed: true,
                     supports_range: false,
                     estimated_cardinality: None,
-                },
+                    encoding_hint: None,
+                
+            
+                    },
             ],
             index_configs: vec![],
             quantization_config: None,
@@ -70,6 +76,12 @@ async fn test_metadata_filtering_simple() -> anyhow::Result<()> {
                     value: Some(metadata_item::Value::StringValue("electronics".to_string())),
                 },
             ],
+            timestamp: 0,
+            updated_at: None,
+            expires_at: None,
+            distance: None,
+            rank: None,
+            score: None,
             ..Default::default()
         },
         VectorRecord {
@@ -81,6 +93,12 @@ async fn test_metadata_filtering_simple() -> anyhow::Result<()> {
                     value: Some(metadata_item::Value::StringValue("books".to_string())),
                 },
             ],
+            timestamp: 0,
+            updated_at: None,
+            expires_at: None,
+            distance: None,
+            rank: None,
+            score: None,
             ..Default::default()
         },
     ];

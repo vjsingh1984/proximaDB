@@ -394,7 +394,6 @@ impl SharedServices {
         debug!("🔧 SharedServices::new - Creating SST engine...");
         let sst_engine = Arc::new(
             crate::storage::engines::sst::SstStorage::new(
-                "sst_storage".to_string(),
                 storage_config.sst_config.clone(),
                 filesystem_factory.clone(),
                 Arc::new(crate::compute::unified_distance::UnifiedDistanceCompute::default()),
@@ -449,6 +448,7 @@ impl SharedServices {
                     owner: None,
                     compression: None,  // SDK-driven compression (added 2025-08-06)
                     optimization_hints: None,  // Storage optimization hints (added 2025-08-06)
+                    storage_location: metadata.storage_assignment.as_ref().map(|sa| sa.base_location.clone()),
                 };
 
                 let proto_collection = crate::proto::proximadb::Collection {
@@ -463,10 +463,8 @@ impl SharedServices {
                     updated_at: metadata.updated_at.timestamp_millis(),
                     storage_assignment: metadata.storage_assignment.as_ref().map(|sa| {
                         crate::proto::proximadb::StorageAssignment {
-                            data_location: sa.data_location.clone(),
-                            wal_location: sa.wal_location.clone(),
-                            location_index: sa.location_index as u32,
-                            assigned_at: sa.assigned_at.timestamp_micros(),
+                            base_location: sa.base_location.clone(),
+                            assigned_at: sa.assigned_at.timestamp(),
                         }
                     }),
                 };

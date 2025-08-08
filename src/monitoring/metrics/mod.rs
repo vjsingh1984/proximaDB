@@ -6,12 +6,14 @@
 //! Comprehensive metrics collection and monitoring system for ProximaDB
 
 pub mod collector;
+pub mod compression;
 pub mod exporters;
 pub mod index_metrics;
 pub mod query_metrics;
 pub mod registry;
 pub mod server_metrics;
 pub mod storage_metrics;
+pub mod updater;
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};

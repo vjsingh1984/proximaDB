@@ -92,8 +92,8 @@ pub struct BackgroundFlushContext {
     // === Engine Configuration ===
     /// Storage engine type (VIPER vs SST)
     pub storage_engine: StorageEngineType,
-    /// Data storage location path
-    pub data_location: String,
+    /// Base storage location path (e.g., "file:///data/disk1")
+    pub base_location: String,
     
     // === Vector Configuration ===
     /// Vector dimension size
@@ -205,7 +205,7 @@ impl BackgroundFlushContext {
         Ok(Self {
             collection_id: collection_id.to_string(),
             storage_engine,
-            data_location: storage_assignment.data_location.clone(),
+            base_location: storage_assignment.base_location.clone(),
             dimension: config.dimension as usize,
             distance_metric,
             compression_config,
@@ -223,7 +223,7 @@ impl BackgroundFlushContext {
         Self {
             collection_id: collection_id.to_string(),
             storage_engine,
-            data_location: format!("/tmp/test_data/{}", collection_id),
+            base_location: format!("file:///tmp/test_data"),
             dimension: 384,
             distance_metric: DistanceMetric::Cosine,
             compression_config: CompressionConfig::default(),

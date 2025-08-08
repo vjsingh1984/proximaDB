@@ -7,6 +7,7 @@ mod tests {
         store::PersistentMetricsStore,
         MetricsConfig,
     };
+    use crate::storage::persistence::filesystem::FilesystemFactory;
     use std::sync::Arc;
     use tokio::time::{sleep, Duration};
     use anyhow::Result;
@@ -17,18 +18,22 @@ mod tests {
         let config = MetricsConfig {
             enabled: true,
             collection_partitions: 4,
-            storage_path: "/tmp/proximadb_metrics_updater_test".to_string(),
+            storage_path: "file:///tmp/proximadb_metrics_updater_test".to_string(),
             flush_interval_seconds: 30,
             retention_days: 7,
             parallel_scan_threshold: 10,
             sparsity_threshold: 0.3,
             quantization_size_threshold: 1_000_000,
+            snapshot_interval_seconds: 60,
+            max_memory_mb: 512,
         };
         
         // Clean up test directory
-        let _ = tokio::fs::remove_dir_all(&config.storage_path).await;
+        let _ = tokio::fs::remove_dir_all("/tmp/proximadb_metrics_updater_test").await;
         
-        let store = PersistentMetricsStore::new(config).await?;
+        let filesystem_config = Default::default();
+        let filesystem_factory = Arc::new(FilesystemFactory::new(filesystem_config).await?);
+        let store = PersistentMetricsStore::new(filesystem_factory, config).await?;
         Ok(Arc::new(DefaultMetricsUpdater::new(Arc::new(store))))
     }
 

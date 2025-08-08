@@ -156,7 +156,14 @@ async fn test_isolated_write_buffer_batch_operations() -> Result<()> {
         
         let batch_vectors = (batch_start..batch_end).map(|i| {
             VectorRecord {
-                id: Some(format!("{}_{:03}", env.collection_id(), i)),
+                id: Some(format!("{}", i)),
+            timestamp: 0,
+            updated_at: None,
+            expires_at: None,
+            distance: None,
+            rank: None,
+            score: None,
+        }_{:03}", env.collection_id(), i)),
                 vector: vec![i as f32, (i + 1) as f32, (i + 2) as f32],
                 metadata: vec![
                     MetadataItem {
@@ -230,7 +237,14 @@ async fn test_isolated_write_buffer_concurrent_writes() -> Result<()> {
         let handle = tokio::spawn(async move {
             let vectors = (0..vectors_per_writer).map(|i| {
                 VectorRecord {
-                    id: Some(format!("{}_writer_{}_{}", collection_id, writer_id, i)),
+                    id: Some(format!("{}", i)),
+            timestamp: 0,
+            updated_at: None,
+            expires_at: None,
+            distance: None,
+            rank: None,
+            score: None,
+        }_writer_{}_{}", collection_id, writer_id, i)),
                     vector: vec![
                         (writer_id * 10 + i) as f32,
                         (writer_id * 10 + i + 1) as f32,
@@ -364,7 +378,14 @@ async fn test_isolated_write_buffer_compression() -> Result<()> {
     // Create larger vectors to see compression effect
     let large_vectors = (0..10).map(|i| {
         VectorRecord {
-            id: Some(format!("{}_{:03}", env.collection_id(), i)),
+            id: Some(format!("{}", i)),
+            timestamp: 0,
+            updated_at: None,
+            expires_at: None,
+            distance: None,
+            rank: None,
+            score: None,
+        }_{:03}", env.collection_id(), i)),
             vector: vec![i as f32; 100], // 100-dimensional vectors with repeated values
             metadata: vec![
                 MetadataItem {

@@ -39,7 +39,10 @@ pub mod core;
 // pub mod distributed;  // Temporarily disabled for single-node optimization
 pub mod handlers;
 pub mod index;
-pub mod metrics;
+// 🔴 UNUSED MODULE - COMMENTED OUT FOR REMOVAL
+// Complete duplicate of working monitoring/metrics system
+// ~2,687 lines of unused code - Safe to remove completely
+// pub mod metrics;
 pub mod monitoring;
 pub mod network;
 pub mod proto;
@@ -67,7 +70,8 @@ pub type Result<T> = std::result::Result<T, Box<dyn std::error::Error + Send + S
 pub struct ProximaDB {
     storage: Arc<RwLock<storage::StorageEngine>>,
     // consensus: consensus::ConsensusEngine,  // Disabled - requires raft dependency
-    _query_engine: query::QueryEngine,
+    // 🔴 UNUSED FIELD - Query engine never used (placeholder only)
+    // _query_engine: query::QueryEngine,
     multi_server: Option<network::MultiServer>,
     _config: core::Config,
 }
@@ -104,11 +108,14 @@ impl ProximaDB {
 
         // let consensus = consensus::ConsensusEngine::new(config.consensus.clone()).await?; // Disabled
 
+        // 🔴 UNUSED MODULE - Query engine is only a placeholder
+        // The entire SQL engine infrastructure appears unused
+        // Vector search functionality is handled by DirectVectorService
         // Note: query_engine needs to be updated to work with Arc<RwLock<StorageEngine>>
         // For now, we'll create a placeholder
-        tracing::debug!("🔧 ProximaDB::new - Creating query engine...");
-        let query_engine = query::QueryEngine::new_placeholder().await?;
-        tracing::debug!("✅ ProximaDB::new - Query engine created successfully");
+        // tracing::debug!("🔧 ProximaDB::new - Creating query engine...");
+        // let query_engine = query::QueryEngine::new_placeholder().await?;
+        // tracing::debug!("✅ ProximaDB::new - Query engine created successfully");
 
         // Create multi-server configuration from actual config values
         use std::net::SocketAddr;
@@ -155,7 +162,7 @@ impl ProximaDB {
         Ok(Self {
             storage,
             // consensus,  // Disabled
-            _query_engine: query_engine,
+            // _query_engine: query_engine,  // Commented out - unused
             multi_server: Some(multi_server),
             _config: config,
         })

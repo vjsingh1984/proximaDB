@@ -23,7 +23,8 @@ fn create_test_vector(id: &str, dimension: usize) -> VectorRecord {
         rank: None,
         score: None,
         distance: None,
-    }
+    
+        }
 }
 
 #[tokio::test]

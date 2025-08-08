@@ -63,7 +63,9 @@ fn create_test_search_context() -> UnifiedSearchContext {
             enable_quantization: false,
             enable_metadata_filtering: true,
             estimated_document_count: 10000,
-        }),
+                compression: None,
+                optimization_hints: None,
+            }),
     }
 }
 

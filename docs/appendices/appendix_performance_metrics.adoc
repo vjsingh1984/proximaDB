@@ -7,7 +7,6 @@ Comprehensive performance benchmarks, metrics, and optimization guidelines for P
 == Performance Overview
 
 image::storage-performance-unified.svg[Storage Performance Architecture, align=center, width=900]
-_link:../diagrams/storage-performance-unified.mmd[View source diagram]_
 
 ProximaDB delivers industry-leading performance for vector search operations through optimized storage engines, hardware acceleration, and efficient protocol implementations.
 

@@ -59,7 +59,8 @@ mod tests {
             mmap_enabled: false,
             prefetch_enabled: false,
             prefetch_size_kb: 64,
-        };
+        decompression_cache_config: None,
+    };
         
         // Configure write buffer separately
         config.write_buffer_config = WriteBufferUserConfig {
@@ -94,6 +95,7 @@ mod tests {
             rank: None,
             score: None,
             distance: None,
+        
         }
     }
 

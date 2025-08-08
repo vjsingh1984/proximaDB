@@ -32,7 +32,14 @@ fn create_test_vectors_with_metadata(
 ) -> Vec<VectorRecord> {
     (start_id..start_id + count)
         .map(|i| VectorRecord {
-            id: Some(format!("vec_{}", i)),
+            id: Some(format!("vec_{,
+            timestamp: 0,
+            updated_at: None,
+            expires_at: None,
+            distance: None,
+            rank: None,
+            score: None,
+        }", i)),
             vector: vec![(i % 256) as f32; dimension],
             metadata: vec![
                 proximadb::proto::proximadb::MetadataItem {

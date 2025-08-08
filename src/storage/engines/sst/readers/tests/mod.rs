@@ -17,3 +17,6 @@ pub mod test_metadata_filtering;
 
 // Fixed metadata filtering tests
 pub mod test_metadata_filtering_fixed;
+
+// SST1 magic marker validation tests
+pub mod test_sst1_validation;

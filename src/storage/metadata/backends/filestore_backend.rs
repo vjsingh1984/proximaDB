@@ -1519,7 +1519,11 @@ mod tests {
             description: Some("Test collection".to_string()),
             tags: vec![],
             owner: Some("test".to_string()),
-        };
+            compression: None,
+            storage_location: None,
+            optimization_hints: None,
+        
+            };
         
         // Create a proto collection
         let collection = Collection {
@@ -1603,6 +1607,11 @@ mod integration_tests {
                 description: Some("Test atomic collection".to_string()),
                 tags: vec!["test".to_string()],
                 owner: Some("test_user".to_string()),
+                compression: None,
+            storage_location: None,
+                optimization_hints: None,
+            storage_location: None,
+            
             }),
             stats: Some(CollectionStats {
                 vector_count: 0,
@@ -1674,6 +1683,11 @@ mod integration_tests {
                 description: Some("Test relative collection".to_string()),
                 tags: vec!["test".to_string()],
                 owner: Some("test_user".to_string()),
+                compression: None,
+            storage_location: None,
+                optimization_hints: None,
+            storage_location: None,
+            
             }),
             stats: Some(CollectionStats {
                 vector_count: 0,

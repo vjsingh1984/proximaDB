@@ -70,15 +70,16 @@ fn create_test_collection(collection_id: &str, base_path: &str) -> crate::proto:
             description: None,
             tags: vec![],
             owner: None,
-        }),
+                compression: None,
+                storage_location: None,
+                optimization_hints: None,
+            }),
         stats: None,
         created_at: chrono::Utc::now().timestamp(),
         updated_at: chrono::Utc::now().timestamp(),
         storage_assignment: Some(StorageAssignment {
-            data_location: format!("file://{}/{}/data", base_path, collection_id),
-            wal_location: format!("file://{}/{}/write_buffer", base_path, collection_id),
-            location_index: 0,
-            assigned_at: chrono::Utc::now().timestamp_micros(),
+            base_location: format!("file://{}", base_path),
+            assigned_at: chrono::Utc::now().timestamp(),
         }),
     }
 }
@@ -115,7 +116,7 @@ async fn test_viper_engine_creation() {
     let filesystem_factory = Arc::new(FilesystemFactory::new(Default::default()).await.unwrap());
     
     let engine = ViperEngine::from_core_config(crate::core::config::ViperConfig::default(), filesystem_factory).await
-        .expect("Failed to create VIPER engine");
+        .expect("Failed to create VIPER storage_engine");
     
     assert_eq!(engine.engine_name(), "VIPER");
 }
@@ -127,7 +128,7 @@ async fn test_single_vector_operations() {
     
     let filesystem_factory = Arc::new(FilesystemFactory::new(Default::default()).await.unwrap());
     let engine = ViperEngine::from_core_config(crate::core::config::ViperConfig::default(), filesystem_factory).await
-        .expect("Failed to create engine");
+        .expect("Failed to create storage_engine");
     
     let collection_id = "test_collection";
     
@@ -149,13 +150,14 @@ async fn test_single_vector_operations() {
         timeout_ms: None,
         trigger_compaction: false,
     
-        collection_config: None,};
-    engine.do_flush(&flush_params).await.expect("Failed to flush");
+        collection_config: None,
+    };
+    engine.do_flush(&flush_params).await.expect("Failed to perform vector_flush");
     
     // Debug: Check if files were created
     use tokio::fs;
-    let data_dir = format!("{}/{}/data", temp_dir.path().to_str().unwrap(), collection_id);
-    let mut entries = fs::read_dir(&data_dir).await.expect("Failed to read directory");
+    let data_dir = format!("{}/{}/viper_data", temp_dir.path().to_str().unwrap(), collection_id);
+    let mut entries = fs::read_dir(&data_dir).await.expect("Failed to read viper data_dir");
     let mut file_count = 0;
     while let Some(entry) = entries.next_entry().await.expect("Failed to read entry") {
         println!("Found file: {:?}", entry.path());
@@ -187,7 +189,7 @@ async fn test_batch_insertion_and_flush() {
     
     let filesystem_factory = Arc::new(FilesystemFactory::new(Default::default()).await.unwrap());
     let engine = ViperEngine::from_core_config(crate::core::config::ViperConfig::default(), filesystem_factory).await
-        .expect("Failed to create engine");
+        .expect("Failed to create storage_engine");
     
     let collection_id = "batch_test";
     
@@ -229,7 +231,7 @@ async fn test_similarity_search() {
     
     let filesystem_factory = Arc::new(FilesystemFactory::new(Default::default()).await.unwrap());
     let engine = ViperEngine::from_core_config(crate::core::config::ViperConfig::default(), filesystem_factory).await
-        .expect("Failed to create engine");
+        .expect("Failed to create storage_engine");
     
     let collection_id = "search_test";
     
@@ -291,7 +293,7 @@ async fn test_collection_operations() {
     
     let filesystem_factory = Arc::new(FilesystemFactory::new(Default::default()).await.unwrap());
     let engine = ViperEngine::from_core_config(crate::core::config::ViperConfig::default(), filesystem_factory).await
-        .expect("Failed to create engine");
+        .expect("Failed to create storage_engine");
     
     let collection_id = "ops_test";
     
@@ -330,7 +332,7 @@ async fn test_compaction() {
     
     let filesystem_factory = Arc::new(FilesystemFactory::new(Default::default()).await.unwrap());
     let engine = ViperEngine::from_core_config(crate::core::config::ViperConfig::default(), filesystem_factory).await
-        .expect("Failed to create engine");
+        .expect("Failed to create storage_engine");
     
     let collection_id = "compaction_test";
     
@@ -390,7 +392,7 @@ async fn test_multi_collection_isolation() {
     
     let filesystem_factory = Arc::new(FilesystemFactory::new(Default::default()).await.unwrap());
     let engine = ViperEngine::from_core_config(crate::core::config::ViperConfig::default(), filesystem_factory).await
-        .expect("Failed to create engine");
+        .expect("Failed to create storage_engine");
     
     let collections = vec!["col_a", "col_b", "col_c"];
     
@@ -514,7 +516,7 @@ async fn test_search_vectors_unified() {
     let config = create_test_config(temp_dir.path().to_str().unwrap());
     let filesystem_factory = Arc::new(FilesystemFactory::new(Default::default()).await.unwrap());
     let engine = ViperEngine::from_core_config(crate::core::config::ViperConfig::default(), filesystem_factory).await
-        .expect("Failed to create engine");
+        .expect("Failed to create storage_engine");
     
     let collection_id = "unified_search_test";
     

@@ -16,7 +16,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use tracing::{debug, info, warn, error};
 
 use crate::compute::distance::DistanceMetric;
-use crate::compute::unified_distance::UnifiedDistanceCompute;
+use crate::compute::unified_distance::{UnifiedDistanceCompute, SimilarityResult};
 use crate::core::search::{SearchResult, SearchDebugInfo, SearchParams};
 use crate::core::search::multi_tier_deduplication::{MultiTierDeduplicator, TieredSearchCandidate, StorageTier, DeduplicationStorageEngine};
 use crate::core::{VectorRecord, proto_metadata_helper};
@@ -30,6 +30,8 @@ use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactor
 use crate::services::streaming_search::{StreamingSearchService, StreamingSearchConfig, SearchResultStream};
 use crate::storage::traits::UnifiedStorageEngine;
 use crate::storage::background_flush_context::BackgroundFlushContext;
+use crate::storage::search_cache::SearchResultCache;
+// use crate::index::axis::manager::AxisManager;  // TODO: Integrate AxisManager properly
 use crate::services::collection_service::CollectionService;
 use crate::proto::proximadb::{StorageEngine, metadata_item::Value as MetadataValue};
 use crate::query::unified_query_planner::{UnifiedQueryPlanner, PlannerConfig, UnifiedExecutionPlan};
@@ -87,8 +89,15 @@ pub struct DirectVectorService {
     /// Collection service for metadata and engine routing (optional)
     collection_service: Option<Arc<CollectionService>>,
     
-    /// Metrics updater for tracking vector operations
-    metrics_updater: Option<Arc<dyn crate::metrics::updater::InternalMetricsUpdater>>,
+    // 🔴 UNUSED FIELD - Metrics module is unused
+    // /// Metrics updater for tracking vector operations
+    // metrics_updater: Option<Arc<dyn crate::metrics::updater::InternalMetricsUpdater>>,
+    
+    // TODO: Add AxisManager for index-based search operations
+    // axis_manager: Option<Arc<AxisManager>>,
+    
+    /// Simple cache for search result caching (restored for performance)
+    search_cache: Arc<SearchResultCache>,
     
     /// Unified query planner for all query optimization
     query_planner: Arc<UnifiedQueryPlanner>,
@@ -348,10 +357,24 @@ impl DirectVectorService {
             failed_operations: Arc::new(AtomicU64::new(0)),
             optimized_write_buffer_writer,
             collection_service,
-            metrics_updater: None,
+            // metrics_updater: None,  // 🔴 UNUSED - metrics module commented out
+            // axis_manager: None,  // TODO: Add AxisManager initialization
+            search_cache: Arc::new(SearchResultCache::new(
+                300,   // 5 minute TTL
+                10000  // Max 10,000 cached queries
+            )),
             query_planner,
         };
         debug!("✅ DirectVectorService::with_workload_hint - Service instance created");
+        
+        // TODO: Initialize AxisManager for index-based search
+        // This requires proper AxisConfig and integration with flush/compaction coordinators
+        // let axis_config = AxisConfig { ... };
+        // let axis_manager = Arc::new(AxisManager::new(axis_config));
+        // service.axis_manager = Some(axis_manager.clone());
+        // service.flush_coordinator.set_axis_manager(axis_manager.clone());
+        // service.compaction_coordinator.set_axis_manager(axis_manager.clone());
+        // info!("🎯 AxisManager initialized and connected to flush/compaction pipelines");
         
         // Perform WAL recovery on startup
         info!("🔄 DirectVectorService: Starting WAL recovery");
@@ -442,11 +465,12 @@ impl DirectVectorService {
         Some(&self.global_memtable)
     }
     
-    /// Set metrics updater for tracking vector operations
-    pub fn set_metrics_updater(&mut self, updater: Arc<dyn crate::metrics::updater::InternalMetricsUpdater>) {
-        self.metrics_updater = Some(updater);
-        info!("🔗 DirectVectorService: Metrics updater registered for operation tracking");
-    }
+    // 🔴 UNUSED METHOD - Metrics module is unused
+    // /// Set metrics updater for tracking vector operations
+    // pub fn set_metrics_updater(&mut self, updater: Arc<dyn crate::metrics::updater::InternalMetricsUpdater>) {
+    //     self.metrics_updater = Some(updater);
+    //     info!("🔗 DirectVectorService: Metrics updater registered for operation tracking");
+    // }
     
     /// Determine the storage engine for a collection based on its configuration
     async fn get_collection_storage_engine(&self, collection_id: &str) -> Result<&'static str> {
@@ -587,13 +611,28 @@ impl DirectVectorService {
         
         // Step 4: Disk persistence for durability (using optimized writer)
         if self.should_persist_to_disk() {
+            // Get base_location from collection metadata
+            // NOTE: This could be optimized by caching the location per collection
+            let base_location = if let Some(collection_service) = &self.collection_service {
+                if let Some(collection) = collection_service.get_proto_collection(collection_id).await? {
+                    collection.storage_assignment
+                        .map(|sa| sa.base_location)
+                        .unwrap_or_else(|| "file:///data".to_string())
+                } else {
+                    "file:///data".to_string()
+                }
+            } else {
+                "file:///data".to_string()
+            };
+            
             // Convert Arc<Vec<VectorRecord>> to Vec<VectorRecord> for the writer
             let vectors_vec = (*vectors).clone();
             match self.optimized_write_buffer_writer.write_vectors(
                 collection_id,
                 vectors_vec,
                 sequences.clone(),
-                self.optimized_format.clone()
+                self.optimized_format.clone(),
+                base_location
             ).await {
                 Ok(wal_path) => {
                     debug!("✅ WAL write completed: {}", wal_path);
@@ -849,6 +888,23 @@ impl DirectVectorService {
     ) -> Result<Vec<SearchResult>> {
         let start_time = std::time::Instant::now();
         
+        // Generate cache key for this search
+        let cache_key = format!(
+            "search:{}:{}:{}:{:?}:{}:{}",
+            collection_id,
+            k,
+            distance_metric as i32,
+            search_params.and_then(|p| p.filter_expression.as_ref()).map(|f| format!("{:?}", f)).unwrap_or_default(),
+            include_vectors,
+            include_metadata
+        );
+        
+        // Check cache first
+        if let Some(cached_results) = self.search_cache.get(&cache_key).await {
+            debug!("🎯 CACHE_HIT: Returning cached results for key: {}", cache_key);
+            return Ok(cached_results);
+        }
+        
         // Use distance metric from search params if provided, otherwise use default
         let effective_distance_metric = search_params
             .and_then(|p| p.distance_metric)
@@ -899,9 +955,21 @@ impl DirectVectorService {
             debug!("🎯 Query planner enabled two-stage search optimization");
         }
         
-        // Step 1: Search WAL memtable with metadata predicate pushdown
-        // OPTIMIZATION: Pre-allocate with expected capacity to avoid reallocations
+        // TODO: Try Axis indexes first when AxisManager is properly integrated
+        // This will significantly improve search performance for indexed collections
         let mut all_results = Vec::with_capacity(k * 3);
+        // let mut used_axis_index = false;
+        // if let Some(ref axis_manager) = self.axis_manager {
+        //     ... perform index-based search ...
+        // }
+        
+        // Step 2: Search WAL memtable and storage engines (if not using index or need more results)
+        // OPTIMIZATION: Pre-allocate with expected capacity to avoid reallocations
+        
+        // CRITICAL OPTIMIZATION: Create distance calculator once for entire search, not per record
+        // This avoids the performance issue in unified distance where calculate_distance() 
+        // creates a new calculator for every call (see line 518/524 in unified_distance.rs)
+        let distance_calculator = crate::compute::distance::create_distance_calculator(effective_distance_metric.clone());
         
         // OPTIMIZATION: Skip WAL search if no unflushed data exists
         let unflushed_batches = self.global_memtable
@@ -928,8 +996,15 @@ impl DirectVectorService {
                         }
                     }
                     
-                    // Calculate similarity using unified distance computation
-                    let similarity_result = self.distance_compute.calculate_distance(&vector_record.vector, query_vector, &effective_distance_metric);
+                    // Use pre-created distance calculator (MAJOR PERFORMANCE OPTIMIZATION)
+                    let raw_distance = distance_calculator.distance(query_vector, &vector_record.vector);
+                    // Create SimilarityResult manually for consistency with unified distance semantics
+                    let similarity_result = SimilarityResult {
+                        raw_value: raw_distance,
+                        metric: effective_distance_metric.clone(),
+                        normalized_score: raw_distance, // For now, use raw distance for normalized score
+                        rank_value: raw_distance, // Use raw for ranking (lower = more similar for most metrics)
+                    };
                     
                     // Log the ID value for search debugging
                     debug!("🔍 SEARCH: vector_record.id = {:?}", vector_record.id);
@@ -999,6 +1074,13 @@ impl DirectVectorService {
             processing_time_us
         );
         
+        // Store in cache for future queries
+        if let Err(e) = self.search_cache.put(cache_key.clone(), final_results.clone()).await {
+            debug!("⚠️ Failed to cache search results: {}", e);
+        } else {
+            debug!("💾 Cached search results for key: {}", cache_key);
+        }
+        
         Ok(final_results)
     }
     
@@ -1015,7 +1097,7 @@ impl DirectVectorService {
                 match BackgroundFlushContext::from_collection_service(service, collection_id).await {
                     Ok(context) => {
                         info!("✅ PRE_COMPUTED: Context for collection {} - engine: {:?}, location: {}", 
-                              collection_id, context.storage_engine, context.data_location);
+                              collection_id, context.storage_engine, context.base_location);
                         context
                     },
                     Err(e) => {
@@ -1300,50 +1382,37 @@ impl DirectVectorService {
         }
     }
     
-    /// Write WAL data to disk using assignment service
+    /// Write WAL data to disk
     async fn write_wal_to_disk(
         collection_id: &str,
         serialized_data: &[u8],
         sequences: &[u64],
         write_buffer_config: &crate::storage::persistence::write_buffer::WriteBufferConfig,
         optimized_format: &OptimizedFormat,
+        base_location: &str,
     ) -> Result<String> {
-        use crate::storage::assignment_service::{get_assignment_service, StorageAssignmentConfig, StorageComponentType};
         use crate::storage::persistence::filesystem::FilesystemFactory;
         
-        // Get assignment service
-        let assignment_service = get_assignment_service();
-        
-        // Create assignment config for WAL
-        let assignment_config = StorageAssignmentConfig {
-            storage_urls: write_buffer_config.multi_disk.data_directories.clone(),
-            component_type: StorageComponentType::Wal,
-            collection_affinity: write_buffer_config.multi_disk.collection_affinity,
-        };
-        
-        // Get WAL directory assignment for this collection
-        let assignment = assignment_service
-            .assign_storage_url(collection_id, &assignment_config)
-            .await
-            .context("Failed to assign WAL storage URL")?;
+        // Construct WAL storage URL
+        let storage_url = format!("{}/{}/write_buffer", base_location, collection_id);
         
         debug!(
-            "📂 WAL_ASSIGNMENT: Collection {} assigned to WAL directory: {}",
+            "📂 WAL: Collection {} writing to directory: {}",
             collection_id,
-            assignment.storage_url
+            storage_url
         );
         
         // Create filesystem instance
         let filesystem_factory = FilesystemFactory::new(Default::default()).await
             .context("Failed to create filesystem factory")?;
-        let filesystem = filesystem_factory.get_filesystem(&assignment.storage_url)
+        let filesystem = filesystem_factory.get_filesystem(&storage_url)
             .context("Failed to get filesystem for WAL directory")?;
         
         // Prepare WAL file path
-        let base_path = if assignment.storage_url.starts_with("file://") {
-            assignment.storage_url.strip_prefix("file://").unwrap_or(&assignment.storage_url)
+        let base_path = if storage_url.starts_with("file://") {
+            storage_url.strip_prefix("file://").unwrap_or(&storage_url)
         } else {
-            &assignment.storage_url
+            &storage_url
         };
         
         let collection_wal_dir = format!("{}/{}", base_path, collection_id);
@@ -2011,11 +2080,12 @@ impl DirectWalRecovery for DirectVectorService {
         for collection in collections {
             // Check if collection has storage assignment
             if let Some(storage_assignment) = &collection.storage_assignment {
+                let wal_url = format!("{}/{}/write_buffer", storage_assignment.base_location, collection.id);
                 println!("🔧 DirectVectorService::discover_wal_files - Processing collection '{}' with WAL location: {}", 
-                    collection.id, storage_assignment.wal_location);
+                    collection.id, wal_url);
                 
                 // Extract base path from WAL location
-                let wal_url = &storage_assignment.wal_location;
+                let wal_url = &wal_url;
                 let base_path = if wal_url.starts_with("file://") {
                     wal_url.strip_prefix("file://").unwrap_or(wal_url)
                 } else {
@@ -2144,19 +2214,21 @@ impl DirectWalRecovery for DirectVectorService {
                         flushed_batch_ids: vec![],
                     })
             } else {
-                self.sst_engine.flush_vectors_direct(vectors).await
-                    .map(|_| crate::storage::traits::FlushResult {
-                        success: true,
-                        collections_affected: vec![collection_id.to_string()],
-                        entries_flushed: vector_count as u64,
-                        bytes_written: write_buffer_data.len() as u64,
-                        files_created: 1,
-                        duration_ms: file_start_time.elapsed().as_millis() as u64,
-                        completed_at: chrono::Utc::now(),
-                        engine_metrics: std::collections::HashMap::new(),
-                        compaction_triggered: false,
-                        flushed_batch_ids: vec![],
-                    })
+                // 🔴 UNUSED - flush_vectors_direct method doesn't exist on SST storage
+                // self.sst_engine.flush_vectors_direct(vectors).await
+                //     .map(|_| crate::storage::traits::FlushResult {
+                //         success: true,
+                //         collections_affected: vec![collection_id.to_string()],
+                //         entries_flushed: vector_count as u64,
+                //         bytes_written: write_buffer_data.len() as u64,
+                //         files_created: 1,
+                //         duration_ms: file_start_time.elapsed().as_millis() as u64,
+                //         completed_at: chrono::Utc::now(),
+                //         engine_metrics: std::collections::HashMap::new(),
+                //         compaction_triggered: false,
+                //         flushed_batch_ids: vec![],
+                //     })
+                Err(anyhow::anyhow!("SST flush path not implemented"))
             }
                 .with_context(|| format!("Failed to flush recovered vectors for collection: {}", collection_id))?;
                 

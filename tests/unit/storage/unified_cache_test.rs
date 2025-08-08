@@ -32,6 +32,13 @@ async fn test_unified_cache_basic_operations() -> Result<()> {
         id: Some("vector_1".to_string()),
         vector: vec![1.0, 2.0, 3.0],
         metadata: vec![],
+        timestamp: 0,
+        updated_at: None,
+        expires_at: None,
+        distance: None,
+        rank: None,
+        score: None,
+        version: None,
         ..Default::default()
     });
 
@@ -118,6 +125,13 @@ async fn test_cross_engine_sharing_effectiveness() -> Result<()> {
         id: Some("shared_vector".to_string()),
         vector: vec![1.0; 128], // 128-dim vector
         metadata: vec![],
+        timestamp: 0,
+        updated_at: None,
+        expires_at: None,
+        distance: None,
+        rank: None,
+        score: None,
+        version: None,
         ..Default::default()
     });
     
@@ -166,6 +180,13 @@ async fn test_memory_pressure_handling() -> Result<()> {
             id: Some(format!("vector_{}", i)),
             vector: vec![1.0; 1000], // Large vectors to create pressure
             metadata: vec![],
+            timestamp: 0,
+            updated_at: None,
+            expires_at: None,
+            distance: None,
+            rank: None,
+            score: None,
+            version: None,
             ..Default::default()
         });
         
@@ -247,6 +268,13 @@ async fn test_adaptive_eviction_policies() -> Result<()> {
             id: Some(format!("item_{}", i)),
             vector: vec![i as f32; 100],
             metadata: vec![],
+            timestamp: 0,
+            updated_at: None,
+            expires_at: None,
+            distance: None,
+            rank: None,
+            score: None,
+            version: None,
             ..Default::default()
         });
         
@@ -297,6 +325,13 @@ async fn test_memory_deduplication_savings() -> Result<()> {
         id: Some("dedup_vector".to_string()),
         vector: vec![1.0; 1024], // Large vector for significant savings
         metadata: vec![],
+        timestamp: 0,
+        updated_at: None,
+        expires_at: None,
+        distance: None,
+        rank: None,
+        score: None,
+        version: None,
         ..Default::default()
     });
     
@@ -352,6 +387,13 @@ async fn test_concurrent_access_performance() -> Result<()> {
             id: Some(format!("item_{}", i)),
             vector: vec![i as f32; 128],
             metadata: vec![],
+            timestamp: 0,
+            updated_at: None,
+            expires_at: None,
+            distance: None,
+            rank: None,
+            score: None,
+            version: None,
             ..Default::default()
         });
         
@@ -398,6 +440,13 @@ async fn test_concurrent_access_performance() -> Result<()> {
                     id: Some(format!("new_item_{}_{}", writer_id, i)),
                     vector: vec![i as f32; 128],
                     metadata: vec![],
+                    timestamp: 0,
+                    updated_at: None,
+                    expires_at: None,
+                    distance: None,
+                    rank: None,
+                    score: None,
+                    version: None,
                     ..Default::default()
                 });
                 
@@ -448,6 +497,13 @@ async fn test_cache_metrics_accuracy() -> Result<()> {
             id: Some(format!("vec_{}", i)),
             vector: vec![i as f32; 64],
             metadata: vec![],
+            timestamp: 0,
+            updated_at: None,
+            expires_at: None,
+            distance: None,
+            rank: None,
+            score: None,
+            version: None,
             ..Default::default()
         });
         
@@ -522,6 +578,13 @@ async fn test_realistic_multi_engine_workload() -> Result<()> {
                     id: Some(format!("seq_{}", i)),
                     vector: vec![i as f32; 384], // 384-dim vectors
                     metadata: vec![],
+                    timestamp: 0,
+                    updated_at: None,
+                    expires_at: None,
+                    distance: None,
+                    rank: None,
+                    score: None,
+                    version: None,
                     ..Default::default()
                 });
                 

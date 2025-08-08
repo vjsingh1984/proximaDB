@@ -62,7 +62,7 @@ async fn test_lsm_basic_operations() {
     setup_storage_assignment(&collection_id, base_path.to_str().unwrap()).await.unwrap();
     
     // Get the assignment service to access the assignment data
-    let assignment_service = proximadb::storage::assignment_service::get_assignment_service();
+// 🔴 OBSOLETE - Assignment service removed
     let test_assignment = assignment_service.get_assignment(&collection_id).await
         .expect("Assignment should exist after setup");
     println!("DEBUG: Using assignment: {}", test_assignment.data_url);
@@ -101,6 +101,13 @@ async fn test_lsm_basic_operations() {
                     value: Some(proximadb::proto::proximadb::metadata_item::Value::StringValue("A".to_string())),
                 }
             ],
+            timestamp: 0,
+            updated_at: None,
+            expires_at: None,
+            distance: None,
+            rank: None,
+            score: None,
+            version: None,
             ..Default::default()
         },
         VectorRecord {
@@ -112,6 +119,13 @@ async fn test_lsm_basic_operations() {
                     value: Some(proximadb::proto::proximadb::metadata_item::Value::StringValue("B".to_string())),
                 }
             ],
+            timestamp: 0,
+            updated_at: None,
+            expires_at: None,
+            distance: None,
+            rank: None,
+            score: None,
+            version: None,
             ..Default::default()
         },
         VectorRecord {
@@ -123,6 +137,13 @@ async fn test_lsm_basic_operations() {
                     value: Some(proximadb::proto::proximadb::metadata_item::Value::StringValue("A".to_string())),
                 }
             ],
+            timestamp: 0,
+            updated_at: None,
+            expires_at: None,
+            distance: None,
+            rank: None,
+            score: None,
+            version: None,
             ..Default::default()
         },
     ];
@@ -272,7 +293,7 @@ async fn test_lsm_compaction() {
     setup_storage_assignment(collection_id, base_path.to_str().unwrap()).await.unwrap();
     
     // Get the assignment service to access the assignment data
-    let assignment_service = proximadb::storage::assignment_service::get_assignment_service();
+// 🔴 OBSOLETE - Assignment service removed
     let test_assignment = assignment_service.get_assignment(collection_id).await
         .expect("Assignment should exist after setup");
     println!("DEBUG: Using assignment: {}", test_assignment.data_url);
@@ -292,6 +313,13 @@ async fn test_lsm_compaction() {
                 id: Some(format!("batch{}_vec{}", batch, i)),
                 vector: vec![batch as f32, i as f32, 0.0],
                 metadata: vec![],
+                timestamp: 0,
+                updated_at: None,
+                expires_at: None,
+                distance: None,
+                rank: None,
+                score: None,
+                version: None,
                 ..Default::default()
             }
         }).collect();
@@ -369,12 +397,26 @@ async fn test_lsm_recovery() {
                 id: Some("persist1".to_string()),
                 vector: vec![1.0, 2.0, 3.0],
                 metadata: vec![],
+                timestamp: 0,
+                updated_at: None,
+                expires_at: None,
+                distance: None,
+                rank: None,
+                score: None,
+                version: None,
                 ..Default::default()
             },
             VectorRecord {
                 id: Some("persist2".to_string()),
                 vector: vec![4.0, 5.0, 6.0],
                 metadata: vec![],
+                timestamp: 0,
+                updated_at: None,
+                expires_at: None,
+                distance: None,
+                rank: None,
+                score: None,
+                version: None,
                 ..Default::default()
             },
         ];

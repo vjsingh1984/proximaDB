@@ -174,10 +174,15 @@ pub struct CollectionConfig {
     /// Per-collection compression settings
     #[prost(message, optional, tag = "14")]
     pub compression: ::core::option::Option<CompressionConfig>,
-    /// Storage optimization hints (field 15)
+    /// Storage location (field 15) - optional, if not provided, system picks from config
+    ///
+    /// Base storage URL (e.g., "file:///data/disk1")
+    #[prost(string, optional, tag = "15")]
+    pub storage_location: ::core::option::Option<::prost::alloc::string::String>,
+    /// Storage optimization hints (field 16)
     ///
     /// Hints for automatic optimization
-    #[prost(message, optional, tag = "15")]
+    #[prost(message, optional, tag = "16")]
     pub optimization_hints: ::core::option::Option<StorageOptimizationHints>,
 }
 /// Advanced index configuration with per-collection customization
@@ -715,17 +720,11 @@ pub struct Collection {
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct StorageAssignment {
-    /// Storage location URL for data (e.g., "file:///data/disk1")
+    /// Base storage URL (e.g., "file:///data/disk1" or "s3://bucket/path")
     #[prost(string, tag = "1")]
-    pub data_location: ::prost::alloc::string::String,
-    /// WAL location URL (e.g., "file:///data/disk1/{collection_id}/write_buffer")
-    #[prost(string, tag = "2")]
-    pub wal_location: ::prost::alloc::string::String,
-    /// Location index in the storage_locations array
-    #[prost(uint32, tag = "3")]
-    pub location_index: u32,
+    pub base_location: ::prost::alloc::string::String,
     /// Assignment timestamp
-    #[prost(int64, tag = "4")]
+    #[prost(int64, tag = "2")]
     pub assigned_at: i64,
 }
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -1520,10 +1519,28 @@ pub enum CompressionAlgorithm {
     CompressionNone = 0,
     /// Zstandard compression (levels 1-22)
     CompressionZstd = 1,
-    /// LZ4 fast compression (future)
+    /// LZ4 fast compression
     CompressionLz4 = 2,
-    /// Snappy balanced compression (future)
+    /// Snappy balanced compression
     CompressionSnappy = 3,
+    /// Gzip/Deflate compression (levels 1-9)
+    CompressionGzip = 4,
+    /// Brotli compression (levels 0-11)
+    CompressionBrotli = 5,
+    /// Bzip2 compression (levels 1-9)
+    CompressionBzip2 = 6,
+    /// Raw deflate compression (levels 1-9)
+    CompressionDeflate = 7,
+    /// XZ/LZMA2 compression (levels 0-9)
+    CompressionXz = 8,
+    /// Zlib compression (levels 1-9)
+    CompressionZlib = 9,
+    /// LZO compression (fastest)
+    CompressionLzo = 10,
+    /// LZ4 high compression variant
+    CompressionLz4hc = 11,
+    /// LZMA compression (high ratio)
+    CompressionLzma = 12,
 }
 impl CompressionAlgorithm {
     /// String value of the enum field names used in the ProtoBuf definition.
@@ -1536,6 +1553,15 @@ impl CompressionAlgorithm {
             CompressionAlgorithm::CompressionZstd => "COMPRESSION_ZSTD",
             CompressionAlgorithm::CompressionLz4 => "COMPRESSION_LZ4",
             CompressionAlgorithm::CompressionSnappy => "COMPRESSION_SNAPPY",
+            CompressionAlgorithm::CompressionGzip => "COMPRESSION_GZIP",
+            CompressionAlgorithm::CompressionBrotli => "COMPRESSION_BROTLI",
+            CompressionAlgorithm::CompressionBzip2 => "COMPRESSION_BZIP2",
+            CompressionAlgorithm::CompressionDeflate => "COMPRESSION_DEFLATE",
+            CompressionAlgorithm::CompressionXz => "COMPRESSION_XZ",
+            CompressionAlgorithm::CompressionZlib => "COMPRESSION_ZLIB",
+            CompressionAlgorithm::CompressionLzo => "COMPRESSION_LZO",
+            CompressionAlgorithm::CompressionLz4hc => "COMPRESSION_LZ4HC",
+            CompressionAlgorithm::CompressionLzma => "COMPRESSION_LZMA",
         }
     }
     /// Creates an enum from field names used in the ProtoBuf definition.
@@ -1545,6 +1571,15 @@ impl CompressionAlgorithm {
             "COMPRESSION_ZSTD" => Some(Self::CompressionZstd),
             "COMPRESSION_LZ4" => Some(Self::CompressionLz4),
             "COMPRESSION_SNAPPY" => Some(Self::CompressionSnappy),
+            "COMPRESSION_GZIP" => Some(Self::CompressionGzip),
+            "COMPRESSION_BROTLI" => Some(Self::CompressionBrotli),
+            "COMPRESSION_BZIP2" => Some(Self::CompressionBzip2),
+            "COMPRESSION_DEFLATE" => Some(Self::CompressionDeflate),
+            "COMPRESSION_XZ" => Some(Self::CompressionXz),
+            "COMPRESSION_ZLIB" => Some(Self::CompressionZlib),
+            "COMPRESSION_LZO" => Some(Self::CompressionLzo),
+            "COMPRESSION_LZ4HC" => Some(Self::CompressionLz4hc),
+            "COMPRESSION_LZMA" => Some(Self::CompressionLzma),
             _ => None,
         }
     }

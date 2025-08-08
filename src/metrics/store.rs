@@ -63,15 +63,23 @@ impl PersistentMetricsStore {
     ) -> Result<Self> {
         // Ensure base directories exist
         let base_path = config.storage_path.clone();
-        filesystem_factory.create_dir_all(&format!("{}/snapshots/global", base_path)).await?;
-        filesystem_factory.create_dir_all(&format!("{}/snapshots/collections", base_path)).await?;
-        filesystem_factory.create_dir_all(&format!("{}/incremental", base_path)).await?;
+        
+        // Normalize path to ensure it starts with file:// for local filesystem
+        let normalized_base = if !base_path.contains("://") {
+            format!("file://{}", base_path)
+        } else {
+            base_path.clone()
+        };
+        
+        filesystem_factory.create_dir_all(&format!("{}/snapshots/global", normalized_base)).await?;
+        filesystem_factory.create_dir_all(&format!("{}/snapshots/collections", normalized_base)).await?;
+        filesystem_factory.create_dir_all(&format!("{}/incremental", normalized_base)).await?;
         
         info!("Initialized PersistentMetricsStore at {}", base_path);
         
         Ok(Self {
             filesystem_factory,
-            base_path,
+            base_path: normalized_base,
             config,
             snapshot_cache: Arc::new(RwLock::new(HashMap::new())),
             pending_updates: Arc::new(RwLock::new(Vec::new())),
@@ -252,6 +260,10 @@ impl PersistentMetricsStore {
         
         // Persist to storage
         let partition = self.calculate_partition(&metrics.collection_id);
+        // Ensure partition directory exists
+        let partition_dir = format!("{}/partition_{}", self.base_path, partition);
+        self.filesystem_factory.create_dir_all(&partition_dir).await?;
+        
         let path = format!("{}/partition_{}/collection_{}.json", 
                           self.base_path, partition, metrics.collection_id);
         
@@ -361,5 +373,78 @@ impl PersistentMetricsStore {
     fn get_start_time(&self) -> i64 {
         // In production, this would be tracked properly
         chrono::Utc::now().timestamp() - 3600 // Default to 1 hour ago
+    }
+    
+    /// Get filesystem factory reference (for tests)
+    pub fn get_filesystem_factory(&self) -> Result<&FilesystemFactory> {
+        Ok(&self.filesystem_factory)
+    }
+    
+    /// Get configuration reference (for tests)
+    pub fn get_config(&self) -> &MetricsConfig {
+        &self.config
+    }
+    
+    /// Store global metrics (for tests)
+    pub async fn store_global_metrics(&self, metrics: &GlobalMetrics) -> Result<()> {
+        let path = format!("{}/global_metrics.json", self.base_path);
+        let json = serde_json::to_string(metrics)?;
+        self.filesystem_factory.write(&path, json.as_bytes(), None).await?;
+        Ok(())
+    }
+    
+    /// Get global metrics (for tests)
+    pub async fn get_global_metrics_stored(&self) -> Result<Option<GlobalMetrics>> {
+        let path = format!("{}/global_metrics.json", self.base_path);
+        if !self.filesystem_factory.exists(&path).await? {
+            return Ok(None);
+        }
+        let data = self.filesystem_factory.read(&path).await?;
+        let metrics: GlobalMetrics = serde_json::from_slice(&data)?;
+        Ok(Some(metrics))
+    }
+    
+    /// List all collections (for tests)
+    pub async fn list_collections(&self) -> Result<Vec<String>> {
+        let cache = self.snapshot_cache.read().await;
+        let mut collections: Vec<String> = cache.keys().cloned().collect();
+        
+        // Also check partitions for collections not in cache
+        for partition in 0..self.config.collection_partitions {
+            let partition_path = format!("{}/partition_{}", self.base_path, partition);
+            if self.filesystem_factory.exists(&partition_path).await? {
+                let entries = self.filesystem_factory.list(&partition_path).await?;
+                for entry in entries {
+                    if entry.name.starts_with("collection_") && entry.name.ends_with(".json") {
+                        let collection_id = entry.name
+                            .strip_prefix("collection_")
+                            .and_then(|s| s.strip_suffix(".json"))
+                            .unwrap_or("")
+                            .to_string();
+                        if !collection_id.is_empty() && !collections.contains(&collection_id) {
+                            collections.push(collection_id);
+                        }
+                    }
+                }
+            }
+        }
+        
+        Ok(collections)
+    }
+    
+    /// Cleanup collection metrics (for tests)
+    pub async fn cleanup_collection_metrics(&self, collection_id: &str) -> Result<()> {
+        // Remove from cache
+        self.snapshot_cache.write().await.remove(collection_id);
+        
+        // Remove from filesystem
+        let partition = self.calculate_partition(collection_id);
+        let path = format!("{}/partition_{}/collection_{}.json", 
+                          self.base_path, partition, collection_id);
+        if self.filesystem_factory.exists(&path).await? {
+            self.filesystem_factory.delete(&path).await?;
+        }
+        
+        Ok(())
     }
 }

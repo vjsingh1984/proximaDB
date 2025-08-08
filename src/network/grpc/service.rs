@@ -448,6 +448,7 @@ impl ProximaDb for ProximaDbGrpcService {
                         enable_automatic_index_selection: false,
                         compression: None,  // SDK-driven (2025-08-06)
                         optimization_hints: None,  // SDK-driven (2025-08-06)
+                        storage_location: None,  // Optional storage location
                     })
                 } else {
                     None

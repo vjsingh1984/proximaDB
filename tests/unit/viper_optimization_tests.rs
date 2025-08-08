@@ -398,6 +398,7 @@ fn test_empty_and_edge_cases() {
         rank: None,
         score: None,
         distance: None,
+        ..Default::default()
     };
     
     // Test single record

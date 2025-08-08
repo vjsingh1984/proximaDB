@@ -87,7 +87,9 @@ mod metadata_backend_tests {
             description: Some("Test collection".to_string()),
             capacity: Some(10000),
             storage_profile: Some("default".to_string()),
-        };
+                compression: None,
+                optimization_hints: None,
+            };
         
         let result = shared_services
             .collection_service
@@ -188,7 +190,9 @@ mod metadata_backend_tests {
             description: None,
             capacity: Some(5000),
             storage_profile: Some("default".to_string()),
-        };
+                compression: None,
+                optimization_hints: None,
+            };
         
         collection_service
             .create_collection_from_grpc(&collection_config)

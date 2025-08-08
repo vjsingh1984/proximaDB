@@ -86,6 +86,12 @@ async fn test_lsm_do_flush_with_bloom_filter() {
                 },
             ],
             timestamp: now as u32,
+            updated_at: None,
+            expires_at: None,
+            distance: None,
+            rank: None,
+            score: None,
+            version: None,
             ..Default::default()
         },
         VectorRecord {
@@ -102,6 +108,12 @@ async fn test_lsm_do_flush_with_bloom_filter() {
                 },
             ],
             timestamp: now as u32,
+            updated_at: None,
+            expires_at: None,
+            distance: None,
+            rank: None,
+            score: None,
+            version: None,
             ..Default::default()
         },
         VectorRecord {
@@ -118,6 +130,12 @@ async fn test_lsm_do_flush_with_bloom_filter() {
                 },
             ],
             timestamp: now as u32,
+            updated_at: None,
+            expires_at: None,
+            distance: None,
+            rank: None,
+            score: None,
+            version: None,
             ..Default::default()
         },
     ];

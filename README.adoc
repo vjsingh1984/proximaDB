@@ -32,11 +32,11 @@ ProximaDB is a high-performance vector database engineered for enterprise AI app
 | **17,000+ vectors/sec**
 | Handle enterprise-scale data ingestion without bottlenecks
 
-| **Zero Downtime Updates**
-| Maintain 24/7 availability during index updates and maintenance
-
 | **Multi-Cloud Ready**
-| Deploy anywhere - AWS, GCP, Azure, or on-premises
+| Deploy anywhere - AWS, GCP, Azure, or on-premises  
+
+| **Proto-First Architecture**
+| Zero double serialization overhead for maximum performance
 |===
 
 == ⚡ Quick Start
@@ -50,9 +50,8 @@ cd proximadb && docker compose up -d
 
 # Access:
 # • Web Dashboard: http://localhost:8080
-# • REST API: http://localhost:5678
+# • REST API: http://localhost:5678  
 # • gRPC: http://localhost:5679
-# • Prometheus Metrics: http://localhost:9090
 ----
 
 === 📊 Performance at a Glance
@@ -67,15 +66,23 @@ client = ProximaDBClient("http://localhost:5678")
 # POST http://localhost:5678/v1/collections
 # POST http://localhost:5678/v1/vectors/insert
 
-# Create a collection
-collection = client.create_collection(
+# Create a VIPER collection with compression
+from proximadb.models import (
+    CollectionConfig, CompressionConfig, 
+    CompressionAlgorithm, StorageEngine
+)
+
+config = CollectionConfig(
     name="products",
     dimension=1536,  # OpenAI embedding size
-    compression_config={
-        "algorithm": "zstd",
-        "enable_dual_columns": True  # 2x faster searches
-    }
+    storage_engine=StorageEngine.VIPER,  # Columnar analytics engine
+    compression=CompressionConfig(
+        algorithm=CompressionAlgorithm.ZSTD,
+        level=6,  # Balanced compression (1-22)
+        enable_quantization=True  # VIPER dual columns (FP32 + quantized)
+    )
 )
+collection = client.create_collection("products", config)
 
 # Insert with 17,000+ vectors/sec throughput
 vectors = [{"id": f"p_{i}", "vector": [...], "metadata": {...}} 

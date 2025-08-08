@@ -187,7 +187,14 @@ impl UnifiedSearchBenchmark {
     ) -> Vec<VectorRecord> {
         (start..end).map(|i| {
             VectorRecord {
-                id: Some(format!("vec_{}", i)),
+                id: Some(format!("vec_{,
+            timestamp: 0,
+            updated_at: None,
+            expires_at: None,
+            distance: None,
+            rank: None,
+            score: None,
+        }", i)),
                 vector: vec![i as f32 / 1000.0; dimension], // Simple pattern for reproducibility
                 metadata: vec![
                     MetadataItem {

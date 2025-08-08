@@ -30,7 +30,9 @@ fn create_test_collection_config(name: &str) -> CollectionConfig {
         storage_engine: 1, // VIPER
         filterable_metadata_fields: vec!["category".to_string(), "source".to_string()],
         indexing_config: std::collections::HashMap::new(),
-    }
+                compression: None,
+                optimization_hints: None,
+            }
 }
 
 /// Helper to count files in a directory recursively

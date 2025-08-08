@@ -191,7 +191,7 @@ fn create_test_vectors(count: usize, dimension: usize, prefix: &str) -> Vec<Vect
         }
         
         VectorRecord {
-            id: Some(format!("{}_{}", prefix, i)),
+            id: Some(format!("{}_{}",  prefix, i)),
             vector,
             metadata: vec![
                 MetadataItem {
@@ -304,14 +304,16 @@ async fn test_viper_flush_with_compression() -> anyhow::Result<()> {
                     indexed: true,
                     supports_range: false,
                     estimated_cardinality: Some(10),
-                },
+                        encoding_hint: None,
+                    },
                 proximadb::proto::proximadb::FilterableColumnSpec {
                     name: "pattern".to_string(),
                     data_type: proximadb::proto::proximadb::FilterableDataType::FilterableString as i32,
                     indexed: true,
                     supports_range: false,
                     estimated_cardinality: Some(10),
-                },
+                        encoding_hint: None,
+                    },
             ],
             ..Default::default()
         }),
@@ -408,7 +410,8 @@ async fn test_viper_search_compressed_data() -> anyhow::Result<()> {
                     indexed: true,
                     supports_range: false,
                     estimated_cardinality: Some(10),
-                },
+                        encoding_hint: None,
+                    },
             ],
             ..Default::default()
         }),
@@ -474,8 +477,10 @@ async fn test_viper_compaction_with_compression() -> anyhow::Result<()> {
         id: "compaction_test".to_string(),
         config: Some(proximadb::proto::proximadb::CollectionConfig {
             dimension: 128,
+            compression: None,
+            optimization_hints: None,
             ..Default::default()
-        }),
+            }),
         ..Default::default()
     };
     

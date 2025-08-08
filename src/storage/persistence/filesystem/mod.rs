@@ -33,22 +33,24 @@ use tracing::{info, error};
 
 pub mod atomic_strategy;
 pub mod auth;
-pub mod azure;
-pub mod gcs;
-pub mod hdfs;
+// 🔴 UNUSED CLOUD STORAGE - Never actually used in production
+// pub mod azure;
+// pub mod gcs;
+// pub mod hdfs;
 pub mod local;
 pub mod manager;
-pub mod s3;
+// pub mod s3;
 pub mod write_strategy;
 
 #[cfg(test)]
 pub mod tests;
 
-use azure::AzureFileSystem;
-use gcs::GcsFileSystem;
-use hdfs::HdfsFileSystem;
+// 🔴 UNUSED CLOUD STORAGE IMPORTS
+// use azure::AzureFileSystem;
+// use gcs::GcsFileSystem;
+// use hdfs::HdfsFileSystem;
 use local::LocalFileSystem;
-use s3::S3FileSystem;
+// use s3::S3FileSystem;
 
 /// Filesystem operation result type
 pub type FsResult<T> = Result<T, FilesystemError>;
@@ -496,20 +498,21 @@ pub struct FilesystemConfig {
     /// Default filesystem URL for unqualified paths
     pub default_fs: Option<String>,
 
-    /// AWS S3 configuration
-    pub s3: Option<s3::S3Config>,
+    // 🔴 UNUSED CLOUD STORAGE CONFIG - modules commented out
+    // /// AWS S3 configuration
+    // pub s3: Option<s3::S3Config>,
 
-    /// Azure Data Lake Storage configuration
-    pub azure: Option<azure::AzureConfig>,
+    // /// Azure Data Lake Storage configuration
+    // pub azure: Option<azure::AzureConfig>,
 
-    /// Google Cloud Storage configuration
-    pub gcs: Option<gcs::GcsConfig>,
+    // /// Google Cloud Storage configuration
+    // pub gcs: Option<gcs::GcsConfig>,
 
     /// Local filesystem configuration
     pub local: Option<local::LocalConfig>,
 
-    /// HDFS configuration
-    pub hdfs: Option<hdfs::HdfsConfig>,
+    // /// HDFS configuration
+    // pub hdfs: Option<hdfs::HdfsConfig>,
 
     /// Global filesystem options
     pub global_options: FileOptions,
@@ -548,11 +551,11 @@ impl Default for FilesystemConfig {
     fn default() -> Self {
         Self {
             default_fs: Some("file://".to_string()),
-            s3: None,
-            azure: None,
-            gcs: None,
+            // s3: None,  // 🔴 UNUSED
+            // azure: None,  // 🔴 UNUSED
+            // gcs: None,  // 🔴 UNUSED
             local: Some(local::LocalConfig::default()),
-            hdfs: None,
+            // hdfs: None,  // 🔴 UNUSED
             global_options: FileOptions::default(),
             auth_config: None,
             performance_config: FilesystemPerformanceConfig::default(),
@@ -609,39 +612,40 @@ impl FilesystemFactory {
                 .insert("file".to_string(), Box::new(local_fs));
         }
 
-        // Initialize S3 filesystem
-        if let Some(s3_config) = &self.config.s3 {
-            let s3_fs = S3FileSystem::new(s3_config.clone()).await?;
-            self.filesystems.insert("s3".to_string(), Box::new(s3_fs));
-        }
+        // 🔴 UNUSED CLOUD STORAGE - Never actually used in production
+        // // Initialize S3 filesystem
+        // if let Some(s3_config) = &self.config.s3 {
+        //     let s3_fs = S3FileSystem::new(s3_config.clone()).await?;
+        //     self.filesystems.insert("s3".to_string(), Box::new(s3_fs));
+        // }
 
-        // Initialize Azure filesystem
-        if let Some(azure_config) = &self.config.azure {
-            let azure_fs_adls = AzureFileSystem::new(azure_config.clone()).await?;
-            let azure_fs_abfs = AzureFileSystem::new(azure_config.clone()).await?;
-            self.filesystems
-                .insert("adls".to_string(), Box::new(azure_fs_adls));
-            // ABFS is the same as ADLS Gen2 - just different URL scheme
-            self.filesystems
-                .insert("abfs".to_string(), Box::new(azure_fs_abfs));
-        }
+        // // Initialize Azure filesystem
+        // if let Some(azure_config) = &self.config.azure {
+        //     let azure_fs_adls = AzureFileSystem::new(azure_config.clone()).await?;
+        //     let azure_fs_abfs = AzureFileSystem::new(azure_config.clone()).await?;
+        //     self.filesystems
+        //         .insert("adls".to_string(), Box::new(azure_fs_adls));
+        //     // ABFS is the same as ADLS Gen2 - just different URL scheme
+        //     self.filesystems
+        //         .insert("abfs".to_string(), Box::new(azure_fs_abfs));
+        // }
 
-        // Initialize GCS filesystem
-        if let Some(gcs_config) = &self.config.gcs {
-            // Create two instances for both schemes
-            let gcs_fs1 = GcsFileSystem::new(gcs_config.clone()).await?;
-            let gcs_fs2 = GcsFileSystem::new(gcs_config.clone()).await?;
-            // Register under both "gcs" and "gs" schemes for compatibility
-            self.filesystems.insert("gcs".to_string(), Box::new(gcs_fs1));
-            self.filesystems.insert("gs".to_string(), Box::new(gcs_fs2));
-        }
+        // // Initialize GCS filesystem
+        // if let Some(gcs_config) = &self.config.gcs {
+        //     // Create two instances for both schemes
+        //     let gcs_fs1 = GcsFileSystem::new(gcs_config.clone()).await?;
+        //     let gcs_fs2 = GcsFileSystem::new(gcs_config.clone()).await?;
+        //     // Register under both "gcs" and "gs" schemes for compatibility
+        //     self.filesystems.insert("gcs".to_string(), Box::new(gcs_fs1));
+        //     self.filesystems.insert("gs".to_string(), Box::new(gcs_fs2));
+        // }
 
-        // Initialize HDFS filesystem
-        if let Some(hdfs_config) = &self.config.hdfs {
-            let hdfs_fs = HdfsFileSystem::new(hdfs_config.clone()).await?;
-            self.filesystems
-                .insert("hdfs".to_string(), Box::new(hdfs_fs));
-        }
+        // // Initialize HDFS filesystem
+        // if let Some(hdfs_config) = &self.config.hdfs {
+        //     let hdfs_fs = HdfsFileSystem::new(hdfs_config.clone()).await?;
+        //     self.filesystems
+        //         .insert("hdfs".to_string(), Box::new(hdfs_fs));
+        // }
 
         Ok(())
     }

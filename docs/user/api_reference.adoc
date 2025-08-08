@@ -17,7 +17,7 @@ ProximaDB REST API with unified handlers and proto-first architecture.
 === Collections
 * **POST** `/api/v1/collection` - Unified collection operations
 
-==== Create Collection
+==== Create Collection (Basic)
 [source,json]
 ----
 {
@@ -30,6 +30,29 @@ ProximaDB REST API with unified handlers and proto-first architecture.
   }
 }
 ----
+
+==== Create Collection with Compression (Advanced)
+[source,json]
+----
+{
+  "operation": "create",
+  "config": {
+    "name": "compressed_collection",
+    "dimension": 1536,
+    "distance_metric": "cosine",
+    "storage_engine": "viper",
+    "compression": {
+      "algorithm": "zstd",
+      "level": 6,
+      "enable_quantization": true,
+      "quantization_type": "int8",
+      "block_size_mb": 8
+    }
+  }
+}
+----
+
+*Note*: Compression config is unified. Engine-specific fields (like `enable_quantization` for VIPER or `block_size_mb` for SST) are automatically applied based on the selected `storage_engine`.
 
 ==== Get Collection
 [source,json]
@@ -135,19 +158,22 @@ curl -X POST http://localhost:5678/api/v1/vector/search \
 [source,python]
 ----
 class CompressionConfig(BaseModel):
-    # SST compression settings
-    sst_block_size: Optional[int] = 16384
-    sst_compression_algorithm: Optional[CompressionAlgorithm] = None
-    sst_compression_level: Optional[int] = None
-    
-    # VIPER compression settings  
-    viper_compression_algorithm: Optional[CompressionAlgorithm] = None
-    viper_compression_level: Optional[int] = None
-    viper_enable_dual_columns: Optional[bool] = False
+    # Unified compression settings (proto-aligned)
+    algorithm: CompressionAlgorithm = CompressionAlgorithm.NONE
+    level: Optional[int] = None
     
     # Global settings
-    adaptive_compression: Optional[bool] = False
-    compression_threshold_kb: Optional[int] = 100
+    adaptive: bool = False
+    min_ratio: Optional[float] = None
+    
+    # VIPER-specific quantization (ignored by SST engine)
+    enable_quantization: bool = False
+    quantization_type: Optional[str] = None  # 'int8', 'pq8', 'pq4'
+    normalization_method: Optional[str] = None  # 'mean', 'trimmed_mean', 'median'
+    
+    # SST-specific block sizing (ignored by VIPER engine)
+    block_size_mb: Optional[int] = None
+    dynamic_block_sizing: bool = False
 ----
 
 ==== SearchOptimization Model

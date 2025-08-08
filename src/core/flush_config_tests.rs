@@ -85,6 +85,7 @@ mod tests {
             level_count: 7,
             compaction_threshold: 5,
             block_size_kb: 1024, // 1MB
+            decompression_cache_config: None,
             ..Default::default()
         };
         assert!(valid_config.validate().is_ok());
@@ -92,6 +93,7 @@ mod tests {
         // Test invalid level count
         let invalid_levels = SstConfig {
             level_count: 0,
+            decompression_cache_config: None,
             ..Default::default()
         };
         assert!(invalid_levels.validate().is_err());
@@ -99,6 +101,7 @@ mod tests {
         // Test invalid compaction threshold
         let invalid_threshold = SstConfig {
             compaction_threshold: 0,
+            decompression_cache_config: None,
             ..Default::default()
         };
         assert!(invalid_threshold.validate().is_err());
@@ -106,6 +109,7 @@ mod tests {
         // Test block size too small
         let small_blocks = SstConfig {
             block_size_kb: 2, // Too small
+            decompression_cache_config: None,
             ..Default::default()
         };
         assert!(small_blocks.validate().is_err());
@@ -113,6 +117,7 @@ mod tests {
         // Test block size too large
         let large_blocks = SstConfig {
             block_size_kb: 20 * 1024, // 20MB - too large
+            decompression_cache_config: None,
             ..Default::default()
         };
         assert!(large_blocks.validate().is_err());

@@ -553,6 +553,6 @@ mod tests {
         
         // IVF is approximate, might not return all vectors
         assert!(results.len() >= 2 && results.len() <= 3, "Expected 2-3 results, got {}", results.len());
-        assert_eq!(results[0].0, "vec_0"); // Closest to [1,0,0,0]
+        assert_eq!(results[0].0, "vec_0");
     }
 }

@@ -20,7 +20,6 @@ pub struct UnifiedParquetReader {
     filesystem: Arc<FilesystemFactory>,
     strategy_selector: Arc<ReadingStrategySelector>,
     cache: Arc<tokio::sync::RwLock<ReaderCache>>,
-    distance_compute: Arc<UnifiedDistanceCompute>,
 }
 
 /// Reading strategy selector based on query characteristics
@@ -217,7 +216,6 @@ impl UnifiedParquetReader {
             filesystem,
             strategy_selector: Arc::new(ReadingStrategySelector::new(config.clone())),
             cache: Arc::new(tokio::sync::RwLock::new(ReaderCache::new(config.schema_cache_size))),
-            distance_compute: Arc::new(UnifiedDistanceCompute::default()),
         }
     }
     
@@ -235,6 +233,10 @@ impl UnifiedParquetReader {
         debug!("📖 UnifiedParquetReader::search_vectors called");
         debug!("📖 Collection context: files={}, filterable_columns={:?}", 
                collection_context.file_paths.len(), collection_context.filterable_columns);
+        
+        // CRITICAL: Create distance compute locally per query to avoid cross-query contamination
+        // This ensures thread safety and correct distance metric for each query
+        let distance_compute = UnifiedDistanceCompute::default();
         
         // Extract query vector from params (support single vector for now)
         let query_vector = params.first_query_vector()
@@ -255,7 +257,7 @@ impl UnifiedParquetReader {
         let vectors = self.execute_optimized_search(query_vector, params, collection_context, &strategy).await?;
         
         // 4. Calculate similarity using unified distance compute
-        let search_results = self.calculate_search_results(query_vector, vectors, params).await?;
+        let search_results = self.calculate_search_results(query_vector, vectors, params, &distance_compute).await?;
         
         Ok(search_results)
     }
@@ -555,16 +557,16 @@ impl UnifiedParquetReader {
         query_vector: &[f32],
         vectors: Vec<VectorRecord>,
         params: &crate::core::search::SearchParams,
+        distance_compute: &UnifiedDistanceCompute,
     ) -> Result<Vec<crate::core::search::SearchResult>> {
         let distance_metric = params.distance_metric.unwrap_or(DistanceMetric::Cosine);
         let mut results = Vec::new();
         
         for vector in vectors {
-            // Calculate semantic distance
-            let similarity = self.distance_compute.calculate_distance(
+            let similarity = distance_compute.calculate_distance(
                 query_vector,
                 &vector.vector,
-                &distance_metric
+                &distance_metric,
             );
             
             // Convert metadata
@@ -583,11 +585,9 @@ impl UnifiedParquetReader {
             results.push(search_result);
         }
         
-        // Sort by rank_value (lower = better) and limit to k
+        // Sort by distance (lower = better) and limit to k
         results.sort_by(|a, b| {
-            let rank_a = a.semantic_distance.as_ref().map(|s| s.rank_value).unwrap_or(f32::INFINITY);
-            let rank_b = b.semantic_distance.as_ref().map(|s| s.rank_value).unwrap_or(f32::INFINITY);
-            rank_a.partial_cmp(&rank_b).unwrap_or(std::cmp::Ordering::Equal)
+            a.score.partial_cmp(&b.score).unwrap_or(std::cmp::Ordering::Equal)
         });
         
         if let Some(k) = params.top_k {
@@ -1340,13 +1340,13 @@ impl UnifiedParquetReader {
                     key: "category".to_string(),
                     value: Some(crate::proto::proximadb::metadata_item::Value::StringValue("test".to_string())),
                 }],
-                timestamp: chrono::Utc::now().timestamp() as u32,
-                distance: Some(0.1 * i as f32),
-                score: Some(1.0 - (0.1 * i as f32)),
-                version: Some(1),
-                updated_at: Some(chrono::Utc::now().timestamp() as u32),
+                timestamp: 0,
+                updated_at: None,
                 expires_at: None,
+                version: None,
+                distance: Some(0.1 * i as f32),
                 rank: Some(i as i32),
+                score: Some(1.0 - (0.1 * i as f32)),
             };
             vectors.push(vector);
         }

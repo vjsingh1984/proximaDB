@@ -57,6 +57,7 @@ fn create_test_vector_records(_collection_id: &str, count: usize) -> Vec<VectorR
                 rank: None,
                 score: Some(1.0 - (i as f32 * 0.1)),
                 distance: Some(i as f32 * 0.1),
+                ..Default::default()
             }
         })
         .collect()

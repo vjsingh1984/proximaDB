@@ -69,7 +69,14 @@ fn create_test_vectors(collection_id: &str, count: usize) -> Vec<VectorRecord> {
                 .collect();
             
             VectorRecord {
-                id: Some(format!("vec_{}", i)),
+                id: Some(format!("vec_{,
+            timestamp: 0,
+            updated_at: None,
+            expires_at: None,
+            distance: None,
+            rank: None,
+            score: None,
+        }", i)),
                 vector,
                 metadata: vec![
                     MetadataItem {
@@ -106,8 +113,10 @@ async fn test_wal_operations_and_batching() {
         distance_metric: DistanceMetric::Cosine as i32,
         storage_engine: StorageEngine::Viper as i32,
         primary_indexing_algorithm: IndexingAlgorithm::Hnsw as i32,
-        ..Default::default()
-    };
+        ..Default::default(),
+                compression: None,
+                optimization_hints: None,
+            };
     
     collection_service.create_collection(&config).await.unwrap();
     
@@ -184,8 +193,10 @@ async fn test_flush_operations() {
         distance_metric: DistanceMetric::Euclidean as i32,
         storage_engine: StorageEngine::Viper as i32,
         primary_indexing_algorithm: IndexingAlgorithm::Hnsw as i32,
-        ..Default::default()
-    };
+        ..Default::default(),
+                compression: None,
+                optimization_hints: None,
+            };
     
     collection_service.create_collection(&config).await.unwrap();
     
@@ -291,8 +302,10 @@ async fn test_compaction_operations() {
         distance_metric: DistanceMetric::Manhattan as i32,
         storage_engine: StorageEngine::Sst as i32,
         primary_indexing_algorithm: IndexingAlgorithm::Ivf as i32,
-        ..Default::default()
-    };
+        ..Default::default(),
+                compression: None,
+                optimization_hints: None,
+            };
     
     collection_service.create_collection(&config).await.unwrap();
     
@@ -351,8 +364,9 @@ async fn test_compaction_operations() {
         bloom_filter_config: Some(proximadb::core::bloom::BloomFilterConfig {
             bits_per_key: 10,
             enabled: true,
-            ..Default::default()
-        }),
+            ..Default::default(),
+        decompression_cache_config: None,
+    }),
         cache_size_mb: 128,
         level_size_multiplier: 10.0,
         enable_write_buffer: true,
@@ -400,8 +414,10 @@ async fn test_cross_engine_consistency() {
         distance_metric: DistanceMetric::Cosine as i32,
         storage_engine: StorageEngine::Viper as i32,
         primary_indexing_algorithm: IndexingAlgorithm::Hnsw as i32,
-        ..Default::default()
-    };
+        ..Default::default(),
+                compression: None,
+                optimization_hints: None,
+            };
     
     let lsm_config = CollectionConfig {
         name: "lsm_consistency_test".to_string(),
@@ -409,8 +425,10 @@ async fn test_cross_engine_consistency() {
         distance_metric: DistanceMetric::Cosine as i32,
         storage_engine: StorageEngine::Sst as i32,
         primary_indexing_algorithm: IndexingAlgorithm::Hnsw as i32,
-        ..Default::default()
-    };
+        ..Default::default(),
+                compression: None,
+                optimization_hints: None,
+            };
     
     collection_service.create_collection(&viper_config).await.unwrap();
     collection_service.create_collection(&lsm_config).await.unwrap();
@@ -504,8 +522,10 @@ async fn test_atomic_operations() {
         distance_metric: DistanceMetric::DotProduct as i32,
         storage_engine: StorageEngine::Viper as i32,
         primary_indexing_algorithm: IndexingAlgorithm::Pq as i32,
-        ..Default::default()
-    };
+        ..Default::default(),
+                compression: None,
+                optimization_hints: None,
+            };
     
     collection_service.create_collection(&config).await.unwrap();
     

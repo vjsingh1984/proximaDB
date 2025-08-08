@@ -21,7 +21,7 @@ use super::config::SyncMode;
 
 use crate::storage::traits::{FlushParameters, FlushResult, UnifiedStorageEngine};
 use crate::storage::background_flush_context::BackgroundFlushContext;
-use crate::metrics::updater::{InternalMetricsUpdater, FlushMetricsUpdate};
+use crate::monitoring::metrics::updater::{InternalMetricsUpdater, FlushMetricsUpdate};
 use super::enhanced_flush_result::EnhancedFlushResult;
 use super::flush_result_optimization::{OptimizedFlushCoordinator, OptimizedFlushResult};
 
@@ -85,8 +85,9 @@ pub struct WriteBufferFlushCoordinator {
     optimized_coordinator: Option<Arc<OptimizedFlushCoordinator>>,
     /// Collection service for fetching metadata
     collection_service: Option<Arc<crate::services::collection_service::CollectionService>>,
-    /// Metrics updater for tracking flush operations
-    metrics_updater: Option<Arc<dyn InternalMetricsUpdater>>,
+    // 🔴 UNUSED FIELD - Metrics module is unused
+    // /// Metrics updater for tracking flush operations
+    // metrics_updater: Option<Arc<dyn InternalMetricsUpdater>>,
 }
 
 impl WriteBufferFlushCoordinator {
@@ -99,7 +100,7 @@ impl WriteBufferFlushCoordinator {
             axis_manager: None,
             optimized_coordinator: None,
             collection_service: None,
-            metrics_updater: None,
+            // metrics_updater: None,  // 🔴 UNUSED FIELD
         }
     }
     
@@ -108,11 +109,12 @@ impl WriteBufferFlushCoordinator {
         self.collection_service = Some(service);
     }
     
-    /// Set metrics updater for tracking flush operations
-    pub fn set_metrics_updater(&mut self, updater: Arc<dyn InternalMetricsUpdater>) {
-        self.metrics_updater = Some(updater);
-        info!("🔗 FlushCoordinator: Metrics updater registered for flush operation tracking");
-    }
+    // 🔴 UNUSED METHOD - Metrics module is unused
+    // /// Set metrics updater for tracking flush operations
+    // pub fn set_metrics_updater(&mut self, updater: Arc<dyn InternalMetricsUpdater>) {
+    //     self.metrics_updater = Some(updater);
+    //     info!("🔗 FlushCoordinator: Metrics updater registered for flush operation tracking");
+    // }
     
     /// Enable optimized flush processing
     pub fn enable_optimized_flush(&mut self, batch_size: usize, worker_count: usize, dimension: usize) {
@@ -237,14 +239,16 @@ impl WriteBufferFlushCoordinator {
                         crate::storage::background_flush_context::StorageEngineType::Viper => crate::proto::proximadb::StorageEngine::Viper as i32,
                         crate::storage::background_flush_context::StorageEngineType::Sst => crate::proto::proximadb::StorageEngine::Sst as i32,
                     },
+                    compression: None,
+                    optimization_hints: None,
                     filterable_columns: context.filterable_columns.clone(),
                     quantization_config: None, // Can be enhanced later if needed
                     // Add other fields as needed...
                     ..Default::default()
                 }),
                 storage_assignment: Some(crate::proto::proximadb::StorageAssignment {
-                    data_location: context.data_location.clone(),
-                    ..Default::default()
+                    base_location: context.base_location.clone(),
+                    assigned_at: chrono::Utc::now().timestamp(),
                 }),
                 ..Default::default()
             })
@@ -406,27 +410,28 @@ impl WriteBufferFlushCoordinator {
             collection_id
         );
         
-        // 📊 METRICS: Record flush operation metrics (non-blocking)
-        if let Some(ref metrics) = self.metrics_updater {
-            let engine_type = if let Some(context) = flush_context {
-                context.engine_name().to_uppercase()
-            } else {
-                engine_type.to_uppercase()
-            };
-            
-            metrics.record_flush(
-                collection_id,
-                FlushMetricsUpdate {
-                    vectors_flushed: storage_result.entries_flushed as i64,
-                    bytes_written: storage_result.bytes_written as i64,
-                    duration_ms: storage_result.duration_ms as i64,
-                    files_created: storage_result.files_created as i32,
-                    engine_type,
-                    timestamp: chrono::Utc::now().timestamp_millis(),
-                },
-            ).await;
-            debug!("📊 Recorded flush metrics for collection {}", collection_id);
-        }
+        // 🔴 UNUSED METRICS - Metrics module is unused
+        // // 📊 METRICS: Record flush operation metrics (non-blocking)
+        // if let Some(ref metrics) = self.metrics_updater {
+        //     let engine_type = if let Some(context) = flush_context {
+        //         context.engine_name().to_uppercase()
+        //     } else {
+        //         engine_type.to_uppercase()
+        //     };
+        //     
+        //     metrics.record_flush(
+        //         collection_id,
+        //         FlushMetricsUpdate {
+        //             vectors_flushed: storage_result.entries_flushed as i64,
+        //             bytes_written: storage_result.bytes_written as i64,
+        //             duration_ms: storage_result.duration_ms as i64,
+        //             files_created: storage_result.files_created as i32,
+        //             engine_type,
+        //             timestamp: chrono::Utc::now().timestamp_millis(),
+        //         },
+        //     ).await;
+        //     debug!("📊 Recorded flush metrics for collection {}", collection_id);
+        // }
         
         // Return enhanced result with vector data for AXIS indexing
         Ok(EnhancedFlushResult::new(storage_result, vector_records_for_axis))

@@ -47,61 +47,64 @@ image::storage-architecture-complete.svg[ProximaDB Architecture, align=center, w
 
 == 🗄️ Storage Architecture
 
-=== Dual Engine Design
+=== Magic Bytes System
 
-ProximaDB implements two specialized storage engines with automatic format detection:
+ProximaDB uses magic bytes for automatic format detection and validation:
 
-==== SST Engine (Row-Based Storage)
-**Format Identification**: SST1 magic bytes at header
+image::proximadb-unified-architecture.svg[ProximaDB Unified Architecture, align=center, width=900]
 
-[cols="1,1,2", options="header"]
+[cols="2,1,1,2", options="header"]
 |===
-| Magic Bytes | Location | Purpose
+| Engine | Magic | Location | Purpose
 
-| `SST1` (0x53535431)
-| File header (offset 0)
-| Main SSTable format identifier
+| **SST Engine**
+| `SST1`
+| Header (0x0)
+| Row-based OLTP storage
 
-| `BF01` (0x42463031)
-| Bloom filter section
-| Bloom filter validation
+| **VIPER Engine** 
+| `PAR1`
+| Footer (-4 bytes)
+| Columnar analytics storage
 
-| `IDX1` (0x49445831)
-| Index section
-| B-tree/Skip list index
+| **Bloom Filters**
+| `BF01`
+| Section header
+| Fast negative lookups
 
-| `BLK1` (0x424C4B31)
-| Data blocks
-| Individual block markers
-|===
-
-**Optimized For**: 
-* OLTP workloads
-* Point queries and updates
-* Real-time ingestion
-* Small batch operations
-
-==== VIPER Engine (Columnar Storage)
-**Format Identification**: Standard Apache Parquet (PAR1)
-
-[cols="1,1,2", options="header"]
-|===
-| Format | Magic Bytes | Location
-
-| Apache Parquet
-| `PAR1` (0x50415231)
-| File footer (last 4 bytes)
-
-| Apache Arrow IPC
-| `ARROW1`
-| File header (optional)
+| **Indexes**
+| `IDX1`
+| Section header
+| B-tree/skip list indexes
 |===
 
-**Optimized For**:
-* Analytics workloads
-* Batch processing
-* Columnar scans
-* Compression efficiency
+=== Storage Engine Selection
+
+**SST Engine** - Optimized for:
+* OLTP workloads and real-time ingestion
+* Point queries and single-vector updates
+* Small to medium batch operations (<10K vectors)
+* Low-latency requirements (sub-millisecond)
+
+**VIPER Engine** - Optimized for:
+* Analytics workloads and complex queries
+* Large batch operations (>10K vectors)
+* Columnar scans with metadata filtering
+* Maximum compression efficiency (50-80% reduction)
+
+=== Technical Architecture Diagrams
+
+==== Write Buffer Strategy Pattern
+image::write-buffer-strategy-pattern.svg[Write Buffer Strategy, width=700]
+
+==== Bloom Filter Architecture  
+image::bloom-filter-architecture.svg[Bloom Filter Architecture, width=700]
+
+==== Unified Handlers Architecture
+image::unified-handlers-architecture.svg[Unified Handlers, width=700]
+
+==== SQL Acceleration Architecture
+image::sql-acceleration-architecture.svg[SQL Acceleration, width=700]
 
 === File Format Detection Flow
 

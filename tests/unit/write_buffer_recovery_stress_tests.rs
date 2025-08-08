@@ -12,6 +12,9 @@ use anyhow::Result;
 use std::path::{Path, PathBuf};
 use tempfile::TempDir;
 use proximadb::proto::proximadb::VectorRecord;
+use proximadb::storage::persistence::write_buffer::serialization::{
+    SerializerFactory, SerializationFormat, VectorBatchSerializer
+};
 use tracing::info;
 
 /// Test helper to create test vectors with metadata
@@ -57,12 +60,14 @@ async fn create_test_wal_files(
     
     let mut wal_files = Vec::new();
     
+    let serializer = SerializerFactory::create(SerializationFormat::ProtocolBuffers);
+    
     for idx in 0..num_files {
         let vectors = create_test_vectors_with_metadata(idx * 100, 100, 128);
-        let serialized = bincode::serialize(&vectors)?;
+        let serialized = serializer.serialize_batch(&vectors)?;
         
         let filename = format!(
-            "wal_20250717_120000_{:010}_{:010}_test{}.bincode",
+            "wal_20250717_120000_{:010}_{:010}_test_{}_data",
             idx * 100,
             (idx + 1) * 100 - 1,
             idx
@@ -127,9 +132,10 @@ mod tests {
                 for entry in std::fs::read_dir(&logs_dir)? {
                     let entry = entry?;
                     let path = entry.path();
-                    if path.extension().and_then(|s| s.to_str()) == Some("bincode") {
+                    if path.extension().and_then(|s| s.to_str()) == Some("data") {
                         let data = std::fs::read(&path)?;
-                        let vectors: Vec<VectorRecord> = bincode::deserialize(&data)?;
+                        let serializer = SerializerFactory::create(SerializationFormat::ProtocolBuffers);
+                        let vectors = serializer.deserialize_batch(&data)?;
                         total_vectors += vectors.len();
                     }
                 }
@@ -143,10 +149,10 @@ mod tests {
         while let Some(result) = recovery_tasks.join_next().await {
             let (collection_id, vector_count) = result??;
             recovered_collections.push(collection_id);
-            assert_eq!(vector_count, 300, "Each collection should have 300 vectors");
+            assert_eq!(vector_count, 300, "Each collection should have 300");
         }
         
-        assert_eq!(recovered_collections.len(), 5, "Should recover all 5 collections");
+        assert_eq!(recovered_collections.len(), 5, "Should recover all 5");
         
         let duration = start.elapsed();
         info!("Concurrent recovery stress test completed in {:?}", duration);
@@ -182,10 +188,11 @@ mod tests {
                 dimension,
             );
             
-            let serialized = bincode::serialize(&vectors)?;
+            let serializer = SerializerFactory::create(SerializationFormat::ProtocolBuffers);
+            let serialized = serializer.serialize_batch(&vectors)?;
             
             let filename = format!(
-                "wal_20250717_120000_{:010}_{:010}_batch{}.bincode",
+                "wal_20250717_120000_{:010}_{:010}_batch_{}_data",
                 batch_idx * batch_size,
                 (batch_idx + 1) * batch_size - 1,
                 batch_idx
@@ -211,12 +218,13 @@ mod tests {
         for entry in std::fs::read_dir(&logs_dir)? {
             let entry = entry?;
             let path = entry.path();
-            if path.extension().and_then(|s| s.to_str()) == Some("bincode") {
+            if path.extension().and_then(|s| s.to_str()) == Some("data") {
                 let data = tokio::fs::read(&path).await?;
                 total_bytes_processed += data.len();
                 
                 // Deserialize to verify data integrity
-                let vectors: Vec<VectorRecord> = bincode::deserialize(&data)?;
+                let serializer = SerializerFactory::create(SerializationFormat::ProtocolBuffers);
+                let vectors = serializer.deserialize_batch(&data)?;
                 total_vectors_recovered += vectors.len();
             }
         }
@@ -224,19 +232,14 @@ mod tests {
         assert_eq!(
             total_vectors_recovered,
             batch_size * num_batches,
-            "Should recover all vectors"
+            "Recovery check"
         );
         
         let recovery_duration = recovery_start.elapsed();
         let total_duration = start.elapsed();
         
         info!(
-            "Large WAL stress test completed:\n\
-             - Total vectors: {}\n\
-             - Total data size: {} MB\n\
-             - Recovery time: {:?}\n\
-             - Total time: {:?}\n\
-             - Recovery throughput: {} vectors/sec",
+            "Completed: {} vectors, {} MB, recovery {:?}, total {:?}, {} vec/s",
             total_vectors_recovered,
             total_bytes_processed / (1024 * 1024),
             recovery_duration,

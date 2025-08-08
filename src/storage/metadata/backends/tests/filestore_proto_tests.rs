@@ -49,6 +49,10 @@ mod tests {
                         indexed: true,
                         supports_range: false,
                         estimated_cardinality: Some(100),
+                        encoding_hint: None,
+                compression: None,
+                optimization_hints: None,
+            
                     },
                     FilterableColumnSpec {
                         name: "price".to_string(),
@@ -56,12 +60,19 @@ mod tests {
                         indexed: true,
                         supports_range: true,
                         estimated_cardinality: None,
+                        encoding_hint: None,
+                    
                     },
                 ],
                 index_configs: vec![],
                 quantization_config: None,
                 primary_index_name: "default".to_string(),
                 enable_automatic_index_selection: true,
+                description: None,
+                tags: vec![],
+                owner: None,
+                compression: None,
+                optimization_hints: None,
             }),
             stats: Some(CollectionStats {
                 vector_count: 1000,
@@ -310,21 +321,27 @@ mod tests {
                     indexed: true,
                     supports_range: true,
                     estimated_cardinality: None,
-                },
+                    encoding_hint: None,
+                
+                    },
                 FilterableColumnSpec {
                     name: "status".to_string(),
                     data_type: FilterableDataType::FilterableString as i32,
                     indexed: true,
                     supports_range: false,
                     estimated_cardinality: Some(5),
-                },
+                    encoding_hint: None,
+                
+                    },
                 FilterableColumnSpec {
                     name: "score".to_string(),
                     data_type: FilterableDataType::FilterableInteger as i32,
                     indexed: true,
                     supports_range: true,
                     estimated_cardinality: Some(100),
-                },
+                    encoding_hint: None,
+                
+                    },
             ];
         }
 

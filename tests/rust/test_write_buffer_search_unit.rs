@@ -12,7 +12,13 @@ mod wal_search_tests {
         pub collection_id: String,
         pub vector: Vec<f32>,
         pub metadata: HashMap<String, serde_json::Value>,
-    }
+            timestamp: 0,
+            updated_at: None,
+            expires_at: None,
+            distance: None,
+            rank: None,
+            score: None,
+        }
     
     #[derive(Clone, Debug)]
     pub enum MockWalOperation {
@@ -91,10 +97,16 @@ mod wal_search_tests {
         let test_collection = "test_collection";
         
         let record = MockVectorRecord {
-            id: "test_vector_1".to_string(),
-            collection_id: test_collection.to_string(),
+            id: Some("test_vector_1".to_string()),
+            collection_id: Some(test_collection.to_string()),
             vector: test_vector.clone(),
             metadata: HashMap::new(),
+            timestamp: 0,
+            updated_at: None,
+            expires_at: None,
+            distance: None,
+            rank: None,
+            score: None,
         };
         
         let wal_entry = MockWalEntry {
@@ -144,11 +156,17 @@ mod wal_search_tests {
         let mut all_entries = Vec::new();
         for (i, (vector, id)) in vectors.iter().enumerate() {
             let record = MockVectorRecord {
-                id: id.to_string(),
-                collection_id: test_collection.to_string(),
+                id: Some(id.to_string()),
+                collection_id: Some(test_collection.to_string()),
                 vector: vector.clone(),
                 metadata: HashMap::new(),
-            };
+            timestamp: 0,
+            updated_at: None,
+            expires_at: None,
+            distance: None,
+            rank: None,
+            score: None,
+        };
             
             let wal_entry = MockWalEntry {
                 id: format!("entry_{}", i),

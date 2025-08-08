@@ -697,7 +697,8 @@ mod tests {
                 rank: None,
                 score: None,
                 distance: None,
-            },
+            
+        },
             VectorRecord {
                 id: Some("2".to_string()),
                 vector: vec![0.0, 1.0],
@@ -709,7 +710,8 @@ mod tests {
                 rank: None,
                 score: None,
                 distance: None,
-            },
+            
+        },
             VectorRecord {
                 id: Some("3".to_string()),
                 vector: vec![-1.0, 0.0],
@@ -721,7 +723,8 @@ mod tests {
                 rank: None,
                 score: None,
                 distance: None,
-            },
+            
+        },
         ];
 
         let model = engine.train_model("test", vectors).await.unwrap();

@@ -52,6 +52,8 @@ impl CollectionPartition {
     }
 
     /// Add WAL batch to this collection partition
+    /// Add batch to collection partition - CRITICAL HOT PATH
+    #[inline(always)]
     fn add_batch(&mut self, mut batch: crate::storage::memtable::specialized::write_buffer_behavior::WriteBufferVectorBatch) -> Result<()> {
         let batch_id = batch.batch_id.to_base62();
         let batch_size = batch.total_size_bytes;
@@ -423,7 +425,9 @@ impl GlobalPartitionedMemtable {
         }
     }
 
-    /// Add native WAL batch to the appropriate collection partition (STREAMLINED ARCHITECTURE)
+    /// Add native WAL batch to the appropriate collection partition - CRITICAL HOT PATH
+    /// STREAMLINED ARCHITECTURE with optimized atomic operations
+    #[inline(always)]
     pub async fn add_wal_batch(&self, collection_id: &str, wal_batch: crate::storage::memtable::specialized::write_buffer_behavior::WriteBufferVectorBatch) -> Result<Vec<u64>> {
         let batch_id = wal_batch.batch_id.to_base62();
         let vector_count = wal_batch.vector_records.len();

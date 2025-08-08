@@ -408,6 +408,7 @@ mod tests {
                 rank: None,
                 score: Some(i as f32),
                 distance: None,
+                ..Default::default()
             };
             vectors.push(vector);
         }
@@ -418,7 +419,7 @@ mod tests {
     #[tokio::test]
     async fn test_read_all_vectors_from_parquet() -> Result<()> {
         let temp_dir = TempDir::new()?;
-        let file_path = format!("{}/test_vectors.parquet", temp_dir.path().display());
+        let file_path = format!("{}/test_vectors_file.parquet", temp_dir.path().display());
         
         // Create test vectors
         let test_vectors = create_test_vectors(5, 4);
@@ -606,6 +607,7 @@ mod tests {
             rank: None,
             score: None,
             distance: None,
+        
         };
         
         // Write to parquet file

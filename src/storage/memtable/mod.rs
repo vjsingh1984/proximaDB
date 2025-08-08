@@ -45,14 +45,16 @@ pub use core::{MemtableConfig, MemtableCore, MemtableMVCC, MemtableMetrics};
 // Import tracing for debug macros
 use tracing::debug;
 
+// 🔴 UNUSED MEMTABLE EXPORTS - COMMENTED OUT FOR REMOVAL
+// Only GlobalPartitionedMemtable is actually used in production
 // Re-export implementations
 pub use implementations::{
-    bplustree::BPlusTreeMemtable,
-    btree::BTreeMemtable,
-    dashmap::DashMapMemtable,
-    // artmap::ArtMemtable,  // Commented out - not currently used
-    hashmap::HashMapMemtable,
-    skiplist::SkipListMemtable,
+    // bplustree::BPlusTreeMemtable,  // UNUSED - Never instantiated
+    // btree::BTreeMemtable,          // UNUSED - Never instantiated
+    // dashmap::DashMapMemtable,      // UNUSED - Never instantiated
+    // artmap::ArtMemtable,           // Already commented out
+    // hashmap::HashMapMemtable,      // UNUSED - Never instantiated
+    // skiplist::SkipListMemtable,    // UNUSED - Never instantiated
 };
 
 // Re-export specialized wrappers (using proper OOP composition)
@@ -128,12 +130,13 @@ impl MemtableFactory {
         specialized::SpecializedMemtableFactory::create_global_partitioned_for_wal(config)
     }
 
-    /// Create SST-optimized memtable (SkipList for concurrent access)
-    pub fn create_for_sst(
-        config: MemtableConfig,
-    ) -> specialized::LsmMemtable<String, crate::storage::engines::sst::SstRecord> {
-        specialized::SpecializedMemtableFactory::create_skiplist_for_sst(config)
-    }
+    // 🔴 UNUSED METHOD - SST doesn't use SkipList memtable
+    // /// Create SST-optimized memtable (SkipList for concurrent access)
+    // pub fn create_for_sst(
+    //     config: MemtableConfig,
+    // ) -> specialized::LsmMemtable<String, crate::storage::engines::sst::SstRecord> {
+    //     specialized::SpecializedMemtableFactory::create_skiplist_for_sst(config)
+    // }
 
     /// Create specific memtable type for testing/benchmarking
     pub fn create_typed<K, V>(
@@ -145,12 +148,17 @@ impl MemtableFactory {
         V: Clone + Send + Sync + std::fmt::Debug + 'static,
     {
         match memtable_type {
-            MemtableType::BTree => Box::new(BTreeMemtable::new(true)),
-            MemtableType::BPlusTree => Box::new(BPlusTreeMemtable::new()),
-            MemtableType::SkipList => Box::new(SkipListMemtable::new()),
-            MemtableType::HashMap => Box::new(HashMapMemtable::new()),
-            MemtableType::DashMap => Box::new(DashMapMemtable::new()),
-            MemtableType::ART => Box::new(BTreeMemtable::new(false)), // Temporarily use BTree instead of ART
+            // 🔴 UNUSED MEMTABLE TYPES - COMMENTED OUT FOR REMOVAL
+            // These implementations are never actually instantiated in production
+            // MemtableType::BTree => Box::new(BTreeMemtable::new(true)),
+            // MemtableType::BPlusTree => Box::new(BPlusTreeMemtable::new()),
+            // MemtableType::SkipList => Box::new(SkipListMemtable::new()),
+            // MemtableType::HashMap => Box::new(HashMapMemtable::new()),
+            // MemtableType::DashMap => Box::new(DashMapMemtable::new()),
+            // MemtableType::ART => Box::new(BTreeMemtable::new(false)), // Temporarily use BTree instead of ART
+            
+            // Return error for now - only GlobalPartitioned is used
+            _ => panic!("Unused memtable type requested: {:?}", memtable_type)
         }
     }
 
@@ -473,12 +481,14 @@ mod tests {
         // Test WriteBuffer creation
         let _write_buffer_memtable = MemtableFactory::create_for_wal(config.clone());
 
+        // 🔴 UNUSED TEST - SST memtable creation is unused
         // Test SST creation
-        let _sst_memtable = MemtableFactory::create_for_sst(config.clone());
+        // let _sst_memtable = MemtableFactory::create_for_sst(config.clone());
 
+        // 🔴 UNUSED TEST - Typed memtable creation is unused
         // Test typed creation
-        let _btree_memtable: Box<dyn MemtableCore<String, String> + Send + Sync> =
-            MemtableFactory::create_typed(MemtableType::BTree, config.clone());
+        // let _btree_memtable: Box<dyn MemtableCore<String, String> + Send + Sync> =
+        //     MemtableFactory::create_typed(MemtableType::BTree, config.clone());
     }
 
     #[tokio::test]

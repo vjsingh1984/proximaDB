@@ -495,7 +495,8 @@ impl MetadataWriteBufferManager {
                 rank: None,
                 score: None,
                 distance: None,
-            };
+            
+        };
 
             // Write delete record to write buffer using modern batch architecture through WriteBufferBehaviorWrapper
             let delete_batch_records = vec![delete_record];

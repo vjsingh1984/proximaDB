@@ -57,6 +57,7 @@ fn create_test_vectors(count: usize, dimension: usize, collection_id: &str) -> V
             rank: None,
             score: None,
             distance: None,
+        
         });
     }
 

@@ -12,7 +12,8 @@ use tracing::{info, warn};
 use super::WriteBufferConfig;
 use crate::storage::traits::UnifiedStorageEngine;
 use crate::storage::background_flush_context::BackgroundFlushContext;
-use crate::metrics::updater::{InternalMetricsUpdater, CompactionMetricsUpdate};
+// 🔴 UNUSED IMPORT - Metrics module is unused
+use crate::monitoring::metrics::updater::{InternalMetricsUpdater, CompactionMetricsUpdate};
 
 /// Background task status enumeration
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -55,8 +56,9 @@ pub struct BackgroundMaintenanceManager {
     collection_status: Arc<RwLock<HashMap<String, BackgroundTaskStatus>>>,
     stats: Arc<Mutex<BackgroundMaintenanceStats>>,
     storage_engines: Arc<RwLock<HashMap<String, Arc<dyn UnifiedStorageEngine>>>>,
-    /// Metrics updater for tracking compaction operations
-    metrics_updater: Option<Arc<dyn InternalMetricsUpdater>>,
+    // 🔴 UNUSED FIELD - Metrics module is unused
+    // /// Metrics updater for tracking compaction operations
+    // metrics_updater: Option<Arc<dyn InternalMetricsUpdater>>,
 }
 
 impl BackgroundMaintenanceManager {
@@ -67,7 +69,7 @@ impl BackgroundMaintenanceManager {
             collection_status: Arc::new(RwLock::new(HashMap::new())),
             stats: Arc::new(Mutex::new(BackgroundMaintenanceStats::default())),
             storage_engines: Arc::new(RwLock::new(HashMap::new())),
-            metrics_updater: None,
+            // metrics_updater: None,  // 🔴 UNUSED
         }
     }
 
@@ -83,11 +85,12 @@ impl BackgroundMaintenanceManager {
         Ok(())
     }
     
-    /// Set metrics updater for tracking compaction operations
-    pub fn set_metrics_updater(&mut self, updater: Arc<dyn InternalMetricsUpdater>) {
-        self.metrics_updater = Some(updater);
-        info!("🔗 BackgroundManager: Metrics updater registered for compaction tracking");
-    }
+    // 🔴 UNUSED METHOD - Metrics module is unused
+    // /// Set metrics updater for tracking compaction operations
+    // pub fn set_metrics_updater(&mut self, updater: Arc<dyn InternalMetricsUpdater>) {
+    //     self.metrics_updater = Some(updater);
+    //     info!("🔗 BackgroundManager: Metrics updater registered for compaction tracking");
+    // }
 
     /// 🚀 OPTIMIZED: Context-based compaction that eliminates collection service calls
     pub async fn execute_compaction_with_context(
@@ -168,21 +171,22 @@ impl BackgroundMaintenanceManager {
                         result.duration_ms
                     );
                     
-                    // 📊 METRICS: Record compaction operation metrics (non-blocking)
-                    if let Some(metrics) = metrics_updater {
-                        metrics.record_compaction(
-                            &context.collection_id,
-                            CompactionMetricsUpdate {
-                                files_before: result.input_files as i32,
-                                files_after: result.output_files as i32,
-                                bytes_before: result.bytes_read as i64,  // Use bytes_read instead
-                                bytes_after: result.bytes_written as i64,  // Use bytes_written instead
-                                duration_ms: result.duration_ms as i64,
-                                timestamp: chrono::Utc::now().timestamp_millis(),
-                            },
-                        ).await;
-                        info!("📊 Recorded compaction metrics for collection {}", context.collection_id);
-                    }
+                    // 🔴 UNUSED METRICS - Metrics module is unused
+                    // // 📊 METRICS: Record compaction operation metrics (non-blocking)
+                    // if let Some(metrics) = metrics_updater {
+                    //     metrics.record_compaction(
+                    //         &context.collection_id,
+                    //         CompactionMetricsUpdate {
+                    //             files_before: result.input_files as i32,
+                    //             files_after: result.output_files as i32,
+                    //             bytes_before: result.bytes_read as i64,  // Use bytes_read instead
+                    //             bytes_after: result.bytes_written as i64,  // Use bytes_written instead
+                    //             duration_ms: result.duration_ms as i64,
+                    //             timestamp: chrono::Utc::now().timestamp_millis(),
+                    //         },
+                    //     ).await;
+                    //     info!("📊 Recorded compaction metrics for collection {}", context.collection_id);
+                    // }
                     
                     // Return file list for compatibility - for VIPER this would be the compacted files
                     // Since the UnifiedStorageEngine doesn't return file paths, we'll return a placeholder

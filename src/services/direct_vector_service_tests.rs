@@ -52,6 +52,7 @@ mod tests {
             rank: None,
             score: None,
             distance: None,
+        
         }
     }
 
@@ -74,7 +75,7 @@ mod tests {
         let distance_compute = Arc::new(crate::compute::unified_distance::UnifiedDistanceCompute::default());
         
         let viper_engine = Arc::new(ViperEngine::from_core_config(crate::core::config::ViperConfig::default(), filesystem.clone()).await.expect("Failed to create VIPER engine"));
-        let sst_engine = Arc::new(SstStorage::new("test_collection".to_string(), config.storage.sst_config.clone(), filesystem.clone(), distance_compute).await.expect("Failed to create SST engine"));
+        let sst_engine = Arc::new(SstStorage::new(config.storage.sst_config.clone(), filesystem.clone(), distance_compute).await.expect("Failed to create SST engine"));
 
         // Create write buffer config
         let write_buffer_config = WriteBufferConfig::default();
@@ -103,7 +104,7 @@ mod tests {
         let distance_compute = Arc::new(crate::compute::unified_distance::UnifiedDistanceCompute::default());
         
         let viper_engine = Arc::new(ViperEngine::from_core_config(crate::core::config::ViperConfig::default(), filesystem.clone()).await.expect("Failed to create VIPER engine"));
-        let sst_engine = Arc::new(SstStorage::new("test_collection".to_string(), config.storage.sst_config.clone(), filesystem.clone(), distance_compute).await.expect("Failed to create SST engine"));
+        let sst_engine = Arc::new(SstStorage::new(config.storage.sst_config.clone(), filesystem.clone(), distance_compute).await.expect("Failed to create SST engine"));
         let write_buffer_config = WriteBufferConfig::default();
 
         let service = DirectVectorService::with_format(write_buffer_config, viper_engine, sst_engine, format)
@@ -170,7 +171,7 @@ mod tests {
         let distance_compute = Arc::new(crate::compute::unified_distance::UnifiedDistanceCompute::default());
         
         let viper_engine = Arc::new(ViperEngine::from_core_config(crate::core::config::ViperConfig::default(), filesystem.clone()).await.expect("Failed to create VIPER engine"));
-        let sst_engine = Arc::new(SstStorage::new("test_collection".to_string(), config.storage.sst_config.clone(), filesystem.clone(), distance_compute).await.expect("Failed to create SST engine"));
+        let sst_engine = Arc::new(SstStorage::new(config.storage.sst_config.clone(), filesystem.clone(), distance_compute).await.expect("Failed to create SST engine"));
         let write_buffer_config = WriteBufferConfig::default();
 
         // Test write-heavy workload
@@ -231,7 +232,7 @@ mod tests {
         let distance_compute = Arc::new(crate::compute::unified_distance::UnifiedDistanceCompute::default());
         
         let viper_engine = Arc::new(ViperEngine::from_core_config(crate::core::config::ViperConfig::default(), filesystem.clone()).await.expect("Failed to create VIPER engine"));
-        let sst_engine = Arc::new(SstStorage::new("test_collection".to_string(), config.storage.sst_config.clone(), filesystem.clone(), distance_compute).await.expect("Failed to create SST engine"));
+        let sst_engine = Arc::new(SstStorage::new(config.storage.sst_config.clone(), filesystem.clone(), distance_compute).await.expect("Failed to create SST engine"));
         let write_buffer_config = WriteBufferConfig::default();
 
         // Test format override (should use override instead of workload hint)

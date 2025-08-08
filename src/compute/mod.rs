@@ -23,8 +23,9 @@
 
 pub mod algorithms;
 pub mod distance;
-pub mod hardware;
-pub mod hardware_detection;
+// 🔴 UNUSED MODULES - Using core::hardware_capabilities instead
+// pub mod hardware;
+// pub mod hardware_detection;
 // pub mod indexing;  // Removed - all indexing now in AXIS package
 // pub mod quantization;  // Removed - use unified_quantization instead
 pub mod unified_distance;
@@ -40,7 +41,7 @@ pub mod gpu_distance;
 
 pub use algorithms::*;
 pub use distance::*;
-pub use hardware::*;
+// pub use hardware::*;  // 🔴 UNUSED - hardware module commented out
 // pub use indexing::*;  // Commented out as indexing module is empty
 // Old quantization module removed - use unified_quantization types instead
 pub use memory_pool::*;

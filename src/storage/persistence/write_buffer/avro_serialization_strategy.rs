@@ -11,7 +11,7 @@ use tracing::{debug, info};
 
 use super::batch_strategy::WriteBufferBatchStrategy;
 use super::{FlushResult, WriteBufferConfig, WriteBufferStats, BatchId};
-use crate::compute::unified_distance::{DistanceComputeProvider, UnifiedDistanceCompute};
+use crate::compute::unified_distance::UnifiedDistanceCompute;
 use crate::core::VectorRecord;
 use crate::storage::memtable::specialized::write_buffer_behavior::WriteBufferVectorBatch;
 use crate::storage::persistence::filesystem::FilesystemFactory;
@@ -42,8 +42,6 @@ pub struct AvroSerializationStrategy {
     /// Flush coordinator
     flush_coordinator: Arc<WriteBufferFlushCoordinator>,
     
-    /// Distance computation
-    distance_compute: UnifiedDistanceCompute,
     
     /// Configuration
     config: WriteBufferConfig,
@@ -108,7 +106,6 @@ impl AvroSerializationStrategy {
             recovery_manager,
             storage_engine: Arc::new(tokio::sync::RwLock::new(None)),
             flush_coordinator,
-            distance_compute: UnifiedDistanceCompute::default(),
             config: config.clone(),
         })
     }
@@ -120,11 +117,6 @@ impl Default for AvroSerializationStrategy {
     }
 }
 
-impl DistanceComputeProvider for AvroSerializationStrategy {
-    fn distance_compute(&self) -> &UnifiedDistanceCompute {
-        &self.distance_compute
-    }
-}
 
 #[async_trait]
 impl WriteBufferBatchStrategy for AvroSerializationStrategy {
@@ -254,12 +246,15 @@ impl WriteBufferBatchStrategy for AvroSerializationStrategy {
             return Ok(Vec::new());
         }
         
+        // CRITICAL: Create distance compute locally per query to avoid cross-query contamination
+        let distance_compute = UnifiedDistanceCompute::default();
+        
         // Use the unified distance compute to calculate distances
         let metric = distance_metric.unwrap_or(crate::compute::distance::DistanceMetric::Cosine);
         let mut results: Vec<(String, f32, VectorRecord)> = Vec::new();
         
         for vector in vectors {
-            let distance_result = self.distance_compute.calculate_distance(
+            let distance_result = distance_compute.calculate_distance(
                 query_vector,
                 &vector.vector,
                 &metric,

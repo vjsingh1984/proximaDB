@@ -11,7 +11,7 @@ use proximadb::core::{SstConfig, BloomFilterConfig, VectorRecord, WriteBufferUse
 use proximadb::core::config::StorageLocation;
 use proximadb::proto::proximadb::MetadataItem;
 use proximadb::compute::unified_distance::{UnifiedDistanceCompute, HardwareBackend};
-use proximadb::storage::assignment_service::{HashBasedAssignmentService, AssignmentService, set_assignment_service, get_assignment_service};
+// 🔴 OBSOLETE - Assignment service removed
 use proximadb::storage::engines::sst::SstStorage;
 use proximadb::storage::persistence::filesystem::{FilesystemFactory, FilesystemConfig};
 use proximadb::storage::traits::UnifiedStorageEngine;
@@ -132,6 +132,13 @@ impl IsolatedTestEnvironment {
         (0..count).map(|i| {
             VectorRecord {
                 id: Some(format!("{}_{}", self.collection_id, i)),
+                timestamp: 0,
+                updated_at: None,
+                expires_at: None,
+                distance: None,
+                rank: None,
+                score: None,
+                version: None,
                 vector: vec![i as f32, (i + 1) as f32, (i + 2) as f32],
                 metadata: vec![
                     MetadataItem {
@@ -153,7 +160,6 @@ impl IsolatedTestEnvironment {
                         )),
                     },
                 ],
-                timestamp: chrono::Utc::now().timestamp() as u32,
                 ..Default::default()
             }
         }).collect()
@@ -199,6 +205,7 @@ impl IsolatedTestEnvironment {
                 enabled: true,
                 ..Default::default()
             }),
+            decompression_cache_config: None,
             
             // Cache
             cache_size_mb: 16,
@@ -207,7 +214,7 @@ impl IsolatedTestEnvironment {
             background_thread_count: 1, // Single thread for deterministic testing
             
             // Directories - will be set by assignment service
-            data_directory: "/tmp/test_data".to_string(), // Placeholder
+            data_directory: "/tmp/test-data".to_string(), // Placeholder
             
             // Memory mapping - disabled for testing
             mmap_enabled: false,
@@ -223,7 +230,7 @@ impl IsolatedTestEnvironment {
             memory_flush_size_bytes: 512 * 1024, // 512KB
             memtable_type: "BTree".to_string(),
             sync_mode: "perbatch".to_string(),
-            write_buffer_directory: "/tmp/test_wb".to_string(), // Placeholder
+            write_buffer_directory: "/tmp/test-wb".to_string(), // Placeholder
             enable_wal: true,
             vector_count_threshold: 50,  // Small threshold for tests
         }

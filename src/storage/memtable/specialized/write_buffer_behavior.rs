@@ -879,6 +879,7 @@ mod tests {
             rank: None,
             score: None,
             distance: None,
+        
         };
 
         let vector_record2 = crate::core::VectorRecord {
@@ -892,6 +893,7 @@ mod tests {
             rank: None,
             score: None,
             distance: None,
+        
         };
 
         // Test first batch insertion using unified add_vector_batch API

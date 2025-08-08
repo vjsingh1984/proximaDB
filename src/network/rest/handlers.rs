@@ -1265,7 +1265,8 @@ fn convert_to_proto_config(config: RestCollectionConfig) -> Result<CollectionCon
                 supports_range: col.supports_range,
                 estimated_cardinality: col.estimated_cardinality,
                 encoding_hint: None,  // SDK-driven encoding hints (2025-08-06)
-            }
+            
+                    }
         })
         .collect();
     
@@ -1294,6 +1295,7 @@ fn convert_to_proto_config(config: RestCollectionConfig) -> Result<CollectionCon
         owner: config.owner,
         compression: None,  // SDK-driven compression (2025-08-06)
         optimization_hints: None,  // SDK-driven optimization (2025-08-06)
+        storage_location: None,
     })
 }
 
@@ -1838,6 +1840,7 @@ pub async fn delete_vectors(
             distance: Some(0.0),
             rank: Some(0),
             score: Some(0.0),
+        
         })
         .collect();
     

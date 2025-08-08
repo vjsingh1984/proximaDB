@@ -1,59 +1,82 @@
-graph TD
-    Start([New Collection]) --> Engine{Storage<br/>Engine?}
+%%{init: {'theme':'dark', 'themeVariables': { 'primaryColor':'#1f2937', 'primaryTextColor':'#f3f4f6', 'primaryBorderColor':'#4b5563', 'lineColor':'#6b7280', 'secondaryColor':'#374151', 'tertiaryColor':'#111827', 'background':'#0f172a', 'mainBkg':'#1f2937', 'secondBkg':'#374151', 'tertiaryBkg':'#111827'}}}%%
+flowchart TD
+    Start([Start: Choose Compression])
+    Start --> Q1{What is your<br/>primary goal?}
     
-    Engine -->|VIPER| ViperPath[Columnar Storage<br/>Analytics Optimized]
-    Engine -->|SST| SstPath[Row Storage<br/>Write Optimized]
+    Q1 -->|Minimize Latency| Speed[Speed Priority]
+    Q1 -->|Balance| Balanced[Balanced Approach]
+    Q1 -->|Minimize Storage| Storage[Storage Priority]
     
-    ViperPath --> VectorType1{Vector<br/>Type?}
-    VectorType1 -->|FP32| VFP32[Standard Parquet<br/>List&lt;Float32&gt;<br/>30-50% compression]
-    VectorType1 -->|INT8/16| VQuant[Quantized Storage<br/>List&lt;Int8/16&gt;<br/>75% reduction]
-    VectorType1 -->|4-6 bit| VCustom[Pack to INT8<br/>with Bytemuck<br/>81-87% reduction]
-    VectorType1 -->|Sparse| VSparse[COO Format<br/>indices + values<br/>70-90% reduction]
+    %% Speed Path
+    Speed --> Q2{Vector<br/>Dimensions?}
+    Q2 -->|< 512| LZ4_Low[LZ4<br/>No compression level]
+    Q2 -->|512-1024| Snappy[Snappy<br/>No compression level]
+    Q2 -->|> 1024| ZSTD1[ZSTD Level 1-2<br/>Fast compression]
     
-    SstPath --> VectorChar{Vector<br/>Characteristics?}
-    VectorChar -->|Similar<br/>Sequential| SXOR[XOR Delta<br/>40-60% compression]
-    VectorChar -->|High<br/>Precision Waste| SAdaptive[Adaptive Precision<br/>50-75% compression]
-    VectorChar -->|>70% Sparse| SSparse[COO/CSR Format<br/>70-90% compression]
-    VectorChar -->|Random Dense| SStandard[ZSTD Only<br/>10-30% compression]
+    %% Balanced Path
+    Balanced --> Q3{Storage<br/>Engine?}
+    Q3 -->|SST| SST_Balanced
+    Q3 -->|VIPER| VIPER_Balanced
     
-    VFP32 --> Access1{Access<br/>Pattern?}
-    VQuant --> Access1
-    VCustom --> Access1
-    VSparse --> Access1
+    SST_Balanced --> Q4{Access<br/>Pattern?}
+    Q4 -->|Random| ZSTD3[ZSTD Level 3<br/>4MB blocks]
+    Q4 -->|Sequential| ZSTD6[ZSTD Level 6<br/>8MB blocks]
     
-    SXOR --> Access2{Access<br/>Pattern?}
-    SAdaptive --> Access2
-    SSparse --> Access2
-    SStandard --> Access2
+    VIPER_Balanced --> Q5{Query<br/>Type?}
+    Q5 -->|Analytics| ZSTD_Quant[ZSTD Level 3-6<br/>+ INT8 Quantization]
+    Q5 -->|Real-time| ZSTD_NoQuant[ZSTD Level 3<br/>No Quantization]
     
-    Access1 -->|Archive| A1[ZSTD-9<br/>Max compression]
-    Access1 -->|Read Heavy| A2[ZSTD-1 or None<br/>Low latency]
-    Access1 -->|Write Heavy| A3[LZ4<br/>Fast compression]
-    Access1 -->|Balanced| A4[ZSTD-3<br/>Balanced]
+    %% Storage Path
+    Storage --> Q6{Query<br/>Frequency?}
+    Q6 -->|High| Storage_High
+    Q6 -->|Medium| Storage_Medium
+    Q6 -->|Low/Archive| Storage_Low
     
-    Access2 -->|Archive| A5[ZSTD-9<br/>Max compression]
-    Access2 -->|Read Heavy| A6[ZSTD-1 or None<br/>Low latency]
-    Access2 -->|Write Heavy| A7[LZ4<br/>Fast compression]
-    Access2 -->|Balanced| A8[ZSTD-3<br/>Balanced]
+    Storage_High --> Q7{Engine?}
+    Q7 -->|SST| Brotli4[Brotli Level 4-6<br/>8MB blocks]
+    Q7 -->|VIPER| ZSTD9_PQ[ZSTD Level 9<br/>+ PQ8 Quantization]
     
-    A1 --> Result1[/Expected:<br/>60-80% reduction<br/>-30% query speed/]
-    A2 --> Result2[/Expected:<br/>30-50% reduction<br/>Baseline speed/]
-    A3 --> Result3[/Expected:<br/>40-60% reduction<br/>-10% write speed/]
-    A4 --> Result4[/Expected:<br/>50-70% reduction<br/>-15% overall speed/]
+    Storage_Medium --> Q8{Data Type?}
+    Q8 -->|Dense Vectors| Brotli7[Brotli Level 7-9<br/>12MB blocks]
+    Q8 -->|Text/Legacy| Gzip_Zlib[Gzip/Zlib Level 6<br/>Good compatibility]
+    Q8 -->|Mixed Data| Bzip2[Bzip2 Level 5-7<br/>Balanced ratio]
     
-    A5 --> Result5[/Expected:<br/>70-90% reduction<br/>-30% query speed/]
-    A6 --> Result6[/Expected:<br/>40-60% reduction<br/>-5% query speed/]
-    A7 --> Result7[/Expected:<br/>50-70% reduction<br/>-10% write speed/]
-    A8 --> Result8[/Expected:<br/>60-80% reduction<br/>-15% overall speed/]
+    Storage_Low --> Q9{Extreme Compression?}
+    Q9 -->|Maximum Ratio| LZMA[LZMA Level 6-9<br/>16MB blocks]
+    Q9 -->|LZMA2 Based| XZ[XZ Level 6-9<br/>Better than LZMA]
+    Q9 -->|Legacy Support| Deflate_Legacy[Deflate Level 6<br/>Raw compression]
     
-    style Start fill:#e1f5fe
-    style ViperPath fill:#fff3e0
-    style SstPath fill:#f3e5f5
-    style Result1 fill:#ffebee
-    style Result2 fill:#e8f5e9
-    style Result3 fill:#e8f5e9
-    style Result4 fill:#fff9c4
-    style Result5 fill:#ffebee
-    style Result6 fill:#e8f5e9
-    style Result7 fill:#e8f5e9
-    style Result8 fill:#fff9c4
+    %% Recommendations
+    LZ4_Low --> Rec1[Recommendation:<br/>2-3x compression<br/>< 2% latency impact]
+    Snappy --> Rec2[Recommendation:<br/>2x compression<br/>< 3% latency impact]
+    ZSTD1 --> Rec3[Recommendation:<br/>3x compression<br/>< 5% latency impact]
+    
+    ZSTD3 --> Rec4[Recommendation:<br/>3.8x compression<br/>6% latency impact]
+    ZSTD6 --> Rec5[Recommendation:<br/>4.2x compression<br/>10% latency impact]
+    
+    ZSTD_Quant --> Rec6[Recommendation:<br/>8-16x compression<br/>15% latency impact]
+    ZSTD_NoQuant --> Rec7[Recommendation:<br/>3.8x compression<br/>6% latency impact]
+    
+    Brotli4 --> Rec8[Recommendation:<br/>4.2x compression<br/>12% latency impact]
+    ZSTD9_PQ --> Rec9[Recommendation:<br/>16-32x compression<br/>20% latency impact]
+    
+    Brotli7 --> Rec10[Recommendation:<br/>5x compression<br/>15% latency impact]
+    ZSTD9 --> Rec11[Recommendation:<br/>4.5x compression<br/>12% latency impact]
+    
+    LZMA --> Rec12[Recommendation:<br/>6-8x compression<br/>25% latency impact]
+    XZ --> Rec13[Recommendation:<br/>7x compression<br/>30% latency impact]
+    
+    Gzip_Zlib --> Rec14[Recommendation:<br/>3.5x compression<br/>Compatible with all systems]
+    Bzip2 --> Rec15[Recommendation:<br/>4.8x compression<br/>15% latency impact]
+    Deflate_Legacy --> Rec16[Recommendation:<br/>3.2x compression<br/>Legacy system support]
+    
+    %% Styling
+    classDef speedClass fill:#10b981,stroke:#065f46,color:#000
+    classDef balancedClass fill:#3b82f6,stroke:#1e40af,color:#fff
+    classDef storageClass fill:#f59e0b,stroke:#92400e,color:#000
+    classDef recClass fill:#6b7280,stroke:#374151,color:#fff
+    
+    class LZ4_Low,Snappy,ZSTD1,Speed speedClass
+    class ZSTD3,ZSTD6,ZSTD_Quant,ZSTD_NoQuant,Balanced,SST_Balanced,VIPER_Balanced balancedClass
+    class Brotli4,Brotli7,ZSTD9,ZSTD9_PQ,LZMA,XZ,Storage,Storage_High,Storage_Medium,Storage_Low storageClass
+    class Rec1,Rec2,Rec3,Rec4,Rec5,Rec6,Rec7,Rec8,Rec9,Rec10,Rec11,Rec12,Rec13 recClass

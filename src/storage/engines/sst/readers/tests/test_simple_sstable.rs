@@ -10,6 +10,7 @@ use tempfile::TempDir;
 fn create_test_config() -> SstConfig {
     SstConfig {
         block_size_kb: 4, // Use small 4KB blocks for tests
+        decompression_cache_config: None,
         ..SstConfig::default()
     }
 }
@@ -59,8 +60,13 @@ async fn test_simple_sstable_write_read() {
     // Parse the SSTable manually
     let mut offset = 0;
     
+    // Check SST1 magic bytes
+    assert_eq!(&data[0..4], b"SST1", "Missing SST1 magic bytes");
+    offset += 4;
+    println!("  ✓ SST1 magic bytes verified");
+    
     // Read header length
-    let header_len = u32::from_le_bytes([data[0], data[1], data[2], data[3]]) as usize;
+    let header_len = u32::from_le_bytes([data[offset], data[offset+1], data[offset+2], data[offset+3]]) as usize;
     offset += 4;
     println!("  Header length: {} bytes", header_len);
     

@@ -1,0 +1,43 @@
+graph TB
+    subgraph "UnifiedCrossEngineCache"
+        subgraph "L1 Memory Cache"
+            L1V[Vectors]
+            L1I[Indexes]
+            L1B[Bloom Filters]
+            L1M[Metadata]
+        end
+        
+        subgraph "L2 NVMe Cache"
+            L2F[File Storage]
+            L2I[Index Map]
+        end
+        
+        subgraph "L3 Network Cache"
+            L3C[Cloud Storage]
+            L3R[Remote Index]
+        end
+    end
+    
+    subgraph "Storage Engines"
+        SST[SST Engine]
+        VIPER[VIPER Engine]
+    end
+    
+    SST --> L1V
+    SST --> L1I
+    VIPER --> L1V
+    VIPER --> L1M
+    
+    L1V -.->|Demote| L2F
+    L2F -.->|Demote| L3C
+    L3C -.->|Promote| L2F
+    L2F -.->|Promote| L1V
+    
+    style L1V fill:#e1f5e1
+    style L1I fill:#e1f5e1
+    style L1B fill:#e1f5e1
+    style L1M fill:#e1f5e1
+    style L2F fill:#fff4e1
+    style L2I fill:#fff4e1
+    style L3C fill:#ffe1e1
+    style L3R fill:#ffe1e1

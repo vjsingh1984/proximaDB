@@ -76,7 +76,14 @@ fn create_test_vectors(collection_id: &str, count: usize) -> Vec<VectorRecord> {
             ];
             
             VectorRecord {
-                id: Some(format!("vec_{}", i)),
+                id: Some(format!("vec_{,
+            timestamp: 0,
+            updated_at: None,
+            expires_at: None,
+            distance: None,
+            rank: None,
+            score: None,
+        }", i)),
                 vector,
                 metadata,
                 timestamp: chrono::Utc::now().timestamp() as u32,
@@ -104,8 +111,10 @@ async fn test_basic_vector_operations() {
         distance_metric: DistanceMetric::Cosine as i32,
         storage_engine: StorageEngine::Viper as i32,
         primary_indexing_algorithm: IndexingAlgorithm::Hnsw as i32,
-        ..Default::default()
-    };
+        ..Default::default(),
+                compression: None,
+                optimization_hints: None,
+            };
     
     collection_service.create_collection(&config).await.unwrap();
     
@@ -164,8 +173,10 @@ async fn test_batch_vector_insertion() {
         distance_metric: DistanceMetric::Euclidean as i32,
         storage_engine: StorageEngine::Sst as i32,
         primary_indexing_algorithm: IndexingAlgorithm::Ivf as i32,
-        ..Default::default()
-    };
+        ..Default::default(),
+                compression: None,
+                optimization_hints: None,
+            };
     
     collection_service.create_collection(&config).await.unwrap();
     
@@ -226,8 +237,10 @@ async fn test_streaming_search() {
         distance_metric: DistanceMetric::Manhattan as i32,
         storage_engine: StorageEngine::Viper as i32,
         primary_indexing_algorithm: IndexingAlgorithm::Hnsw as i32,
-        ..Default::default()
-    };
+        ..Default::default(),
+                compression: None,
+                optimization_hints: None,
+            };
     
     collection_service.create_collection(&config).await.unwrap();
     
@@ -286,8 +299,10 @@ async fn test_metadata_filtering() {
             "score".to_string(),
             "is_active".to_string(),
         ],
-        ..Default::default()
-    };
+        ..Default::default(),
+                compression: None,
+                optimization_hints: None,
+            };
     
     collection_service.create_collection(&config).await.unwrap();
     
@@ -375,8 +390,10 @@ async fn test_flush_operations() {
         distance_metric: DistanceMetric::DotProduct as i32,
         storage_engine: StorageEngine::Sst as i32,
         primary_indexing_algorithm: IndexingAlgorithm::Pq as i32,
-        ..Default::default()
-    };
+        ..Default::default(),
+                compression: None,
+                optimization_hints: None,
+            };
     
     collection_service.create_collection(&config).await.unwrap();
     
@@ -447,8 +464,10 @@ async fn test_metrics_and_health() {
         distance_metric: DistanceMetric::Cosine as i32,
         storage_engine: StorageEngine::Viper as i32,
         primary_indexing_algorithm: IndexingAlgorithm::Hnsw as i32,
-        ..Default::default()
-    };
+        ..Default::default(),
+                compression: None,
+                optimization_hints: None,
+            };
     
     collection_service.create_collection(&config).await.unwrap();
     

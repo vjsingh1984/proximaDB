@@ -140,7 +140,9 @@ async fn test_assignment_service_discovery_after_restart() -> Result<()> {
             description: None,
             tags: vec![],
             owner: None,
-        };
+                compression: None,
+                optimization_hints: None,
+            };
         
         match collection_service.create_collection(&collection_config).await {
             Ok(response) => {
@@ -160,6 +162,7 @@ async fn test_assignment_service_discovery_after_restart() -> Result<()> {
                             distance: None,
                             rank: None,
                             score: None,
+                            ..Default::default()
                         },
                         VectorRecord {
                             id: Some(format!("{}_vector_2", collection_id)),
@@ -172,6 +175,7 @@ async fn test_assignment_service_discovery_after_restart() -> Result<()> {
                             distance: None,
                             rank: None,
                             score: None,
+                            ..Default::default()
                         },
                     ];
                     
@@ -452,7 +456,9 @@ async fn test_assignment_persistence_and_recovery() -> Result<()> {
             description: None,
             tags: vec![],
             owner: None,
-        };
+                compression: None,
+                optimization_hints: None,
+            };
         
         collection_service.create_collection(&collection_config).await?;
     }

@@ -20,12 +20,11 @@ ProximaDB implements a sophisticated SDK-driven compression system that gives cl
 
 == Architecture
 
-=== Compression Flow
+=== Compression Architecture
 
-image::diagrams/images/compression-architecture.svg[Compression Architecture, align=center, width=800]
-_link:diagrams/compression-architecture.mmd[View source diagram]_
+image::diagrams/images/compression-architecture-consolidated.svg[Compression Architecture, align=center, width=800]
 
-The compression flow shows how SDK configuration drives compression through the system:
+The comprehensive compression architecture showing SDK-driven strategy with engine-specific optimizations:
 
 === Key Components
 
@@ -35,19 +34,22 @@ Python model that encapsulates all compression settings:
 [source,python]
 ----
 class CompressionConfig(BaseModel):
-    # SST compression settings
-    sst_block_size: Optional[int] = 16384
-    sst_compression_algorithm: Optional[CompressionAlgorithm] = None
-    sst_compression_level: Optional[int] = None
-    
-    # VIPER compression settings  
-    viper_compression_algorithm: Optional[CompressionAlgorithm] = None
-    viper_compression_level: Optional[int] = None
-    viper_enable_dual_columns: Optional[bool] = False
+    # Unified compression settings (proto-aligned)
+    algorithm: CompressionAlgorithm = CompressionAlgorithm.NONE
+    level: Optional[int] = None
     
     # Global settings
-    adaptive_compression: Optional[bool] = False
-    compression_threshold_kb: Optional[int] = 100
+    adaptive: bool = False
+    min_ratio: Optional[float] = None
+    
+    # VIPER-specific quantization (ignored by SST)
+    enable_quantization: bool = False
+    quantization_type: Optional[str] = None  # 'int8', 'pq8', 'pq4'
+    normalization_method: Optional[str] = None  # 'mean', 'trimmed_mean', 'median'
+    
+    # SST-specific block sizing (ignored by VIPER)
+    block_size_mb: Optional[int] = None
+    dynamic_block_sizing: bool = False
 ----
 
 ==== 2. UnifiedQueryPlanner
@@ -87,9 +89,9 @@ Modern SSTable format with version identification:
 
 == Configuration Guide
 
-=== SST Compression
+=== Engine-Specific Compression Examples
 
-SST engine supports block-level compression with configurable block sizes:
+==== SST Engine with Block Compression
 
 [source,python]
 ----
@@ -103,46 +105,41 @@ from proximadb.models import (
 
 client = ProximaDBClient()
 
-# Configure SST with ZSTD compression
-compression_config = CompressionConfig(
-    sst_compression_algorithm=CompressionAlgorithm.ZSTD,
-    sst_compression_level=6,  # Balanced (1-9)
-    sst_block_size=32768,      # 32KB blocks
-    adaptive_compression=True,
-    compression_threshold_kb=50
-)
-
-collection_config = CollectionConfig(
-    name="my_sst_collection",
+# SST collection with block compression
+sst_config = CollectionConfig(
+    name="sst_compressed",
     dimension=1536,
     storage_engine=StorageEngine.SST,
-    compression_config=compression_config
+    compression=CompressionConfig(
+        algorithm=CompressionAlgorithm.ZSTD,
+        level=6,                    # ZSTD compression level (1-22)
+        block_size_mb=16,          # SST block size (only applies to SST engine)
+        adaptive=True              # Enable adaptive compression
+    )
 )
 
-collection = client.create_collection(collection_config)
+collection = client.create_collection(sst_config)
 ----
 
-=== VIPER Compression
-
-VIPER engine uses Parquet compression with optional dual columns:
+==== VIPER Engine with Dual Columns
 
 [source,python]
 ----
-# Configure VIPER with LZ4 and dual columns
-compression_config = CompressionConfig(
-    viper_compression_algorithm=CompressionAlgorithm.LZ4,
-    viper_compression_level=1,  # Fast compression
-    viper_enable_dual_columns=True  # Store both FP32 and INT8
-)
-
-collection_config = CollectionConfig(
-    name="my_viper_collection",
-    dimension=768,
+# VIPER collection with quantization
+viper_config = CollectionConfig(
+    name="viper_compressed", 
+    dimension=1536,
     storage_engine=StorageEngine.VIPER,
-    compression_config=compression_config
+    compression=CompressionConfig(
+        algorithm=CompressionAlgorithm.LZ4,
+        level=1,                        # Fast compression
+        enable_quantization=True,       # VIPER dual columns (only applies to VIPER)
+        quantization_type="int8",       # INT8 quantization
+        normalization_method="mean"     # Normalization for quantized column
+    )
 )
 
-collection = client.create_collection(collection_config)
+collection = client.create_collection(viper_config)
 ----
 
 === Compression-Aware Search

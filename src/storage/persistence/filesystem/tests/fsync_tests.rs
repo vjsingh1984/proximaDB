@@ -194,7 +194,8 @@ async fn test_concurrent_sync_operations() {
 #[cfg(test)]
 mod cloud_storage_sync_tests {
     use super::*;
-    use crate::storage::persistence::filesystem::{s3::S3FileSystem, azure::AzureFileSystem, gcs::GcsFileSystem};
+    // 🔴 UNUSED IMPORTS - cloud storage modules commented out
+    // use crate::storage::persistence::filesystem::{s3::S3FileSystem, azure::AzureFileSystem, gcs::GcsFileSystem};
     
     #[tokio::test]
     async fn test_s3_sync_is_noop() {

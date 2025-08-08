@@ -6,7 +6,6 @@ use tokio::sync::{mpsc, RwLock};
 use tracing::{debug, info, error};
 
 use crate::proto::proximadb::VectorRecord;
-use crate::storage::assignment_service::get_assignment_service;
 use crate::storage::persistence::filesystem::FilesystemFactory;
 use crate::storage::persistence::write_buffer::config::WriteBufferConfig;
 use crate::services::direct_vector_service::OptimizedFormat;
@@ -45,6 +44,7 @@ struct WalWriteRequest {
     vectors: Vec<VectorRecord>,
     sequences: Vec<u64>,
     format: OptimizedFormat,
+    base_location: String,
     response_tx: tokio::sync::oneshot::Sender<Result<String>>,
 }
 
@@ -118,6 +118,7 @@ impl OptimizedWriteBufferWriter {
         vectors: Vec<VectorRecord>,
         sequences: Vec<u64>,
         format: OptimizedFormat,
+        base_location: String,
     ) -> Result<String> {
         let (response_tx, response_rx) = tokio::sync::oneshot::channel();
         
@@ -126,6 +127,7 @@ impl OptimizedWriteBufferWriter {
             vectors,
             sequences,
             format,
+            base_location,
             response_tx,
         };
         
@@ -345,13 +347,13 @@ impl OptimizedWriteBufferWriter {
         filesystem_factory: &FilesystemFactory,
         metrics: &Arc<RwLock<WalWriterMetrics>>,
     ) -> Result<()> {
-        // Get cached assignment or fetch new one
-        let assignment = Self::get_cached_assignment(
-            collection_id,
-            config,
-            assignment_cache,
-            metrics
-        ).await?;
+        // Get base_location from the first request (all requests for same collection have same base_location)
+        let base_location = requests.first()
+            .ok_or_else(|| anyhow::anyhow!("No requests in batch"))?
+            .base_location.clone();
+        
+        // Create assignment paths
+        let assignment = Self::create_assignment_paths(collection_id, &base_location);
         
         // Get filesystem for this URL
         let filesystem = filesystem_factory.get_filesystem(&assignment.storage_url)?;
@@ -439,52 +441,20 @@ impl OptimizedWriteBufferWriter {
         }
     }
     
-    /// Get cached assignment or fetch new one
-    async fn get_cached_assignment(
+    /// Create assignment paths from base location
+    fn create_assignment_paths(
         collection_id: &str,
-        _config: &WriteBufferConfig,
-        assignment_cache: &Arc<RwLock<HashMap<String, CachedAssignment>>>,
-        metrics: &Arc<RwLock<WalWriterMetrics>>,
-    ) -> Result<CachedAssignment> {
-        // Check cache first
-        {
-            let cache = assignment_cache.read().await;
-            if let Some(cached) = cache.get(collection_id) {
-                // Cache entries expire after 5 minutes
-                if cached.cached_at.elapsed() < Duration::from_secs(300) {
-                    metrics.write().await.cache_hits += 1;
-                    return Ok(cached.clone());
-                }
-            }
-        }
+        base_location: &str,
+    ) -> CachedAssignment {
+        // Create assignment from base location
+        let write_buffer_url = format!("{}/{}/write_buffer", base_location, collection_id);
         
-        metrics.write().await.cache_misses += 1;
-        
-        // Fetch assignment from service
-        let assignment_service = get_assignment_service();
-        
-        let assignment = assignment_service
-            .get_assignment(collection_id)
-            .await
-            .ok_or_else(|| anyhow::anyhow!("No assignment found for collection {}", collection_id))?;
-        
-        let base_path = if assignment.write_buffer_url.starts_with("file://") {
-            assignment.write_buffer_url.strip_prefix("file://").unwrap_or(&assignment.write_buffer_url)
-        } else {
-            &assignment.write_buffer_url
-        };
-        
-        let cached = CachedAssignment {
-            storage_url: assignment.write_buffer_url.clone(),
-            collection_wal_dir: assignment.write_buffer_url.clone(),
-            logs_dir: format!("{}/logs", assignment.write_buffer_url.trim_end_matches('/')),
+        CachedAssignment {
+            storage_url: write_buffer_url.clone(),
+            collection_wal_dir: write_buffer_url.clone(),
+            logs_dir: format!("{}/logs", write_buffer_url.trim_end_matches('/')),
             cached_at: Instant::now(),
-        };
-        
-        // Update cache
-        assignment_cache.write().await.insert(collection_id.to_string(), cached.clone());
-        
-        Ok(cached)
+        }
     }
     
     /// Write combined batch with optimized atomic write

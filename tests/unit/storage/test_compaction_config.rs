@@ -84,7 +84,8 @@ async fn test_compaction_trigger_conditions() -> Result<()> {
     let config = SstConfig {
         compaction_threshold: 2, // Trigger compaction with 2 files
         data_directory: temp_dir.path().to_string_lossy().to_string(),
-        ..Default::default()
+        ..Default::default(),
+        decompression_cache_config: None,
     };
     
     // Create test records
@@ -135,7 +136,8 @@ async fn test_compaction_priority_levels() -> Result<()> {
     
     let config = SstConfig {
         data_directory: temp_dir.path().to_string_lossy().to_string(),
-        ..Default::default()
+        ..Default::default(),
+        decompression_cache_config: None,
     };
     
     // Create test records
@@ -184,7 +186,8 @@ async fn test_compaction_with_expired_records() -> Result<()> {
     
     let config = SstConfig {
         data_directory: temp_dir.path().to_string_lossy().to_string(),
-        ..Default::default()
+        ..Default::default(),
+        decompression_cache_config: None,
     };
     
     let current_time = chrono::Utc::now().timestamp_millis();
@@ -334,8 +337,9 @@ async fn test_compaction_level_configuration() -> Result<()> {
             level_count,
             memtable_size_mb: memtable_size / (1024 * 1024) as u64,
             data_directory: temp_dir.path().to_string_lossy().to_string(),
-            ..Default::default()
-        };
+            ..Default::default(),
+        decompression_cache_config: None,
+    };
         
         // Verify configuration is valid
         assert!(config.level_count > 0);
@@ -378,7 +382,8 @@ async fn test_compaction_performance_metrics() -> Result<()> {
     
     let config = SstConfig {
         data_directory: temp_dir.path().to_string_lossy().to_string(),
-        ..Default::default()
+        ..Default::default(),
+        decompression_cache_config: None,
     };
     
     // Create larger dataset for performance testing

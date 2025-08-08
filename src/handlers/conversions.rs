@@ -255,6 +255,7 @@ impl CollectionRequestBuilder {
             owner: json.get("owner").and_then(|v| v.as_str()).map(String::from),
             compression: None,  // SDK-driven compression (2025-08-06)
             optimization_hints: None,  // Storage optimization hints (2025-08-06)
+            storage_location: None,  // Optional storage location
         })
     }
 }
@@ -393,6 +394,7 @@ impl VectorBatchRequestBuilder {
             rank: None,
             score: None,
             distance: None,
+        
         })
     }
 }

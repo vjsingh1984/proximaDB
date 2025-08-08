@@ -18,6 +18,7 @@ mod tests {
             rank: None,
             score: Some(score),
             distance: None,
+        
         }
     }
 

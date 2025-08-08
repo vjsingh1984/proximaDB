@@ -88,7 +88,7 @@ fn create_test_search_context() -> UnifiedSearchContext {
         enable_quantization: true,
         enable_metadata_filtering: true,
         estimated_document_count: 1000,
-    };
+            };
     
     let storage_info = StorageInfo {
         is_cloud_storage: false,
@@ -145,7 +145,7 @@ async fn test_unified_search_interface() {
     assert_eq!(first_vector.vector.len(), 32);
     assert_eq!(first_vector.metadata.len(), 3);
     
-    println!("✅ Unified search interface structure test passed");
+    // Test completed
 }
 
 /// Test basic search functionality with SearchParams
@@ -185,7 +185,7 @@ async fn test_search_params_functionality() {
     assert!(filtered_search.filter_expression.is_some());
     assert_eq!(filtered_search.distance_metric, Some(DistanceMetric::Manhattan));
     
-    println!("✅ SearchParams functionality test passed");
+    // Test completed
 }
 
 /// Test distance metric functionality
@@ -227,7 +227,7 @@ async fn test_distance_metrics() {
         assert!(result2.rank_value <= result1.rank_value, 
             "Identical vectors should have lower rank_value for {:?}", metric);
         
-        println!("✅ Distance metric {:?} test passed", metric);
+        // Distance metric test completed
     }
 }
 
@@ -253,7 +253,7 @@ async fn test_vector_record_structure() {
             Some(proximadb::proto::proximadb::metadata_item::Value::StringValue(s)) => {
                 assert!(s.starts_with("cat_"));
             }
-            _ => panic!("Expected string value for category"),
+            _ => panic!("Bad"),
         }
         
         let score_item = vector.metadata.iter().find(|item| item.key == "score").unwrap();
@@ -262,7 +262,7 @@ async fn test_vector_record_structure() {
                 let score: f64 = s.parse().unwrap();
                 assert!(score >= 0.0 && score <= 1.0);
             }
-            _ => panic!("Expected string value for score"),
+            _ => panic!("Bad"),
         }
         
         let active_item = vector.metadata.iter().find(|item| item.key == "active").unwrap();
@@ -271,11 +271,11 @@ async fn test_vector_record_structure() {
                 let active: bool = s.parse().unwrap();
                 assert!(active == (i % 2 == 0));
             }
-            _ => panic!("Expected string value for active"),
+            _ => panic!("Bad"),
         }
     }
     
-    println!("✅ VectorRecord structure test passed");
+    // Test completed
 }
 
 /// Test SearchResult structure
@@ -324,7 +324,7 @@ async fn test_search_result_structure() {
     let score = search_result.metadata.get("score").unwrap().as_f64().unwrap();
     assert_eq!(score, 0.85);
     
-    println!("✅ SearchResult structure test passed");
+    // Test completed
 }
 
 /// Test unified search context creation
@@ -367,7 +367,7 @@ async fn test_unified_search_context() {
     assert_eq!(context.storage_info.file_count, 5);
     assert!(context.storage_info.supports_range_requests);
     
-    println!("✅ UnifiedSearchContext test passed");
+    // Test completed
 }
 
 /// Test basic unified search engine interface functionality
@@ -397,7 +397,7 @@ async fn test_unified_search_engine_interface() {
     // Test that we can create the necessary components
     // (This is a compile-time test - if this compiles, the trait is correctly defined)
     
-    println!("✅ UnifiedSearchEngine interface test passed");
+    // Test completed
 }
 
 /// Test SearchParams default values and edge cases
@@ -441,7 +441,7 @@ async fn test_search_params_edge_cases() {
     };
     assert_eq!(zero_dim_params.query_vectors.as_ref().unwrap()[0].len(), 0);
     
-    println!("✅ SearchParams edge cases test passed");
+    // Test completed
 }
 
 /// Test basic API usage patterns
@@ -476,7 +476,7 @@ async fn test_api_usage_patterns() {
     // Test with filters
     let mut filters = HashMap::new();
     filters.insert("category".to_string(), json!("electronics"));
-    filters.insert("price".to_string(), json!({"$lt": 100}));
+    filters.insert("price".to_string(), json!({"less_than": 100}));
     
     let filtered_search = SearchParams {
         query_vectors: Some(vec![vec![0.5; 128]]),
@@ -488,5 +488,5 @@ async fn test_api_usage_patterns() {
     assert!(filtered_search.filter_expression.is_some());
     assert_eq!(filtered_search.top_k, Some(50));
     
-    println!("✅ API usage patterns test passed");
+    // Test completed
 }

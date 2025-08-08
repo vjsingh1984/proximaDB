@@ -441,7 +441,8 @@ impl ParquetReconstructor {
                 rank: None,
                 score: None,
                 distance: None,
-            });
+            
+        });
         }
         
         Ok(vector_records)

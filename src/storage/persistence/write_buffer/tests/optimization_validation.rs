@@ -79,7 +79,7 @@ mod tests {
         let context = BackgroundFlushContext {
             collection_id: "test_collection".to_string(),
             storage_engine: StorageEngineType::Viper,
-            data_location: "/tmp/test/test_collection".to_string(),
+            base_location: "file:///tmp/test".to_string(),
             dimension: 384,
             distance_metric: DistanceMetric::Cosine,
             compression_config: CompressionConfig::default(),
@@ -128,7 +128,7 @@ mod tests {
         let context = BackgroundFlushContext {
             collection_id: "completeness_test".to_string(),
             storage_engine: StorageEngineType::Viper,
-            data_location: "/tmp/test/completeness_test".to_string(),
+            base_location: "file:///tmp/test".to_string(),
             dimension: 512,
             distance_metric: DistanceMetric::Euclidean,
             compression_config: CompressionConfig {
@@ -154,7 +154,7 @@ mod tests {
         assert_eq!(context.engine_name(), "viper");
         assert_eq!(context.dimension, 512);
         assert_eq!(context.distance_metric, DistanceMetric::Euclidean);
-        assert_eq!(context.data_location, "/tmp/test/completeness_test");
+        assert_eq!(context.base_location, "file:///tmp/test");
         
         // Verify compression config
         assert!(context.compression_config.enabled);

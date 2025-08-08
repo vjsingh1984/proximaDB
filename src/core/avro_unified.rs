@@ -117,7 +117,8 @@ pub struct VectorRecord {
     pub rank: Option<i32>,
     pub score: Option<f32>,
     pub distance: Option<f32>,
-}
+
+        }
 
 // Note: VectorRecord intentionally does NOT implement Eq or Hash
 // to maintain Avro compatibility and zero-copy semantics.
@@ -144,6 +145,7 @@ impl VectorRecord {
             rank: None,
             score: None,
             distance: None,
+        
         }
     }
 

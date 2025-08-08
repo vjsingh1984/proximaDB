@@ -54,7 +54,13 @@ fn create_test_vector(id: &str, _collection_id: &str, dimension: usize) -> Vecto
             proximadb::MetadataItem {
                 key: "category".to_string(),
                 value: Some(crate::proto::proximadb::metadata_item::Value::StringValue("test".to_string())),
-            },
+            timestamp: 0,
+            updated_at: None,
+            expires_at: None,
+            distance: None,
+            rank: None,
+            score: None,
+        },
             proximadb::MetadataItem {
                 key: "score".to_string(),
                 value: Some(crate::proto::proximadb::metadata_item::Value::StringValue("0.95".to_string())),
@@ -72,8 +78,13 @@ fn create_expired_vector(id: &str, _collection_id: &str, dimension: usize) -> Ve
         vector: (0..dimension).map(|i| i as f32 / 100.0).collect(),
         metadata: vec![],
         created_at: Utc::now().timestamp_micros(),
-        expires_at: Some(Utc::now().timestamp_millis() - 1000), // Expired 1 second ago
-    }
+        expires_at: Some(Utc::now().timestamp_millis() - 1000), // Expired 1 second ago,
+            timestamp: 0,
+            updated_at: None,
+            distance: None,
+            rank: None,
+            score: None,
+        }
 }
 
 /// Create test index selection strategy

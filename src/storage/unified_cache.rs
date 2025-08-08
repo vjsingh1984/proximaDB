@@ -745,6 +745,12 @@ mod tests {
             id: Some("vector_1".to_string()),
             vector: vec![1.0, 2.0, 3.0],
             metadata: vec![],
+            timestamp: 0,
+            updated_at: None,
+            expires_at: None,
+            distance: None,
+            rank: None,
+            score: None,
             ..Default::default()
         });
         
@@ -776,6 +782,12 @@ mod tests {
             id: Some("shared_vector".to_string()),
             vector: vec![1.0, 2.0, 3.0, 4.0],
             metadata: vec![],
+            timestamp: 0,
+            updated_at: None,
+            expires_at: None,
+            distance: None,
+            rank: None,
+            score: None,
             ..Default::default()
         });
         
@@ -817,6 +829,12 @@ mod tests {
                 id: Some(format!("vector_{}", i)),
                 vector: vec![1.0; 1000], // Large vectors
                 metadata: vec![],
+                timestamp: 0,
+                updated_at: None,
+                expires_at: None,
+                distance: None,
+                rank: None,
+                score: None,
                 ..Default::default()
             });
             

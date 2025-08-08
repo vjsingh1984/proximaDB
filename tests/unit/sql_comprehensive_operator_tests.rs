@@ -41,7 +41,7 @@ mod tests {
     use proximadb::proto::proximadb::{VectorRecord, MetadataItem, metadata_item};
     use proximadb::services::DirectVectorService;
     use proximadb::storage::StorageEngine;
-    use proximadb::storage::assignment_service::{AssignmentService, UnifiedAssignment, set_assignment_service};
+// 🔴 OBSOLETE - Assignment service removed
     use proximadb::config::Config;
     use proximadb::query::sql_engine::{
         SqlParser, QueryPlanner, SqlExecutor,

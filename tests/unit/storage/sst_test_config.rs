@@ -227,6 +227,7 @@ pub fn create_test_sst_config(base_path: &str) -> SstConfig {
             enabled: true,
             ..Default::default()
         }),
+        decompression_cache_config: None,
         
         // Cache
         cache_size_mb: 32,
@@ -287,8 +288,8 @@ pub async fn setup_storage_assignment(collection_id: &str, _base_path: &str) -> 
     let test_assignments = get_test_assignments();
     let test_assignment = test_assignments.get_or_create_assignment(collection_id).await?;
     
-    // Extract base path from the persistent assignment
-    let assignment_service = proximadb::storage::assignment_service::get_assignment_service();
+    // 🔴 UNUSED - Assignment service removed
+    // let assignment_service = proximadb::storage::assignment_service::get_assignment_service();
     
     // Create storage location using the persistent assignment's base directory
     let storage_location = StorageLocation {
@@ -297,12 +298,10 @@ pub async fn setup_storage_assignment(collection_id: &str, _base_path: &str) -> 
         tags: Default::default(),
     };
     
-    // Use the persistent assignment to ensure consistency
-    assignment_service
-        .assign_collection(collection_id, &[storage_location], "hash")
-        .await?;
+    // 🔴 OBSOLETE - Assignment service removed, using test assignment directly
+    // No need to register with service - just use the test assignment paths
     
-    // Verify assignment was created - use the actual assignment from service
+    // Verify assignment was created - use the test assignment directly
     let assignment = assignment_service.get_assignment(collection_id).await;
     if let Some(assignment) = assignment {
         // If assignment differs from our persistent one, update the persistent storage
@@ -374,12 +373,13 @@ pub async fn cleanup_sstable_files(collection_id: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Cleanup assignment for a collection (removes from both persistent and global service)
+/// Cleanup assignment for a collection (removes from persistent storage only)
 pub async fn cleanup_assignment(collection_id: &str) -> anyhow::Result<()> {
-    let assignment_service = proximadb::storage::assignment_service::get_assignment_service();
+    // 🔴 UNUSED - Assignment service removed
+    // let assignment_service = proximadb::storage::assignment_service::get_assignment_service();
     
-    // Remove from global assignment service
-    let _ = assignment_service.remove_assignment(collection_id).await;
+    // Remove from global assignment service - NO LONGER NEEDED
+    // let _ = assignment_service.remove_assignment(collection_id).await;
     
     // Remove from persistent test assignments
     let test_assignments = get_test_assignments();

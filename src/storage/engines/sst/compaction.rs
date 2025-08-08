@@ -1066,7 +1066,8 @@ impl CompactionManager {
     /// Uses centralized filename generator to ensure consistency
     fn generate_output_file_path(&self, collection_id: &str, collection_dir: &Path, level: u8) -> PathBuf {
         // Use centralized filename generator for consistency across codebase
-        let filename = super::SstFilenameGenerator::generate_compaction_filename(collection_id, level);
+        // SstFilenameGenerator is collection-agnostic, only takes level
+        let filename = super::SstFilenameGenerator::generate_compaction_filename(level);
         collection_dir.join(filename)
     }
 

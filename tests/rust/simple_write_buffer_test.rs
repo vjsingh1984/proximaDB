@@ -5,7 +5,13 @@ use std::collections::HashMap;
 pub struct TestVectorRecord {
     pub id: String,
     pub vector: Vec<f32>,
-}
+            timestamp: 0,
+            updated_at: None,
+            expires_at: None,
+            distance: None,
+            rank: None,
+            score: None,
+        }
 
 #[derive(Clone, Debug)]
 pub enum TestWalOperation {
@@ -76,9 +82,15 @@ fn test_exact_match() -> bool {
     let test_vector = vec![1.0, 0.0];
     
     let record = TestVectorRecord {
-        id: "test_vector_1".to_string(),
+        id: Some("test_vector_1".to_string()),
         vector: test_vector.clone(),
-    };
+            timestamp: 0,
+            updated_at: None,
+            expires_at: None,
+            distance: None,
+            rank: None,
+            score: None,
+        };
     
     let wal_entry = TestWalEntry {
         operation: TestWalOperation::Insert {
@@ -117,8 +129,14 @@ fn test_ranking() -> bool {
     let mut all_entries = Vec::new();
     for (vector, id) in vectors {
         let record = TestVectorRecord {
-            id: id.to_string(),
+            id: Some(id.to_string()),
             vector,
+            timestamp: 0,
+            updated_at: None,
+            expires_at: None,
+            distance: None,
+            rank: None,
+            score: None,
         };
         
         let wal_entry = TestWalEntry {

@@ -34,6 +34,8 @@ async fn test_metadata_retrieval_works() {
             dimension: 128,
             distance_metric: DistanceMetric::Cosine as i32,
             storage_engine: StorageEngine::Viper as i32,
+            compression: None,
+            optimization_hints: None,
             ..Default::default()
         }),
         query_params: Default::default(),
@@ -60,6 +62,11 @@ async fn test_metadata_retrieval_works() {
         vector: vec![0.1; 128],
         metadata: metadata.clone(),
         timestamp: chrono::Utc::now().timestamp() as u32,
+        updated_at: None,
+        expires_at: None,
+        distance: None,
+        rank: None,
+        score: None,
         ..Default::default()
     };
 
@@ -178,8 +185,10 @@ async fn test_search_with_metadata_filter() {
             name: collection_name.clone(),
             dimension: 64,
             distance_metric: DistanceMetric::Cosine as i32,
+            compression: None,
+            optimization_hints: None,
             ..Default::default()
-        }),
+            }),
         query_params: Default::default(),
         options: Default::default(),
         migration_config: Default::default(),
@@ -209,6 +218,12 @@ async fn test_search_with_metadata_filter() {
             vector,
             metadata,
             timestamp: chrono::Utc::now().timestamp() as u32,
+            updated_at: None,
+            expires_at: None,
+            distance: None,
+            rank: None,
+            score: None,
+            version: None,
             ..Default::default()
         };
 
