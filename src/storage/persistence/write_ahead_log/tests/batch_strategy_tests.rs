@@ -10,7 +10,7 @@ mod tests {
     use crate::storage::persistence::write_ahead_log::{AvroSerializationStrategy, BincodeSerializationStrategy, WALBatchStrategy};
     // WalBatchStrategyExt removed - use write_native_batch directly
     use crate::storage::WALConfig;
-    use crate::compute::distance::DistanceMetric;
+    use crate::compute::distance_computation::DistanceMetric;
     use chrono::Utc;
     
     use std::sync::Arc;

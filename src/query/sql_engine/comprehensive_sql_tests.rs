@@ -24,8 +24,8 @@ mod tests {
     use std::sync::Arc;
     use serde_json::Value;
     
-    use crate::compute::distance::{DistanceMetric, PlatformCapability};
-    use crate::compute::distance_compute_engine::UnifiedDistanceCompute;
+    use crate::compute::distance_computation::{DistanceMetric, PlatformCapability};
+    use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
     use crate::core::hardware_capabilities::HardwareBackend;
     use crate::query::sql_engine::{
         SqlEngine, SqlParser, ParsedQuery, SqlExecutor, SqlExecutionResult,

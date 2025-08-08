@@ -16,7 +16,7 @@ mod tests {
     use crate::storage::engines::viper::ViperEngine;
     use crate::storage::engines::sst::SstStorage;
     use crate::storage::persistence::write_ahead_log::WALConfig;
-    use crate::compute::distance::DistanceMetric;
+    use crate::compute::distance_computation::DistanceMetric;
 
     /// Create test vector record with customizable properties
     fn create_test_vector_record(id: &str, vector: Vec<f32>, metadata: Vec<(&str, &str)>) -> ProtoVectorRecord {
@@ -72,7 +72,7 @@ mod tests {
 
         // Create storage engines
         let filesystem = Arc::new(crate::storage::FilesystemFactory::new(Default::default()).await.expect("Failed to create filesystem factory"));
-        let distance_compute = Arc::new(crate::compute::distance_compute_engine::UnifiedDistanceCompute::default());
+        let distance_compute = Arc::new(crate::compute::distance_computation::engine::UnifiedDistanceCompute::default());
         
         let viper_engine = Arc::new(ViperEngine::from_core_config(crate::core::config::ViperConfig::default(), filesystem.clone()).await.expect("Failed to create VIPER engine"));
         let sst_engine = Arc::new(SstStorage::new(config.storage.sst_config.clone(), filesystem.clone(), distance_compute).await.expect("Failed to create SST engine"));
@@ -101,7 +101,7 @@ mod tests {
         ];
 
         let filesystem = Arc::new(crate::storage::FilesystemFactory::new(Default::default()).await.expect("Failed to create filesystem factory"));
-        let distance_compute = Arc::new(crate::compute::distance_compute_engine::UnifiedDistanceCompute::default());
+        let distance_compute = Arc::new(crate::compute::distance_computation::engine::UnifiedDistanceCompute::default());
         
         let viper_engine = Arc::new(ViperEngine::from_core_config(crate::core::config::ViperConfig::default(), filesystem.clone()).await.expect("Failed to create VIPER engine"));
         let sst_engine = Arc::new(SstStorage::new(config.storage.sst_config.clone(), filesystem.clone(), distance_compute).await.expect("Failed to create SST engine"));
@@ -168,7 +168,7 @@ mod tests {
         ];
 
         let filesystem = Arc::new(crate::storage::FilesystemFactory::new(Default::default()).await.expect("Failed to create filesystem factory"));
-        let distance_compute = Arc::new(crate::compute::distance_compute_engine::UnifiedDistanceCompute::default());
+        let distance_compute = Arc::new(crate::compute::distance_computation::engine::UnifiedDistanceCompute::default());
         
         let viper_engine = Arc::new(ViperEngine::from_core_config(crate::core::config::ViperConfig::default(), filesystem.clone()).await.expect("Failed to create VIPER engine"));
         let sst_engine = Arc::new(SstStorage::new(config.storage.sst_config.clone(), filesystem.clone(), distance_compute).await.expect("Failed to create SST engine"));
@@ -229,7 +229,7 @@ mod tests {
         ];
 
         let filesystem = Arc::new(crate::storage::FilesystemFactory::new(Default::default()).await.expect("Failed to create filesystem factory"));
-        let distance_compute = Arc::new(crate::compute::distance_compute_engine::UnifiedDistanceCompute::default());
+        let distance_compute = Arc::new(crate::compute::distance_computation::engine::UnifiedDistanceCompute::default());
         
         let viper_engine = Arc::new(ViperEngine::from_core_config(crate::core::config::ViperConfig::default(), filesystem.clone()).await.expect("Failed to create VIPER engine"));
         let sst_engine = Arc::new(SstStorage::new(config.storage.sst_config.clone(), filesystem.clone(), distance_compute).await.expect("Failed to create SST engine"));

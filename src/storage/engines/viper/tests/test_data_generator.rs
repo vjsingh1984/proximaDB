@@ -18,8 +18,8 @@ use rand_chacha::ChaCha8Rng;
 use std::collections::HashMap;
 use std::fs::File;
 use std::sync::Arc;
-use crate::compute::distance_compute_engine::UnifiedDistanceCompute;
-use crate::compute::distance::DistanceMetric;
+use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
+use crate::compute::distance_computation::DistanceMetric;
 // Note: apache_avro imports removed - add to Cargo.toml if needed for Avro tests
 
 /// Configuration for test data generation

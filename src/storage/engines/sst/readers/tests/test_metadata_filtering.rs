@@ -9,7 +9,7 @@ use crate::core::config::{BloomFilterConfig, SstConfig};
 use crate::storage::engines::sst::readers::{UnifiedSstableReader, CollectionContext};
 use crate::storage::persistence::filesystem::{FilesystemFactory, FilesystemConfig};
 use crate::core::search::SearchParams;
-use crate::compute::distance::DistanceMetric;
+use crate::compute::distance_computation::DistanceMetric;
 use std::sync::Arc;
 use std::collections::{BTreeMap, HashMap};
 use tempfile::TempDir;

@@ -24,7 +24,7 @@ pub struct SearchParams {
     pub top_k: Option<usize>,
     
     /// Distance metric to use for similarity calculation
-    pub distance_metric: Option<crate::compute::distance::DistanceMetric>,
+    pub distance_metric: Option<crate::compute::distance_computation::DistanceMetric>,
     
     /// Unified metadata filter expression supporting AND, OR, NOT operators
     pub filter_expression: Option<FilterExpression>,
@@ -64,7 +64,7 @@ impl Default for SearchParams {
         Self {
             query_vectors: None,
             top_k: Some(10),
-            distance_metric: Some(crate::compute::distance::DistanceMetric::Cosine),
+            distance_metric: Some(crate::compute::distance_computation::DistanceMetric::Cosine),
             filter_expression: None,
             accuracy_threshold: Some(0.95),
             include_expired: Some(false),

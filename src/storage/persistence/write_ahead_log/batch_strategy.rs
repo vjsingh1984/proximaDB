@@ -11,8 +11,8 @@ use anyhow::{Result, Context};
 use async_trait::async_trait;
 use std::sync::Arc;
 
-use crate::compute::distance::DistanceMetric as CoreDistanceMetric;
-use crate::compute::distance_compute_engine::DistanceComputeProvider;
+use crate::compute::distance_computation::DistanceMetric as CoreDistanceMetric;
+use crate::compute::distance_computation::engine::DistanceComputeProvider;
 use crate::core::{String, VectorId, VectorRecord};
 use crate::storage::memtable::specialized::wal_behavior::WALVectorBatch;
 use crate::storage::persistence::filesystem::FilesystemFactory;

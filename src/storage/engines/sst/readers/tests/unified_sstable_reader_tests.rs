@@ -12,7 +12,7 @@ mod tests {
     };
     use crate::core::config::{BloomFilterConfig, SstConfig};
     use crate::core::search::{SearchParams, FilterExpression, ComparisonOperator};
-    use crate::compute::distance::DistanceMetric;
+    use crate::compute::distance_computation::DistanceMetric;
 
     fn create_test_config() -> SstConfig {
         SstConfig {

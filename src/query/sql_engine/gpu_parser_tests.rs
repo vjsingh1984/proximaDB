@@ -2,7 +2,7 @@
 mod tests {
     use super::super::gpu_parser::*;
     use super::super::parser::{QueryType, VectorQuery};
-    use crate::compute::distance::DistanceMetric;
+    use crate::compute::distance_computation::DistanceMetric;
     use std::time::Instant;
     
     #[test]

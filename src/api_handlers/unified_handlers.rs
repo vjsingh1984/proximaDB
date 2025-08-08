@@ -456,7 +456,7 @@ impl UnifiedHandlers {
             .vector;
         
         // Convert distance metric (default to Cosine for now)
-        let distance_metric = crate::compute::distance::DistanceMetric::Cosine;
+        let distance_metric = crate::compute::distance_computation::DistanceMetric::Cosine;
         
         // Extract search parameters and metadata filters from request
         // Convert proto SearchParams to core SearchParams with filter expressions

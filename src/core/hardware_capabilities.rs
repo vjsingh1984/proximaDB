@@ -28,7 +28,7 @@ use num_cpus;
 // No longer importing duplicate CpuFeatures from compute module
 use crate::query::sql_engine::simd_parser::SimdCapabilities;
 use crate::core::config::HardwareConfig;
-use crate::compute::distance::PlatformCapability;
+use crate::compute::distance_computation::PlatformCapability;
 
 // GPU types with feature gating
 #[cfg(feature = "gpu")]

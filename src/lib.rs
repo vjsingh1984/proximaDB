@@ -33,6 +33,7 @@
 //! - **Enterprise Ready**: RBAC, audit logs, compliance
 
 pub mod api;
+pub mod common;  // Shared infrastructure
 pub mod compute;
 // pub mod consensus;  // Disabled - requires raft dependency
 pub mod core;

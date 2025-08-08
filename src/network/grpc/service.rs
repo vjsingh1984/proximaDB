@@ -756,9 +756,9 @@ impl ProximaDb for ProximaDbGrpcService {
             let search_params = if req.distance_metric_override.is_some() {
                 let dm = req.distance_metric_override.unwrap();
                 let distance_metric = match dm {
-                    1 => Some(crate::compute::distance::DistanceMetric::Euclidean),
-                    2 => Some(crate::compute::distance::DistanceMetric::DotProduct),
-                    _ => Some(crate::compute::distance::DistanceMetric::Cosine),
+                    1 => Some(crate::compute::distance_computation::DistanceMetric::Euclidean),
+                    2 => Some(crate::compute::distance_computation::DistanceMetric::DotProduct),
+                    _ => Some(crate::compute::distance_computation::DistanceMetric::Cosine),
                 };
                 let mut params = crate::core::search::SearchParams {
                     top_k: Some(req.top_k as usize),
@@ -964,7 +964,7 @@ impl ProximaDb for ProximaDbGrpcService {
                             &req.collection_id,
                             &query.vector,
                             req.top_k as usize,
-                            crate::compute::distance::DistanceMetric::Cosine,
+                            crate::compute::distance_computation::DistanceMetric::Cosine,
                             None, // search_params
                             include_vectors,
                             include_metadata,

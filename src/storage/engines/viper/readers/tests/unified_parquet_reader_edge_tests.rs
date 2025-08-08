@@ -8,7 +8,7 @@ mod edge_tests {
         UnifiedParquetReader, CollectionContext,
     };
     use crate::core::search::{SearchParams, FilterExpression, ComparisonOperator};
-    use crate::compute::distance::DistanceMetric;
+    use crate::compute::distance_computation::DistanceMetric;
     use crate::storage::persistence::filesystem::{FilesystemFactory, FilesystemConfig};
     use std::sync::Arc;
     use serde_json::json;

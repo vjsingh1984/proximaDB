@@ -11,7 +11,7 @@ mod tests {
     use crate::storage::background_flush_context::{
         BackgroundFlushContext, StorageEngineType, CompressionConfig, OperationPriority
     };
-    use crate::compute::distance::DistanceMetric;
+    use crate::compute::distance_computation::DistanceMetric;
     use std::collections::HashMap;
 
     /// Mock collection service that tracks how many times it's called

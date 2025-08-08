@@ -3,8 +3,8 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
-use crate::compute::distance_compute_engine::SimilarityResult;
-use crate::compute::unified_quantization::UnifiedQuantizationLevel;
+use crate::compute::distance_computation::engine::SimilarityResult;
+use crate::compute::quantization::unified::UnifiedQuantizationLevel;
 
 /// Unified search result structure - replaces 13+ duplicates across schema_types and other files
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]

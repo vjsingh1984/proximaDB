@@ -1,6 +1,7 @@
 //! Real performance benchmark for ProximaDB
 
-use proximadb::compute::distance::{detect_platform_capability, create_distance_calculator, DistanceMetric};
+use proximadb::compute::distance_computation::{DistanceMetric};
+use proximadb::compute::distance_computation::core::{detect_platform_capability, create_distance_calculator};
 use proximadb::index::axis::{AxisIvfIndex, AxisIvfConfig, AxisLshIndex, AxisLshConfig};
 use proximadb::core::VectorRecord;
 use std::sync::Arc;

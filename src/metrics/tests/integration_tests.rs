@@ -16,7 +16,7 @@ mod tests {
     };
     use crate::storage::background_flush_context::{BackgroundFlushContext, StorageEngineType, CompressionConfig, OperationPriority};
     use crate::storage::traits::{UnifiedStorageEngine, FlushParameters, FlushResult, CompactionParameters, CompactionResult};
-    use crate::compute::distance::DistanceMetric;
+    use crate::compute::distance_computation::DistanceMetric;
     use crate::core::VectorRecord;
     use std::sync::Arc;
     use std::collections::HashMap;
@@ -116,7 +116,7 @@ mod tests {
             _collection_id: &str,
             _query_vector: &[f32],
             _k: usize,
-            _distance_metric: &crate::compute::distance::DistanceMetric,
+            _distance_metric: &crate::compute::distance_computation::DistanceMetric,
             _filter_expression: Option<&crate::core::search::FilterExpression>,
             _include_vectors: bool,
             _include_metadata: bool,

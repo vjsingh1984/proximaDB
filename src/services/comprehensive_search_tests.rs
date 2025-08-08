@@ -24,8 +24,8 @@ mod tests {
     use tokio::time::{timeout, Duration};
     use tracing::debug;
     
-    use crate::compute::distance::{DistanceMetric, PlatformCapability};
-    use crate::compute::distance_compute_engine::{UnifiedDistanceCompute, DistanceMode};
+    use crate::compute::distance_computation::{DistanceMetric, PlatformCapability};
+    use crate::compute::distance_computation::engine::{UnifiedDistanceCompute, DistanceMode};
     use crate::core::hardware_capabilities::HardwareBackend;
     use crate::core::search::{
         SearchParams, SearchResultSet, UnifiedSearchContext, UnifiedSearchEngine,
@@ -39,7 +39,7 @@ mod tests {
     use crate::storage::engines::sst::unified_search_engine::{SstUnifiedSearchEngine, SstSearchConfig};
     use crate::storage::engines::viper::readers::unified_parquet_reader::UnifiedParquetReader;
     use crate::storage::engines::sst::readers::unified_sstable_reader::UnifiedSstableReader;
-    use crate::compute::unified_quantization::UnifiedQuantizationEngine;
+    use crate::compute::quantization::unified::UnifiedQuantizationEngine;
 
     /// Test data structure for comprehensive testing
     #[derive(Debug, Clone)]
@@ -412,7 +412,7 @@ mod tests {
         let distance_compute = Arc::new(UnifiedDistanceCompute::default());
         // Note: UnifiedQuantizationEngine requires a CodebookStore, which would need to be mocked for tests
         // For now, we'll create a simple in-memory codebook store
-        use crate::compute::unified_quantization::{InMemoryCodebookStore, CodebookStore};
+        use crate::compute::quantization::unified::{InMemoryCodebookStore, CodebookStore};
         let codebook_store = Arc::new(InMemoryCodebookStore::new()) as Arc<dyn CodebookStore>;
         let quantization_engine = Arc::new(UnifiedQuantizationEngine::new(distance_compute.clone(), codebook_store));
         
@@ -470,7 +470,7 @@ mod tests {
         let distance_compute = Arc::new(UnifiedDistanceCompute::default());
         // Note: UnifiedQuantizationEngine requires a CodebookStore, which would need to be mocked for tests
         // For now, we'll create a simple in-memory codebook store
-        use crate::compute::unified_quantization::{InMemoryCodebookStore, CodebookStore};
+        use crate::compute::quantization::unified::{InMemoryCodebookStore, CodebookStore};
         let codebook_store = Arc::new(InMemoryCodebookStore::new()) as Arc<dyn CodebookStore>;
         let quantization_engine = Arc::new(UnifiedQuantizationEngine::new(distance_compute.clone(), codebook_store));
         

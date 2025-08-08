@@ -16,7 +16,7 @@ use crate::storage::persistence::write_ahead_log::{
 };
 use crate::storage::persistence::filesystem::FilesystemFactory;
 use crate::storage::memtable::specialized::wal_behavior::WALVectorBatch;
-use crate::compute::distance::DistanceMetric;
+use crate::compute::distance_computation::DistanceMetric;
 
 /// Create test configuration
 fn create_test_config() -> WALConfig {
@@ -492,7 +492,7 @@ mod integration_tests {
             _collection_id: &str,
             _query_vector: &[f32],
             _k: usize,
-            _distance_metric: &crate::compute::distance::DistanceMetric,
+            _distance_metric: &crate::compute::distance_computation::DistanceMetric,
             _metadata_filters: Option<&crate::core::search::FilterExpression>,
             _include_vectors: bool,
             _include_metadata: bool,

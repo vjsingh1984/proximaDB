@@ -5,10 +5,10 @@ mod tests {
     use std::sync::Arc;
     use std::collections::HashMap;
     use anyhow::Result;
-    use crate::compute::distance::DistanceMetric;
+    use crate::compute::distance_computation::DistanceMetric;
     use crate::core::search::{SearchParams, SearchResult, SearchResultSet, SemanticDistance};
-    use crate::compute::distance_compute_engine::UnifiedDistanceCompute;
-    use crate::compute::unified_quantization::{UnifiedQuantizationEngine, UnifiedQuantizationLevel};
+    use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
+    use crate::compute::quantization::unified::{UnifiedQuantizationEngine, UnifiedQuantizationLevel};
     use crate::services::collection_service::CollectionService;
 
     // Mock search engine for testing

@@ -396,7 +396,7 @@ impl SharedServices {
             crate::storage::engines::sst::SstStorage::new(
                 storage_config.sst_config.clone(),
                 filesystem_factory.clone(),
-                Arc::new(crate::compute::distance_compute_engine::UnifiedDistanceCompute::default()),
+                Arc::new(crate::compute::distance_computation::engine::UnifiedDistanceCompute::default()),
             ).await?
         );
         debug!("✅ SharedServices::new - SST engine created successfully");

@@ -35,8 +35,7 @@ use tracing::{debug, info};
 // use std::hint::likely; // Unstable feature - removed for compilation
 // use std::simd::{f32x8, Simd}; // Unstable feature - removed for compilation
 
-use super::distance::{create_distance_calculator, DistanceMetric, PlatformCapability};
-use super::memory_pool::pooled_vector;
+use crate::compute::distance_computation::core::{create_distance_calculator, DistanceMetric, PlatformCapability};
 use crate::services::collection_service::CollectionService;
 use crate::core::hardware_capabilities::{get_hardware_capabilities, HardwareCapabilities};
 
@@ -460,7 +459,7 @@ impl UnifiedDistanceCompute {
             
             // Acquire pooled vectors for GPU transfer
             for vector in vectors {
-                let mut pooled = pooled_vector(vector.len());
+                let mut pooled = Vec::with_capacity(vector.len());
                 pooled.extend_from_slice(vector);
                 owned_vectors.push(pooled.clone());
                 pooled_vectors.push(pooled);
@@ -773,7 +772,7 @@ impl UnifiedDistanceCompute {
                 let query_norm = self.calculate_norm(query);
                 
                 // Use memory pool for batch result processing
-                let mut pooled_results = pooled_vector(vectors.len());
+                let mut pooled_results = Vec::with_capacity(vectors.len());
                 pooled_results.resize(vectors.len(), 0.0);
                 
                 // Convert raw GPU results to SimilarityResults
@@ -813,7 +812,7 @@ impl UnifiedDistanceCompute {
             let query_norm = self.calculate_norm(query);
             
             // Use pooled vector for batch distance calculations
-            let mut pooled_distances = pooled_vector(vectors.len());
+            let mut pooled_distances = Vec::with_capacity(vectors.len());
             pooled_distances.resize(vectors.len(), 0.0);
             
             for (i, vector) in vectors.iter().enumerate() {
@@ -848,7 +847,7 @@ impl UnifiedDistanceCompute {
         // Use memory pool for intermediate chunk processing if large dataset
         if vectors.len() >= 1000 {
             // Acquire pooled vector for chunk result aggregation
-            let mut pooled_buffer = pooled_vector(chunk_size.min(1024));
+            let mut pooled_buffer: Vec<SimilarityResult> = Vec::with_capacity(chunk_size.min(1024));
             
             for chunk in vectors.chunks(chunk_size) {
                 let mut chunk_results = self.calculate_distance_batch(query, chunk, metric);
@@ -887,7 +886,7 @@ impl UnifiedDistanceCompute {
         // Use memory pool for large distributed computations
         if node_vectors.iter().map(|(_, vecs)| vecs.len()).sum::<usize>() >= 500 {
             // Acquire pooled vector for node processing coordination
-            let mut pooled_coordinator = pooled_vector(256); // Small coordination buffer
+            let mut pooled_coordinator: Vec<f32> = Vec::with_capacity(256); // Small coordination buffer
             
             for (node_id, vectors) in node_vectors {
                 let distances = self.calculate_distance_batch(query, vectors, metric);

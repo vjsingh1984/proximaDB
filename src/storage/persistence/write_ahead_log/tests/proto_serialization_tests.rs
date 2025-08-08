@@ -15,7 +15,7 @@ use crate::storage::persistence::write_ahead_log::{
 };
 use crate::storage::persistence::filesystem::FilesystemFactory;
 use crate::storage::memtable::specialized::wal_behavior::WALVectorBatch;
-use crate::compute::distance::DistanceMetric;
+use crate::compute::distance_computation::DistanceMetric;
 
 /// Create test configuration for Proto strategy
 fn create_test_config() -> WALConfig {

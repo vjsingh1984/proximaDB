@@ -18,8 +18,8 @@ use crate::core::search::{
     SearchParams, SearchResultSet, UnifiedSearchEngine, UnifiedSearchContext,
     OptimizationHint
 };
-use crate::compute::distance_compute_engine::UnifiedDistanceCompute;
-use crate::compute::unified_quantization::{UnifiedQuantizationEngine, UnifiedQuantizationLevel};
+use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
+use crate::compute::quantization::unified::{UnifiedQuantizationEngine, UnifiedQuantizationLevel};
 use super::readers::unified_parquet_reader::{UnifiedParquetReader, CollectionContext};
 
 

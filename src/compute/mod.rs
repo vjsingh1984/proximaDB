@@ -14,39 +14,36 @@
  * limitations under the License.
  */
 
-//! High-performance vector computation engine for ProximaDB
+//! High-performance distance computation engine for ProximaDB
 //!
-//! This module provides optimized vector similarity search algorithms with support for:
-//! - CPU vectorization (AVX-512, AVX2, SSE)
+//! This module focuses specifically on distance calculations with support for:
+//! - CPU vectorization (AVX-512, AVX2, SSE) 
 //! - GPU acceleration (CUDA, ROCm, Intel GPU)
-//! - Hardware-specific optimizations (Intel MKL, OpenBLAS)
+//! - Vector quantization for storage efficiency
+//! - Platform-specific optimizations
+//!
+//! The module is organized into semantic sub-modules:
+//! - `distance_computation`: Core distance algorithms and SIMD optimizations
+//! - `gpu`: GPU acceleration (conditionally compiled)  
+//! - `quantization`: Vector quantization strategies
+//!
+//! Note: Memory management is handled by the cache module, not here.
 
-pub mod algorithms;
-pub mod distance;
-// 🔴 UNUSED MODULES - Using core::hardware_capabilities instead
-// pub mod hardware;
-// pub mod hardware_detection;
-// pub mod indexing;  // Removed - all indexing now in AXIS package
-// pub mod quantization;  // Removed - use unified_quantization instead
-pub mod distance_compute_engine;
-pub mod memory_layout;
-pub mod memory_pool;
-pub mod unified_quantization;
-#[cfg(feature = "gpu")]
-pub mod gpu_distance;
+// Semantic module organization  
+pub mod distance_computation;
+pub mod gpu;
+pub mod quantization;
+
+// Legacy distance module removed - all functionality moved to distance_computation::core
 
 // Unit tests - will be added as modules are completed
 // #[cfg(test)]
 // pub mod tests;
 
-pub use algorithms::*;
-pub use distance::*;
-// pub use hardware::*;  // 🔴 UNUSED - hardware module commented out
-// pub use indexing::*;  // Commented out as indexing module is empty
-// Old quantization module removed - use unified_quantization types instead
-pub use memory_pool::*;
-pub use distance_compute_engine::*;
-pub use unified_quantization::*;
+// Re-export main APIs from semantic modules
+pub use distance_computation::*;
+pub use gpu::*;
+pub use quantization::*;
 
 #[cfg(test)]
 mod tests;
@@ -279,7 +276,7 @@ impl Default for ComputeConfig {
                     ComputeBackend::CUDA,
                     ComputeBackend::ROCm,
                     ComputeBackend::OpenCL,
-                    ComputeBackend::CpuSIMD(crate::compute::distance::PlatformCapability::X86Avx2),
+                    ComputeBackend::CpuSIMD(PlatformCapability::X86Avx2),
                 ],
                 cpu_vectorization: CpuVectorization {
                     avx512: true,

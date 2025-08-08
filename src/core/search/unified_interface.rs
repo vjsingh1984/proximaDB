@@ -9,9 +9,9 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::core::search::{SearchParams, SearchResult, SearchResultSet};
-use crate::compute::distance::DistanceMetric;
-use crate::compute::distance_compute_engine::UnifiedDistanceCompute;
-use crate::compute::unified_quantization::{UnifiedQuantizationEngine, UnifiedQuantizationLevel};
+use crate::compute::distance_computation::DistanceMetric;
+use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
+use crate::compute::quantization::unified::{UnifiedQuantizationEngine, UnifiedQuantizationLevel};
 use crate::services::collection_service::CollectionService;
 
 /// Unified search execution context with collection awareness
@@ -248,9 +248,9 @@ impl UnifiedSearchOrchestrator {
             collection_config,
             filterable_columns,
             available_quantization: vec![
-                crate::compute::unified_quantization::UnifiedQuantizationLevel::pq8(32),
-                crate::compute::unified_quantization::UnifiedQuantizationLevel::pq4(32),
-                crate::compute::unified_quantization::UnifiedQuantizationLevel::int8(),
+                crate::compute::quantization::unified::UnifiedQuantizationLevel::pq8(32),
+                crate::compute::quantization::unified::UnifiedQuantizationLevel::pq4(32),
+                crate::compute::quantization::unified::UnifiedQuantizationLevel::int8(),
             ],
             storage_info,
         })

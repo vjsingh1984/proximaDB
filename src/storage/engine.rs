@@ -74,7 +74,7 @@ pub struct StorageEngine {
     filesystem: Arc<crate::storage::persistence::filesystem::FilesystemFactory>,
 
     /// Shared distance computation engine for all storage operations
-    distance_compute: Arc<crate::compute::distance_compute_engine::UnifiedDistanceCompute>,
+    distance_compute: Arc<crate::compute::distance_computation::engine::UnifiedDistanceCompute>,
 
     /// Collection metadata provider - injected after construction to break circular dependency
     metadata_provider: Arc<RwLock<Option<Arc<dyn CollectionMetadataProvider>>>>,
@@ -178,7 +178,7 @@ impl StorageEngine {
         let sst_storage = Arc::new(SstStorage::new(
             config.sst_config.clone(),
             filesystem.clone(),
-            Arc::new(crate::compute::distance_compute_engine::UnifiedDistanceCompute::default()),
+            Arc::new(crate::compute::distance_computation::engine::UnifiedDistanceCompute::default()),
         ).await?);
 
         Ok(Self {
@@ -190,7 +190,7 @@ impl StorageEngine {
             axis_index_manager,
             compaction_manager,
             filesystem,
-            distance_compute: Arc::new(crate::compute::distance_compute_engine::UnifiedDistanceCompute::default()),
+            distance_compute: Arc::new(crate::compute::distance_computation::engine::UnifiedDistanceCompute::default()),
             metadata_provider: Arc::new(RwLock::new(metadata_provider)),
         })
     }
@@ -711,7 +711,7 @@ impl StorageEngine {
     }
 
     /// Get the shared distance computation engine
-    pub fn distance_compute(&self) -> &Arc<crate::compute::distance_compute_engine::UnifiedDistanceCompute> {
+    pub fn distance_compute(&self) -> &Arc<crate::compute::distance_computation::engine::UnifiedDistanceCompute> {
         &self.distance_compute
     }
 
@@ -720,7 +720,7 @@ impl StorageEngine {
         &self,
         query: &[f32],
         vector: &[f32],
-        distance_metric: &crate::compute::distance::DistanceMetric,
+        distance_metric: &crate::compute::distance_computation::DistanceMetric,
     ) -> crate::storage::Result<f32> {
         // Use shared unified distance computation engine
         let result = self.distance_compute.calculate_distance(query, vector, distance_metric);
@@ -956,8 +956,8 @@ impl StorageEngine {
                 let distance = self.calculate_distance_metric(
                     query,
                     &record.vector,
-                    &crate::compute::distance::DistanceMetric::try_from(config.distance_metric)
-                        .unwrap_or(crate::compute::distance::DistanceMetric::Cosine),
+                    &crate::compute::distance_computation::DistanceMetric::try_from(config.distance_metric)
+                        .unwrap_or(crate::compute::distance_computation::DistanceMetric::Cosine),
                 )?;
 
                 let vector_id = if record.id.as_deref().unwrap_or("").is_empty() {

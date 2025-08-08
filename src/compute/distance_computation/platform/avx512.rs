@@ -7,7 +7,7 @@
 #[cfg(target_arch = "x86_64")]
 use std::arch::x86_64::*;
 
-use crate::compute::distance::{DistanceCompute, DistanceMetric};
+use crate::compute::distance_computation::core::{DistanceCompute, DistanceMetric};
 
 /// Enhanced AVX2 implementation mimicking AVX-512 performance
 /// Uses aggressive unrolling and prefetching

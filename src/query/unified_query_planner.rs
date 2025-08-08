@@ -118,7 +118,7 @@ pub struct VectorSearchPlan {
     /// Number of results
     pub k: usize,
     /// Distance metric
-    pub distance_metric: crate::compute::distance::DistanceMetric,
+    pub distance_metric: crate::compute::distance_computation::DistanceMetric,
     /// Search strategy
     pub search_strategy: VectorSearchStrategy,
     /// Accuracy threshold
@@ -620,7 +620,7 @@ impl UnifiedQueryPlanner {
             query_vectors: params.query_vectors.clone().unwrap_or_default(),
             k: params.top_k.unwrap_or(10),
             distance_metric: params.distance_metric.unwrap_or(
-                crate::compute::distance::DistanceMetric::Cosine
+                crate::compute::distance_computation::DistanceMetric::Cosine
             ),
             search_strategy: strategy,
             accuracy_threshold: params.accuracy_threshold.unwrap_or(0.95),

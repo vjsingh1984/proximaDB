@@ -14,7 +14,7 @@ use crate::core::VectorRecord;
 use crate::proto::proximadb::MetadataItem;
 use crate::storage::engines::viper::{ViperEngine, ViperEngineConfig};
 use crate::storage::traits::{UnifiedStorageEngine, FlushParameters};
-use crate::compute::distance::DistanceMetric;
+use crate::compute::distance_computation::DistanceMetric;
 use crate::storage::persistence::filesystem::FilesystemFactory;
 
 /// Create test configuration

@@ -253,7 +253,7 @@ mod tests {
     #[tokio::test]
     async fn test_create_accelerator_factory() {
         // Test CPU backend
-        let cpu_accel = create_accelerator(ComputeBackend::CpuSIMD(crate::compute::distance::PlatformCapability::X86Avx2));
+        let cpu_accel = create_accelerator(ComputeBackend::CpuSIMD(crate::compute::distance_computation::PlatformCapability::X86Avx2));
         assert!(cpu_accel.is_available());
         
         // Test ROCm backend
@@ -262,7 +262,7 @@ mod tests {
         assert!(matches!(info.backend, ComputeBackend::ROCm));
         
         // Test default (should be CPU)
-        let default_accel = create_accelerator(ComputeBackend::CpuSIMD(crate::compute::distance::PlatformCapability::X86Avx2));
+        let default_accel = create_accelerator(ComputeBackend::CpuSIMD(crate::compute::distance_computation::PlatformCapability::X86Avx2));
         assert!(default_accel.is_available());
     }
     
@@ -295,7 +295,7 @@ mod tests {
     // #[test]
     // fn test_hardware_info_struct() {
     //     let info = HardwareInfo {
-    //         backend: ComputeBackend::CpuSIMD(crate::compute::distance::PlatformCapability::X86Avx2),
+    //         backend: ComputeBackend::CpuSIMD(crate::compute::distance_computation::PlatformCapability::X86Avx2),
     //         device_name: "Test CPU".to_string(),
     //         memory_total: 16 * 1024 * 1024 * 1024,
     //         memory_free: 8 * 1024 * 1024 * 1024,

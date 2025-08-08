@@ -15,8 +15,8 @@ use crate::core::search::{
     SearchParams, SearchResultSet, UnifiedSearchEngine, UnifiedSearchContext,
     SearchResult, OptimizationHint,
 };
-use crate::compute::distance_compute_engine::UnifiedDistanceCompute;
-use crate::compute::unified_quantization::UnifiedQuantizationEngine;
+use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
+use crate::compute::quantization::unified::UnifiedQuantizationEngine;
 
 use super::readers::unified_sstable_reader::UnifiedSstableReader;
 

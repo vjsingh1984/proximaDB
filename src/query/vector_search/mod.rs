@@ -29,7 +29,7 @@ use crate::index::axis::{
     AxisLshConfig, AxisLshIndex,
     IndexAlgorithm as AxisIndexAlgorithm,
 };
-use crate::compute::distance::DistanceMetric;
+use crate::compute::distance_computation::DistanceMetric;
 
 /// Vector search algorithm types (AXIS-based)
 #[derive(Debug, Clone)]

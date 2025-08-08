@@ -13,7 +13,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
-use crate::compute::distance::DistanceMetric as CoreDistanceMetric;
+use crate::compute::distance_computation::DistanceMetric as CoreDistanceMetric;
 use crate::core::VectorRecord;
 use crate::storage::memtable::core::MemtableConfig;
 use crate::storage::memtable::implementations::global_partitioned::GlobalPartitionedMemtable;

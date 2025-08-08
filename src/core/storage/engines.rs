@@ -2,7 +2,7 @@
 
 
 // Use the canonical DistanceMetric from compute distance module
-pub use crate::compute::distance::DistanceMetric;
+pub use crate::compute::distance_computation::DistanceMetric;
 
 // Use the canonical StorageEngine from proto instead of duplicate enum
 pub use crate::proto::proximadb::StorageEngine;

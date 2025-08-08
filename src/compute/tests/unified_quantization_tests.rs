@@ -157,7 +157,7 @@ fn test_compression_ratio_calculations() {
 #[test]
 fn test_in_memory_codebook_store() {
     setup_hardware_capabilities();
-    use crate::compute::unified_quantization::{Codebook, CodebookData, TrainingConfig};
+    use crate::compute::quantization::unified::{Codebook, CodebookData, TrainingConfig};
     
     let rt = tokio::runtime::Runtime::new().unwrap();
     

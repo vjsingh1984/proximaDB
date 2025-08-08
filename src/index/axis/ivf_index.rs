@@ -27,8 +27,8 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use tracing::{debug, info, warn};
 
-use crate::compute::distance::DistanceMetric;
-use crate::compute::distance_compute_engine::UnifiedDistanceCompute;
+use crate::compute::distance_computation::DistanceMetric;
+use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
 use crate::core::VectorRecord;
 use crate::index::axis::index_factory::{AxisVectorIndex, IndexStats};
 use crate::index::axis::types::IndexAlgorithm;

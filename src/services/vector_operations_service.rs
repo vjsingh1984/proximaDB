@@ -15,8 +15,8 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use tracing::{debug, info, warn, error};
 
-use crate::compute::distance::DistanceMetric;
-use crate::compute::distance_compute_engine::{UnifiedDistanceCompute, SimilarityResult};
+use crate::compute::distance_computation::DistanceMetric;
+use crate::compute::distance_computation::engine::{UnifiedDistanceCompute, SimilarityResult};
 use crate::core::search::{SearchResult, SearchDebugInfo, SearchParams};
 use crate::core::search::multi_tier_deduplication::{MultiTierDeduplicator, TieredSearchCandidate, StorageTier, DeduplicationStorageEngine};
 use crate::core::{VectorRecord, proto_metadata_helper};
@@ -971,7 +971,7 @@ impl VectorOperationsService {
         // CRITICAL OPTIMIZATION: Create distance calculator once for entire search, not per record
         // This avoids the performance issue in unified distance where calculate_distance() 
         // creates a new calculator for every call (see line 518/524 in unified_distance.rs)
-        let distance_calculator = crate::compute::distance::create_distance_calculator(effective_distance_metric.clone());
+        let distance_calculator = crate::compute::distance_computation::create_distance_calculator(effective_distance_metric.clone());
         
         // OPTIMIZATION: Skip WAL search if no unflushed data exists
         let unflushed_batches = self.global_memtable

@@ -19,7 +19,7 @@ use std::ptr;
 
 use crate::core::VectorRecord;
 use crate::core::search::{SearchParams, SearchResult, FilterExpression};
-use crate::compute::distance_compute_engine::UnifiedDistanceCompute;
+use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
 use crate::storage::persistence::filesystem::FilesystemFactory;
 use crate::storage::engines::sst::bloom_filter::SstableBloomFilter;
 use crate::storage::engines::sst::{SstableHeader, DataBlock, IndexEntry};
@@ -356,7 +356,7 @@ impl UnifiedSstableReader {
             .ok_or_else(|| anyhow::anyhow!("Query vector required"))?;
         
         let k = params.top_k.unwrap_or(10);
-        let distance_metric = params.distance_metric.unwrap_or(crate::compute::distance::DistanceMetric::Cosine);
+        let distance_metric = params.distance_metric.unwrap_or(crate::compute::distance_computation::DistanceMetric::Cosine);
         
         debug!("🔍 Searching in {} blocks for top {} results", blocks.len(), k);
         

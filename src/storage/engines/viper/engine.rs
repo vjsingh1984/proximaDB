@@ -42,7 +42,7 @@ use super::flush::FlushManager;
 // use super::ml_clustering::MLClusteringEngine; // Moved to AXIS
 use super::utilities::ViperUtilities;
 use super::unified_search_engine::ViperUnifiedSearchEngine;
-use crate::compute::distance_compute_engine::UnifiedDistanceCompute;
+use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
 use super::types::CollectionMetadata;
 
 /// VIPER Engine - Main coordination point for the modular VIPER storage engine
@@ -92,7 +92,7 @@ impl ViperEngine {
         collection_id: String,  // Used for logging and initial setup
         core_config: crate::core::config::ViperConfig,
         filesystem: Arc<FilesystemFactory>,
-        _distance_compute: Arc<crate::compute::distance_compute_engine::UnifiedDistanceCompute>,  // VIPER creates its own internally
+        _distance_compute: Arc<crate::compute::distance_computation::engine::UnifiedDistanceCompute>,  // VIPER creates its own internally
     ) -> Result<Self> {
         info!("🔧 Creating VIPER engine with initial collection: {}", collection_id);
         // VIPER manages multiple collections, so we just log the initial one
@@ -107,7 +107,7 @@ impl ViperEngine {
         collection_id: String,  // Used for logging and initial setup
         core_config: crate::core::config::ViperConfig,
         filesystem: Arc<FilesystemFactory>,
-        _distance_compute: Arc<crate::compute::distance_compute_engine::UnifiedDistanceCompute>,
+        _distance_compute: Arc<crate::compute::distance_computation::engine::UnifiedDistanceCompute>,
         base_location: String,  // Can be used to override default storage paths
     ) -> Result<Self> {
         info!("🔧 Creating VIPER engine for collection: {} with base location: {}", 
@@ -148,9 +148,9 @@ impl ViperEngine {
             search_engine: Arc::new(ViperUnifiedSearchEngine::new(
                 Arc::new(super::readers::UnifiedParquetReader::new(filesystem.clone())),
                 Arc::new(UnifiedDistanceCompute::default()),
-                Arc::new(crate::compute::unified_quantization::UnifiedQuantizationEngine::new(
+                Arc::new(crate::compute::quantization::unified::UnifiedQuantizationEngine::new(
                     Arc::new(UnifiedDistanceCompute::default()),
-                    Arc::new(crate::compute::unified_quantization::InMemoryCodebookStore::new()),
+                    Arc::new(crate::compute::quantization::unified::InMemoryCodebookStore::new()),
                 )),
             )),
             stats: Arc::new(RwLock::new(EngineStats::default())),
@@ -565,7 +565,7 @@ impl ViperEngine {
             collection_id,
             query_vector,
             k,
-            &crate::compute::distance::DistanceMetric::Cosine, // Default metric
+            &crate::compute::distance_computation::DistanceMetric::Cosine, // Default metric
             None, // No filters
             true, // Include vectors
             true, // Include metadata
@@ -831,7 +831,7 @@ impl UnifiedStorageEngine for ViperEngine {
         collection_id: &str,
         query_vector: &[f32],
         k: usize,
-        distance_metric: &crate::compute::distance::DistanceMetric,
+        distance_metric: &crate::compute::distance_computation::DistanceMetric,
         filter_expression: Option<&crate::core::search::FilterExpression>,
         include_vectors: bool,
         include_metadata: bool,
@@ -920,7 +920,7 @@ impl UnifiedStorageEngine for ViperEngine {
         let result_set = match self.search_engine.search_unified(
                 &search_context,
                 &search_params,
-                &crate::compute::distance_compute_engine::UnifiedDistanceCompute::default(),
+                &crate::compute::distance_computation::engine::UnifiedDistanceCompute::default(),
                 None, // TODO: Add quantization engine when needed
             ).await {
             Ok(rs) => rs,

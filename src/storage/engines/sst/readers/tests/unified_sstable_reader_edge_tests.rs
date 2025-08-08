@@ -13,7 +13,7 @@ mod edge_tests {
     };
     use crate::core::config::SstConfig;
     use crate::core::search::{SearchParams, FilterExpression, ComparisonOperator};
-    use crate::compute::distance::DistanceMetric;
+    use crate::compute::distance_computation::DistanceMetric;
     use crate::storage::persistence::filesystem::{FilesystemFactory, FilesystemConfig};
     use std::sync::Arc;
     use std::collections::HashMap;

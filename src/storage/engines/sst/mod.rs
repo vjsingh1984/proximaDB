@@ -43,12 +43,12 @@ use crate::storage::traits::{
     UnifiedStorageEngine,
 };
 use crate::storage::transaction_coordinator::{TransactionCoordinator, StagingConfig, TransactionStageType};
-use crate::compute::distance_compute_engine::UnifiedDistanceCompute;
-use crate::compute::unified_quantization::{UnifiedQuantizationEngine, CodebookStore, InMemoryCodebookStore};
+use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
+use crate::compute::quantization::unified::{UnifiedQuantizationEngine, CodebookStore, InMemoryCodebookStore};
 use crate::core::search::UnifiedSearchEngine;
 use crate::proto::proximadb::MetadataItem;
 use crate::services::collection_service::CollectionService;
-use crate::compute::distance::DistanceMetric;
+use crate::compute::distance_computation::DistanceMetric;
 use crate::core::search::FilterExpression;
 use unified_search_engine::{SstUnifiedSearchEngine, SstSearchConfig};
 use anyhow::{Context, Result};
@@ -1281,7 +1281,7 @@ impl SstStorage {
     pub async fn new(
         config: SstConfig,
         filesystem: Arc<FilesystemFactory>,
-        distance_compute: Arc<crate::compute::distance_compute_engine::UnifiedDistanceCompute>,
+        distance_compute: Arc<crate::compute::distance_computation::engine::UnifiedDistanceCompute>,
     ) -> Result<Self> {
         info!("🌲 Creating SST storage engine (collection-agnostic singleton)");
         
@@ -1926,7 +1926,7 @@ impl UnifiedStorageEngine for SstStorage {
         collection_id: &str,
         query_vector: &[f32],
         k: usize,
-        distance_metric: &crate::compute::distance::DistanceMetric,
+        distance_metric: &crate::compute::distance_computation::DistanceMetric,
         filter_expression: Option<&crate::core::search::FilterExpression>,
         include_vectors: bool,
         include_metadata: bool,

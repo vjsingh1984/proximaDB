@@ -23,7 +23,7 @@ use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use std::sync::Arc;
 
-use crate::compute::distance::DistanceMetric;
+use crate::compute::distance_computation::DistanceMetric;
 use crate::core::VectorRecord;
 // use crate::index::axis::hnsw_integration::{AxisHnswConfig, PartitionedHnswIndex};
 use crate::index::axis::annoy_index::{AxisAnnoyConfig, AxisAnnoyIndex};

@@ -88,7 +88,7 @@ impl UnifiedStorageEngine for MockStorageEngine {
         _collection_id: &str,
         _query_vector: &[f32],
         _k: usize,
-        _distance_metric: &crate::compute::distance::DistanceMetric,
+        _distance_metric: &crate::compute::distance_computation::DistanceMetric,
         _metadata_filters: Option<&crate::core::search::FilterExpression>,
         _include_vectors: bool,
         _include_metadata: bool,

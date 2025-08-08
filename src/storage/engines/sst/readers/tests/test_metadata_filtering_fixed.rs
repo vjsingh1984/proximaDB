@@ -7,7 +7,7 @@ use crate::storage::engines::sst::SstRecord;
 use crate::storage::engines::sst::readers::UnifiedSstableReader;
 use crate::storage::persistence::filesystem::{FilesystemFactory, FilesystemConfig};
 use crate::core::search::SearchParams;
-use crate::compute::distance::DistanceMetric;
+use crate::compute::distance_computation::DistanceMetric;
 use std::sync::Arc;
 use std::collections::HashMap;
 use tempfile::TempDir;

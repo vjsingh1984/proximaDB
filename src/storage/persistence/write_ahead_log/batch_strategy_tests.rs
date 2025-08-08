@@ -17,7 +17,7 @@ mod write_ahead_log_batch_strategy_tests {
     use crate::storage::persistence::write_ahead_log::BatchId;
     use crate::storage::persistence::filesystem::FilesystemFactory;
     use crate::storage::persistence::write_ahead_log::{WALConfig, WALStats, WALOperation};
-    use crate::compute::distance::DistanceMetric;
+    use crate::compute::distance_computation::DistanceMetric;
     use anyhow::Result;
     use async_trait::async_trait;
     use std::collections::HashMap;
@@ -31,7 +31,7 @@ mod write_ahead_log_batch_strategy_tests {
         filesystem: Option<Arc<FilesystemFactory>>,
         initialized: bool,
         wal_behavior: Option<MockWriteBufferBehavior>,
-        distance_compute: crate::compute::distance_compute_engine::UnifiedDistanceCompute,
+        distance_compute: crate::compute::distance_computation::engine::UnifiedDistanceCompute,
     }
 
     #[derive(Debug)]
@@ -98,14 +98,14 @@ mod write_ahead_log_batch_strategy_tests {
                 filesystem: None,
                 initialized: false,
                 wal_behavior: Some(MockWriteBufferBehavior::new()),
-                distance_compute: crate::compute::distance_compute_engine::UnifiedDistanceCompute::default(),
+                distance_compute: crate::compute::distance_computation::engine::UnifiedDistanceCompute::default(),
             }
         }
     }
 
     #[async_trait]
-    impl crate::compute::distance_compute_engine::DistanceComputeProvider for MockWALBatchStrategy {
-        fn distance_compute(&self) -> &crate::compute::distance_compute_engine::UnifiedDistanceCompute {
+    impl crate::compute::distance_computation::engine::DistanceComputeProvider for MockWALBatchStrategy {
+        fn distance_compute(&self) -> &crate::compute::distance_computation::engine::UnifiedDistanceCompute {
             &self.distance_compute
         }
     }

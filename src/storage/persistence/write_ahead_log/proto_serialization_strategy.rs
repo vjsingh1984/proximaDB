@@ -11,7 +11,7 @@ use tracing::{debug, info};
 
 use super::batch_strategy::WALBatchStrategy;
 use super::{FlushResult, WALConfig, WALStats, BatchId};
-use crate::compute::distance_compute_engine::{DistanceComputeProvider, UnifiedDistanceCompute};
+use crate::compute::distance_computation::engine::{DistanceComputeProvider, UnifiedDistanceCompute};
 use crate::core::VectorRecord;
 use crate::storage::memtable::specialized::wal_behavior::WALVectorBatch;
 use crate::storage::persistence::filesystem::FilesystemFactory;
@@ -237,7 +237,7 @@ impl WALBatchStrategy for ProtoSerializationStrategy {
         collection_id: &str,
         query_vector: &[f32],
         k: usize,
-        distance_metric: Option<crate::compute::distance::DistanceMetric>,
+        distance_metric: Option<crate::compute::distance_computation::DistanceMetric>,
     ) -> Result<Vec<(String, f32, VectorRecord)>> {
         // For now, similarity search is delegated to storage engine
         let engine = self.storage_engine.read().await;

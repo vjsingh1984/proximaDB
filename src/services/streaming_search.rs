@@ -21,8 +21,8 @@ use std::task::{Context, Poll};
 use tokio::sync::mpsc;
 use tracing::{debug, info, warn};
 
-use crate::compute::distance::DistanceMetric;
-use crate::compute::distance_compute_engine::UnifiedDistanceCompute;
+use crate::compute::distance_computation::DistanceMetric;
+use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
 use crate::core::search::{SearchResult, SearchDebugInfo};
 use crate::services::vector_operations_service::VectorOperationsService;
 

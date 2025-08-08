@@ -19,7 +19,7 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tracing::{debug, info};
 
-use crate::compute::distance_compute_engine::{DistanceComputeProvider, UnifiedDistanceCompute};
+use crate::compute::distance_computation::engine::{DistanceComputeProvider, UnifiedDistanceCompute};
 use crate::core::{String, VectorId, VectorRecord};
 use crate::storage::traits::{UnifiedStorageEngine, FlushResult};
 use crate::storage::memtable::specialized::wal_behavior::WALVectorBatch;
@@ -1378,7 +1378,7 @@ impl WriteAheadLogManager {
         collection_id: &str,
         query_vector: &[f32],
         k: usize,
-        distance_metric: Option<crate::compute::distance::DistanceMetric>,
+        distance_metric: Option<crate::compute::distance_computation::DistanceMetric>,
     ) -> Result<Vec<(VectorId, f32, VectorRecord)>> {
         self.strategy.search_vectors_similarity(collection_id, query_vector, k, distance_metric).await
     }

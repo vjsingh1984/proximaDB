@@ -8,8 +8,8 @@ use anyhow::Result;
 use chrono::Utc;
 
 use super::*;
-use crate::compute::distance_compute_engine::UnifiedDistanceCompute;
-use crate::compute::unified_quantization::{UnifiedQuantizationEngine, InMemoryCodebookStore};
+use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
+use crate::compute::quantization::unified::{UnifiedQuantizationEngine, InMemoryCodebookStore};
 use crate::core::search::{SearchParams, UnifiedSearchContext};
 
 use crate::storage::engines::sst::readers::unified_sstable_reader::{
@@ -58,7 +58,7 @@ fn create_test_search_context() -> UnifiedSearchContext {
             },
         ],
         collection_config: Some(crate::core::search::CollectionConfig {
-            default_distance_metric: crate::compute::distance::DistanceMetric::Cosine,
+            default_distance_metric: crate::compute::distance_computation::DistanceMetric::Cosine,
             vector_dimension: 128,
             enable_quantization: false,
             enable_metadata_filtering: true,
@@ -74,7 +74,7 @@ fn create_test_search_params() -> SearchParams {
     SearchParams {
         query_vectors: Some(vec![vec![0.1; 128]]),
         top_k: Some(10),
-        distance_metric: Some(crate::compute::distance::DistanceMetric::Cosine),
+        distance_metric: Some(crate::compute::distance_computation::DistanceMetric::Cosine),
         filters: None,
         filter_expression: None,
         accuracy_threshold: None,

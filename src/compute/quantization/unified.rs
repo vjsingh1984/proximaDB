@@ -16,8 +16,8 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tracing::debug;
 
-use super::distance::DistanceMetric;
-use super::distance_compute_engine::{UnifiedDistanceCompute, SimilarityResult, MetricProperties};
+use crate::compute::distance_computation::core::DistanceMetric;
+use crate::compute::distance_computation::engine::{UnifiedDistanceCompute, SimilarityResult, MetricProperties};
 
 // Use proto types as the single source of truth
 pub use crate::proto::proximadb::{

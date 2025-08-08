@@ -98,7 +98,7 @@ pub trait UnifiedStorageEngine: Send + Sync {
         collection_id: &str,
         query_vector: &[f32],
         k: usize,
-        distance_metric: &crate::compute::distance::DistanceMetric,
+        distance_metric: &crate::compute::distance_computation::DistanceMetric,
         filter_expression: Option<&crate::core::search::FilterExpression>,
         include_vectors: bool,
         include_metadata: bool,
@@ -704,7 +704,7 @@ pub struct SearchParams {
     pub k: usize,
     
     /// Distance metric to use
-    pub distance_metric: crate::compute::distance::DistanceMetric,
+    pub distance_metric: crate::compute::distance_computation::DistanceMetric,
     
     /// Optional metadata filters
     pub metadata_filters: Option<HashMap<String, serde_json::Value>>,

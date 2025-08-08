@@ -10,8 +10,8 @@
 #[cfg(test)]
 mod tests {
     use crate::compute::gpu_distance::{GpuBackend, GpuDistanceCompute, detect_best_gpu};
-    use crate::compute::distance_compute_engine::{UnifiedDistanceCompute, HardwareBackend, GpuAccelerator};
-    use crate::compute::distance::DistanceMetric;
+    use crate::compute::distance_computation::engine::{UnifiedDistanceCompute, HardwareBackend, GpuAccelerator};
+    use crate::compute::distance_computation::DistanceMetric;
     use crate::compute::PlatformCapability;
     
     /// Test GPU backend detection and selection

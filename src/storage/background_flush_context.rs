@@ -12,7 +12,7 @@ use anyhow::{anyhow, Context, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-use crate::compute::distance::DistanceMetric;
+use crate::compute::distance_computation::DistanceMetric;
 use crate::services::collection_service::CollectionService;
 use crate::proto::proximadb::{Collection, FilterableColumnSpec};
 

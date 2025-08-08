@@ -15,8 +15,8 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 
 use super::super::core::MemtableMetrics;
-use crate::compute::distance::DistanceMetric as CoreDistanceMetric;
-use crate::compute::distance_compute_engine::{
+use crate::compute::distance_computation::DistanceMetric as CoreDistanceMetric;
+use crate::compute::distance_computation::engine::{
     DistanceComputeProvider, UnifiedDistanceCompute, SimilarityResult,
 };
 use crate::core::VectorRecord;

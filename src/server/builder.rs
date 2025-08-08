@@ -138,7 +138,7 @@ impl Default for ComputeConfig {
 }
 
 // Use the canonical DistanceMetric from compute distance module
-pub use crate::compute::distance::DistanceMetric;
+pub use crate::compute::distance_computation::DistanceMetric;
 
 /// Indexing algorithm configuration
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

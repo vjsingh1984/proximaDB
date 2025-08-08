@@ -10,8 +10,8 @@ use tracing::{debug, info, warn};
 
 use crate::core::VectorRecord;
 use crate::core::search::FilterExpression;
-use crate::compute::distance::DistanceMetric;
-use crate::compute::distance_compute_engine::UnifiedDistanceCompute;
+use crate::compute::distance_computation::DistanceMetric;
+use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
 use crate::storage::persistence::filesystem::FilesystemFactory;
 
 /// Unified Parquet Reader with automatic strategy selection

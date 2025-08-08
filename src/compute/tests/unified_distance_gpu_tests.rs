@@ -9,8 +9,8 @@
 
 #[cfg(test)]
 mod tests {
-    use crate::compute::distance_compute_engine::{UnifiedDistanceCompute, HardwareBackend, DistanceMode};
-    use crate::compute::distance::{DistanceMetric, PlatformCapability};
+    use crate::compute::distance_computation::engine::{UnifiedDistanceCompute, HardwareBackend, DistanceMode};
+    use crate::compute::distance_computation::{DistanceMetric, PlatformCapability};
     use std::time::Instant;
 
     /// Test that UnifiedDistanceCompute correctly selects GPU when available

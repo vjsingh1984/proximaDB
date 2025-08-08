@@ -13,7 +13,7 @@ pub mod adaptive_engine;
 pub mod analyzer;
 pub mod annoy_index;
 pub mod clustering;
-pub mod hnsw_integration;
+pub mod hnsw_index;
 pub mod index_factory;
 pub mod ivf_index;
 pub mod lsh_index;
@@ -22,6 +22,7 @@ pub mod migration_engine;
 pub mod monitor;
 pub mod strategy;
 pub mod types;
+pub mod utils;
 
 // Test modules
 #[cfg(test)]
@@ -42,8 +43,8 @@ pub use clustering::{
     ClusteringMetrics, ClusteringModel, DBSCANConfig, HierarchicalConfig, KMeansConfig,
     KMeansInit, LinkageCriterion,
 };
-pub use hnsw_integration::{
-    AxisHnswConfig, AxisHnswManager, HnswStats, PartitionedHnswIndex,
+pub use hnsw_index::{
+    AxisHnswConfig, AxisHnswIndex, create_hnsw_index,
 };
 pub use index_factory::{AxisIndexCreationResult, AxisVectorIndex, IndexFactory, IndexStats};
 pub use ivf_index::{AxisIvfConfig, AxisIvfIndex, IvfStats};
@@ -61,6 +62,10 @@ pub use strategy::{
 pub use types::{
     DataType, IndexAlgorithm, IndexSpecification, IndexSelectionStrategy,
     QueryCondition, ResultCombination, RoutingRule, TextAnalyzer, Tokenizer, TokenFilter
+};
+pub use utils::{
+    IndexVectorStore, ConcurrentIdMapping, AtomicStats,
+    metadata, memory, validation
 };
 
 use serde::{Deserialize, Serialize};

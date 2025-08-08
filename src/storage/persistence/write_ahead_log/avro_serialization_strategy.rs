@@ -11,7 +11,7 @@ use tracing::{debug, info};
 
 use super::batch_strategy::WALBatchStrategy;
 use super::{FlushResult, WALConfig, WALStats, BatchId};
-use crate::compute::distance_compute_engine::UnifiedDistanceCompute;
+use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
 use crate::core::VectorRecord;
 use crate::storage::memtable::specialized::wal_behavior::WALVectorBatch;
 use crate::storage::persistence::filesystem::FilesystemFactory;
@@ -237,7 +237,7 @@ impl WALBatchStrategy for AvroSerializationStrategy {
         collection_id: &str,
         query_vector: &[f32],
         k: usize,
-        distance_metric: Option<crate::compute::distance::DistanceMetric>,
+        distance_metric: Option<crate::compute::distance_computation::DistanceMetric>,
     ) -> Result<Vec<(String, f32, VectorRecord)>> {
         // For tests, we can do a simple search in memtable
         let vectors = self.memtable_manager.get_collection_vectors(collection_id).await?;
@@ -250,7 +250,7 @@ impl WALBatchStrategy for AvroSerializationStrategy {
         let distance_compute = UnifiedDistanceCompute::default();
         
         // Use the unified distance compute to calculate distances
-        let metric = distance_metric.unwrap_or(crate::compute::distance::DistanceMetric::Cosine);
+        let metric = distance_metric.unwrap_or(crate::compute::distance_computation::DistanceMetric::Cosine);
         let mut results: Vec<(String, f32, VectorRecord)> = Vec::new();
         
         for vector in vectors {

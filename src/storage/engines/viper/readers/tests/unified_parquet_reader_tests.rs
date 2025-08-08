@@ -8,8 +8,8 @@ mod tests {
         UnifiedParquetReader, CollectionContext,
     };
     use crate::core::search::{SearchParams, FilterExpression, ComparisonOperator};
-    use crate::compute::distance::DistanceMetric;
-    use crate::compute::distance_compute_engine::SimilarityResult;
+    use crate::compute::distance_computation::DistanceMetric;
+    use crate::compute::distance_computation::engine::SimilarityResult;
     use crate::storage::persistence::filesystem::{FilesystemFactory, FilesystemConfig};
     use crate::core::{VectorRecord, String};
     use crate::proto::proximadb::MetadataItem;

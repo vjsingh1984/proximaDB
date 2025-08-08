@@ -4,7 +4,7 @@
 //! with proper MVCC version handling and logical delete semantics.
 
 use super::super::global_partitioned::GlobalPartitionedMemtable;
-use crate::compute::distance::DistanceMetric as CoreDistanceMetric;
+use crate::compute::distance_computation::DistanceMetric as CoreDistanceMetric;
 use crate::core::VectorRecord;
 use crate::storage::memtable::specialized::wal_behavior::WALVectorBatch;
 use crate::storage::persistence::write_ahead_log::BatchId;
