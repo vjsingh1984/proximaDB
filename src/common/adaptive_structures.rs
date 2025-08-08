@@ -105,19 +105,20 @@ where
 /// Backend type classification for workload optimization
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum BackendType {
-    /// Index backend: Never evicts, promotes to persistent storage
+    /// Index backend: Can evict (durability provided by AXIS storage)
+    /// AXIS maintains index data at {baseurl}/{collectionid}/indexes/
     Index {
         /// Primary data structure (DashMap for concurrent bulk operations)
         structure: IndexStructure,
-        /// Tier policy (never evict, always promote)
-        tier_policy: IndexTierPolicy,
+        /// Tier policy (unified eviction - same as cache!)
+        tier_policy: UnifiedTierPolicy,
     },
     /// Cache backend: Can evict, uses memory pressure for promotion
     Cache {
         /// Primary data structure (Moka for automatic eviction)
         structure: CacheStructure,
-        /// Tier policy (evict or promote based on access patterns)
-        tier_policy: CacheTierPolicy,
+        /// Tier policy (unified eviction - same policy type as index!)
+        tier_policy: UnifiedTierPolicy,
     },
     /// Hybrid backend: Adaptive behavior based on workload detection
     Hybrid {
@@ -166,26 +167,32 @@ pub enum HybridStructure {
     CacheMode(CacheStructure),
 }
 
-/// Tier policies for index backends (never evict)
+/// Unified tier policy for both index and cache backends
+/// KEY INSIGHT: Both can evict because durability is provided by AXIS storage
+/// at {baseurl}/{collectionid}/indexes/ which is the source of truth
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct IndexTierPolicy {
-    /// Minimum tier to maintain data (never goes below this)
-    min_tier: StorageTier,
-    /// Promotion threshold (access frequency)
-    promotion_threshold: u64,
-    /// Maximum tier for acceleration
-    max_acceleration_tier: StorageTier,
+pub struct UnifiedTierPolicy {
+    /// Eviction policy (applies to BOTH index and cache backends!)
+    eviction_policy: EvictionPolicy,
+    /// Promotion criteria for moving to faster tiers
+    promotion_criteria: PromotionCriteria,
+    /// Demotion criteria for moving to slower tiers
+    demotion_criteria: DemotionCriteria,
+    /// Reload strategy for restartability
+    reload_strategy: ReloadStrategy,
 }
 
-/// Tier policies for cache backends (eviction allowed)
+/// Reload strategy for restartability
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct CacheTierPolicy {
-    /// Eviction policy
-    eviction_policy: EvictionPolicy,
-    /// Promotion criteria
-    promotion_criteria: PromotionCriteria,
-    /// Demotion criteria  
-    demotion_criteria: DemotionCriteria,
+pub struct ReloadStrategy {
+    /// Load data from AXIS storage on startup
+    load_on_startup: bool,
+    /// Prefetch hot data based on historical access patterns
+    prefetch_hot_data: bool,
+    /// Maximum items to load initially
+    max_initial_load: usize,
+    /// AXIS storage path pattern: {baseurl}/{collection_id}/indexes/
+    axis_storage_path: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

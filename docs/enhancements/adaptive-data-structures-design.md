@@ -1537,28 +1537,41 @@ After analyzing the per-collection policy approach, it became clear that storing
 
 ### Data Flow Diagrams
 
-#### Index Workload - Data Promotion/Demotion
+#### Index Workload - Data Promotion/Demotion (REVISED)
 
 ```
-Index Data Lifecycle (Never Evicts - Always Promotes to Persistent Storage)
+Index Cache Lifecycle (CAN EVICT - Durability Guaranteed by AXIS Storage)
+
+CRITICAL INSIGHT: AXIS indexes maintain durability at {baseurl}/{collectionid}/indexes/
+Therefore, cache/memory tiers can safely evict since data can be reloaded from AXIS storage!
 
 Hot Data (>100 accesses/day)
 ┌─────────────┐    Memory Pressure    ┌─────────────┐    Disk Full    ┌─────────────┐
 │   Memory    │ ───────────────────→  │    NVMe     │ ─────────────→  │     HDD     │
-│    (L1)     │                       │    (L2)     │                 │    (L3)     │
-│ /tmp/c1/mem │                       │/tmp/c1/nvme │                 │ /tmp/c1/hdd │
+│    (L1)     │   (Demote or Evict)   │    (L2)     │  (Demote/Evict) │    (L3)     │
+│ Cache Tier  │                       │ Cache Tier  │                 │ Cache Tier  │
 └─────────────┘                       └─────────────┘                 └─────────────┘
-      ↑                                      ↑                               ↑
-      │ Access Frequency                     │ Access Frequency               │
-      │ Increases                            │ Increases                      │
-      │                                      │                                │
-┌─────────────┐    Access Promotion   ┌─────────────┐    Access Promotion   ┌─────────────┐
-│   Evicted   │ ←──────────────────   │    NVMe     │ ←────────────────────  │     HDD     │
-│   (Never)   │                       │    (L2)     │                        │    (L3)     │
-│     N/A     │                       │/tmp/c1/nvme │                        │ /tmp/c1/hdd │
-└─────────────┘                       └─────────────┘                        └─────────────┘
+      ↑ ↓                                   ↑ ↓                             ↑ ↓
+      │ │ Promotion/Demotion                │ │                             │ │
+      │ │ Based on Access                   │ │                             │ │
+      │ │                                   │ │                             │ │
+┌─────────────┐                       ┌─────────────┐                 ┌─────────────┐
+│   EVICTED   │                       │   EVICTED   │                 │ AXIS Source │
+│ (Can Reload │                       │ (Can Reload │                 │{baseurl}/   │
+│ from AXIS)  │                       │ from AXIS)  │                 │{collection}/│
+└─────────────┘                       └─────────────┘                 │indexes/     │
+                                                                       └─────────────┘
+                            ↑
+                            │ Source of Truth
+                            │ (WAL/Flush/Compaction Updates)
+                            │
+                    ┌───────────────────┐
+                    │   AXIS Index       │
+                    │  Durable Storage   │
+                    │ Always Consistent  │
+                    └───────────────────┘
 
-Rule: Index backends NEVER evict data - always promote to persistent storage
+Rule: Index cache tiers CAN evict since AXIS maintains durability at {baseurl}/{collectionid}/indexes/
 ```
 
 #### Cache Workload - Data Eviction/Promotion
@@ -1752,7 +1765,356 @@ let path = rule_policy.get_collection_path("user_vectors", 2);
 assert_eq!(path, "/tmp/nvme/user_vectors");
 ```
 
-### Benefits of Rule-Based Approach
+### Intelligent Tiering with Durability-Aware Promotion
+
+#### Core Principle: Never Duplicate, Always Accelerate
+The tiering system intelligently avoids redundant storage by understanding where durable data exists and only promoting to tiers that provide acceleration benefits.
+
+**Key Design Decisions:**
+1. **Eviction is configurable** - Not always mandatory, depends on durability location
+2. **Smart promotion** - Only promote to tiers faster than durable storage location
+3. **Ephemeral by design** - Shared infrastructure can be lost without data loss
+4. **Flexible policies** - Support eviction, non-eviction, promotion, demotion, or any combination
+5. **Cost-aware** - Avoid double storage costs by not duplicating durable data
+
+#### Scenario-Based Tiering Strategies
+
+```
+SCENARIO 1: Durable Storage on Local Disk
+─────────────────────────────────────────
+Durable Location: /mnt/ssd/{collection}/indexes/
+
+Tiering Strategy:
+┌─────────────┐
+│   Memory    │ ← Buffer hot data (EVICT ON PRESSURE)
+│  Ephemeral  │   
+└─────────────┘
+      ↓ No promotion to disk (already durable there!)
+┌─────────────┐
+│  Disk Cache │ ← SKIP THIS TIER (would duplicate)
+│   NOT USED  │   
+└─────────────┘
+      ↓
+┌─────────────┐
+│ Durable Disk│ ← Source of truth
+│ /mnt/ssd/   │   
+└─────────────┘
+
+Rule: Only use memory for acceleration, evict when needed
+Rationale: No point duplicating data already on local disk
+```
+
+```
+SCENARIO 2: Durable Storage on Cloud (S3 Standard)
+───────────────────────────────────────────────────
+Durable Location: s3://bucket/{collection}/indexes/
+
+Tiering Strategy:
+┌─────────────┐     Pressure    ┌─────────────┐     Pressure    ┌─────────────┐
+│   Memory    │ ───────────────→│  Local Disk │ ───────────────→│  S3 Express │
+│  Ephemeral  │     PROMOTE      │  Ephemeral  │     PROMOTE      │  Ephemeral  │
+│ (EVICT: Yes)│                 │ (EVICT: Yes)│                 │(EVICT: Maybe)│
+└─────────────┘                 └─────────────┘                 └─────────────┘
+      ↑                               ↑                               ↑
+      │ All faster than S3 Standard, so all provide acceleration     │
+      └───────────────────────────────────────────────────────────────┘
+                                      ↓
+                            ┌─────────────┐
+                            │ S3 Standard │ ← Durable source
+                            │   (Slower)  │   
+                            └─────────────┘
+
+Rule: Promote through Memory→Disk→S3Express for acceleration
+Rationale: All tiers faster than durable storage provide value
+```
+
+```
+SCENARIO 3: Mixed Durability (Hybrid Cloud)
+───────────────────────────────────────────
+Some data durable on disk, some on cloud
+
+Collection A (disk-durable):           Collection B (cloud-durable):
+┌─────────────┐                        ┌─────────────┐
+│   Memory    │                        │   Memory    │
+│ Evict: Yes  │                        │ Evict: Yes  │
+└─────────────┘                        └─────────────┘
+      ↓ NO                                   ↓ YES
+┌─────────────┐                        ┌─────────────┐
+│ Disk (Skip) │                        │ Disk Cache  │
+└─────────────┘                        │ Evict: Yes  │
+      ↓                                └─────────────┘
+┌─────────────┐                              ↓
+│Durable Disk │                        ┌─────────────┐
+└─────────────┘                        │Cloud Durable│
+                                       └─────────────┘
+
+Rule: Per-collection tiering based on durability location
+```
+
+#### Comprehensive Tiering Policy Matrix
+
+```
+┌──────────────────┬────────────────┬────────────────┬─────────────────┬──────────────┐
+│ Durable Location │ Memory Tier    │ NVMe/SSD Tier  │ HDD Tier        │ Cloud Express│
+├──────────────────┼────────────────┼────────────────┼─────────────────┼──────────────┤
+│ Memory (tmpfs)   │ USE (no evict) │ PROMOTE        │ PROMOTE         │ PROMOTE      │
+│                  │                │ (persistence)  │ (persistence)   │ (durability) │
+├──────────────────┼────────────────┼────────────────┼─────────────────┼──────────────┤
+│ Local NVMe       │ USE (evict)    │ SKIP           │ PROMOTE         │ PROMOTE      │
+│                  │ (buffer only)  │ (redundant)    │ (if slower)     │ (if needed)  │
+├──────────────────┼────────────────┼────────────────┼─────────────────┼──────────────┤
+│ Local HDD        │ USE (evict)    │ USE (evict)    │ SKIP            │ PROMOTE      │
+│                  │ (acceleration) │ (acceleration) │ (redundant)     │ (if faster)  │
+├──────────────────┼────────────────┼────────────────┼─────────────────┼──────────────┤
+│ S3 Express       │ USE (evict)    │ USE (evict)    │ USE (evict)     │ SKIP/USE*    │
+│                  │ (acceleration) │ (acceleration) │ (acceleration)  │ (see note)   │
+├──────────────────┼────────────────┼────────────────┼─────────────────┼──────────────┤
+│ S3 Standard      │ USE (evict)    │ USE (evict)    │ USE (evict)     │ USE (evict)  │
+│                  │ (acceleration) │ (acceleration) │ (acceleration)  │ (acceleration)│
+├──────────────────┼────────────────┼────────────────┼─────────────────┼──────────────┤
+│ S3 Glacier       │ USE (evict)    │ USE (evict)    │ USE (evict)     │ USE (evict)  │
+│                  │ (hot cache)    │ (warm cache)   │ (cold cache)    │ (faster tier)│
+└──────────────────┴────────────────┴────────────────┴─────────────────┴──────────────┘
+
+* S3 Express Note: Can be used for long-running servers but data fidelity not guaranteed 
+  across restarts (KMS changes, zone failures). Treat as ephemeral acceleration tier.
+```
+
+#### Intelligent Promotion Rules
+
+```rust
+// Smart tier promotion that avoids redundancy
+impl RuleBasedTierPolicy {
+    pub fn should_promote(&self, 
+        current_tier: StorageTier,
+        target_tier: StorageTier,
+        durable_location: StorageTier,
+    ) -> PromotionDecision {
+        
+        // Never promote to same tier as durable location (redundant)
+        if target_tier == durable_location {
+            return PromotionDecision::Skip { 
+                reason: "Would duplicate durable storage" 
+            };
+        }
+        
+        // Only promote to tiers faster than durable location
+        if !target_tier.is_faster_than(&durable_location) {
+            return PromotionDecision::Skip { 
+                reason: "No acceleration benefit" 
+            };
+        }
+        
+        // Check if promotion makes sense based on access pattern
+        match (current_tier, target_tier) {
+            (Memory, Disk) if durable_location.is_cloud() => {
+                // Promote memory to disk for cloud-durable data
+                PromotionDecision::Promote { 
+                    evict_on_pressure: true 
+                }
+            },
+            (Memory, Disk) if durable_location.is_local() => {
+                // Skip disk tier for local-durable data
+                PromotionDecision::Skip { 
+                    reason: "Data already durable on local disk" 
+                }
+            },
+            (Disk, CloudExpress) if durable_location == CloudStandard => {
+                // Use Express tier for acceleration
+                PromotionDecision::Promote { 
+                    evict_on_pressure: false // Can keep for long-running 
+                }
+            },
+            _ => PromotionDecision::Evaluate { 
+                based_on: "access_frequency, cost, latency" 
+            }
+        }
+    }
+}
+```
+
+#### Restart Recovery Strategies
+
+```
+RESTART SCENARIO A: Lost all ephemeral tiers
+────────────────────────────────────────────
+Action: Lazy load from durable storage on access
+
+┌─────────────┐     Cache Miss    ┌─────────────┐
+│   Memory    │ ←────────────────│   Request   │
+│   (Empty)   │                  └─────────────┘
+└─────────────┘                         ↓
+      ↓                          ┌─────────────┐
+Load from durable ──────────────→│ Durable Src │
+                                 │ (Disk/Cloud)│
+                                 └─────────────┘
+
+RESTART SCENARIO B: Partial tier loss
+──────────────────────────────────────
+Action: Validate remaining tiers, reload missing
+
+┌─────────────┐                  ┌─────────────┐
+│   Memory    │                  │  Disk Cache │
+│   (Lost)    │                  │ (Preserved) │
+└─────────────┘                  └─────────────┘
+      ↓                                ↑
+   Reload hot data                Validate checksums
+      ↓                                ↓
+┌─────────────────────────────────────────────┐
+│          Durable Storage (Source)           │
+└─────────────────────────────────────────────┘
+
+RESTART SCENARIO C: Cloud tier uncertainty
+──────────────────────────────────────────
+Action: Treat S3 Express as untrusted, reload
+
+┌─────────────┐
+│ S3 Express  │ ← May have stale/corrupt data
+│ (Untrusted) │   (KMS rotation, zone change)
+└─────────────┘
+      ↓
+  Invalidate & Reload
+      ↓
+┌─────────────┐
+│ S3 Standard │ ← Always trust durable tier
+│  (Trusted)  │
+└─────────────┘
+```
+
+#### Simplified Policy: Everything Can Evict
+
+```rust
+// BEFORE (Complex): Different policies for index vs cache
+enum EvictionPolicy {
+    NeverEvict,        // For indexes (WRONG - not needed!)
+    LruEvict,          // For caches
+    SizeBasedEvict,    // For caches
+}
+
+// AFTER (Simple): Unified eviction for all workloads
+enum EvictionPolicy {
+    LruEvict { max_entries: usize },        // Works for both!
+    SizeBasedEvict { max_memory_mb: usize }, // Works for both!
+    TimeBasedEvict { max_age: Duration },    // Works for both!
+}
+
+// Both index and cache backends use same eviction logic
+impl AdaptiveStore for IndexBackend {
+    async fn handle_memory_pressure(&self) {
+        // Can evict - data reloadable from AXIS storage
+        self.evict_coldest_entries().await;
+    }
+}
+
+impl AdaptiveStore for CacheBackend {
+    async fn handle_memory_pressure(&self) {
+        // Can evict - standard cache behavior
+        self.evict_coldest_entries().await;
+    }
+}
+```
+
+### Restartability and Recovery
+
+#### Startup Sequence with AXIS Durability
+
+```
+Server Restart Sequence:
+
+1. INITIALIZE GlobalTierManager
+   ├── Load server config from config.toml
+   ├── Detect available tiers (Memory, NVMe, HDD)
+   └── Initialize RuleBasedTierPolicy
+
+2. SCAN AXIS Storage
+   ├── For each collection in {baseurl}/{collectionid}/indexes/
+   │   ├── Load index metadata
+   │   ├── Determine hot data from access logs
+   │   └── Schedule prefetch tasks
+   └── Collections discovered: [user_vectors, product_embeddings, ...]
+
+3. LAZY LOADING Strategy
+   ├── Don't load all data immediately (avoid OOM)
+   ├── Load on first access (cache miss → load from AXIS)
+   └── Background prefetch for historically hot data
+
+4. CACHE WARMING (Optional)
+   ├── Load top-K frequently accessed vectors
+   ├── Apply rule-based tier placement
+   └── Memory tier ← Hot data only
+
+5. READY TO SERVE
+   └── All queries can be served (cache hit or AXIS load)
+```
+
+#### Recovery from Cache Tier Failures
+
+```rust
+// Automatic recovery when cache tier data is lost
+impl AdaptiveStore {
+    async fn get(&self, key: &K) -> Option<V> {
+        // Try cache tiers first
+        if let Some(value) = self.memory_cache.get(key) {
+            return Some(value);
+        }
+        
+        if let Some(value) = self.nvme_cache.get(key) {
+            self.promote_to_memory(key, &value); // Promote hot data
+            return Some(value);
+        }
+        
+        // Cache miss - load from AXIS durable storage
+        if let Some(value) = self.load_from_axis(key).await {
+            // Apply rule-based tier placement
+            let tier = self.rule_policy.determine_tier(
+                &self.workload_pattern,
+                self.get_access_frequency(key),
+                self.get_age_days(key)
+            );
+            
+            self.place_in_tier(tier, key, &value);
+            return Some(value);
+        }
+        
+        None // Data doesn't exist
+    }
+    
+    async fn load_from_axis(&self, key: &K) -> Option<V> {
+        // Load from {baseurl}/{collection_id}/indexes/
+        let path = format!("{}/{}/indexes/{}", 
+            self.baseurl, self.collection_id, key);
+        
+        // AXIS storage provides the data
+        axis_storage::load(&path).await
+    }
+}
+```
+
+#### Restart Configuration
+
+```toml
+# proximadb server config.toml
+[restart_strategy]
+# Load data from AXIS storage on startup
+load_on_startup = true
+
+# Prefetch historically hot data
+prefetch_hot_data = true
+
+# Maximum items to load initially per collection
+max_initial_load = 10000
+
+# Parallel loading threads
+loader_threads = 4
+
+# Cache warming strategy
+[restart_strategy.cache_warming]
+enabled = true
+warm_top_k_per_collection = 1000
+warm_collections = ["user_vectors", "product_embeddings"]
+```
+
+### Benefits of Rule-Based Approach with Unified Eviction
 
 1. **Scalability**: O(1) policy lookup regardless of number of collections
 2. **Simplicity**: Single set of rules to understand and configure
@@ -1760,6 +2122,8 @@ assert_eq!(path, "/tmp/nvme/user_vectors");
 4. **Maintainability**: Rules can be updated server-wide without per-collection changes
 5. **Resource Efficiency**: No per-collection policy storage overhead
 6. **Future Extensibility**: Easy to add new rules or expose via API later
+7. **Unified Eviction**: Same eviction logic for index and cache workloads
+8. **Guaranteed Restartability**: AXIS storage provides durability, caches rebuild automatically
 
 ### Configuration Integration
 
