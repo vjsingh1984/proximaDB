@@ -59,6 +59,7 @@ use tracing::{debug, info, warn};
 use crate::common::concurrent_structures::{AtomicMetrics, MetricsSnapshot};
 use crate::common::tier_policy_engine::{
     GlobalTierManager, SmartTierPolicy, StorageTier, WorkloadPattern, WorkloadMetrics,
+    WorkloadType, CollectionStorageConfig, MemoryThresholds,
 };
 
 /// Adaptive storage interface that chooses optimal backend based on workload
@@ -217,7 +218,7 @@ pub struct PromotionCriteria {
     min_promotion_tier: StorageTier,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct DemotionCriteria {
     /// Maximum idle time before demotion
     max_idle_time: Duration,
@@ -228,7 +229,7 @@ pub struct DemotionCriteria {
 }
 
 /// Workload detection configuration for hybrid backends
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct WorkloadDetectionConfig {
     /// Sample size for workload analysis
     sample_size: usize,
@@ -324,8 +325,8 @@ impl UniversalTierManager {
         tier_policy: SmartTierPolicy,
     ) -> Result<()> {
         info!(
-            "Registering collection '{}' with tier policy: {:?}",
-            collection_id, tier_policy.policy_type
+            "Registering collection '{}' with tier policy",
+            collection_id
         );
 
         self.collection_configs.insert(collection_id.clone(), tier_policy);
@@ -423,15 +424,15 @@ impl AdaptiveStoreFactory {
             .await?;
 
         // Create appropriate backend
-        match config.backend_type {
+        match &config.backend_type {
             BackendType::Index { structure, tier_policy } => {
-                self.create_index_backend(collection_id, structure, tier_policy, config).await
+                self.create_index_backend(collection_id, structure.clone(), tier_policy.clone(), config).await
             }
             BackendType::Cache { structure, tier_policy } => {
-                self.create_cache_backend(collection_id, structure, tier_policy, config).await
+                self.create_cache_backend(collection_id, structure.clone(), tier_policy.clone(), config).await
             }
             BackendType::Hybrid { active_structure, detection_config } => {
-                self.create_hybrid_backend(collection_id, active_structure, detection_config, config).await
+                self.create_hybrid_backend(collection_id, active_structure.clone(), detection_config.clone(), config).await
             }
         }
     }
@@ -441,7 +442,7 @@ impl AdaptiveStoreFactory {
         &self,
         collection_id: String,
         structure: IndexStructure,
-        tier_policy: IndexTierPolicy,
+        tier_policy: UnifiedTierPolicy,
         config: AdaptiveStoreConfig,
     ) -> Result<Box<dyn AdaptiveStore<K, V>>>
     where
@@ -480,7 +481,7 @@ impl AdaptiveStoreFactory {
         &self,
         collection_id: String,
         structure: CacheStructure,
-        tier_policy: CacheTierPolicy,
+        tier_policy: UnifiedTierPolicy,
         config: AdaptiveStoreConfig,
     ) -> Result<Box<dyn AdaptiveStore<K, V>>>
     where
@@ -541,8 +542,36 @@ impl AdaptiveStoreFactory {
     /// Create tier policy from config
     fn create_tier_policy(&self, config: &AdaptiveStoreConfig) -> Result<SmartTierPolicy> {
         // This would integrate with the actual GlobalTierManager's policy creation
-        // For now, return a default policy
-        SmartTierPolicy::create_default(&config.collection_id)
+        // For now, return a default policy based on backend type
+        let workload_type = match &config.backend_type {
+            BackendType::Index { .. } => WorkloadType::Index,
+            BackendType::Cache { .. } => WorkloadType::Cache,
+            BackendType::Hybrid { .. } => WorkloadType::Hybrid,
+        };
+        
+        Ok(SmartTierPolicy {
+            workload_type,
+            collection_config: CollectionStorageConfig {
+                collection_id: config.collection_id.clone(),
+                base_location: "/tmp".to_string(),
+                baseline_tier: StorageTier::HardDisk { mount_path: "/mnt/hdd".to_string() },
+                max_acceleration_tier: Some(StorageTier::Memory),
+                cost_budget: None,
+            },
+            available_tiers: vec![
+                StorageTier::Memory,
+                StorageTier::NvmeSsd { mount_path: "/mnt/nvme".to_string() },
+                StorageTier::HardDisk { mount_path: "/mnt/hdd".to_string() },
+            ],
+            tier_configs: HashMap::new(),
+            placement_rules: vec![],
+            memory_thresholds: MemoryThresholds {
+                promotion_threshold: 0.7,
+                demotion_threshold: 0.9,
+                emergency_eviction: 0.95,
+            },
+            cost_optimization: None,
+        })
     }
 
     /// Get default configuration for collection
@@ -568,10 +597,24 @@ impl AdaptiveStoreFactory {
                     initial_capacity: 1024,
                     memory_limit_mb: Some(512),
                 },
-                tier_policy: IndexTierPolicy {
-                    min_tier: StorageTier::Memory,
-                    promotion_threshold: 100,
-                    max_acceleration_tier: StorageTier::NvmeSsd,
+                tier_policy: UnifiedTierPolicy {
+                    eviction_policy: EvictionPolicy::SizeBased { max_memory_mb: 512 },
+                    promotion_criteria: PromotionCriteria {
+                        min_access_frequency: 100,
+                        frequency_window: Duration::from_secs(3600),
+                        min_promotion_tier: StorageTier::Memory,
+                    },
+                    demotion_criteria: DemotionCriteria {
+                        max_idle_time: Duration::from_secs(7200),
+                        memory_pressure_threshold: 0.85,
+                        min_tier: StorageTier::HardDisk { mount_path: "/mnt/hdd".to_string() },
+                    },
+                    reload_strategy: ReloadStrategy {
+                        load_on_startup: true,
+                        prefetch_hot_data: true,
+                        max_initial_load: 10000,
+                        axis_storage_path: "{baseurl}/{collection_id}/indexes/".to_string(),
+                    },
                 },
             },
             tier_config: TierConfig {
@@ -596,7 +639,7 @@ impl AdaptiveStoreFactory {
                     time_to_live: Some(Duration::from_secs(3600)),
                     time_to_idle: Some(Duration::from_secs(1800)),
                 },
-                tier_policy: CacheTierPolicy {
+                tier_policy: UnifiedTierPolicy {
                     eviction_policy: EvictionPolicy::Lru { max_entries: 10000 },
                     promotion_criteria: PromotionCriteria {
                         min_access_frequency: 10,
@@ -606,7 +649,13 @@ impl AdaptiveStoreFactory {
                     demotion_criteria: DemotionCriteria {
                         max_idle_time: Duration::from_secs(1800),
                         memory_pressure_threshold: 0.9,
-                        min_tier: StorageTier::HardDisk,
+                        min_tier: StorageTier::HardDisk { mount_path: "/mnt/hdd".to_string() },
+                    },
+                    reload_strategy: ReloadStrategy {
+                        load_on_startup: false,
+                        prefetch_hot_data: false,
+                        max_initial_load: 0,
+                        axis_storage_path: "{baseurl}/{collection_id}/cache/".to_string(),
                     },
                 },
             },
@@ -665,7 +714,7 @@ impl AdaptiveStoreFactory {
 pub struct IndexBackend<K, V> {
     collection_id: String,
     storage: DashMap<K, V>,
-    tier_policy: IndexTierPolicy,
+    tier_policy: UnifiedTierPolicy,
     config: AdaptiveStoreConfig,
     tier_manager: Arc<UniversalTierManager>,
     metrics: AtomicMetrics,
@@ -676,7 +725,7 @@ pub struct IndexBackend<K, V> {
 pub struct CacheBackend<K, V> {
     collection_id: String,
     storage: MokaCache<K, V>,
-    tier_policy: CacheTierPolicy,
+    tier_policy: UnifiedTierPolicy,
     config: AdaptiveStoreConfig,
     tier_manager: Arc<UniversalTierManager>,
     metrics: AtomicMetrics,
@@ -707,7 +756,7 @@ where
         collection_id: String,
         initial_capacity: usize,
         memory_limit_mb: Option<usize>,
-        tier_policy: IndexTierPolicy,
+        tier_policy: UnifiedTierPolicy,
         config: AdaptiveStoreConfig,
         tier_manager: Arc<UniversalTierManager>,
     ) -> Result<Self> {
@@ -725,7 +774,7 @@ where
     async fn new_rwlock_hashmap(
         collection_id: String,
         initial_capacity: usize,
-        tier_policy: IndexTierPolicy,
+        tier_policy: UnifiedTierPolicy,
         config: AdaptiveStoreConfig,
         tier_manager: Arc<UniversalTierManager>,
     ) -> Result<Self> {
@@ -751,7 +800,7 @@ where
         max_capacity: u64,
         time_to_live: Option<Duration>,
         time_to_idle: Option<Duration>,
-        tier_policy: CacheTierPolicy,
+        tier_policy: UnifiedTierPolicy,
         config: AdaptiveStoreConfig,
         tier_manager: Arc<UniversalTierManager>,
     ) -> Result<Self> {
@@ -779,7 +828,7 @@ where
     async fn new_lru(
         collection_id: String,
         max_capacity: usize,
-        tier_policy: CacheTierPolicy,
+        tier_policy: UnifiedTierPolicy,
         config: AdaptiveStoreConfig,
         tier_manager: Arc<UniversalTierManager>,
     ) -> Result<Self> {
@@ -996,10 +1045,24 @@ mod tests {
                     initial_capacity: 100,
                     memory_limit_mb: None,
                 },
-                tier_policy: IndexTierPolicy {
-                    min_tier: StorageTier::Memory,
-                    promotion_threshold: 10,
-                    max_acceleration_tier: StorageTier::NvmeSsd,
+                tier_policy: UnifiedTierPolicy {
+                    eviction_policy: EvictionPolicy::SizeBased { max_memory_mb: 100 },
+                    promotion_criteria: PromotionCriteria {
+                        min_access_frequency: 10,
+                        frequency_window: Duration::from_secs(60),
+                        min_promotion_tier: StorageTier::Memory,
+                    },
+                    demotion_criteria: DemotionCriteria {
+                        max_idle_time: Duration::from_secs(300),
+                        memory_pressure_threshold: 0.8,
+                        min_tier: StorageTier::NvmeSsd { mount_path: "/mnt/nvme".to_string() },
+                    },
+                    reload_strategy: ReloadStrategy {
+                        load_on_startup: false,
+                        prefetch_hot_data: false,
+                        max_initial_load: 0,
+                        axis_storage_path: "/tmp/test/indexes/".to_string(),
+                    },
                 },
             },
             tier_config: TierConfig {
