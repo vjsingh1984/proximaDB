@@ -7,6 +7,7 @@ pub mod backend;
 pub mod specialized;
 pub mod coordinator;
 pub mod metrics;
+pub mod adapters;
 
 #[cfg(test)]
 mod tests;
@@ -27,3 +28,6 @@ pub use specialized::{
     IndexStructureCache,
     MetadataCache,
 };
+
+// Re-export adapters for migration
+pub use adapters::UnifiedCacheAdapter;

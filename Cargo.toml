@@ -160,6 +160,7 @@ dashmap = "6.1.0"
 bplustree = "0.1.0"
 lru = "0.12"
 moka = { version = "0.12", features = ["future"] }
+roaring = "0.10"  # Roaring bitmaps for filter caching
 
 # Lock-free data structures for Phase 2 optimization
 arc-swap = "1.7"

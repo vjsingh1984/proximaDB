@@ -9,3 +9,6 @@ mod metrics_tests;
 
 #[cfg(test)]
 mod backend_tests;
+
+#[cfg(test)]
+mod migration_tests;
