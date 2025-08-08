@@ -6,13 +6,13 @@
 //! Simplified WAL Recovery Stress Tests
 //! 
 //! These tests verify WAL file creation, reading, and recovery performance
-//! without depending on DirectVectorService.
+//! without depending on VectorOperationsService.
 
 use anyhow::Result;
 use std::path::{Path, PathBuf};
 use tempfile::TempDir;
 use proximadb::proto::proximadb::VectorRecord;
-use proximadb::storage::persistence::write_buffer::serialization::{
+use proximadb::storage::persistence::write_ahead_log::serialization::{
     SerializerFactory, SerializationFormat, VectorBatchSerializer
 };
 use tracing::info;

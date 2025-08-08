@@ -7,7 +7,7 @@
 
 //! End-to-End Integration Tests for WAL Write Optimization
 //!
-//! Tests the complete integration of OptimizedWriteBufferWriter with DirectVectorService,
+//! Tests the complete integration of OptimizedWriteBufferWriter with VectorOperationsService,
 //! validating performance improvements, batching behavior, and metrics collection.
 
 use anyhow::Result;
@@ -18,8 +18,8 @@ use tokio::time::sleep;
 use tracing::{info, debug};
 
 use proximadb::core::VectorRecord;
-use proximadb::services::direct_vector_service::{DirectVectorService, OptimizedFormat};
-use proximadb::storage::persistence::write_buffer::config::{WriteBufferConfig, PerformanceConfig, SyncMode};
+use proximadb::services::vector_service::{VectorOperationsService, OptimizedFormat};
+use proximadb::storage::persistence::write_ahead_log::config::{WriteBufferConfig, PerformanceConfig, SyncMode};
 use proximadb::storage::engines::viper::ViperEngine;
 // ViperConfig moved to core::config
 use proximadb::storage::engines::sst::SstStorage;
@@ -82,18 +82,18 @@ async fn test_basic_service_creation() -> Result<()> {
     let _ = proximadb::core::hardware_capabilities::initialize_hardware_capabilities_default();
     let _ = tracing_subscriber::fmt::try_init();
     
-    info!("🚀 Testing Basic DirectVectorService Creation");
+    info!("🚀 Testing Basic VectorOperationsService Creation");
     
     let config = WalOptimizationTestConfig::default();
     let _service = create_direct_vector_service(&config).await?;
     
-    info!("✅ DirectVectorService created successfully");
+    info!("✅ VectorOperationsService created successfully");
     Ok(())
 }
 
 // TODO: Uncomment and implement these additional tests once basic service creation works
 // These comprehensive tests will validate the full WAL optimization functionality:
-// - test_optimized_write_buffer_writer_integration() - Performance comparison
+// - test_optimized_write_ahead_log_writer_integration() - Performance comparison
 // - test_write_combining_effectiveness() - Write combining validation
 // - test_batching_thresholds() - Batch size optimization
 // - test_metrics_collection() - Metrics system validation
@@ -101,20 +101,20 @@ async fn test_basic_service_creation() -> Result<()> {
 
 // Helper functions for future test implementation
 
-async fn create_direct_vector_service(config: &WalOptimizationTestConfig) -> Result<DirectVectorService> {
+async fn create_direct_vector_service(config: &WalOptimizationTestConfig) -> Result<VectorOperationsService> {
     // Create WAL config with test parameters
-    let mut write_buffer_config = WriteBufferConfig::default();
-    write_buffer_config.enable_optimized_writer = config.enable_optimized_writer;
-    write_buffer_config.optimized_writer_batch_size = Some(config.batch_size);
-    write_buffer_config.optimized_writer_batch_timeout_ms = Some(config.batch_timeout_ms);
-    write_buffer_config.optimized_writer_enable_combining = Some(config.enable_combining);
+    let mut wal_config = WriteBufferConfig::default();
+    wal_config.enable_optimized_writer = config.enable_optimized_writer;
+    wal_config.optimized_writer_batch_size = Some(config.batch_size);
+    wal_config.optimized_writer_batch_timeout_ms = Some(config.batch_timeout_ms);
+    wal_config.optimized_writer_enable_combining = Some(config.enable_combining);
     
     // Performance config for testing
-    write_buffer_config.performance = PerformanceConfig {
+    wal_config.performance = PerformanceConfig {
         memory_flush_size_bytes: 2 * 1024 * 1024, // 2MB
         disk_segment_size: 512 * 1024 * 1024,
         global_flush_threshold: 4 * 1024 * 1024 * 1024,
-        write_buffer_size: 8 * 1024 * 1024,
+        write_ahead_log_size: 8 * 1024 * 1024,
         concurrent_flushes: 2,
         batch_threshold: config.batch_size,
         mvcc_cleanup_interval_secs: 3600,
@@ -122,9 +122,9 @@ async fn create_direct_vector_service(config: &WalOptimizationTestConfig) -> Res
         sync_mode: SyncMode::PerBatch,
         global_shrink_factor: 0.4,
         cloud_backup: None,
-        enable_optimized_write_buffer_writer: Some(config.enable_optimized_writer),
+        enable_optimized_write_ahead_log_writer: Some(config.enable_optimized_writer),
         background_writer_threads: Some(2),
-        write_buffer_batch_size: Some(config.batch_size),
+        write_ahead_log_batch_size: Some(config.batch_size),
     };
     
     // Create temporary directory for testing
@@ -150,7 +150,7 @@ async fn create_direct_vector_service(config: &WalOptimizationTestConfig) -> Res
         compaction_threshold: 4,
         compaction_strategy: "leveled".to_string(),
         compression: "snappy".to_string(),
-        compression_enabled: true,
+        compression_algorithm: true,
         compression_level: 3,
         bloom_filter_config: Some(proximadb::core::config::BloomFilterConfig {
             bits_per_key: 10,
@@ -165,16 +165,16 @@ async fn create_direct_vector_service(config: &WalOptimizationTestConfig) -> Res
         prefetch_enabled: false,
         prefetch_size_kb: 64,
     };
-    let distance_compute = Arc::new(proximadb::compute::unified_distance::UnifiedDistanceCompute::new(proximadb::compute::distance::DistanceMetric::Cosine));
+    let distance_compute = Arc::new(proximadb::compute::distance_computation::UnifiedDistanceCompute::new(proximadb::compute::distance::DistanceMetric::Cosine));
     let lsm_engine = Arc::new(SstStorage::new(
         lsm_config, 
         filesystem_factory,
         distance_compute
     ).await?);
     
-    // Create DirectVectorService with test configuration
-    DirectVectorService::new(
-        write_buffer_config,
+    // Create VectorOperationsService with test configuration
+    VectorOperationsService::new(
+        wal_config,
         viper_engine,
         lsm_engine,
     ).await
@@ -190,7 +190,7 @@ fn _generate_test_vectors(count: usize, dimension: usize) -> Vec<Vec<f32>> {
         .collect()
 }
 
-async fn _get_wal_metrics(service: &DirectVectorService) -> Option<String> {
+async fn _get_wal_metrics(service: &VectorOperationsService) -> Option<String> {
     // Get metrics from the service's optimized WAL writer
     service.get_wal_metrics_report().await
 }

@@ -214,19 +214,19 @@ async fn test_recovery_after_crash_simulation() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn test_write_buffer_recovery_no_hang() {
+async fn test_write_ahead_log_recovery_no_hang() {
     setup_hardware_capabilities();
     // Test that write buffer recovery doesn't hang
     let temp_dir = TempDir::new().unwrap();
     let config = create_test_config(&temp_dir);
     
     // Create mock write buffer files
-    let write_buffer_dir = temp_dir.path().join("write_buffer");
-    std::fs::create_dir_all(&write_buffer_dir).unwrap();
+    let write_ahead_log_dir = temp_dir.path().join("write_ahead_log");
+    std::fs::create_dir_all(&write_ahead_log_dir).unwrap();
     
     // Create some WAL segments
     for i in 0..3 {
-        let segment_path = write_buffer_dir.join(format!("segment_{:06}.wal", i));
+        let segment_path = write_ahead_log_dir.join(format!("segment_{:06}.wal", i));
         std::fs::write(&segment_path, b"mock wal data").unwrap();
     }
     
@@ -259,16 +259,16 @@ async fn test_atomic_operations_no_hang() {
             proximadb::storage::persistence::filesystem::FilesystemFactory::new(Default::default()).await?
         );
         
-        let coordinator = proximadb::storage::atomic::UnifiedAtomicCoordinator::new(
+        let coordinator = proximadb::storage::transaction_coordinator::UnifiedAtomicCoordinator::new(
             filesystem_factory,
             Some(temp_dir.path().to_str().unwrap().to_string()),
         ).await?;
         
         // Test atomic operation
-        let config = proximadb::storage::atomic::StagingConfig {
+        let config = proximadb::storage::transaction_coordinator::StagingConfig {
             base_url: format!("file://{}", temp_dir.path().display()),
             collection_id: Some("test".to_string()),
-            operation_type: proximadb::storage::atomic::StagingOperationType::Flush,
+            operation_type: proximadb::storage::transaction_coordinator::StagingOperationType::Flush,
             auto_cleanup: true,
             ..Default::default()
         };

@@ -9,7 +9,7 @@ use tempfile::TempDir;
 
 use proximadb::proto::proximadb::{VectorRecord, MetadataItem};
 use proximadb::services::collection_service::CollectionService;
-use proximadb::services::direct_vector_service::DirectVectorService;
+use proximadb::services::VectorOperationsService;
 use proximadb::storage::engines::viper::ViperEngine;
 use proximadb::storage::persistence::filesystem::FilesystemFactory;
 use proximadb::storage::memtable::implementations::global_partitioned::GlobalPartitionedMemtable;

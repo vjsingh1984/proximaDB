@@ -19,7 +19,7 @@ use axum::{
 use tower::ServiceExt;
 
 use proximadb::network::rest::create_rest_router;
-use proximadb::services::direct_vector_service::DirectVectorService;
+use proximadb::services::VectorOperationsService;
 use proximadb::services::collection_service::CollectionService;
 use proximadb::storage::persistence::filesystem::{FilesystemFactory, FilesystemConfig};
 use proximadb::storage::memtable::implementations::global_partitioned::GlobalPartitionedMemtable;
@@ -44,7 +44,7 @@ async fn create_test_app() -> (Router, TempDir) {
     ));
     
     // Create services
-    let direct_vector_service = Arc::new(DirectVectorService::new(
+    let direct_vector_service = Arc::new(VectorOperationsService::new(
         filesystem.clone(),
         memtable.clone(),
         temp_dir.path().to_path_buf(),

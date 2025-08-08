@@ -58,7 +58,7 @@ use proximadb::storage::engines::viper::{
 use proximadb::proto::proximadb::{MetadataItem, Collection};
 use proximadb::core::search::{SearchParams, FilterExpression};
 use proximadb::storage::traits::UnifiedStorageEngine;
-use proximadb::storage::atomic::UnifiedAtomicCoordinator;
+use proximadb::storage::transaction_coordinator::UnifiedAtomicCoordinator;
 use proximadb::storage::persistence::filesystem::FilesystemFactory;
 use proximadb::storage::metadata::store::MetadataStore;
 use std::sync::Arc;
@@ -89,11 +89,11 @@ fn ensure_test_directories() {
 }
 
 /// Create test VIPER configuration with compression
-fn create_test_config(temp_dir: &TempDir, compression_enabled: bool) -> proximadb::core::config::ViperConfig {
+fn create_test_config(temp_dir: &TempDir, compression_algorithm: bool) -> proximadb::core::config::ViperConfig {
     proximadb::core::config::ViperConfig {
         row_group_size: 50_000,
         compression: "zstd".to_string(),
-        compression_enabled,
+        compression_algorithm,
         compression_level: 3,
         enable_statistics: true,
         data_directory: temp_dir.path().to_str().unwrap().to_string(),
@@ -598,7 +598,7 @@ async fn test_compression_algorithms_comparison() -> anyhow::Result<()> {
 }
 
 #[tokio::test]
-async fn test_compression_enabled_vs_disabled() -> anyhow::Result<()> {
+async fn test_compression_algorithm_vs_disabled() -> anyhow::Result<()> {
     // Initialize hardware capabilities
     let _ = proximadb::core::hardware_capabilities::initialize_hardware_capabilities_default();
     // Ensure required test directories exist
@@ -611,9 +611,9 @@ async fn test_compression_enabled_vs_disabled() -> anyhow::Result<()> {
     
     let mut sizes = Vec::new();
     
-    for (compression_enabled, name) in test_cases {
+    for (compression_algorithm, name) in test_cases {
         let temp_dir = TempDir::new().unwrap();
-        let config = Arc::new(create_test_config(&temp_dir, compression_enabled));
+        let config = Arc::new(create_test_config(&temp_dir, compression_algorithm));
         
         // Set up storage assignment for the test collection
         setup_test_assignment("compression_test").await?;

@@ -36,7 +36,7 @@ pub fn ensure_test_directories() {
             "./data/metadata/current", 
             "./data/metadata/__staging",
             "./data/metadata/archive",
-            "./data/metadata/write_buffer",
+            "./data/metadata/write_ahead_log",
             "./data/metadata/rocksdb",
             "./data/metadata/rocksdb_backups",
             "./test_metadata",

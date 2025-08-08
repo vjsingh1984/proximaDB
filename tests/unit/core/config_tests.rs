@@ -24,7 +24,7 @@ fn test_default_config() {
     // Test default SST config
     assert_eq!(config.storage.sst_config.memtable_size_mb, 64);
     assert_eq!(config.storage.sst_config.level_count, 7);
-    assert!(config.storage.sst_config.enable_write_buffer);
+    assert!(config.storage.sst_config.enable_write_ahead_log);
     
     // Test default API config
     assert_eq!(config.api.rest_port, 5678);
@@ -51,8 +51,8 @@ mmap_enabled = true
 [storage.sst_config]
 memtable_size_mb = 128
 level_count = 5
-enable_write_buffer = true
-write_buffer_directory = "/custom/write_buffer"
+enable_write_ahead_log = true
+write_ahead_log_directory = "/custom/write_ahead_log"
 data_directory = "/custom/sst_data"
 
 [api]
@@ -81,7 +81,7 @@ log_level = "debug"
     
     assert_eq!(config.storage.sst_config.memtable_size_mb, 128);
     assert_eq!(config.storage.sst_config.level_count, 5);
-    assert!(config.storage.sst_config.enable_write_buffer);
+    assert!(config.storage.sst_config.enable_write_ahead_log);
     
     assert_eq!(config.api.rest_port, 8080);
     assert_eq!(config.api.grpc_port, 9090);

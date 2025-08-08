@@ -5,5 +5,5 @@
 pub mod storage;
 
 // Include write buffer recovery stress tests
-#[path = "../unit/write_buffer_recovery_stress_tests.rs"]
-pub mod write_buffer_recovery_stress_tests;
+#[path = "../unit/write_ahead_log_recovery_stress_tests.rs"]
+pub mod write_ahead_log_recovery_stress_tests;

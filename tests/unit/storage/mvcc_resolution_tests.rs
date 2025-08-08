@@ -4,7 +4,7 @@
 //! VIPER and SST engines to ensure consistency.
 
 use proximadb::core::search::SearchResult;
-use proximadb::services::DirectVectorService;
+use proximadb::services::VectorOperationsService;
 use std::collections::HashMap;
 use serde_json::json;
 
@@ -29,11 +29,11 @@ fn create_search_result(id: &str, version: u32, timestamp: u32, score: f32) -> S
     }
 }
 
-/// Test DirectVectorService's apply_mvcc_deduplication method
+/// Test VectorOperationsService's apply_mvcc_deduplication method
 #[test]
 fn test_apply_mvcc_deduplication() {
-    // Create a mock DirectVectorService just to test the method
-    // Note: We can't easily instantiate DirectVectorService here, so we'll test the logic directly
+    // Create a mock VectorOperationsService just to test the method
+    // Note: We can't easily instantiate VectorOperationsService here, so we'll test the logic directly
     
     // Test case 1: Normal version progression
     let results = vec![
@@ -101,7 +101,7 @@ fn test_apply_mvcc_deduplication() {
     assert_eq!(deduplicated.len(), 3); // All preserved
 }
 
-/// Test the actual MVCC logic (extracted from DirectVectorService)
+/// Test the actual MVCC logic (extracted from VectorOperationsService)
 fn apply_mvcc_logic(results: Vec<SearchResult>) -> Vec<SearchResult> {
     use std::collections::HashMap;
     

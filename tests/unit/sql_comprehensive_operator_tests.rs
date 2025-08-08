@@ -30,7 +30,7 @@ mod tests {
     }
     
     use proximadb::proto::proximadb::{VectorRecord, MetadataItem, metadata_item};
-    use proximadb::services::DirectVectorService;
+    use proximadb::services::VectorOperationsService;
     use proximadb::storage::StorageEngine;
 // 🔴 OBSOLETE - Assignment service removed
     use proximadb::config::Config;
@@ -42,7 +42,7 @@ mod tests {
     
     /// Test fixture for SQL operator testing
     struct SqlOperatorTestFixture {
-        pub vector_service: Arc<DirectVectorService>,
+        pub vector_service: Arc<VectorOperationsService>,
         pub sql_executor: SqlExecutor,
         pub collection_id: String,
         pub temp_dir: TempDir,
@@ -82,9 +82,9 @@ mod tests {
             // Create SST engine
             let mut sst_config = proximadb::core::config::SstConfig::default();
             sst_config.data_directory = temp_dir.path().to_string_lossy().to_string();
-            sst_config.compression_enabled = true;
+            sst_config.compression_algorithm = true;
             sst_config.compression_level = 3;
-            let distance_compute = Arc::new(proximadb::compute::unified_distance::UnifiedDistanceCompute::new(
+            let distance_compute = Arc::new(proximadb::compute::distance_computation::UnifiedDistanceCompute::new(
                 proximadb::compute::distance::DistanceMetric::Cosine
             ));
             let sst_engine = Arc::new(proximadb::storage::engines::sst::SstStorage::new(
@@ -93,10 +93,10 @@ mod tests {
                 distance_compute
             ).await?);
             
-            // Create DirectVectorService using user config converted to engine config
-            let write_buffer_config = config.storage.write_buffer_config.to_engine_config();
-            let vector_service = Arc::new(DirectVectorService::new(
-                write_buffer_config,
+            // Create VectorOperationsService using user config converted to engine config
+            let wal_config = config.storage.wal_config.to_engine_config();
+            let vector_service = Arc::new(VectorOperationsService::new(
+                wal_config,
                 viper_engine,
                 sst_engine
             ).await?);

@@ -10,7 +10,7 @@ use uuid::Uuid;
 use proximadb::core::{SstConfig, BloomFilterConfig, VectorRecord, WriteBufferUserConfig};
 use proximadb::core::config::StorageLocation;
 use proximadb::proto::proximadb::MetadataItem;
-use proximadb::compute::unified_distance::{UnifiedDistanceCompute, HardwareBackend};
+use proximadb::compute::distance_computation::{UnifiedDistanceCompute, HardwareBackend};
 // 🔴 OBSOLETE - Assignment service removed
 use proximadb::storage::engines::sst::SstStorage;
 use proximadb::storage::persistence::filesystem::{FilesystemFactory, FilesystemConfig};
@@ -53,7 +53,7 @@ impl IsolatedTestEnvironment {
         // Create base directories
         let base_path = temp_dir.path().to_str().unwrap();
         tokio::fs::create_dir_all(format!("{}/data", base_path)).await?;
-        tokio::fs::create_dir_all(format!("{}/write_buffer", base_path)).await?;
+        tokio::fs::create_dir_all(format!("{}/write_ahead_log", base_path)).await?;
         tokio::fs::create_dir_all(format!("{}/index", base_path)).await?;
         
         // Create storage locations
@@ -167,7 +167,7 @@ impl IsolatedTestEnvironment {
             // Storage type
             compaction_strategy: "leveled".to_string(),
             compression: "none".to_string(), // No compression for faster tests
-            compression_enabled: false,
+            compression_algorithm: false,
             compression_level: 0,
             
             // Bloom filter - enabled with conservative settings
@@ -195,13 +195,13 @@ impl IsolatedTestEnvironment {
     }
     
     /// Create test WriteBuffer configuration
-    fn create_test_write_buffer_config() -> WriteBufferUserConfig {
+    fn create_test_wal_config() -> WriteBufferUserConfig {
         WriteBufferUserConfig {
-            write_buffer_size_mb: 2,
+            write_ahead_log_size_mb: 2,
             memory_flush_size_bytes: 512 * 1024, // 512KB
             memtable_type: "BTree".to_string(),
             sync_mode: "perbatch".to_string(),
-            write_buffer_directory: "/tmp/test-wb".to_string(), // Placeholder
+            write_ahead_log_directory: "/tmp/test-wb".to_string(), // Placeholder
             enable_wal: true,
             vector_count_threshold: 50,  // Small threshold for tests
         }

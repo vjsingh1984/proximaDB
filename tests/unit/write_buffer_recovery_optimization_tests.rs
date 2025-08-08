@@ -18,10 +18,10 @@ use std::sync::Arc;
 use tempfile::TempDir;
 
 use proximadb::core::VectorRecord;
-use crate::services::direct_vector_service::{DirectVectorService, OptimizedFormat};
+use crate::services::vector_service::{VectorOperationsService, OptimizedFormat};
 use crate::storage::engines::viper::ViperEngine;
 use crate::storage::engines::sst::LsmTree;
-use crate::storage::persistence::write_buffer::WriteBufferConfig;
+use crate::storage::persistence::write_ahead_log::WriteBufferConfig;
 use tracing::info;
 
 /// Test helper to create test vectors with metadata
@@ -78,7 +78,7 @@ async fn create_test_wal_files(
         // Serialize based on format
         let serialized = match format {
             OptimizedFormat::Proto => {
-                use crate::storage::persistence::write_buffer::serialization::{ProtocolBuffersSerializer, VectorBatchSerializer};
+                use crate::storage::persistence::write_ahead_log::serialization::{ProtocolBuffersSerializer, VectorBatchSerializer};
                 let serializer = ProtocolBuffersSerializer::new();
                 serializer.serialize_batch(&vectors)?
             }
@@ -94,7 +94,7 @@ async fn create_test_wal_files(
                 serialized
             }
             OptimizedFormat::Avro => {
-                use crate::storage::persistence::write_buffer::serialization::{AvroSerializer, VectorBatchSerializer};
+                use crate::storage::persistence::write_ahead_log::serialization::{AvroSerializer, VectorBatchSerializer};
                 let serializer = AvroSerializer::new();
                 serializer.serialize_batch(&vectors)?
             }
@@ -143,10 +143,10 @@ mod recovery_tests {
         assert_eq!(wal_files.len(), 3);
         
         // Create WAL config pointing to temp directory
-        let write_buffer_config = WriteBufferConfig {
-            multi_disk: crate::storage::persistence::write_buffer::config::MultiDiskConfig {
+        let wal_config = WriteBufferConfig {
+            multi_disk: crate::storage::persistence::write_ahead_log::config::MultiDiskConfig {
                 data_directories: vec![format!("file://{}", wal_dir.display())],
-                distribution_strategy: crate::storage::persistence::write_buffer::config::DiskDistributionStrategy::RoundRobin,
+                distribution_strategy: crate::storage::persistence::write_ahead_log::config::DiskDistributionStrategy::RoundRobin,
                 collection_affinity: true,
             },
             ..Default::default()
@@ -156,9 +156,9 @@ mod recovery_tests {
         let viper_engine = create_mock_viper_engine().await?;
         let lsm_engine = create_mock_lsm_engine().await?;
         
-        // Create DirectVectorService and trigger recovery
-        let service = DirectVectorService::new(
-            write_buffer_config,
+        // Create VectorOperationsService and trigger recovery
+        let service = VectorOperationsService::new(
+            wal_config,
             viper_engine,
             lsm_engine,
         ).await?;
@@ -190,8 +190,8 @@ mod recovery_tests {
         std::fs::write(&corrupted_file, b"corrupted data that is not valid proto")?;
         
         // Create WAL config
-        let write_buffer_config = WriteBufferConfig {
-            multi_disk: crate::storage::persistence::write_buffer::config::MultiDiskConfig {
+        let wal_config = WriteBufferConfig {
+            multi_disk: crate::storage::persistence::write_ahead_log::config::MultiDiskConfig {
                 data_directories: vec![format!("file://{}", wal_dir.display())],
                 ..Default::default()
             },
@@ -202,8 +202,8 @@ mod recovery_tests {
         let lsm_engine = create_mock_lsm_engine().await?;
         
         // Recovery should skip corrupted file but process valid ones
-        let service = DirectVectorService::new(
-            write_buffer_config,
+        let service = VectorOperationsService::new(
+            wal_config,
             viper_engine,
             lsm_engine,
         ).await?;
@@ -261,8 +261,8 @@ mod recovery_tests {
         
         assert_eq!(all_files.len(), 50); // 5 collections * 10 files each
         
-        let write_buffer_config = WriteBufferConfig {
-            multi_disk: crate::storage::persistence::write_buffer::config::MultiDiskConfig {
+        let wal_config = WriteBufferConfig {
+            multi_disk: crate::storage::persistence::write_ahead_log::config::MultiDiskConfig {
                 data_directories: vec![format!("file://{}", wal_dir.display())],
                 ..Default::default()
             },
@@ -274,8 +274,8 @@ mod recovery_tests {
         
         // Measure recovery time
         let start = std::time::Instant::now();
-        let service = DirectVectorService::new(
-            write_buffer_config,
+        let service = VectorOperationsService::new(
+            wal_config,
             viper_engine,
             lsm_engine,
         ).await?;
@@ -321,14 +321,14 @@ mod recovery_tests {
         ).await?;
         
         // Configure multiple WAL directories
-        let write_buffer_config = WriteBufferConfig {
-            multi_disk: crate::storage::persistence::write_buffer::config::MultiDiskConfig {
+        let wal_config = WriteBufferConfig {
+            multi_disk: crate::storage::persistence::write_ahead_log::config::MultiDiskConfig {
                 data_directories: vec![
                     format!("file://{}", temp_dir1.path().display()),
                     format!("file://{}", temp_dir2.path().display()),
                     format!("file://{}", temp_dir3.path().display()),
                 ],
-                distribution_strategy: crate::storage::persistence::write_buffer::config::DiskDistributionStrategy::RoundRobin,
+                distribution_strategy: crate::storage::persistence::write_ahead_log::config::DiskDistributionStrategy::RoundRobin,
                 collection_affinity: true,
             },
             ..Default::default()
@@ -338,8 +338,8 @@ mod recovery_tests {
         let lsm_engine = create_mock_lsm_engine().await?;
         
         // Should recover from all directories
-        let service = DirectVectorService::new(
-            write_buffer_config,
+        let service = VectorOperationsService::new(
+            wal_config,
             viper_engine,
             lsm_engine,
         ).await?;
@@ -471,7 +471,7 @@ mod recovery_stress_tests {
             recovery_tasks.spawn(async move {
                 // Create disk manager and recovery manager
                 let disk_manager = Arc::new(
-                    crate::storage::persistence::write_buffer::WriteBufferDiskManager::new(
+                    crate::storage::persistence::write_ahead_log::WriteBufferDiskManager::new(
                         fs,
                         &wal_dir
                     )
@@ -540,7 +540,7 @@ mod recovery_stress_tests {
             );
             
             // Use Proto format for better compression
-            use crate::storage::persistence::write_buffer::serialization::{ProtocolBuffersSerializer, VectorBatchSerializer};
+            use crate::storage::persistence::write_ahead_log::serialization::{ProtocolBuffersSerializer, VectorBatchSerializer};
             let serializer = ProtocolBuffersSerializer::new();
             let serialized = serializer.serialize_batch(&vectors)?;
             
@@ -565,7 +565,7 @@ mod recovery_stress_tests {
         let recovery_start = Instant::now();
         
         let disk_manager = Arc::new(
-            proximadb::storage::persistence::write_buffer::WriteBufferDiskManager::new(
+            proximadb::storage::persistence::write_ahead_log::WriteBufferDiskManager::new(
                 filesystem.clone(),
                 wal_dir
             )
@@ -583,7 +583,7 @@ mod recovery_stress_tests {
             total_bytes_processed += data.len();
             
             // Deserialize to verify data integrity
-            use crate::storage::persistence::write_buffer::serialization::{ProtocolBuffersSerializer, VectorBatchSerializer};
+            use crate::storage::persistence::write_ahead_log::serialization::{ProtocolBuffersSerializer, VectorBatchSerializer};
             let serializer = ProtocolBuffersSerializer::new();
             let vectors = serializer.deserialize_batch(&data)?;
             total_vectors_recovered += vectors.len();

@@ -31,7 +31,7 @@ pub mod isolated_filesystem_test;
 // SST engine integration tests
 pub mod isolated_sst_engine_test;
 // TODO: Fix API mismatches before enabling this test
-// pub mod isolated_write_buffer_test;
+// pub mod isolated_write_ahead_log_test;
 
 // Comprehensive filesystem integration tests - REMOVED (outdated APIs)
 // pub mod filesystem_comprehensive_test;
@@ -61,7 +61,7 @@ pub mod filestore_path_test;
 pub mod unified_search_integration;
 
 // Write Buffer optimization integration tests - NEW optimized Write Buffer writer
-pub mod write_buffer_optimization_integration_test;
+pub mod write_ahead_log_optimization_integration_test;
 
 // VIPER engine integration tests
 pub mod viper;

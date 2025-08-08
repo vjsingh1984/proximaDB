@@ -1,6 +1,6 @@
-//! Integration tests for DirectVectorService operations
+//! Integration tests for VectorOperationsService operations
 //!
-//! Tests the complete vector lifecycle using the current DirectVectorService API:
+//! Tests the complete vector lifecycle using the current VectorOperationsService API:
 //! - Vector insertion (single and batch)
 //! - Vector search (unified and streaming)
 //! - Collection management
@@ -15,14 +15,14 @@ use proximadb::core::VectorRecord;
 use proximadb::proto::proximadb::{
     CollectionConfig, DistanceMetric, StorageEngine, IndexingAlgorithm, MetadataItem
 };
-use proximadb::services::direct_vector_service::DirectVectorService;
+use proximadb::services::VectorOperationsService;
 use proximadb::services::collection_service::CollectionService;
 use proximadb::storage::persistence::filesystem::{FilesystemFactory, FilesystemConfig};
-use proximadb::storage::persistence::write_buffer::WriteBufferManager;
+use proximadb::storage::persistence::write_ahead_log::WriteBufferManager;
 use proximadb::storage::memtable::implementations::global_partitioned::GlobalPartitionedMemtable;
 
 /// Helper to create test configuration
-async fn create_test_services() -> (DirectVectorService, CollectionService, TempDir) {
+async fn create_test_services() -> (VectorOperationsService, CollectionService, TempDir) {
     let temp_dir = TempDir::new().unwrap();
     
     // Create filesystem
@@ -36,8 +36,8 @@ async fn create_test_services() -> (DirectVectorService, CollectionService, Temp
         2 * 1024 * 1024,  // 2MB flush threshold
     ));
     
-    // Create DirectVectorService
-    let direct_vector_service = DirectVectorService::new(
+    // Create VectorOperationsService
+    let direct_vector_service = VectorOperationsService::new(
         filesystem.clone(),
         memtable.clone(),
         temp_dir.path().to_path_buf(),

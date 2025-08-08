@@ -10,8 +10,8 @@ use tempfile::TempDir;
 use proximadb::core::SstConfig;
 use proximadb::storage::engines::sst::compaction::{CompactionManager, CompactionTask, CompactionPriority};
 use proximadb::storage::engines::sst::SstRecord;
-use proximadb::storage::persistence::write_buffer::background_manager::BackgroundMaintenanceManager;
-use proximadb::storage::persistence::write_buffer::config::WriteBufferConfig;
+use proximadb::storage::persistence::write_ahead_log::background_manager::BackgroundMaintenanceManager;
+use proximadb::storage::persistence::write_ahead_log::config::WriteBufferConfig;
 
 /// Helper function to create test LSM records
 fn create_test_lsm_records(collection_id: &str, count: usize) -> Vec<SstRecord> {

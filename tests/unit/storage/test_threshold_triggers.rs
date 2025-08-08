@@ -8,7 +8,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use anyhow::Result;
 use proximadb::core::config::SstConfig;
-use proximadb::storage::persistence::write_buffer::config::PerformanceConfig;
+use proximadb::storage::persistence::write_ahead_log::config::PerformanceConfig;
 
 /// Test that memory flush threshold configuration is properly set
 #[tokio::test]

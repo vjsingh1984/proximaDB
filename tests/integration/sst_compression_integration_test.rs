@@ -14,9 +14,9 @@ use proximadb::storage::engines::sst::{
 use proximadb::proto::proximadb::MetadataItem;
 use proximadb::core::search::{SearchParams, FilterExpression};
 use proximadb::storage::traits::UnifiedStorageEngine;
-use proximadb::storage::atomic::UnifiedAtomicCoordinator;
+use proximadb::storage::transaction_coordinator::UnifiedAtomicCoordinator;
 use proximadb::storage::persistence::filesystem::FilesystemFactory;
-use proximadb::compute::unified_distance::UnifiedDistanceCompute;
+use proximadb::compute::distance_computation::UnifiedDistanceCompute;
 use std::sync::{Arc, Once};
 use tokio::sync::RwLock;
 use tempfile::TempDir;
@@ -32,14 +32,14 @@ fn setup_hardware_capabilities() {
 }
 
 /// Create test SST configuration with compression
-fn create_test_config(temp_dir: &TempDir, compression_enabled: bool) -> SstConfig {
+fn create_test_config(temp_dir: &TempDir, compression_algorithm: bool) -> SstConfig {
     SstConfig {
         level_count: 3,
         compaction_threshold: 3,
         block_size_kb: 4096, // 4MB for optimal ZSTD compression
         compaction_strategy: "leveled".to_string(),
         compression: "zstd".to_string(),
-        compression_enabled,
+        compression_algorithm,
         compression_level: 3,
         bloom_filter_config: None, // Disable for these tests
         cache_size_mb: 64,
@@ -119,7 +119,7 @@ async fn test_sst_datablock_compression() -> anyhow::Result<()> {
     assert_eq!(data_block.records.len(), recovered_block.records.len());
     
     // Check compression was applied
-    assert!(recovered_block.compression_enabled);
+    assert!(recovered_block.compression_algorithm);
     assert!(recovered_block.compression_ratio > 0.0 && recovered_block.compression_ratio < 1.0);
     
     info!("DataBlock compression ratio: {:.2}", recovered_block.compression_ratio);
@@ -406,7 +406,7 @@ async fn test_sst_search_compressed_blocks() -> anyhow::Result<()> {
 }
 
 #[tokio::test]
-async fn test_compression_enabled_vs_disabled() -> anyhow::Result<()> {
+async fn test_compression_algorithm_vs_disabled() -> anyhow::Result<()> {
     setup_hardware_capabilities();
     let temp_dir_compressed = TempDir::new().unwrap();
     let temp_dir_uncompressed = TempDir::new().unwrap();

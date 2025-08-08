@@ -1,4 +1,4 @@
-//! Comprehensive test coverage for unified_distance and unified_quantization modules
+//! Comprehensive test coverage for distance_computation and unified_quantization modules
 //!
 //! This test module provides 70%+ code coverage for both unified modules by testing:
 //! - All distance metrics and their edge cases
@@ -19,11 +19,11 @@ use proximadb::proto::proximadb::{
 use std::sync::Arc;
 
 #[cfg(test)]
-mod unified_distance_coverage {
+mod distance_computation_coverage {
     use super::*;
 
     #[test]
-    fn test_unified_distance_construction() {
+    fn test_distance_computation_construction() {
         let _ = proximadb::core::hardware_capabilities::initialize_hardware_capabilities_default();
         // Test default construction
         let default_compute = UnifiedDistanceCompute::default();

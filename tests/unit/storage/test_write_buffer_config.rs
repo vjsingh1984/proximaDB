@@ -8,7 +8,7 @@
 //! - Performance and compression configurations
 
 use anyhow::Result;
-use proximadb::storage::persistence::write_buffer::config::{
+use proximadb::storage::persistence::write_ahead_log::config::{
     WriteBufferConfig, WriteBufferStrategyType, MemTableConfig, MemTableType, MultiDiskConfig,
     DiskDistributionStrategy, CompressionConfig, PerformanceConfig, SyncMode,
     CollectionWalConfig, CloudBackupConfig, CloudStorageType, RetentionPolicy,
@@ -17,7 +17,7 @@ use proximadb::storage::persistence::write_buffer::config::{
 use std::collections::HashMap;
 
 #[cfg(test)]
-mod write_buffer_config_tests {
+mod wal_config_tests {
     use super::*;
 
     #[test]
@@ -166,7 +166,7 @@ mod write_buffer_config_tests {
         assert_eq!(config.memory_flush_size_bytes, 10 * 1024 * 1024); // 10MB
         assert_eq!(config.disk_segment_size, 512 * 1024 * 1024);     // 512MB
         assert_eq!(config.global_flush_threshold, 4 * 1024 * 1024 * 1024); // 4GB
-        assert_eq!(config.write_buffer_size, 8 * 1024 * 1024);       // 8MB
+        assert_eq!(config.write_ahead_log_size, 8 * 1024 * 1024);       // 8MB
         assert_eq!(config.batch_threshold, 500);
         assert_eq!(config.mvcc_cleanup_interval_secs, 3600);         // 1 hour
         assert_eq!(config.ttl_cleanup_interval_secs, 300);           // 5 minutes
@@ -185,7 +185,7 @@ mod write_buffer_config_tests {
             memory_flush_size_bytes: 1024 * 1024, // 1MB
             disk_segment_size: 64 * 1024 * 1024, // 64MB
             global_flush_threshold: 1024 * 1024 * 1024, // 1GB
-            write_buffer_size: 1024 * 1024, // 1MB
+            write_ahead_log_size: 1024 * 1024, // 1MB
             concurrent_flushes: 8,
             batch_threshold: 100,
             mvcc_cleanup_interval_secs: 7200, // 2 hours
@@ -234,7 +234,7 @@ mod write_buffer_config_tests {
     }
 
     #[test]
-    fn test_collection_write_buffer_config() -> Result<()> {
+    fn test_collection_wal_config() -> Result<()> {
         let collection_config = CollectionWalConfig {
             strategy_override: Some(WriteBufferStrategyType::BincodeBatch),
             flush_size_override: Some(5 * 1024 * 1024), // 5MB
@@ -260,7 +260,7 @@ mod write_buffer_config_tests {
     }
 
     #[test]
-    fn test_write_buffer_config_comprehensive() -> Result<()> {
+    fn test_wal_config_comprehensive() -> Result<()> {
         let mut collection_overrides = HashMap::new();
         collection_overrides.insert(
             "high_volume_collection".to_string(),
@@ -299,7 +299,7 @@ mod write_buffer_config_tests {
                 memory_flush_size_bytes: 50 * 1024 * 1024, // 50MB
                 disk_segment_size: 1024 * 1024 * 1024, // 1GB
                 global_flush_threshold: 16 * 1024 * 1024 * 1024, // 16GB
-                write_buffer_size: 16 * 1024 * 1024, // 16MB
+                write_ahead_log_size: 16 * 1024 * 1024, // 16MB
                 concurrent_flushes: 2,
                 batch_threshold: 1000,
                 mvcc_cleanup_interval_secs: 1800, // 30 minutes
@@ -338,7 +338,7 @@ mod write_buffer_config_tests {
     }
 
     #[test]
-    fn test_write_buffer_config_defaults() {
+    fn test_wal_config_defaults() {
         let config = WriteBufferConfig::default();
         
         // Verify default strategy
@@ -438,7 +438,7 @@ mod write_buffer_config_tests {
                 memory_flush_size_bytes: 1024, // Very small
                 disk_segment_size: 1024,
                 global_flush_threshold: 1024,
-                write_buffer_size: 1024,
+                write_ahead_log_size: 1024,
                 concurrent_flushes: 1, // Single threaded
                 batch_threshold: 1,    // No batching
                 mvcc_cleanup_interval_secs: 1, // Very frequent

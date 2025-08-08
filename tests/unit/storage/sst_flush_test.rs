@@ -7,7 +7,7 @@ use proximadb::storage::engines::sst::SstStorage;
 use proximadb::storage::persistence::filesystem::FilesystemFactory;
 use proximadb::storage::traits::{FlushParameters, UnifiedStorageEngine};
 use proximadb::core::VectorRecord;
-use proximadb::compute::unified_distance::{UnifiedDistanceCompute, HardwareBackend};
+use proximadb::compute::distance_computation::{UnifiedDistanceCompute, HardwareBackend};
 use std::sync::Arc;
 use tempfile::TempDir;
 

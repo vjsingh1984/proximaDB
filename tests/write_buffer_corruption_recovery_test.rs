@@ -1,5 +1,5 @@
 #[cfg(test)]
-mod write_buffer_corruption_recovery_tests {
+mod write_ahead_log_corruption_recovery_tests {
     type Result<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>>;
     use std::path::PathBuf;
     use tempfile::TempDir;
@@ -33,7 +33,7 @@ mod write_buffer_corruption_recovery_tests {
                 mmap_enabled: true,
                 sst_config: Default::default(),
                 viper_config: Default::default(),
-                write_buffer_config: Default::default(),
+                wal_config: Default::default(),
                 cache_size_mb: 128,
                 bloom_filter_config: None,
                 filesystem_config: Default::default(),
@@ -77,22 +77,22 @@ mod write_buffer_corruption_recovery_tests {
             db.start().await?;
             
             // Create some test data directories to simulate collections
-            let collection_id = "write_buffer_corruption_test";
+            let collection_id = "write_ahead_log_corruption_test";
             let collection_dir = PathBuf::from(base_path).join(collection_id);
             fs::create_dir_all(&collection_dir).await?;
-            let write_buffer_dir = collection_dir.join("write_buffer");
-            fs::create_dir_all(&write_buffer_dir).await?;
+            let write_ahead_log_dir = collection_dir.join("write_ahead_log");
+            fs::create_dir_all(&write_ahead_log_dir).await?;
             
             // Create some dummy write buffer files
             let dummy_data = b"dummy write buffer data";
-            fs::write(write_buffer_dir.join("000001.wb"), dummy_data).await?;
-            fs::write(write_buffer_dir.join("000002.wb"), dummy_data).await?;
+            fs::write(write_ahead_log_dir.join("000001.wb"), dummy_data).await?;
+            fs::write(write_ahead_log_dir.join("000002.wb"), dummy_data).await?;
             
             db.stop().await?;
         }
         
         // Corrupt WriteBuffer files
-        corrupt_write_buffer_files(base_path, CorruptionType::Header).await?;
+        corrupt_write_ahead_log_files(base_path, CorruptionType::Header).await?;
         
         // Phase 2: Recovery should handle corruption gracefully
         {
@@ -126,20 +126,20 @@ mod write_buffer_corruption_recovery_tests {
             let collection_id = "truncated_wal_test";
             let collection_dir = PathBuf::from(base_path).join(collection_id);
             fs::create_dir_all(&collection_dir).await?;
-            let write_buffer_dir = collection_dir.join("write_buffer");
-            fs::create_dir_all(&write_buffer_dir).await?;
+            let write_ahead_log_dir = collection_dir.join("write_ahead_log");
+            fs::create_dir_all(&write_ahead_log_dir).await?;
             
             // Create multiple write buffer files
             for i in 0..5 {
                 let dummy_data = format!("write buffer batch {} data", i);
-                fs::write(write_buffer_dir.join(format!("{:06}.wb", i)), dummy_data.as_bytes()).await?;
+                fs::write(write_ahead_log_dir.join(format!("{:06}.wb", i)), dummy_data.as_bytes()).await?;
             }
             
             db.stop().await?;
         }
         
         // Truncate WriteBuffer files
-        corrupt_write_buffer_files(base_path, CorruptionType::Truncate).await?;
+        corrupt_write_ahead_log_files(base_path, CorruptionType::Truncate).await?;
         
         // Phase 2: Recovery should recover what it can
         {
@@ -172,18 +172,18 @@ mod write_buffer_corruption_recovery_tests {
             let collection_id = "checksum_test";
             let collection_dir = PathBuf::from(base_path).join(collection_id);
             fs::create_dir_all(&collection_dir).await?;
-            let write_buffer_dir = collection_dir.join("write_buffer");
-            fs::create_dir_all(&write_buffer_dir).await?;
+            let write_ahead_log_dir = collection_dir.join("write_ahead_log");
+            fs::create_dir_all(&write_ahead_log_dir).await?;
             
             // Create write buffer files with checksums
             let dummy_data = b"write buffer data with checksums";
-            fs::write(write_buffer_dir.join("checksum_001.wb"), dummy_data).await?;
+            fs::write(write_ahead_log_dir.join("checksum_001.wb"), dummy_data).await?;
             
             db.stop().await?;
         }
         
         // Corrupt data but not headers
-        corrupt_write_buffer_files(base_path, CorruptionType::DataCorruption).await?;
+        corrupt_write_ahead_log_files(base_path, CorruptionType::DataCorruption).await?;
         
         // Phase 2: Recovery should detect checksum mismatches
         {
@@ -218,12 +218,12 @@ mod write_buffer_corruption_recovery_tests {
                 let collection_id = format!("transaction_test_{}", i);
                 let collection_dir = PathBuf::from(base_path).join(&collection_id);
                 fs::create_dir_all(&collection_dir).await?;
-                let write_buffer_dir = collection_dir.join("write_buffer");
-                fs::create_dir_all(&write_buffer_dir).await?;
+                let write_ahead_log_dir = collection_dir.join("write_ahead_log");
+                fs::create_dir_all(&write_ahead_log_dir).await?;
                 
                 // Create write buffer files
                 let dummy_data = format!("transaction {} data", i);
-                fs::write(write_buffer_dir.join("txn.wb"), dummy_data.as_bytes()).await?;
+                fs::write(write_ahead_log_dir.join("txn.wb"), dummy_data.as_bytes()).await?;
             }
             
             // Start but don't complete a flush operation
@@ -258,7 +258,7 @@ mod write_buffer_corruption_recovery_tests {
         DataCorruption,
     }
     
-    async fn corrupt_write_buffer_files(base_path: &str, corruption_type: CorruptionType) -> Result<()> {
+    async fn corrupt_write_ahead_log_files(base_path: &str, corruption_type: CorruptionType) -> Result<()> {
         use std::path::Path;
         
         // Find WriteBuffer files by walking the directory
@@ -268,9 +268,9 @@ mod write_buffer_corruption_recovery_tests {
             while let Some(entry) = entries.next_entry().await? {
                 let path = entry.path();
                 if path.is_dir() {
-                    let write_buffer_dir = path.join("write_buffer");
-                    if write_buffer_dir.exists() {
-                        let mut wb_entries = fs::read_dir(&write_buffer_dir).await?;
+                    let write_ahead_log_dir = path.join("write_ahead_log");
+                    if write_ahead_log_dir.exists() {
+                        let mut wb_entries = fs::read_dir(&write_ahead_log_dir).await?;
                         while let Some(wb_entry) = wb_entries.next_entry().await? {
                             let file_path = wb_entry.path();
                             if file_path.is_file() && file_path.extension().and_then(|s| s.to_str()) == Some("wb") {

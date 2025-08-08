@@ -17,14 +17,14 @@ pub struct TestAssignmentData {
     pub collection_id: String,
     pub base_directory: String,
     pub data_url: String,
-    #[serde(default = "default_write_buffer_url")]
-    pub write_buffer_url: String,
+    #[serde(default = "default_write_ahead_log_url")]
+    pub write_ahead_log_url: String,
     #[serde(default = "default_index_url")]
     pub index_url: String,
     pub created_at: chrono::DateTime<chrono::Utc>,
 }
 
-fn default_write_buffer_url() -> String {
+fn default_write_ahead_log_url() -> String {
     String::new()
 }
 
@@ -81,8 +81,8 @@ impl PersistentTestAssignments {
         // Check if assignment exists on disk
         if let Some(mut assignment) = assignments.get(collection_id).cloned() {
             // Fill in missing fields for backward compatibility
-            if assignment.write_buffer_url.is_empty() {
-                assignment.write_buffer_url = format!("file://{}/{}/write_buffer", assignment.base_directory, collection_id);
+            if assignment.write_ahead_log_url.is_empty() {
+                assignment.write_ahead_log_url = format!("file://{}/{}/write_ahead_log", assignment.base_directory, collection_id);
             }
             if assignment.index_url.is_empty() {
                 assignment.index_url = format!("file://{}/{}/index", assignment.base_directory, collection_id);
@@ -99,25 +99,25 @@ impl PersistentTestAssignments {
         // Create new assignment using fixed directory path based on collection ID
         let base_directory = format!("/tmp/proximadb_test_{}", collection_id);
         let data_url = format!("file://{}/{}/data", base_directory, collection_id);
-        let write_buffer_url = format!("file://{}/{}/write_buffer", base_directory, collection_id);
+        let write_ahead_log_url = format!("file://{}/{}/write_ahead_log", base_directory, collection_id);
         let index_url = format!("file://{}/{}/index", base_directory, collection_id);
 
         let assignment = TestAssignmentData {
             collection_id: collection_id.to_string(),
             base_directory: base_directory.clone(),
             data_url: data_url.clone(),
-            write_buffer_url: write_buffer_url.clone(),
+            write_ahead_log_url: write_ahead_log_url.clone(),
             index_url: index_url.clone(),
             created_at: chrono::Utc::now(),
         };
 
         // Create all required directories
         let data_path = PathBuf::from(&base_directory).join(collection_id).join("data");
-        let write_buffer_path = PathBuf::from(&base_directory).join(collection_id).join("write_buffer");
+        let write_ahead_log_path = PathBuf::from(&base_directory).join(collection_id).join("write_ahead_log");
         let index_path = PathBuf::from(&base_directory).join(collection_id).join("index");
         
         fs::create_dir_all(&data_path).await?;
-        fs::create_dir_all(&write_buffer_path).await?;
+        fs::create_dir_all(&write_ahead_log_path).await?;
         fs::create_dir_all(&index_path).await?;
 
         // Store on disk

@@ -16,18 +16,18 @@ use proximadb::core::VectorRecord;
 use proximadb::proto::proximadb::{
     CollectionConfig, DistanceMetric, StorageEngine, IndexingAlgorithm, MetadataItem
 };
-use proximadb::services::direct_vector_service::DirectVectorService;
+use proximadb::services::VectorOperationsService;
 use proximadb::services::collection_service::CollectionService;
 use proximadb::storage::persistence::filesystem::{FilesystemFactory, FilesystemConfig};
-use proximadb::storage::persistence::write_buffer::{WriteBufferManager, WriteBufferConfig};
-use proximadb::storage::persistence::write_buffer::batch_strategy::WriteBufferStrategyType;
+use proximadb::storage::persistence::write_ahead_log::{WriteBufferManager, WriteBufferConfig};
+use proximadb::storage::persistence::write_ahead_log::batch_strategy::WriteBufferStrategyType;
 use proximadb::storage::memtable::implementations::global_partitioned::GlobalPartitionedMemtable;
 use proximadb::storage::engines::viper::ViperEngine;
 use proximadb::storage::engines::sst::SstStorage as LsmEngine;
 
 /// Test setup helper
 async fn create_test_setup() -> (
-    DirectVectorService,
+    VectorOperationsService,
     CollectionService,
     Arc<FilesystemFactory>,
     TempDir,
@@ -46,7 +46,7 @@ async fn create_test_setup() -> (
     ));
     
     // Create services
-    let direct_vector_service = DirectVectorService::new(
+    let direct_vector_service = VectorOperationsService::new(
         filesystem.clone(),
         memtable.clone(),
         temp_dir.path().to_path_buf(),
@@ -121,7 +121,7 @@ async fn test_wal_operations_and_batching() {
     collection_service.create_collection(&config).await.unwrap();
     
     // Create WAL manager
-    let write_buffer_config = WriteBufferConfig {
+    let wal_config = WriteBufferConfig {
         wal_dir: _temp_dir.path().join("wal"),
         max_batch_size: 1000,
         flush_interval_ms: 5000,
@@ -129,10 +129,10 @@ async fn test_wal_operations_and_batching() {
         ..Default::default()
     };
     
-    let write_buffer_manager = WriteBufferManager::new(
+    let write_ahead_log_manager = WriteBufferManager::new(
         "wal_test_collection",
         WriteBufferStrategyType::ProtoBatch,
-        &write_buffer_config,
+        &wal_config,
         filesystem.clone(),
     ).await.unwrap();
     
@@ -140,7 +140,7 @@ async fn test_wal_operations_and_batching() {
     let batch_size = 100;
     let vectors = create_test_vectors("wal_test_collection", batch_size);
     
-    let sequences = write_buffer_manager
+    let sequences = write_ahead_log_manager
         .insert_vectors("wal_test_collection".to_string(), vectors.clone())
         .await
         .unwrap();
@@ -153,7 +153,7 @@ async fn test_wal_operations_and_batching() {
     }
     
     // Test reading from WAL
-    let read_vectors = write_buffer_manager
+    let read_vectors = write_ahead_log_manager
         .read_vectors_by_sequence_range(sequences[0], sequences[batch_size-1])
         .await
         .unwrap();
@@ -161,7 +161,7 @@ async fn test_wal_operations_and_batching() {
     assert_eq!(read_vectors.len(), batch_size);
     
     // Test WAL recovery
-    let recovery_vectors = write_buffer_manager
+    let recovery_vectors = write_ahead_log_manager
         .recover_vectors_from_sequence(0)
         .await
         .unwrap();
@@ -169,10 +169,10 @@ async fn test_wal_operations_and_batching() {
     assert!(recovery_vectors.len() >= batch_size);
     
     // Test WAL compaction
-    write_buffer_manager.compact_wal().await.unwrap();
+    write_ahead_log_manager.compact_wal().await.unwrap();
     
     // Verify data is still readable after compaction
-    let post_compaction_vectors = write_buffer_manager
+    let post_compaction_vectors = write_ahead_log_manager
         .read_vectors_by_sequence_range(sequences[0], sequences[batch_size-1])
         .await
         .unwrap();
@@ -357,7 +357,7 @@ async fn test_compaction_operations() {
         compaction_threshold: 2,
         block_size_kb: 64,
         memory_flush_size_bytes: 1024 * 1024,
-        write_buffer_size_mb: 1,
+        write_ahead_log_size_mb: 1,
         max_levels: 7,
         compaction_strategy: "leveled".to_string(),
         compression: "lz4".to_string(),
@@ -369,7 +369,7 @@ async fn test_compaction_operations() {
     }),
         cache_size_mb: 128,
         level_size_multiplier: 10.0,
-        enable_write_buffer: true,
+        enable_write_ahead_log: true,
         sync_mode: "sync".to_string(),
         ..Default::default()
     };

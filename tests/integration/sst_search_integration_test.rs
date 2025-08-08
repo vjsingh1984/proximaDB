@@ -1,20 +1,20 @@
 //! Integration test for LSM engine search functionality
 //!
-//! Tests the complete pipeline: DirectVectorService -> WAL + Memtable -> Flush -> LSM SSTable -> Search
+//! Tests the complete pipeline: VectorOperationsService -> WAL + Memtable -> Flush -> LSM SSTable -> Search
 //! 
 //! LSM engine is purely SSTable-based storage with:
 //! - Headers with metadata
 //! - Bloom filters for efficient key/metadata lookups  
 //! - Data blocks with vectors
-//! - No memtable (that's in DirectVectorService)
+//! - No memtable (that's in VectorOperationsService)
 
 use proximadb::core::{VectorRecord, SstConfig};
 use proximadb::core::search::{FilterExpression, ComparisonOperator};
 use proximadb::proto::proximadb::MetadataItem;
 use proximadb::compute::distance::DistanceMetric;
-use proximadb::compute::unified_distance::{UnifiedDistanceCompute, HardwareBackend};
-use proximadb::storage::persistence::write_buffer::config::WriteBufferConfig;
-use proximadb::services::direct_vector_service::DirectVectorService;
+use proximadb::compute::distance_computation::{UnifiedDistanceCompute, HardwareBackend};
+use proximadb::storage::persistence::write_ahead_log::config::WriteBufferConfig;
+use proximadb::services::VectorOperationsService;
 use proximadb::storage::engines::viper::ViperEngine;
 // ViperConfig no longer needed - using core config
 use proximadb::storage::engines::sst::SstStorage;
@@ -33,12 +33,12 @@ mod common {
 use common::unique_collection_id;
 
 /// Helper to create test WAL configuration with small thresholds
-fn create_test_write_buffer_config(base_path: &str) -> WriteBufferConfig {
+fn create_test_wal_config(base_path: &str) -> WriteBufferConfig {
     let mut config = WriteBufferConfig::default();
     // Configure small flush threshold for testing
     config.performance.memory_flush_size_bytes = 1024 * 1024; // 1MB threshold
     config.performance.global_flush_threshold = 2 * 1024 * 1024; // 2MB global threshold
-    // Add WAL directory for DirectVectorService
+    // Add WAL directory for VectorOperationsService
     config.multi_disk.data_directories = vec![format!("file://{}/wal", base_path)];
     config
 }
@@ -73,7 +73,7 @@ async fn test_lsm_search_with_flush() {
     let wal_path = format!("{}/{}/wal/{}/logs_dir", base_path, collection_id, collection_id);
     std::fs::create_dir_all(&wal_path).unwrap();
     
-    // TODO: Once DirectVectorService has access to collection service,
+    // TODO: Once VectorOperationsService has access to collection service,
     // we should create a collection with LSM storage engine specified.
     // For now, we'll manually flush to LSM engine.
     
@@ -105,10 +105,10 @@ async fn test_lsm_search_with_flush() {
             .unwrap()
     );
     
-    // Create DirectVectorService
-    let write_buffer_config = create_test_write_buffer_config(base_path);
-    let direct_service = DirectVectorService::new(
-        write_buffer_config,
+    // Create VectorOperationsService
+    let wal_config = create_test_wal_config(base_path);
+    let direct_service = VectorOperationsService::new(
+        wal_config,
         viper_engine,
         lsm_engine.clone()
     ).await.unwrap();
@@ -156,7 +156,7 @@ async fn test_lsm_search_with_flush() {
     
     eprintln!("Inserted {} vectors", result.entries_written);
     
-    // Phase 2: Since DirectVectorService defaults to VIPER, we'll directly flush to LSM
+    // Phase 2: Since VectorOperationsService defaults to VIPER, we'll directly flush to LSM
     eprintln!("\nPhase 2: Directly flushing vectors to LSM SSTables");
     
     // Get all vectors from debug method and convert to core VectorRecords
@@ -355,9 +355,9 @@ async fn test_lsm_compaction_and_search() {
             .unwrap()
     );
     
-    let write_buffer_config = create_test_write_buffer_config(base_path);
-    let direct_service = DirectVectorService::new(
-        write_buffer_config,
+    let wal_config = create_test_wal_config(base_path);
+    let direct_service = VectorOperationsService::new(
+        wal_config,
         viper_engine,
         lsm_engine.clone()
     ).await.unwrap();
@@ -524,9 +524,9 @@ async fn test_lsm_bloom_filter_efficiency() {
             .unwrap()
     );
     
-    let write_buffer_config = create_test_write_buffer_config(base_path);
-    let direct_service = DirectVectorService::new(
-        write_buffer_config,
+    let wal_config = create_test_wal_config(base_path);
+    let direct_service = VectorOperationsService::new(
+        wal_config,
         viper_engine,
         lsm_engine.clone()
     ).await.unwrap();

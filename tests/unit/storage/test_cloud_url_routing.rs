@@ -13,11 +13,11 @@ use std::sync::Arc;
 use std::time::SystemTime;
 
 use proximadb::core::VectorRecord;
-use proximadb::storage::memtable::specialized::write_buffer_behavior::WriteBufferVectorBatch;
+use proximadb::storage::memtable::specialized::write_ahead_log_behavior::WriteBufferVectorBatch;
 use proximadb::storage::persistence::filesystem::{FilesystemFactory, FilesystemConfig};
-use proximadb::storage::persistence::write_buffer::batch_strategy::WriteBufferBatchStrategy;
-use proximadb::storage::persistence::write_buffer::bincode_batch::BincodeWalBatchStrategy;
-use proximadb::storage::persistence::write_buffer::config::WriteBufferConfig;
+use proximadb::storage::persistence::write_ahead_log::batch_strategy::WriteBufferBatchStrategy;
+use proximadb::storage::persistence::write_ahead_log::bincode_batch::BincodeWalBatchStrategy;
+use proximadb::storage::persistence::write_ahead_log::config::WriteBufferConfig;
 use proximadb::storage::BatchId;
 
 /// Helper function to create test vector records

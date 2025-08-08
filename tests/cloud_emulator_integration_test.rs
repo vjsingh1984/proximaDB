@@ -21,7 +21,7 @@ use proximadb::storage::persistence::filesystem::{
     s3::{S3Config, CredentialConfig, CredentialProviderType, S3StorageClass},
     gcs::{GcsConfig, GcsCredentialConfig, GcsCredentialProviderType, GcsStorageClass},
 };
-use proximadb::storage::atomic::{UnifiedAtomicCoordinator, StagingConfig, StagingOperationType};
+use proximadb::storage::transaction_coordinator::{UnifiedAtomicCoordinator, StagingConfig, StagingOperationType};
 use std::sync::Arc;
 use std::process::{Command, Child, Stdio};
 use std::path::PathBuf;

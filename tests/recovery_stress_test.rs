@@ -58,7 +58,7 @@ mod recovery_stress_tests {
                 mmap_enabled: true,
                 sst_config: Default::default(),
                 viper_config: Default::default(),
-                write_buffer_config: Default::default(),
+                wal_config: Default::default(),
                 cache_size_mb: 256,
                 bloom_filter_config: None,
                 filesystem_config: Default::default(),
@@ -212,7 +212,7 @@ mod recovery_stress_tests {
             create_test_data(base_path, collection_id, 5).await?;
             
             // Create additional unflushed data by adding write buffer files
-            let wb_dir = PathBuf::from(base_path).join(collection_id).join("write_buffer");
+            let wb_dir = PathBuf::from(base_path).join(collection_id).join("write_ahead_log");
             fs::create_dir_all(&wb_dir).await?;
             fs::write(wb_dir.join("unflushed.wb"), b"unflushed data").await?;
             

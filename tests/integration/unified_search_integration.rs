@@ -10,7 +10,7 @@ use serde_json::json;
 use proximadb::core::VectorRecord;
 use proximadb::core::search::{SearchParams, SearchResult};
 use proximadb::compute::distance::DistanceMetric;
-use proximadb::compute::unified_distance::UnifiedDistanceCompute;
+use proximadb::compute::distance_computation::UnifiedDistanceCompute;
 use proximadb::core::search::unified_interface::{
     UnifiedSearchContext, CollectionConfig, FilterableColumn,
     ColumnDataType, StorageInfo

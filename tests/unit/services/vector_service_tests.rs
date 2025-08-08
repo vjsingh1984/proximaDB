@@ -1,6 +1,6 @@
-//! Unit tests for DirectVectorService operations
+//! Unit tests for VectorOperationsService operations
 
-use proximadb::services::direct_vector_service::{OptimizedFormat, WorkloadType};
+use proximadb::services::vector_service::{OptimizedFormat, WorkloadType};
 
 #[cfg(test)]
 mod tests {
@@ -8,7 +8,7 @@ mod tests {
     
     #[tokio::test]
     async fn test_direct_vector_service_basic() {
-        // DirectVectorService provides optimized vector operations
+        // VectorOperationsService provides optimized vector operations
         // with eliminated WAL Manager Registry overhead
         // This is a placeholder test - full integration tests require
         // proper storage engine setup

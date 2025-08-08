@@ -24,12 +24,12 @@
 //! - Search results are properly ordered regardless of metric type
 
 use proximadb::compute::distance::DistanceMetric;
-use proximadb::compute::unified_distance::{
+use proximadb::compute::distance_computation::{
     UnifiedDistanceCompute, MetricProperties,
 };
 use proximadb::storage::memtable::implementations::global_partitioned::GlobalPartitionedMemtable;
-use proximadb::storage::memtable::specialized::write_buffer_behavior::WriteBufferVectorBatch;
-use proximadb::storage::persistence::write_buffer::BatchId;
+use proximadb::storage::memtable::specialized::write_ahead_log_behavior::WriteBufferVectorBatch;
+use proximadb::storage::persistence::write_ahead_log::BatchId;
 use proximadb::core::VectorRecord;
 use std::sync::Arc;
 

@@ -16,10 +16,10 @@ use proximadb::core::serialization::{VectorSerializationConfig, CompressionAlgor
 use proximadb::core::search::{SearchParams, FilterExpression};
 use proximadb::proto::proximadb::{MetadataItem, Collection};
 use proximadb::storage::traits::UnifiedStorageEngine;
-use proximadb::storage::atomic::UnifiedAtomicCoordinator;
+use proximadb::storage::transaction_coordinator::UnifiedAtomicCoordinator;
 use proximadb::storage::persistence::filesystem::FilesystemFactory;
 use proximadb::storage::metadata::store::{MetadataStore, MetadataStoreConfig};
-use proximadb::compute::unified_distance::UnifiedDistanceCompute;
+use proximadb::compute::distance_computation::UnifiedDistanceCompute;
 use std::sync::{Arc, Once};
 use tempfile::TempDir;
 use tokio::time::Instant;
@@ -161,7 +161,7 @@ async fn test_optimization_end_to_end() -> anyhow::Result<()> {
         block_size_kb: 8192, // 8MB optimized for ZSTD
         compaction_strategy: "leveled".to_string(),
         compression: "zstd".to_string(),
-        compression_enabled: true,
+        compression_algorithm: true,
         compression_level: 3,
         bloom_filter_config: None,
         cache_size_mb: 128,
@@ -179,7 +179,7 @@ async fn test_optimization_end_to_end() -> anyhow::Result<()> {
     let viper_config = proximadb::core::config::ViperConfig {
         row_group_size: 50_000,
         compression: "zstd".to_string(),
-        compression_enabled: true,
+        compression_algorithm: true,
         compression_level: 3,
         enable_statistics: true,
         data_directory: format!("{}/viper_data", temp_dir.path().display()),

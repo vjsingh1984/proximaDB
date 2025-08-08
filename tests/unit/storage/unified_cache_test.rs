@@ -8,7 +8,7 @@
 
 use anyhow::Result;
 use proximadb::core::VectorRecord;
-use proximadb::storage::unified_cache::{
+use proximadb::storage::cache::{
     CacheDataType, CacheKey, MemoryPressure, UnifiedCacheConfig,
     UnifiedCrossEngineCache, EvictionPolicy,
 };
@@ -17,7 +17,7 @@ use std::time::Duration;
 use tokio::time::sleep;
 
 #[tokio::test]
-async fn test_unified_cache_basic_operations() -> Result<()> {
+async fn test_cache_basic_operations() -> Result<()> {
     let config = UnifiedCacheConfig::default();
     let cache = UnifiedCrossEngineCache::new(config)?;
 

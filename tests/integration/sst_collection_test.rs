@@ -8,17 +8,17 @@ use proximadb::proto::proximadb::{CollectionConfig, StorageEngine, DistanceMetri
 use proximadb::storage::metadata::backends::filestore_backend::{FilestoreMetadataBackend, FilestoreMetadataConfig};
 use proximadb::core::config::{StorageConfig, StorageLocation, AssignmentConfig};
 use proximadb::storage::persistence::filesystem::{FilesystemFactory, FilesystemConfig};
-use proximadb::compute::unified_distance::{UnifiedDistanceCompute, HardwareBackend};
-use proximadb::services::direct_vector_service::DirectVectorService;
+use proximadb::compute::distance_computation::{UnifiedDistanceCompute, HardwareBackend};
+use proximadb::services::VectorOperationsService;
 use proximadb::core::VectorRecord;
 use proximadb::proto::proximadb::MetadataItem;
 use proximadb::core::config::SstConfig;
-use proximadb::storage::persistence::write_buffer::WriteBufferConfig;
+use proximadb::storage::persistence::write_ahead_log::WriteBufferConfig;
 use proximadb::storage::engines::sst::SstStorage;
 use proximadb::storage::engines::viper::ViperEngine;
 use proximadb::storage::traits::UnifiedStorageEngine;
 // 🔴 OBSOLETE - Assignment service removed
-use proximadb::storage::persistence::write_buffer::WriteBufferFlushCoordinator;
+use proximadb::storage::persistence::write_ahead_log::WriteBufferFlushCoordinator;
 use proximadb::storage::traits::CollectionMetadataProvider;
 use std::sync::Arc;
 use tempfile::TempDir;
@@ -50,7 +50,7 @@ async fn test_lsm_collection_with_proper_routing() {
         mmap_enabled: false,
         sst_config: SstConfig::default(),
         viper_config: Default::default(),
-        write_buffer_config: Default::default(),
+        wal_config: Default::default(),
         cache_size_mb: 100,
         bloom_filter_config: Some(proximadb::core::bloom::BloomFilterConfig {
             bits_per_key: 10,
@@ -143,8 +143,8 @@ async fn test_lsm_collection_with_proper_routing() {
     flush_coordinator.register_storage_engine("LSM", lsm_engine.clone()).await;
     
     // Create WAL config
-    let mut write_buffer_config = WriteBufferConfig::default();
-    write_buffer_config.multi_disk.data_directories = vec![format!("file://{}/wal", base_path)];
+    let mut wal_config = WriteBufferConfig::default();
+    wal_config.multi_disk.data_directories = vec![format!("file://{}/wal", base_path)];
     
     // Assignment service removed - collections now embed storage_assignment
     let storage_locations: Vec<StorageLocation> = vec![StorageLocation {
@@ -156,10 +156,10 @@ async fn test_lsm_collection_with_proper_routing() {
     // Storage assignment happens through collection creation now
     println!("Setting up storage for collection {}", collection_id);
     
-    // Create DirectVectorService with collection service for proper engine routing
+    // Create VectorOperationsService with collection service for proper engine routing
     let direct_service = Arc::new(
-        DirectVectorService::with_collection_service(
-            write_buffer_config,
+        VectorOperationsService::with_collection_service(
+            wal_config,
             viper_engine.clone(),
             lsm_engine.clone(),
             collection_service.clone(),
@@ -168,7 +168,7 @@ async fn test_lsm_collection_with_proper_routing() {
         .unwrap()
     );
     
-    // No need to register flush coordinator - DirectVectorService already has one internally
+    // No need to register flush coordinator - VectorOperationsService already has one internally
     
     // Test 1: Insert vectors
     println!("\n=== Test 1: Insert vectors ===");
@@ -261,8 +261,8 @@ async fn test_lsm_collection_with_proper_routing() {
     tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
     
     // Manually trigger flush to the correct engine
-    // In production, this would be done by DirectVectorService with collection service integration
-    // First, we need to flush from WAL since DirectVectorService writes to WAL
+    // In production, this would be done by VectorOperationsService with collection service integration
+    // First, we need to flush from WAL since VectorOperationsService writes to WAL
     println!("Triggering force flush for collection {}", collection_id);
     let flush_result = direct_service
         .force_flush_collection(&collection_id)

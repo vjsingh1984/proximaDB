@@ -15,7 +15,7 @@ use proximadb::proto::proximadb::{
 };
 use proximadb::compute::distance::DistanceMetric;
 use proximadb::core::SearchResult;
-use proximadb::services::direct_vector_service::DirectVectorService;
+use proximadb::services::VectorOperationsService;
 use proximadb::services::collection_service::CollectionService;
 use proximadb::storage::engines::viper::ViperEngine;
 use proximadb::storage::engines::sst::LsmTree;
@@ -62,7 +62,7 @@ impl Default for BenchmarkConfig {
 
 /// Unified search benchmark suite
 pub struct UnifiedSearchBenchmark {
-    direct_service: Arc<DirectVectorService>,
+    direct_service: Arc<VectorOperationsService>,
     collection_service: Arc<CollectionService>,
     config: BenchmarkConfig,
 }
@@ -78,8 +78,8 @@ impl UnifiedSearchBenchmark {
             filesystem_factory.clone(),
         ));
         
-        // Create DirectVectorService
-        let direct_service = Arc::new(DirectVectorService::new(
+        // Create VectorOperationsService
+        let direct_service = Arc::new(VectorOperationsService::new(
             global_memtable,
             collection_service.clone(),
             None, // viper_engine
@@ -157,7 +157,7 @@ impl UnifiedSearchBenchmark {
             let end = ((batch_idx + 1) * batch_size).min(size);
             let batch_vectors = self.generate_test_vectors(collection_id, start, end, dimension);
             
-            // Insert through DirectVectorService
+            // Insert through VectorOperationsService
             self.direct_service.insert_vectors_batch(
                 collection_id,
                 batch_vectors,

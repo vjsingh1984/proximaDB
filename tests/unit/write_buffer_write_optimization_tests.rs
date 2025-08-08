@@ -19,10 +19,10 @@ use std::time::{Duration, Instant};
 use tokio::sync::oneshot;
 
 use proximadb::core::VectorRecord;
-use proximadb::services::direct_vector_service::OptimizedFormat;
+use proximadb::services::vector_service::OptimizedFormat;
 use proximadb::storage::assignment_service::{AssignmentService, HashBasedAssignmentService};
 use proximadb::storage::persistence::filesystem::FilesystemFactory;
-use proximadb::storage::persistence::write_buffer::{WriteBufferConfig, OptimizedWriteBufferWriter, OptimizedWriteBufferWriterConfig};
+use proximadb::storage::persistence::write_ahead_log::{WriteBufferConfig, OptimizedWriteBufferWriter, OptimizedWriteBufferWriterConfig};
 
 /// Test helper to create sample vectors
 fn create_test_vectors(count: usize, dimension: usize) -> Vec<VectorRecord> {
@@ -51,11 +51,11 @@ fn create_test_vectors(count: usize, dimension: usize) -> Vec<VectorRecord> {
 }
 
 /// Test helper to create test WAL config
-fn create_test_write_buffer_config() -> WriteBufferConfig {
+fn create_test_wal_config() -> WriteBufferConfig {
     WriteBufferConfig {
-        multi_disk: proximadb::storage::persistence::write_buffer::config::MultiDiskConfig {
+        multi_disk: proximadb::storage::persistence::write_ahead_log::config::MultiDiskConfig {
             data_directories: vec!["file:///tmp/test_wal".to_string()],
-            distribution_strategy: proximadb::storage::persistence::write_buffer::config::DiskDistributionStrategy::RoundRobin,
+            distribution_strategy: proximadb::storage::persistence::write_ahead_log::config::DiskDistributionStrategy::RoundRobin,
             collection_affinity: true,
         },
         ..Default::default()
@@ -76,11 +76,11 @@ mod batching_tests {
             ..Default::default()
         };
         
-        let write_buffer_config = create_test_write_buffer_config();
+        let wal_config = create_test_wal_config();
         let filesystem_factory = Arc::new(FilesystemFactory::new(Default::default()).await.unwrap());
         let assignment_service = Arc::new(HashBasedAssignmentService::new(filesystem_factory, "round_robin"));
         
-        let writer = OptimizedWriteBufferWriter::new(config, write_buffer_config, assignment_service).await?;
+        let writer = OptimizedWriteBufferWriter::new(config, wal_config, assignment_service).await?;
         
         // Submit exactly batch_size writes
         let mut handles = Vec::new();
@@ -124,11 +124,11 @@ mod batching_tests {
             ..Default::default()
         };
         
-        let write_buffer_config = create_test_write_buffer_config();
+        let wal_config = create_test_wal_config();
         let filesystem_factory = Arc::new(FilesystemFactory::new(Default::default()).await.unwrap());
         let assignment_service = Arc::new(HashBasedAssignmentService::new(filesystem_factory, "round_robin"));
         
-        let writer = OptimizedWriteBufferWriter::new(config, write_buffer_config, assignment_service).await?;
+        let writer = OptimizedWriteBufferWriter::new(config, wal_config, assignment_service).await?;
         
         // Submit fewer writes than batch size
         let vectors = create_test_vectors(5, 128);
@@ -163,11 +163,11 @@ mod batching_tests {
             ..Default::default()
         };
         
-        let write_buffer_config = create_test_write_buffer_config();
+        let wal_config = create_test_wal_config();
         let filesystem_factory = Arc::new(FilesystemFactory::new(Default::default()).await.unwrap());
         let assignment_service = Arc::new(HashBasedAssignmentService::new(filesystem_factory, "round_robin"));
         
-        let writer = OptimizedWriteBufferWriter::new(config, write_buffer_config, assignment_service).await?;
+        let writer = OptimizedWriteBufferWriter::new(config, wal_config, assignment_service).await?;
         
         // Submit multiple writes to same collection
         let mut handles = Vec::new();
@@ -203,11 +203,11 @@ mod caching_tests {
     #[tokio::test]
     async fn test_assignment_caching() -> Result<()> {
         let config = OptimizedWriteBufferWriterConfig::default();
-        let write_buffer_config = create_test_write_buffer_config();
+        let wal_config = create_test_wal_config();
         let filesystem_factory = Arc::new(FilesystemFactory::new(Default::default()).await.unwrap());
         let assignment_service = Arc::new(HashBasedAssignmentService::new(filesystem_factory, "round_robin"));
         
-        let writer = OptimizedWriteBufferWriter::new(config, write_buffer_config, assignment_service).await?;
+        let writer = OptimizedWriteBufferWriter::new(config, wal_config, assignment_service).await?;
         
         // First write - cache miss
         let vectors = create_test_vectors(1, 128);
@@ -248,9 +248,9 @@ mod caching_tests {
             ..Default::default()
         };
         
-        let mut write_buffer_config = create_test_write_buffer_config();
+        let mut wal_config = create_test_wal_config();
         // Add multiple WAL directories
-        write_buffer_config.multi_disk.data_directories = vec![
+        wal_config.multi_disk.data_directories = vec![
             "file:///tmp/test_wal1".to_string(),
             "file:///tmp/test_wal2".to_string(),
             "file:///tmp/test_wal3".to_string(),
@@ -258,7 +258,7 @@ mod caching_tests {
         
         let filesystem_factory = Arc::new(FilesystemFactory::new(Default::default()).await.unwrap());
         let assignment_service = Arc::new(HashBasedAssignmentService::new(filesystem_factory, "round_robin"));
-        let writer = OptimizedWriteBufferWriter::new(config, write_buffer_config, assignment_service).await?;
+        let writer = OptimizedWriteBufferWriter::new(config, wal_config, assignment_service).await?;
         
         // Write to multiple collections to use different filesystems
         for i in 0..10 {
@@ -286,13 +286,13 @@ mod error_handling_tests {
     #[tokio::test]
     async fn test_write_failure_callback() -> Result<()> {
         let config = OptimizedWriteBufferWriterConfig::default();
-        let mut write_buffer_config = create_test_write_buffer_config();
+        let mut wal_config = create_test_wal_config();
         // Use invalid directory to trigger errors
-        write_buffer_config.multi_disk.data_directories = vec!["file:///dev/null/invalid".to_string()];
+        wal_config.multi_disk.data_directories = vec!["file:///dev/null/invalid".to_string()];
         
         let filesystem_factory = Arc::new(FilesystemFactory::new(Default::default()).await.unwrap());
         let assignment_service = Arc::new(HashBasedAssignmentService::new(filesystem_factory, "round_robin"));
-        let writer = OptimizedWriteBufferWriter::new(config, write_buffer_config, assignment_service).await?;
+        let writer = OptimizedWriteBufferWriter::new(config, wal_config, assignment_service).await?;
         
         let vectors = create_test_vectors(1, 128);
         let result = writer.write_vectors(
@@ -318,10 +318,10 @@ mod error_handling_tests {
             ..Default::default()
         };
         
-        let write_buffer_config = create_test_write_buffer_config();
+        let wal_config = create_test_wal_config();
         let filesystem_factory = Arc::new(FilesystemFactory::new(Default::default()).await.unwrap());
         let assignment_service = Arc::new(HashBasedAssignmentService::new(filesystem_factory, "round_robin"));
-        let writer = OptimizedWriteBufferWriter::new(config, write_buffer_config, assignment_service).await?;
+        let writer = OptimizedWriteBufferWriter::new(config, wal_config, assignment_service).await?;
         
         // Submit writes but don't wait
         let vectors = create_test_vectors(50, 128);
@@ -375,10 +375,10 @@ mod performance_benchmarks {
             ..Default::default()
         };
         
-        let write_buffer_config = create_test_write_buffer_config();
+        let wal_config = create_test_wal_config();
         let filesystem_factory = Arc::new(FilesystemFactory::new(Default::default()).await.unwrap());
         let assignment_service = Arc::new(HashBasedAssignmentService::new(filesystem_factory, "round_robin"));
-        let writer = OptimizedWriteBufferWriter::new(config, write_buffer_config, assignment_service).await?;
+        let writer = OptimizedWriteBufferWriter::new(config, wal_config, assignment_service).await?;
         
         let start_batched = Instant::now();
         let mut handles = Vec::new();
@@ -425,10 +425,10 @@ mod performance_benchmarks {
             ..Default::default()
         };
         
-        let write_buffer_config = create_test_write_buffer_config();
+        let wal_config = create_test_wal_config();
         let filesystem_factory = Arc::new(FilesystemFactory::new(Default::default()).await.unwrap());
         let assignment_service = Arc::new(HashBasedAssignmentService::new(filesystem_factory, "round_robin"));
-        let writer = OptimizedWriteBufferWriter::new(config, write_buffer_config, assignment_service).await?;
+        let writer = OptimizedWriteBufferWriter::new(config, wal_config, assignment_service).await?;
         
         const NUM_COLLECTIONS: usize = 10;
         const WRITES_PER_COLLECTION: usize = 100;
@@ -467,7 +467,7 @@ mod performance_benchmarks {
 #[cfg(test)]
 mod integration_tests {
     use super::*;
-    use proximadb::services::direct_vector_service::DirectVectorService;
+    use proximadb::services::VectorOperationsService;
     use proximadb::storage::engines::viper::ViperEngine;
     use proximadb::storage::engines::sst::LsmTree;
 

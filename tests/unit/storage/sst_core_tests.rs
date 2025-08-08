@@ -7,7 +7,7 @@ use proximadb::core::VectorRecord;
 use proximadb::core::search::{FilterExpression, ComparisonOperator};
 use proximadb::proto::proximadb::MetadataItem;
 use proximadb::compute::distance::DistanceMetric;
-use proximadb::compute::unified_distance::{UnifiedDistanceCompute, HardwareBackend};
+use proximadb::compute::distance_computation::{UnifiedDistanceCompute, HardwareBackend};
 use std::sync::Arc;
 use tempfile::TempDir;
 
