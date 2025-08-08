@@ -39,11 +39,10 @@ graph TB
         Prof3["Storage-Optimized<br/>ZSTD-9, 16MB blocks"]
     end
     
-    subgraph "Implementation Phases"
+    subgraph "User Configuration"
         direction LR
-        Ph1["Phase 1<br/>SST Compression"] --> Ph2["Phase 2<br/>VIPER Dual Storage"]
-        Ph2 --> Ph3["Phase 3<br/>Query Support"]
-        Ph3 --> Ph4["Phase 4<br/>SDK Integration"]
+        UC1["Collection Creation<br/>Set compression in SDK"] --> UC2["Automatic Detection<br/>Query planner optimizes"]
+        UC2 --> UC3["Transparent Decompression<br/>Cache for performance"]
     end
     
     %% Connections
