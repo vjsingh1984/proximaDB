@@ -16,6 +16,7 @@ pub mod clustering;
 pub mod hnsw_index;
 pub mod index_factory;
 pub mod ivf_index;
+pub mod ivf_tier_aware;
 pub mod lsh_index;
 pub mod manager;
 pub mod migration_engine;
