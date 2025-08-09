@@ -5,7 +5,8 @@
 
 image:https://img.shields.io/badge/tests-1460%2B%20passing-brightgreen[Tests] image:https://img.shields.io/badge/performance-17K%20vec%2Fs-blue[Performance] image:https://img.shields.io/badge/compression-50--80%25-orange[Compression] image:https://img.shields.io/badge/license-Apache%202.0-blue[License]
 
-image::business-system-overview.svg[ProximaDB Overview, align=center, width=800]
+image::business-architecture-consolidated.svg[ProximaDB Overview, align=center, width=800]
+_link:docs/diagrams/business-architecture-consolidated.mmd[View diagram source]_
 
 **Production-ready vector database delivering 3x faster performance with 50-80% storage reduction.**
 
@@ -95,6 +96,9 @@ results = client.search("products", query_vector, top_k=10)
 ----
 
 == 🚀 Technical Excellence
+
+image::technical-architecture-complete.svg[ProximaDB Technical Architecture, align=center, width=900]
+_link:docs/diagrams/technical-architecture-complete.mmd[View architecture diagram source]_
 
 === Architecture Advantages
 
@@ -237,9 +241,21 @@ _See link:docs/enhancements/enterprise_production_features.adoc[Enterprise Roadm
   # Install from source (PyPI package coming soon)
   pip install -e clients/python/
   ```
-  * SDK-driven compression configuration
-  * Connection pooling and batching
-  * Async/await support
+  * **Performance Optimizations:**
+    - Connection pooling (15-25% throughput improvement)
+    - Dynamic batching (30-50% throughput improvement)
+    - Response caching for read operations
+    - Protocol-aware optimizations
+  * **Full Feature Support:**
+    - All 13 distance metrics supported
+    - All 6 indexing algorithms supported
+    - SDK-driven compression configuration
+    - Automatic protocol selection (REST/gRPC)
+  * **Developer Experience:**
+    - Type-safe with Pydantic models
+    - Async/await support
+    - Comprehensive error handling
+    - Built-in retry logic
 
 **Language Examples:**
 ```python

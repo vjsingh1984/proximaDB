@@ -452,6 +452,12 @@ class ProximaDBClient:
             5: DistanceMetric.MANHATTAN,
             6: DistanceMetric.JACCARD,
             7: DistanceMetric.CUSTOM,
+            8: DistanceMetric.CHEBYSHEV,
+            9: DistanceMetric.CANBERRA,
+            10: DistanceMetric.MINKOWSKI,
+            11: DistanceMetric.ANGULAR,
+            12: DistanceMetric.BRAY_CURTIS,
+            13: DistanceMetric.HELLINGER,
         }
         return mapping.get(proto_metric, DistanceMetric.COSINE)
     
@@ -473,6 +479,7 @@ class ProximaDBClient:
             3: IndexingAlgorithm.PQ,
             4: IndexingAlgorithm.FLAT,
             5: IndexingAlgorithm.ANNOY,
+            6: IndexingAlgorithm.LSH,
         }
         return mapping.get(proto_algo, IndexingAlgorithm.HNSW)
     
@@ -511,6 +518,12 @@ class ProximaDBClient:
             DistanceMetric.MANHATTAN: pb2.DistanceMetric.MANHATTAN,
             DistanceMetric.JACCARD: pb2.DistanceMetric.JACCARD,
             DistanceMetric.CUSTOM: pb2.DistanceMetric.CUSTOM,
+            DistanceMetric.CHEBYSHEV: pb2.DistanceMetric.CHEBYSHEV,
+            DistanceMetric.CANBERRA: pb2.DistanceMetric.CANBERRA,
+            DistanceMetric.MINKOWSKI: pb2.DistanceMetric.MINKOWSKI,
+            DistanceMetric.ANGULAR: pb2.DistanceMetric.ANGULAR,
+            DistanceMetric.BRAY_CURTIS: pb2.DistanceMetric.BRAY_CURTIS,
+            DistanceMetric.HELLINGER: pb2.DistanceMetric.HELLINGER,
         }
         return mapping.get(metric, pb2.DistanceMetric.COSINE)
     
@@ -532,6 +545,7 @@ class ProximaDBClient:
             IndexingAlgorithm.PQ: pb2.IndexingAlgorithm.PQ,
             IndexingAlgorithm.FLAT: pb2.IndexingAlgorithm.FLAT,
             IndexingAlgorithm.ANNOY: pb2.IndexingAlgorithm.ANNOY,
+            IndexingAlgorithm.LSH: pb2.IndexingAlgorithm.LSH,
         }
         return mapping.get(algo, pb2.IndexingAlgorithm.HNSW)
     
@@ -615,6 +629,9 @@ class ProximaDBClient:
         
         if self._active_protocol == Protocol.GRPC:
             proto_config = self._pydantic_to_proto_collection_config(config)
+            # Note: gRPC client expects individual parameters, not the full config
+            # Compression config is embedded in the proto_config but needs to be passed
+            # through the collection metadata on the server side
             response = self._client.create_collection(
                 name=config.name,
                 dimension=config.dimension,
