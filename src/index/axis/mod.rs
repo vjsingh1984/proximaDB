@@ -15,9 +15,11 @@ pub mod annoy_index;
 pub mod clustering;
 pub mod hnsw_index;
 pub mod index_factory;
-pub mod ivf_index;      // Legacy - will deprecate
-pub mod ivf_tier_aware; // Legacy - will deprecate  
-pub mod ivf_unified;    // New unified implementation
+pub mod ivf_unified;    // Unified IVF implementation
+pub mod ivf_posting_list_storage;  // IVF posting list storage with SST/VIPER support
+pub mod universal_index_storage;   // Universal storage handler for all indexes
+// Re-export for backward compatibility (will remove after migration)
+pub use ivf_unified as ivf_index;
 pub mod lsh_index;
 pub mod manager;
 pub mod migration_engine;
@@ -31,6 +33,14 @@ pub mod utils;
 pub mod types_tests;
 #[cfg(test)]
 pub mod strategy_tests;
+#[cfg(test)]
+pub mod annoy_index_tests;
+#[cfg(test)]
+pub mod pq_index_tests;
+#[cfg(test)]
+pub mod flat_index_tests;
+#[cfg(test)]
+pub mod hybrid_index_tests;
 
 // Old test modules removed - using new type system tests
 
@@ -49,7 +59,9 @@ pub use hnsw_index::{
     AxisHnswConfig, AxisHnswIndex, create_hnsw_index,
 };
 pub use index_factory::{AxisIndexCreationResult, AxisVectorIndex, IndexFactory, IndexStats};
-pub use ivf_index::{AxisIvfConfig, AxisIvfIndex, IvfStats};
+pub use ivf_unified::{UnifiedIvfConfig, UnifiedIvfIndex, IvfStats, CentroidConfig, PostingListConfig};
+// Temporary compatibility aliases (will remove after full migration)
+pub use ivf_unified::{UnifiedIvfConfig as AxisIvfConfig, UnifiedIvfIndex as AxisIvfIndex};
 pub use lsh_index::{AxisLshConfig, AxisLshIndex, LshStats};
 pub use manager::{
     AxisManager, FilterOperator, HybridQuery, MetadataFilter, MigrationStatus, QueryResult,

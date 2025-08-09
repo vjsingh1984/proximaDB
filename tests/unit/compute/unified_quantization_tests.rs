@@ -164,7 +164,7 @@ fn test_compression_ratio_calculations() {
 #[test]
 fn test_in_memory_codebook_store() {
     let _ = proximadb::core::hardware_capabilities::initialize_hardware_capabilities_default();
-    use proximadb::compute::unified_quantization::{Codebook, CodebookData, TrainingConfig};
+    use proximadb::compute::quantization::unified::{Codebook, CodebookData, TrainingConfig};
     
     let rt = tokio::runtime::Runtime::new().unwrap();
     

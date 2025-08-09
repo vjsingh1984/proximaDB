@@ -1,0 +1,104 @@
+---
+title: ProximaDB Comprehensive Search Orchestration Flow
+---
+
+sequenceDiagram
+    participant Client
+    participant VectorOpsService as VectorOperationsService<br/>(Orchestrator)
+    participant QueryPlanner as Unified Query<br/>Planner
+    participant CollectionService
+    participant WAL as WAL/Memtable<br/>(Unflushed)
+    participant BloomFilter as Bloom Filters
+    participant AxisIndex as AXIS Indexes<br/>(HNSW/IVF/PQ)
+    participant ViperEngine as VIPER Engine<br/>(Columnar)
+    participant SSTEngine as SST Engine<br/>(Row-based)
+    participant TwoStage as Two-Stage<br/>Search
+    
+    Note over Client,TwoStage: Search Request Flow with Complete Orchestration
+    
+    Client->>VectorOpsService: search_vectors(collection_id, query, k, metric)
+    
+    rect rgb(240, 248, 255)
+        Note over VectorOpsService: Step 1: Query Planning & Optimization
+        VectorOpsService->>CollectionService: get_collection(collection_id)
+        CollectionService-->>VectorOpsService: Collection metadata & index config
+        
+        VectorOpsService->>QueryPlanner: plan_search_query(params, collection_id)
+        Note over QueryPlanner: Analyze query complexity<br/>Check index availability<br/>Determine search strategy
+        QueryPlanner-->>VectorOpsService: ExecutionPlan {<br/>  strategy: Index/Scan/Hybrid<br/>  two_stage: true/false<br/>  parallelism: level<br/>}
+    end
+    
+    rect rgb(255, 248, 240)
+        Note over VectorOpsService: Step 2: WAL/Memtable Search (Always First)
+        VectorOpsService->>WAL: get_unflushed_batches(collection_id)
+        WAL-->>VectorOpsService: Unflushed vector batches
+        
+        alt Has Metadata Filters
+            VectorOpsService->>BloomFilter: might_contain_field(field, value)
+            Note over BloomFilter: 95% reduction in<br/>unnecessary scans
+            BloomFilter-->>VectorOpsService: Filtered batches only
+        end
+        
+        VectorOpsService->>VectorOpsService: Calculate distances for WAL vectors
+        Note over VectorOpsService: UnifiedDistanceCompute<br/>with SIMD/GPU acceleration
+    end
+    
+    rect rgb(240, 255, 240)
+        Note over VectorOpsService: Step 3: Persistent Storage Search
+        
+        alt Collection Has Indexes (HNSW/IVF/PQ)
+            VectorOpsService->>AxisIndex: query(vector, k, filters)
+            
+            alt Product Quantization (PQ) Enabled
+                Note over AxisIndex: Stage 1: Search PQ codes<br/>(compressed representations)
+                AxisIndex->>AxisIndex: Find top 10*k candidates<br/>using quantized distances
+                
+                Note over AxisIndex: Stage 2: Rerank with FP32
+                AxisIndex->>ViperEngine: get_vectors(candidate_ids)
+                ViperEngine-->>AxisIndex: Original FP32 vectors
+                AxisIndex->>AxisIndex: Recalculate exact distances
+            else Standard Index Search
+                AxisIndex->>AxisIndex: Navigate index structure<br/>(HNSW layers, IVF clusters)
+            end
+            
+            AxisIndex-->>VectorOpsService: Indexed search results
+        else No Indexes - Raw Storage Scan
+            par Parallel Storage Search
+                VectorOpsService->>ViperEngine: search(query, k, filters)
+                
+                alt Two-Stage Search Enabled (VIPER)
+                    Note over ViperEngine: Stage 1: Search INT8/PQ columns
+                    ViperEngine->>ViperEngine: Scan quantized columns<br/>Get 10*k candidates
+                    
+                    Note over ViperEngine: Stage 2: Rerank with FP32 column
+                    ViperEngine->>ViperEngine: Load parallel FP32 column<br/>Recalculate exact distances
+                else Standard Search
+                    ViperEngine->>ViperEngine: Scan FP32 columns directly
+                end
+                
+                ViperEngine-->>VectorOpsService: VIPER results
+            and
+                VectorOpsService->>SSTEngine: search(query, k, filters)
+                
+                Note over SSTEngine: Three-stage filtering:<br/>1. Bloom filter (metadata)<br/>2. Zone map (ranges)<br/>3. Block scan
+                
+                alt SST Compression Enabled
+                    SSTEngine->>SSTEngine: Decompress blocks (ZSTD/LZ4)
+                end
+                
+                SSTEngine-->>VectorOpsService: SST results
+            end
+        end
+    end
+    
+    rect rgb(255, 240, 255)
+        Note over VectorOpsService: Step 4: Result Merging & Deduplication
+        VectorOpsService->>VectorOpsService: Merge results from:<br/>- WAL (unflushed)<br/>- Indexes or Storage
+        VectorOpsService->>VectorOpsService: Multi-tier deduplication<br/>Remove duplicates by vector_id
+        VectorOpsService->>VectorOpsService: Sort by distance/score<br/>Take top k results
+        VectorOpsService->>VectorOpsService: Re-rank final results
+    end
+    
+    VectorOpsService-->>Client: Final SearchResults[k]
+    
+    Note over Client,TwoStage: Key Optimizations:<br/>1. Bloom filters reduce 95% of metadata filtering overhead<br/>2. Two-stage search: Fast approximate → Accurate reranking<br/>3. Parallel storage search for throughput<br/>4. Index-first strategy when available<br/>5. Compression-aware query planning

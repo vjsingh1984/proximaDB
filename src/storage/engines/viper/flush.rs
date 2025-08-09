@@ -751,17 +751,13 @@ impl FlushManager {
                     }
                 } else {
                     // No compression config, use viper defaults
-                    if viper_config.compression_enabled {
-                        match viper_config.compression.as_str() {
-                            "zstd" => (parquet::basic::Compression::ZSTD(
-                                parquet::basic::ZstdLevel::try_new(viper_config.compression_level)?
-                            ), true),
-                            "snappy" => (parquet::basic::Compression::SNAPPY, true),
-                            "lz4" => (parquet::basic::Compression::LZ4, true),
-                            _ => (parquet::basic::Compression::UNCOMPRESSED, false),
-                        }
-                    } else {
-                        (parquet::basic::Compression::UNCOMPRESSED, false)
+                    match viper_config.compression.as_str() {
+                        "zstd" => (parquet::basic::Compression::ZSTD(
+                            parquet::basic::ZstdLevel::try_new(viper_config.compression_level)?
+                        ), true),
+                        "snappy" => (parquet::basic::Compression::SNAPPY, true),
+                        "lz4" => (parquet::basic::Compression::LZ4, true),
+                        "none" | _ => (parquet::basic::Compression::UNCOMPRESSED, false)
                     }
                 }
             } else {

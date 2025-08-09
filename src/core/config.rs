@@ -430,9 +430,6 @@ pub struct SstConfig {
     pub compaction_strategy: String,
     /// Compression algorithm (snappy, lz4, zstd, none)
     pub compression: String,
-    /// Enable compression for SST DataBlocks
-    #[serde(default = "default_compression_enabled")]
-    pub compression_enabled: bool,
     /// Compression level (1-22 for ZSTD, ignored for other algorithms)
     #[serde(default = "default_compression_level")]
     pub compression_level: i32,
@@ -468,9 +465,6 @@ pub struct ViperConfig {
     pub row_group_size: usize,
     /// Compression for Parquet files (snappy, gzip, lz4, zstd)
     pub compression: String,
-    /// Enable compression for Parquet files
-    #[serde(default = "default_compression_enabled")]
-    pub compression_enabled: bool,
     /// Compression level (1-22 for ZSTD, ignored for other algorithms)
     #[serde(default = "default_compression_level")]
     pub compression_level: i32,
@@ -486,8 +480,7 @@ impl Default for ViperConfig {
     fn default() -> Self {
         Self {
             row_group_size: 100_000,
-            compression: "zstd".to_string(),  // Changed to ZSTD for better compression
-            compression_enabled: true,  // Compression enabled by default
+            compression: "zstd".to_string(),  // ZSTD for better compression
             compression_level: 3,  // Balanced speed/compression
             enable_statistics: true,
             data_directory: "./data/viper_data".to_string(),
@@ -496,9 +489,6 @@ impl Default for ViperConfig {
     }
 }
 
-fn default_compression_enabled() -> bool {
-    true  // Compression enabled by default
-}
 
 fn default_compression_level() -> i32 {
     3  // Balanced compression level
@@ -515,8 +505,7 @@ impl Default for SstConfig {
             compaction_threshold: 5,
             block_size_kb: 8192, // 8MB default - optimal for 768D vectors (~2350 vectors/block)
             compaction_strategy: "leveled".to_string(),
-            compression: "zstd".to_string(),  // Changed to ZSTD for better compression
-            compression_enabled: true,  // Compression enabled by default
+            compression: "zstd".to_string(),  // ZSTD for better compression
             compression_level: 3,  // Balanced speed/compression
             bloom_filter_config: Some(BloomFilterConfig::default()),
             cache_size_mb: 128,

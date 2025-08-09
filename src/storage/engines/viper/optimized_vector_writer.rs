@@ -73,7 +73,7 @@ impl OptimizedVectorWriterConfig {
                 compression_level: config.compression_level,
                 adaptive_compression: true,
             },
-            compression_enabled: config.compression_enabled,
+            compression_enabled: config.compression != "none",
             compression_algorithm: config.compression.clone(),
             parquet_compression_level: config.compression_level,
             row_group_size: config.row_group_size,

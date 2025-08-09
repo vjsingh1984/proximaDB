@@ -1,6 +1,6 @@
 //! Unit tests for VectorOperationsService operations
 
-use proximadb::services::vector_service::{OptimizedFormat, WorkloadType};
+use proximadb::services::vector_operations_service::{OptimizedFormat, WorkloadType};
 
 #[cfg(test)]
 mod tests {

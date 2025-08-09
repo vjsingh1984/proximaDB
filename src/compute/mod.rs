@@ -276,7 +276,7 @@ impl Default for ComputeConfig {
                     ComputeBackend::CUDA,
                     ComputeBackend::ROCm,
                     ComputeBackend::OpenCL,
-                    ComputeBackend::CpuSIMD(PlatformCapability::X86Avx2),
+                    ComputeBackend::AVX2,
                 ],
                 cpu_vectorization: CpuVectorization {
                     avx512: true,

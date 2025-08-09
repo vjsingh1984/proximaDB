@@ -82,10 +82,10 @@ mod tests {
             // Create SST engine
             let mut sst_config = proximadb::core::config::SstConfig::default();
             sst_config.data_directory = temp_dir.path().to_string_lossy().to_string();
-            sst_config.compression_algorithm = true;
+            // compression_algorithm field removed - SDK-driven compression now
             sst_config.compression_level = 3;
-            let distance_compute = Arc::new(proximadb::compute::distance_computation::UnifiedDistanceCompute::new(
-                proximadb::compute::distance::DistanceMetric::Cosine
+            let distance_compute = Arc::new(proximadb::compute::distance_computation::engine::UnifiedDistanceCompute::new(
+                proximadb::compute::distance_computation::DistanceMetric::Cosine
             ));
             let sst_engine = Arc::new(proximadb::storage::engines::sst::SstStorage::new(
                 sst_config,

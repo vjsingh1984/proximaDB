@@ -806,7 +806,7 @@ pub struct HybridQuery {
     pub vector_query: Option<VectorQuery>,
     pub metadata_filters: Vec<MetadataFilter>,
     pub id_filters: Vec<VectorId>,
-    pub k: usize,
+    pub top_k: usize,
     pub include_expired: bool, // For MVCC - whether to include expired records
 }
 

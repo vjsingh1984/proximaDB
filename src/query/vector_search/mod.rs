@@ -25,7 +25,7 @@ use std::sync::Arc;
 // Import AXIS indexing components
 use crate::index::axis::{
     AxisIndexCreationResult, AxisVectorIndex, IndexFactory,
-    AxisIvfConfig, AxisIvfIndex,
+    UnifiedIvfConfig, UnifiedIvfIndex,  // Using unified IVF implementation
     AxisLshConfig, AxisLshIndex,
     IndexAlgorithm as AxisIndexAlgorithm,
 };

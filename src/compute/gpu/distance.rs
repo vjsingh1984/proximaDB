@@ -742,7 +742,7 @@ impl DistanceCompute for GpuDistanceCalculator {
                 // Fallback to CPU implementation
                 use super::distance::create_distance_calculator;
                 let cpu_calc = create_distance_calculator(self.metric.clone());
-                cpu_calc.distance(a, b)
+                cpu_calc.calculate_distance(a, b, &self.metric)
             })
     }
 

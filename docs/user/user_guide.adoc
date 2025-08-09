@@ -1,207 +1,223 @@
 = ProximaDB User Guide
 :toc: left
 :toclevels: 2
-:imagesdir: ../diagrams/images
 
-**Complete guide for AI applications with ProximaDB.**
-
-== Overview
-
-ProximaDB: High-performance vector database for AI applications with rich metadata filtering.
-
-**Topics**: Collections | Vector Operations | SQL Engine | Performance | Production
+**Complete operations guide for ProximaDB.**
 
 == Collections
 
-**Create Collection:**
+=== Create Collection
 [source,python]
 ----
 from proximadb import ProximaDBClient
-from proximadb.models import CompressionConfig, CompressionAlgorithm
 
 client = ProximaDBClient("http://localhost:5678")
 
 # Basic collection
 collection = client.create_collection(
-    name="documents", dimension=384, distance_metric="cosine", engine="viper"
+    name="vectors",
+    dimension=384,
+    engine="viper"  # or "sst"
 )
 
 # With compression
-compression = CompressionConfig(
-    algorithm=CompressionAlgorithm.ZSTD, level=6, enable_quantization=True
-)
+from proximadb.models import CompressionConfig
+
 collection = client.create_collection(
-    name="enterprise", dimension=1536, compression=compression
+    name="compressed",
+    dimension=1536,
+    compression=CompressionConfig(
+        algorithm="zstd",
+        level=6,
+        enable_quantization=True
+    )
 )
 ----
 
-**Manage Collections:**
+=== Manage Collections
 [source,python]
 ----
-collections = client.list_collections()  # List all
-info = client.get_collection("documents")  # Get details
-client.update_collection("documents", description="Updated")
-client.delete_collection("documents")  # Delete
+# List all
+collections = client.list_collections()
+
+# Get details
+info = client.get_collection("vectors")
+
+# Delete
+client.delete_collection("vectors")
 ----
 
 == Vector Operations
 
-**Insert Vectors:**
+=== Insert
 [source,python]
 ----
 # Single vector
-vector_data = {
-    "id": "doc_001",
-    "vector": [0.1, 0.2, 0.3] * 128,
-    "metadata": {"title": "ML Fundamentals", "category": "education"}
+vector = {
+    "id": "vec1",
+    "vector": [0.1, 0.2, ...],  # must match dimension
+    "metadata": {"category": "A", "score": 0.95}
 }
-client.insert_vectors("documents", [vector_data])
+client.insert_vectors("vectors", [vector])
 
-# Batch insert (recommended)
-vectors = [{"id": f"doc_{i}", "vector": vector_data[i], 
-           "metadata": metadata[i]} for i in range(1000)]
-results = client.insert_vectors("documents", vectors, batch_size=100)
+# Batch insert (faster)
+vectors = [...]  # list of vector objects
+client.insert_vectors("vectors", vectors, batch_size=100)
 
 # Upsert (insert or update)
-client.upsert_vectors("documents", upsert_data)
+client.upsert_vectors("vectors", vectors)
 ----
 
-**Search Vectors:**
+=== Search
 [source,python]
 ----
 # Basic search
 results = client.search_vectors(
-    collection_id="documents",
-    query_vector=[0.1, 0.2, 0.3] * 128,
-    top_k=10,
-    include_metadata=True
+    collection_id="vectors",
+    query_vector=[0.1, 0.2, ...],
+    top_k=10
 )
 
-# With metadata filtering
+# With filters
 results = client.search_vectors(
-    collection_id="documents",
-    query_vector=query_vector,
+    collection_id="vectors",
+    query_vector=query,
     metadata_filter={
-        "category": "research",
-        "word_count": {">=": 1000}
+        "category": "A",
+        "score": {">=": 0.8}
     },
-    distance_threshold=0.8
-)
-
-# Batch search
-batch_results = client.batch_search_vectors(
-    collection_id="documents",
-    query_vectors=[query1, query2, query3],
-    top_k=5
+    top_k=10
 )
 ----
 
-== SQL Engine
-
-**Vector SQL Queries:**
+=== Update/Delete
 [source,python]
 ----
-# Basic vector similarity
-results = client.execute_sql("""
-    SELECT id, metadata->>'title', 
-           VECTOR_SIMILARITY(vector, [...], 'cosine') as score
-    FROM documents WHERE score > 0.8
-    ORDER BY score DESC LIMIT 10
-""")
+# Update vector
+client.update_vector("vectors", "vec1", new_vector)
 
-# Complex filtering
-results = client.execute_sql("""
-    SELECT id, metadata->>'title'
-    FROM documents 
-    WHERE (metadata->>'category' = 'research' AND metadata->>'priority' = 'high')
-      AND metadata->>'word_count' BETWEEN 1000 AND 5000
-    ORDER BY VECTOR_SIMILARITY(vector, [...], 'cosine') DESC
-""")
+# Delete vector
+client.delete_vector("vectors", "vec1")
+
+# Get vector
+vector = client.get_vector("vectors", "vec1")
 ----
 
-**Supported**: 13 distance metrics (cosine, euclidean, dot_product, etc.) | Full SQL operators (AND/OR/NOT, comparisons, JSON access)
+== SQL Queries
 
-== Performance
-
-**Benchmarks**:
-- **Insert**: gRPC 49K/sec, REST 20K/sec
-- **Search**: VIPER ~1.5ms, SST ~1.8ms
-- **SQL**: ~3ms average latency
-
-**Engine Selection:**
-[source,python]
+[source,sql]
 ----
-# Write-heavy: SST engine
-collection = client.create_collection(
-    name="writes", engine="sst", index_config={"algorithm": "hnsw"}
-)
+-- Vector similarity search
+SELECT id, metadata->>'title',
+       VECTOR_SIMILARITY(vector, [...], 'cosine') as score
+FROM vectors
+WHERE score > 0.8
+ORDER BY score DESC
+LIMIT 10;
 
-# Analytics: VIPER engine  
-collection = client.create_collection(
-    name="analytics", engine="viper", dimension=384
-)
+-- Complex filtering
+SELECT * FROM vectors
+WHERE metadata->>'category' = 'A'
+  AND metadata->>'score' > 0.9
+  AND VECTOR_SIMILARITY(vector, [...], 'euclidean') < 1.0;
 ----
 
-**Optimization:**
-- **Batch Sizes**: gRPC (500), REST (100), SQL (50)
-- **Protocol**: Use gRPC for high throughput
-- **Compression**: ZSTD level 6 for balanced performance
-- **Caching**: Enable vector cache (512MB) and metadata cache (128MB)
+== Performance Tips
 
-== Client Libraries
+=== Choose the Right Engine
+[cols="1,1,1", options="header"]
+|===
+| Engine | Best For | Characteristics
 
-**Python Client:**
-[source,bash]
-----
-pip install proximadb-client
-----
+| **SST**
+| Write-heavy, OLTP
+| Row storage, bloom filters
 
-**Integration Examples:**
-[source,python]
-----
-# With Sentence Transformers
-from sentence_transformers import SentenceTransformer
-model = SentenceTransformer('all-MiniLM-L6-v2')
-embeddings = model.encode(documents)
+| **VIPER**
+| Analytics, compression
+| Columnar, quantization
+|===
 
-# With OpenAI
-import openai
-response = openai.Embedding.create(
-    input=texts, model="text-embedding-ada-002"
-)
-----
+=== Optimization Guidelines
+* **Batch Size**: 100-500 vectors per request
+* **Protocol**: Use gRPC for 3x better performance
+* **Compression**: ZSTD level 6 for balance
+* **Index**: HNSW for quality, IVF for scale
 
-== Production Deployment
+== Configuration
 
-**Hardware Configuration:**
+=== config.toml
 [source,toml]
 ----
-[hardware]
-enable_gpu = true        # Auto-detect CUDA/ROCm/MPS
-enable_simd = true       # Auto-detect AVX-512/AVX2/NEON
+[server]
+rest_port = 5678
+grpc_port = 5679
 worker_threads = 8
 
+[storage]
+data_directory = "/data"
+cache_size_mb = 512
+
 [performance]
+enable_gpu = true
+enable_simd = true
 connection_pool_size = 100
-query_cache_size_mb = 256
 ----
 
-**Compression Algorithms:**
-- **ZSTD**: Balanced speed/ratio (3-5x compression)
-- **LZ4**: Maximum speed (2-3x compression)
-- **Snappy**: Low latency (2x compression)
-- **Brotli**: Maximum compression (4-6x compression)
+=== Distance Metrics
+* **cosine**: Semantic similarity (normalized)
+* **euclidean**: Geometric distance
+* **dot_product**: Magnitude-aware similarity
+* Plus 10 more specialized metrics
 
-**Best Practices:**
-- Use VIPER for analytics, SST for write-heavy workloads
-- Enable compression for storage savings (especially VIPER with quantization)
-- Batch operations for optimal throughput
-- Use appropriate distance metrics for your data
-- Monitor performance with built-in metrics
+== Integration Examples
 
-== Support
+=== With Embeddings
+[source,python]
+----
+# Sentence Transformers
+from sentence_transformers import SentenceTransformer
+model = SentenceTransformer('all-MiniLM-L6-v2')
+embeddings = model.encode(texts)
 
-- **Documentation**: `/docs/` directory
-- **API Reference**: link:api_reference.adoc[Complete API Guide]
-- **Performance Guide**: link:../performance_reference.adoc[Performance Reference]
-- **GitHub**: Issues and feature requests
+# OpenAI
+import openai
+response = openai.Embedding.create(
+    input=texts,
+    model="text-embedding-ada-002"
+)
+embeddings = [r["embedding"] for r in response["data"]]
+----
+
+=== RAG Pipeline
+[source,python]
+----
+# 1. Embed query
+query_embedding = model.encode(query)
+
+# 2. Search vectors
+results = client.search_vectors(
+    "documents",
+    query_embedding,
+    top_k=5
+)
+
+# 3. Use results as context
+context = [r["metadata"]["text"] for r in results]
+prompt = f"Context: {context}\nQuestion: {query}"
+----
+
+== Monitoring
+
+* **Health Check**: `GET /health`
+* **Metrics**: `GET /metrics` (Prometheus format)
+* **Collection Stats**: `GET /collections/{name}/stats`
+
+== Next Steps
+
+* link:api_reference.adoc[**API Reference**] - Complete endpoint documentation
+* link:../performance_reference.adoc[**Performance Guide**] - Benchmarks and tuning
+* link:../compression_guide.adoc[**Compression Guide**] - Storage optimization
+
+---
+**Support**: GitHub Issues | Email: singhvjd@gmail.com

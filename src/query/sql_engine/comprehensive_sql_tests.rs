@@ -24,7 +24,7 @@ mod tests {
     use std::sync::Arc;
     use serde_json::Value;
     
-    use crate::compute::distance_computation::{DistanceMetric, PlatformCapability};
+    use crate::compute::distance_computation::DistanceMetric;
     use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
     use crate::core::hardware_capabilities::HardwareBackend;
     use crate::query::sql_engine::{
@@ -640,21 +640,8 @@ mod tests {
                 assert!(distance_result.normalized_score >= 0.0 && distance_result.normalized_score <= 1.0,
                     "Normalized score should be in [0, 1] for {}", test_name);
                 
-                // For testing, we can show the platform capability used
-                let backend = match distance_compute.platform_capability() {
-                    #[cfg(target_arch = "x86_64")]
-                    PlatformCapability::X86Avx512 => "AVX512",
-                    #[cfg(target_arch = "x86_64")]
-                    PlatformCapability::X86Avx2 => "AVX2",
-                    #[cfg(target_arch = "x86_64")]
-                    PlatformCapability::X86Avx => "AVX",
-                    #[cfg(target_arch = "x86_64")]
-                    PlatformCapability::X86Sse2 => "SSE2",
-                    #[cfg(target_arch = "aarch64")]
-                    PlatformCapability::ArmNeon => "NEON",
-                    PlatformCapability::Scalar => "Scalar",
-                    _ => "Unknown",
-                };
+                // For testing, we can show the hardware backend used
+                let backend = format!("{:?}", distance_compute.preferred_backend());
                 
                 println!("  🎯 {} engine: metric={:?}, distance={:.4}, backend={}", 
                     engine_name, metric_enum, distance_result.raw_value, backend);

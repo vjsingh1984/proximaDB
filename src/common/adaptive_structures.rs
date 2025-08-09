@@ -59,7 +59,7 @@ use tracing::{debug, info, warn};
 use crate::common::concurrent_structures::{AtomicMetrics, MetricsSnapshot};
 use crate::common::tier_policy_engine::{
     GlobalTierManager, SmartTierPolicy, StorageTier, WorkloadPattern, WorkloadMetrics,
-    WorkloadType, CollectionStorageConfig, MemoryThresholds,
+    CollectionStorageConfig, CollectionStorageLimits,
 };
 
 /// Adaptive storage interface that chooses optimal backend based on workload
@@ -104,7 +104,7 @@ where
 }
 
 /// Backend type classification for workload optimization
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum BackendType {
     /// Index backend: Can evict (durability provided by AXIS storage)
     /// AXIS maintains index data at {baseurl}/{collectionid}/indexes/
@@ -171,29 +171,29 @@ pub enum HybridStructure {
 /// Unified tier policy for both index and cache backends
 /// KEY INSIGHT: Both can evict because durability is provided by AXIS storage
 /// at {baseurl}/{collectionid}/indexes/ which is the source of truth
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct UnifiedTierPolicy {
     /// Eviction policy (applies to BOTH index and cache backends!)
-    eviction_policy: EvictionPolicy,
+    pub eviction_policy: EvictionPolicy,
     /// Promotion criteria for moving to faster tiers
-    promotion_criteria: PromotionCriteria,
+    pub promotion_criteria: PromotionCriteria,
     /// Demotion criteria for moving to slower tiers
-    demotion_criteria: DemotionCriteria,
+    pub demotion_criteria: DemotionCriteria,
     /// Reload strategy for restartability
-    reload_strategy: ReloadStrategy,
+    pub reload_strategy: ReloadStrategy,
 }
 
 /// Reload strategy for restartability
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ReloadStrategy {
     /// Load data from AXIS storage on startup
-    load_on_startup: bool,
+    pub load_on_startup: bool,
     /// Prefetch hot data based on historical access patterns
-    prefetch_hot_data: bool,
+    pub prefetch_hot_data: bool,
     /// Maximum items to load initially
-    max_initial_load: usize,
+    pub max_initial_load: usize,
     /// AXIS storage path pattern: {baseurl}/{collection_id}/indexes/
-    axis_storage_path: String,
+    pub axis_storage_path: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -211,21 +211,21 @@ pub enum EvictionPolicy {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PromotionCriteria {
     /// Minimum access frequency for promotion
-    min_access_frequency: u64,
+    pub min_access_frequency: u64,
     /// Time window for frequency calculation
-    frequency_window: Duration,
+    pub frequency_window: Duration,
     /// Minimum tier for promotion consideration
-    min_promotion_tier: StorageTier,
+    pub min_promotion_tier: StorageTier,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct DemotionCriteria {
     /// Maximum idle time before demotion
-    max_idle_time: Duration,
+    pub max_idle_time: Duration,
     /// Memory pressure threshold (0.0-1.0)
-    memory_pressure_threshold: f64,
+    pub memory_pressure_threshold: f64,
     /// Minimum tier (won't demote below this)
-    min_tier: StorageTier,
+    pub min_tier: StorageTier,
 }
 
 /// Workload detection configuration for hybrid backends
@@ -244,20 +244,20 @@ pub struct WorkloadDetectionConfig {
 }
 
 /// Result of tier rebalancing operation
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct TierRebalanceResult {
     /// Number of items promoted
-    promoted_count: usize,
+    pub promoted_count: usize,
     /// Number of items demoted
-    demoted_count: usize,
+    pub demoted_count: usize,
     /// Number of items evicted
-    evicted_count: usize,
+    pub evicted_count: usize,
     /// Total time taken
-    duration: Duration,
+    pub duration: Duration,
     /// Memory freed (bytes)
-    memory_freed_bytes: usize,
+    pub memory_freed_bytes: usize,
     /// Memory allocated (bytes)
-    memory_allocated_bytes: usize,
+    pub memory_allocated_bytes: usize,
 }
 
 /// Configuration for adaptive store creation
@@ -543,35 +543,56 @@ impl AdaptiveStoreFactory {
     fn create_tier_policy(&self, config: &AdaptiveStoreConfig) -> Result<SmartTierPolicy> {
         // This would integrate with the actual GlobalTierManager's policy creation
         // For now, return a default policy based on backend type
-        let workload_type = match &config.backend_type {
-            BackendType::Index { .. } => WorkloadType::Index,
-            BackendType::Cache { .. } => WorkloadType::Cache,
-            BackendType::Hybrid { .. } => WorkloadType::Hybrid,
+        
+        // Create collection config
+        let collection_config = CollectionStorageConfig {
+            collection_id: config.collection_id.clone(),
+            base_location: "/tmp".to_string(),
+            durable_baseline: StorageTier::HardDisk { mount_path: "/mnt/hdd".to_string() },
+            max_acceleration_tier: Some(StorageTier::Memory),
+            storage_limits: CollectionStorageLimits {
+                max_memory_bytes: Some(1024 * 1024 * 1024), // 1GB
+                max_local_disk_bytes: None,
+                max_monthly_cost_usd: None,
+            },
         };
         
-        Ok(SmartTierPolicy {
-            workload_type,
-            collection_config: CollectionStorageConfig {
-                collection_id: config.collection_id.clone(),
-                base_location: "/tmp".to_string(),
-                baseline_tier: StorageTier::HardDisk { mount_path: "/mnt/hdd".to_string() },
-                max_acceleration_tier: Some(StorageTier::Memory),
-                cost_budget: None,
+        // Create default available tiers
+        let available_tiers = vec![
+            StorageTier::Memory,
+            StorageTier::NvmeSsd { mount_path: "/mnt/nvme".to_string() },
+            StorageTier::HardDisk { mount_path: "/mnt/hdd".to_string() },
+        ];
+        
+        // Create tier configs
+        let tier_configs = HashMap::new();
+        
+        // Use the appropriate constructor based on backend type
+        let policy = match &config.backend_type {
+            BackendType::Index { .. } => {
+                SmartTierPolicy::for_index_workload_constrained(
+                    collection_config,
+                    &available_tiers,
+                    &tier_configs,
+                )
             },
-            available_tiers: vec![
-                StorageTier::Memory,
-                StorageTier::NvmeSsd { mount_path: "/mnt/nvme".to_string() },
-                StorageTier::HardDisk { mount_path: "/mnt/hdd".to_string() },
-            ],
-            tier_configs: HashMap::new(),
-            placement_rules: vec![],
-            memory_thresholds: MemoryThresholds {
-                promotion_threshold: 0.7,
-                demotion_threshold: 0.9,
-                emergency_eviction: 0.95,
+            BackendType::Cache { .. } => {
+                SmartTierPolicy::for_cache_workload_constrained(
+                    collection_config,
+                    &available_tiers,
+                    &tier_configs,
+                )
             },
-            cost_optimization: None,
-        })
+            BackendType::Hybrid { .. } => {
+                SmartTierPolicy::for_hybrid_workload_constrained(
+                    collection_config,
+                    &available_tiers,
+                    &tier_configs,
+                )
+            },
+        };
+        
+        Ok(policy)
     }
 
     /// Get default configuration for collection

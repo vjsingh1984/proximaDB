@@ -1,377 +1,269 @@
-= Technical API Reference
+= Technical Reference
 :toc: left
+:toclevels: 2
 :imagesdir: ../diagrams/images
 
-**Complete API documentation for ProximaDB core systems.**
+**Core API documentation for ProximaDB systems.**
 
-== Hardware Capabilities API
+== Hardware Capabilities
 
-=== Centralized Hardware Detection
-
+=== Initialization
 [source,rust]
 ----
-use proximadb::core::hardware_capabilities::{
-    get_hardware_capabilities, initialize_hardware_capabilities_default
-};
+use proximadb::core::hardware_capabilities::*;
 
-// Initialize at server startup (required)
+// Required at startup
 initialize_hardware_capabilities_default()?;
 
-// Access capabilities globally
+// Access globally
 let caps = get_hardware_capabilities();
-println!("CPU: {} cores, GPU: {}", caps.cpu.logical_cores, caps.gpu.backend);
 ----
 
-=== Hardware Capability Queries
-
+=== Capability Checks
 [source,rust]
 ----
-// Check specific capabilities
-caps.has_avx512()           // AVX-512 available and enabled
-caps.has_gpu()              // GPU acceleration available
-caps.has_gpu_parsing()      // GPU SQL parsing enabled
-caps.has_simd()             // Any SIMD acceleration available
+caps.has_avx512()      // AVX-512 available
+caps.has_gpu()         // GPU acceleration
+caps.has_simd()        // Any SIMD available
 
 // Hardware-aware decisions
 if caps.should_use_gpu_distance(vector_size) {
     // Use GPU for large vectors
 }
-
-// Get optimal backend
-let backend = caps.preferred_backend(); // Returns best available hardware
 ----
 
-=== MVCC Resolution API
+=== Configuration
+[source,toml]
+----
+[hardware]
+enable_gpu_acceleration = true
+enable_simd = true
+gpu_min_vector_size = 512
+gpu_min_batch_size = 100
+----
+
+== Adaptive Data Structures
+
+=== Workload Patterns
+
+[cols="1,2,2", options="header"]
+|===
+| Workload | Solution | Benefits
+
+| **Index**
+| DashMap + Write Buffer
+| 5x bulk insert, lock-free reads
+
+| **Cache**
+| Moka + Auto Eviction
+| 5x reads, auto memory management
+
+| **Hybrid**
+| Hot/Cold Tiers
+| Runtime adaptation
+|===
+
+=== Architecture Separation
+
+**Index Structures** (`/src/index/axis/utils.rs`):
+```rust
+pub struct IndexVectorStore {
+    vectors: DashMap<String, Arc<VectorRecord>>,
+    dimension: usize,
+}
+```
+
+**Cache Structures** (`/src/storage/cache/`):
+```rust
+pub struct QueryCache {
+    results: DashMap<QueryKey, SearchResults>,
+    ttl_tracker: TimeToLive,
+}
+```
+
+**Shared Infrastructure** (`/src/common/concurrent_structures.rs`):
+```rust
+pub struct ConcurrentStorage<K, V> {
+    storage: DashMap<K, StoredItem<V>>,
+    metrics: AtomicMetrics,
+}
+```
+
+== MVCC Resolution
 
 [source,rust]
 ----
 use proximadb::core::search::mvcc_resolution::MvccResolver;
 
-// Create resolver with current timestamp
 let resolver = MvccResolver::new();
-
-// Create resolver with custom timestamp (testing)
-let resolver = MvccResolver::with_timestamp(1234567890);
-
-// Resolve vector records according to MVCC rules
 let resolved = resolver.resolve_batch(records);
 ----
 
-**MVCC Resolution Features**:
-- **Expiry Management**: Automatic exclusion of expired records
-- **Version Control**: Highest version without gaps wins
-- **Timestamp Resolution**: Earliest timestamp for same version
-- **Append-Only Support**: Empty ID bypass for high-throughput
-- **Global Deletion**: ID-based expiry affects all versions
+**Features**:
+* Expiry management
+* Version control (highest without gaps)
+* Timestamp resolution
+* Append-only support
+* Global deletion
 
-=== Hardware Configuration
+== SQL Acceleration
 
-[source,toml]
-----
-[hardware]
-enable_detection = true
-enable_gpu_acceleration = true
-enable_gpu_parsing = true
-enable_simd = true
-enable_avx512 = true
-gpu_min_vector_size = 512
-gpu_min_batch_size = 100
-----
-
-=== Multi-Tier Deduplication API
-
+=== GPU Parser
 [source,rust]
 ----
-use proximadb::core::search::multi_tier_deduplication::MultiTierDeduplicator;
+use proximadb::query::sql_engine::gpu_parser::*;
 
-// Create deduplicator for search results
-let deduplicator = MultiTierDeduplicator::new();
-
-// Deduplicate search results with metadata preservation
-let deduplicated = deduplicator.deduplicate_results(search_results)?;
-----
-
-**Deduplication Features**:
-- **Multi-Tier Processing**: Layered result optimization
-- **Metadata Preservation**: Maintains result quality
-- **Performance Optimization**: Reduced result set processing
-- **Configurable Strategies**: Adaptive deduplication algorithms
-
-== SQL Acceleration APIs
-
-=== GPU-Accelerated SQL Parser
-
-[source,rust]
-----
-use proximadb::query::sql_engine::gpu_parser::{GpuSqlParser, parse_sql_gpu};
-
-// Global parser (recommended)
+// Parse with GPU acceleration
 let query = parse_sql_gpu(sql)?;
 
-// Direct parser instance
-let mut parser = GpuSqlParser::new()?;
-let query = parser.parse(sql)?;
-
-// Performance statistics
+// Get statistics
 let stats = parser.get_stats();
-println!("GPU: {}, CPU: {}", stats.gpu_accelerated_count, stats.cpu_fallback_count);
 ----
 
 === SIMD Vector Parser
-
 [source,rust]
 ----
-use proximadb::query::sql_engine::simd_parser::SimdVectorParser;
+use proximadb::query::sql_engine::simd_parser::*;
 
 let mut parser = SimdVectorParser::new();
 let vectors = parser.parse_vector_array("[1.0, 2.0, 3.0]")?;
-
-// Performance monitoring
-let stats = parser.performance_summary();
-println!("SIMD utilization: {}%", stats.simd_utilization);
 ----
 
-=== SQL Parser Performance Metrics
+== REST API
 
-[source,rust]
-----
-// GPU Parser Statistics
-pub struct GpuParserStats {
-    pub total_queries_parsed: u64,
-    pub gpu_accelerated_count: u64, 
-    pub cpu_fallback_count: u64,
-    pub total_parse_time_ms: f64,
-    pub gpu_parse_time_ms: f64,
-    pub cpu_parse_time_ms: f64,
-}
-
-// SIMD Parser Statistics  
-pub struct SimdPerformanceStats {
-    pub vectors_parsed: u64,
-    pub elements_parsed: u64,
-    pub total_time_ns: u64,
-    pub simd_utilization: f64, // Percentage of SIMD usage
-    pub avx2_operations: u64,
-    pub sse41_operations: u64, 
-    pub scalar_operations: u64,
-}
-----
-
-== API Reference
-
-=== REST API
-
-==== Collections
-
-[source,http]
-----
-# Create collection
+=== Collections
+```http
 POST /collections
 {
-  "name": "my_collection",
+  "name": "vectors",
   "dimension": 384,
   "engine": "viper"
 }
 
-# Get collection
 GET /collections/{name}
-
-# Delete collection
 DELETE /collections/{name}
+```
 
-# List collections
-GET /collections
-----
-
-==== Vectors
-
-[source,http]
-----
-# Insert vectors
+=== Vectors
+```http
 POST /collections/{name}/vectors
 {
-  "vectors": [
-    {
-      "id": "vec1",
-      "vector": [0.1, 0.2, ...],
-      "metadata": {"key": "value"}
-    }
-  ]
+  "vectors": [{
+    "id": "vec1",
+    "vector": [0.1, ...],
+    "metadata": {}
+  }]
 }
 
-# Search vectors
 POST /collections/{name}/search
 {
-  "vector": [0.1, 0.2, ...],
-  "top_k": 10,
-  "metadata_filter": {"key": "value"}
+  "vector": [0.1, ...],
+  "top_k": 10
 }
+```
 
-# Get vector
-GET /collections/{name}/vectors/{id}
-
-# Delete vector
-DELETE /collections/{name}/vectors/{id}
-----
-
-=== gRPC API
+== gRPC API
 
 [source,proto]
 ----
 service ProximaDB {
-  // Collection operations
   rpc CreateCollection(CreateCollectionRequest) returns (Collection);
-  rpc GetCollection(GetCollectionRequest) returns (Collection);
-  rpc DeleteCollection(DeleteCollectionRequest) returns (Empty);
-  
-  // Vector operations
   rpc InsertVectors(VectorBatchRequest) returns (VectorBatchResponse);
   rpc SearchVectors(VectorSearchRequest) returns (VectorSearchResponse);
-  rpc GetVector(GetVectorRequest) returns (VectorRecord);
 }
 ----
 
-=== SQL Interface
+== SQL Interface
 
 [source,sql]
 ----
 -- Create collection
-CREATE COLLECTION my_collection (dimension=384, engine='viper');
+CREATE COLLECTION vectors (dimension=384, engine='viper');
 
--- Insert vectors
-INSERT INTO my_collection (id, vector, metadata) 
-VALUES ('vec1', [0.1, 0.2, ...], '{"key": "value"}');
+-- Insert
+INSERT INTO vectors (id, vector, metadata) 
+VALUES ('vec1', [0.1, ...], '{"key": "value"}');
 
--- Search vectors
-SELECT id, metadata, similarity(vector, [0.1, 0.2, ...]) as score
-FROM my_collection
-WHERE metadata->>'key' = 'value'
+-- Search
+SELECT id, similarity(vector, [0.1, ...]) as score
+FROM vectors
 ORDER BY score DESC
 LIMIT 10;
-
--- Delete vectors
-DELETE FROM my_collection WHERE id = 'vec1';
 ----
 
-== Configuration Reference
+== Configuration
 
-=== Server Configuration
-
-**Ports**: REST port 5678, gRPC port 5679, configurable worker threads and connections
-
-**Storage**: Dual engine (SST + VIPER), configurable data directory, write buffer settings
-
-**Cloud Storage**: AWS S3, Azure Blob, Google Cloud Storage support with native authentication
-
-=== Compression Configuration
-
-==== Network Compression Defaults
-* **REST API**: Compression OFF by default
-  - Reason: Better debugging and troubleshooting
-  - Supports: gzip, deflate, zstd, brotli
-* **gRPC**: Compression ON by default  
-  - Reason: Better performance
-  - Supports: gzip (tonic limitation)
-
-==== Configuration Hierarchy
-1. **Defaults**: REST off, gRPC on
-2. **TOML config**: Overrides defaults via `enable_compression` in `[rest]` and `[grpc]` sections
-3. **Runtime**: Can be overridden programmatically
-
-==== TOML Configuration
+=== Server
 [source,toml]
 ----
+[server]
+rest_port = 5678
+grpc_port = 5679
+
+[storage]
+data_directory = "/data"
+write_buffer_mb = 512
+
 [rest]
-enable_compression = false  # Default: false
-max_request_size_mb = 64
+enable_compression = false  # Default
 
 [grpc]
-enable_compression = true   # Default: true
-max_frame_size_mb = 16
+enable_compression = true   # Default
 ----
 
-==== Storage Configuration
-[source,toml]
-----
-# Note: Compression is now SDK-driven via CompressionConfig
-# No server-level compression configuration required
-# See compression_guide.adoc for SDK-driven compression setup
-----
+=== Compression
+* **REST**: OFF by default (debugging)
+* **gRPC**: ON by default (performance)
+* **Storage**: SDK-driven via CompressionConfig
 
 == Distance Metrics
 
-* **cosine**: Cosine similarity [0, 2]
-* **euclidean**: L2 distance [0, ∞)  
-* **dot_product**: Inner product (-∞, ∞)
-* **manhattan**: L1 distance [0, ∞)
-* **hamming**: Bit differences [0, n]
-* **jaccard**: Set similarity [0, 1]
+[cols="1,2,1", options="header"]
+|===
+| Metric | Description | Range
+
+| cosine | Semantic similarity | [0, 2]
+| euclidean | L2 distance | [0, ∞)
+| dot_product | Inner product | (-∞, ∞)
+| manhattan | L1 distance | [0, ∞)
+| hamming | Bit differences | [0, n]
+| jaccard | Set similarity | [0, 1]
+|===
 
 == Index Types
 
-=== HNSW (Hierarchical Navigable Small World)
-* Best for: High recall requirements
-* Memory: O(M × N) where M is connections
-* Build time: O(N log N)
-* Search time: O(log N)
+[cols="1,2,1,1", options="header"]
+|===
+| Type | Best For | Memory | Search
 
-=== IVF (Inverted File)
-* Best for: Large datasets
-* Memory: O(N) + centroids
-* Build time: O(N × K) clustering
-* Search time: O(nprobe × N/K)
-
-=== LSH (Locality Sensitive Hashing)
-* Best for: Approximate matching
-* Memory: O(L × N) where L is tables
-* Build time: O(L × N)
-* Search time: O(L)
-
-=== Annoy (Approximate Nearest Neighbors)
-* Best for: Memory-constrained
-* Memory: O(N × n_trees)
-* Build time: O(N × n_trees × log N)
-* Search time: O(n_trees × log N)
+| HNSW | High recall | O(M×N) | O(log N)
+| IVF | Large datasets | O(N) | O(nprobe×N/K)
+| LSH | Approximate | O(L×N) | O(L)
+| Annoy | Memory-constrained | O(N×trees) | O(trees×log N)
+| PQ | Compression | O(N/8) | O(N)
+| FLAT | Perfect recall | O(N) | O(N)
+|===
 
 == Error Codes
 
-* **COLLECTION_NOT_FOUND**: Collection does not exist - Create collection first
-* **DIMENSION_MISMATCH**: Vector dimension incorrect - Check collection dimension  
-* **INVALID_METADATA**: Metadata parsing failed - Validate JSON format
-* **STORAGE_ERROR**: Storage operation failed - Check disk space/permissions
-* **TIMEOUT**: Operation timed out - Retry with backoff
-== Compression Metrics
+* **COLLECTION_NOT_FOUND**: Collection doesn't exist
+* **DIMENSION_MISMATCH**: Vector dimension incorrect
+* **INVALID_METADATA**: JSON parsing failed
+* **STORAGE_ERROR**: Disk/permission issue
+* **TIMEOUT**: Operation exceeded time limit
 
-=== Performance Characteristics
+== Performance Metrics
 
-[cols="3,2,2,2", options="header"]
+=== Compression Impact
+[cols="2,1,1,1", options="header"]
 |===
-| Operation | No Compression | LZ4 | ZSTD-6
+| Metric | None | LZ4 | ZSTD-6
 
-| **Insert (vec/s)**
-| 10,000
-| 8,500
-| 6,000
-
-| **Search (ms)**
-| 0.5
-| 0.7
-| 1.2
-
-| **Storage Size**
-| 100GB
-| 50GB
-| 30GB
-
-| **Cache Hit Rate**
-| N/A
-| 75%
-| 75%
+| Insert (vec/s) | 10,000 | 8,500 | 6,000
+| Search (ms) | 0.5 | 0.7 | 1.2
+| Storage | 100GB | 50GB | 30GB
+| Cache Hit | N/A | 75% | 75%
 |===
 
-=== Compression Ratios
-
-* **ZSTD**: 2-10x compression (balanced)
-* **LZ4**: 1.5-3x compression (fast)
-* **SNAPPY**: 1.5-2x compression (very fast)
-
+---
+**Next**: link:architecture.adoc[Architecture] | link:../user/api_reference.adoc[API Reference]

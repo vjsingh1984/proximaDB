@@ -127,7 +127,6 @@ mod tests {
         // Should return a valid backend
         match backend {
             HardwareBackend::Scalar |
-            HardwareBackend::CpuSIMD(_) |
             HardwareBackend::CUDA |
             HardwareBackend::ROCm |
             HardwareBackend::MPS |

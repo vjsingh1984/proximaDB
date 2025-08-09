@@ -6,12 +6,12 @@
 
 == Overview
 
-Total documentation files: **19 files** (reduced from 51)
+Total documentation files: **17 files** (reduced from 51)
 - **User Guides**: 4 files 
 - **Developer Resources**: 4 files
 - **Operations**: 1 file
-- **Reference**: 4 files
-- **Diagrams**: 32 MermaidJS files + SVG outputs
+- **Reference**: 3 files
+- **Diagrams**: 40+ MermaidJS files + SVG outputs
 
 == File Structure
 
@@ -23,10 +23,6 @@ Total documentation files: **19 files** (reduced from 51)
 |Documentation hub with navigation
 |All users
 
-|link:requirements.adoc[requirements.adoc] 
-|System requirements
-|Administrators
-
 |link:compression_guide.adoc[compression_guide.adoc]
 |SDK-driven compression configuration
 |Developers
@@ -36,7 +32,7 @@ Total documentation files: **19 files** (reduced from 51)
 |Operations/Developers
 
 |link:enterprise_features.adoc[enterprise_features.adoc]
-|Enterprise features roadmap
+|Enterprise features, roadmap, and version status
 |Business/Technical leads
 |===
 

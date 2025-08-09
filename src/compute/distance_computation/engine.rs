@@ -35,7 +35,9 @@ use tracing::{debug, info};
 // use std::hint::likely; // Unstable feature - removed for compilation
 // use std::simd::{f32x8, Simd}; // Unstable feature - removed for compilation
 
-use crate::compute::distance_computation::core::{create_distance_calculator, DistanceMetric, PlatformCapability};
+// Use proto enum as the single source of truth for DistanceMetric
+pub use crate::proto::proximadb::DistanceMetric;
+use super::{create_distance_calculator, DistanceCompute};
 use crate::services::collection_service::CollectionService;
 use crate::core::hardware_capabilities::{get_hardware_capabilities, HardwareCapabilities};
 
@@ -254,16 +256,15 @@ impl MetricProperties for DistanceMetric {
 impl std::fmt::Display for HardwareBackend {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            HardwareBackend::CpuSIMD(cap) => write!(f, "CPU SIMD ({})", cap),
+            HardwareBackend::AVX512 => write!(f, "AVX-512 SIMD"),
+            HardwareBackend::AVX2 => write!(f, "AVX2 SIMD"),
+            HardwareBackend::SSE => write!(f, "SSE SIMD"),
+            HardwareBackend::NEON => write!(f, "ARM NEON SIMD"),
             HardwareBackend::CUDA => write!(f, "NVIDIA CUDA"),
             HardwareBackend::ROCm => write!(f, "AMD ROCm"),
             HardwareBackend::MPS => write!(f, "Apple Metal"),
             HardwareBackend::OpenCL => write!(f, "OpenCL"),
             HardwareBackend::Scalar => write!(f, "CPU Scalar"),
-            HardwareBackend::AVX512 => write!(f, "CPU AVX-512"),
-            HardwareBackend::AVX2 => write!(f, "CPU AVX2"),
-            HardwareBackend::SSE => write!(f, "CPU SSE"),
-            HardwareBackend::NEON => write!(f, "ARM NEON"),
         }
     }
 }
@@ -299,8 +300,8 @@ pub trait GpuAccelerator: Send + Sync {
 pub struct UnifiedDistanceCompute {
     /// System default distance metric
     system_default: DistanceMetric,
-    /// Hardware capability for SIMD optimization
-    platform_capability: PlatformCapability,
+    /// Hardware capability from centralized detection
+    hardware_backend: HardwareBackend,
     /// GPU accelerator if available
     gpu_accelerator: Option<Arc<dyn GpuAccelerator>>,
     /// Preferred hardware backend
@@ -313,7 +314,7 @@ impl std::fmt::Debug for UnifiedDistanceCompute {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("UnifiedDistanceCompute")
             .field("system_default", &self.system_default)
-            .field("platform_capability", &self.platform_capability)
+            .field("hardware_backend", &self.hardware_backend)
             .field("local_only", &true)
             .finish()
     }
@@ -324,36 +325,8 @@ impl Default for UnifiedDistanceCompute {
         // Always use centralized hardware capabilities - no fallback for Release 1
         let caps = get_hardware_capabilities();
         
-        let platform_capability = if caps.has_simd() {
-            #[cfg(target_arch = "x86_64")]
-            {
-                if caps.has_avx512() {
-                    PlatformCapability::X86Avx512
-                } else if caps.cpu.simd.has_avx2 {
-                    PlatformCapability::X86Avx2
-                } else if caps.cpu.simd.has_avx {
-                    PlatformCapability::X86Avx
-                } else if caps.cpu.simd.has_sse {
-                    PlatformCapability::X86Sse2
-                } else {
-                    PlatformCapability::Scalar
-                }
-            }
-            #[cfg(target_arch = "aarch64")]
-            {
-                if caps.cpu.simd.has_neon {
-                    PlatformCapability::ArmNeon
-                } else {
-                    PlatformCapability::Scalar
-                }
-            }
-            #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
-            {
-                PlatformCapability::Scalar
-            }
-        } else {
-            PlatformCapability::Scalar
-        };
+        // Get the preferred backend directly from centralized capabilities
+        let preferred_backend = caps.preferred_backend();
         
         // GPU accelerator based on centralized capabilities
         let gpu_accelerator = if caps.has_gpu_distance() {
@@ -362,18 +335,11 @@ impl Default for UnifiedDistanceCompute {
             None
         };
         
-        // Determine preferred backend from centralized capabilities
-        let preferred_backend = if caps.has_gpu_distance() && gpu_accelerator.is_some() {
-            caps.preferred_backend()
-        } else {
-            HardwareBackend::CpuSIMD(platform_capability)
-        };
-        
         info!("🚀 UnifiedDistanceCompute initialized with centralized capabilities: {}", preferred_backend);
         
         Self {
             system_default: DistanceMetric::Cosine,
-            platform_capability,
+            hardware_backend: preferred_backend,
             gpu_accelerator,
             preferred_backend,
             gpu_enabled: caps.config.enable_gpu_distance,
@@ -417,13 +383,13 @@ impl UnifiedDistanceCompute {
     pub fn set_gpu_enabled(&mut self, enabled: bool) {
         self.gpu_enabled = enabled;
         if !enabled {
-            self.preferred_backend = HardwareBackend::CpuSIMD(self.platform_capability);
+            self.preferred_backend = self.hardware_backend;
         }
     }
     
     /// Get available hardware backends
     pub fn available_backends(&self) -> Vec<HardwareBackend> {
-        let mut backends = vec![HardwareBackend::CpuSIMD(self.platform_capability)];
+        let mut backends = vec![self.hardware_backend];
         
         if let Some(ref gpu) = self.gpu_accelerator {
             if gpu.is_available() {
@@ -479,11 +445,6 @@ impl UnifiedDistanceCompute {
         }
     }
     
-    /// Get the detected platform capability
-    pub fn platform_capability(&self) -> PlatformCapability {
-        self.platform_capability
-    }
-    
     /// Get the preferred hardware backend
     pub fn preferred_backend(&self) -> HardwareBackend {
         self.preferred_backend
@@ -513,7 +474,7 @@ impl UnifiedDistanceCompute {
                         match self.calculate_with_gpu(vec_a, vec_b, metric) {
                             Ok(value) => value,
                             Err(_) => {
-                                // Fallback to optimized factory-created calculator
+                                // Fallback to optimized CPU calculation
                                 let calculator = create_distance_calculator(metric.clone());
                                 calculator.distance(vec_a, vec_b)
                             }
@@ -533,7 +494,7 @@ impl UnifiedDistanceCompute {
                             Ok(value) => value,
                             Err(_) => {
                                 let calculator = create_distance_calculator(metric.clone());
-                                calculator.distance(vec_a, vec_b)
+                        calculator.distance(vec_a, vec_b)
                             }
                         }
                     } else {
@@ -743,6 +704,11 @@ impl UnifiedDistanceCompute {
     /// Get system default distance metric
     pub fn system_default(&self) -> &DistanceMetric {
         &self.system_default
+    }
+    
+    /// Get platform capability information
+    pub fn platform_capability(&self) -> Arc<crate::core::hardware_capabilities::HardwareCapabilities> {
+        crate::core::hardware_capabilities::get_hardware_capabilities()
     }
 
     /// Calculate batch distances with rich semantic results

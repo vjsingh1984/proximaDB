@@ -1,0 +1,73 @@
+---
+title: ProximaDB Search Orchestration - Swimlane View
+---
+
+flowchart TB
+    subgraph Client ["Client Layer"]
+        A[Search Request<br/>collection_id, query_vector, k]
+        Z[Search Results<br/>Top k vectors with metadata]
+    end
+    
+    subgraph Orchestration ["Orchestration Layer (VectorOperationsService)"]
+        B[Query Planning]
+        C[Result Cache Check]
+        D[Orchestrate Search]
+        E[Merge & Deduplicate]
+        F[Final Ranking]
+    end
+    
+    subgraph WAL ["WAL/Memtable Layer (Unflushed Data)"]
+        G[Get Unflushed Batches]
+        H[Bloom Filter Check<br/>95% reduction]
+        I[Distance Calculation<br/>SIMD/GPU accelerated]
+    end
+    
+    subgraph Indexes ["AXIS Index Layer (Optional)"]
+        J{Has Indexes?}
+        K[HNSW Search<br/>Hierarchical graph]
+        L[IVF Search<br/>Inverted clusters]
+        M[PQ Two-Stage<br/>1. Quantized search<br/>2. FP32 rerank]
+    end
+    
+    subgraph Storage ["Persistent Storage Layer"]
+        N[VIPER Engine<br/>Columnar format]
+        O[SST Engine<br/>Row format]
+        P[Two-Stage Search<br/>INT8/PQ → FP32]
+        Q[Three-Stage Filter<br/>Bloom→Zone→Block]
+    end
+    
+    %% Flow connections
+    A --> B
+    B --> C
+    C -->|Cache Miss| D
+    C -->|Cache Hit| Z
+    
+    D --> G
+    G --> H
+    H -->|Filtered| I
+    I -->|WAL Results| E
+    
+    D --> J
+    J -->|Yes| K
+    J -->|Yes| L
+    J -->|Yes| M
+    K -->|Index Results| E
+    L -->|Index Results| E
+    M -->|Reranked Results| E
+    
+    J -->|No| N
+    J -->|No| O
+    N --> P
+    P -->|VIPER Results| E
+    O --> Q
+    Q -->|SST Results| E
+    
+    E --> F
+    F --> Z
+    
+    style A fill:#e1f5fe
+    style Z fill:#c8e6c9
+    style H fill:#fff3e0
+    style M fill:#fce4ec
+    style P fill:#fce4ec
+    style E fill:#f3e5f5

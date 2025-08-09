@@ -4,13 +4,15 @@
 mod tests {
     use super::super::*;
     use std::time::Instant;
+    use crate::core::hardware_capabilities::get_hardware_capabilities;
     
     #[test]
     fn benchmark_simd_performance() {
         println!("\n=== SIMD Performance Benchmark ===");
         
-        let capability = detect_platform_capability();
-        println!("Platform: {}", capability);
+        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let capability = get_hardware_capabilities();
+        println!("Platform: {:?}", capability.preferred_backend());
         
         let dimensions = vec![128, 256, 512, 1024];
         let iterations = 10_000;

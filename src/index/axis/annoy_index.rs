@@ -127,20 +127,35 @@ impl AnnoyTree {
         node_memory + std::mem::size_of::<Self>()
     }
 
-    /// Build tree from vectors
+    /// Build tree from vectors (with optional collection filtering)
     fn build(
         &mut self,
         vectors: &[(String, Vec<f32>)],
         config: &AxisAnnoyConfig,
         rng: &mut ChaCha20Rng,
         distance_compute: &UnifiedDistanceCompute,
+        collection_id: Option<&str>,
     ) -> Result<()> {
         if vectors.is_empty() {
             return Ok(());
         }
 
+        // Filter vectors by collection if specified
+        let filtered_vectors: Vec<(String, Vec<f32>)> = if let Some(coll_id) = collection_id {
+            vectors.iter()
+                .filter(|(id, _)| id.starts_with(&format!("{}:", coll_id)))
+                .cloned()
+                .collect()
+        } else {
+            vectors.to_vec()
+        };
+
+        if filtered_vectors.is_empty() {
+            return Ok(());
+        }
+
         // Build tree recursively
-        self.root = self.build_subtree(vectors, config, rng, distance_compute)?;
+        self.root = self.build_subtree(&filtered_vectors, config, rng, distance_compute)?;
         Ok(())
     }
 
@@ -239,7 +254,7 @@ impl AnnoyTree {
         Ok(node_idx)
     }
 
-    /// Search for nearest neighbors in this tree
+    /// Search for nearest neighbors in this tree (with collection awareness)
     fn search(
         &self,
         query: &[f32],
@@ -248,6 +263,7 @@ impl AnnoyTree {
         vectors: &HashMap<String, Arc<VectorRecord>>,
         distance_compute: &UnifiedDistanceCompute,
         nodes_to_search: usize,
+        collection_id: Option<&str>,
     ) -> Result<()> {
         let mut stack = vec![(self.root, 0)];
         let mut nodes_searched = 0;
@@ -262,9 +278,22 @@ impl AnnoyTree {
                 AnnoyNode::Leaf { vector_ids } => {
                     // Add all vectors in leaf to candidates
                     for id in vector_ids {
-                        if let Some(record) = vectors.get(id) {
+                        // If collection filtering is enabled, extract the actual ID
+                        let actual_id = if let Some(coll_id) = collection_id {
+                            // Remove collection prefix if present
+                            let prefix = format!("{}:", coll_id);
+                            if id.starts_with(&prefix) {
+                                id.strip_prefix(&prefix).unwrap_or(id)
+                            } else {
+                                continue; // Skip vectors from other collections
+                            }
+                        } else {
+                            id
+                        };
+                        
+                        if let Some(record) = vectors.get(actual_id) {
                             let distance_result = distance_compute.calculate_distance(query, &record.vector, &distance_compute.system_default());
-                            candidates.push((id.clone(), distance_result.rank_value));
+                            candidates.push((actual_id.to_string(), distance_result.rank_value));
                         }
                     }
                 }
@@ -291,8 +320,11 @@ impl AnnoyTree {
     }
 }
 
-/// AXIS-native Annoy index implementation with improved concurrency
+/// AXIS-native Annoy index implementation with improved concurrency and collection partitioning
 pub struct AxisAnnoyIndex {
+    /// Collection identifier for partitioning (optional for backward compatibility)
+    collection_id: Option<String>,
+    
     /// Configuration
     config: AxisAnnoyConfig,
     
@@ -318,12 +350,22 @@ pub struct AxisAnnoyIndex {
 impl AxisAnnoyIndex {
     /// Create new Annoy index using standardized utilities
     pub fn new(config: AxisAnnoyConfig, dimension: usize) -> Result<Self> {
+        Self::new_with_collection(None, config, dimension)
+    }
+    
+    /// Create new Annoy index for a specific collection
+    pub fn new_with_collection(
+        collection_id: Option<String>,
+        config: AxisAnnoyConfig,
+        dimension: usize
+    ) -> Result<Self> {
         // USING UTILS: Validate configuration
         validation::validate_dimension(dimension)?;
         
+        let coll_str = collection_id.as_ref().map(|s| s.as_str()).unwrap_or("default");
         info!(
-            "Creating AXIS Annoy index: {} trees, search_k={}, dim={}",
-            config.n_trees, config.search_k, dimension
+            "Creating AXIS Annoy index for collection '{}': {} trees, search_k={}, dim={}",
+            coll_str, config.n_trees, config.search_k, dimension
         );
         
         let distance_compute = UnifiedDistanceCompute::new(config.distance_metric);
@@ -335,6 +377,7 @@ impl AxisAnnoyIndex {
         };
         
         Ok(Self {
+            collection_id,
             config,
             // USING UTILS: Standardized vector storage
             vectors: IndexVectorStore::new(dimension),
@@ -362,17 +405,27 @@ impl AxisAnnoyIndex {
             return Ok(());
         }
 
+        let coll_str = self.collection_id.as_ref().map(|s| s.as_str()).unwrap_or("all");
         info!(
-            "Building Annoy index with {} trees for {} vectors",
+            "Building Annoy index with {} trees for {} vectors in collection '{}'",
             self.config.n_trees,
-            self.vectors.len()
+            self.vectors.len(),
+            coll_str
         );
 
         // USING UTILS: Prepare vector data from IndexVectorStore
+        // If collection_id is set, prefix vector IDs for partitioning
         let vector_data: Vec<(String, Vec<f32>)> = self.vectors.keys()
             .into_iter()
             .filter_map(|id| {
-                self.vectors.get(&id).map(|record| (id, record.vector.clone()))
+                self.vectors.get(&id).map(|record| {
+                    let prefixed_id = if let Some(ref coll_id) = self.collection_id {
+                        format!("{}:{}", coll_id, id)
+                    } else {
+                        id
+                    };
+                    (prefixed_id, record.vector.clone())
+                })
             })
             .collect();
 
@@ -387,7 +440,7 @@ impl AxisAnnoyIndex {
             let tree_seed = rng.gen();
             let mut tree_rng = ChaCha20Rng::seed_from_u64(tree_seed);
             
-            tree.build(&vector_data, &self.config, &mut tree_rng, &self.distance_compute)?;
+            tree.build(&vector_data, &self.config, &mut tree_rng, &self.distance_compute, self.collection_id.as_deref())?;
             trees.push(tree);
         }
 
@@ -481,7 +534,7 @@ impl AxisVectorIndex for AxisAnnoyIndex {
     async fn search(
         &self,
         query: &[f32],
-        k: usize,
+        top_k: usize,
         filter: Option<&(dyn for<'a> Fn(&'a VectorRecord) -> bool + Send + Sync)>,
     ) -> Result<Vec<(String, f32)>> {
         let start = std::time::Instant::now();
@@ -492,8 +545,8 @@ impl AxisVectorIndex for AxisAnnoyIndex {
             return Err(anyhow!("Index must be built before searching"));
         }
 
-        // USING UTILS: Validate k parameter
-        let k = validation::validate_k(k, 10000)?;
+        // USING UTILS: Validate top_k parameter
+        let k = validation::validate_k(top_k, 10000)?;
         
         // Validate query dimension against stored dimension
         if query.len() != self.vectors.dimension() {
@@ -522,10 +575,20 @@ impl AxisVectorIndex for AxisAnnoyIndex {
         let mut all_candidates = Vec::new();
         
         // Create a temporary HashMap for tree search compatibility
-        // TODO: Update tree search to work with IndexVectorStore directly
+        // When collection_id is set, use prefixed keys for partitioning
         let vector_map: HashMap<String, Arc<VectorRecord>> = self.vectors.keys()
             .into_iter()
-            .filter_map(|key| self.vectors.get(&key).map(|v| (key, v)))
+            .filter_map(|key| {
+                self.vectors.get(&key).map(|v| {
+                    let map_key = if let Some(ref coll_id) = self.collection_id {
+                        // Use original key for map (tree will handle prefixing)
+                        key.clone()
+                    } else {
+                        key
+                    };
+                    (map_key, v)
+                })
+            })
             .collect();
         
         for tree in trees.iter() {
@@ -536,6 +599,7 @@ impl AxisVectorIndex for AxisAnnoyIndex {
                 &vector_map,
                 &self.distance_compute,
                 nodes_per_tree,
+                self.collection_id.as_deref(),
             )?;
         }
 

@@ -1,77 +1,39 @@
-= ProximaDB Documentation Hub
+= ProximaDB Documentation
 :toc: left
 :toclevels: 2
 :imagesdir: diagrams/images
 
-image::business-system-overview.svg[ProximaDB Overview, align=center, width=900]
+image::business-architecture-consolidated.svg[ProximaDB Business Architecture, align=center, width=900]
 
-**Your complete guide to ProximaDB - the enterprise vector database delivering 3x performance with 50-80% storage reduction.**
+**Enterprise vector database with 3x performance and 50-80% storage reduction.**
 
-== Quick Navigation
+== Quick Start
 
 [cols="1,1,1", frame=none, grid=none]
 |===
 | **🚀 Get Started**
-
-link:user/getting_started.adoc[5-Minute Quick Start] +
-link:../README.adoc[Project Overview] +
-link:user/user_guide.adoc[User Guide]
+link:user/getting_started.adoc[Install] +
+link:user/user_guide.adoc[User Guide] +
+link:user/api_reference.adoc[API Reference]
 
 | **🔧 Develop**
-
-link:user/api_reference.adoc[API Reference] +
-link:developer/developer_guide.adoc[Developer Guide] +
-link:developer/architecture.adoc[Architecture]
+link:developer/architecture.adoc[Architecture] +
+link:developer/technical_reference.adoc[Technical Docs] +
+link:developer/developer_guide.adoc[Contributing]
 
 | **📊 Deploy**
-
-link:admin/multi_disk_guide.adoc[Production Setup] +
-link:performance_reference.adoc[Performance Guide] +
-link:compression_guide.adoc[Compression Guide]
+link:admin/multi_disk_guide.adoc[Production] +
+link:performance_reference.adoc[Performance] +
+link:compression_guide.adoc[Compression]
 |===
 
-== Documentation by Role
+== Key Capabilities
 
-=== Business Decision Makers
-* link:../README.adoc[Executive Overview] - ROI, use cases, and business value
-* link:diagrams/business-system-overview.svg[System Architecture] - Visual overview
-* link:enterprise_features.adoc[Enterprise Features] - Roadmap and capabilities
-
-=== Developers
-* **Getting Started**
-  - link:user/getting_started.adoc[Installation & Setup] - Docker, binary, or source
-  - link:user/user_guide.adoc[Complete User Guide] - Collections, vectors, search
-  - link:user/api_reference.adoc[API Reference] - REST & gRPC endpoints
-
-* **Integration**
-  - link:user/semantic_search_guide.adoc[Semantic Search] - RAG & embeddings
-  - link:compression_guide.adoc[Compression Guide] - SDK-driven compression
-  - link:developer/developer_guide.adoc[Contributing] - Development setup
-
-* **Advanced Topics**
-  - link:developer/architecture.adoc[System Architecture] - Core components
-  - link:developer/magic_bytes_architecture.adoc[Magic Bytes] - SST1 vs PAR1
-  - link:developer/technical_reference.adoc[Technical Reference] - Implementation details
-
-=== Operations & DevOps
-* **Deployment**
-  - link:admin/multi_disk_guide.adoc[Multi-Disk Setup] - Cloud storage configuration
-  - link:performance_reference.adoc[Performance Tuning] - Optimization guide
-  - link:requirements.adoc[System Requirements] - Hardware and software needs
-
-* **Monitoring**
-  - Built-in Prometheus metrics
-  - Performance monitoring via REST/gRPC APIs
-  - Hardware acceleration detection
-
-== Key Features
-
-=== Performance Benchmarks
 [cols="2,1,1", options="header"]
 |===
-| Operation | Performance | vs Competition
+| Metric | Performance | Industry Comparison
 
-| **Bulk Insert**
+| **Insert Throughput**
 | 17,484 vec/s
 | 3x faster
 
@@ -79,99 +41,75 @@ link:compression_guide.adoc[Compression Guide]
 | 0.9ms (p99)
 | 65% lower
 
-| **Storage Compression**
+| **Storage Efficiency**
 | 50-80% reduction
 | Best in class
+
+| **Test Coverage**
+| 1,460+ tests
+| 100% pass rate
 |===
 
-=== Dual Storage Architecture
-**Magic Bytes** for automatic format detection:
+== Architecture
 
-[cols="1,1,2", options="header"]
-|===
-| Engine | Magic Bytes | Purpose
+=== Core Components
+* **VectorOperationsService**: Proto-first, zero-copy operations
+* **Dual Storage**: SST (row-based) + VIPER (columnar)
+* **Hardware Acceleration**: Automatic GPU/SIMD detection
+* **Compression**: SDK-driven ZSTD/LZ4/Snappy
 
-| **SST Engine**
-| `SST1` (header)
-| Row-based storage for OLTP workloads
+=== Supported Features
+* **6 Index Types**: HNSW, IVF, PQ, FLAT, ANNOY, LSH
+* **13 Distance Metrics**: Cosine, Euclidean, Dot Product, Manhattan, etc.
+* **Query Options**: SQL, REST, gRPC, Python SDK
+* **Cloud Storage**: S3, Azure Blob, Google Cloud Storage
 
-| **VIPER Engine**
-| `PAR1` (footer)
-| Columnar storage for analytics
-|===
+== Documentation Guide
 
-=== SDK-Driven Compression
-**Full Client Control** - No server defaults:
+=== For Developers
+1. link:user/getting_started.adoc[**Getting Started**] - Installation and setup
+2. link:user/api_reference.adoc[**API Reference**] - REST and gRPC endpoints
+3. link:developer/architecture.adoc[**Architecture**] - System design and components
+4. link:developer/technical_reference.adoc[**Technical Reference**] - Implementation details
 
-* **Algorithms**: ZSTD (2-10x), LZ4 (1.5-3x), Snappy (1.5-2x)
-* **Quantization**: INT8, PQ8, PQ4 with 100% FP32 fidelity
-* **Cache**: Intelligent decompression cache with auto-invalidation
+=== For Operations
+1. link:admin/multi_disk_guide.adoc[**Production Setup**] - Multi-disk and cloud deployment
+2. link:performance_reference.adoc[**Performance Guide**] - Benchmarks and tuning
+3. link:compression_guide.adoc[**Compression**] - Storage optimization
+4. link:enterprise_features.adoc[**Roadmap**] - Future features and versions
 
-== Learning Paths
+=== Key Diagrams
+* link:diagrams/technical-architecture-complete.mmd[Technical Architecture]
+* link:diagrams/proximadb-core-classes.mmd[Core Classes]
+* link:diagrams/vector-lifecycle-state.mmd[Vector Lifecycle]
+* link:diagrams/proximadb-deployment.mmd[Deployment]
 
-=== Path 1: Quick Proof of Concept (1 Hour)
-1. link:user/getting_started.adoc[Install with Docker] (5 min)
-2. link:user/user_guide.adoc#collections[Basic Operations] (20 min)
-3. link:user/api_reference.adoc#search[Search API] (15 min)
-4. link:performance_reference.adoc[Benchmark] (20 min)
+== Quick Examples
 
-=== Path 2: Production Deployment (1 Week)
-1. link:developer/architecture.adoc[Understand Architecture] (Day 1)
-2. link:admin/multi_disk_guide.adoc[Setup Infrastructure] (Day 2)
-3. link:user/semantic_search_guide.adoc[Integrate Embeddings] (Day 3)
-4. link:compression_guide.adoc[Configure Compression] (Day 4)
-5. link:performance_reference.adoc[Optimize & Monitor] (Day 5)
-
-=== Path 3: Advanced Development (2 Weeks)
-1. link:developer/magic_bytes_architecture.adoc[Storage Internals] (Week 1)
-2. link:developer/technical_reference.adoc[Implementation Details] (Week 1)
-3. link:enterprise_features.adoc[Enhancement Areas] (Week 2)
-4. link:developer/developer_guide.adoc[Contributing] (Week 2)
-
-== Streamlined Documentation Structure
-
-```
-docs/
-├── index.adoc                      # This documentation hub
-├── requirements.adoc               # System requirements
-├── compression_guide.adoc          # Compression configuration
-├── performance_reference.adoc      # Performance benchmarks
-├── enterprise_features.adoc        # Enterprise roadmap
-│
-├── user/                          # End-user guides
-│   ├── getting_started.adoc       # Installation & setup
-│   ├── user_guide.adoc            # Complete usage guide  
-│   ├── api_reference.adoc         # REST & gRPC APIs
-│   └── semantic_search_guide.adoc # RAG & embeddings
-│
-├── developer/                     # Developer resources
-│   ├── architecture.adoc          # System architecture
-│   ├── developer_guide.adoc       # Contributing guide
-│   ├── magic_bytes_architecture.adoc # File format details
-│   └── technical_reference.adoc   # Implementation reference
-│
-├── admin/                         # Operations guides
-│   └── multi_disk_guide.adoc     # Multi-cloud deployment
-│
-└── diagrams/                      # Architecture diagrams
-    ├── *.mmd                      # Mermaid sources (standardized theme)
-    └── images/*.svg               # Generated SVG images
+=== Docker Setup
+```bash
+docker run -d \
+  -p 5678:5678 \
+  -p 5679:5679 \
+  -v proximadb_data:/data \
+  proximadb/proximadb:latest
 ```
 
-== Next Steps
+=== Python Client
+```python
+from proximadb import ProximaDBClient
 
-[cols="1,1,1", frame=none, grid=none]
-|===
-| **Try It**
-link:user/getting_started.adoc[Start Here →]
+client = ProximaDBClient("http://localhost:5678")
+client.create_collection("my_vectors", dimension=384)
+client.insert_vectors("my_vectors", vectors)
+results = client.search("my_vectors", query_vector, top_k=10)
+```
 
-| **Learn More**
-link:developer/architecture.adoc[Architecture →]
+== Resources
 
-| **Get Help**
-link:https://github.com/vjsingh1984/proximadb/issues[GitHub Issues →]
-|===
+* link:https://github.com/vjsingh1984/proximadb[GitHub Repository]
+* link:enterprise_features.adoc[Version Roadmap]
+* link:DOCUMENTATION_MAP.adoc[Documentation Map]
 
 ---
-
-**Version**: 1.0.0 | **Updated**: 2025-08-08 | **License**: Apache 2.0
+**Version 1.0.0** | **Apache 2.0 License**

@@ -6,8 +6,8 @@ use proximadb::storage::traits::{UnifiedStorageEngine, FlushParameters};
 use proximadb::core::VectorRecord;
 use proximadb::core::search::{FilterExpression, ComparisonOperator};
 use proximadb::proto::proximadb::MetadataItem;
-use proximadb::compute::distance::DistanceMetric;
-use proximadb::compute::distance_computation::{UnifiedDistanceCompute, HardwareBackend};
+use proximadb::compute::distance_computation::DistanceMetric;
+use proximadb::compute::distance_computation::engine::UnifiedDistanceCompute;
 use std::sync::Arc;
 use tempfile::TempDir;
 
@@ -75,7 +75,7 @@ async fn test_lsm_basic_operations() {
     }
     
     // Create distance compute for SST storage
-    let distance_compute = Arc::new(UnifiedDistanceCompute::new(proximadb::compute::distance::DistanceMetric::Cosine));
+    let distance_compute = Arc::new(UnifiedDistanceCompute::new(DistanceMetric::Cosine));
     
     // Create SST storage
     let engine = SstStorage::new(
@@ -287,7 +287,7 @@ async fn test_lsm_compaction() {
     let test_assignment = setup_storage_assignment(collection_id, base_path.to_str().unwrap()).await.unwrap();
     println!("DEBUG: Using assignment: {}", test_assignment.data_url);
     
-    let distance_compute = Arc::new(UnifiedDistanceCompute::new(proximadb::compute::distance::DistanceMetric::Cosine));
+    let distance_compute = Arc::new(UnifiedDistanceCompute::new(DistanceMetric::Cosine));
     let engine = SstStorage::new(
         sst_config.clone(),
         filesystem.clone(),
@@ -372,7 +372,7 @@ async fn test_lsm_recovery() {
         let fs_config = create_test_filesystem_config();
         let filesystem = Arc::new(FilesystemFactory::new(fs_config).await.unwrap());
         
-        let distance_compute = Arc::new(UnifiedDistanceCompute::new(proximadb::compute::distance::DistanceMetric::Cosine));
+        let distance_compute = Arc::new(UnifiedDistanceCompute::new(DistanceMetric::Cosine));
         let engine = SstStorage::new(
             sst_config,
             filesystem.clone(),
@@ -428,7 +428,7 @@ async fn test_lsm_recovery() {
         let fs_config = create_test_filesystem_config();
         let filesystem = Arc::new(FilesystemFactory::new(fs_config).await.unwrap());
         
-        let distance_compute = Arc::new(UnifiedDistanceCompute::new(proximadb::compute::distance::DistanceMetric::Cosine));
+        let distance_compute = Arc::new(UnifiedDistanceCompute::new(DistanceMetric::Cosine));
         let engine = SstStorage::new(
             sst_config,
             filesystem.clone(),

@@ -61,7 +61,7 @@ pub mod filestore_path_test;
 pub mod unified_search_integration;
 
 // Write Buffer optimization integration tests - NEW optimized Write Buffer writer
-pub mod write_ahead_log_optimization_integration_test;
+// pub mod write_ahead_log_optimization_integration_test; // File doesn't exist
 
 // VIPER engine integration tests
 pub mod viper;

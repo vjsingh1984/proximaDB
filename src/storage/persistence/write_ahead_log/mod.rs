@@ -19,7 +19,10 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tracing::{debug, info};
 
+use crate::core::bloom::BloomFilterStrategy;
+
 use crate::compute::distance_computation::engine::{DistanceComputeProvider, UnifiedDistanceCompute};
+use crate::compute::distance_computation::DistanceMetric;
 use crate::core::{String, VectorId, VectorRecord};
 use crate::storage::traits::{UnifiedStorageEngine, FlushResult};
 use crate::storage::memtable::specialized::wal_behavior::WALVectorBatch;
@@ -1381,6 +1384,355 @@ impl WriteAheadLogManager {
         distance_metric: Option<crate::compute::distance_computation::DistanceMetric>,
     ) -> Result<Vec<(VectorId, f32, VectorRecord)>> {
         self.strategy.search_vectors_similarity(collection_id, query_vector, k, distance_metric).await
+    }
+    /// Enhanced search with bloom filter optimization for WAL/memtable data
+    /// This is the PREFERRED method for searching unflushed vectors with metadata filtering
+    pub async fn search_unflushed_vectors(
+        &self,
+        collection_id: &str,
+        query_vector: &[f32],
+        top_k: usize,
+        distance_metric: DistanceMetric,
+        metadata_filters: Option<&crate::core::search::FilterExpression>,
+        include_vectors: bool,
+        include_metadata: bool,
+    ) -> Result<Vec<crate::core::search::SearchResult>> {
+        use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
+        use crate::core::search::SearchResult;
+        
+        tracing::debug!(
+            "🔍 WAL: Enhanced search for collection {} with top_k={}, metric={:?}, filters={}",
+            collection_id, top_k, distance_metric, metadata_filters.is_some()
+        );
+        
+        // Step 1: Get unflushed batches through strategy (which accesses global memtable)
+        let batches = if let Some(wal_behavior) = self.strategy.get_wal_behavior() {
+            wal_behavior.get_unflushed_batches(collection_id)
+                .await
+                .context("Failed to get unflushed batches from strategy WAL behavior")?
+        } else {
+            tracing::debug!("No WAL behavior available for collection {}", collection_id);
+            return Ok(vec![]);
+        };
+        
+        if batches.is_empty() {
+            tracing::debug!("No unflushed batches found for collection {}", collection_id);
+            return Ok(vec![]);
+        }
+        
+        // Step 2: Apply bloom filter optimization if metadata filters exist
+        let filtered_batches = if let Some(filter_expr) = metadata_filters {
+            self.filter_batches_with_bloom(batches, filter_expr).await?
+        } else {
+            batches
+        };
+        
+        if filtered_batches.is_empty() {
+            tracing::debug!("No batches passed bloom filter for collection {}", collection_id);
+            return Ok(vec![]);
+        }
+        
+        let batch_count = filtered_batches.len();
+        tracing::debug!("Found {} batches to search (after bloom filtering)", batch_count);
+        
+        // Step 3: Create distance calculator once for efficiency
+        let distance_calculator = UnifiedDistanceCompute::new(distance_metric.clone());
+        
+        // Step 4: Search through filtered batches
+        let mut all_results = Vec::new();
+        
+        for batch in filtered_batches {
+            for vector_record in batch.vector_records.iter() {
+                // Apply fine-grained metadata filter if specified
+                if let Some(filter_expr) = metadata_filters {
+                    if !self.evaluate_filter_on_record(vector_record, filter_expr) {
+                        continue;
+                    }
+                }
+                
+                // Calculate distance
+                let similarity_result = distance_calculator.calculate_distance(
+                    query_vector,
+                    &vector_record.vector,
+                    &distance_metric,
+                );
+                
+                // Create search result
+                let search_result = SearchResult {
+                    id: vector_record.id.clone().unwrap_or_default(),
+                    vector_id: vector_record.id.clone(),
+                    score: similarity_result.normalized_score,
+                    distance: Some(similarity_result.raw_value),
+                    rank: None, // Will be set after sorting
+                    vector: if include_vectors { 
+                        Some(vector_record.vector.clone()) 
+                    } else { 
+                        None 
+                    },
+                    metadata: if include_metadata {
+                        self.convert_proto_metadata_to_hashmap(&vector_record.metadata)
+                    } else {
+                        std::collections::HashMap::new()
+                    },
+                    debug_info: None,
+                    semantic_distance: None,
+                    quantization_info: None,
+                    engine_stats: None,
+                    index_path: None,
+                    created_at: Some(chrono::DateTime::from_timestamp(
+                        vector_record.timestamp as i64, 0
+                    ).unwrap_or_else(chrono::Utc::now)),
+                    version: vector_record.version,
+                    timestamp: Some(vector_record.timestamp),
+                };
+                
+                all_results.push(search_result);
+            }
+        }
+        
+        // Step 5: Sort by score and take top k
+        all_results.sort_by(|a, b| {
+            b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal)
+        });
+        all_results.truncate(top_k);
+        
+        // Set ranks
+        for (i, result) in all_results.iter_mut().enumerate() {
+            result.rank = Some((i + 1) as u16);
+        }
+        
+        tracing::info!(
+            "✅ WAL search completed: {} results from {} batches with bloom filter optimization",
+            all_results.len(),
+            batch_count
+        );
+        
+        Ok(all_results)
+    }
+    
+    /// Filter batches using bloom filters for metadata efficiency
+    async fn filter_batches_with_bloom(
+        &self,
+        batches: Vec<crate::storage::memtable::specialized::wal_behavior::WALVectorBatch>,
+        metadata_filters: &crate::core::search::FilterExpression,
+    ) -> Result<Vec<crate::storage::memtable::specialized::wal_behavior::WALVectorBatch>> {
+        use crate::core::search::{FilterExpression, ComparisonOperator};
+        
+        let mut filtered_batches = Vec::new();
+        let mut bloom_hits = 0;
+        let mut bloom_misses = 0;
+        
+        // Extract field/value pairs from filter expression for bloom filter checking
+        let filter_conditions = self.extract_filter_conditions(metadata_filters);
+        
+        for batch in batches {
+            let mut should_include = true;
+            
+            // Check bloom filter if available
+            if let Some(ref bloom_filter) = batch.metadata_bloom_filter {
+                // Check each filter condition against bloom filter
+                for (field, value) in &filter_conditions {
+                    // Use bloom filter's might_contain method
+                    if !bloom_filter.might_contain(format!("{}:{}", field, value).as_bytes()) {
+                        should_include = false;
+                        bloom_misses += 1;
+                        break;
+                    }
+                }
+                
+                if should_include {
+                    bloom_hits += 1;
+                    filtered_batches.push(batch);
+                }
+            } else {
+                // No bloom filter, must check manually - include for detailed checking
+                filtered_batches.push(batch);
+            }
+        }
+        
+        tracing::debug!(
+            "🌸 Bloom filter optimization: {} hits, {} misses ({:.1}% filtered)",
+            bloom_hits,
+            bloom_misses,
+            if bloom_hits + bloom_misses > 0 { 
+                (bloom_misses as f64 / (bloom_hits + bloom_misses) as f64) * 100.0 
+            } else { 0.0 }
+        );
+        
+        Ok(filtered_batches)
+    }
+    
+    /// Extract field/value pairs from FilterExpression for bloom filter checking
+    fn extract_filter_conditions(
+        &self,
+        filter: &crate::core::search::FilterExpression,
+    ) -> Vec<(String, String)> {
+        use crate::core::search::{FilterExpression, ComparisonOperator};
+        let mut conditions = Vec::new();
+        
+        match filter {
+            FilterExpression::Comparison { field, operator, value } => {
+                // Only include certain operators that work well with bloom filters
+                match operator {
+                    ComparisonOperator::Equals 
+                    | ComparisonOperator::Contains 
+                    | ComparisonOperator::StartsWith 
+                    | ComparisonOperator::EndsWith => {
+                        if let Some(str_value) = value.as_str() {
+                            conditions.push((field.clone(), str_value.to_string()));
+                        }
+                    }
+                    _ => {
+                        // For other operators (>, <, etc.), we still include the field
+                        // The bloom filter will help eliminate batches that don't have the field at all
+                        if let Some(str_value) = value.as_str() {
+                            conditions.push((field.clone(), str_value.to_string()));
+                        }
+                    }
+                }
+            }
+            FilterExpression::And(exprs) => {
+                for expr in exprs {
+                    conditions.extend(self.extract_filter_conditions(expr));
+                }
+            }
+            FilterExpression::Or(exprs) => {
+                // For OR, we include all conditions (bloom filter will be more permissive)
+                for expr in exprs {
+                    conditions.extend(self.extract_filter_conditions(expr));
+                }
+            }
+            FilterExpression::Not(_) => {
+                // Bloom filters don't help with NOT operations, skip optimization
+            }
+        }
+        
+        conditions
+    }
+    
+    /// Evaluate filter expression on a vector record with proper enum handling
+    fn evaluate_filter_on_record(
+        &self,
+        record: &crate::proto::proximadb::VectorRecord,
+        filter: &crate::core::search::FilterExpression,
+    ) -> bool {
+        use crate::core::search::{FilterExpression, ComparisonOperator};
+        
+        match filter {
+            FilterExpression::Comparison { field, operator, value } => {
+                // Find the metadata field in the record
+                for metadata in &record.metadata {
+                    if metadata.key == *field {
+                        // Get the metadata value as string for comparison
+                        let metadata_value = metadata.value.as_ref()
+                            .map(|v| match v {
+                                crate::proto::proximadb::metadata_item::Value::StringValue(s) => s.clone(),
+                                crate::proto::proximadb::metadata_item::Value::NumberValue(n) => n.to_string(),
+                                crate::proto::proximadb::metadata_item::Value::BoolValue(b) => b.to_string(),
+                            })
+                            .unwrap_or_default();
+                        
+                        // Compare based on operator
+                        return self.compare_values(&metadata_value, operator, value);
+                    }
+                }
+                // Field not found, consider it a non-match
+                false
+            }
+            FilterExpression::And(exprs) => {
+                exprs.iter().all(|e| self.evaluate_filter_on_record(record, e))
+            }
+            FilterExpression::Or(exprs) => {
+                exprs.iter().any(|e| self.evaluate_filter_on_record(record, e))
+            }
+            FilterExpression::Not(expr) => {
+                !self.evaluate_filter_on_record(record, expr)
+            }
+        }
+    }
+    
+    /// Compare values based on operator
+    fn compare_values(
+        &self,
+        left: &str,
+        operator: &crate::core::search::ComparisonOperator,
+        right: &serde_json::Value,
+    ) -> bool {
+        use crate::core::search::ComparisonOperator;
+        
+        match operator {
+            ComparisonOperator::Equals => {
+                left == right.as_str().unwrap_or("")
+            }
+            ComparisonOperator::NotEquals => {
+                left != right.as_str().unwrap_or("")
+            }
+            ComparisonOperator::GreaterThan => {
+                if let (Ok(left_num), Some(right_num)) = (left.parse::<f64>(), right.as_f64()) {
+                    left_num > right_num
+                } else {
+                    false
+                }
+            }
+            ComparisonOperator::GreaterThanOrEqual => {
+                if let (Ok(left_num), Some(right_num)) = (left.parse::<f64>(), right.as_f64()) {
+                    left_num >= right_num
+                } else {
+                    false
+                }
+            }
+            ComparisonOperator::LessThan => {
+                if let (Ok(left_num), Some(right_num)) = (left.parse::<f64>(), right.as_f64()) {
+                    left_num < right_num
+                } else {
+                    false
+                }
+            }
+            ComparisonOperator::LessThanOrEqual => {
+                if let (Ok(left_num), Some(right_num)) = (left.parse::<f64>(), right.as_f64()) {
+                    left_num <= right_num
+                } else {
+                    false
+                }
+            }
+            ComparisonOperator::Contains => {
+                left.contains(right.as_str().unwrap_or(""))
+            }
+            ComparisonOperator::StartsWith => {
+                left.starts_with(right.as_str().unwrap_or(""))
+            }
+            ComparisonOperator::EndsWith => {
+                left.ends_with(right.as_str().unwrap_or(""))
+            }
+            _ => false, // Other operators not implemented yet
+        }
+    }
+    
+    /// Convert proto metadata to HashMap for SearchResult
+    fn convert_proto_metadata_to_hashmap(
+        &self,
+        metadata: &[crate::proto::proximadb::MetadataItem],
+    ) -> std::collections::HashMap<String, serde_json::Value> {
+        metadata
+            .iter()
+            .filter_map(|item| {
+                let value = item.value.as_ref().map(|v| match v {
+                    crate::proto::proximadb::metadata_item::Value::StringValue(s) => {
+                        serde_json::Value::String(s.clone())
+                    }
+                    crate::proto::proximadb::metadata_item::Value::NumberValue(n) => {
+                        serde_json::Number::from_f64(*n)
+                            .map(serde_json::Value::Number)
+                            .unwrap_or(serde_json::Value::Null)
+                    }
+                    crate::proto::proximadb::metadata_item::Value::BoolValue(b) => {
+                        serde_json::Value::Bool(*b)
+                    }
+                })?;
+                
+                Some((item.key.clone(), value))
+            })
+            .collect()
     }
 
     /// Get all vectors for a collection (modern API)

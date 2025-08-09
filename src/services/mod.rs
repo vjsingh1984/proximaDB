@@ -20,7 +20,8 @@ mod vector_operations_service_tests;
 
 #[cfg(test)]
 pub mod tests {
-    // Test modules will be added here as needed
+    pub mod search_orchestration_tests;
+    pub mod wal_bloom_integration_tests;
 }
 
 pub use collection_service::CollectionService;

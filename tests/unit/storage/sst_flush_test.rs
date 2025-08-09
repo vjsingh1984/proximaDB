@@ -7,7 +7,8 @@ use proximadb::storage::engines::sst::SstStorage;
 use proximadb::storage::persistence::filesystem::FilesystemFactory;
 use proximadb::storage::traits::{FlushParameters, UnifiedStorageEngine};
 use proximadb::core::VectorRecord;
-use proximadb::compute::distance_computation::{UnifiedDistanceCompute, HardwareBackend};
+use proximadb::compute::distance_computation::engine::UnifiedDistanceCompute;
+use proximadb::compute::distance_computation::DistanceMetric;
 use std::sync::Arc;
 use tempfile::TempDir;
 
@@ -59,7 +60,7 @@ async fn test_lsm_do_flush_with_bloom_filter() {
     // Clean up any existing SSTable files from previous test runs
     cleanup_sstable_files(collection_id).await.unwrap();
     
-    let distance_compute = Arc::new(UnifiedDistanceCompute::new(proximadb::compute::distance::DistanceMetric::Cosine));
+    let distance_compute = Arc::new(UnifiedDistanceCompute::new(DistanceMetric::Cosine));
     let lsm_engine = SstStorage::new(
         sst_config.clone(),
         filesystem.clone(),
@@ -198,7 +199,7 @@ async fn test_lsm_do_flush_with_bloom_filter() {
         collection_id,
         &query,
         5,
-        &proximadb::compute::distance::DistanceMetric::Cosine,
+        &DistanceMetric::Cosine,
         None,
         true,
         true,
@@ -223,7 +224,7 @@ async fn test_lsm_do_flush_with_bloom_filter() {
         collection_id,
         &query,
         5,
-        &proximadb::compute::distance::DistanceMetric::Cosine,
+        &DistanceMetric::Cosine,
         Some(&filter),
         true,
         true,

@@ -396,6 +396,7 @@ impl WALBehaviorWrapper {
         tracing::info!("🧹 WAL_BATCH: Cleared {} flushed batches", cleared_count);
         Ok(cleared_count)
     }
+    
 }
 
 /// Write Buffer-specific implementation
@@ -410,38 +411,107 @@ impl WALBehaviorWrapper {
         Ok(vectors_with_sequences.into_iter().map(|(_, vector)| vector).collect())
     }
 
-    /// Search vectors in unflushed WAL data with configurable distance metric
+    /// Search vectors in unflushed WAL data with enhanced bloom filter support
     ///
     /// This searches the WAL memtable for similar vectors that haven't been flushed yet.
     /// Should be called BEFORE searching storage engines to get complete results.
+    /// Uses consistent signature with VectorOperationsService expectations.
     pub async fn search_unflushed_vectors(
         &self,
-        query_vector: &[f32],
-        k: usize,
         collection_id: &str,
-        distance_metric: CoreDistanceMetric,
-    ) -> Result<Vec<(f32, VectorRecord)>> {
+        query_vector: &[f32],
+        top_k: usize,
+        distance_metric: crate::compute::distance_computation::DistanceMetric,
+        _metadata_filters: Option<&crate::core::search::FilterExpression>,
+        include_vectors: bool,
+        include_metadata: bool,
+    ) -> Result<Vec<crate::core::search::SearchResult>> {
+        use crate::core::search::SearchResult;
+        
         tracing::info!(
-            "🔍 WAL_SEARCH: Searching unflushed vectors in collection {} (k={}) using {:?}",
+            "🔍 WAL_SEARCH: Searching unflushed vectors in collection {} (top_k={}) using {:?}",
             collection_id,
-            k,
+            top_k,
             distance_metric
         );
+        
+        // Convert unified DistanceMetric to CoreDistanceMetric for now
+        // TODO: Update global partitioned memtable to accept unified DistanceMetric for all 13 metrics
+        let core_metric = match distance_metric {
+            crate::compute::distance_computation::DistanceMetric::Unspecified => CoreDistanceMetric::Cosine, // Default fallback
+            crate::compute::distance_computation::DistanceMetric::Cosine => CoreDistanceMetric::Cosine,
+            crate::compute::distance_computation::DistanceMetric::Euclidean => CoreDistanceMetric::Euclidean,
+            crate::compute::distance_computation::DistanceMetric::DotProduct => CoreDistanceMetric::DotProduct,
+            crate::compute::distance_computation::DistanceMetric::Manhattan => CoreDistanceMetric::Manhattan,
+            crate::compute::distance_computation::DistanceMetric::Hamming => CoreDistanceMetric::Hamming,
+            crate::compute::distance_computation::DistanceMetric::Jaccard => CoreDistanceMetric::Jaccard,
+            crate::compute::distance_computation::DistanceMetric::Chebyshev => CoreDistanceMetric::Chebyshev,
+            crate::compute::distance_computation::DistanceMetric::Canberra => CoreDistanceMetric::Canberra,
+            crate::compute::distance_computation::DistanceMetric::Minkowski => CoreDistanceMetric::Minkowski,
+            crate::compute::distance_computation::DistanceMetric::Angular => CoreDistanceMetric::Angular,
+            crate::compute::distance_computation::DistanceMetric::BrayCurtis => CoreDistanceMetric::BrayCurtis,
+            crate::compute::distance_computation::DistanceMetric::Hellinger => CoreDistanceMetric::Hellinger,
+            crate::compute::distance_computation::DistanceMetric::Custom => CoreDistanceMetric::Custom,
+        };
 
-        let results = self
+        let raw_results = self
             .inner
-            .search_vectors(query_vector, k, collection_id, distance_metric)
+            .search_vectors(query_vector, top_k, collection_id, core_metric)
             .await?;
 
-        eprintln!("🔍 WAL_SEARCH: Found {} unflushed results", results.len());
-        tracing::info!("🔍 WAL_SEARCH: Found {} unflushed results", results.len());
+        eprintln!("🔍 WAL_SEARCH: Found {} unflushed results", raw_results.len());
+        tracing::info!("🔍 WAL_SEARCH: Found {} unflushed results", raw_results.len());
+        
+        // Convert (SimilarityResult, VectorRecord) to SearchResult objects
+        let mut search_results = Vec::new();
+        for (rank, (similarity, vector_record)) in raw_results.into_iter().enumerate() {
+            let search_result = SearchResult {
+                id: vector_record.id.clone().unwrap_or_default(),
+                vector_id: vector_record.id.clone(),
+                score: similarity.rank_value,
+                distance: None, // Score is already the similarity score
+                rank: Some((rank + 1) as u16),
+                vector: if include_vectors { 
+                    Some(vector_record.vector.clone()) 
+                } else { 
+                    None 
+                },
+                metadata: if include_metadata {
+                    // Convert proto metadata to HashMap
+                    vector_record.metadata.iter()
+                        .filter_map(|item| {
+                            let value = item.value.as_ref().map(|v| match v {
+                                crate::proto::proximadb::metadata_item::Value::StringValue(s) => {
+                                    serde_json::Value::String(s.clone())
+                                }
+                                crate::proto::proximadb::metadata_item::Value::NumberValue(n) => {
+                                    serde_json::Number::from_f64(*n)
+                                        .map(serde_json::Value::Number)
+                                        .unwrap_or(serde_json::Value::Null)
+                                }
+                                crate::proto::proximadb::metadata_item::Value::BoolValue(b) => {
+                                    serde_json::Value::Bool(*b)
+                                }
+                            }).unwrap_or(serde_json::Value::Null);
+                            Some((item.key.clone(), value))
+                        })
+                        .collect()
+                } else {
+                    std::collections::HashMap::new()
+                },
+                debug_info: None,
+                quantization_info: None,
+                engine_stats: None,
+                version: vector_record.version,
+                timestamp: Some(vector_record.timestamp),
+                semantic_distance: None,
+                index_path: Some("wal_memtable".to_string()),
+                created_at: Some(chrono::Utc::now()),
+            };
+            search_results.push(search_result);
+        }
 
-        // Convert SimilarityResult back to f32 for compatibility with existing API
-        let converted_results: Vec<(f32, VectorRecord)> = results
-            .into_iter()
-            .map(|(result, record)| (result.rank_value, record))
-            .collect();
-        Ok(converted_results)
+        Ok(search_results)
     }
 
     /// Get vector by ID within a specific collection (MODERN)

@@ -1,0 +1,181 @@
+%%{init: {'theme':'neutral', 'themeVariables': {'primaryColor':'#2E86AB','primaryTextColor':'#1A1A1A','primaryBorderColor':'#2E86AB','lineColor':'#5C6B73','secondaryColor':'#A23B72','tertiaryColor':'#F18F01','background':'#FFFFFF','mainBkg':'#F7F7F7','textColor':'#1A1A1A'}}}%%
+classDiagram
+    %% Core Services
+    class VectorOperationsService {
+        -collection_service: Arc~CollectionService~
+        -engine_factory: Arc~StorageEngineFactory~
+        -hardware_caps: Arc~HardwareCapabilities~
+        +insert_vectors(collection_id, vectors) Result
+        +search_vectors(collection_id, query) Result
+        +update_vector(collection_id, vector_id, vector) Result
+        +delete_vector(collection_id, vector_id) Result
+        +get_vector(collection_id, vector_id) Result
+    }
+
+    class CollectionService {
+        -collections: DashMap~String, Collection~
+        -storage_assignments: DashMap~String, StorageAssignment~
+        +create_collection(config) Result~Collection~
+        +get_collection(id) Option~Collection~
+        +delete_collection(id) Result
+        +list_collections() Vec~Collection~
+        +update_compression(id, config) Result
+    }
+
+    %% Storage Engines
+    class StorageEngine {
+        <<interface>>
+        +insert(vectors) Result
+        +search(query, k) Result~Vec~
+        +update(id, vector) Result
+        +delete(id) Result
+        +get(id) Option~VectorRecord~
+        +flush() Result
+    }
+
+    class ViperEngine {
+        -memtable: Arc~Memtable~
+        -sstables: Vec~SSTable~
+        -compression: CompressionConfig
+        +insert(vectors) Result
+        +search(query, k) Result~Vec~
+        +flush_to_parquet() Result
+        +compact() Result
+    }
+
+    class SSTEngine {
+        -memtable: Arc~Memtable~
+        -sstables: Vec~SSTable~
+        -bloom_filters: Vec~BloomFilter~
+        +insert(vectors) Result
+        +search(query, k) Result~Vec~
+        +flush_to_sst() Result
+        +merge_sstables() Result
+    }
+
+    %% Index Structures
+    class IndexAlgorithm {
+        <<interface>>
+        +build(vectors) Result
+        +search(query, k) Result~Vec~
+        +add(vector) Result
+        +remove(id) Result
+        +optimize() Result
+    }
+
+    class HNSWIndex {
+        -graph: Vec~Vec~usize~~
+        -levels: Vec~usize~
+        -entry_point: usize
+        +build(vectors) Result
+        +search(query, k) Result~Vec~
+        +insert_node(vector) Result
+    }
+
+    class IVFIndex {
+        -centroids: Vec~Vector~
+        -inverted_lists: Vec~PostingList~
+        -quantizer: Option~Quantizer~
+        +train(vectors) Result
+        +search(query, k, nprobe) Result~Vec~
+        +add_to_cluster(vector, cluster_id) Result
+    }
+
+    class LSHIndex {
+        -hash_tables: Vec~HashTable~
+        -hash_functions: Vec~HashFunction~
+        +build(vectors) Result
+        +search(query, k) Result~Vec~
+        +hash_vector(vector) Vec~u64~
+    }
+
+    %% Hardware Acceleration
+    class HardwareCapabilities {
+        -cpu_info: CpuInfo
+        -gpu_info: Option~GpuInfo~
+        -simd_support: SimdSupport
+        +has_avx512() bool
+        +has_gpu() bool
+        +should_use_gpu(size) bool
+        +preferred_backend() ComputeBackend
+    }
+
+    class DistanceEngine {
+        -backend: ComputeBackend
+        -gpu_context: Option~GpuContext~
+        +compute_distance(a, b, metric) f32
+        +batch_distance(vectors, query, metric) Vec~f32~
+        +simd_distance(a, b) f32
+        +gpu_distance(a, b) f32
+    }
+
+    %% Cache System
+    class CrossCacheOrchestrator {
+        -vector_cache: Arc~VectorStore~
+        -query_cache: Arc~QueryCache~
+        -filter_cache: Arc~BitmapFilterCache~
+        -pattern_tracker: Arc~AccessPatternTracker~
+        -memory_allocator: Arc~DynamicMemoryAllocator~
+        +on_vector_access(id) Result
+        +on_query_execution(query) Result
+        +orchestrate_cascade_invalidation(key) Result
+        +reallocate_memory_tiers() Result
+    }
+
+    class AccessPatternTracker {
+        -access_history: Mutex~VecDeque~
+        -correlation_matrix: DashMap~String, Vec~
+        -event_sender: mpsc::Sender
+        +track_access_async(key, type)
+        +get_predicted_accesses(key, limit) Vec
+        +is_frequently_accessed(key, threshold) bool
+    }
+
+    %% Quantization & Compression
+    class CompressionConfig {
+        +algorithm: CompressionAlgorithm
+        +level: i32
+        +enable_quantization: bool
+        +quantization_type: String
+        +normalization: String
+    }
+
+    class Quantizer {
+        +quantize_int8(vectors) Result~Vec~
+        +quantize_pq8(vectors, centroids) Result~Vec~
+        +quantize_pq4(vectors, centroids) Result~Vec~
+        +dequantize(quantized, type) Result~Vec~
+    }
+
+    %% Relationships
+    VectorOperationsService --> CollectionService : uses
+    VectorOperationsService --> StorageEngine : creates
+    VectorOperationsService --> HardwareCapabilities : queries
+    
+    StorageEngine <|-- ViperEngine : implements
+    StorageEngine <|-- SSTEngine : implements
+    
+    ViperEngine --> CompressionConfig : uses
+    SSTEngine --> CompressionConfig : uses
+    
+    IndexAlgorithm <|-- HNSWIndex : implements
+    IndexAlgorithm <|-- IVFIndex : implements
+    IndexAlgorithm <|-- LSHIndex : implements
+    
+    IVFIndex --> Quantizer : uses
+    ViperEngine --> Quantizer : uses
+    
+    VectorOperationsService --> DistanceEngine : uses
+    DistanceEngine --> HardwareCapabilities : queries
+    
+    VectorOperationsService --> CrossCacheOrchestrator : uses
+    CrossCacheOrchestrator --> AccessPatternTracker : contains
+    
+    CollectionService --> CompressionConfig : manages
+
+    style VectorOperationsService fill:#E8F4F8,stroke:#2E86AB,stroke-width:2px
+    style CollectionService fill:#E8F4F8,stroke:#2E86AB,stroke-width:2px
+    style StorageEngine fill:#FFF5FA,stroke:#A23B72,stroke-width:2px
+    style IndexAlgorithm fill:#FFF8E7,stroke:#F18F01,stroke-width:2px
+    style HardwareCapabilities fill:#E7F5E7,stroke:#5C9E7F,stroke-width:2px
+    style CrossCacheOrchestrator fill:#F0E7FF,stroke:#8B7DC3,stroke-width:2px

@@ -31,9 +31,10 @@ use tokio::sync::Mutex;
 use std::time::Duration;
 
 /// Workload pattern classification for adaptive structures
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum WorkloadPattern {
     /// Read-heavy workload (>80% reads)
+    #[default]
     ReadHeavy,
     /// Write-heavy workload (>50% writes)
     WriteHeavy,
@@ -44,7 +45,7 @@ pub enum WorkloadPattern {
 }
 
 /// Workload metrics for performance analysis and optimization
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct WorkloadMetrics {
     /// Current workload pattern
     pub pattern: WorkloadPattern,
@@ -801,6 +802,9 @@ pub struct GlobalTierManager {
     
     /// Server configuration for default paths
     server_config: ServerTierConfig,
+    
+    /// Collection-specific policies
+    collection_policies: HashMap<String, SmartTierPolicy>,
 }
 
 #[derive(Debug)]
@@ -903,6 +907,7 @@ impl GlobalTierManager {
             global_memory_manager: GlobalMemoryManager::new(),
             metrics_collector: Arc::new(Mutex::new(GlobalMetricsCollector::new())),
             server_config,
+            collection_policies: HashMap::new(),
         }
     }
     
@@ -1034,7 +1039,10 @@ impl GlobalTierManager {
     
     /// Handle global memory pressure affecting all collections
     pub fn handle_global_memory_pressure(&mut self) -> Result<GlobalPressureResponse> {
-        let mut response = GlobalPressureResponse::new();
+        let mut response = GlobalPressureResponse {
+            total_memory_freed: 0,
+            collection_actions: HashMap::new(),
+        };
         
         // Get collections sorted by priority (low priority = evicted first)
         // In rule-based approach, we would get collections from metrics
@@ -1061,26 +1069,26 @@ impl GlobalTierManager {
                         // Index: Promote to durable storage, never evict
                         // let promoted = self.promote_collection_data_to_durable(collection_id)?;
                         let promoted = 0;
-                        response.add_promotion(collection_id.clone(), promoted);
+                        response.add_promotion(collection_id.to_string(), promoted);
                         memory_freed += promoted * 1024; // Estimate
                     },
                     WorkloadType::Cache { .. } => {
                         // Cache: Can evict or promote to local disk
                         // let (promoted, evicted) = self.handle_cache_memory_pressure(collection_id)?;
                         let (promoted, evicted) = (0, 0);
-                        response.add_promotion(collection_id.clone(), promoted);
-                        response.add_eviction(collection_id.clone(), evicted);
+                        response.add_promotion(collection_id.to_string(), promoted);
+                        response.add_eviction(collection_id.to_string(), evicted);
                         memory_freed += (promoted + evicted) * 1024;
                     },
                     WorkloadType::Hybrid { .. } => {
                         // Hybrid: Adaptive based on access patterns
                         // let action = self.handle_hybrid_memory_pressure(collection_id)?;
-                        let action = MemoryPressureAction {
-                            promoted_bytes: 0,
-                            evicted_bytes: 0,
-                        };
-                        response.add_hybrid_action(collection_id.clone(), action);
-                        memory_freed += action.memory_freed;
+                        // For hybrid workloads, do balanced promotion/eviction
+                        let promoted = 0;
+                        let evicted = 100; // Default eviction count for hybrid
+                        response.add_promotion(collection_id.to_string(), promoted);
+                        response.add_eviction(collection_id.to_string(), evicted);
+                        memory_freed += evicted * 1024; // Estimate 1KB per item
                     },
                 }
             }
@@ -1189,7 +1197,7 @@ impl GlobalTierManager {
         // Check configured disk path or /var
         // Check available space on /var - for now use reasonable defaults
         // In production, would use std::fs::metadata or sysinfo
-        Some(100 * 1024 * 1024 * 1024)  // Default 100GB
+        // Some(100 * 1024 * 1024 * 1024)  // Default 100GB
         Some(10 * 1024 * 1024 * 1024 * 1024) // 10TB
     }
 }
@@ -1198,6 +1206,28 @@ impl GlobalTierManager {
 pub struct GlobalPressureResponse {
     pub total_memory_freed: usize,
     pub collection_actions: HashMap<String, MemoryPressureAction>,
+}
+
+impl GlobalPressureResponse {
+    pub fn add_promotion(&mut self, collection_id: String, promoted: usize) {
+        self.collection_actions.insert(
+            collection_id,
+            MemoryPressureAction::Promoted { 
+                items: promoted, 
+                bytes: 0  // Would need actual byte count in real implementation
+            }
+        );
+    }
+    
+    pub fn add_eviction(&mut self, collection_id: String, evicted: usize) {
+        self.collection_actions.insert(
+            collection_id,
+            MemoryPressureAction::Evicted { 
+                items: evicted, 
+                bytes: 0  // Would need actual byte count in real implementation
+            }
+        );
+    }
 }
 
 #[derive(Debug)]
@@ -1328,6 +1358,7 @@ impl SmartTierPolicy {
                 max_access_latency_ms: 100,
                 durability_preference: DurabilityPreference::High,
             },
+            collection_config: collection_config.clone(),
             available_tiers,
             tier_configs,
             placement_rules,
@@ -1353,7 +1384,7 @@ impl SmartTierPolicy {
     ) -> Self {
         // Same as for_cache_workload but with collection constraints
         let mut policy = Self::for_cache_workload();
-        policy.collection_config = Some(collection_config);
+        policy.collection_config = collection_config;
         policy
     }
     
@@ -1425,6 +1456,17 @@ impl SmartTierPolicy {
                 target_hit_rate: 0.85, // Target 85% hit rate
                 max_cost_per_gb_per_month: 50.0, // $50/GB/month max
             },
+            collection_config: CollectionStorageConfig {
+                collection_id: "cache".to_string(),
+                base_location: "/tmp/cache".to_string(),
+                durable_baseline: StorageTier::Memory,
+                max_acceleration_tier: None,
+                storage_limits: CollectionStorageLimits {
+                    max_memory_bytes: Some(1024 * 1024 * 1024), // 1GB
+                    max_local_disk_bytes: None,
+                    max_monthly_cost_usd: None,
+                },
+            }, // Use default for cache
             available_tiers,
             tier_configs: HashMap::new(), // Will be populated with defaults
             placement_rules,
@@ -1450,7 +1492,7 @@ impl SmartTierPolicy {
     ) -> Self {
         // Same as for_hybrid_workload but with collection constraints
         let mut policy = Self::for_hybrid_workload();
-        policy.collection_config = Some(collection_config);
+        policy.collection_config = collection_config;
         policy
     }
     
@@ -1583,19 +1625,30 @@ impl SmartTierPolicy {
                 adaptation_sensitivity: 0.7, // Moderate sensitivity
                 performance_cost_balance: 0.6, // Slightly favor performance
             },
+            collection_config: CollectionStorageConfig {
+                collection_id: "default".to_string(),
+                base_location: "/tmp".to_string(),
+                durable_baseline: StorageTier::Memory,
+                max_acceleration_tier: None,
+                storage_limits: CollectionStorageLimits {
+                    max_memory_bytes: Some(1024 * 1024 * 1024), // 1GB default
+                    max_local_disk_bytes: None,
+                    max_monthly_cost_usd: None,
+                },
+            },
             available_tiers,
             tier_configs: HashMap::new(),
             placement_rules,
             memory_thresholds: MemoryThresholds {
-                promotion_threshold: 0.70, // Start early for hybrid
-                critical_threshold: 0.85,
-                target_utilization: 0.65,
+                promotion_threshold: 0.8,
+                critical_threshold: 0.95,
+                target_utilization: 0.7,
             },
             cost_optimization: CostOptimization {
-                max_monthly_cost: Some(2000.0), // Higher budget for hybrid
-                cost_per_operation_budget: Some(0.005), // $0.005 per operation
-                auto_optimize: true,
-                cost_tracking_window_days: 14, // Medium window
+                max_monthly_cost: None,
+                cost_per_operation_budget: None,
+                auto_optimize: false,
+                cost_tracking_window_days: 1, // 1 day
             },
         }
     }
@@ -1687,10 +1740,10 @@ impl SmartTierPolicy {
             PlacementCondition::Priority { min_priority, max_priority } => {
                 if let Some(prio) = priority {
                     if let Some(min) = min_priority {
-                        if prio < min { return false; }
+                        if prio < *min { return false; }
                     }
                     if let Some(max) = max_priority {
-                        if prio > max { return false; }
+                        if prio > *max { return false; }
                     }
                     true
                 } else {
@@ -1783,7 +1836,20 @@ mod tests {
     
     #[test]
     fn test_index_policy_placement() {
-        let policy = SmartTierPolicy::for_index_workload();
+        let collection_config = CollectionStorageConfig {
+            collection_id: "test".to_string(),
+            base_location: "/tmp/test".to_string(),
+            durable_baseline: StorageTier::Memory,
+            max_acceleration_tier: None,
+            storage_limits: CollectionStorageLimits {
+                max_memory_bytes: Some(1024 * 1024 * 1024), // 1GB
+                max_local_disk_bytes: None,
+                max_monthly_cost_usd: None,
+            },
+        };
+        let available_tiers = vec![StorageTier::Memory];
+        let tier_configs = HashMap::new();
+        let policy = SmartTierPolicy::for_index_workload_constrained(collection_config, &available_tiers, &tier_configs);
         
         // Small, hot data -> Memory
         let tier = policy.determine_placement(

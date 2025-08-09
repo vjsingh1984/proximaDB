@@ -4,7 +4,8 @@ use proximadb::storage::engines::sst::SstStorage;
 use proximadb::storage::persistence::filesystem::FilesystemFactory;
 use proximadb::core::VectorRecord;
 use proximadb::proto::proximadb::MetadataItem;
-use proximadb::compute::distance_computation::{UnifiedDistanceCompute, HardwareBackend};
+use proximadb::compute::distance_computation::engine::UnifiedDistanceCompute;
+use proximadb::compute::distance_computation::DistanceMetric;
 use proximadb::storage::traits::{FlushParameters, UnifiedStorageEngine};
 use std::sync::Arc;
 
@@ -48,7 +49,7 @@ async fn test_lsm_atomic_flush_creates_staging_directory() {
     // Wait a bit to ensure any background operations complete
     tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
     
-    let distance_compute = Arc::new(UnifiedDistanceCompute::new(proximadb::compute::distance::DistanceMetric::Cosine));
+    let distance_compute = Arc::new(UnifiedDistanceCompute::new(DistanceMetric::Cosine));
     let lsm_tree = SstStorage::new(
         sst_config,
         filesystem.clone(),
@@ -178,7 +179,7 @@ async fn test_lsm_atomic_flush_rollback_on_failure() {
     // Setup storage assignment BEFORE creating SST storage
     let test_assignment = setup_storage_assignment(collection_id, base_path.to_str().unwrap()).await.unwrap();
     
-    let distance_compute = Arc::new(UnifiedDistanceCompute::new(proximadb::compute::distance::DistanceMetric::Cosine));
+    let distance_compute = Arc::new(UnifiedDistanceCompute::new(DistanceMetric::Cosine));
     let lsm_tree = SstStorage::new(
         sst_config,
         filesystem.clone(),
@@ -265,7 +266,7 @@ async fn test_lsm_atomic_compaction_with_staging() {
     // Setup storage assignment BEFORE creating SST storage
     let test_assignment = setup_storage_assignment(collection_id, base_path.to_str().unwrap()).await.unwrap();
     
-    let distance_compute = Arc::new(UnifiedDistanceCompute::new(proximadb::compute::distance::DistanceMetric::Cosine));
+    let distance_compute = Arc::new(UnifiedDistanceCompute::new(DistanceMetric::Cosine));
     let mut lsm_tree = SstStorage::new(
         sst_config,
         filesystem.clone(),
@@ -400,7 +401,7 @@ async fn test_lsm_sequential_flush_within_collection() {
     // Setup storage assignment BEFORE creating SST storage
     let test_assignment = setup_storage_assignment(collection_id, base_path.to_str().unwrap()).await.unwrap();
     
-    let distance_compute = Arc::new(UnifiedDistanceCompute::new(proximadb::compute::distance::DistanceMetric::Cosine));
+    let distance_compute = Arc::new(UnifiedDistanceCompute::new(DistanceMetric::Cosine));
     let lsm_tree = SstStorage::new(
         sst_config,
         filesystem.clone(),
@@ -480,7 +481,7 @@ async fn test_concurrent_flushes_across_collections() {
     let fs_config = create_test_filesystem_config();
     let filesystem = Arc::new(FilesystemFactory::new(fs_config).await.unwrap());
     let sst_config = create_test_sst_config(base_path.to_str().unwrap());
-    let distance_compute = Arc::new(UnifiedDistanceCompute::new(proximadb::compute::distance::DistanceMetric::Cosine));
+    let distance_compute = Arc::new(UnifiedDistanceCompute::new(DistanceMetric::Cosine));
     
     // Create multiple collections
     let mut handles = vec![];

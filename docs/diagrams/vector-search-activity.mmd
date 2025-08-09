@@ -1,0 +1,68 @@
+%%{init: {'theme':'neutral', 'themeVariables': {'primaryColor':'#2E86AB','primaryTextColor':'#1A1A1A','primaryBorderColor':'#2E86AB','lineColor':'#5C6B73','secondaryColor':'#A23B72','tertiaryColor':'#F18F01','background':'#FFFFFF','mainBkg':'#F7F7F7','textColor':'#1A1A1A'}}}%%
+flowchart TD
+    Start([Search Request]) --> Parse[Parse Query]
+    Parse --> Validate{Valid Query?}
+    
+    Validate -->|No| Error[Return Error]
+    Error --> End([End])
+    
+    Validate -->|Yes| CheckCache{Check Query Cache}
+    CheckCache -->|Hit| ReturnCached[Return Cached Results]
+    ReturnCached --> End
+    
+    CheckCache -->|Miss| GetCollection[Get Collection Metadata]
+    GetCollection --> CheckHardware[Check Hardware Capabilities]
+    
+    CheckHardware --> SelectBackend{Select Compute Backend}
+    SelectBackend -->|GPU Available| GPUPath[GPU Acceleration Path]
+    SelectBackend -->|SIMD Available| SIMDPath[SIMD Acceleration Path]
+    SelectBackend -->|CPU Only| CPUPath[CPU Path]
+    
+    GPUPath --> LoadToGPU[Load Vectors to GPU]
+    LoadToGPU --> GPUCompute[GPU Distance Computation]
+    
+    SIMDPath --> SIMDCompute[SIMD Distance Computation]
+    CPUPath --> CPUCompute[Scalar Distance Computation]
+    
+    GPUCompute --> SelectIndex{Select Index Type}
+    SIMDCompute --> SelectIndex
+    CPUCompute --> SelectIndex
+    
+    SelectIndex -->|HNSW| HNSWSearch[HNSW Graph Search]
+    SelectIndex -->|IVF| IVFSearch[IVF Cluster Search]
+    SelectIndex -->|LSH| LSHSearch[LSH Hash Search]
+    SelectIndex -->|Flat| FlatSearch[Brute Force Search]
+    
+    HNSWSearch --> TwoStage{Two-Stage Search?}
+    IVFSearch --> TwoStage
+    LSHSearch --> TwoStage
+    FlatSearch --> TwoStage
+    
+    TwoStage -->|Yes| Stage1[Stage 1: Quantized Search]
+    Stage1 --> GetCandidates[Get Top-K*10 Candidates]
+    GetCandidates --> Stage2[Stage 2: FP32 Reranking]
+    Stage2 --> ApplyFilters
+    
+    TwoStage -->|No| DirectSearch[Direct FP32 Search]
+    DirectSearch --> ApplyFilters
+    
+    ApplyFilters{Apply Metadata Filters?}
+    ApplyFilters -->|Yes| FilterResults[Filter by Metadata]
+    ApplyFilters -->|No| SortResults
+    
+    FilterResults --> SortResults[Sort by Distance]
+    SortResults --> LimitResults[Apply Top-K Limit]
+    
+    LimitResults --> CacheResults[Cache Results]
+    CacheResults --> UpdateMetrics[Update Metrics]
+    UpdateMetrics --> TrackAccess[Track Access Pattern]
+    TrackAccess --> ReturnResults[Return Results]
+    ReturnResults --> End
+
+    style Start fill:#E8F4F8,stroke:#2E86AB,stroke-width:3px
+    style End fill:#E8F4F8,stroke:#2E86AB,stroke-width:3px
+    style GPUPath fill:#E7F5E7,stroke:#5C9E7F,stroke-width:2px
+    style SIMDPath fill:#FFF8E7,stroke:#F18F01,stroke-width:2px
+    style CPUPath fill:#FFF5FA,stroke:#A23B72,stroke-width:2px
+    style Stage1 fill:#F0E7FF,stroke:#8B7DC3,stroke-width:2px
+    style Stage2 fill:#F0E7FF,stroke:#8B7DC3,stroke-width:2px

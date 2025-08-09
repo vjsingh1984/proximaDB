@@ -1,325 +1,186 @@
-= ProximaDB SDK-Driven Compression Guide
-:toc:
-:toc-placement: preamble
-:toclevels: 3
-:icons: font
-:source-highlighter: rouge
+= Compression Guide
+:toc: left
+:toclevels: 2
+
+**SDK-driven compression for optimal storage efficiency.**
 
 == Overview
 
-ProximaDB implements a sophisticated SDK-driven compression system that gives clients complete control over compression settings without any server-side defaults. This guide covers the compression architecture, configuration options, and best practices.
+ProximaDB compression is **100% SDK-controlled** - no server defaults. Configure compression per collection through the client SDK.
 
-== Key Features
+== Quick Start
 
-* **SDK-Driven Configuration**: All compression settings are controlled from the client SDK
-* **No Server Defaults**: Server never applies compression without explicit SDK configuration
-* **Storage Engine Specific**: Different compression strategies for SST and VIPER engines
-* **Compression-Aware Search**: Query planner optimizes based on compression status
-* **Decompression Cache**: LRU cache with automatic invalidation
-* **SST1 Format**: Clean, modern SSTable format with magic bytes
-
-== Architecture
-
-=== Compression Architecture
-
-image::diagrams/images/compression-architecture-consolidated.svg[Compression Architecture, align=center, width=800]
-
-The comprehensive compression architecture showing SDK-driven strategy with engine-specific optimizations:
-
-=== Key Components
-
-==== 1. SDK CompressionConfig
-Python model that encapsulates all compression settings:
-
-[source,python]
-----
-class CompressionConfig(BaseModel):
-    # Unified compression settings (proto-aligned)
-    algorithm: CompressionAlgorithm = CompressionAlgorithm.NONE
-    level: Optional[int] = None
-    
-    # Global settings
-    adaptive: bool = False
-    min_ratio: Optional[float] = None
-    
-    # VIPER-specific quantization (ignored by SST)
-    enable_quantization: bool = False
-    quantization_type: Optional[str] = None  # 'int8', 'pq8', 'pq4'
-    normalization_method: Optional[str] = None  # 'mean', 'trimmed_mean', 'median'
-    
-    # SST-specific block sizing (ignored by VIPER)
-    block_size_mb: Optional[int] = None
-    dynamic_block_sizing: bool = False
-----
-
-==== 2. UnifiedQueryPlanner
-Centralized query planning that considers compression:
-
-* Analyzes file metadata for compression status
-* Routes queries to optimal data format
-* Manages two-stage search for quantized data
-* Estimates decompression costs
-
-==== 3. Decompression Cache
-LRU cache for decompressed blocks:
-
-* Configurable size (default 512MB)
-* Automatic invalidation on data changes
-* Prefetching support for sequential access
-* Per-algorithm sub-caches for better locality
-
-==== 4. SST1 Format
-
-image::diagrams/images/sst1-format.svg[SST1 Format Structure, align=center, width=700]
-_link:diagrams/sst1-format.mmd[View source diagram]_
-
-Modern SSTable format with version identification:
-
-[source]
-----
-[SST1 Magic - 4 bytes]["SST1"]
-[Header Length - 4 bytes]
-[Header Data - variable]
-[Bloom Filter Length - 4 bytes]
-[Bloom Filter Data - variable]
-[Index Length - 4 bytes]
-[Index Data - variable]
-[Data Blocks - variable]
-----
-
-== Configuration Guide
-
-=== Engine-Specific Compression Examples
-
-==== SST Engine with Block Compression
-
+=== Basic Compression
 [source,python]
 ----
 from proximadb import ProximaDBClient
-from proximadb.models import (
-    CollectionConfig,
-    CompressionConfig,
-    CompressionAlgorithm,
-    StorageEngine
-)
+from proximadb.models import CompressionConfig
 
-client = ProximaDBClient()
+client = ProximaDBClient("http://localhost:5678")
 
-# SST collection with block compression
-sst_config = CollectionConfig(
-    name="sst_compressed",
+# Create collection with compression
+collection = client.create_collection(
+    name="compressed",
     dimension=1536,
-    storage_engine=StorageEngine.SST,
+    engine="viper",
     compression=CompressionConfig(
-        algorithm=CompressionAlgorithm.ZSTD,
-        level=6,                    # ZSTD compression level (1-22)
-        block_size_mb=16,          # SST block size (only applies to SST engine)
-        adaptive=True              # Enable adaptive compression
+        algorithm="zstd",
+        level=6
     )
 )
-
-collection = client.create_collection(sst_config)
 ----
 
-==== VIPER Engine with Dual Columns
+== Compression Options
 
+=== Algorithms
+[cols="1,1,1,1", options="header"]
+|===
+| Algorithm | Ratio | Speed | Use Case
+
+| **ZSTD**
+| 2-10x
+| Medium
+| Balanced (default)
+
+| **LZ4**
+| 1.5-3x
+| Fast
+| Low latency
+
+| **Snappy**
+| 1.5-2x
+| Very Fast
+| Real-time
+
+| **None**
+| 1x
+| Fastest
+| Maximum speed
+|===
+
+=== Compression Levels
+* **ZSTD**: 1-22 (default: 6)
+  - 1-3: Write-optimized
+  - 4-9: Balanced
+  - 10+: Storage-optimized
+* **LZ4**: 1-16 (default: 1)
+* **Snappy**: No levels
+
+== Engine-Specific Features
+
+=== SST Engine (Row-Based)
 [source,python]
 ----
-# VIPER collection with quantization
-viper_config = CollectionConfig(
-    name="viper_compressed", 
-    dimension=1536,
-    storage_engine=StorageEngine.VIPER,
-    compression=CompressionConfig(
-        algorithm=CompressionAlgorithm.LZ4,
-        level=1,                        # Fast compression
-        enable_quantization=True,       # VIPER dual columns (only applies to VIPER)
-        quantization_type="int8",       # INT8 quantization
-        normalization_method="mean"     # Normalization for quantized column
-    )
+# SST with block compression
+config = CompressionConfig(
+    algorithm="zstd",
+    level=6,
+    block_size_mb=16,      # SST-specific
+    dynamic_block_sizing=True
 )
-
-collection = client.create_collection(viper_config)
 ----
 
-=== Compression-Aware Search
+**Features**:
+* Block-level compression
+* Dynamic block sizing
+* Bloom filter optimization
+* Fast decompression
 
-Optimize searches with compression hints:
+=== VIPER Engine (Columnar)
+[source,python]
+----
+# VIPER with quantization
+config = CompressionConfig(
+    algorithm="lz4",
+    level=1,
+    enable_quantization=True,     # VIPER-specific
+    quantization_type="int8",     # or "pq8", "pq4"
+    normalization_method="mean"
+)
+----
 
+**Features**:
+* Column compression
+* Dual storage (FP32 + quantized)
+* 100% vector fidelity
+* Two-stage search
+
+== Quantization (VIPER Only)
+
+=== Types
+[cols="1,1,1,1", options="header"]
+|===
+| Type | Compression | Accuracy | Speed
+
+| **INT8**
+| 4:1
+| High
+| Fast
+
+| **PQ8**
+| 8-32:1
+| Medium
+| Medium
+
+| **PQ4**
+| 16-64:1
+| Lower
+| Slow
+|===
+
+=== Two-Stage Search
+1. **Stage 1**: Search quantized vectors (fast)
+2. **Stage 2**: Rerank with FP32 (accurate)
+3. **Result**: 2x speed, 100% accuracy
+
+== Advanced Configuration
+
+=== Adaptive Compression
+[source,python]
+----
+config = CompressionConfig(
+    algorithm="zstd",
+    level=6,
+    adaptive=True,         # Auto-adjust level
+    min_ratio=2.0         # Minimum compression ratio
+)
+----
+
+=== Search Optimization
 [source,python]
 ----
 from proximadb.models import SearchOptimization
 
-# Configure compression-aware search
+# Compression-aware search
 optimization = SearchOptimization(
-    enable_two_stage=True,              # Use quantized first pass
-    prefer_compressed_search=True,      # Prefer compressed data
-    decompression_budget_ms=100,        # Max decompression time
-    use_decompression_cache=True,       # Use cache (default)
-    compression_aware_routing=True      # Smart query routing
+    enable_two_stage=True,
+    prefer_compressed_search=True,
+    decompression_budget_ms=100,
+    use_decompression_cache=True
 )
 
 results = client.search_vectors(
-    collection_id="my_collection",
-    query_vector=query_vector,
-    top_k=10,
+    "compressed",
+    query_vector,
     search_optimization=optimization
 )
 ----
 
-== Compression Algorithms
+== Performance Impact
 
-=== Supported Algorithms
-
-[cols="2,3,2,2", options="header"]
-|===
-| Algorithm | Best For | Compression Ratio | Speed
-
-| **NONE**
-| Low-latency queries
-| 1:1
-| Fastest
-
-| **ZSTD**
-| Balanced performance
-| 2-10x
-| Moderate
-
-| **LZ4**
-| Fast compression
-| 1.5-3x
-| Fast
-
-| **SNAPPY**
-| Real-time systems
-| 1.5-2x
-| Very Fast
-|===
-
-=== Algorithm Selection Guide
-
-==== Choose ZSTD when:
-* Storage cost is a concern
-* Compression ratio is important
-* Can tolerate moderate CPU overhead
-* Using levels 3-6 for balance
-
-==== Choose LZ4 when:
-* Need fast compression/decompression
-* Real-time ingestion is critical
-* Moderate compression is acceptable
-
-==== Choose SNAPPY when:
-* Ultra-low latency is required
-* CPU resources are limited
-* Basic compression is sufficient
-
-==== Choose NONE when:
-* Maximum query performance needed
-* Storage is not a constraint
-* Data doesn't compress well
-
-== Best Practices
-
-=== 1. Data-Aware Configuration
-
-Different data types compress differently:
-
-[source,python]
-----
-# Sparse embeddings (high compressibility)
-sparse_config = CompressionConfig(
-    sst_compression_algorithm=CompressionAlgorithm.ZSTD,
-    sst_compression_level=9  # Maximum compression
-)
-
-# Dense random embeddings (low compressibility)
-dense_config = CompressionConfig(
-    sst_compression_algorithm=CompressionAlgorithm.LZ4,
-    sst_compression_level=1  # Fast, minimal compression
-)
-
-# Time-series embeddings (moderate compressibility)
-timeseries_config = CompressionConfig(
-    sst_compression_algorithm=CompressionAlgorithm.ZSTD,
-    sst_compression_level=3,  # Fast compression
-    adaptive_compression=True  # Adapt to patterns
-)
-----
-
-=== 2. Block Size Optimization
-
-Block size affects compression ratio and query performance:
-
-* **Small blocks (4-16KB)**: Better random access, lower compression
-* **Medium blocks (32-64KB)**: Balanced performance
-* **Large blocks (128KB+)**: Better compression, slower random access
-
-[source,python]
-----
-# For random access patterns
-random_access_config = CompressionConfig(
-    sst_block_size=8192  # 8KB blocks
-)
-
-# For sequential access patterns
-sequential_config = CompressionConfig(
-    sst_block_size=131072  # 128KB blocks
-)
-----
-
-=== 3. Cache Configuration
-
-Server-side cache configuration in TOML:
-
-[source,toml]
-----
-[storage.sst.decompression_cache]
-max_size_mb = 512                         # Cache size
-enable_prefetch = true                    # Prefetch related blocks
-prefetch_threshold = 3                    # Accesses before prefetch
-ttl_seconds = 0                          # No TTL (0 = disabled)
-invalidation_check_interval_seconds = 60  # Check interval
-----
-
-=== 4. Two-Stage Search Strategy
-
-image::diagrams/images/two-stage-search.svg[Two-Stage Search Architecture, align=center, width=800]
-_link:diagrams/two-stage-search.mmd[View source diagram]_
-
-For VIPER with dual columns:
-
-[source,python]
-----
-# Enable dual columns during collection creation
-compression_config = CompressionConfig(
-    viper_enable_dual_columns=True
-)
-
-# Use two-stage search
-optimization = SearchOptimization(
-    enable_two_stage=True,
-    accuracy_threshold=0.95  # Rerank if below threshold
-)
-----
-
-== Performance Considerations
-
-=== Compression Impact
-
-[cols="3,2,2,2", options="header"]
+[cols="2,1,1,1", options="header"]
 |===
 | Operation | No Compression | LZ4 | ZSTD-6
 
-| **Insert (vec/s)**
-| 10,000
-| 8,500
-| 6,000
+| **Insert Speed**
+| 10K vec/s
+| 8.5K vec/s
+| 6K vec/s
 
-| **Search (ms)**
-| 0.5
-| 0.7
-| 1.2
+| **Search Latency**
+| 0.5ms
+| 0.7ms
+| 1.2ms
 
 | **Storage Size**
 | 100GB
@@ -332,120 +193,66 @@ optimization = SearchOptimization(
 | 75%
 |===
 
-=== Memory Usage
+== Best Practices
 
-* Decompression cache: 512MB default
-* Working buffers: ~100MB per query
-* Dual columns: 2x vector storage
+=== Choosing Compression
+```
+Write-Heavy → LZ4 or Snappy
+Storage-Optimized → ZSTD level 9+
+Analytics → VIPER + Quantization
+Real-time → No compression or Snappy
+```
 
-=== CPU Overhead
+=== Configuration Tips
+1. **Start with ZSTD-6** for balanced performance
+2. **Enable quantization** for VIPER analytics
+3. **Use adaptive compression** for mixed workloads
+4. **Monitor compression ratios** via metrics
+5. **Size decompression cache** based on working set
 
-* ZSTD: 20-40% CPU for compression
-* LZ4: 5-10% CPU for compression
-* Decompression: 2-5% of compression time
-
-== Monitoring and Metrics
+== Monitoring
 
 === Compression Metrics
+```python
+# Get compression stats
+stats = client.get_collection_stats("compressed")
+print(f"Compression ratio: {stats['compression_ratio']:.2f}x")
+print(f"Compressed size: {stats['compressed_size_mb']:.1f} MB")
+print(f"Original size: {stats['original_size_mb']:.1f} MB")
+```
 
-Monitor compression effectiveness:
-
-[source,python]
-----
-metrics = client.get_collection_metrics("my_collection")
-
-print(f"Compression ratio: {metrics['compression_ratio']}")
-print(f"Compressed size: {metrics['compressed_bytes']}")
-print(f"Original size: {metrics['original_bytes']}")
-print(f"Cache hit rate: {metrics['cache_hit_rate']}")
-----
-
-=== Cache Statistics
-
-[source,python]
-----
+=== Cache Performance
+```python
+# Monitor decompression cache
 cache_stats = client.get_cache_stats()
-
-print(f"Cache hits: {cache_stats['hits']}")
-print(f"Cache misses: {cache_stats['misses']}")
-print(f"Hit rate: {cache_stats['hit_rate']}")
-print(f"Bytes saved: {cache_stats['bytes_saved']}")
-print(f"Time saved: {cache_stats['time_saved_ms']}ms")
-----
-
-== Troubleshooting
-
-=== Common Issues
-
-==== 1. High Memory Usage
-* Reduce cache size in TOML config
-* Use smaller block sizes
-* Disable prefetching
-
-==== 2. Slow Queries
-* Check cache hit rate
-* Increase decompression budget
-* Consider using NONE for hot data
-
-==== 3. Poor Compression Ratio
-* Verify data compressibility
-* Try different algorithms
-* Enable adaptive compression
-
-==== 4. SST1 Format Errors
-* Ensure all files use SST1 format
-* Check for file corruption
-* Verify magic bytes: `b"SST1"`
+print(f"Cache hit rate: {cache_stats['hit_rate']:.1%}")
+print(f"Cache size: {cache_stats['size_mb']:.1f} MB")
+```
 
 == Migration Guide
 
-=== From Uncompressed Collections
-
-1. Create new collection with compression
-2. Copy vectors using batch operations
-3. Update application to use new collection
-4. Delete old collection
-
-[source,python]
-----
-# Create compressed version
-new_config = CollectionConfig(
-    name="collection_v2_compressed",
-    dimension=old_collection.dimension,
-    compression_config=CompressionConfig(
-        sst_compression_algorithm=CompressionAlgorithm.ZSTD,
-        sst_compression_level=6
+=== Enable Compression
+```python
+# Update existing collection
+client.update_collection(
+    "my_collection",
+    compression=CompressionConfig(
+        algorithm="zstd",
+        level=6
     )
 )
-new_collection = client.create_collection(new_config)
+```
 
-# Copy vectors in batches
-batch_size = 1000
-offset = 0
-while True:
-    vectors = client.get_vectors(old_collection.id, 
-                                offset=offset, 
-                                limit=batch_size)
-    if not vectors:
-        break
-    
-    client.insert_vectors(new_collection.id, vectors)
-    offset += batch_size
+=== Disable Compression
+```python
+# Remove compression
+client.update_collection(
+    "my_collection",
+    compression=CompressionConfig(
+        algorithm="none"
+    )
+)
+```
 
-# Switch application to new collection
-# Delete old collection when ready
-----
-
-== Conclusion
-
-ProximaDB's SDK-driven compression provides:
-
-* Full client control over compression
-* No server-side defaults or surprises
-* Optimized query planning
-* Effective caching strategies
-* Clean, modern SST1 format
-
-Choose compression settings based on your specific use case, data characteristics, and performance requirements. Monitor metrics to optimize configuration over time.
-
-For additional support, see the link:https://github.com/proximadb/proximadb[ProximaDB GitHub repository] or contact the development team.
+---
+**Next**: link:performance_reference.adoc[Performance] | link:developer/architecture.adoc[Architecture]

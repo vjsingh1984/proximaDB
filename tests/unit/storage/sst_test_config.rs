@@ -217,8 +217,8 @@ pub fn create_test_sst_config(base_path: &str) -> SstConfig {
         
         // Storage type
         compaction_strategy: "leveled".to_string(),
-        compression: "none".to_string(),  // No compression for tests
-        compression_algorithm: false,
+        compression: "none".to_string(),  // No compression for tests - algorithm determined from proto
+        // compression_enabled removed - redundant with compression algorithm
         compression_level: 0,
         
         // Bloom filter - use consistent settings
@@ -250,11 +250,11 @@ pub fn create_test_sst_config(base_path: &str) -> SstConfig {
 /// Create a consistent test configuration for WriteBuffer
 pub fn create_test_wal_config(base_path: &str) -> WriteBufferUserConfig {
     WriteBufferUserConfig {
-        write_ahead_log_size_mb: 4,  // Small for tests
+        write_buffer_size_mb: 64,  // 64MB for tests
         memory_flush_size_bytes: 1024 * 1024,  // 1MB flush threshold
         memtable_type: "BTree".to_string(),
         sync_mode: "perbatch".to_string(),
-        write_ahead_log_directory: format!("{}/write_ahead_log", base_path),
+        write_buffer_directory: format!("{}/wal", base_path),  // Added missing field
         enable_wal: true,
         vector_count_threshold: 100,  // Small threshold for tests
     }

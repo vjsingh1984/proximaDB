@@ -24,7 +24,6 @@ mod tests {
             block_size_kb: 4,
             compaction_strategy: "leveled".to_string(),
             compression: "snappy".to_string(),
-            compression_enabled: true,
             compression_level: 3,
             bloom_filter_config: None,
             cache_size_mb: 1,

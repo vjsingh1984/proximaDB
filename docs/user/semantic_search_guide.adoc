@@ -3,7 +3,7 @@
 :toclevels: 3
 :imagesdir: ../diagrams/images
 
-image::business-system-overview.svg[ProximaDB Semantic Search, align=center, width=600]
+image::business-architecture-consolidated.svg[ProximaDB Semantic Search, align=center, width=600]
 
 **Complete guide to semantic vector search with ProximaDB - from basic queries to advanced indexing strategies.**
 

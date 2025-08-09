@@ -28,7 +28,7 @@ use num_cpus;
 // No longer importing duplicate CpuFeatures from compute module
 use crate::query::sql_engine::simd_parser::SimdCapabilities;
 use crate::core::config::HardwareConfig;
-use crate::compute::distance_computation::PlatformCapability;
+// No longer importing PlatformCapability from compute - using our own HardwareBackend
 
 // GPU types with feature gating
 #[cfg(feature = "gpu")]
@@ -47,8 +47,14 @@ pub enum GpuBackend {
 /// Hardware acceleration backend (centralized from compute module)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum HardwareBackend {
-    /// CPU with SIMD (AVX-512, AVX2, SSE, NEON, etc.)
-    CpuSIMD(PlatformCapability),
+    /// AVX-512 SIMD instructions
+    AVX512,
+    /// AVX2 SIMD instructions
+    AVX2,
+    /// SSE SIMD instructions
+    SSE,
+    /// ARM NEON SIMD instructions
+    NEON,
     /// NVIDIA CUDA GPU
     CUDA,
     /// AMD ROCm GPU
@@ -59,14 +65,6 @@ pub enum HardwareBackend {
     OpenCL,
     /// CPU scalar (no acceleration)
     Scalar,
-    /// CPU AVX-512
-    AVX512,
-    /// CPU AVX2
-    AVX2,
-    /// CPU SSE
-    SSE,
-    /// ARM NEON
-    NEON,
 }
 
 #[cfg(not(feature = "gpu"))]
@@ -651,8 +649,7 @@ mod tests {
             HardwareBackend::CUDA |
             HardwareBackend::ROCm |
             HardwareBackend::MPS |
-            HardwareBackend::OpenCL |
-            HardwareBackend::CpuSIMD(_) => {
+            HardwareBackend::OpenCL => {
                 // Valid backend
             }
         }

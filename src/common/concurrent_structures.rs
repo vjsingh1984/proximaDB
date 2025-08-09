@@ -423,6 +423,7 @@ impl Default for AtomicMetrics {
 
 /// Snapshot of metrics at a point in time
 #[derive(Debug, Clone)]
+#[derive(Default)]
 pub struct MetricsSnapshot {
     pub entries: usize,
     pub memory_bytes: usize,

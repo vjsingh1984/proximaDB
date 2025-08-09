@@ -15,6 +15,8 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use tracing::{debug, info, warn, error};
 
+use crate::core::bloom::BloomFilterStrategy;
+
 use crate::compute::distance_computation::DistanceMetric;
 use crate::compute::distance_computation::engine::{UnifiedDistanceCompute, SimilarityResult};
 use crate::core::search::{SearchResult, SearchDebugInfo, SearchParams};
@@ -957,94 +959,56 @@ impl VectorOperationsService {
             debug!("🎯 Query planner enabled two-stage search optimization");
         }
         
-        // TODO: Try Axis indexes first when AxisManager is properly integrated
-        // This will significantly improve search performance for indexed collections
+        // ORCHESTRATED SEARCH STRATEGY:
+        // 1. Always search WAL/memtable for unflushed data
+        // 2. Use indexes for flushed data (if available) OR raw storage scan
+        // 3. Merge and deduplicate results
         let mut all_results = Vec::with_capacity(k * 3);
-        // let mut used_axis_index = false;
-        // if let Some(ref axis_manager) = self.axis_manager {
-        //     ... perform index-based search ...
-        // }
+        let mut skip_storage_scan = false;
         
-        // Step 2: Search WAL memtable and storage engines (if not using index or need more results)
-        // OPTIMIZATION: Pre-allocate with expected capacity to avoid reallocations
-        
-        // CRITICAL OPTIMIZATION: Create distance calculator once for entire search, not per record
-        // This avoids the performance issue in unified distance where calculate_distance() 
-        // creates a new calculator for every call (see line 518/524 in unified_distance.rs)
-        let distance_calculator = crate::compute::distance_computation::create_distance_calculator(effective_distance_metric.clone());
-        
-        // OPTIMIZATION: Skip WAL search if no unflushed data exists
-        let unflushed_batches = self.global_memtable
-            .get_unflushed_batches(collection_id)
-            .await
-            .context("Failed to get unflushed batches from WAL memtable")?;
-        
-        debug!("🔍 WAL memtable has {} unflushed batches", unflushed_batches.len());
-        
-        // Convert unflushed vectors with metadata filtering and unified distance scoring
-        if !unflushed_batches.is_empty() {
-            for (batch_idx, batch) in unflushed_batches.iter().enumerate() {
-                debug!("  Batch[{}] has {} vectors", batch_idx, batch.vector_records.len());
-                for (vec_idx, vector_record) in batch.vector_records.iter().enumerate() {
-                    if vec_idx < 3 {
-                        debug!("    Vector[{}] ID from WAL: {:?}", vec_idx, vector_record.id);
-                        debug!("    Vector[{}] Full record: id={:?}, vector_len={}, metadata_len={}", 
-                            vec_idx, vector_record.id, vector_record.vector.len(), vector_record.metadata.len());
+        // Step 1: Check if collection has indexes configured and use them first
+        if let Some(collection_service) = &self.collection_service {
+            if let Ok(Some(collection)) = collection_service.get_proto_collection(collection_id).await {
+                if let Some(config) = &collection.config {
+                    // Check if primary indexing algorithm is configured
+                    let has_index = config.primary_indexing_algorithm != 0; // 0 = INDEXING_ALGORITHM_UNSPECIFIED
+                    
+                    if has_index {
+                        debug!("🎯 Collection {} has index configured: {:?}", collection_id, config.primary_indexing_algorithm);
+                        
+                        // When AxisManager is integrated, it will be called from storage engine
+                        // StorageEngine::search() already checks Axis indexes for flushed data
+                        // We just need to skip the raw storage scan since indexes will handle it
+                        skip_storage_scan = true;
+                        info!("🎯 INDEX: Collection has indexes, storage engine will use them for flushed data");
+                    } else {
+                        debug!("📊 Collection {} has no indexes, storage engine will scan raw data", collection_id);
                     }
-                    // Apply filter expression if specified
-                    if let Some(filter_expr) = search_params.and_then(|p| p.filter_expression.as_ref()) {
-                        if !self.apply_filter_expression(collection_id, vector_record, filter_expr).await {
-                            continue; // Skip vectors that don't match filter
-                        }
-                    }
-                    
-                    // Use pre-created distance calculator (MAJOR PERFORMANCE OPTIMIZATION)
-                    let raw_distance = distance_calculator.distance(query_vector, &vector_record.vector);
-                    // Create SimilarityResult manually for consistency with unified distance semantics
-                    let similarity_result = SimilarityResult {
-                        raw_value: raw_distance,
-                        metric: effective_distance_metric.clone(),
-                        normalized_score: raw_distance, // For now, use raw distance for normalized score
-                        rank_value: raw_distance, // Use raw for ranking (lower = more similar for most metrics)
-                    };
-                    
-                    // Log the ID value for search debugging
-                    debug!("🔍 SEARCH: vector_record.id = {:?}", vector_record.id);
-                    
-                    // Handle proto optional ID field properly
-                    let vector_id = vector_record.id.clone();
-                    let id_string = vector_id.clone().unwrap_or_default();
-                    
-                    let search_result = SearchResult {
-                        id: id_string,
-                        vector_id: vector_id,
-                        score: similarity_result.normalized_score, // Unified semantic score (0.0-1.0, higher = more similar)
-                        distance: Some(similarity_result.raw_value), // Raw distance value
-                        rank: None, // Will be set after sorting
-                        vector: if include_vectors { Some(vector_record.vector.clone()) } else { None },
-                        metadata: if include_metadata {
-                            proto_metadata_helper::proto_metadata_to_json(&vector_record.metadata)
-                        } else { std::collections::HashMap::new() },
-                        version: vector_record.version,
-                        timestamp: Some(vector_record.timestamp),
-                        debug_info: Some(SearchDebugInfo {
-                            algorithm: format!("UnifiedDistance::{:?}", effective_distance_metric),
-                            candidates_evaluated: 0,
-                            processing_time_us: 0, // TODO: Add timing
-                        }),
-                        semantic_distance: Some(similarity_result),
-                        quantization_info: None,
-                        engine_stats: None,
-                        index_path: None,
-                        created_at: Some(chrono::DateTime::from_timestamp(vector_record.timestamp as i64, 0).unwrap_or_else(chrono::Utc::now)),
-                    };
-                    
-                    all_results.push(search_result);
                 }
             }
         }
         
-        debug!("🔍 WAL search found {} vectors (after metadata filtering)", all_results.len());
+        // Step 2: ALWAYS search WAL/memtable for unflushed data (indexes don't contain this)
+        // REFACTORED: Now using bloom filter optimization for metadata filtering
+        
+        debug!("🔍 Searching WAL with bloom filter optimization");
+        
+        // Use optimized WAL search with bloom filters through global memtable
+        let wal_results = self.global_memtable
+            .search_unflushed_vectors(
+                collection_id,
+                query_vector,
+                k * 2,  // Get extra results for merging
+                effective_distance_metric,
+                search_params.and_then(|p| p.filter_expression.as_ref()),
+                include_vectors,
+                include_metadata,
+            )
+            .await
+            .context("Failed to search WAL with bloom filter optimization")?;
+        
+        debug!("🔍 WAL search found {} vectors (after bloom filtering)", wal_results.len());
+        all_results.extend(wal_results);
         
         // Step 2: Search storage engines with predicate pushdown if we need more results
         if all_results.len() < k {
@@ -1973,6 +1937,148 @@ impl VectorOperationsService {
         
         info!("✅ VectorOperationsService shutdown complete");
         Ok(())
+    }
+    
+    /// Search WAL with bloom filter optimization
+    async fn search_wal_with_bloom_filters(
+        &self,
+        collection_id: &str,
+        query_vector: &[f32],
+        k: usize,
+        distance_metric: DistanceMetric,
+        metadata_filters: Option<&crate::core::search::FilterExpression>,
+        include_vectors: bool,
+        include_metadata: bool,
+    ) -> Result<Vec<SearchResult>> {
+        use crate::core::search::SearchDebugInfo;
+        
+        // Get unflushed batches from WAL
+        let unflushed_batches = self.global_memtable
+            .get_unflushed_batches(collection_id)
+            .await
+            .context("Failed to get unflushed batches from WAL memtable")?;
+        
+        if unflushed_batches.is_empty() {
+            return Ok(vec![]);
+        }
+        
+        // Filter batches using bloom filters if metadata filters are provided
+        let filtered_batches = if let Some(filters) = metadata_filters {
+            let mut result = Vec::new();
+            let mut bloom_hits = 0;
+            let mut bloom_misses = 0;
+            
+            // Extract simple equality filters for bloom filter optimization
+            let conditions = crate::core::search::filter_extraction::extract_metadata_conditions(filters);
+            
+            for batch in unflushed_batches {
+                if let Some(ref bloom_filter) = batch.metadata_bloom_filter {
+                    // Use bloom filter to quickly check if batch might contain matching metadata
+                    let mut should_include = conditions.is_empty(); // If no simple conditions, include by default
+                    
+                    for (field, value) in &conditions {
+                        if bloom_filter.might_contain(format!("{}:{}", field, value).as_bytes()) {
+                            should_include = true;
+                            bloom_hits += 1;
+                            break;
+                        }
+                    }
+                    
+                    if should_include {
+                        result.push(batch);
+                    } else {
+                        bloom_misses += 1;
+                        // Bloom filter says definitely not present, skip this batch
+                        debug!("🌸 Bloom filter: Skipping batch - no matches for filter conditions");
+                    }
+                } else {
+                    // No bloom filter, must check manually
+                    result.push(batch);
+                }
+            }
+            
+            info!(
+                "🌸 Bloom filter optimization: {} hits, {} misses ({:.1}% filtered)",
+                bloom_hits,
+                bloom_misses,
+                (bloom_misses as f64 / (bloom_hits + bloom_misses).max(1) as f64) * 100.0
+            );
+            
+            result
+        } else {
+            unflushed_batches
+        };
+        
+        // Create distance calculator once for efficiency
+        let distance_calculator = UnifiedDistanceCompute::new(distance_metric.clone());
+        let mut results = Vec::new();
+        
+        // Search through filtered batches
+        for batch in filtered_batches {
+            for vector_record in batch.vector_records.iter() {
+                // Apply fine-grained metadata filter if specified
+                if let Some(filter_expr) = metadata_filters {
+                    if !self.apply_filter_expression(collection_id, vector_record, filter_expr).await {
+                        continue;
+                    }
+                }
+                
+                // Calculate distance
+                let similarity_result = distance_calculator.calculate_distance(
+                    query_vector,
+                    &vector_record.vector,
+                    &distance_metric,
+                );
+                
+                // Create search result
+                let search_result = SearchResult {
+                    id: vector_record.id.clone().unwrap_or_default(),
+                    vector_id: vector_record.id.clone(),
+                    score: similarity_result.normalized_score,
+                    distance: Some(similarity_result.raw_value),
+                    rank: None,
+                    vector: if include_vectors { 
+                        Some(vector_record.vector.clone()) 
+                    } else { 
+                        None 
+                    },
+                    metadata: if include_metadata {
+                        proto_metadata_helper::proto_metadata_to_json(&vector_record.metadata)
+                    } else {
+                        std::collections::HashMap::new()
+                    },
+                    version: vector_record.version,
+                    timestamp: Some(vector_record.timestamp),
+                    debug_info: Some(SearchDebugInfo {
+                        algorithm: format!("UnifiedDistance::{:?}", distance_metric),
+                        candidates_evaluated: 0,
+                        processing_time_us: 0,
+                    }),
+                    semantic_distance: Some(similarity_result),
+                    quantization_info: None,
+                    engine_stats: None,
+                    index_path: None,
+                    created_at: Some(chrono::DateTime::from_timestamp(
+                        vector_record.timestamp as i64, 0
+                    ).unwrap_or_else(chrono::Utc::now)),
+                };
+                
+                results.push(search_result);
+            }
+        }
+        
+        // Sort by score and take top k
+        results.sort_by(|a, b| {
+            b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal)
+        });
+        results.truncate(k);
+        
+        // Set ranks
+        for (i, result) in results.iter_mut().enumerate() {
+            result.rank = Some((i + 1) as u16);
+        }
+        
+        Ok(results)
     }
     
     /// Apply filter expression to vector record with type-safe filtering

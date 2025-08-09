@@ -1,0 +1,63 @@
+%%{init: {'theme':'neutral', 'themeVariables': {'primaryColor':'#2E86AB','primaryTextColor':'#1A1A1A','primaryBorderColor':'#2E86AB','lineColor':'#5C6B73','secondaryColor':'#A23B72','tertiaryColor':'#F18F01','background':'#FFFFFF','mainBkg':'#F7F7F7','textColor':'#1A1A1A'}}}%%
+sequenceDiagram
+    participant Client
+    participant API as REST/gRPC API
+    participant VOS as VectorOperationsService
+    participant CS as CollectionService
+    participant SE as StorageEngine
+    participant WAL as WriteAheadLog
+    participant Memtable
+    participant Index
+    participant Cache as CacheOrchestrator
+    participant Metrics
+
+    Client->>API: POST /collections/{id}/vectors
+    API->>API: Validate Request
+    API->>VOS: insert_vectors(collection_id, vectors)
+    
+    VOS->>CS: get_collection(collection_id)
+    CS-->>VOS: Collection metadata
+    
+    VOS->>VOS: Check compression config
+    VOS->>VOS: Validate vector dimensions
+    
+    VOS->>SE: get_engine(collection_id)
+    SE-->>VOS: StorageEngine instance
+    
+    par Parallel Operations
+        VOS->>WAL: append(vectors)
+        WAL->>WAL: Serialize to proto
+        WAL->>WAL: Write to log
+        WAL-->>VOS: WAL position
+    and
+        VOS->>Memtable: insert(vectors)
+        Memtable->>Memtable: Store in memory
+        Memtable-->>VOS: Success
+    and
+        VOS->>Index: add_vectors(vectors)
+        Index->>Index: Update index structure
+        Index-->>VOS: Index updated
+    end
+    
+    VOS->>Cache: invalidate_related(vector_ids)
+    Cache->>Cache: Cascade invalidation
+    Cache-->>VOS: Cache cleared
+    
+    VOS->>Metrics: record_insert(count, latency)
+    Metrics-->>VOS: Recorded
+    
+    alt Flush Threshold Reached
+        Memtable->>SE: trigger_flush()
+        SE->>SE: Create SSTable/Parquet
+        SE->>SE: Apply compression
+        SE->>SE: Write to disk
+        SE-->>Memtable: Flush complete
+        Memtable->>Memtable: Clear flushed data
+    end
+    
+    VOS-->>API: InsertResponse
+    API-->>Client: 200 OK {success: true, count: n}
+
+    Note over WAL,Memtable: Write-Ahead Log ensures durability
+    Note over Index: Index updates are asynchronous
+    Note over SE: Storage engine handles compression

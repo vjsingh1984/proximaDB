@@ -27,9 +27,8 @@ mod metadata_backend_tests {
             backend_type: "filestore".to_string(),
             storage_url: format!("file://{}", metadata_path.to_string_lossy()),
             cache_size_mb: Some(64),
-            sync_interval_ms: Some(1000),
-            compression_enabled: Some(true),
-            ..Default::default()
+            flush_interval_secs: Some(1),
+            cloud_config: None,
         };
         
         // Create storage config

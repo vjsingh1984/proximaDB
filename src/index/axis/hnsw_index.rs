@@ -30,11 +30,20 @@ use dashmap::DashMap;
 use tracing::{debug, info, warn};
 
 use crate::compute::distance_computation::DistanceMetric;
-use crate::compute::distance_computation::core::{DistanceCompute, create_distance_calculator};
+use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
 use crate::core::VectorRecord;
 use crate::index::axis::index_factory::{AxisVectorIndex, IndexStats};
 use crate::index::axis::types::IndexAlgorithm;
 use crate::index::axis::utils::{IndexVectorStore, ConcurrentIdMapping, AtomicStats, validation, memory};
+
+/// Memory usage statistics
+#[derive(Debug, Clone)]
+pub struct MemoryUsage {
+    pub total_bytes: usize,
+    pub index_size_bytes: usize,
+    pub vector_data_bytes: usize,
+    pub metadata_bytes: usize,
+}
 
 /// HNSW index configuration aligned with AXIS standards
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -75,13 +84,16 @@ impl Ord for OrderedFloat {
     }
 }
 
-/// HNSW index implementation using shared infrastructure
+/// HNSW index implementation using shared infrastructure with collection partitioning
 /// Migrated to use IndexVectorStore and ConcurrentIdMapping for consistency
 pub struct AxisHnswIndex {
+    /// Collection identifier for partitioning (optional for backward compatibility)
+    collection_id: Option<String>,
+    
     /// Configuration
     config: AxisHnswConfig,
     /// Distance computation
-    distance_computer: Box<dyn DistanceCompute>,
+    distance_computer: UnifiedDistanceCompute,
     
     /// USING UTILS: Standardized vector storage with external IDs
     vectors: IndexVectorStore,
@@ -94,6 +106,7 @@ pub struct AxisHnswIndex {
     
     /// HNSW-specific: Graph layers with composite keys
     /// (layer, internal_node_id) -> connections
+    /// TODO: Add partitioning - will use (collection_id, layer, node_id) in Phase 3
     layers: DashMap<(usize, usize), Vec<usize>>,
     
     /// HNSW-specific: Maximum layer currently in use (atomic)
@@ -112,15 +125,25 @@ pub struct AxisHnswIndex {
 impl AxisHnswIndex {
     /// Create a new HNSW index with the given configuration using shared utilities
     pub fn new(config: AxisHnswConfig, dimension: usize) -> Result<Self> {
+        Self::new_with_collection(None, config, dimension)
+    }
+    
+    /// Create a new HNSW index for a specific collection
+    pub fn new_with_collection(
+        collection_id: Option<String>, 
+        config: AxisHnswConfig, 
+        dimension: usize
+    ) -> Result<Self> {
         // USING UTILS: Validate dimension
         validation::validate_dimension(dimension)?;
         
+        let coll_str = collection_id.as_ref().map(|s| s.as_str()).unwrap_or("default");
         info!(
-            "Creating AXIS HNSW index: M={}, ef_construction={}, ef={}, dim={}",
-            config.m, config.ef_construction, config.ef, dimension
+            "Creating AXIS HNSW index for collection '{}': M={}, ef_construction={}, ef={}, dim={}",
+            coll_str, config.m, config.ef_construction, config.ef, dimension
         );
         
-        let distance_computer = create_distance_calculator(config.distance_metric);
+        let distance_computer = UnifiedDistanceCompute::new(config.distance_metric);
         
         let algorithm_type = IndexAlgorithm::HNSW {
             m: config.m as u32,
@@ -130,6 +153,7 @@ impl AxisHnswIndex {
         };
         
         Ok(Self {
+            collection_id,
             config,
             distance_computer,
             
@@ -180,7 +204,7 @@ impl AxisHnswIndex {
             // USING UTILS: Get vector from IndexVectorStore by internal ID
             if let Some(external_id) = self.id_mapping.get_external(ep) {
                 if let Some(vector_record) = self.vectors.get(&external_id) {
-                    let dist = self.distance_computer.distance(query, &vector_record.vector);
+                    let dist = self.distance_computer.calculate_distance(query, &vector_record.vector, &self.config.distance_metric).rank_value;
                     
                     candidates.push(std::cmp::Reverse((OrderedFloat(dist), ep)));
                     dynamic_candidates.push((OrderedFloat(dist), ep));
@@ -207,7 +231,7 @@ impl AxisHnswIndex {
                         // USING UTILS: Get vector from IndexVectorStore by internal ID
                         if let Some(external_id) = self.id_mapping.get_external(neighbor) {
                             if let Some(vector_record) = self.vectors.get(&external_id) {
-                                let dist = self.distance_computer.distance(query, &vector_record.vector);
+                                let dist = self.distance_computer.calculate_distance(query, &vector_record.vector, &self.config.distance_metric).rank_value;
                                 
                                 if dynamic_candidates.len() < ef {
                                     // We need more candidates
@@ -294,7 +318,7 @@ impl AxisVectorIndex for AxisHnswIndex {
         let mut curr_nearest = vec![entry_point];
         
         // Search from top layer down to level+1 (greedy search with ef=1)
-        for layer in (level + 1..=self.max_layer.load(Ordering::Relaxed)).rev() {
+        for layer in (level + 1..=self.max_layer.load(AtomicOrdering::Relaxed)).rev() {
             curr_nearest = self.search_layer(&vector.vector, &curr_nearest, 1, layer)
                 .into_iter()
                 .map(|(node, _)| node)
@@ -342,10 +366,10 @@ impl AxisVectorIndex for AxisHnswIndex {
     async fn search(
         &self,
         query: &[f32],
-        k: usize,
+        top_k: usize,
         filter: Option<&(dyn for<'a> Fn(&'a VectorRecord) -> bool + Send + Sync)>,
     ) -> Result<Vec<(String, f32)>> {
-        self.search_with_filter(query, k, filter).await
+        self.search_with_filter(query, top_k, filter).await
     }
 
     async fn remove(&self, id: &str) -> Result<()> {
@@ -424,11 +448,11 @@ impl AxisVectorIndex for AxisHnswIndex {
 }
 
 impl AxisHnswIndex {
-    /// Internal method to search with optional filtering
-    async fn search_with_filter(
+    /// Search with optional filtering
+    pub async fn search_with_filter(
         &self,
         query: &[f32],
-        k: usize,
+        top_k: usize,
         filter: Option<&(dyn for<'a> Fn(&'a VectorRecord) -> bool + Send + Sync)>,
     ) -> Result<Vec<(String, f32)>> {
         let start = std::time::Instant::now();
@@ -453,8 +477,8 @@ impl AxisHnswIndex {
                 .collect();
         }
         
-        // Search layer 0 with configured ef (or k if larger)
-        let search_ef = self.config.ef.max(k);
+        // Search layer 0 with configured ef (or top_k if larger)
+        let search_ef = self.config.ef.max(top_k);
         let candidates = self.search_layer(query, &curr_nearest, search_ef, 0);
         
         // Apply filter and convert results
@@ -472,7 +496,7 @@ impl AxisHnswIndex {
 
                     results.push((external_id.clone(), score));
                     
-                    if results.len() >= k {
+                    if results.len() >= top_k {
                         break;
                     }
                 }
@@ -482,6 +506,62 @@ impl AxisHnswIndex {
         // USING UTILS: Record successful operation
         self.stats.record_success(start.elapsed().as_micros() as u64);
         Ok(results)
+    }
+    
+    /// Get the number of vectors in the index
+    pub fn size(&self) -> usize {
+        self.vectors.len()
+    }
+    
+    /// Get memory usage of the index
+    pub fn memory_usage(&self) -> MemoryUsage {
+        let total = self.estimate_memory_usage();
+        MemoryUsage {
+            total_bytes: total,
+            index_size_bytes: total / 3, // Approximate distribution
+            vector_data_bytes: total / 3,
+            metadata_bytes: total / 3,
+        }
+    }
+    
+    /// Add a single vector to the index
+    pub async fn add_vector(&mut self, id: String, vector: Vec<f32>, metadata: Option<HashMap<String, serde_json::Value>>) -> Result<()> {
+        let record = Arc::new(crate::proto::proximadb::VectorRecord {
+            id: Some(id.clone()),
+            vector,
+            metadata: vec![],
+            timestamp: 0,
+            updated_at: None,
+            expires_at: None,
+            version: None,
+            rank: None,
+            score: None,
+            distance: None,
+        });
+        self.add(id, record).await
+    }
+    
+    /// Add multiple vectors to the index
+    pub async fn add_vectors(&mut self, batch: Vec<(String, Vec<f32>, Option<HashMap<String, serde_json::Value>>)>) -> Result<()> {
+        for (id, vector, metadata) in batch {
+            self.add_vector(id, vector, metadata).await?;
+        }
+        Ok(())
+    }
+    
+    /// Search for top_k nearest neighbors
+    pub async fn search(&self, query: &[f32], top_k: usize) -> Result<Vec<(String, f32)>> {
+        self.search_with_filter(query, top_k, None).await
+    }
+    
+    /// Remove a vector from the index
+    pub async fn remove_vector(&mut self, id: &str) -> Result<bool> {
+        self.remove(id).await.map(|_| true)
+    }
+    
+    /// Optimize the index (no-op for HNSW)
+    pub fn optimize(&self) -> Result<()> {
+        Ok(())
     }
     
     /// Estimate memory usage in bytes
@@ -570,7 +650,7 @@ mod tests {
         assert_eq!(index.stats().vector_count, 3);
         
         // Search should work
-        let results = index.search(&[1.0, 0.0, 0.0], 2, None).await.unwrap();
+        let results = index.search(&[1.0, 0.0, 0.0], 2).await.unwrap();
         assert!(results.len() <= 2); // HNSW is approximate
         
         // Remove a vector
@@ -579,5 +659,194 @@ mod tests {
         
         // Remove non-existent vector (should succeed without error)
         index.remove("nonexistent").await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_hnsw_search_quality() {
+        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        
+        let mut config = AxisHnswConfig::default();
+        config.ef = 200; // Higher ef for better quality
+        let index = AxisHnswIndex::new(config, 4).unwrap();
+        
+        // Create a set of test vectors
+        let test_vectors = vec![
+            ("v1", vec![1.0, 0.0, 0.0, 0.0]),
+            ("v2", vec![0.9, 0.1, 0.0, 0.0]),
+            ("v3", vec![0.0, 1.0, 0.0, 0.0]),
+            ("v4", vec![0.0, 0.0, 1.0, 0.0]),
+            ("v5", vec![0.0, 0.0, 0.0, 1.0]),
+            ("v6", vec![0.8, 0.2, 0.0, 0.0]),
+            ("v7", vec![0.7, 0.3, 0.0, 0.0]),
+        ];
+        
+        for (id, vector) in test_vectors.iter() {
+            let record = VectorRecord {
+                id: Some(id.to_string()),
+                vector: vector.clone(),
+                metadata: vec![],
+                timestamp: 0,
+                updated_at: None,
+                expires_at: None,
+                version: None,
+                rank: None,
+                score: None,
+                distance: None,
+            };
+            index.add(id.to_string(), Arc::new(record)).await.unwrap();
+        }
+        
+        // Search for nearest neighbors to v1
+        let query = vec![1.0, 0.0, 0.0, 0.0];
+        let results = index.search(&query, 3).await.unwrap();
+        
+        // v1, v2, v6, v7 should be closest (all have high first component)
+        assert!(results.len() >= 2);
+        
+        // The first result should be v1 itself (exact match)
+        if let Some(first) = results.first() {
+            assert_eq!(first.0, "v1");
+        }
+    }
+
+    #[tokio::test]
+    async fn test_hnsw_layer_navigation() {
+        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        
+        let mut config = AxisHnswConfig::default();
+        config.m = 16;
+        config.ef_construction = 200;
+        let index = AxisHnswIndex::new(config, 3).unwrap();
+        
+        // Add enough vectors to create multiple layers
+        for i in 0..50 {
+            let vector = vec![
+                (i as f32).sin(),
+                (i as f32).cos(),
+                (i as f32 * 0.5).sin(),
+            ];
+            let record = VectorRecord {
+                id: Some(format!("vec_{}", i)),
+                vector,
+                metadata: vec![],
+                timestamp: 0,
+                updated_at: None,
+                expires_at: None,
+                version: None,
+                rank: None,
+                score: None,
+                distance: None,
+            };
+            index.add(format!("vec_{}", i), Arc::new(record)).await.unwrap();
+        }
+        
+        // Check that multiple layers were created
+        let stats = index.stats();
+        assert_eq!(stats.vector_count, 50);
+        
+        // Search should work efficiently across layers
+        let query = vec![0.5, 0.5, 0.5];
+        let results = index.search(&query, 10).await.unwrap();
+        assert!(results.len() > 0);
+    }
+
+    #[tokio::test]
+    async fn test_hnsw_pruning_heuristic() {
+        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        
+        let mut config = AxisHnswConfig::default();
+        config.m = 5; // Small M to test pruning
+        let index = AxisHnswIndex::new(config, 2).unwrap();
+        
+        // Add vectors in a line to test pruning
+        for i in 0..20 {
+            let record = VectorRecord {
+                id: Some(format!("v{}", i)),
+                vector: vec![i as f32, 0.0],
+                metadata: vec![],
+                timestamp: 0,
+                updated_at: None,
+                expires_at: None,
+                version: None,
+                rank: None,
+                score: None,
+                distance: None,
+            };
+            index.add(format!("v{}", i), Arc::new(record)).await.unwrap();
+        }
+        
+        // Search for middle point
+        let query = vec![10.0, 0.0];
+        let results = index.search(&query, 5).await.unwrap();
+        
+        // Should find neighbors despite pruning
+        assert!(results.len() >= 3);
+    }
+
+    #[test]
+    fn test_hnsw_config_validation() {
+        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        
+        // Test valid config
+        let valid_config = AxisHnswConfig {
+            m: 16,
+            ef_construction: 200,
+            ef: 100,
+            max_layers: 10,
+            distance_metric: DistanceMetric::Cosine,
+        };
+        assert!(AxisHnswIndex::new(valid_config, 128).is_ok());
+        
+        // Test invalid dimension
+        let config = AxisHnswConfig::default();
+        assert!(AxisHnswIndex::new(config.clone(), 0).is_err());
+        
+        // Test with very high dimension
+        assert!(AxisHnswIndex::new(config, 10000).is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_hnsw_empty_index_search() {
+        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        
+        let config = AxisHnswConfig::default();
+        let index = AxisHnswIndex::new(config, 3).unwrap();
+        
+        // Search on empty index should return empty results
+        let results = index.search(&[1.0, 0.0, 0.0], 5).await.unwrap();
+        assert_eq!(results.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_hnsw_duplicate_removal() {
+        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        
+        let config = AxisHnswConfig::default();
+        let index = AxisHnswIndex::new(config, 2).unwrap();
+        
+        let record = VectorRecord {
+            id: Some("duplicate".to_string()),
+            vector: vec![1.0, 0.0],
+            metadata: vec![],
+            timestamp: 0,
+            updated_at: None,
+            expires_at: None,
+            version: None,
+            rank: None,
+            score: None,
+            distance: None,
+        };
+        
+        // Add the same ID twice
+        index.add("duplicate".to_string(), Arc::new(record.clone())).await.unwrap();
+        assert_eq!(index.stats().vector_count, 1);
+        
+        // Adding again should replace
+        index.add("duplicate".to_string(), Arc::new(record)).await.unwrap();
+        assert_eq!(index.stats().vector_count, 1);
+        
+        // Remove should work
+        index.remove("duplicate").await.unwrap();
+        assert_eq!(index.stats().vector_count, 0);
     }
 }

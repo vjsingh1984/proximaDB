@@ -27,7 +27,7 @@ use crate::compute::distance_computation::DistanceMetric;
 use crate::core::VectorRecord;
 // use crate::index::axis::hnsw_integration::{AxisHnswConfig, PartitionedHnswIndex};
 use crate::index::axis::annoy_index::{AxisAnnoyConfig, AxisAnnoyIndex};
-use crate::index::axis::ivf_index::{AxisIvfConfig, AxisIvfIndex};
+use crate::index::axis::ivf_unified::{UnifiedIvfConfig, UnifiedIvfIndex, CentroidConfig, PostingListConfig};
 use crate::index::axis::lsh_index::{AxisLshConfig, AxisLshIndex};
 use crate::index::axis::types::IndexAlgorithm;
 
@@ -41,7 +41,7 @@ pub trait AxisVectorIndex: Send + Sync {
     async fn search(
         &self,
         query: &[f32],
-        k: usize,
+        top_k: usize,
         filter: Option<&(dyn for<'a> Fn(&'a VectorRecord) -> bool + Send + Sync)>,
     ) -> Result<Vec<(String, f32)>>;
     
@@ -66,7 +66,7 @@ pub struct IndexStats {
 /// AXIS index creation result
 pub enum AxisIndexCreationResult {
     /// IVF index (requires training)
-    Ivf(Box<AxisIvfIndex>),
+    Ivf(Box<UnifiedIvfIndex>),
     /// LSH index (ready to use)
     Lsh(Box<AxisLshIndex>),
     /// Annoy index (requires building)
@@ -96,18 +96,17 @@ impl IndexFactory {
                 ))
             }
             
-            IndexAlgorithm::IVF { nlist, nprobe, quantizer } => {
-                let config = AxisIvfConfig {
+            IndexAlgorithm::IVF { nlist, nprobe, quantizer: _ } => {
+                let config = UnifiedIvfConfig {
                     n_clusters: *nlist as usize,
                     n_probe: *nprobe as usize,
-                    train_size: 0, // Auto-calculate
-                    max_iterations: 20,
+                    dimension,
                     distance_metric,
-                    enable_pq: quantizer.is_some(),
-                    pq_subquantizers: 8,
+                    ..UnifiedIvfConfig::default()
                 };
                 
-                let index = AxisIvfIndex::new(config, dimension);
+                // For factory, use a default collection ID (will be updated when attached to collection)
+                let index = UnifiedIvfIndex::new("default".to_string(), config)?;
                 Ok(AxisIndexCreationResult::Ivf(Box::new(index)))
             }
             
@@ -134,7 +133,7 @@ impl IndexFactory {
                     distance_metric,
                 };
                 
-                let index = AxisAnnoyIndex::new(config, dimension);
+                let index = AxisAnnoyIndex::new(config, dimension)?;
                 Ok(AxisIndexCreationResult::Annoy(Box::new(index)))
             }
             
@@ -157,7 +156,7 @@ impl IndexFactory {
         match Self::create_index(algorithm, dimension, distance_metric)? {
             AxisIndexCreationResult::Ivf(mut index) => {
                 if let Some(data) = training_data {
-                    index.train(data).await?;
+                    index.train(data.to_vec()).await?;
                 }
                 Ok(index as Box<dyn AxisVectorIndex>)
             }
@@ -175,7 +174,7 @@ impl IndexFactory {
 // No adapters needed - all index types implement AxisVectorIndex directly!
 
 // Implementation of AxisVectorIndex for AXIS-native indexes is in their respective modules:
-// - AxisIvfIndex in ivf_index.rs
+// - UnifiedIvfIndex in ivf_unified.rs
 // - AxisLshIndex in lsh_index.rs
 // - AxisAnnoyIndex in annoy_index.rs
 // - PartitionedHnswIndex in hnsw_integration.rs

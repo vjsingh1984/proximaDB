@@ -1,0 +1,62 @@
+%%{init: {'theme':'neutral', 'themeVariables': {'primaryColor':'#2E86AB','primaryTextColor':'#1A1A1A','primaryBorderColor':'#2E86AB','lineColor':'#5C6B73','secondaryColor':'#A23B72','tertiaryColor':'#F18F01','background':'#FFFFFF','mainBkg':'#F7F7F7','textColor':'#1A1A1A'}}}%%
+stateDiagram-v2
+    [*] --> Incoming: Insert Request
+    
+    Incoming --> Validating: Validate
+    Validating --> Rejected: Invalid
+    Rejected --> [*]
+    
+    Validating --> InWAL: Valid
+    InWAL --> InMemtable: Write to Memtable
+    
+    InMemtable --> Indexed: Update Index
+    Indexed --> Searchable: Available for Search
+    
+    Searchable --> Cached: Frequently Accessed
+    Searchable --> Flushing: Flush Threshold
+    Cached --> Searchable: Cache Eviction
+    
+    Flushing --> InSSTable: SST Engine
+    Flushing --> InParquet: VIPER Engine
+    
+    InSSTable --> Compressed: Apply Compression
+    InParquet --> Compressed: Apply Compression
+    
+    Compressed --> OnDisk: Write to Disk
+    OnDisk --> Tiered: Move to Slower Tier
+    
+    Tiered --> ColdStorage: Archive
+    ColdStorage --> Retrieved: Access Request
+    Retrieved --> OnDisk: Restore
+    
+    OnDisk --> Compacting: Compaction
+    Compacting --> Optimized: Merge Complete
+    Optimized --> OnDisk: Write Back
+    
+    Searchable --> Updating: Update Request
+    Updating --> InWAL: New Version
+    
+    Searchable --> Deleting: Delete Request
+    Deleting --> Tombstoned: Mark Deleted
+    Tombstoned --> Purged: Compaction
+    Purged --> [*]
+    
+    note right of InWAL: Durability guaranteed
+    note right of InMemtable: Fast access
+    note right of Indexed: Search optimized
+    note right of Cached: Hot data in memory
+    note right of OnDisk: Persistent storage
+    note right of ColdStorage: Cost-optimized
+    note right of Tombstoned: Logical deletion
+    
+    classDef active fill:#E8F4F8,stroke:#2E86AB,stroke-width:2px
+    classDef storage fill:#FFF5FA,stroke:#A23B72,stroke-width:2px
+    classDef processing fill:#FFF8E7,stroke:#F18F01,stroke-width:2px
+    classDef cached fill:#E7F5E7,stroke:#5C9E7F,stroke-width:2px
+    classDef deleted fill:#FFE0E0,stroke:#FF6B6B,stroke-width:2px
+    
+    class InWAL,InMemtable,Indexed,Searchable active
+    class InSSTable,InParquet,OnDisk,Tiered,ColdStorage storage
+    class Flushing,Compacting,Updating processing
+    class Cached cached
+    class Tombstoned,Purged deleted

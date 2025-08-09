@@ -24,7 +24,7 @@ mod tests {
     use tokio::time::{timeout, Duration};
     use tracing::debug;
     
-    use crate::compute::distance_computation::{DistanceMetric, PlatformCapability};
+    use crate::compute::distance_computation::DistanceMetric;
     use crate::compute::distance_computation::engine::{UnifiedDistanceCompute, DistanceMode};
     use crate::core::hardware_capabilities::HardwareBackend;
     use crate::core::search::{
@@ -311,12 +311,11 @@ mod tests {
             HardwareBackend::ROCm,
             HardwareBackend::MPS,
             HardwareBackend::OpenCL,
-            HardwareBackend::CpuSIMD(PlatformCapability::X86Avx512),
-            HardwareBackend::CpuSIMD(PlatformCapability::X86Avx2),
-            HardwareBackend::CpuSIMD(PlatformCapability::X86Avx),
-            HardwareBackend::CpuSIMD(PlatformCapability::X86Sse2),
+            HardwareBackend::AVX512,
+            HardwareBackend::AVX2,
+            HardwareBackend::SSE,
             #[cfg(target_arch = "aarch64")]
-            HardwareBackend::CpuSIMD(PlatformCapability::ArmNeon),
+            HardwareBackend::NEON,
             #[cfg(not(target_arch = "aarch64"))]
             HardwareBackend::Scalar,
             HardwareBackend::Scalar,

@@ -1,8 +1,9 @@
 //! Real performance benchmark for ProximaDB
 
 use proximadb::compute::distance_computation::{DistanceMetric};
-use proximadb::compute::distance_computation::core::{detect_platform_capability, create_distance_calculator};
-use proximadb::index::axis::{AxisIvfIndex, AxisIvfConfig, AxisLshIndex, AxisLshConfig};
+use proximadb::compute::distance_computation::engine::UnifiedDistanceCompute;
+use proximadb::index::axis::ivf_unified::{UnifiedIvfIndex, UnifiedIvfConfig, IvfClusteringMethod, CentroidConfig, PostingListConfig};
+use proximadb::index::axis::lsh_index::{AxisLshIndex, AxisLshConfig};
 use proximadb::core::VectorRecord;
 use std::sync::Arc;
 use std::time::Instant;
@@ -10,7 +11,7 @@ use std::collections::HashMap;
 
 fn benchmark_distance_metrics() -> HashMap<(usize, DistanceMetric), f64> {
     println!("\n=== Distance Computation Benchmarks ===");
-    println!("Platform: {}", detect_platform_capability());
+    println!("Platform: UnifiedDistanceCompute with automatic hardware detection");
     
     let dimensions = vec![128, 256, 512, 1024, 2048];
     let iterations = 100_000;
@@ -24,17 +25,17 @@ fn benchmark_distance_metrics() -> HashMap<(usize, DistanceMetric), f64> {
         let b: Vec<f32> = (0..dim).map(|i| (i as f32).cos()).collect();
         
         for metric in [DistanceMetric::Cosine, DistanceMetric::Euclidean, DistanceMetric::DotProduct] {
-            let calc = create_distance_calculator(metric);
+            let calc = UnifiedDistanceCompute::new(metric);
             
             // Warmup
             for _ in 0..1000 {
-                let _ = calc.distance(&a, &b);
+                let _ = calc.calculate_distance(&a, &b, &metric);
             }
             
             // Benchmark
             let start = Instant::now();
             for _ in 0..iterations {
-                let _ = calc.distance(&a, &b);
+                let _ = calc.calculate_distance(&a, &b, &metric);
             }
             let elapsed = start.elapsed();
             
@@ -64,47 +65,42 @@ async fn benchmark_indexing() {
             .map(|i| (0..dimension).map(|j| ((i * j) as f32).sin()).collect())
             .collect();
         
-        // AXIS IVF benchmark
+        // Unified IVF benchmark
         {
             let num_clusters = ((size as f64).sqrt() as usize).max(10);
             
-            let config = AxisIvfConfig {
+            let config = UnifiedIvfConfig {
                 n_clusters: num_clusters,
                 n_probe: 5,
-                train_size: 0, // Auto-calculate
-                max_iterations: 20,
+                dimension,
                 distance_metric: DistanceMetric::Cosine,
-                enable_pq: false,
-                pq_subquantizers: 8,
+                quantization_bits: 0,
+                use_pq: false,
+                pq_subspaces: 0,
+                clustering_method: IvfClusteringMethod::KMeans,
+                train_on_insert: false,
+                min_train_size: 100,
+                max_iterations: 20,
+                tolerance: 0.01,
+                n_init: 1,
+                centroid_config: CentroidConfig::default(),
+                posting_list_config: PostingListConfig::default(),
             };
             
             let start = Instant::now();
-            let mut index = AxisIvfIndex::new(config, dimension);
+            let mut index = UnifiedIvfIndex::new("benchmark".to_string(), config).unwrap();
             
             // Train the index
-            if let Err(e) = index.train(&vectors[..1000.min(size)]).await {
-                println!("  IVF training failed: {}", e);
-                continue;
-            }
+            let training_data = vectors[..1000.min(size)].to_vec();
+            index.train(training_data).await.unwrap();
             
             // Add vectors
             for (i, vec) in vectors.iter().enumerate() {
-                let record = VectorRecord {
-                    id: Some(format!("vec_{}", i)),
-                    vector: vec.clone(),
-                    metadata: vec![],
-                    timestamp: 0,
-                    updated_at: Some(0),
-                    expires_at: Some(0),
-                    version: Some(1),
-                    rank: Some(0),
-                    score: Some(0.0),
-                    distance: Some(0.0),
-                };
-                if let Err(e) = index.add(format!("vec_{}", i), Arc::new(record)).await {
-                    println!("  IVF add failed: {}", e);
-                    break;
-                }
+                index.add_vector(
+                    format!("vec_{}", i), 
+                    vec.clone(),
+                    None  // No metadata for benchmark
+                ).await.unwrap();
             }
             let build_time = start.elapsed();
             
@@ -118,7 +114,7 @@ async fn benchmark_indexing() {
             let search_time = start.elapsed();
             let qps = search_iterations as f64 / search_time.as_secs_f64();
             
-            println!("  AXIS IVF: build={:.2}s, QPS={:.0}, clusters={}", 
+            println!("  Unified IVF: build={:.2}s, QPS={:.0}, clusters={}", 
                      build_time.as_secs_f64(), qps, num_clusters);
         }
         
@@ -191,12 +187,13 @@ fn benchmark_concurrent_operations() {
         for _ in 0..num_threads {
             let counter_clone = counter.clone();
             let handle = thread::spawn(move || {
-                let calc = create_distance_calculator(DistanceMetric::Cosine);
+                let metric = DistanceMetric::Cosine;
+                let calc = UnifiedDistanceCompute::new(metric);
                 let a: Vec<f32> = (0..128).map(|i| (i as f32).sin()).collect();
                 let b: Vec<f32> = (0..128).map(|i| (i as f32).cos()).collect();
                 
                 for _ in 0..operations_per_thread {
-                    let _ = calc.distance(&a, &b);
+                    let _ = calc.calculate_distance(&a, &b, &metric);
                     counter_clone.fetch_add(1, Ordering::Relaxed);
                 }
             });

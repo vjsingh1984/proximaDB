@@ -25,6 +25,7 @@
 pub mod concurrent_structures;
 pub mod tier_policy_engine;
 pub mod adaptive_structures;
+pub mod tier_data_movement;
 
 pub use concurrent_structures::{
     ConcurrentStorage, ConcurrentMapping, AtomicMetrics, MetricsSnapshot,

@@ -24,6 +24,7 @@ use anyhow::{anyhow, Result};
 use dashmap::DashMap;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
+use std::hash::Hash;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use tracing::{debug, info};
@@ -115,16 +116,32 @@ impl HashFunction {
     }
 }
 
-/// AXIS-integrated LSH index
+/// Partitioned key for collection-aware storage
+#[derive(Debug, Clone, Hash, Eq, PartialEq)]
+pub struct PartitionedKey<K: Hash + Eq> {
+    pub collection_id: String,
+    pub key: K,
+}
+
+impl<K: Hash + Eq> PartitionedKey<K> {
+    pub fn new(collection_id: String, key: K) -> Self {
+        Self { collection_id, key }
+    }
+}
+
+/// AXIS-integrated LSH index with collection partitioning
 pub struct AxisLshIndex {
+    /// Collection identifier for partitioning (optional for backward compatibility)
+    collection_id: Option<String>,
     /// Configuration
     config: AxisLshConfig,
     /// Hash tables mapping hash values to vector IDs
-    hash_tables: Vec<Arc<DashMap<u64, HashSet<String>>>>,
+    /// Partitioned by collection: (collection_id, hash_value) -> vector_ids
+    hash_tables: Vec<Arc<DashMap<PartitionedKey<u64>, HashSet<String>>>>,
     /// Hash functions for each table
     hash_functions: Vec<Vec<HashFunction>>,
-    /// Vector data storage
-    vectors: Arc<DashMap<String, Arc<VectorRecord>>>,
+    /// Vector data storage - partitioned by collection
+    vectors: Arc<DashMap<PartitionedKey<String>, Arc<VectorRecord>>>,
     /// Dimension
     dimension: usize,
     /// Distance compute instance
@@ -138,9 +155,19 @@ pub struct AxisLshIndex {
 impl AxisLshIndex {
     /// Create a new LSH index
     pub fn new(config: AxisLshConfig, dimension: usize) -> Self {
+        Self::new_with_collection(None, config, dimension)
+    }
+    
+    /// Create a new LSH index for a specific collection
+    pub fn new_with_collection(
+        collection_id: Option<String>,
+        config: AxisLshConfig,
+        dimension: usize
+    ) -> Self {
+        let coll_str = collection_id.as_ref().map(|s| s.as_str()).unwrap_or("default");
         info!(
-            "Creating AXIS LSH index: {} tables, {} hashes, {} dim",
-            config.n_tables, config.n_hashes, dimension
+            "Creating AXIS LSH index for collection '{}': {} tables, {} hashes, {} dim",
+            coll_str, config.n_tables, config.n_hashes, dimension
         );
         
         use rand::SeedableRng;
@@ -171,6 +198,7 @@ impl AxisLshIndex {
         };
         
         Self {
+            collection_id,
             config,
             hash_tables,
             hash_functions,
@@ -196,14 +224,27 @@ impl AxisLshIndex {
         for (table_idx, table) in self.hash_tables.iter().enumerate() {
             let hash_value = self.compute_hash(table_idx, &vector_record.vector);
             
+            // Create partitioned key for hash table
+            let key = if let Some(ref coll_id) = self.collection_id {
+                PartitionedKey::new(coll_id.clone(), hash_value)
+            } else {
+                PartitionedKey::new("default".to_string(), hash_value)
+            };
+            
             table
-                .entry(hash_value)
+                .entry(key)
                 .or_insert_with(HashSet::new)
                 .insert(id.clone());
         }
         
-        // Store vector
-        self.vectors.insert(id, vector_record);
+        // Store vector with partitioned key
+        let vector_key = if let Some(ref coll_id) = self.collection_id {
+            PartitionedKey::new(coll_id.clone(), id)
+        } else {
+            PartitionedKey::new("default".to_string(), id)
+        };
+        
+        self.vectors.insert(vector_key, vector_record);
         self.vector_count.fetch_add(1, Ordering::Relaxed);
         
         Ok(())
@@ -230,8 +271,15 @@ impl AxisLshIndex {
         for (table_idx, table) in self.hash_tables.iter().enumerate() {
             let hash_value = self.compute_hash(table_idx, query);
             
+            // Create partitioned key for lookup
+            let key = if let Some(ref coll_id) = self.collection_id {
+                PartitionedKey::new(coll_id.clone(), hash_value)
+            } else {
+                PartitionedKey::new("default".to_string(), hash_value)
+            };
+            
             // Look in the same bucket
-            if let Some(bucket) = table.get(&hash_value) {
+            if let Some(bucket) = table.get(&key) {
                 for id in bucket.iter() {
                     candidates.insert(id.clone());
                 }
@@ -241,7 +289,13 @@ impl AxisLshIndex {
             if self.config.n_hashes <= 5 {
                 for offset in &[-1, 1] {
                     let adjacent_hash = (hash_value as i64 + offset) as u64;
-                    if let Some(bucket) = table.get(&adjacent_hash) {
+                    let adjacent_key = if let Some(ref coll_id) = self.collection_id {
+                        PartitionedKey::new(coll_id.clone(), adjacent_hash)
+                    } else {
+                        PartitionedKey::new("default".to_string(), adjacent_hash)
+                    };
+                    
+                    if let Some(bucket) = table.get(&adjacent_key) {
                         for id in bucket.iter() {
                             candidates.insert(id.clone());
                         }
@@ -253,7 +307,14 @@ impl AxisLshIndex {
         // Compute actual distances for candidates
         let mut results = Vec::new();
         for id in &candidates {
-            if let Some(vector_record) = self.vectors.get(id) {
+            // Create partitioned key for vector lookup
+            let vector_key = if let Some(ref coll_id) = self.collection_id {
+                PartitionedKey::new(coll_id.clone(), id.clone())
+            } else {
+                PartitionedKey::new("default".to_string(), id.clone())
+            };
+            
+            if let Some(vector_record) = self.vectors.get(&vector_key) {
                 // Apply filter if provided
                 if let Some(f) = filter {
                     if !f(&vector_record) {
@@ -281,16 +342,19 @@ impl AxisLshIndex {
     
     /// Remove a vector from the index
     pub async fn remove(&self, id: &str) -> Result<()> {
-        if let Some((_, vector_record)) = self.vectors.remove(id) {
+        let collection_id = self.collection_id.as_ref().map(|s| s.as_str()).unwrap_or("default");
+        let key = PartitionedKey::new(collection_id.to_string(), id.to_string());
+        if let Some((_, vector_record)) = self.vectors.remove(&key) {
             // Remove from all hash tables
             for (table_idx, table) in self.hash_tables.iter().enumerate() {
                 let hash_value = self.compute_hash(table_idx, &vector_record.vector);
                 
-                if let Some(mut bucket) = table.get_mut(&hash_value) {
+                let hash_key = PartitionedKey::new(collection_id.to_string(), hash_value);
+                if let Some(mut bucket) = table.get_mut(&hash_key) {
                     bucket.remove(id);
                     if bucket.is_empty() {
                         drop(bucket);
-                        table.remove(&hash_value);
+                        table.remove(&hash_key);
                     }
                 }
             }
@@ -503,10 +567,10 @@ impl AxisVectorIndex for AxisLshIndex {
     async fn search(
         &self,
         query: &[f32],
-        k: usize,
+        top_k: usize,
         filter: Option<&(dyn for<'a> Fn(&'a VectorRecord) -> bool + Send + Sync)>,
     ) -> Result<Vec<(String, f32)>> {
-        AxisLshIndex::search(self, query, k, filter).await
+        AxisLshIndex::search(self, query, top_k, filter).await
     }
     
     async fn remove(&self, id: &str) -> Result<()> {

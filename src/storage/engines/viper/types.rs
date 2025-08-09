@@ -327,11 +327,11 @@ impl ViperEngineConfig {
             initial_cluster_count: 16,
             enable_quantization: false,    // Disabled by default
             parquet_compression: match config.compression.as_str() {
-                "zstd" if config.compression_enabled => ParquetCompression::Zstd,
-                "snappy" if config.compression_enabled => ParquetCompression::Snappy,
-                "gzip" if config.compression_enabled => ParquetCompression::Gzip,
-                "lz4" if config.compression_enabled => ParquetCompression::Lz4,
-                _ => ParquetCompression::None,
+                "zstd" => ParquetCompression::Zstd,
+                "snappy" => ParquetCompression::Snappy,
+                "gzip" => ParquetCompression::Gzip,
+                "lz4" => ParquetCompression::Lz4,
+                "none" | _ => ParquetCompression::None,
             },
             row_group_size: config.row_group_size,
             enable_background_compaction: true,

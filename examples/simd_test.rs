@@ -1,14 +1,17 @@
 //! SIMD performance test example
 
-use proximadb::compute::distance::{detect_platform_capability, create_distance_calculator, DistanceMetric};
+use proximadb::compute::distance_computation::DistanceMetric;
+use proximadb::compute::distance_computation::engine::UnifiedDistanceCompute;
+use proximadb::core::hardware_capabilities::{initialize_hardware_capabilities_default, get_hardware_capabilities};
 use std::time::Instant;
 
 fn main() {
     println!("ProximaDB SIMD Performance Test");
     println!("===============================");
     
-    let capability = detect_platform_capability();
-    println!("Detected platform: {}", capability);
+    let _ = initialize_hardware_capabilities_default();
+    let capability = get_hardware_capabilities();
+    println!("Detected platform: {:?}", capability);
     println!();
     
     let dim = 1024;
@@ -25,17 +28,17 @@ fn main() {
         DistanceMetric::Euclidean,
         DistanceMetric::DotProduct,
     ] {
-        let calc = create_distance_calculator(metric);
+        let calc = UnifiedDistanceCompute::new(metric);
         
         // Warmup
         for _ in 0..100 {
-            let _ = calc.distance(&a, &b);
+            let _ = calc.calculate_distance(&a, &b, &metric);
         }
         
         // Benchmark
         let start = Instant::now();
         for _ in 0..iterations {
-            let _ = calc.distance(&a, &b);
+            let _ = calc.calculate_distance(&a, &b, &metric);
         }
         let elapsed = start.elapsed();
         

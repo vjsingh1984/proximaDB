@@ -303,13 +303,63 @@ pub trait WALBatchStrategy: Send + Sync + std::fmt::Debug {
     ) -> Result<Vec<(VectorId, f32, VectorRecord)>> {
         // Default implementation using get_wal_behavior
         if let Some(wal_behavior) = self.get_wal_behavior() {
-            let metric = distance_metric.unwrap_or(CoreDistanceMetric::Cosine);
-            let results = wal_behavior.search_unflushed_vectors(query_vector, k, collection_id, metric).await?;
+            // Convert CoreDistanceMetric to unified DistanceMetric (they're the same due to alias)
+            let unified_metric = distance_metric.map(|m| match m {
+                CoreDistanceMetric::Unspecified => crate::compute::distance_computation::DistanceMetric::Cosine, // Default fallback
+                CoreDistanceMetric::Cosine => crate::compute::distance_computation::DistanceMetric::Cosine,
+                CoreDistanceMetric::Euclidean => crate::compute::distance_computation::DistanceMetric::Euclidean,
+                CoreDistanceMetric::DotProduct => crate::compute::distance_computation::DistanceMetric::DotProduct,
+                CoreDistanceMetric::Manhattan => crate::compute::distance_computation::DistanceMetric::Manhattan,
+                CoreDistanceMetric::Hamming => crate::compute::distance_computation::DistanceMetric::Hamming,
+                CoreDistanceMetric::Jaccard => crate::compute::distance_computation::DistanceMetric::Jaccard,
+                CoreDistanceMetric::Chebyshev => crate::compute::distance_computation::DistanceMetric::Chebyshev,
+                CoreDistanceMetric::Canberra => crate::compute::distance_computation::DistanceMetric::Canberra,
+                CoreDistanceMetric::Minkowski => crate::compute::distance_computation::DistanceMetric::Minkowski,
+                CoreDistanceMetric::Angular => crate::compute::distance_computation::DistanceMetric::Angular,
+                CoreDistanceMetric::BrayCurtis => crate::compute::distance_computation::DistanceMetric::BrayCurtis,
+                CoreDistanceMetric::Hellinger => crate::compute::distance_computation::DistanceMetric::Hellinger,
+                CoreDistanceMetric::Custom => crate::compute::distance_computation::DistanceMetric::Custom,
+            }).unwrap_or(crate::compute::distance_computation::DistanceMetric::Cosine);
             
-            // Convert results to the expected format
+            let results = wal_behavior.search_unflushed_vectors(
+                collection_id,
+                query_vector,
+                k,
+                unified_metric,
+                None, // No metadata filters
+                true, // Include vectors
+                true, // Include metadata
+            ).await?;
+            
+            // Convert SearchResult objects to the expected format
             let converted_results: Vec<(VectorId, f32, VectorRecord)> = results
                 .into_iter()
-                .map(|(score, record)| (record.id.as_deref().unwrap_or("").to_string(), score, record))
+                .map(|search_result| {
+                    // Create VectorRecord from SearchResult
+                    let vector_record = VectorRecord {
+                        id: search_result.vector_id,
+                        vector: search_result.vector.unwrap_or_default(),
+                        metadata: search_result.metadata.into_iter()
+                            .map(|(key, value)| crate::proto::proximadb::MetadataItem {
+                                key,
+                                value: Some(match value {
+                                    serde_json::Value::String(s) => crate::proto::proximadb::metadata_item::Value::StringValue(s),
+                                    serde_json::Value::Number(n) => crate::proto::proximadb::metadata_item::Value::NumberValue(n.as_f64().unwrap_or(0.0)),
+                                    serde_json::Value::Bool(b) => crate::proto::proximadb::metadata_item::Value::BoolValue(b),
+                                    _ => crate::proto::proximadb::metadata_item::Value::StringValue("null".to_string()),
+                                })
+                            })
+                            .collect(),
+                        timestamp: search_result.timestamp.unwrap_or(0),
+                        updated_at: None,
+                        expires_at: None,
+                        version: search_result.version,
+                        rank: search_result.rank.map(|r| r as i32),
+                        score: Some(search_result.score),
+                        distance: search_result.distance,
+                    };
+                    (search_result.id, search_result.score, vector_record)
+                })
                 .collect();
                 
             Ok(converted_results)
