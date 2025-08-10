@@ -1,146 +1,34 @@
 %%{init: {'theme':'neutral', 'themeVariables': {'primaryColor':'#2E86AB','primaryTextColor':'#1A1A1A','primaryBorderColor':'#2E86AB','lineColor':'#5C6B73','secondaryColor':'#A23B72','tertiaryColor':'#F18F01','background':'#FFFFFF','mainBkg':'#F7F7F7','textColor':'#1A1A1A'}}}%%
 graph TB
-    subgraph "API Layer"
-        REST[REST API<br/>Port: 5678]
-        GRPC[gRPC API<br/>Port: 5679]
-        SQL[SQL Interface]
-    end
-
-    subgraph "Protocol Handlers"
-        RestHandler[REST Handler<br/>- Compression: OFF default<br/>- JSON/Proto conversion]
-        GrpcHandler[gRPC Handler<br/>- Compression: ON default<br/>- Native Proto]
-        SqlHandler[SQL Parser<br/>- GPU Acceleration<br/>- SIMD Optimization]
-    end
-
-    subgraph "Core Services"
-        VOS[VectorOperationsService<br/>- Direct memtable access<br/>- Zero-copy operations<br/>- Hardware routing]
-        CS[CollectionService<br/>- Metadata management<br/>- Storage assignments<br/>- Compression config]
-        SS[StreamingService<br/>- Batch processing<br/>- Flow control]
-    end
-
-    subgraph "Compute Layer"
-        subgraph "Hardware Detection"
-            HW[HardwareCapabilities<br/>- CPU: AVX/AVX512<br/>- GPU: CUDA/ROCm<br/>- SIMD: SSE/AVX]
-        end
-        
-        subgraph "Distance Engine"
-            DE[DistanceEngine<br/>- Auto backend selection<br/>- Batch operations<br/>- Metric support]
-            GPU[GPU Compute<br/>- Large vectors<br/>- Batch >100]
-            SIMD[SIMD Compute<br/>- Medium vectors<br/>- AVX512/AVX2]
-            CPU[CPU Compute<br/>- Small vectors<br/>- Scalar ops]
-        end
-    end
-
-    subgraph "Index Layer"
-        IF[IndexFactory]
-        HNSW[HNSW<br/>- Graph-based<br/>- High recall]
-        IVF[IVF<br/>- Cluster-based<br/>- Scalable]
-        LSH[LSH<br/>- Hash-based<br/>- Fast approx]
-        ANNOY[Annoy<br/>- Tree-based<br/>- Memory efficient]
-        FLAT[Flat<br/>- Brute force<br/>- 100% recall]
-        PQ[PQ<br/>- Quantized<br/>- Compressed]
-    end
-
-    subgraph "Storage Layer"
-        subgraph "Write Path"
-            WAL[WriteAheadLog<br/>- Proto serialization<br/>- Durability]
-            MT[Memtable<br/>- In-memory buffer<br/>- Fast writes]
-        end
-        
-        subgraph "Storage Engines"
-            VIPER[VIPER Engine<br/>- Columnar Parquet<br/>- Analytics optimized<br/>- Dual columns]
-            SST[SST Engine<br/>- Row-based<br/>- Write optimized<br/>- Bloom filters]
-        end
-        
-        subgraph "Compression"
-            COMP[Compression<br/>- SDK-driven<br/>- ZSTD/LZ4/Snappy<br/>- Quantization]
-            Q[Quantization<br/>- INT8/PQ8/PQ4<br/>- FP32 preserved<br/>- Two-stage search]
-        end
-    end
-
-    subgraph "Cache Layer"
-        CO[CrossCacheOrchestrator<br/>- Pattern tracking<br/>- Memory allocation<br/>- Cascade invalidation]
-        VC[VectorStore<br/>- Vector data<br/>- 40% memory]
-        QC[QueryCache<br/>- Search results<br/>- 30% memory]
-        FC[FilterCache<br/>- Bitmap filters<br/>- 20% memory]
-        IC[IndexCache<br/>- Index nodes<br/>- 10% memory]
-    end
-
-    subgraph "Storage Tiers"
-        L1[L1: Memory<br/>- <1ms latency<br/>- Hot data]
-        L2[L2: NVMe<br/>- <10ms latency<br/>- Warm data]
-        L3[L3: HDD<br/>- <100ms latency<br/>- Cold data]
-        L4[L4: Cloud<br/>- S3/GCS/Azure<br/>- Archive]
-    end
-
-    subgraph "Observability"
-        Metrics[Metrics<br/>- Prometheus<br/>- Real-time]
-        Tracing[Tracing<br/>- OpenTelemetry<br/>- Distributed]
-        Logging[Logging<br/>- Structured<br/>- Debug/Info/Error]
-    end
-
-    %% API to Handlers
-    REST --> RestHandler
-    GRPC --> GrpcHandler
-    SQL --> SqlHandler
-
-    %% Handlers to Services
-    RestHandler --> VOS
-    GrpcHandler --> VOS
-    SqlHandler --> VOS
-
-    %% Services interactions
-    VOS --> CS
-    VOS --> SS
-    VOS --> HW
-    VOS --> DE
-
-    %% Hardware routing
-    HW --> DE
-    DE --> GPU
-    DE --> SIMD
-    DE --> CPU
-
-    %% Index operations
-    VOS --> IF
-    IF --> HNSW
-    IF --> IVF
-    IF --> LSH
-    IF --> ANNOY
-    IF --> FLAT
-    IF --> PQ
-
-    %% Storage operations
-    VOS --> WAL
-    WAL --> MT
-    MT --> VIPER
-    MT --> SST
-    VIPER --> COMP
-    SST --> COMP
-    COMP --> Q
-
-    %% Cache operations
-    VOS --> CO
-    CO --> VC
-    CO --> QC
-    CO --> FC
-    CO --> IC
-
-    %% Storage tiers
-    VC --> L1
-    L1 --> L2
-    L2 --> L3
-    L3 --> L4
-
-    %% Monitoring
-    VOS --> Metrics
-    VOS --> Tracing
-    VOS --> Logging
-
-    style REST fill:#E8F4F8,stroke:#2E86AB,stroke-width:2px
-    style GRPC fill:#E8F4F8,stroke:#2E86AB,stroke-width:2px
-    style VOS fill:#FFF5FA,stroke:#A23B72,stroke-width:2px
-    style VIPER fill:#FFF8E7,stroke:#F18F01,stroke-width:2px
-    style SST fill:#FFF8E7,stroke:#F18F01,stroke-width:2px
-    style GPU fill:#E7F5E7,stroke:#5C9E7F,stroke-width:2px
-    style CO fill:#F0E7FF,stroke:#8B7DC3,stroke-width:2px
+    Title[<b>ProximaDB Technical Architecture</b><br/>━━━━━━━━━━━━━━━━━━━━<br/>Click components to explore details]
+    
+    Title --> Overview[<b>Technical Overview</b><br/>High-level system architecture<br/>→ technical-overview.svg]
+    
+    Title --> API[<b>API & Protocols</b><br/>REST, gRPC, SQL interfaces<br/>→ technical-api-protocols.svg]
+    
+    Title --> Storage[<b>Storage Architecture</b><br/>Engines, tiers, compression<br/>→ technical-storage-architecture.svg]
+    
+    Title --> DataFlow[<b>Data Flow</b><br/>Insert, search, background ops<br/>→ technical-data-flow.svg]
+    
+    Title --> Hardware[<b>Hardware Acceleration</b><br/>GPU, SIMD, optimization<br/>→ technical-hardware-acceleration.svg]
+    
+    Title --> Cache[<b>Cache Architecture</b><br/>Multi-tier caching system<br/>→ technical-cache-architecture.svg]
+    
+    Title --> Index[<b>Index Algorithms</b><br/>HNSW, IVF, LSH, and more<br/>→ technical-index-algorithms.svg]
+    
+    style Title fill:#2E86AB,color:#fff
+    style Overview fill:#e6f4ea
+    style API fill:#e8f0fe
+    style Storage fill:#fef7e0
+    style DataFlow fill:#f3e5f5
+    style Hardware fill:#fce4ec
+    style Cache fill:#e0f2fe
+    style Index fill:#e6f4ea
+    
+    click Overview "technical-overview.svg"
+    click API "technical-api-protocols.svg"
+    click Storage "technical-storage-architecture.svg"
+    click DataFlow "technical-data-flow.svg"
+    click Hardware "technical-hardware-acceleration.svg"
+    click Cache "technical-cache-architecture.svg"
+    click Index "technical-index-algorithms.svg"

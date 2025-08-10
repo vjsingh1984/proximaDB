@@ -4,6 +4,9 @@
 
 **REST and gRPC API documentation.**
 
+image::../diagrams/images/technical-api-protocols.svg[API & Protocols Architecture, width=900]
+_API layer architecture showing REST, gRPC, and SQL interfaces_
+
 == REST API
 
 **Base URL**: `http://localhost:5678`

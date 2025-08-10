@@ -1,0 +1,57 @@
+%%{init: {'theme':'neutral', 'themeVariables': {'primaryColor':'#2E86AB','primaryTextColor':'#1A1A1A','primaryBorderColor':'#2E86AB','lineColor':'#5C6B73','secondaryColor':'#A23B72','tertiaryColor':'#F18F01','background':'#FFFFFF','mainBkg':'#F7F7F7','textColor':'#1A1A1A'}}}%%
+graph LR
+    subgraph "Write Path"
+        Write[<b>Vector Write</b>]
+        WAL[<b>Write-Ahead Log</b><br/>━━━━━━━━━━<br/>Proto serialization<br/>Durability guarantee<br/>Recovery point]
+        Memtable[<b>Memtable</b><br/>━━━━━━━━━━<br/>In-memory buffer<br/>Fast writes<br/>Flush trigger]
+    end
+    
+    subgraph "Storage Engines"
+        direction TB
+        
+        VIPER[<b>VIPER Engine</b><br/>━━━━━━━━━━<br/>• Columnar format<br/>• Parquet files<br/>• Analytics optimized<br/>• Dual columns FP32+Quantized<br/>• PAR1 magic bytes]
+        
+        SST[<b>SST Engine</b><br/>━━━━━━━━━━<br/>• Row-based format<br/>• SSTable files<br/>• Write optimized<br/>• Bloom filters<br/>• SST1 magic bytes]
+    end
+    
+    subgraph "Compression Layer"
+        Compression[<b>Compression</b><br/>━━━━━━━━━━<br/>• SDK-driven config<br/>• ZSTD/LZ4/Snappy<br/>• Dynamic block sizing]
+        
+        Quantization[<b>Quantization</b><br/>━━━━━━━━━━<br/>• INT8/PQ8/PQ4<br/>• FP32 preserved<br/>• VIPER only]
+    end
+    
+    subgraph "Storage Tiers"
+        direction TB
+        
+        L1[<b>L1: Memory</b><br/>Hot data<br/><1ms latency]
+        L2[<b>L2: NVMe</b><br/>Warm data<br/><10ms latency]
+        L3[<b>L3: HDD</b><br/>Cold data<br/><100ms latency]
+        L4[<b>L4: Cloud</b><br/>Archive<br/>S3/GCS/Azure]
+    end
+    
+    Write --> WAL
+    WAL --> Memtable
+    Memtable --> VIPER
+    Memtable --> SST
+    
+    VIPER --> Compression
+    SST --> Compression
+    Compression --> Quantization
+    
+    VIPER --> L2
+    SST --> L2
+    L1 --> L2
+    L2 --> L3
+    L3 --> L4
+    
+    style Write fill:#e8f0fe
+    style WAL fill:#e6f4ea
+    style Memtable fill:#fef7e0
+    style VIPER fill:#f3e5f5
+    style SST fill:#f3e5f5
+    style Compression fill:#e0f2fe
+    style Quantization fill:#fce4ec
+    style L1 fill:#e6f4ea
+    style L2 fill:#fef7e0
+    style L3 fill:#e8f0fe
+    style L4 fill:#f3e5f5

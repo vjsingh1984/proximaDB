@@ -1,0 +1,38 @@
+%%{init: {'theme':'neutral', 'themeVariables': {'primaryColor':'#2E86AB','primaryTextColor':'#1A1A1A','primaryBorderColor':'#2E86AB','lineColor':'#5C6B73','secondaryColor':'#A23B72','tertiaryColor':'#F18F01','background':'#FFFFFF','mainBkg':'#F7F7F7','textColor':'#1A1A1A'}}}%%
+graph LR
+    subgraph "Insert Flow"
+        Insert[Vector Insert]
+        Insert --> WAL1[Write to WAL]
+        WAL1 --> Mem1[Buffer in Memtable]
+        Mem1 --> Index1[Update Index]
+        Index1 --> Ack[Return ACK]
+    end
+    
+    subgraph "Search Flow"
+        Search[Search Request]
+        Search --> Cache1[Check Cache]
+        Cache1 --> Index2[Query Index]
+        Index2 --> Filter[Apply Filters]
+        Filter --> Rank[Rank Results]
+        Rank --> Return[Return Results]
+    end
+    
+    subgraph "Background Operations"
+        direction TB
+        Flush[<b>Flush Process</b><br/>Memtable → Disk]
+        Compact[<b>Compaction</b><br/>Merge SSTables]
+        Tier[<b>Tiering</b><br/>Hot → Cold data]
+        GC[<b>Garbage Collection</b><br/>Clean expired]
+    end
+    
+    Mem1 -.-> Flush
+    Flush -.-> Compact
+    Compact -.-> Tier
+    Tier -.-> GC
+    
+    style Insert fill:#e6f4ea
+    style Search fill:#e8f0fe
+    style Flush fill:#fef7e0
+    style Compact fill:#f3e5f5
+    style Tier fill:#fce4ec
+    style GC fill:#e0f2fe

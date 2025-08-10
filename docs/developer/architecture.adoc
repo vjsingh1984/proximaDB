@@ -7,7 +7,10 @@
 
 == System Overview
 
-image::technical-architecture-complete.svg[ProximaDB Architecture, width=900]
+image::technical-overview.svg[ProximaDB Technical Overview, width=900]
+_High-level system architecture showing all major components_
+
+_For detailed technical architecture, see link:../diagrams/technical-architecture-complete.mmd[navigation hub] with links to link:../diagrams/technical-api-protocols.mmd[API/protocols], link:../diagrams/technical-storage-architecture.mmd[storage], link:../diagrams/technical-hardware-acceleration.mmd[hardware acceleration], and more._
 
 === Design Principles
 * **Proto-first**: Zero double serialization, native proto flow
@@ -43,6 +46,9 @@ image::technical-architecture-complete.svg[ProximaDB Architecture, width=900]
 |===
 
 == Storage Architecture
+
+image::technical-storage-architecture.svg[Storage Architecture, width=900]
+_Complete storage architecture with write path, engines, compression, and tiering_
 
 === Storage Engines
 [cols="1,1,2", options="header"]
@@ -103,6 +109,9 @@ _Detailed breakdown of core capabilities, advanced features, and enterprise func
 === Hardware Capabilities
 **Location**: `/src/core/hardware_capabilities.rs`
 
+image::technical-hardware-acceleration.svg[Hardware Acceleration, width=900]
+_Hardware detection and compute acceleration strategy_
+
 ```rust
 // Initialize once at startup
 initialize_hardware_capabilities_default();
@@ -132,6 +141,9 @@ config = CompressionConfig(
 3. **Block-Based** (SST): Bloom filter → Decompress blocks
 
 == Indexing (AXIS)
+
+image::technical-index-algorithms.svg[Index Algorithms, width=900]
+_All supported index algorithms with characteristics_
 
 === Supported Algorithms
 [cols="1,1,2", options="header"]

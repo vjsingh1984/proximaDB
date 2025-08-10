@@ -70,6 +70,45 @@ Proto-first, dual engines, no lock-in
 
 == Technical Architecture Diagrams
 
+=== Core Technical Diagrams
+
+[cols="1,2", options="header"]
+|===
+| Diagram | Description
+
+| **Technical Overview**
+| `technical-overview.svg` +
+High-level system architecture showing all major components
+
+| **API & Protocols**
+| `technical-api-protocols.svg` +
+REST, gRPC, and SQL interfaces with protocol handlers
+
+| **Storage Architecture**
+| `technical-storage-architecture.svg` +
+Write path, storage engines, compression, and tiering
+
+| **Data Flow**
+| `technical-data-flow.svg` +
+Insert flow, search flow, and background operations
+
+| **Hardware Acceleration**
+| `technical-hardware-acceleration.svg` +
+GPU, SIMD detection and compute strategies
+
+| **Cache Architecture**
+| `technical-cache-architecture.svg` +
+Multi-tier cache system with orchestration
+
+| **Index Algorithms**
+| `technical-index-algorithms.svg` +
+HNSW, IVF, LSH, Annoy, PQ, and Flat indexes
+
+| **Navigation Hub**
+| `technical-architecture-complete.svg` +
+Central navigation to all technical diagrams
+|===
+
 === UML Diagrams
 
 [cols="1,2", options="header"]

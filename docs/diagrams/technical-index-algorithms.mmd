@@ -1,0 +1,44 @@
+%%{init: {'theme':'neutral', 'themeVariables': {'primaryColor':'#2E86AB','primaryTextColor':'#1A1A1A','primaryBorderColor':'#2E86AB','lineColor':'#5C6B73','secondaryColor':'#A23B72','tertiaryColor':'#F18F01','background':'#FFFFFF','mainBkg':'#F7F7F7','textColor':'#1A1A1A'}}}%%
+graph TB
+    subgraph "Index Factory"
+        Factory[<b>IndexFactory</b><br/>Algorithm selection<br/>Auto-configuration]
+    end
+    
+    subgraph "Graph-Based"
+        HNSW[<b>HNSW</b><br/>━━━━━━━━━━<br/>• Hierarchical graph<br/>• High recall 95%+<br/>• Fast search<br/>• Memory: O(N*M)]
+    end
+    
+    subgraph "Partition-Based"
+        IVF[<b>IVF</b><br/>━━━━━━━━━━<br/>• Inverted file index<br/>• Scalable to billions<br/>• Balanced performance<br/>• Memory: O(N/nlist)]
+    end
+    
+    subgraph "Tree-Based"
+        ANNOY[<b>Annoy</b><br/>━━━━━━━━━━<br/>• Random projection trees<br/>• Memory efficient<br/>• Fast build<br/>• Memory: O(N*trees)]
+    end
+    
+    subgraph "Hash-Based"
+        LSH[<b>LSH</b><br/>━━━━━━━━━━<br/>• Locality sensitive hashing<br/>• Sublinear search<br/>• Probabilistic<br/>• Memory: O(N*tables)]
+    end
+    
+    subgraph "Quantization"
+        PQ[<b>PQ</b><br/>━━━━━━━━━━<br/>• Product quantization<br/>• 8-32x compression<br/>• Trade recall for memory<br/>• Memory: O(N/8)]
+    end
+    
+    subgraph "Exact Search"
+        FLAT[<b>Flat</b><br/>━━━━━━━━━━<br/>• Brute force<br/>• 100% recall<br/>• No build time<br/>• Memory: O(N)]
+    end
+    
+    Factory --> HNSW
+    Factory --> IVF
+    Factory --> ANNOY
+    Factory --> LSH
+    Factory --> PQ
+    Factory --> FLAT
+    
+    style Factory fill:#2E86AB,color:#fff
+    style HNSW fill:#e6f4ea
+    style IVF fill:#fef7e0
+    style ANNOY fill:#e8f0fe
+    style LSH fill:#f3e5f5
+    style PQ fill:#fce4ec
+    style FLAT fill:#e0f2fe

@@ -1,0 +1,41 @@
+%%{init: {'theme':'neutral', 'themeVariables': {'primaryColor':'#2E86AB','primaryTextColor':'#1A1A1A','primaryBorderColor':'#2E86AB','lineColor':'#5C6B73','secondaryColor':'#A23B72','tertiaryColor':'#F18F01','background':'#FFFFFF','mainBkg':'#F7F7F7','textColor':'#1A1A1A'}}}%%
+graph TB
+    subgraph "Cache Orchestration"
+        Orchestrator[<b>CrossCacheOrchestrator</b><br/>━━━━━━━━━━━━━━━<br/>Pattern tracking<br/>Memory allocation<br/>Cascade invalidation]
+    end
+    
+    subgraph "Specialized Caches"
+        VectorCache[<b>VectorStore</b><br/>━━━━━━━━━━<br/>Vector data<br/>40% memory<br/>LRU eviction]
+        
+        QueryCache[<b>QueryCache</b><br/>━━━━━━━━━━<br/>Search results<br/>30% memory<br/>TTL-based]
+        
+        FilterCache[<b>FilterCache</b><br/>━━━━━━━━━━<br/>Bitmap filters<br/>20% memory<br/>Incremental updates]
+        
+        IndexCache[<b>IndexCache</b><br/>━━━━━━━━━━<br/>Index nodes<br/>10% memory<br/>Hot path optimization]
+    end
+    
+    subgraph "Cache Features"
+        Pattern[<b>Pattern Analysis</b><br/>Access tracking<br/>Prefetch prediction]
+        
+        Memory[<b>Memory Management</b><br/>Dynamic allocation<br/>Pressure handling]
+        
+        Invalidation[<b>Invalidation</b><br/>Cascade updates<br/>Consistency]
+    end
+    
+    Orchestrator --> VectorCache
+    Orchestrator --> QueryCache
+    Orchestrator --> FilterCache
+    Orchestrator --> IndexCache
+    
+    Orchestrator --> Pattern
+    Orchestrator --> Memory
+    Orchestrator --> Invalidation
+    
+    style Orchestrator fill:#2E86AB,color:#fff
+    style VectorCache fill:#e6f4ea
+    style QueryCache fill:#fef7e0
+    style FilterCache fill:#e8f0fe
+    style IndexCache fill:#f3e5f5
+    style Pattern fill:#fce4ec
+    style Memory fill:#e0f2fe
+    style Invalidation fill:#e6f4ea

@@ -1,0 +1,48 @@
+%%{init: {'theme':'neutral', 'themeVariables': {'primaryColor':'#2E86AB','primaryTextColor':'#1A1A1A','primaryBorderColor':'#2E86AB','lineColor':'#5C6B73','secondaryColor':'#A23B72','tertiaryColor':'#F18F01','background':'#FFFFFF','mainBkg':'#F7F7F7','textColor':'#1A1A1A'}}}%%
+graph TB
+    subgraph "Hardware Detection"
+        Detect[<b>HardwareCapabilities</b><br/>━━━━━━━━━━━━━━<br/>Auto-detection at startup<br/>Runtime capability check]
+        
+        CPU_Features[<b>CPU Features</b><br/>• SSE4.2<br/>• AVX2<br/>• AVX-512<br/>• ARM NEON]
+        
+        GPU_Support[<b>GPU Support</b><br/>• CUDA cores<br/>• ROCm AMD<br/>• Memory size<br/>• Compute capability]
+    end
+    
+    subgraph "Distance Engine"
+        Router[<b>Distance Router</b><br/>━━━━━━━━━━━━<br/>Automatic backend selection<br/>Based on vector size & batch]
+        
+        GPU_Compute[<b>GPU Compute</b><br/>━━━━━━━━━━<br/>• Large vectors >1024d<br/>• Batch size >100<br/>• Parallel processing<br/>• 10x speedup]
+        
+        SIMD_Compute[<b>SIMD Compute</b><br/>━━━━━━━━━━<br/>• Medium vectors<br/>• AVX-512/AVX2<br/>• 4-8x speedup<br/>• CPU efficient]
+        
+        Scalar_Compute[<b>Scalar Compute</b><br/>━━━━━━━━━━<br/>• Small vectors <128d<br/>• Single operations<br/>• Fallback mode<br/>• Universal support]
+    end
+    
+    subgraph "Optimization Strategies"
+        Batch[<b>Batch Processing</b><br/>Vectorized operations]
+        Cache[<b>Cache Optimization</b><br/>Memory alignment]
+        Parallel[<b>Parallelization</b><br/>Multi-threading]
+    end
+    
+    Detect --> CPU_Features
+    Detect --> GPU_Support
+    
+    CPU_Features --> Router
+    GPU_Support --> Router
+    
+    Router --> GPU_Compute
+    Router --> SIMD_Compute
+    Router --> Scalar_Compute
+    
+    GPU_Compute --> Batch
+    SIMD_Compute --> Cache
+    Scalar_Compute --> Parallel
+    
+    style Detect fill:#2E86AB,color:#fff
+    style Router fill:#f3e5f5
+    style GPU_Compute fill:#e6f4ea
+    style SIMD_Compute fill:#fef7e0
+    style Scalar_Compute fill:#e8f0fe
+    style Batch fill:#fce4ec
+    style Cache fill:#e0f2fe
+    style Parallel fill:#e6f4ea

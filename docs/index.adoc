@@ -7,7 +7,11 @@ image::business-overview.svg[ProximaDB Business Overview, align=center, width=90
 
 **Enterprise vector database with 3x performance and 50-80% storage reduction.**
 
-_For detailed business architecture, see link:diagrams/business-architecture-consolidated.mmd[navigation hub] with links to link:diagrams/business-capabilities.mmd[capabilities], link:diagrams/business-roi-metrics.mmd[ROI metrics], and link:diagrams/business-use-cases.mmd[use cases]._
+image::technical-overview.svg[ProximaDB Technical Overview, align=center, width=900]
+
+_For detailed architecture diagrams:_
+* link:diagrams/business-architecture-consolidated.mmd[Business Architecture Hub] | link:diagrams/technical-architecture-complete.mmd[Technical Architecture Hub]
+* link:diagrams/index.adoc[Complete Diagrams Documentation]
 
 == Quick Start
 

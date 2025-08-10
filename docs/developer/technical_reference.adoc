@@ -5,6 +5,9 @@
 
 **Core API documentation for ProximaDB systems.**
 
+image::technical-data-flow.svg[Data Flow Architecture, width=900]
+_Complete data flow for insert, search, and background operations_
+
 == Hardware Capabilities
 
 === Initialization
@@ -88,6 +91,18 @@ pub struct ConcurrentStorage<K, V> {
     metrics: AtomicMetrics,
 }
 ```
+
+== Cache Architecture
+
+image::technical-cache-architecture.svg[Cache Architecture, width=900]
+_Multi-tier cache system with specialized caches and orchestration_
+
+=== Cache Components
+* **CrossCacheOrchestrator**: Pattern tracking and memory allocation
+* **VectorStore**: Vector data cache (40% memory)
+* **QueryCache**: Search results cache (30% memory)
+* **FilterCache**: Bitmap filters (20% memory)
+* **IndexCache**: Index nodes (10% memory)
 
 == MVCC Resolution
 
