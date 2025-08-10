@@ -28,6 +28,9 @@ cd clients/python && pip install -e ".[dev]" && cd ../..
 
 == Testing
 
+image::test-infrastructure-flow.svg[Test Infrastructure, width=900]
+_Test execution flow with hardware capability initialization_
+
 **Test Coverage**: 1,460+ tests, 100% pass rate
 - Core Services: 550+ tests (98% coverage)
 - Storage Engines: 450+ tests (95% coverage)

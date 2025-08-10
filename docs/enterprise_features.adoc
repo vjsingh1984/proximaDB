@@ -50,6 +50,29 @@ This document provides the comprehensive roadmap for ProximaDB, including curren
 | No audit trail, GDPR features
 |===
 
+== Multi-Tenancy Architecture (Planned)
+
+image::multi-tenancy-architecture.svg[Multi-Tenancy Architecture, width=900]
+_Planned multi-tenant isolation and resource management architecture_
+
+Key features to implement:
+* **Tenant isolation**: Separate namespaces per tenant
+* **Resource quotas**: CPU, memory, storage limits
+* **Performance isolation**: QoS and rate limiting
+* **Data isolation**: Encryption per tenant
+
+== Security Architecture (Planned)
+
+image::security-architecture.svg[Security Architecture, width=900]
+_Comprehensive security model for enterprise deployments_
+
+Security layers to implement:
+* **Edge security**: TLS/mTLS, API gateway
+* **Authentication**: OIDC, SAML, API keys
+* **Authorization**: RBAC, ABAC policies
+* **Encryption**: At-rest and in-transit
+* **Audit logging**: Complete audit trail
+
 == Version 1.0.0 Status (Current Release)
 
 === ✅ Core Features (Implemented)

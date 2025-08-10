@@ -45,10 +45,26 @@ _For detailed technical architecture, see link:../diagrams/technical-architectur
 | Compression
 |===
 
+== System Initialization
+
+image::initialization-sequence.svg[Initialization Sequence, width=900]
+_Complete startup sequence showing service creation, dependency injection, and recovery phases_
+
+The initialization follows a careful sequence to avoid circular dependencies:
+1. **Core Services Creation**: MetricsCollector and SharedServices
+2. **Storage Engine Setup**: Created without CollectionService, then injected
+3. **Network Layer**: REST and gRPC servers with unified handlers
+4. **Recovery**: Collections from metadata, then vectors from WAL
+
 == Storage Architecture
 
 image::technical-storage-architecture.svg[Storage Architecture, width=900]
 _Complete storage architecture with write path, engines, compression, and tiering_
+
+=== Bloom Filter Optimization
+
+image::bloom-filter-architecture.svg[Bloom Filter Architecture, width=900]
+_CompositeBloomFilter providing 95% metadata scan reduction in WAL search operations_
 
 === Storage Engines
 [cols="1,1,2", options="header"]
@@ -89,6 +105,16 @@ Memory (bincode) → NVMe (SST/VIPER) → HDD → S3/Cloud
 
 image::business-capabilities.svg[ProximaDB Technical Capabilities, width=900]
 _Detailed breakdown of core capabilities, advanced features, and enterprise functionality_
+
+=== Service Interactions
+
+image::service-interactions.svg[Service Interactions, width=900]
+_Sequence diagram showing request flow through services_
+
+=== DirectVectorService Architecture
+
+image::direct-vector-service.svg[DirectVectorService Architecture, width=900]
+_Direct memtable access pattern providing 40-60% latency reduction_
 
 === VectorOperationsService
 **Location**: `/src/services/vector_operations_service.rs`
@@ -134,11 +160,21 @@ config = CompressionConfig(
 )
 ```
 
+=== Compression Decision Tree
+
+image::compression-decision-tree.svg[Compression Decision Tree, width=900]
+_Decision flow for selecting optimal compression settings based on workload_
+
 === Two-Stage Search
 
 1. **Index-Based** (AXIS): Quantized index → FP32 rerank
 2. **Column-Based** (VIPER): Quantized column → FP32 column
 3. **Block-Based** (SST): Bloom filter → Decompress blocks
+
+=== Write-Ahead Log Pattern
+
+image::write-ahead-log-strategy-pattern.svg[WAL Strategy Pattern, width=900]
+_Strategy pattern implementation for WAL serialization formats_
 
 == Indexing (AXIS)
 

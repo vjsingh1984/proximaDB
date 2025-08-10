@@ -92,6 +92,54 @@ pub struct ConcurrentStorage<K, V> {
 }
 ```
 
+== Search Architecture
+
+=== Two-Stage Search Strategy
+
+image::two-stage-search.svg[Two-Stage Search, width=900]
+_Coarse-to-fine search strategy with quantized first stage and FP32 reranking_
+
+The two-stage approach provides optimal performance:
+1. **Stage 1 (Coarse)**: Use quantized vectors or indexes to get 10-100x candidates
+2. **Stage 2 (Fine)**: Rerank with full precision FP32 vectors
+
+=== Query Flow
+
+image::query-flow-complete.svg[Complete Query Flow, width=900]
+_End-to-end query processing from client SDK to result aggregation_
+
+== Quantization & Compression
+
+image::unified_quantization_system.svg[Unified Quantization System, width=900]
+_Complete quantization pipeline with hardware acceleration and adaptive selection_
+
+=== Quantization Methods
+* **Scalar (INT8/INT16)**: 4-8x compression, 99.5%+ accuracy
+* **Product Quantization (PQ)**: 16-64x compression, 95-99% accuracy  
+* **Binary**: 32x compression, 85-95% accuracy
+
+=== Engine-Specific Strategy
+
+image::engine-quantization-strategy.svg[Engine Quantization Strategy, width=900]
+_VIPER vs SST quantization recommendations based on engine characteristics_
+
+== Storage Implementation
+
+=== Storage Engine Classes
+
+image::storage-engine-classes.svg[Storage Engine Classes, width=900]
+_Class hierarchy and relationships for storage engine implementation_
+
+=== Unified Handlers
+
+image::unified-handlers-architecture.svg[Unified Handlers Architecture, width=900]
+_API unification layer for REST and gRPC protocols_
+
+=== Parquet Reader Architecture
+
+image::unified-parquet-reader-architecture.svg[Parquet Reader Architecture, width=900]
+_Optimized Parquet reading pipeline for VIPER engine_
+
 == Cache Architecture
 
 image::technical-cache-architecture.svg[Cache Architecture, width=900]

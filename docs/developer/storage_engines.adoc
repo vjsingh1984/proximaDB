@@ -1,0 +1,198 @@
+= Storage Engine Internals
+:toc: left
+:toclevels: 2
+:imagesdir: ../diagrams/images
+
+**Deep dive into ProximaDB's dual storage engine architecture.**
+
+== SST Engine Architecture
+
+The SST (Sorted String Table) engine is optimized for write-heavy OLTP workloads with row-based storage.
+
+=== SST File Format
+
+image::sst1-format.svg[SST1 File Format, width=900]
+_Internal structure of SST1 file format with magic bytes, headers, and data sections_
+
+Key features:
+* **Magic bytes**: SST1 header for format identification
+* **Row-based storage**: Optimal for point queries
+* **Bloom filters**: 95% reduction in unnecessary reads
+* **Compression blocks**: Configurable compression per block
+
+=== Adaptive Precision
+
+image::sst-adaptive-precision-detail.svg[SST Adaptive Precision, width=900]
+_Dynamic precision adjustment based on data characteristics_
+
+The SST engine automatically adjusts precision based on:
+* Vector dimensionality
+* Data distribution
+* Query patterns
+* Available memory
+
+=== Sorting Architecture
+
+image::sst-sorting-architecture.svg[SST Sorting Architecture, width=900]
+_Multi-phase sorting pipeline for optimal write performance_
+
+Sorting pipeline:
+1. **In-memory sorting**: Quick sort for small batches
+2. **External merge sort**: For data exceeding memory
+3. **Compaction**: Background merge of sorted runs
+4. **Bloom filter generation**: During flush operations
+
+== VIPER Engine Architecture
+
+The VIPER (Vector Indexed Parquet Enhanced Reader) engine uses columnar storage optimized for analytics.
+
+=== Parquet Integration
+
+VIPER leverages Apache Parquet for:
+* **Columnar compression**: 50-80% storage reduction
+* **Predicate pushdown**: Filter at storage layer
+* **Vector quantization**: Optional INT8/PQ compression
+* **Batch processing**: Optimized for large scans
+
+=== Quantization Strategy
+
+The key difference between engines:
+* **VIPER**: Quantization RECOMMENDED ✓
+  - Columnar format benefits from uniform types
+  - Better compression ratios
+  - Faster SIMD operations
+
+* **SST**: Quantization NOT RECOMMENDED ✗
+  - Row format doesn't benefit
+  - Added complexity without gains
+  - Better to use native FP32
+
+== Storage Engine Selection
+
+=== Decision Matrix
+
+[cols="2,2,2,2", options="header"]
+|===
+| Criteria | SST | VIPER | Recommendation
+
+| **Dataset Size**
+| <100K vectors
+| >100K vectors
+| VIPER for large scale
+
+| **Write Pattern**
+| Real-time/streaming
+| Batch inserts
+| SST for streaming
+
+| **Query Pattern**
+| Point lookups
+| Range scans
+| Match to pattern
+
+| **Compression Need**
+| Low priority
+| High priority
+| VIPER for compression
+
+| **Hardware**
+| Standard CPU
+| GPU/High-end CPU
+| VIPER for acceleration
+|===
+
+=== Configuration Examples
+
+==== SST for Real-time
+[source,python]
+----
+config = CollectionConfig(
+    name="realtime_vectors",
+    dimension=768,
+    storage_engine="sst",
+    compression=CompressionConfig(
+        algorithm="lz4",  # Fast compression
+        level=1,          # Minimal overhead
+        enable_quantization=False  # Not recommended for SST
+    )
+)
+----
+
+==== VIPER for Analytics
+[source,python]
+----
+config = CollectionConfig(
+    name="analytics_vectors",
+    dimension=1536,
+    storage_engine="viper",
+    compression=CompressionConfig(
+        algorithm="zstd",
+        level=6,
+        enable_quantization=True,
+        quantization_type="pq8"  # Product quantization
+    )
+)
+----
+
+== Performance Characteristics
+
+=== Write Performance
+[cols="2,2,2", options="header"]
+|===
+| Metric | SST | VIPER
+
+| Single insert
+| 0.5ms
+| 2ms
+
+| Batch (1000)
+| 50ms
+| 100ms
+
+| Flush time
+| 100ms/MB
+| 500ms/MB
+
+| Compaction
+| Incremental
+| Full rewrite
+|===
+
+=== Read Performance
+[cols="2,2,2", options="header"]
+|===
+| Metric | SST | VIPER
+
+| Point query
+| 0.3ms
+| 1ms
+
+| Range scan (1000)
+| 10ms
+| 5ms
+
+| Metadata filter
+| Bloom filter
+| Parquet pushdown
+
+| Compression overhead
+| 10%
+| 5%
+|===
+
+== Advanced Features
+
+=== Multi-Tier Storage
+Both engines support tiered storage:
+1. **Hot tier**: Memory (Bincode)
+2. **Warm tier**: NVMe (Native format)
+3. **Cold tier**: HDD/S3 (Compressed)
+
+=== Concurrent Operations
+* **SST**: Lock-free reads, sequential writes
+* **VIPER**: Batch writes, parallel reads
+
+=== Recovery & Durability
+* **WAL**: Write-ahead logging for both engines
+* **Snapshots**: Point-in-time backups
+* **Replication**: Async replication support

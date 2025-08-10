@@ -69,6 +69,21 @@ cd clients/python
 PYTHONPATH=src python examples/basic_usage_working.py
 ----
 
+== 📄 Text Chunking Strategies
+
+image::chunking-strategies.svg[Text Chunking Strategies, width=900]
+_Different chunking strategies for optimal semantic search_
+
+=== Chunking Methods
+
+ProximaDB supports multiple chunking strategies for text processing:
+
+* **Fixed-size chunks**: Simple, predictable memory usage
+* **Sentence-based**: Preserves semantic boundaries
+* **Paragraph-based**: Maintains context
+* **Sliding window**: Overlapping chunks for better recall
+* **Semantic chunking**: Smart splitting based on topic changes
+
 == 🚀 Advanced Indexing Algorithms
 
 === Multi-Algorithm Performance Comparison
