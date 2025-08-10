@@ -38,8 +38,7 @@ fn create_test_config(temp_dir: &TempDir, compression_algorithm: bool) -> SstCon
         compaction_threshold: 3,
         block_size_kb: 4096, // 4MB for optimal ZSTD compression
         compaction_strategy: "leveled".to_string(),
-        compression: "zstd".to_string(),
-        compression_algorithm,
+        compression: compression_algorithm.to_string(),
         compression_level: 3,
         bloom_filter_config: None, // Disable for these tests
         cache_size_mb: 64,
@@ -119,7 +118,7 @@ async fn test_sst_datablock_compression() -> anyhow::Result<()> {
     assert_eq!(data_block.records.len(), recovered_block.records.len());
     
     // Check compression was applied
-    assert!(recovered_block.compression_algorithm);
+    assert!(!matches!(recovered_block.compression_algorithm, CompressionAlgorithmSst::None));
     assert!(recovered_block.compression_ratio > 0.0 && recovered_block.compression_ratio < 1.0);
     
     info!("DataBlock compression ratio: {:.2}", recovered_block.compression_ratio);

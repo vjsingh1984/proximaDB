@@ -161,7 +161,6 @@ async fn test_optimization_end_to_end() -> anyhow::Result<()> {
         block_size_kb: 8192, // 8MB optimized for ZSTD
         compaction_strategy: "leveled".to_string(),
         compression: "zstd".to_string(),
-        compression_algorithm: true,
         compression_level: 3,
         bloom_filter_config: None,
         cache_size_mb: 128,
@@ -179,7 +178,6 @@ async fn test_optimization_end_to_end() -> anyhow::Result<()> {
     let viper_config = proximadb::core::config::ViperConfig {
         row_group_size: 50_000,
         compression: "zstd".to_string(),
-        compression_algorithm: true,
         compression_level: 3,
         enable_statistics: true,
         data_directory: format!("{}/viper_data", temp_dir.path().display()),

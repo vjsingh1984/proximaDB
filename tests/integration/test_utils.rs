@@ -167,7 +167,6 @@ impl IsolatedTestEnvironment {
             // Storage type
             compaction_strategy: "leveled".to_string(),
             compression: "none".to_string(), // No compression for faster tests
-            compression_algorithm: false,
             compression_level: 0,
             
             // Bloom filter - enabled with conservative settings
@@ -197,11 +196,11 @@ impl IsolatedTestEnvironment {
     /// Create test WriteBuffer configuration
     fn create_test_wal_config() -> WriteBufferUserConfig {
         WriteBufferUserConfig {
-            write_ahead_log_size_mb: 2,
+            write_buffer_size_mb: 2,
             memory_flush_size_bytes: 512 * 1024, // 512KB
             memtable_type: "BTree".to_string(),
             sync_mode: "perbatch".to_string(),
-            write_ahead_log_directory: "/tmp/test-wb".to_string(), // Placeholder
+            write_buffer_directory: "/tmp/test-wb".to_string(), // Placeholder
             enable_wal: true,
             vector_count_threshold: 50,  // Small threshold for tests
         }

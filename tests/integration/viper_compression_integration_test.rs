@@ -92,8 +92,7 @@ fn ensure_test_directories() {
 fn create_test_config(temp_dir: &TempDir, compression_algorithm: bool) -> proximadb::core::config::ViperConfig {
     proximadb::core::config::ViperConfig {
         row_group_size: 50_000,
-        compression: "zstd".to_string(),
-        compression_algorithm,
+        compression: compression_algorithm.to_string(),
         compression_level: 3,
         enable_statistics: true,
         data_directory: temp_dir.path().to_str().unwrap().to_string(),
