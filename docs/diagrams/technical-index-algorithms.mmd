@@ -5,27 +5,27 @@ graph TB
     end
     
     subgraph "Graph-Based"
-        HNSW[<b>HNSW</b><br/>━━━━━━━━━━<br/>• Hierarchical graph<br/>• High recall 95%+<br/>• Fast search<br/>• Memory: O(N*M)]
+        HNSW[<b>HNSW</b><br/>━━━━━━━━━━<br/>• Hierarchical graph<br/>• High recall 95%+<br/>• Fast search<br/>• Memory: O-N*M]
     end
     
     subgraph "Partition-Based"
-        IVF[<b>IVF</b><br/>━━━━━━━━━━<br/>• Inverted file index<br/>• Scalable to billions<br/>• Balanced performance<br/>• Memory: O(N/nlist)]
+        IVF[<b>IVF</b><br/>━━━━━━━━━━<br/>• Inverted file index<br/>• Scalable to billions<br/>• Balanced performance<br/>• Memory: O-N/nlist]
     end
     
     subgraph "Tree-Based"
-        ANNOY[<b>Annoy</b><br/>━━━━━━━━━━<br/>• Random projection trees<br/>• Memory efficient<br/>• Fast build<br/>• Memory: O(N*trees)]
+        ANNOY[<b>Annoy</b><br/>━━━━━━━━━━<br/>• Random projection trees<br/>• Memory efficient<br/>• Fast build<br/>• Memory: O-N*trees]
     end
     
     subgraph "Hash-Based"
-        LSH[<b>LSH</b><br/>━━━━━━━━━━<br/>• Locality sensitive hashing<br/>• Sublinear search<br/>• Probabilistic<br/>• Memory: O(N*tables)]
+        LSH[<b>LSH</b><br/>━━━━━━━━━━<br/>• Locality sensitive hashing<br/>• Sublinear search<br/>• Probabilistic<br/>• Memory: O-N*tables]
     end
     
     subgraph "Quantization"
-        PQ[<b>PQ</b><br/>━━━━━━━━━━<br/>• Product quantization<br/>• 8-32x compression<br/>• Trade recall for memory<br/>• Memory: O(N/8)]
+        PQ[<b>PQ</b><br/>━━━━━━━━━━<br/>• Product quantization<br/>• 8-32x compression<br/>• Trade recall for memory<br/>• Memory: O-N/8]
     end
     
     subgraph "Exact Search"
-        FLAT[<b>Flat</b><br/>━━━━━━━━━━<br/>• Brute force<br/>• 100% recall<br/>• No build time<br/>• Memory: O(N)]
+        FLAT[<b>Flat</b><br/>━━━━━━━━━━<br/>• Brute force<br/>• 100% recall<br/>• No build time<br/>• Memory: O-N]
     end
     
     Factory --> HNSW
