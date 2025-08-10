@@ -3,9 +3,11 @@
 :toclevels: 2
 :imagesdir: diagrams/images
 
-image::business-architecture-consolidated.svg[ProximaDB Business Architecture, align=center, width=900]
+image::business-overview.svg[ProximaDB Business Overview, align=center, width=900]
 
 **Enterprise vector database with 3x performance and 50-80% storage reduction.**
+
+_For detailed business architecture, see link:diagrams/business-architecture-consolidated.mmd[navigation hub] with links to link:diagrams/business-capabilities.mmd[capabilities], link:diagrams/business-roi-metrics.mmd[ROI metrics], and link:diagrams/business-use-cases.mmd[use cases]._
 
 == Quick Start
 
@@ -28,6 +30,9 @@ link:compression_guide.adoc[Compression]
 |===
 
 == Key Capabilities
+
+image::business-competitive-advantages.svg[ProximaDB Competitive Advantages, width=900]
+_Technology leadership, market differentiators, and performance edge_
 
 [cols="2,1,1", options="header"]
 |===
@@ -79,6 +84,7 @@ link:compression_guide.adoc[Compression]
 4. link:enterprise_features.adoc[**Roadmap**] - Future features and versions
 
 === Key Diagrams
+* link:diagrams/index.adoc[**Diagrams Documentation**] - Complete visual guide
 * link:diagrams/technical-architecture-complete.mmd[Technical Architecture]
 * link:diagrams/proximadb-core-classes.mmd[Core Classes]
 * link:diagrams/vector-lifecycle-state.mmd[Vector Lifecycle]

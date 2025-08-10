@@ -4,6 +4,9 @@
 
 **Performance benchmarks and optimization guide.**
 
+image::diagrams/images/business-roi-metrics.svg[Performance and ROI Metrics, width=900]
+_Comprehensive performance metrics and ROI analysis showing 3x performance gains and 70% TCO reduction_
+
 == Benchmarks
 
 **Test Hardware**: AMD Ryzen 9 7950X, 32 cores, 157GB RAM, AVX-512

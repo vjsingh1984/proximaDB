@@ -5,6 +5,9 @@
 
 **Get ProximaDB running in 5 minutes.**
 
+image::business-use-cases.svg[ProximaDB Use Cases, width=900]
+_Industry applications including E-commerce, AI/LLM, Media, Finance, and Healthcare_
+
 == Prerequisites
 
 * **Docker**: 20.10+ with Docker Compose v2

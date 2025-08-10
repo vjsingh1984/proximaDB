@@ -1,0 +1,175 @@
+= ProximaDB Diagrams Documentation
+:toc: left
+:toclevels: 2
+:imagesdir: images
+
+**Complete visual documentation of ProximaDB architecture and business capabilities.**
+
+== Business Architecture Diagrams
+
+ProximaDB's business architecture is organized into multiple focused diagrams for clarity and easy navigation.
+
+=== Diagram Structure
+
+[cols="1,2,2", options="header"]
+|===
+| Diagram | Purpose | Content
+
+| **Navigation Hub**
+| Central navigation to all business views
+| `business-architecture-consolidated.svg` +
+Interactive menu linking to detailed diagrams
+
+| **Business Overview**
+| High-level platform overview
+| `business-overview.svg` +
+Core engine → Capabilities → Value → Applications → ROI
+
+| **Core Capabilities**
+| Technical and enterprise features
+| `business-capabilities.svg` +
+Storage, Search, ML, Analytics, Security, HA
+
+| **ROI & Metrics**
+| Quantifiable benefits
+| `business-roi-metrics.svg` +
+3x performance, 50-80% storage savings, 70% TCO reduction
+
+| **Use Cases**
+| Industry applications
+| `business-use-cases.svg` +
+E-commerce, AI/LLM, Media, Finance, Healthcare
+
+| **Competitive Advantages**
+| Market differentiators
+| `business-competitive-advantages.svg` +
+Proto-first, dual engines, no lock-in
+|===
+
+=== Design Principles
+
+. **Clarity**: Each diagram focuses on one aspect to avoid information overload
+. **Hierarchy**: Clear visual hierarchy with headers, sections, and connections
+. **Consistency**: Uniform color scheme and styling across all diagrams
+. **Accessibility**: High contrast colors and clear text for readability
+. **Navigation**: Interconnected diagrams with clear relationships
+
+=== Color Scheme
+
+[cols="1,1,2", options="header"]
+|===
+| Color | Hex Code | Usage
+
+| Primary Blue | #2E86AB | Main components, headers
+| Success Green | #e6f4ea | Performance, positive metrics
+| Warning Yellow | #fef7e0 | Cost savings, efficiency
+| Info Light Blue | #e8f0fe | Features, capabilities
+| Secondary Purple | #f3e5f5 | Advanced features, differentiators
+| Accent Pink | #fce4ec | Future-proof, scalability
+|===
+
+== Technical Architecture Diagrams
+
+=== UML Diagrams
+
+[cols="1,2", options="header"]
+|===
+| Diagram | Description
+
+| **Use Cases**
+| `proximadb-use-cases.svg` +
+Comprehensive use case diagram showing all actors and interactions
+
+| **Core Classes**
+| `proximadb-core-classes.svg` +
+Detailed class diagram of core components
+
+| **Vector Search Activity**
+| `vector-search-activity.svg` +
+Activity diagram for vector search flow
+
+| **Vector Insert Sequence**
+| `vector-insert-sequence.svg` +
+Sequence diagram for insert operations
+
+| **Deployment Architecture**
+| `proximadb-deployment.svg` +
+Deployment architecture diagram
+
+| **Vector Lifecycle**
+| `vector-lifecycle-state.svg` +
+State diagram for vector lifecycle
+|===
+
+=== System Architecture
+
+[cols="1,2", options="header"]
+|===
+| Diagram | Description
+
+| **Technical Architecture**
+| `technical-architecture-complete.svg` +
+Complete technical architecture with all components
+
+| **Compression Architecture**
+| `compression-encoding-architecture.svg` +
+SDK-driven compression and encoding flow
+
+| **Component Relationships**
+| `proximadb-component-relationships.svg` +
+Inter-component dependencies and data flow
+|===
+
+== Documentation Update History
+
+=== 2025-08-09 Updates
+
+==== Business Diagram Reorganization
+* Created 6 focused business diagrams from consolidated view
+* Improved readability with proper spacing and hierarchy
+* Added navigation hub for easy diagram discovery
+* Consistent theming across all diagrams
+
+==== Technical Enhancements
+* Comprehensive UML diagram suite
+* Standardized neutral theme for light/dark compatibility
+* SVG-only approach for scalability
+* Professional styling with consistent colors
+
+=== Generation Scripts
+
+==== Mermaid Diagrams
+[source,bash]
+----
+# Generate single diagram
+npx @mermaid-js/mermaid-cli -i [diagram].mmd -o images/[diagram].svg
+
+# Generate all business diagrams
+for f in business-*.mmd; do
+  npx @mermaid-js/mermaid-cli -i "$f" -o "images/${f%.mmd}.svg"
+done
+----
+
+==== Online Preview
+Preview and edit Mermaid diagrams at: https://mermaid.live/
+
+== Maintenance Guidelines
+
+=== Adding New Diagrams
+. Create `.mmd` file with consistent theme header
+. Follow naming convention: `category-purpose.mmd`
+. Generate SVG with appropriate dimensions
+. Update this index with diagram information
+
+=== Updating Existing Diagrams
+. Modify the `.mmd` source file
+. Regenerate SVG using mermaid-cli
+. Verify rendering in both light and dark modes
+. Update documentation if structure changes
+
+=== Best Practices
+* Keep diagrams focused on single concepts
+* Use consistent color coding across related diagrams
+* Maintain visual hierarchy with clear sections
+* Test readability at different zoom levels
+* Include descriptive titles and labels

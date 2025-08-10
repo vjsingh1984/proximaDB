@@ -5,8 +5,8 @@
 
 image:https://img.shields.io/badge/tests-1460%2B%20passing-brightgreen[Tests] image:https://img.shields.io/badge/performance-17K%20vec%2Fs-blue[Performance] image:https://img.shields.io/badge/compression-50--80%25-orange[Compression] image:https://img.shields.io/badge/license-Apache%202.0-blue[License]
 
-image::business-architecture-consolidated.svg[ProximaDB Overview, align=center, width=800]
-_link:docs/diagrams/business-architecture-consolidated.mmd[View diagram source]_
+image::business-overview.svg[ProximaDB Business Overview, align=center, width=800]
+_link:docs/diagrams/business-overview.mmd[View diagram source] | link:docs/diagrams/business-architecture-consolidated.mmd[Browse all business diagrams]_
 
 **Production-ready vector database delivering 3x faster performance with 50-80% storage reduction.**
 

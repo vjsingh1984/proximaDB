@@ -1,71 +1,26 @@
 %%{init: {'theme':'neutral', 'themeVariables': {'primaryColor':'#2E86AB','primaryTextColor':'#1A1A1A','primaryBorderColor':'#2E86AB','lineColor':'#5C6B73','secondaryColor':'#A23B72','tertiaryColor':'#F18F01','background':'#FFFFFF','mainBkg':'#F7F7F7','textColor':'#1A1A1A'}}}%%
 graph TB
-    subgraph "Business Value & ROI"
-        subgraph "Performance Benefits"
-            Perf[🚀 Superior Performance<br/>• 20K+ vectors/sec throughput<br/>• Sub-millisecond search<br/>• 3x faster than alternatives<br/>• Hardware acceleration]
-            
-            Eff[💰 Resource Efficiency<br/>• 50-80% storage reduction<br/>• Lower compute requirements<br/>• Reduced network transfer<br/>• Optimized memory usage]
-            
-            Dev[⚡ Developer Velocity<br/>• Production-ready SDKs<br/>• SQL + Vector queries<br/>• Comprehensive docs<br/>• Quick integration]
-        end
-        
-        subgraph "Competitive Advantages"
-            Tech[🔬 Technology Leadership<br/>• Proto-first architecture<br/>• Dual storage engines<br/>• SDK-driven compression<br/>• Magic byte validation]
-            
-            Scale[📈 Enterprise Scale<br/>• Horizontal scaling<br/>• Multi-cloud support<br/>• ACID compliance<br/>• Production proven]
-            
-            Flex[🔄 Future Proof<br/>• No vendor lock-in<br/>• Open standards<br/>• Extensible design<br/>• Active development]
-        end
-    end
-
-    subgraph "Business Capabilities"
-        subgraph "Core Services"
-            VS[Vector Storage<br/>• High-dimensional data<br/>• Billions of vectors<br/>• Multi-format support]
-            SS[Similarity Search<br/>• KNN queries<br/>• Range queries<br/>• Hybrid search]
-            RT[Real-time Processing<br/>• Stream ingestion<br/>• Low latency<br/>• High throughput]
-        end
-
-        subgraph "Advanced Features"
-            ML[ML Integration<br/>• Embedding models<br/>• Quantization<br/>• GPU acceleration]
-            AN[Analytics<br/>• SQL queries<br/>• Aggregations<br/>• Reporting]
-            SC[Scalability<br/>• Horizontal scaling<br/>• Multi-tier storage<br/>• Cloud native]
-        end
-
-        subgraph "Enterprise Features"
-            SEC[Security<br/>• Authentication<br/>• Encryption<br/>• Access control]
-            HA[High Availability<br/>• Replication<br/>• Failover<br/>• Backup/Restore]
-            MO[Monitoring<br/>• Performance metrics<br/>• Health checks<br/>• Alerting]
-        end
-    end
-
-    subgraph "Use Cases"
-        RAG[RAG/LLM<br/>• Document search<br/>• Context retrieval<br/>• Chat history]
-        REC[Recommendations<br/>• Product similarity<br/>• Content matching<br/>• User preferences]
-        SEARCH[Semantic Search<br/>• Natural language<br/>• Multi-modal<br/>• Cross-lingual]
-        ANOMALY[Anomaly Detection<br/>• Fraud detection<br/>• Quality control<br/>• Security monitoring]
-    end
-
-    %% Connections showing value flow
-    Perf --> VS
-    Eff --> SC
-    Dev --> ML
-    Tech --> SS
-    Scale --> HA
-    Flex --> AN
+    Title[<b>ProximaDB Business Architecture</b><br/>━━━━━━━━━━━━━━━━━━━━<br/>Click components to explore details]
     
-    VS --> RAG
-    SS --> SEARCH
-    RT --> ANOMALY
-    ML --> REC
-    AN --> SEARCH
-    SC --> RAG
+    Title --> Overview[<b>Business Overview</b><br/>High-level platform view<br/>→ business-overview.svg]
     
-    SEC --> HA
-    HA --> MO
-
-    style Perf fill:#e6f4ea
-    style Eff fill:#fef7e0
-    style Dev fill:#e8f0fe
-    style Tech fill:#f3e5f5
-    style Scale fill:#e0f2fe
-    style Flex fill:#fce4ec
+    Title --> Capabilities[<b>Core Capabilities</b><br/>Features and functionality<br/>→ business-capabilities.svg]
+    
+    Title --> ROI[<b>ROI & Metrics</b><br/>Performance and cost savings<br/>→ business-roi-metrics.svg]
+    
+    Title --> UseCases[<b>Use Cases</b><br/>Industry applications<br/>→ business-use-cases.svg]
+    
+    Title --> Advantages[<b>Competitive Advantages</b><br/>Market differentiators<br/>→ business-competitive-advantages.svg]
+    
+    style Title fill:#2E86AB,color:#fff
+    style Overview fill:#e6f4ea
+    style Capabilities fill:#e8f0fe
+    style ROI fill:#fef7e0
+    style UseCases fill:#f3e5f5
+    style Advantages fill:#fce4ec
+    
+    click Overview "business-overview.svg"
+    click Capabilities "business-capabilities.svg"
+    click ROI "business-roi-metrics.svg"
+    click UseCases "business-use-cases.svg"
+    click Advantages "business-competitive-advantages.svg"

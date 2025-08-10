@@ -81,6 +81,9 @@ Memory (bincode) → NVMe (SST/VIPER) → HDD → S3/Cloud
 
 == Core Services
 
+image::business-capabilities.svg[ProximaDB Technical Capabilities, width=900]
+_Detailed breakdown of core capabilities, advanced features, and enterprise functionality_
+
 === VectorOperationsService
 **Location**: `/src/services/vector_operations_service.rs`
 

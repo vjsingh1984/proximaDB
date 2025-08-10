@@ -1,0 +1,49 @@
+%%{init: {'theme':'neutral', 'themeVariables': {'primaryColor':'#2E86AB','primaryTextColor':'#1A1A1A','primaryBorderColor':'#2E86AB','lineColor':'#5C6B73','secondaryColor':'#A23B72','tertiaryColor':'#F18F01','background':'#FFFFFF','mainBkg':'#F7F7F7','textColor':'#1A1A1A'}}}%%
+graph TB
+    subgraph "Core Capabilities"
+        direction LR
+        
+        Storage[<b>Vector Storage</b><br/>━━━━━━━━━━<br/>• Billions of vectors<br/>• High dimensions<br/>• Multi-format support<br/>• ACID transactions]
+        
+        Search[<b>Similarity Search</b><br/>━━━━━━━━━━<br/>• KNN queries<br/>• Range search<br/>• Filtered search<br/>• Hybrid SQL+Vector]
+        
+        Process[<b>Real-time Processing</b><br/>━━━━━━━━━━<br/>• Stream ingestion<br/>• 20K+ vectors/sec<br/>• Sub-ms latency<br/>• Batch operations]
+    end
+    
+    subgraph "Advanced Features"
+        direction LR
+        
+        ML[<b>ML Integration</b><br/>━━━━━━━━━━<br/>• Embedding models<br/>• Quantization<br/>• GPU acceleration<br/>• Auto-optimization]
+        
+        Analytics[<b>Analytics Engine</b><br/>━━━━━━━━━━<br/>• SQL queries<br/>• Aggregations<br/>• Reporting<br/>• Visualization]
+        
+        Scale[<b>Scalability</b><br/>━━━━━━━━━━<br/>• Horizontal scaling<br/>• Multi-tier storage<br/>• Cloud native<br/>• Auto-sharding]
+    end
+    
+    subgraph "Enterprise Features"
+        direction LR
+        
+        Security[<b>Security</b><br/>━━━━━━━━━━<br/>• Authentication<br/>• Encryption<br/>• Access control<br/>• Audit logs]
+        
+        HA[<b>High Availability</b><br/>━━━━━━━━━━<br/>• Replication<br/>• Failover<br/>• Backup/Restore<br/>• Disaster recovery]
+        
+        Monitor[<b>Monitoring</b><br/>━━━━━━━━━━<br/>• Performance metrics<br/>• Health checks<br/>• Alerting<br/>• Dashboards]
+    end
+    
+    Storage --> ML
+    Search --> Analytics
+    Process --> Scale
+    
+    ML --> Security
+    Analytics --> HA
+    Scale --> Monitor
+    
+    style Storage fill:#e6f4ea
+    style Search fill:#e8f0fe
+    style Process fill:#fef7e0
+    style ML fill:#f3e5f5
+    style Analytics fill:#e0f2fe
+    style Scale fill:#fce4ec
+    style Security fill:#e6f4ea
+    style HA fill:#e8f0fe
+    style Monitor fill:#fef7e0
