@@ -22,8 +22,8 @@ flowchart TD
     
     subgraph "Core Services"
         CS[CollectionService]
-        DVS[DirectVectorService]
-        subgraph "DirectVectorService Features"
+        VOS[VectorOperationsService]
+        subgraph "VectorOperationsService Features"
             DV1[40-60% Performance Improvement]
             DV2[Direct Memtable Access]
             DV3[Eliminated Registry Overhead]
@@ -53,20 +53,20 @@ flowchart TD
     UH --> GH
     
     CH --> CS
-    VH --> DVS
-    SH --> DVS
-    GH --> DVS
+    VH --> VOS
+    SH --> VOS
+    GH --> VOS
     
-    DVS --> DV1
-    DVS --> DV2
-    DVS --> DV3
+    VOS --> DV1
+    VOS --> DV2
+    VOS --> DV3
     
-    DVS --> GM
+    VOS --> GM
     GM --> VE
     GM --> SE
     
     style UH fill:#e3f2fd
-    style DVS fill:#e8f5e8
+    style VOS fill:#e8f5e8
     style DV1 fill:#fff3e0
     style DV2 fill:#fff3e0
     style DV3 fill:#fff3e0

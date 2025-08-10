@@ -57,7 +57,7 @@ image::technical-architecture-complete.svg[ProximaDB Architecture, width=800]
 
 **Core Components:**
 
-- **DirectVectorService**: Main service with 40-60% latency improvement
+- **VectorOperationsService**: Main service with 40-60% latency improvement
 - **Storage Engines**: VIPER (columnar) + SST (row-based)
 - **Dual Protocol**: REST (5678) + gRPC (5679)
 - **Hardware Acceleration**: Auto-detect GPU/SIMD capabilities
@@ -66,7 +66,7 @@ image::technical-architecture-complete.svg[ProximaDB Architecture, width=800]
 [source]
 ----
 src/
-├── services/           # Business logic (DirectVectorService, CollectionService)
+├── services/           # Business logic (VectorOperationsService, CollectionService)
 ├── storage/            # Storage engines (VIPER, SST)
 ├── handlers/           # REST/gRPC API handlers
 ├── proto/              # Protocol buffer definitions
@@ -119,7 +119,7 @@ use proximadb::core::hardware_capabilities::{
 initialize_hardware_capabilities_default();
 ----
 
-**DirectVectorService:**
+**VectorOperationsService:**
 [source,rust]
 ----
 // Collection ID passed separately (not in proto)

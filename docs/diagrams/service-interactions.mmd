@@ -4,7 +4,7 @@ sequenceDiagram
     participant REST as  REST API
     participant gRPC as  gRPC API  
     participant Handler as  UnifiedHandlers
-    participant DVS as  DirectVectorService
+    participant VOS as  VectorOperationsService
     participant CS as  CollectionService
     participant Engine as  StorageEngine
     participant VIPER as  VIPER Engine
@@ -21,31 +21,31 @@ sequenceDiagram
     
     Client->>+REST: POST /collections/{id}/vectors<br/> JSON Batch (500 vectors)
     REST->>+Handler: insert_vectors_unified()<br/> JSON → Proto
-    Handler->>+DVS: insert_vectors_direct()<br/> Direct Memtable Access
+    Handler->>+VOS: insert_vectors_direct()<br/> Direct Memtable Access
     
-    Note over DVS:  Engine Routing Decision<br/>Via Collection Service
+    Note over VOS:  Engine Routing Decision<br/>Via Collection Service
     
-    DVS->>+CS: get_collection_metadata(collection_id)
+    VOS->>+CS: get_collection_metadata(collection_id)
     CS->>CS: Check storage_assignment<br/>in collection metadata
-    CS-->>-DVS: StorageEngine + Locations<br/>data_location, wal_location
+    CS-->>-VOS: StorageEngine + Locations<br/>data_location, wal_location
     
     alt VIPER Engine (Default)
-        DVS->>+VIPER: do_flush()<br/> Columnar Storage
+        VOS->>+VIPER: do_flush()<br/> Columnar Storage
         VIPER->>+TxCoord: begin_atomic_operation()<br/> ACID Transaction
         TxCoord->>+Cloud: write_to_staging()<br/> Creates .parquet files
         Cloud-->>-TxCoord:  Write Confirmed
         TxCoord-->>-VIPER:  Transaction ID
-        VIPER-->>-DVS:  Insert Complete
+        VIPER-->>-VOS:  Insert Complete
     else SST Engine (If Configured)  
-        DVS->>+SST: do_flush()<br/> Row-based Storage
+        VOS->>+SST: do_flush()<br/> Row-based Storage
         SST->>+TxCoord: begin_atomic_operation()<br/> ACID Transaction
         TxCoord->>+Cloud: write_sstables()<br/> Creates .sst files
         Cloud-->>-TxCoord:  Write Confirmed
         TxCoord-->>-SST:  Transaction ID
-        SST-->>-DVS:  Insert Complete
+        SST-->>-VOS:  Insert Complete
     end
     
-    DVS-->>-Handler:  Batch Inserted
+    VOS-->>-Handler:  Batch Inserted
     Handler-->>-REST:  Proto → JSON Response
     REST-->>-Client:  Insert Stats<br/> 10-49K vectors/sec
     
@@ -54,22 +54,22 @@ sequenceDiagram
     
     Client->>+gRPC: SearchVectors()<br/> Query + metadata filter
     gRPC->>+Handler: search_vectors_unified()<br/> Direct Proto
-    Handler->>+DVS: search_vectors()<br/> Dual Engine Search
+    Handler->>+VOS: search_vectors()<br/> Dual Engine Search
     
-    Note over DVS:  Parallel Search Strategy<br/>Both engines searched simultaneously
+    Note over VOS:  Parallel Search Strategy<br/>Both engines searched simultaneously
     
     par VIPER Search
-        DVS->>+VIPER: search_vectors_unified()<br/> Reads .parquet files
+        VOS->>+VIPER: search_vectors_unified()<br/> Reads .parquet files
         VIPER->>VIPER:  Metadata filter bug<br/>(Returns 0 results)
-        VIPER-->>-DVS:  Empty Results (Issue)
+        VIPER-->>-VOS:  Empty Results (Issue)
     and SST Search
-        DVS->>+SST: search_vectors_unified()<br/> Looks for .sst files
+        VOS->>+SST: search_vectors_unified()<br/> Looks for .sst files
         SST->>SST:  File pattern mismatch<br/>(No .sst files found)
-        SST-->>-DVS:  Empty Results (Issue)
+        SST-->>-VOS:  Empty Results (Issue)
     end
     
-    DVS->>DVS: merge_and_deduplicate()<br/> MvccResolver + MultiTierDeduplicator
-    DVS-->>-Handler:  Empty Results (0 matches)
+    VOS->>VOS: merge_and_deduplicate()<br/> MvccResolver + MultiTierDeduplicator
+    VOS-->>-Handler:  Empty Results (0 matches)
     Handler-->>-gRPC:  Direct Proto Response
     gRPC-->>-Client:  No Results<br/> Expected matches but got 0
     
@@ -120,10 +120,10 @@ sequenceDiagram
         SIMD-->>-SQL: Vec<f32><br/> 163.3 MB/s throughput
     end
     
-    SQL->>+DVS: search_vectors()<br/> Optimized query execution
-    DVS->>+Engine: search_with_metadata()<br/> Hardware-aware search
-    Engine-->>-DVS: Vector results
-    DVS-->>-SQL: Ranked results
+    SQL->>+VOS: search_vectors()<br/> Optimized query execution
+    VOS->>+Engine: search_with_metadata()<br/> Hardware-aware search
+    Engine-->>-VOS: Vector results
+    VOS-->>-SQL: Ranked results
     SQL-->>-REST: Query results
     REST-->>-Client: JSON response<br/> Sub-2ms query time
     

@@ -111,9 +111,9 @@ _Detailed breakdown of core capabilities, advanced features, and enterprise func
 image::service-interactions.svg[Service Interactions, width=900]
 _Sequence diagram showing request flow through services_
 
-=== DirectVectorService Architecture
+=== VectorOperationsService Architecture
 
-image::direct-vector-service.svg[DirectVectorService Architecture, width=900]
+image::vector-operations-service.svg[VectorOperationsService Architecture, width=900]
 _Direct memtable access pattern providing 40-60% latency reduction_
 
 === VectorOperationsService

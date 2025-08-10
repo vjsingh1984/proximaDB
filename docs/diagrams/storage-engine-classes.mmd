@@ -2,8 +2,8 @@
 classDiagram
     %% Core Storage Engine Architecture - Updated 2025-08-02
     
-    class DirectVectorService {
-         services/direct_vector_service.rs
+    class VectorOperationsService {
+         services/vector_operations_service.rs
         -viper_engine: Arc~ViperEngine~
         -sst_engine: Arc~SstEngine~
         -mvcc_resolver: MvccResolver
@@ -171,7 +171,7 @@ classDiagram
 
     class SqlExecutor {
          query/sql_engine/executor.rs
-        -vector_service: Arc~DirectVectorService~
+        -vector_service: Arc~VectorOperationsService~
         +execute_plan(plan: ExecutionPlan) Result~SqlExecutionResult~
         +execute_vector_search(params: VectorSearchParams) Result~Vec~ResultRow~~
         +execute_metadata_query(plan: ExecutionPlan) Result~Vec~ResultRow~~
@@ -247,12 +247,12 @@ classDiagram
     UnifiedSearchEngine <|-- ViperUnifiedSearchEngine : implements
     UnifiedSearchEngine <|-- SstUnifiedSearchEngine : implements
     
-    DirectVectorService --> ViperEngine : coordinates
-    DirectVectorService --> SstEngine : coordinates
-    DirectVectorService --> CollectionService : optional
-    DirectVectorService --> WriteAheadLogBehaviorWrapper : manages
-    DirectVectorService --> MvccResolver : uses
-    DirectVectorService --> MultiTierDeduplicator : uses
+    VectorOperationsService --> ViperEngine : coordinates
+    VectorOperationsService --> SstEngine : coordinates
+    VectorOperationsService --> CollectionService : optional
+    VectorOperationsService --> WriteAheadLogBehaviorWrapper : manages
+    VectorOperationsService --> MvccResolver : uses
+    VectorOperationsService --> MultiTierDeduplicator : uses
     
     ViperEngine --> ViperUnifiedSearchEngine : uses
     SstEngine --> SstUnifiedSearchEngine : uses
@@ -267,7 +267,7 @@ classDiagram
     ViperEngine --> MvccResolver : compaction uses
     MultiTierDeduplicator --> MvccResolver : record comparison
     
-    SqlExecutor --> DirectVectorService : executes via
+    SqlExecutor --> VectorOperationsService : executes via
     
     WriteAheadLogBehaviorWrapper --> TransactionCoordinator : persists via
     
@@ -280,7 +280,7 @@ classDiagram
     
     note for ThreeStageFilterPipeline " SST Filtering\n• Bloom Pre-filter (99%)\n• Block Statistics\n• Row Filtering\n• 30% Processing Savings"
     
-    note for DirectVectorService " Service Performance\n• Direct Memtable Access\n• 40-60% Latency Reduction\n• Dual Engine Support\n• Engine Routing"
+    note for VectorOperationsService " Service Performance\n• Direct Memtable Access\n• 40-60% Latency Reduction\n• Dual Engine Support\n• Engine Routing"
     
     note for MvccResolver " Centralized MVCC\n• Version Continuity\n• Expired Record Deletion\n• Append-Only Support\n• Timestamp Tiebreaking\n• Engine-Agnostic Logic"
     
@@ -354,7 +354,7 @@ classDiagram
     %% Apply Styling to Classes (one per line to avoid parser issues)
     class ViperEngine engineStyle
     class SstEngine engineStyle
-    class DirectVectorService engineStyle
+    class VectorOperationsService engineStyle
     class StorageEngine traitStyle
     class UnifiedSearchEngine traitStyle
     class ViperUnifiedSearchEngine searchStyle
