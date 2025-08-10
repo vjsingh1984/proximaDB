@@ -103,6 +103,14 @@ The two-stage approach provides optimal performance:
 1. **Stage 1 (Coarse)**: Use quantized vectors or indexes to get 10-100x candidates
 2. **Stage 2 (Fine)**: Rerank with full precision FP32 vectors
 
+=== Search Orchestration
+
+image::search_orchestration_swimlanes.svg[Search Orchestration Swimlanes, width=900]
+_Swimlane view of search orchestration across all system layers_
+
+image::comprehensive_search_flow.svg[Comprehensive Search Flow, width=900]
+_Detailed sequence diagram showing complete search orchestration with all components_
+
 === Query Flow
 
 image::query-flow-complete.svg[Complete Query Flow, width=900]
