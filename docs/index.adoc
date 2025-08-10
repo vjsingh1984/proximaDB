@@ -33,6 +33,11 @@ link:performance_reference.adoc[Performance] +
 link:compression_guide.adoc[Compression]
 |===
 
+=== For Business Leaders
+* link:business/index.adoc[**Business Overview**] - Executive summary and value proposition
+* link:business/roi_calculator.adoc[**ROI Calculator**] - Calculate your cost savings
+* link:business/use_cases.adoc[**Industry Use Cases**] - How different industries can benefit
+
 == Key Capabilities
 
 image::business-competitive-advantages.svg[ProximaDB Competitive Advantages, width=900]
