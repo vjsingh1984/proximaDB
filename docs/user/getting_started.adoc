@@ -53,53 +53,322 @@ cargo run --release --bin proximadb-server
 pip install proximadb-client
 ----
 
-=== 2. Create Collection
+=== 2. Basic Connection
 
 [source,python]
 ----
 from proximadb import ProximaDBClient
 
-# Connect
+# Connect to ProximaDB (default ports: REST 5678, gRPC 5679)
 client = ProximaDBClient("http://localhost:5678")
 
-# Create collection
-collection = client.create_collection(
-    name="my_vectors",
-    dimension=384,
-    engine="viper"  # or "sst"
-)
+# Or use gRPC for better performance
+client = ProximaDBClient("grpc://localhost:5679")
+
+# Verify connection
+health = client.health_check()
+print(f"ProximaDB status: {health['status']}")
 ----
 
-=== 3. Insert Vectors
+=== 3. Create a Collection
 
 [source,python]
 ----
-# Insert with metadata
+from proximadb import ProximaDBClient
+
+# Connect to ProximaDB
+client = ProximaDBClient("http://localhost:5678")
+
+# Create a collection optimized for your use case
+collection = client.create_collection(
+    name="products",
+    dimension=1536,        # OpenAI ada-002 embeddings dimension
+    storage_engine="viper" # Columnar for analytics workloads
+)
+
+print(f"Collection created: {collection.id}")
+
+# Alternative: Create with SST engine for write-heavy workloads
+collection_sst = client.create_collection(
+    name="user_sessions",
+    dimension=768,         # BERT embeddings dimension
+    storage_engine="sst"   # Row-based for high-throughput writes
+)
+----
+
+=== 4. Insert Vectors with Metadata
+
+[source,python]
+----
+# Single vector insertion
+vector = {
+    "id": "product_001",
+    "vector": [0.1, 0.2, 0.3, ...],  # 1536-dimensional vector
+    "metadata": {
+        "name": "Premium Wireless Headphones",
+        "category": "Electronics",
+        "price": 299.99,
+        "brand": "AudioTech",
+        "in_stock": True,
+        "rating": 4.5
+    }
+}
+client.insert_vector("products", vector)
+
+# Bulk insertion for better performance
 vectors = [
     {
-        "id": "vec1",
-        "vector": [0.1, 0.2, ...],  # 384-dim
-        "metadata": {"category": "A", "score": 0.95}
+        "id": "product_002",
+        "vector": [...],  # Your embedding
+        "metadata": {
+            "name": "Smartphone Case",
+            "category": "Accessories",
+            "price": 19.99
+        }
+    },
+    {
+        "id": "product_003",
+        "vector": [...],  # Your embedding
+        "metadata": {
+            "name": "Bluetooth Speaker",
+            "category": "Electronics",
+            "price": 79.99
+        }
     }
 ]
 
-client.insert_vectors("my_vectors", vectors)
+# Bulk insert (much faster for large datasets)
+result = client.insert_vectors("products", vectors)
+print(f"Inserted {result['count']} vectors")
 ----
 
-=== 4. Search
+=== 5. Search Vectors
 
 [source,python]
 ----
-# Vector search
+# Basic semantic search
+query_vector = [0.2, 0.3, 0.1, ...]  # Your query embedding
+
 results = client.search_vectors(
-    collection_id="my_vectors",
-    query_vector=[0.2, 0.3, ...],  # 384-dim
+    collection_id="products",
+    query_vector=query_vector,
     top_k=10
 )
 
-# Print results
-for result in results:
-    print(f"{result['id']}: {result['score']:.3f}")
+# Display results
+for result in results['results']:
+    print(f"ID: {result['id']}")
+    print(f"Score: {result['score']:.4f}")
+    print(f"Metadata: {result['metadata']}")
+    print("---")
+----
+
+=== 6. Advanced Search with Filtering
+
+[source,python]
+----
+# Search with metadata filtering
+results = client.search_vectors(
+    collection_id="products",
+    query_vector=query_vector,
+    metadata_filter={
+        "category": "Electronics",
+        "price": {"$lt": 200},
+        "in_stock": True
+    },
+    top_k=5
+)
+
+# Search with multiple filters
+complex_filter = {
+    "$and": [
+        {"category": {"$in": ["Electronics", "Accessories"]}},
+        {"price": {"$gte": 50, "$lte": 500}},
+        {"rating": {"$gt": 4.0}}
+    ]
+}
+
+filtered_results = client.search_vectors(
+    collection_id="products",
+    query_vector=query_vector,
+    metadata_filter=complex_filter,
+    top_k=10
+)
+----
+
+=== 7. Update and Delete Operations
+
+[source,python]
+----
+# Update vector metadata
+client.update_vector(
+    collection_id="products",
+    vector_id="product_001",
+    metadata={
+        "price": 249.99,  # Updated price
+        "on_sale": True
+    }
+)
+
+# Delete a single vector
+client.delete_vector("products", "product_003")
+
+# Delete multiple vectors
+vector_ids = ["product_004", "product_005", "product_006"]
+client.delete_vectors("products", vector_ids)
+
+# Delete by metadata filter
+client.delete_by_filter(
+    collection_id="products",
+    metadata_filter={"category": "Discontinued"}
+)
+----
+
+== Production Examples
+
+=== E-commerce Recommendation System
+
+[source,python]
+----
+import numpy as np
+from proximadb import ProximaDBClient
+from sentence_transformers import SentenceTransformer
+
+# Initialize embedding model
+model = SentenceTransformer('all-MiniLM-L6-v2')
+client = ProximaDBClient("http://localhost:5678")
+
+# Create product catalog collection
+client.create_collection(
+    name="product_catalog",
+    dimension=384,
+    storage_engine="viper",  # Optimized for analytics
+    index_type="hnsw",       # Fast approximate search
+    compression={             # Enable compression
+        "enabled": True,
+        "type": "quantization",
+        "level": "INT8"
+    }
+)
+
+# Index products
+products = [
+    {"id": "SKU001", "name": "Wireless Mouse", "desc": "Ergonomic wireless mouse with RGB lighting"},
+    {"id": "SKU002", "name": "Mechanical Keyboard", "desc": "Cherry MX switches, RGB backlit"},
+    # ... more products
+]
+
+for product in products:
+    # Generate embedding from product description
+    embedding = model.encode(product['desc']).tolist()
+    
+    client.insert_vector(
+        collection_id="product_catalog",
+        vector_id=product['id'],
+        vector=embedding,
+        metadata={
+            "name": product['name'],
+            "description": product['desc']
+        }
+    )
+
+# Find similar products
+query = "gaming accessories with lights"
+query_embedding = model.encode(query).tolist()
+
+recommendations = client.search_vectors(
+    collection_id="product_catalog",
+    query_vector=query_embedding,
+    top_k=5
+)
+
+print("Recommended products:")
+for rec in recommendations['results']:
+    print(f"- {rec['metadata']['name']}: {rec['score']:.2f}")
+----
+
+=== RAG (Retrieval-Augmented Generation) System
+
+[source,python]
+----
+from proximadb import ProximaDBClient
+import openai
+
+client = ProximaDBClient("grpc://localhost:5679")  # Use gRPC for speed
+
+# Create knowledge base collection
+client.create_collection(
+    name="knowledge_base",
+    dimension=1536,           # OpenAI ada-002 dimension
+    storage_engine="sst",     # Optimized for writes
+    index_type="ivf",         # Good for large datasets
+    compression={
+        "enabled": True,
+        "type": "pq",         # Product quantization
+        "segments": 8         # 8-bit PQ
+    }
+)
+
+# Function to chunk and index documents
+def index_document(doc_id, content, chunk_size=500):
+    # Split into chunks
+    chunks = [content[i:i+chunk_size] 
+              for i in range(0, len(content), chunk_size)]
+    
+    vectors = []
+    for i, chunk in enumerate(chunks):
+        # Generate embedding
+        response = openai.Embedding.create(
+            model="text-embedding-ada-002",
+            input=chunk
+        )
+        embedding = response['data'][0]['embedding']
+        
+        vectors.append({
+            "id": f"{doc_id}_chunk_{i}",
+            "vector": embedding,
+            "metadata": {
+                "doc_id": doc_id,
+                "chunk_index": i,
+                "text": chunk
+            }
+        })
+    
+    # Bulk insert for efficiency
+    client.insert_vectors("knowledge_base", vectors)
+
+# RAG query function
+def rag_query(question):
+    # Get question embedding
+    response = openai.Embedding.create(
+        model="text-embedding-ada-002",
+        input=question
+    )
+    query_embedding = response['data'][0]['embedding']
+    
+    # Retrieve relevant context
+    results = client.search_vectors(
+        collection_id="knowledge_base",
+        query_vector=query_embedding,
+        top_k=5
+    )
+    
+    # Build context from retrieved chunks
+    context = "\n".join([
+        r['metadata']['text'] 
+        for r in results['results']
+    ])
+    
+    # Generate answer with context
+    completion = openai.ChatCompletion.create(
+        model="gpt-3.5-turbo",
+        messages=[
+            {"role": "system", "content": "Answer based on the context provided."},
+            {"role": "user", "content": f"Context: {context}\n\nQuestion: {question}"}
+        ]
+    )
+    
+    return completion.choices[0].message.content
 ----
 
 == Configuration
@@ -111,14 +380,40 @@ for result in results:
 [server]
 rest_port = 5678
 grpc_port = 5679
+max_connections = 1000
+request_timeout_ms = 30000
 
 [storage]
-data_directory = "/data"
-engine = "viper"  # or "sst"
+data_directory = "/data/proximadb"
+default_engine = "viper"  # or "sst"
+wal_enabled = true
+wal_sync_interval_ms = 100
 
 [performance]
 enable_gpu = true
 enable_simd = true
+cache_size_mb = 1024
+thread_pool_size = 16
+
+[monitoring]
+metrics_enabled = true
+metrics_port = 9090
+log_level = "info"
+----
+
+=== Environment Variables
+
+[source,bash]
+----
+# Override config file settings
+export PROXIMADB_REST_PORT=5680
+export PROXIMADB_GRPC_PORT=5681
+export PROXIMADB_DATA_DIR=/custom/data/path
+export PROXIMADB_LOG_LEVEL=debug
+export PROXIMADB_ENABLE_GPU=true
+
+# Run with custom settings
+docker run -e PROXIMADB_REST_PORT=5680 proximadb/server
 ----
 
 === Storage Engines
@@ -136,13 +431,72 @@ enable_simd = true
 | Columnar, compression
 |===
 
-== Hardware Acceleration
+== Performance Optimization
+
+=== Hardware Acceleration
 
 ProximaDB automatically detects and uses:
 
 * **SIMD**: AVX-512, AVX2, SSE4.1, NEON
 * **GPU**: CUDA, ROCm, MPS, OpenCL
 * **Optimizations**: Cache-aware, zero-copy
+
+=== Batch Operations for Scale
+
+[source,python]
+----
+# Efficient batch processing
+from proximadb import ProximaDBClient
+import numpy as np
+
+client = ProximaDBClient("grpc://localhost:5679")
+
+# Process in batches of 1000 for optimal performance
+batch_size = 1000
+vectors = []
+
+for i in range(10000):
+    vectors.append({
+        "id": f"vec_{i}",
+        "vector": np.random.rand(384).tolist(),
+        "metadata": {"batch": i // batch_size}
+    })
+    
+    # Insert when batch is full
+    if len(vectors) >= batch_size:
+        client.insert_vectors("my_collection", vectors)
+        vectors = []  # Reset batch
+
+# Insert remaining vectors
+if vectors:
+    client.insert_vectors("my_collection", vectors)
+----
+
+=== Connection Pooling
+
+[source,python]
+----
+# Use connection pooling for concurrent operations
+from proximadb import ProximaDBClient
+from concurrent.futures import ThreadPoolExecutor
+
+# Create a client pool
+clients = [ProximaDBClient("grpc://localhost:5679") for _ in range(10)]
+
+def search_task(client_id, query_id):
+    client = clients[client_id % len(clients)]
+    query_vector = np.random.rand(384).tolist()
+    return client.search_vectors(
+        collection_id="my_collection",
+        query_vector=query_vector,
+        top_k=10
+    )
+
+# Parallel searches
+with ThreadPoolExecutor(max_workers=10) as executor:
+    futures = [executor.submit(search_task, i, i) for i in range(100)]
+    results = [f.result() for f in futures]
+----
 
 == Next Steps
 
@@ -166,10 +520,51 @@ ProximaDB automatically detects and uses:
 | Check: `docker ps \| grep proximadb`
 |===
 
+== Monitoring & Observability
+
+=== Health Checks
+
+[source,python]
+----
+# Monitor ProximaDB health
+import time
+import requests
+
+def monitor_health():
+    while True:
+        try:
+            response = requests.get("http://localhost:5678/health")
+            health = response.json()
+            
+            if health['status'] != 'healthy':
+                print(f"WARNING: ProximaDB unhealthy - {health}")
+                # Trigger alert
+            
+        except Exception as e:
+            print(f"ERROR: Cannot reach ProximaDB - {e}")
+        
+        time.sleep(30)  # Check every 30 seconds
+----
+
+=== Metrics Collection
+
+[source,bash]
+----
+# Prometheus metrics endpoint
+curl http://localhost:9090/metrics
+
+# Key metrics to monitor:
+# - proximadb_search_latency_ms
+# - proximadb_insert_throughput_ops
+# - proximadb_collection_vector_count
+# - proximadb_memory_usage_bytes
+# - proximadb_cache_hit_ratio
+----
+
 == Support
 
-* GitHub: https://github.com/vjsingh1984/proximadb/issues
-* Email: singhvjd@gmail.com
+* **GitHub Issues**: https://github.com/vjsingh1984/proximadb/issues
+* **Email**: singhvjd@gmail.com
 
 ---
 **Ready to build?** → link:user_guide.adoc[User Guide]
