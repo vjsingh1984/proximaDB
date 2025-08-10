@@ -187,7 +187,7 @@ async fn test_insert_flush_compact_flow() {
     
     // Step 5: Verify data is still searchable
     println!("\n🔍 Step 5: Verifying search after compaction...");
-    let search_results = engine.search(
+    let search_results = engine.search_vectors(
         collection_id,
         &vec![0.5; 128],
         100,
@@ -390,7 +390,7 @@ async fn test_basic_compaction() {
     }
     
     // Verify all data still accessible
-    let search_results = engine.search(
+    let search_results = engine.search_vectors(
         collection_id,
         &vec![0.5; 128],
         100,
@@ -501,7 +501,7 @@ async fn test_concurrent_compaction_and_reads() {
             let mut failed_reads = 0;
             
             for attempt in 0..20 {
-                let results = read_engine.search(
+                let results = read_engine.search_vectors(
                     &collection_id_owned,
                     &vec![0.5; 128],
                     10,

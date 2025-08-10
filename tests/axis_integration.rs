@@ -231,7 +231,7 @@ async fn test_axis_complex_hybrid_queries() {
             },
         ],
         id_filters: vec![],
-        k: 10,
+        top_k: 10,
         include_expired: false,
     };
 
