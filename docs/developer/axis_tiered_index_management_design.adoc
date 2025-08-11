@@ -1,0 +1,856 @@
+= AXIS Tiered Index Management Design
+:toc: left
+:toclevels: 3
+:imagesdir: ../diagrams/images
+
+== Executive Summary
+
+This document redesigns AXIS index management with collection-level granularity and bidirectional tier promotion/demotion between memory and disk, ensuring index integrity while optimizing resource usage.
+
+== Key Design Decisions
+
+=== Granularity: Collection-Level
+
+**Decision: Collection-level promotion/demotion**
+
+Rationale:
+1. **Index Integrity**: Partial index loading breaks query correctness
+2. **Consistency**: All index structures for a collection move together
+3. **Simplicity**: Easier to reason about and implement
+4. **Performance**: Avoid complex partial index merging
+
+[WARNING]
+====
+Record-level or partial index eviction would cause:
+- Incomplete query results (missing evicted portions)
+- Complex merge logic when reloading
+- Index corruption risks
+- Unpredictable query performance
+====
+
+=== Tiering Strategy: Bidirectional Movement
+
+```
+┌─────────────┐     Promote      ┌─────────────┐     Promote      ┌─────────────┐
+│   MEMORY    │ ◄──────────────► │    DISK     │ ◄──────────────► │   ARCHIVE   │
+│  (Hot Tier) │     Demote       │ (Warm Tier) │     Demote       │ (Cold Tier) │
+└─────────────┘                  └─────────────┘                  └─────────────┘
+     Fast                             Medium                           Slow
+   <1ms access                      10-50ms                         100ms-1s
+```
+
+== Tier Management Architecture
+
+=== Component Overview
+
+[source]
+----
+┌────────────────────────────────────────────────────────────┐
+│                    AXIS Tier Manager                       │
+├────────────────────────────────────────────────────────────┤
+│ ┌──────────────────┐  ┌─────────────────┐  ┌───────────┐ │
+│ │  Access Tracker  │  │ Promotion Engine│  │ Demotion  │ │
+│ │  (Heat Scoring)  │  │  (Disk→Memory)  │  │  Engine   │ │
+│ └──────────────────┘  └─────────────────┘  └───────────┘ │
+├────────────────────────────────────────────────────────────┤
+│ ┌──────────────────────────────────────────────────────┐  │
+│ │              Collection State Manager                 │  │
+│ │  ┌─────────────────────────────────────────────┐    │  │
+│ │  │ Collection → TierState → Location → Status  │    │  │
+│ │  └─────────────────────────────────────────────┘    │  │
+│ └──────────────────────────────────────────────────────┘  │
+├────────────────────────────────────────────────────────────┤
+│                      Storage Tiers                         │
+│ ┌─────────────┐  ┌──────────────┐  ┌─────────────────┐  │
+│ │   Memory    │  │     Disk     │  │     Archive     │  │
+│ │  - HNSW     │  │  - Indexed   │  │  - Compressed   │  │
+│ │  - IVF      │  │  - Direct IO │  │  - S3/GCS       │  │
+│ │  - PQ       │  │  - Mmap      │  │  - Glacier     │  │
+│ └─────────────┘  └──────────────┘  └─────────────────┘  │
+└────────────────────────────────────────────────────────────┘
+----
+
+== Tier State Management
+
+=== Collection Tier States
+
+[source,rust]
+----
+#[derive(Debug, Clone, PartialEq)]
+pub enum CollectionTierState {
+    /// Fully loaded in memory, ready for queries
+    Memory {
+        loaded_at: Instant,
+        memory_bytes: usize,
+        access_count: u64,
+        last_access: Instant,
+    },
+    
+    /// On disk, can be promoted to memory
+    Disk {
+        stored_at: Instant,
+        disk_location: PathBuf,
+        disk_bytes: usize,
+        last_access: Option<Instant>,
+        promotion_eligible: bool,
+    },
+    
+    /// Archived to cold storage (S3/GCS)
+    Archive {
+        archived_at: Instant,
+        archive_url: String,
+        compressed_bytes: usize,
+        retrieval_cost: f64,
+    },
+    
+    /// Transitioning between tiers
+    Transitioning {
+        from: Box<CollectionTierState>,
+        to: TierLevel,
+        started_at: Instant,
+        progress: f32,
+    },
+    
+    /// Not yet built (new collection)
+    Unbuilt,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum TierLevel {
+    Memory,
+    Disk,
+    Archive,
+}
+----
+
+=== Heat Scoring System
+
+[source,rust]
+----
+/// Tracks access patterns to determine tier placement
+pub struct HeatScorer {
+    /// Access history per collection
+    access_history: DashMap<String, AccessHistory>,
+    
+    /// Scoring weights
+    weights: ScoringWeights,
+}
+
+#[derive(Debug, Clone)]
+pub struct AccessHistory {
+    /// Recent access timestamps (circular buffer)
+    recent_accesses: VecDeque<Instant>,
+    
+    /// Access count in different time windows
+    access_count_1h: u64,
+    access_count_24h: u64,
+    access_count_7d: u64,
+    
+    /// Query latency impact when not in memory
+    avg_fallback_latency_ms: f64,
+    
+    /// Business importance score (0-100)
+    importance_score: f32,
+}
+
+impl HeatScorer {
+    /// Calculate heat score for tier placement decision
+    pub fn calculate_heat_score(&self, collection_id: &str) -> f64 {
+        let history = match self.access_history.get(collection_id) {
+            Some(h) => h,
+            None => return 0.0,
+        };
+        
+        // Weighted scoring formula
+        let recency_score = self.calculate_recency_score(&history);
+        let frequency_score = self.calculate_frequency_score(&history);
+        let impact_score = history.avg_fallback_latency_ms / 100.0;
+        let importance = history.importance_score as f64 / 100.0;
+        
+        (recency_score * self.weights.recency +
+         frequency_score * self.weights.frequency +
+         impact_score * self.weights.impact +
+         importance * self.weights.business) / 4.0
+    }
+    
+    fn calculate_recency_score(&self, history: &AccessHistory) -> f64 {
+        if let Some(last_access) = history.recent_accesses.back() {
+            let age = Instant::now().duration_since(*last_access);
+            // Exponential decay: score = e^(-age_in_hours / 24)
+            (-age.as_secs_f64() / 86400.0).exp()
+        } else {
+            0.0
+        }
+    }
+    
+    fn calculate_frequency_score(&self, history: &AccessHistory) -> f64 {
+        // Weighted by time window
+        (history.access_count_1h as f64 * 1.0 +
+         history.access_count_24h as f64 * 0.5 +
+         history.access_count_7d as f64 * 0.1) / 100.0
+    }
+}
+----
+
+== Promotion Engine
+
+=== Memory Promotion (Disk → Memory)
+
+[source,rust]
+----
+pub struct PromotionEngine {
+    tier_manager: Arc<TierManager>,
+    memory_budget: MemoryBudget,
+    io_scheduler: IoScheduler,
+}
+
+impl PromotionEngine {
+    /// Promote collection from disk to memory
+    pub async fn promote_to_memory(
+        &self,
+        collection_id: &str,
+        trigger: PromotionTrigger,
+    ) -> Result<()> {
+        // 1. Check current state
+        let current_state = self.tier_manager.get_state(collection_id).await?;
+        
+        match current_state {
+            CollectionTierState::Disk { disk_location, disk_bytes, .. } => {
+                // 2. Check memory budget
+                if !self.memory_budget.can_allocate(disk_bytes).await {
+                    // Need to demote something first
+                    self.make_room_for(disk_bytes).await?;
+                }
+                
+                // 3. Mark as transitioning
+                self.tier_manager.set_state(
+                    collection_id,
+                    CollectionTierState::Transitioning {
+                        from: Box::new(current_state.clone()),
+                        to: TierLevel::Memory,
+                        started_at: Instant::now(),
+                        progress: 0.0,
+                    },
+                ).await?;
+                
+                // 4. Load index from disk
+                let index = self.load_index_from_disk(&disk_location).await?;
+                
+                // 5. Apply any pending deltas since last persistence
+                let deltas = self.load_pending_deltas(collection_id).await?;
+                self.apply_deltas_to_index(&index, deltas).await?;
+                
+                // 6. Register in memory
+                self.tier_manager.register_in_memory(
+                    collection_id,
+                    index,
+                    disk_bytes,
+                ).await?;
+                
+                // 7. Update state
+                self.tier_manager.set_state(
+                    collection_id,
+                    CollectionTierState::Memory {
+                        loaded_at: Instant::now(),
+                        memory_bytes: disk_bytes,
+                        access_count: 0,
+                        last_access: Instant::now(),
+                    },
+                ).await?;
+                
+                info!("✅ Promoted collection {} to memory ({:.2} MB)",
+                      collection_id, disk_bytes as f64 / 1_048_576.0);
+                
+                // 8. Optionally keep disk copy for fast recovery
+                if trigger == PromotionTrigger::HighFrequency {
+                    // Keep disk copy for hot collections
+                    debug!("Keeping disk copy for fast recovery");
+                } else {
+                    // Remove disk copy to save space
+                    tokio::fs::remove_file(&disk_location).await?;
+                }
+            }
+            
+            CollectionTierState::Archive { archive_url, .. } => {
+                // Two-step promotion: Archive → Disk → Memory
+                self.promote_from_archive_to_disk(collection_id, &archive_url).await?;
+                self.promote_to_memory(collection_id, trigger).await?;
+            }
+            
+            CollectionTierState::Memory { .. } => {
+                debug!("Collection {} already in memory", collection_id);
+            }
+            
+            _ => {
+                return Err(anyhow!("Cannot promote from state: {:?}", current_state));
+            }
+        }
+        
+        Ok(())
+    }
+    
+    /// Make room in memory by demoting cold collections
+    async fn make_room_for(&self, required_bytes: usize) -> Result<()> {
+        let candidates = self.tier_manager.get_demotion_candidates().await?;
+        
+        let mut freed_bytes = 0;
+        for (collection_id, score) in candidates {
+            if freed_bytes >= required_bytes {
+                break;
+            }
+            
+            let state = self.tier_manager.get_state(&collection_id).await?;
+            if let CollectionTierState::Memory { memory_bytes, .. } = state {
+                // Demote to disk
+                self.tier_manager.demote_to_disk(&collection_id).await?;
+                freed_bytes += memory_bytes;
+                
+                info!("📤 Demoted {} to disk (freed {:.2} MB, score: {:.2})",
+                      collection_id, memory_bytes as f64 / 1_048_576.0, score);
+            }
+        }
+        
+        if freed_bytes < required_bytes {
+            return Err(anyhow!("Cannot free enough memory: need {}, freed {}",
+                              required_bytes, freed_bytes));
+        }
+        
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum PromotionTrigger {
+    UserQuery,        // Promoted due to query needing index
+    HighFrequency,    // Promoted due to access pattern
+    Preload,          // Proactive promotion
+    Manual,           // Admin-triggered
+}
+----
+
+== Demotion Engine
+
+=== Memory Demotion (Memory → Disk)
+
+[source,rust]
+----
+pub struct DemotionEngine {
+    tier_manager: Arc<TierManager>,
+    persistence_engine: Arc<IndexPersistenceEngine>,
+}
+
+impl DemotionEngine {
+    /// Demote collection from memory to disk
+    pub async fn demote_to_disk(
+        &self,
+        collection_id: &str,
+        reason: DemotionReason,
+    ) -> Result<()> {
+        // 1. Get current index from memory
+        let index = self.tier_manager.get_memory_index(collection_id).await?;
+        
+        // 2. Mark as transitioning
+        self.tier_manager.set_state(
+            collection_id,
+            CollectionTierState::Transitioning {
+                from: Box::new(CollectionTierState::Memory { .. }),
+                to: TierLevel::Disk,
+                started_at: Instant::now(),
+                progress: 0.0,
+            },
+        ).await?;
+        
+        // 3. Persist to disk
+        let disk_location = self.persistence_engine.persist_full_index(
+            collection_id,
+            &index,
+            PersistenceOptions {
+                compression: CompressionType::Zstd(3),
+                include_vectors: reason != DemotionReason::ArchivePrep,
+            },
+        ).await?;
+        
+        // 4. Verify persistence
+        let disk_bytes = tokio::fs::metadata(&disk_location).await?.len() as usize;
+        
+        // 5. Remove from memory
+        self.tier_manager.remove_from_memory(collection_id).await?;
+        
+        // 6. Update state
+        self.tier_manager.set_state(
+            collection_id,
+            CollectionTierState::Disk {
+                stored_at: Instant::now(),
+                disk_location: disk_location.clone(),
+                disk_bytes,
+                last_access: Some(Instant::now()),
+                promotion_eligible: true,
+            },
+        ).await?;
+        
+        info!("💾 Demoted collection {} to disk at {} ({:.2} MB)",
+              collection_id, disk_location.display(), 
+              disk_bytes as f64 / 1_048_576.0);
+        
+        Ok(())
+    }
+    
+    /// Demote to archive (Disk → Archive)
+    pub async fn demote_to_archive(
+        &self,
+        collection_id: &str,
+    ) -> Result<()> {
+        let state = self.tier_manager.get_state(collection_id).await?;
+        
+        match state {
+            CollectionTierState::Disk { disk_location, .. } => {
+                // 1. Compress heavily
+                let compressed = self.compress_for_archive(&disk_location).await?;
+                
+                // 2. Upload to S3/GCS
+                let archive_url = self.upload_to_archive(&compressed).await?;
+                
+                // 3. Remove disk copy
+                tokio::fs::remove_file(&disk_location).await?;
+                
+                // 4. Update state
+                self.tier_manager.set_state(
+                    collection_id,
+                    CollectionTierState::Archive {
+                        archived_at: Instant::now(),
+                        archive_url,
+                        compressed_bytes: compressed.len(),
+                        retrieval_cost: self.calculate_retrieval_cost(compressed.len()),
+                    },
+                ).await?;
+                
+                info!("🗄️ Archived collection {} to cold storage", collection_id);
+            }
+            _ => {
+                return Err(anyhow!("Can only archive from disk state"));
+            }
+        }
+        
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum DemotionReason {
+    MemoryPressure,   // System needs memory
+    LowAccess,        // Heat score below threshold
+    Scheduled,        // Time-based policy
+    ArchivePrep,      // Preparing for archive
+    Manual,           // Admin-triggered
+}
+----
+
+== Automatic Tier Management
+
+=== Policy-Based Automation
+
+[source,rust]
+----
+pub struct TierPolicy {
+    /// Thresholds for automatic promotion
+    promotion_thresholds: PromotionThresholds,
+    
+    /// Thresholds for automatic demotion
+    demotion_thresholds: DemotionThresholds,
+    
+    /// Time-based rules
+    time_rules: Vec<TimeRule>,
+}
+
+#[derive(Debug, Clone)]
+pub struct PromotionThresholds {
+    /// Heat score above this triggers promotion
+    heat_score_threshold: f64,
+    
+    /// Access count in 1h above this triggers promotion
+    access_count_1h: u64,
+    
+    /// Fallback latency above this triggers promotion (ms)
+    latency_threshold_ms: f64,
+}
+
+#[derive(Debug, Clone)]
+pub struct DemotionThresholds {
+    /// Heat score below this triggers demotion
+    heat_score_threshold: f64,
+    
+    /// No access for this duration triggers demotion
+    idle_duration: Duration,
+    
+    /// Memory usage above this triggers aggressive demotion
+    memory_pressure_percent: f32,
+}
+
+#[derive(Debug, Clone)]
+pub struct TimeRule {
+    /// Cron expression for when rule applies
+    schedule: String,
+    
+    /// Action to take
+    action: TierAction,
+    
+    /// Filter for which collections
+    collection_filter: CollectionFilter,
+}
+
+impl TierManager {
+    /// Background task that enforces tier policies
+    pub async fn run_policy_enforcer(&self) {
+        let mut interval = tokio::time::interval(Duration::from_secs(60));
+        
+        loop {
+            interval.tick().await;
+            
+            // Evaluate all collections
+            let collections = self.list_all_collections().await;
+            
+            for collection_id in collections {
+                if let Err(e) = self.evaluate_and_apply_policy(&collection_id).await {
+                    warn!("Policy evaluation failed for {}: {}", collection_id, e);
+                }
+            }
+            
+            // Check memory pressure
+            if self.is_memory_pressure().await {
+                self.handle_memory_pressure().await;
+            }
+        }
+    }
+    
+    async fn evaluate_and_apply_policy(&self, collection_id: &str) -> Result<()> {
+        let state = self.get_state(collection_id).await?;
+        let heat_score = self.heat_scorer.calculate_heat_score(collection_id);
+        
+        match state {
+            CollectionTierState::Disk { .. } => {
+                // Check if should promote
+                if heat_score > self.policy.promotion_thresholds.heat_score_threshold {
+                    self.promotion_engine.promote_to_memory(
+                        collection_id,
+                        PromotionTrigger::HighFrequency,
+                    ).await?;
+                }
+            }
+            
+            CollectionTierState::Memory { last_access, .. } => {
+                // Check if should demote
+                let idle_time = Instant::now().duration_since(last_access);
+                
+                if heat_score < self.policy.demotion_thresholds.heat_score_threshold ||
+                   idle_time > self.policy.demotion_thresholds.idle_duration {
+                    self.demotion_engine.demote_to_disk(
+                        collection_id,
+                        DemotionReason::LowAccess,
+                    ).await?;
+                }
+            }
+            
+            CollectionTierState::Archive { .. } => {
+                // Check if should restore
+                if heat_score > self.policy.promotion_thresholds.heat_score_threshold * 2.0 {
+                    // Very hot - promote all the way to memory
+                    self.promotion_engine.promote_to_memory(
+                        collection_id,
+                        PromotionTrigger::HighFrequency,
+                    ).await?;
+                }
+            }
+            
+            _ => {}
+        }
+        
+        Ok(())
+    }
+}
+----
+
+== Query Execution with Tiering
+
+=== Transparent Query Handling
+
+[source,rust]
+----
+impl AxisManager {
+    /// Execute query with automatic tier management
+    pub async fn execute_query(
+        &self,
+        query: VectorQuery,
+    ) -> Result<QueryResult> {
+        let collection_id = &query.collection_id;
+        
+        // Record access for heat scoring
+        self.heat_scorer.record_access(collection_id).await;
+        
+        // Get current tier state
+        let state = self.tier_manager.get_state(collection_id).await?;
+        
+        match state {
+            CollectionTierState::Memory { .. } => {
+                // Fast path: query from memory
+                self.query_from_memory(collection_id, query).await
+            }
+            
+            CollectionTierState::Disk { promotion_eligible, .. } => {
+                if promotion_eligible && self.should_auto_promote(collection_id).await {
+                    // Promote and query
+                    self.promotion_engine.promote_to_memory(
+                        collection_id,
+                        PromotionTrigger::UserQuery,
+                    ).await?;
+                    self.query_from_memory(collection_id, query).await
+                } else {
+                    // Query directly from disk (slower)
+                    self.query_from_disk(collection_id, query).await
+                }
+            }
+            
+            CollectionTierState::Archive { .. } => {
+                // Check if worth restoring
+                if self.is_restore_worthwhile(collection_id).await {
+                    self.restore_from_archive(collection_id).await?;
+                    self.execute_query(query).await  // Retry
+                } else {
+                    // Fallback to storage scan
+                    self.fallback_to_storage_scan(query).await
+                }
+            }
+            
+            CollectionTierState::Transitioning { .. } => {
+                // Wait or fallback
+                if self.can_wait_for_transition().await {
+                    self.wait_for_transition(collection_id).await?;
+                    self.execute_query(query).await  // Retry
+                } else {
+                    self.fallback_to_storage_scan(query).await
+                }
+            }
+            
+            CollectionTierState::Unbuilt => {
+                // No index exists, scan storage
+                self.fallback_to_storage_scan(query).await
+            }
+        }
+    }
+}
+----
+
+== Synchronization with Flush/Compaction
+
+=== Maintaining Index Integrity Across Tiers
+
+[source,rust]
+----
+impl FlushCoordinator {
+    /// Handle flush with tier-aware index updates
+    pub async fn flush_with_tier_update(
+        &self,
+        collection_id: &str,
+        vectors: Vec<VectorRecord>,
+    ) -> Result<()> {
+        // 1. Flush to storage
+        let flush_result = self.flush_to_storage(collection_id, &vectors).await?;
+        
+        // 2. Get collection tier state
+        let tier_state = self.tier_manager.get_state(collection_id).await?;
+        
+        match tier_state {
+            CollectionTierState::Memory { .. } => {
+                // Update in-memory index directly
+                self.axis_manager.update_memory_index(collection_id, &vectors).await?;
+            }
+            
+            CollectionTierState::Disk { disk_location, .. } => {
+                // Append delta to disk
+                self.append_delta_to_disk(
+                    &disk_location,
+                    IndexDelta::Additions(vectors),
+                ).await?;
+            }
+            
+            CollectionTierState::Archive { .. } => {
+                // Queue delta for next restore
+                self.queue_delta_for_archive(collection_id, vectors).await?;
+            }
+            
+            _ => {
+                // Store delta for later application
+                self.store_pending_delta(collection_id, vectors).await?;
+            }
+        }
+        
+        Ok(())
+    }
+}
+
+impl CompactionCoordinator {
+    /// Handle compaction with tier-aware updates
+    pub async fn compact_with_tier_update(
+        &self,
+        collection_id: &str,
+        deleted_ids: Vec<String>,
+        merged_vectors: Vec<VectorRecord>,
+    ) -> Result<()> {
+        // Similar pattern but with deletions
+        let tier_state = self.tier_manager.get_state(collection_id).await?;
+        
+        match tier_state {
+            CollectionTierState::Memory { .. } => {
+                // Direct update
+                self.axis_manager.apply_compaction_to_memory(
+                    collection_id,
+                    &deleted_ids,
+                    &merged_vectors,
+                ).await?;
+            }
+            
+            CollectionTierState::Disk { .. } => {
+                // This is complex - might trigger promotion
+                if self.is_major_compaction(&deleted_ids, &merged_vectors) {
+                    // Major compaction: promote, update, demote
+                    self.tier_manager.promote_to_memory(
+                        collection_id,
+                        PromotionTrigger::Manual,
+                    ).await?;
+                    
+                    self.axis_manager.apply_compaction_to_memory(
+                        collection_id,
+                        &deleted_ids,
+                        &merged_vectors,
+                    ).await?;
+                    
+                    self.tier_manager.demote_to_disk(
+                        collection_id,
+                        DemotionReason::Scheduled,
+                    ).await?;
+                } else {
+                    // Minor compaction: append delta
+                    self.append_compaction_delta_to_disk(
+                        collection_id,
+                        &deleted_ids,
+                        &merged_vectors,
+                    ).await?;
+                }
+            }
+            
+            _ => {
+                self.store_pending_compaction(
+                    collection_id,
+                    deleted_ids,
+                    merged_vectors,
+                ).await?;
+            }
+        }
+        
+        Ok(())
+    }
+}
+----
+
+== Performance Characteristics
+
+=== Tier Performance Matrix
+
+[cols="2,2,2,2,2", options="header"]
+|===
+| Metric | Memory | Disk (NVMe) | Disk (HDD) | Archive (S3)
+
+| Query Latency
+| <1ms
+| 10-50ms
+| 50-200ms
+| 500ms-2s
+
+| Promotion Time
+| N/A
+| 1-5s
+| 5-15s
+| 30s-2min
+
+| Demotion Time
+| 1-5s
+| N/A
+| 10-30s
+| 1-5min
+
+| Storage Cost
+| $10/GB/month
+| $0.50/GB/month
+| $0.10/GB/month
+| $0.02/GB/month
+
+| Capacity
+| Limited (RAM)
+| Moderate (NVMe)
+| Large (HDD)
+| Unlimited
+|===
+
+=== Decision Thresholds
+
+[source,yaml]
+----
+tier_policies:
+  promotion:
+    memory:
+      heat_score: 75.0        # Very hot collections
+      access_1h: 100          # 100+ queries/hour
+      latency_impact_ms: 50   # Causing >50ms delays
+      
+  demotion:
+    to_disk:
+      heat_score: 25.0        # Getting cold
+      idle_minutes: 60        # No access for 1 hour
+      memory_pressure: 80%    # When RAM >80% used
+      
+    to_archive:
+      heat_score: 5.0         # Very cold
+      idle_days: 7            # No access for 1 week
+      disk_pressure: 90%      # When disk >90% used
+----
+
+== Implementation Checklist
+
+=== Phase 1: Core Tiering (Week 1-2)
+- [ ] Implement CollectionTierState enum
+- [ ] Build TierManager with state tracking
+- [ ] Add HeatScorer for access tracking
+- [ ] Create basic promotion/demotion engines
+
+=== Phase 2: Persistence (Week 3-4)
+- [ ] Implement index serialization to disk
+- [ ] Add index deserialization from disk
+- [ ] Build delta append system
+- [ ] Create checkpoint mechanism
+
+=== Phase 3: Policy Engine (Week 5-6)
+- [ ] Implement policy configuration
+- [ ] Build policy evaluation loop
+- [ ] Add automatic promotion triggers
+- [ ] Create memory pressure handling
+
+=== Phase 4: Query Integration (Week 7-8)
+- [ ] Modify query path for tier awareness
+- [ ] Add transparent promotion on query
+- [ ] Implement disk query fallback
+- [ ] Build metrics and monitoring
+
+== Conclusion
+
+This design ensures:
+
+1. **Collection-level integrity**: Entire collection indexes move together
+2. **Bidirectional movement**: Promote and demote based on access patterns
+3. **Transparent operation**: Queries work regardless of tier
+4. **Synchronized updates**: Flush/compaction work across all tiers
+5. **Automatic management**: Policy-based tier placement
+
+The collection-level granularity maintains index integrity while the bidirectional tier movement optimizes resource usage based on actual access patterns.
+
+---
+_Last Updated: 2025-08-11_
+_Status: Complete Redesign Ready for Implementation_

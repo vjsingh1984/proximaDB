@@ -103,10 +103,28 @@ The two-stage approach provides optimal performance:
 1. **Stage 1 (Coarse)**: Use quantized vectors or indexes to get 10-100x candidates
 2. **Stage 2 (Fine)**: Rerank with full precision FP32 vectors
 
-=== Search Orchestration
+=== Search Orchestration Layers
+
+ProximaDB implements a clear separation of concerns in its search architecture:
+
+==== Orchestration Layer (VectorOperationsService)
+Handles high-level coordination and result merging:
+
+* **Stateless orchestration**: No engine-specific logic
+* **Parallel execution**: Concurrent WAL, index, and storage searches
+* **Smart deduplication**: Handles duplicates across sources
+* **Collection awareness**: Routes to appropriate engines based on metadata
+
+==== Engine Layer (SST/VIPER)
+Implements engine-specific optimizations:
+
+* **SST Engine**: Three-stage filter pipeline for row-based data
+* **VIPER Engine**: Columnar optimizations and predicate pushdown
+* **Index Manager**: AXIS index routing and management
+* **WAL Search**: Bloom filter optimization for unflushed data
 
 image::search_orchestration_swimlanes.svg[Search Orchestration Swimlanes, width=900]
-_Swimlane view of search orchestration across all system layers_
+_Swimlane view showing separation between orchestration and engine layers_
 
 image::comprehensive_search_flow.svg[Comprehensive Search Flow, width=900]
 _Detailed sequence diagram showing complete search orchestration with all components_

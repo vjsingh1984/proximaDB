@@ -2,36 +2,45 @@
 
 flowchart TB
     subgraph Client ["Client Layer"]
-        A[Search Request<br/>collection_id, query_vector, k]
+        A[Search Request<br/>collection_id, query_vector, k, metadata_filter]
         Z[Search Results<br/>Top k vectors with metadata]
     end
     
     subgraph Orchestration ["Orchestration Layer (VectorOperationsService)"]
-        B[Query Planning]
+        B[Query Planning<br/>Determine filter order]
         C[Result Cache Check]
-        D[Orchestrate Search]
-        E[Merge & Deduplicate]
-        F[Final Ranking]
+        D[Orchestrate Search<br/>Parallel execution]
+        E[Merge & Deduplicate<br/>MVCC resolution]
+        F[Final Ranking<br/>Distance-based sort]
     end
     
-    subgraph WAL ["WAL/Memtable Layer (Unflushed Data)"]
+    subgraph WAL ["WAL/Memtable Layer (Always Searched)"]
         G[Get Unflushed Batches]
-        H[Bloom Filter Check<br/>95% reduction]
+        H[Bloom Filter Check<br/>95% metadata reduction]
         I[Distance Calculation<br/>SIMD/GPU accelerated]
     end
     
-    subgraph Indexes ["AXIS Index Layer (Optional)"]
-        J{Has Indexes?}
-        K[HNSW Search<br/>Hierarchical graph]
-        L[IVF Search<br/>Inverted clusters]
-        M[PQ Two-Stage<br/>1. Quantized search<br/>2. FP32 rerank]
+    subgraph Indexes ["AXIS Index Layer (Memory/Disk Tiered)"]
+        J{Index Available?}
+        JE{Index Evicted?}
+        K[HNSW Search<br/>Memory: top layers<br/>Disk: bottom layers]
+        L[IVF Search<br/>Memory: centroids<br/>Disk: posting lists]
+        M[PQ Two-Stage<br/>1. Quantized codes<br/>2. FP32 rerank]
+        FB[Fallback to Storage]
     end
     
-    subgraph Storage ["Persistent Storage Layer"]
-        N[VIPER Engine<br/>Columnar format]
-        O[SST Engine<br/>Row format]
-        P[Two-Stage Search<br/>INT8/PQ → FP32]
-        Q[Three-Stage Filter<br/>Bloom→Zone→Block]
+    subgraph SST ["SST Engine (Row-based Storage)"]
+        O[SST Three-Stage Filter]
+        Q1[Stage 1: Bloom Filter<br/>Skip entire files]
+        Q2[Stage 2: Index Block<br/>Skip data blocks]
+        Q3[Stage 3: Row Filter<br/>In-memory metadata]
+    end
+    
+    subgraph VIPER ["VIPER Engine (Columnar Storage)"]
+        N[VIPER Columnar Search]
+        P1[Predicate Pushdown<br/>Parquet statistics]
+        P2[Column Pruning<br/>Load only needed]
+        P3[Two-Stage Search<br/>Quantized → FP32]
     end
     
     %% Flow connections
@@ -40,32 +49,50 @@ flowchart TB
     C -->|Cache Miss| D
     C -->|Cache Hit| Z
     
-    D --> G
+    %% WAL always searched
+    D ==> G
     G --> H
-    H -->|Filtered| I
+    H -->|Pass Filter| I
     I -->|WAL Results| E
     
-    D --> J
-    J -->|Yes| K
-    J -->|Yes| L
-    J -->|Yes| M
+    %% Index path with eviction handling
+    D ==> J
+    J -->|Available| K
+    J -->|Available| L
+    J -->|Available| M
+    J -->|Not Available| JE
+    JE -->|Evicted| FB
+    FB --> O
+    FB --> N
+    
     K -->|Index Results| E
     L -->|Index Results| E
     M -->|Reranked Results| E
     
-    J -->|No| N
-    J -->|No| O
-    N --> P
-    P -->|VIPER Results| E
-    O --> Q
-    Q -->|SST Results| E
+    %% SST three-stage pipeline
+    O --> Q1
+    Q1 -->|Pass| Q2
+    Q2 -->|Pass| Q3
+    Q3 -->|SST Results| E
     
+    %% VIPER columnar pipeline
+    N --> P1
+    P1 --> P2
+    P2 --> P3
+    P3 -->|VIPER Results| E
+    
+    %% Final merge and return
     E --> F
     F --> Z
     
+    %% Styling
     style A fill:#e1f5fe
     style Z fill:#c8e6c9
     style H fill:#fff3e0
+    style Q1 fill:#fff3e0
+    style P1 fill:#fff3e0
     style M fill:#fce4ec
-    style P fill:#fce4ec
+    style P3 fill:#fce4ec
     style E fill:#f3e5f5
+    style JE fill:#ffccbc
+    style FB fill:#ffccbc

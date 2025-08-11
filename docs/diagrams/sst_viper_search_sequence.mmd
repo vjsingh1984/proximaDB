@@ -1,0 +1,111 @@
+%%{init: {'theme':'neutral', 'themeVariables': {'primaryColor':'#3b82f6','primaryTextColor':'#1f2937','primaryBorderColor':'#6b7280','lineColor':'#9ca3af','secondaryColor':'#10b981','tertiaryColor':'#f59e0b','background':'transparent','mainBkg':'#f3f4f6','secondBkg':'#e5e7eb','textColor':'#1f2937'}}}%%
+
+sequenceDiagram
+    participant C as Client
+    participant VOS as VectorOperationsService
+    participant WAL as WAL/Memtable
+    participant IX as IndexManager
+    participant SST as SST Engine
+    participant VIP as VIPER Engine
+    participant CACHE as Cache System
+    
+    Note over C,CACHE: Search with Metadata Filter + Distance Query
+    
+    C->>VOS: search(collection_id, query_vector, k, metadata_filter)
+    
+    Note over VOS: Query Planning Phase
+    VOS->>VOS: Analyze filter selectivity
+    VOS->>VOS: Determine optimal filter order<br/>(metadata-first vs distance-first)
+    
+    Note over VOS,WAL: WAL Search (Always Executed)
+    VOS->>WAL: search_unflushed(query)
+    WAL->>WAL: Apply CompositeBloomFilter
+    WAL->>WAL: Filter by metadata (95% reduction)
+    WAL->>WAL: Calculate distances (SIMD/GPU)
+    WAL-->>VOS: unflushed_results[]
+    
+    Note over VOS,IX: Index Search (If Available)
+    VOS->>IX: check_index_availability(collection_id)
+    
+    alt Index Available in Memory
+        IX-->>VOS: index_handle
+        VOS->>IX: search_index(query_vector, k)
+        IX->>IX: Navigate HNSW/IVF structure
+        IX->>IX: Get candidate vectors
+        IX-->>VOS: index_results[]
+    else Index Evicted or Not Available
+        IX-->>VOS: null (fallback needed)
+        Note over VOS: Fallback to Storage Engines
+    end
+    
+    Note over VOS,SST: SST Engine Search (Row-based)
+    VOS->>SST: search_sst(query, metadata_filter)
+    
+    rect rgb(255, 243, 224)
+        Note over SST: Three-Stage Filter Pipeline
+        SST->>SST: Stage 1: Bloom Filter Check
+        SST->>SST: Check file-level bloom filters
+        SST->>SST: Skip files with no matches (95% reduction)
+        
+        SST->>SST: Stage 2: Index Block Filter
+        SST->>SST: Load SSTable index entries
+        SST->>SST: Check min/max statistics
+        SST->>SST: Skip blocks outside range (60-80% reduction)
+        
+        SST->>CACHE: check_decompression_cache(block_ids)
+        alt Blocks in Cache
+            CACHE-->>SST: cached_blocks[]
+        else Cache Miss
+            SST->>SST: Load and decompress blocks
+            SST->>CACHE: store_in_cache(blocks)
+        end
+        
+        SST->>SST: Stage 3: Row-Level Filter
+        SST->>SST: Apply metadata predicates
+        SST->>SST: Filter individual records
+        SST->>SST: Calculate distances for qualified rows
+    end
+    
+    SST-->>VOS: sst_results[]
+    
+    Note over VOS,VIP: VIPER Engine Search (Columnar)
+    VOS->>VIP: search_viper(query, metadata_filter)
+    
+    rect rgb(252, 228, 236)
+        Note over VIP: Columnar Optimization Pipeline
+        VIP->>VIP: Predicate Pushdown
+        VIP->>VIP: Push filters to Parquet reader
+        VIP->>VIP: Use row group statistics
+        VIP->>VIP: Skip row groups (70-90% reduction)
+        
+        VIP->>VIP: Column Pruning
+        VIP->>VIP: Load only required columns
+        VIP->>VIP: Skip unnecessary metadata columns
+        
+        VIP->>VIP: Two-Stage Search
+        VIP->>VIP: Stage 1: Search quantized column (INT8/PQ)
+        VIP->>VIP: Get top 10x candidates
+        VIP->>CACHE: get_fp32_vectors(candidate_ids)
+        alt FP32 Vectors Cached
+            CACHE-->>VIP: cached_vectors[]
+        else Cache Miss
+            VIP->>VIP: Load FP32 column for candidates
+            VIP->>CACHE: cache_vectors(vectors)
+        end
+        VIP->>VIP: Stage 2: Rerank with FP32
+        VIP->>VIP: Precise distance calculation
+    end
+    
+    VIP-->>VOS: viper_results[]
+    
+    Note over VOS: Result Merging & Deduplication
+    VOS->>VOS: Combine results[WAL + Index + SST + VIPER]
+    VOS->>VOS: Apply MVCC resolution
+    VOS->>VOS: Remove duplicates (keep highest version)
+    VOS->>VOS: Sort by distance
+    VOS->>VOS: Take top-k results
+    
+    VOS->>CACHE: store_query_result(query_hash, results)
+    VOS-->>C: SearchResponse{results[], latency_ms}
+    
+    Note over C,CACHE: Search Complete

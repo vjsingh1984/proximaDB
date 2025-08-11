@@ -250,20 +250,63 @@ Centroids (Memory): 1024 centers, ~1.5MB
 **Core**: cosine, euclidean, dot_product
 **Extended**: manhattan, hamming, jaccard, chebyshev, canberra, minkowski, angular, bray_curtis, hellinger, custom
 
-== Search Optimization
+== Search Architecture
 
-=== Query Planning
-1. Retrieve collection metadata
-2. Search WAL/memtable (always first)
-3. Execute index or scan strategy
-4. Merge and deduplicate results
+=== Two-Level Search Orchestration
+
+ProximaDB implements a sophisticated two-level search architecture that separates high-level orchestration from engine-specific optimizations:
+
+==== Level 1: High-Level Orchestration (VectorOperationsService)
+The `VectorOperationsService` acts as the main search coordinator, managing the overall search flow:
+
+```
+VectorOperationsService.search()
+    ├── WAL.search()           // Always search unflushed data first
+    ├── Index.search()         // If AXIS indexes configured
+    ├── Storage.search()       // SST or VIPER engine search
+    └── Merge & Deduplicate    // Combine all results
+```
+
+Key responsibilities:
+* **WAL Priority**: Always searches WAL/memtable first for unflushed data
+* **Index Routing**: Determines if indexes are available and routes accordingly
+* **Result Merging**: Deduplicates and sorts results from multiple sources
+* **Query Planning**: Optimizes execution strategy based on collection metadata
+
+==== Level 2: Engine-Specific Optimizations
+
+Each storage engine implements internal optimizations transparent to the orchestrator:
+
+===== SST Three-Stage Filter Pipeline
+The SST engine uses a sophisticated three-stage filtering pipeline to minimize disk I/O:
+
+```
+SST.search()
+    └── three_stage_filter()
+        ├── Stage 1: Bloom Filter      // Skip entire SSTable files
+        ├── Stage 2: Index Block Filter // Skip data blocks within files
+        └── Stage 3: Row-Level Filter   // Skip individual records
+```
+
+* **Stage 1 - Bloom Filter**: Uses composite bloom filters to eliminate entire SSTable files that don't contain matching metadata (95% reduction in file reads)
+* **Stage 2 - Index Block Filter**: Examines SSTable index entries to skip irrelevant data blocks (60-80% block skip rate)
+* **Stage 3 - Row-Level Filter**: Applies metadata predicates to individual records in memory (zero deserialization for non-matching rows)
+
+===== VIPER Columnar Optimizations
+The VIPER engine leverages columnar storage for different optimizations:
+
+* **Predicate Pushdown**: Filters pushed to Parquet reader level
+* **Column Pruning**: Only reads required columns
+* **Statistics-based Skipping**: Uses Parquet row group statistics
+* **Quantized Search**: Optional two-stage search with quantized vectors
 
 === Performance Features
-* **Bloom filters**: 95% metadata scan reduction
-* **Parallel reading**: 3-5x multi-file speedup
-* **Early termination**: Stop at k results
-* **Query caching**: LRU repeated queries
-* **Predicate pushdown**: 60-90% I/O reduction
+* **Bloom filters**: 95% metadata scan reduction (SST engine)
+* **Parallel reading**: 3-5x speedup for multi-file operations
+* **Early termination**: Stops at k results when possible
+* **Query caching**: LRU cache for repeated queries
+* **Predicate pushdown**: 60-90% I/O reduction (VIPER engine)
+* **Compression-aware caching**: Stores compressed blocks in cache
 
 == Cache System
 

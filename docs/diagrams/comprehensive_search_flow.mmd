@@ -46,23 +46,31 @@ sequenceDiagram
     rect rgb(240, 255, 240)
         Note over VectorOpsService: Step 3: Persistent Storage Search
         
-        alt Collection Has Indexes (HNSW/IVF/PQ)
-            VectorOpsService->>AxisIndex: query(vector, k, filters, data_urls)
+        alt Collection Has Indexes Available
+            VectorOpsService->>AxisIndex: check_availability(collection_id)
             
-            alt Product Quantization (PQ) Enabled
-                Note over AxisIndex: Stage 1: Search PQ codes<br/>(compressed representations)
-                AxisIndex->>AxisIndex: Find top 10*k candidates<br/>using quantized distances
+            alt Index In Memory
+                AxisIndex-->>VectorOpsService: index_handle
+                VectorOpsService->>AxisIndex: query(vector, k, filters, data_urls)
                 
-                Note over AxisIndex: Stage 2: Rerank with FP32
-                AxisIndex->>ViperEngine: get_vectors(candidate_ids)
-                ViperEngine-->>AxisIndex: Original FP32 vectors
-                AxisIndex->>AxisIndex: Recalculate exact distances
-            else Standard Index Search
-                AxisIndex->>AxisIndex: Navigate index structure<br/>(HNSW layers, IVF clusters)
+                alt Product Quantization (PQ) Enabled
+                    Note over AxisIndex: Stage 1: Search PQ codes<br/>(compressed representations)
+                    AxisIndex->>AxisIndex: Find top 10*k candidates<br/>using quantized distances
+                    
+                    Note over AxisIndex: Stage 2: Rerank with FP32
+                    AxisIndex->>ViperEngine: get_vectors(candidate_ids)
+                    ViperEngine-->>AxisIndex: Original FP32 vectors
+                    AxisIndex->>AxisIndex: Recalculate exact distances
+                else Standard Index Search
+                    AxisIndex->>AxisIndex: Navigate index structure<br/>(HNSW layers, IVF clusters)
+                end
+                
+                AxisIndex-->>VectorOpsService: Indexed search results
+            else Index Evicted/On Disk
+                AxisIndex-->>VectorOpsService: null (index unavailable)
+                Note over VectorOpsService: Fallback to storage scan<br/>with bloom filter optimization
             end
-            
-            AxisIndex-->>VectorOpsService: Indexed search results
-        else No Indexes - Raw Storage Scan
+        else No Indexes - Direct Storage Scan
             par Parallel Storage Search
                 VectorOpsService->>ViperEngine: search(query, k, filters, file_paths)
                 
@@ -80,10 +88,19 @@ sequenceDiagram
             and
                 VectorOpsService->>SSTEngine: search(query, k, filters, file_paths)
                 
-                Note over SSTEngine: Three-stage filtering:<br/>1. Bloom filter (metadata)<br/>2. Zone map (ranges)<br/>3. Block scan
+                Note over SSTEngine: Three-Stage Filter Pipeline
+                SSTEngine->>SSTEngine: Stage 1: Bloom Filter<br/>Skip entire SSTable files (95% reduction)
+                SSTEngine->>SSTEngine: Stage 2: Index Block Filter<br/>Use min/max statistics to skip blocks (60-80% reduction)
+                SSTEngine->>SSTEngine: Stage 3: Row-Level Filter<br/>In-memory metadata predicates
                 
                 alt SST Compression Enabled
-                    SSTEngine->>SSTEngine: Decompress blocks (ZSTD/LZ4)
+                    SSTEngine->>SSTEngine: Check decompression cache
+                    alt Cache Hit
+                        SSTEngine->>SSTEngine: Use cached decompressed blocks
+                    else Cache Miss
+                        SSTEngine->>SSTEngine: Decompress blocks (ZSTD/LZ4)
+                        SSTEngine->>SSTEngine: Store in decompression cache
+                    end
                 end
                 
                 SSTEngine-->>VectorOpsService: SST results
