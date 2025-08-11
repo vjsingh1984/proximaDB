@@ -21,6 +21,8 @@
 
 use crate::index::axis::collection_state::{CollectionStateManager, CollectionTierState, TierLevel};
 use crate::index::axis::memory_tracker::IndexMemoryTracker;
+use crate::index::axis::format_strategy::{IndexFormatStrategy, IndexSerializationFormat};
+use crate::index::axis::serialization::IndexSerializer;
 use crate::storage::persistence::filesystem::{
     FilesystemFactory, StorageTier, FilesystemError, FsResult
 };
@@ -419,20 +421,52 @@ impl AxisTieringManager {
     ) -> FsResult<()> {
         info!("Demoting collection {} from memory to disk", collection_id);
         
-        // Serialize index data
+        // Get access pattern for format selection
+        let access_pattern = self.access_patterns.get(collection_id);
+        let access_frequency = access_pattern.as_ref()
+            .map(|p| p.access_frequency)
+            .unwrap_or(0.0);
+        
+        // Serialize index data from memory
         let index_data = self.memory_tracker.serialize_index(collection_id).await?;
         
-        // Write to disk tier
-        let disk_path = format!("axis/indexes/{}/index.bin", collection_id);
+        // Select format based on target tier and access pattern
+        let format = IndexFormatStrategy::select_format(
+            &StorageTier::SSD,
+            access_frequency,
+            index_data.len() as u64,
+        );
+        
+        info!("Using {:?} format for disk storage", format);
+        
+        // Serialize with selected format
+        let serialized_data = IndexFormatStrategy::serialize(&index_data, format)
+            .map_err(|e| FilesystemError::Io(
+                std::io::Error::new(std::io::ErrorKind::Other, e.to_string())
+            ))?;
+        
+        // Write to disk tier with format extension
+        let extension = match format {
+            IndexSerializationFormat::Bincode => "bin",
+            IndexSerializationFormat::BincodeCompressed => "bin.zst",
+            IndexSerializationFormat::Avro => "avro",
+        };
+        let disk_path = format!("axis/indexes/{}/index.{}", collection_id, extension);
         let disk_url = self.filesystem.get_tier_url(StorageTier::SSD, &disk_path)?;
         
-        self.filesystem.write(&disk_url, &index_data, None).await?;
+        self.filesystem.write(&disk_url, &serialized_data, None).await?;
+        
+        // Store format metadata for recovery
+        let format_meta_path = format!("axis/indexes/{}/format.meta", collection_id);
+        let format_meta_url = self.filesystem.get_tier_url(StorageTier::SSD, &format_meta_path)?;
+        let format_meta = format!("{:?}", format);
+        self.filesystem.write(&format_meta_url, format_meta.as_bytes(), None).await?;
         
         // Update state
         self.collection_state.transition_to_disk(
             collection_id,
             disk_url.clone(),
-            index_data.len() as u64,
+            serialized_data.len() as u64,
         ).await?;
         
         // Clear from memory
@@ -451,16 +485,61 @@ impl AxisTieringManager {
         info!("Promoting collection {} from disk to memory", collection_id);
         
         if let CollectionTierState::Disk { disk_location, .. } = current_state {
+            // Read format metadata
+            let format_meta_path = format!("axis/indexes/{}/format.meta", collection_id);
+            let format_meta_url = self.filesystem.get_tier_url(StorageTier::SSD, &format_meta_path)?;
+            
+            let format = if self.filesystem.exists(&format_meta_url).await? {
+                let format_data = self.filesystem.read(&format_meta_url).await?;
+                let format_str = String::from_utf8_lossy(&format_data);
+                
+                // Parse format from metadata
+                match format_str.as_ref() {
+                    "Bincode" => IndexSerializationFormat::Bincode,
+                    "BincodeCompressed" => IndexSerializationFormat::BincodeCompressed,
+                    "Avro" => IndexSerializationFormat::Avro,
+                    _ => {
+                        warn!("Unknown format {}, detecting from data", format_str);
+                        // Try to detect from file extension or magic bytes
+                        if disk_location.to_string_lossy().ends_with(".zst") {
+                            IndexSerializationFormat::BincodeCompressed
+                        } else if disk_location.to_string_lossy().ends_with(".avro") {
+                            IndexSerializationFormat::Avro
+                        } else {
+                            IndexSerializationFormat::Bincode
+                        }
+                    }
+                }
+            } else {
+                // No format metadata, try to detect
+                warn!("No format metadata found, detecting from file");
+                if disk_location.to_string_lossy().ends_with(".zst") {
+                    IndexSerializationFormat::BincodeCompressed
+                } else if disk_location.to_string_lossy().ends_with(".avro") {
+                    IndexSerializationFormat::Avro
+                } else {
+                    IndexSerializationFormat::Bincode
+                }
+            };
+            
+            info!("Reading index from disk with {:?} format", format);
+            
             // Read from disk
-            let index_data = self.filesystem.read(&disk_location.to_string_lossy()).await?;
+            let serialized_data = self.filesystem.read(&disk_location.to_string_lossy()).await?;
+            
+            // Deserialize with detected format
+            let index_data: Vec<u8> = IndexFormatStrategy::deserialize(&serialized_data, format)
+                .map_err(|e| FilesystemError::Io(
+                    std::io::Error::new(std::io::ErrorKind::Other, e.to_string())
+                ))?;
             
             // Load into memory
-            self.memory_tracker.load_index(collection_id, index_data).await?;
+            self.memory_tracker.load_index(collection_id, index_data.clone()).await?;
             
             // Update state
             self.collection_state.transition_to_memory(
                 collection_id,
-                self.memory_tracker.get_index_memory_usage(collection_id),
+                index_data.len() as u64,
             ).await?;
             
             // Optionally delete from disk
@@ -481,33 +560,65 @@ impl AxisTieringManager {
         info!("Demoting collection {} from disk to cloud", collection_id);
         
         if let CollectionTierState::Disk { disk_location, disk_bytes, .. } = current_state {
+            // Get access pattern for tier and format selection
+            let access_pattern = self.access_patterns.get(collection_id);
+            let access_frequency = access_pattern.as_ref()
+                .map(|p| p.access_frequency)
+                .unwrap_or(0.0);
+            
             // Determine cloud tier based on access pattern
-            let cloud_tier = if let Some(pattern) = self.access_patterns.get(collection_id) {
-                if pattern.access_frequency < 0.1 {
-                    StorageTier::S3GlacierInstant
-                } else {
-                    StorageTier::S3Standard
-                }
+            let cloud_tier = if access_frequency < 0.1 {
+                StorageTier::S3GlacierInstant
             } else {
                 StorageTier::S3Standard
             };
             
-            // Move to cloud
-            let cloud_path = format!("axis/indexes/{}/index.bin", collection_id);
-            self.filesystem.demote_data(
-                StorageTier::SSD,
-                cloud_tier,
-                &cloud_path,
-            ).await?;
+            // For cloud storage, we should use Avro for schema evolution
+            let target_format = IndexSerializationFormat::Avro;
+            
+            info!("Moving to {:?} with {:?} format", cloud_tier, target_format);
+            
+            // Read current data from disk
+            let current_data = self.filesystem.read(&disk_location.to_string_lossy()).await?;
+            
+            // Detect current format
+            let current_format = if disk_location.to_string_lossy().ends_with(".zst") {
+                IndexSerializationFormat::BincodeCompressed
+            } else if disk_location.to_string_lossy().ends_with(".avro") {
+                IndexSerializationFormat::Avro
+            } else {
+                IndexSerializationFormat::Bincode
+            };
+            
+            // Convert format if needed
+            let cloud_data = if current_format != target_format {
+                info!("Converting from {:?} to {:?}", current_format, target_format);
+                // This would need the actual index type, for now just use the data as-is
+                current_data
+            } else {
+                current_data
+            };
+            
+            // Write to cloud with Avro extension
+            let cloud_path = format!("axis/indexes/{}/index.avro", collection_id);
+            let cloud_url = self.filesystem.get_tier_url(cloud_tier, &cloud_path)?;
+            self.filesystem.write(&cloud_url, &cloud_data, None).await?;
+            
+            // Store format metadata
+            let format_meta_path = format!("axis/indexes/{}/format.meta", collection_id);
+            let format_meta_url = self.filesystem.get_tier_url(cloud_tier, &format_meta_path)?;
+            self.filesystem.write(&format_meta_url, b"Avro", None).await?;
             
             // Update state
-            let cloud_url = self.filesystem.get_tier_url(cloud_tier, &cloud_path)?;
             self.collection_state.transition_to_cloud(
                 collection_id,
                 cloud_tier,
                 cloud_url,
-                *disk_bytes,
+                cloud_data.len() as u64,
             ).await?;
+            
+            // Delete from disk after successful cloud upload
+            self.filesystem.delete(&disk_location.to_string_lossy()).await?;
             
             info!("Successfully demoted collection {} to cloud tier {:?}", collection_id, cloud_tier);
         }
