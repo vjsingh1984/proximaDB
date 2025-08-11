@@ -13,7 +13,7 @@ mod tests {
     use std::sync::Arc;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use tokio::sync::RwLock;
-    use tracing::{debug, info};
+    use tracing::{debug, info, warn};
     
     use crate::compute::distance_computation::DistanceMetric;
     use crate::core::search::{SearchParams, SearchResult};

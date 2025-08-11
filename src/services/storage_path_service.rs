@@ -336,7 +336,7 @@ async fn count_files_in_directory(dir: &PathBuf) -> tokio::io::Result<usize> {
 mod tests {
     use super::*;
     use tempfile::TempDir;
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, warn};
 
     #[tokio::test]
     async fn test_storage_path_service() {

@@ -6,7 +6,7 @@
 use anyhow::{Context, Result};
 use std::sync::Arc;
 use std::path::{Path, PathBuf};
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 
 use crate::storage::persistence::filesystem::FilesystemFactory;
 use crate::storage::persistence::write_ahead_log::serialization::SerializationFormat;

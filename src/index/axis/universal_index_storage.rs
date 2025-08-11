@@ -31,7 +31,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 
 use crate::common::tier_policy_engine::StorageTier;
 use crate::storage::engines::sst::sstable_writer::SstableWriter;
