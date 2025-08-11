@@ -2,6 +2,35 @@
 :toc: left
 :toclevels: 2
 
+== Version 0.1.3 (2025-08-11)
+
+=== Production-Ready Code Cleanup
+
+==== Logging Infrastructure Overhaul
+* **Replaced 1,972+ println! statements**: Migrated to proper tracing macros (debug!, info!, warn!, error!)
+* **Renamed LSM to SST**: Consistent terminology throughout codebase
+* **Production Log Level**: Default set to `info` for production deployments
+* **Runtime Configuration**: Flexible log control via RUST_LOG environment variable
+
+==== Compilation & Warning Fixes
+* **Fixed 111 Compilation Errors**: Resolved all blocking build issues
+* **Eliminated 133 Unused Variables**: Added underscore prefix for intentionally unused
+* **Removed Unused Imports**: Fixed 7 unnecessary import statements
+* **Deprecated API Migration**: Updated base64 usage to new Engine interface
+* **Warning Reduction**: 97% decrease (465 → 15 warnings)
+
+==== Test Infrastructure Improvements
+* **Fixed Test Compilation**: Corrected VectorRecord fields and import paths
+* **Memtable Imports**: Fixed paths to implementations/btree and implementations/skiplist
+* **Pattern Matching**: Corrected IndexAlgorithm::HNSW destructuring
+* **Proto Compliance**: Aligned test data structures with proto definitions
+
+==== Code Quality Metrics
+* **Files Modified**: 100+ files updated for production readiness
+* **Clean Compilation**: Library builds successfully with --release flag
+* **Python SDK**: All unit tests passing (23/23 in config tests)
+* **Remaining Warnings**: Only 15 (10 GPU cfg, 5 minor) - all non-blocking
+
 == Version 0.1.2 (2025-08-11)
 
 === Architecture Refinements

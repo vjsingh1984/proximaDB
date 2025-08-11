@@ -11,7 +11,7 @@ pub mod platform;
 pub(crate) mod core; // Internal: Core distance types and SIMD implementations
 
 // Internal re-exports for use within compute module
-pub(crate) use core::{create_distance_calculator, DistanceCompute};
+pub(crate) use core::create_distance_calculator;
 
 // DEPRECATED: PlatformCapability is deprecated - use HardwareBackend from core::hardware_capabilities
 // pub use core::PlatformCapability;

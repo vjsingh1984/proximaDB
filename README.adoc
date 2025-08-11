@@ -168,6 +168,18 @@ python performance_suite.py --suite quick --vectors 1000
 
 === 3. Production Configuration
 
+[source,bash]
+----
+# Build from source for production
+cargo build --release --bin proximadb-server
+
+# Configure logging for production
+export RUST_LOG=info  # Options: error, warn, info, debug, trace
+
+# Run with production config
+./target/release/proximadb-server --config demo/docker-config.toml
+----
+
 For detailed setup, performance tuning, and enterprise features, see our link:docs/user/getting_started.adoc[Getting Started Guide].
 
 == 📊 Proven Performance
