@@ -350,7 +350,7 @@ impl ViperEngine {
                             .collect();
                         
                         // Extract other fields
-                        let created_at = batch.column_by_name("created_at")
+                        let _created_at = batch.column_by_name("created_at")
                             .and_then(|col| col.as_any().downcast_ref::<Int64Array>())
                             .map(|arr| arr.value(row_idx))
                             .unwrap_or(timestamp);
@@ -855,7 +855,7 @@ impl UnifiedStorageEngine for ViperEngine {
         let bytes_reclaimed = input_files.len() as u64 * 1024 * 1024; // Estimate 1MB per file
         
         // Calculate entries processed - estimate based on input files
-        let entries_processed = if input_files.is_empty() {
+        let _entries_processed = if input_files.is_empty() {
             0
         } else {
             // Estimate entries per file (this could be more accurate with metadata)

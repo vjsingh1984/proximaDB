@@ -22,7 +22,7 @@
 
 use anyhow::Result;
 use std::sync::{Arc, OnceLock};
-use tracing::{debug, info};
+use tracing::info;
 use num_cpus;
 
 // No longer importing duplicate CpuFeatures from compute module

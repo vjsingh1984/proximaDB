@@ -24,9 +24,7 @@ use std::sync::Arc;
 
 // Import AXIS indexing components
 use crate::index::axis::{
-    AxisIndexCreationResult, AxisVectorIndex, IndexFactory,
-    UnifiedIvfConfig, UnifiedIvfIndex,  // Using unified IVF implementation
-    AxisLshConfig, AxisLshIndex,
+    AxisVectorIndex, IndexFactory,
     IndexAlgorithm as AxisIndexAlgorithm,
 };
 use crate::compute::distance_computation::DistanceMetric;
@@ -244,7 +242,7 @@ impl SearchAlgorithmFactory {
     }
     
     /// Create optimal LSH configuration
-    pub fn optimize_lsh_config(dimension: usize, recall_target: f32) -> SearchAlgorithm {
+    pub fn optimize_lsh_config(_dimension: usize, recall_target: f32) -> SearchAlgorithm {
         let (n_tables, n_hashes) = if recall_target >= 0.95 {
             (30, 12) // High recall
         } else if recall_target >= 0.85 {

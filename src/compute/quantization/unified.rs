@@ -412,7 +412,6 @@ impl UnifiedQuantizationEngine {
         convergence_threshold: f32,
     ) -> Result<Vec<Vec<f32>>> {
         use rand::seq::SliceRandom;
-use tracing::debug;
         
         if vectors.is_empty() || k == 0 {
             anyhow::bail!("Invalid input for k-means");

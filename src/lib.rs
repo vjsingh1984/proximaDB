@@ -82,7 +82,7 @@ impl ProximaDB {
 
         // Step 1: Create metrics collector first
         tracing::debug!("🔧 ProximaDB::new - Creating metrics collector...");
-        let metrics_config = metrics::MetricsConfig::default();
+        let _metrics_config = metrics::MetricsConfig::default();
         let metrics_collector = Arc::new(monitoring::MetricsCollector::new());
         tracing::debug!("✅ ProximaDB::new - Metrics collector created successfully");
 
@@ -117,7 +117,6 @@ impl ProximaDB {
 
         // Create multi-server configuration from actual config values
         use std::net::SocketAddr;
-use tracing::{debug, error, info};
         tracing::debug!("🔧 ProximaDB::new - Creating server addresses...");
         let rest_addr: SocketAddr =
             format!("{}:{}", config.server.bind_address, config.api.rest_port)

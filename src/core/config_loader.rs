@@ -98,7 +98,7 @@ impl ConfigLoader {
     }
     
     /// Merge user configuration with default configuration
-    fn merge_config_with_defaults(mut base_config: Config, user_toml: toml::Value) -> Result<Config, Box<dyn std::error::Error + Send + Sync>> {
+    fn merge_config_with_defaults(base_config: Config, user_toml: toml::Value) -> Result<Config, Box<dyn std::error::Error + Send + Sync>> {
         // Serialize base config to TOML for merging
         let mut base_toml = toml::Value::try_from(&base_config)?;
         

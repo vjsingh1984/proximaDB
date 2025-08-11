@@ -12,7 +12,7 @@ use tracing::{info, warn};
 use super::WALConfig;
 use crate::storage::traits::UnifiedStorageEngine;
 use crate::storage::background_flush_context::BackgroundFlushContext;
-use crate::metrics::{InternalMetricsUpdater, MetricsUpdate};
+use crate::metrics::InternalMetricsUpdater;
 
 /// Background task status enumeration
 #[derive(Debug, Clone, PartialEq, Eq)]

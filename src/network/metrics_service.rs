@@ -27,8 +27,7 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
-use crate::metrics::exporters::{MetricsExporter, PrometheusExporter};
-use crate::metrics::{MetricsSnapshot};
+use crate::metrics::exporters::PrometheusExporter;
 use crate::monitoring::MetricsCollector;
 
 /// Metrics Service configuration

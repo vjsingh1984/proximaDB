@@ -1,16 +1,15 @@
 //! Cross-cache orchestrator for managing multi-cache operations and synergies
 
-use std::collections::{HashMap, VecDeque, HashSet};
+use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
-use async_trait::async_trait;
-use tokio::sync::{RwLock, Mutex, mpsc};
+use tokio::sync::{Mutex, mpsc};
 use anyhow::Result;
 use dashmap::DashMap;
 
 use crate::storage::cache::{
     VectorStore, QueryCache, BitmapFilterCache,
-    IndexNodeCache, MetadataStore, BaseCache,
+    IndexNodeCache, MetadataStore,
 };
 use crate::storage::cache::metrics::CacheMetrics;
 
@@ -640,13 +639,13 @@ impl CrossCacheOrchestrator {
         // Check if this is a frequently accessed vector
         if self.pattern_tracker.is_frequently_accessed(vector_id, 10).await {
             // Prefetch related metadata
-            if let Some(metadata_cache) = &self.metadata_cache {
+            if let Some(_metadata_cache) = &self.metadata_cache {
                 // Would actually fetch from storage
                 // metadata_cache.prefetch(vector_id).await?;
             }
             
             // Prefetch common filters for this vector
-            if let Some(filter_cache) = &self.filter_cache {
+            if let Some(_filter_cache) = &self.filter_cache {
                 // Would actually compute common filters
                 // filter_cache.prefetch_filters(vector_id).await?;
             }
@@ -791,13 +790,13 @@ impl CrossCacheOrchestrator {
                 if let Some(request) = prefetch_engine.dequeue_fetch_request().await {
                     match request.cache_type {
                         CacheType::VectorData => {
-                            if let Some(cache) = &vector_cache {
+                            if let Some(_cache) = &vector_cache {
                                 // Would actually fetch and cache data
                                 // cache.prefetch(&request.key).await;
                             }
                         }
                         CacheType::Metadata => {
-                            if let Some(cache) = &metadata_cache {
+                            if let Some(_cache) = &metadata_cache {
                                 // Would actually fetch and cache metadata
                                 // cache.prefetch(&request.key).await;
                             }

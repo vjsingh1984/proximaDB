@@ -17,7 +17,7 @@ use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-use tracing::{debug, info, warn};
+use tracing::{debug, info};
 
 use crate::core::bloom::BloomFilterStrategy;
 
@@ -26,7 +26,6 @@ use crate::compute::distance_computation::DistanceMetric;
 use crate::core::{String, VectorId, VectorRecord};
 use crate::storage::traits::{UnifiedStorageEngine, FlushResult};
 use crate::storage::memtable::specialized::wal_behavior::WALVectorBatch;
-use crate::storage::transaction_coordinator::TransactionCoordinator;
 
 // Sub-modules  
 pub mod background_manager;
@@ -1516,7 +1515,7 @@ impl WriteAheadLogManager {
         batches: Vec<crate::storage::memtable::specialized::wal_behavior::WALVectorBatch>,
         metadata_filters: &crate::core::search::FilterExpression,
     ) -> Result<Vec<crate::storage::memtable::specialized::wal_behavior::WALVectorBatch>> {
-        use crate::core::search::{FilterExpression, ComparisonOperator};
+        
         
         let mut filtered_batches = Vec::new();
         let mut bloom_hits = 0;
@@ -1616,7 +1615,7 @@ impl WriteAheadLogManager {
         record: &crate::proto::proximadb::VectorRecord,
         filter: &crate::core::search::FilterExpression,
     ) -> bool {
-        use crate::core::search::{FilterExpression, ComparisonOperator};
+        use crate::core::search::FilterExpression;
         
         match filter {
             FilterExpression::Comparison { field, operator, value } => {

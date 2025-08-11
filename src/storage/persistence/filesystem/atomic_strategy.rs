@@ -21,7 +21,7 @@ use rand;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
-use tracing::{debug, error, info, warn};
+use tracing::debug;
 
 use super::{FileOptions, FileSystem, FilesystemError, FsResult};
 
@@ -174,7 +174,7 @@ impl AtomicWriteExecutor for DirectWriteExecutor {
         filesystem: &dyn FileSystem,
         final_path: &str,
         data: &[u8],
-        options: Option<FileOptions>,
+        _options: Option<FileOptions>,
     ) -> FsResult<()> {
         // Create parent directories if needed
         if let Some(parent) = Path::new(final_path).parent() {
@@ -333,7 +333,7 @@ impl AtomicWriteExecutor for SameMountTempExecutor {
         Ok(())
     }
 
-    async fn cleanup_temp_files(&self, filesystem: &dyn FileSystem) -> FsResult<()> {
+    async fn cleanup_temp_files(&self, _filesystem: &dyn FileSystem) -> FsResult<()> {
         // Implementation for cleaning up temp files older than configured age
         // This would scan for files matching temp patterns and clean them up
         tracing::debug!("Cleaning up temp files with suffix: {}", self.temp_suffix);

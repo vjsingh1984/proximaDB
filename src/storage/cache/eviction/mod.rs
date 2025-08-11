@@ -2,7 +2,6 @@ pub mod least_recently_used;
 pub mod least_frequently_used;
 pub mod adaptive_replacement;
 
-use std::collections::HashMap;
 use std::hash::Hash;
 
 pub use least_recently_used::LRUStrategy;

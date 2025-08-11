@@ -1,5 +1,5 @@
 use crate::storage::cache::base::BaseCacheImpl;
-use crate::storage::cache::traits::{BaseCache, CacheKey, CacheValue};
+use crate::storage::cache::traits::{BaseCache, CacheValue};
 use crate::storage::cache::metrics::CacheMetrics;
 use serde::{Deserialize, Serialize};
 use anyhow::Result;

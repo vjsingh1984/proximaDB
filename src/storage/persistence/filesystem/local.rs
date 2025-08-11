@@ -95,7 +95,7 @@ impl LocalFileSystem {
             Ok(cwd) => {
                 resolved_path = cwd.join(path_str);
             }
-            Err(e) => {
+            Err(_e) => {
                 
                 // Use PWD or CARGO_MANIFEST_DIR as fallback
                 let fallback_base = if let Ok(pwd) = std::env::var("PWD") {
@@ -153,26 +153,26 @@ impl LocalFileSystem {
     pub async fn new(config: LocalConfig) -> FsResult<Self> {
         // Capture the process start directory information
         match std::env::current_dir() {
-            Ok(cwd) => {
+            Ok(_cwd) => {
                 
                 // Try to get parent to see if it's accessible
-                if let Some(parent) = cwd.parent() {
+                if let Some(_parent) = _cwd.parent() {
                 }
             }
-            Err(e) => {
+            Err(_e) => {
                 
                 // Try alternative methods to understand the environment
                 if let Ok(exe_path) = std::env::current_exe() {
-                    if let Some(exe_dir) = exe_path.parent() {
+                    if let Some(_exe_dir) = exe_path.parent() {
                     }
                 }
                 
                 // Check environment variables
-                if let Ok(pwd) = std::env::var("PWD") {
+                if let Ok(_pwd) = std::env::var("PWD") {
                 }
                 
                 // Check if we're in a test environment
-                if let Ok(cargo_manifest_dir) = std::env::var("CARGO_MANIFEST_DIR") {
+                if let Ok(_cargo_manifest_dir) = std::env::var("CARGO_MANIFEST_DIR") {
                 }
             }
         }

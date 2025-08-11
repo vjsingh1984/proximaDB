@@ -314,7 +314,7 @@ impl ConfigValidator {
         }
 
         // Check available disk space for temp directories
-        if let Ok(temp_space) = std::fs::metadata("/tmp") {
+        if let Ok(_temp_space) = std::fs::metadata("/tmp") {
             // Basic check that temp directory exists and is writable
             let test_file = "/tmp/.proximadb_test";
             std::fs::write(test_file, "test").context("Cannot write to /tmp directory")?;

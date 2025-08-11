@@ -37,7 +37,7 @@ use tracing::{debug, info};
 
 // Use proto enum as the single source of truth for DistanceMetric
 pub use crate::proto::proximadb::DistanceMetric;
-use super::{create_distance_calculator, DistanceCompute};
+use super::create_distance_calculator;
 use crate::services::collection_service::CollectionService;
 use crate::core::hardware_capabilities::{get_hardware_capabilities, HardwareCapabilities};
 
@@ -775,13 +775,13 @@ impl UnifiedDistanceCompute {
         // Use memory pool for temporary calculations if processing large batches
         if vectors.len() >= 32 {
             // Pre-calculate query norm once
-            let query_norm = self.calculate_norm(query);
+            let _query_norm = self.calculate_norm(query);
             
             // Use pooled vector for batch distance calculations
             let mut pooled_distances = Vec::with_capacity(vectors.len());
             pooled_distances.resize(vectors.len(), 0.0);
             
-            for (i, vector) in vectors.iter().enumerate() {
+            for (_i, vector) in vectors.iter().enumerate() {
                 let result = self.calculate_distance(query, vector, metric);
                 results.push(result);
             }

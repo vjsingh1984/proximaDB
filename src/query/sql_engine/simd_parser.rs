@@ -22,8 +22,8 @@
 
 use anyhow::{anyhow, Result};
 use std::arch::x86_64::*;
-use tracing::{debug, info};
-use crate::core::hardware_capabilities::{get_hardware_capabilities, try_get_hardware_capabilities};
+use tracing::info;
+use crate::core::hardware_capabilities::try_get_hardware_capabilities;
 
 /// SIMD capabilities detected at runtime
 #[derive(Debug, Clone, Copy)]
@@ -315,7 +315,7 @@ impl SimdVectorParser {
             let mut batch = [0.0f32; 8];
             for j in 0..8 {
                 batch[j] = parts[i + j].parse::<f32>()
-                    .map_err(|e| anyhow!("Invalid float at position {}: '{}'", i + j, parts[i + j]))?;
+                    .map_err(|_e| anyhow!("Invalid float at position {}: '{}'", i + j, parts[i + j]))?;
             }
             
             // Load into AVX2 register for validation (could do additional processing here)
@@ -332,7 +332,7 @@ impl SimdVectorParser {
         // Handle remaining elements with scalar processing
         for part in &parts[i..] {
             let value = part.parse::<f32>()
-                .map_err(|e| anyhow!("Invalid float: '{}'", part))?;
+                .map_err(|_e| anyhow!("Invalid float: '{}'", part))?;
             result.push(value);
         }
         
@@ -351,7 +351,7 @@ impl SimdVectorParser {
             let mut batch = [0.0f32; 4];
             for j in 0..4 {
                 batch[j] = parts[i + j].parse::<f32>()
-                    .map_err(|e| anyhow!("Invalid float at position {}: '{}'", i + j, parts[i + j]))?;
+                    .map_err(|_e| anyhow!("Invalid float at position {}: '{}'", i + j, parts[i + j]))?;
             }
             
             // Load into SSE register for validation
@@ -368,7 +368,7 @@ impl SimdVectorParser {
         // Handle remaining elements with scalar processing
         for part in &parts[i..] {
             let value = part.parse::<f32>()
-                .map_err(|e| anyhow!("Invalid float: '{}'", part))?;
+                .map_err(|_e| anyhow!("Invalid float: '{}'", part))?;
             result.push(value);
         }
         
@@ -381,7 +381,7 @@ impl SimdVectorParser {
         
         for (i, part) in parts.iter().enumerate() {
             let value = part.parse::<f32>()
-                .map_err(|e| anyhow!("Invalid float at position {}: '{}'", i, part))?;
+                .map_err(|_e| anyhow!("Invalid float at position {}: '{}'", i, part))?;
             result.push(value);
         }
         

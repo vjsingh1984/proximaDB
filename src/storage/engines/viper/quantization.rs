@@ -777,7 +777,7 @@ impl VectorQuantizationEngine {
 
     /// Train Uniform Quantization model (1-16 bits)
     fn train_uniform_quantization(&self, vectors: &[Vec<f32>], bits: u8) -> Result<ModelData> {
-        let dimension = vectors[0].len();
+        let _dimension = vectors[0].len();
 
         // Find global min and max values
         let mut min_val = f32::INFINITY;
@@ -810,7 +810,7 @@ impl VectorQuantizationEngine {
 
     /// Train INT8 Quantization model
     fn train_int8_quantization(&self, vectors: &[Vec<f32>]) -> Result<ModelData> {
-        let dimension = vectors[0].len();
+        let _dimension = vectors[0].len();
 
         // Find global min and max values
         let mut min_val = f32::INFINITY;
@@ -933,7 +933,7 @@ impl VectorQuantizationEngine {
         vector: &[f32],
         codebooks: &[Vec<Vec<f32>>],
         subvector_size: usize,
-        level: QuantizationLevel,
+        _level: QuantizationLevel,
     ) -> Result<(QuantizedData, f32)> {
         let mut codes = Vec::with_capacity(codebooks.len());
         let mut total_error = 0.0;
@@ -1084,7 +1084,7 @@ impl VectorQuantizationEngine {
         _model_data: &ModelData,
         level: QuantizationLevel,
     ) -> Result<QuantizationQualityMetrics> {
-        let sample_size = original_vectors.len().min(100); // Sample for evaluation
+        let _sample_size = original_vectors.len().min(100); // Sample for evaluation
         let quantization_start = std::time::Instant::now();
 
         // Since we don't dequantize (FP32 and quantized stored side-by-side),

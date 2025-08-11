@@ -11,7 +11,6 @@
 use anyhow::{Context, Result};
 use arrow_array::{Array, Int64Array, RecordBatch, StringArray};
 use parquet::arrow::ArrowWriter;
-use parquet::file::metadata::ParquetMetaData;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -24,7 +23,6 @@ use crate::storage::persistence::filesystem::{
     FilesystemFactory
 };
 use crate::storage::transaction_coordinator::{TransactionCoordinator, StagingConfig, TransactionStageType};
-use crate::metrics::{InternalMetricsUpdater, MetricsUpdate};
 
 use super::schema::SchemaManager;
 

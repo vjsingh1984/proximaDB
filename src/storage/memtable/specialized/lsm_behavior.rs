@@ -14,7 +14,6 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 
 use crate::storage::memtable::core::{MemtableConfig, MemtableCore};
-use crate::storage::memtable::implementations::skiplist::SkipListMemtable;
 
 /// LSM-specific behavior wrapper around any concurrent memtable implementation
 ///

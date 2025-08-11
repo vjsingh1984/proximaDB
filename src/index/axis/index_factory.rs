@@ -88,7 +88,7 @@ impl IndexFactory {
         distance_metric: DistanceMetric,
     ) -> Result<AxisIndexCreationResult> {
         match algorithm {
-            IndexAlgorithm::HNSW { m, ef_construction, ef_search, max_elements } => {
+            IndexAlgorithm::HNSW { m: _m, _ef_construction, _ef_search, max_elements: _max_elements } => {
                 // HNSW requires more complex setup with existing implementation
                 // For now, we'll return an error and implement a proper async wrapper later
                 Err(anyhow!(

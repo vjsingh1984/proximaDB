@@ -19,10 +19,7 @@ use crate::services::collection_service::CollectionService;
 use crate::services::vector_operations_service::VectorOperationsService;
 use crate::network::grpc::conversions::convert_search_results;
 use crate::storage::persistence::filesystem::FilesystemFactory;
-use crate::core::{
-    VectorInsertResponse as SchemaVectorInsertResponse,
-    VectorOperationMetrics as SchemaVectorOperationMetrics,
-};
+use crate::core::VectorOperationMetrics as SchemaVectorOperationMetrics;
 
 /// ProximaDB gRPC service implementing optimized zero-copy patterns
 /// - Collection operations: Use dedicated CollectionService with FilestoreMetadataBackend
@@ -775,7 +772,7 @@ impl ProximaDb for ProximaDbGrpcService {
             
             // Enhanced VectorOperationsService search with metadata predicates and unified distance
             // Pass Cosine as fallback, but search_params will override if present
-            let combined_search_params = search_params;
+            let _combined_search_params = search_params;
             
             // Use UnifiedHandlers for search to ensure collection resolution
             let unified_handlers = crate::api_handlers::UnifiedHandlers::new(

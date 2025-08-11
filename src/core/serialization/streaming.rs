@@ -312,7 +312,7 @@ impl StreamingCompressor {
     /// Start compression worker threads
     fn start_workers(
         worker_count: usize,
-        mut work_rx: mpsc::Receiver<CompressionWork>,
+        work_rx: mpsc::Receiver<CompressionWork>,
         memory_pool: Arc<VectorMemoryPool>,
         metrics: Arc<RwLock<StreamingMetrics>>,
     ) -> Result<Vec<JoinHandle<()>>> {

@@ -9,11 +9,11 @@
 //! - Holistic view of query characteristics and data properties
 //! - Easier to maintain and extend
 
-use anyhow::{anyhow, Result};
+use anyhow::Result;
 use serde::{Deserialize, Serialize};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::sync::Arc;
-use tracing::{debug, info};
+use tracing::info;
 
 use crate::core::search::{SearchParams, FilterExpression};
 use crate::proto::proximadb::{CompressionConfig, CompressionAlgorithm};
@@ -491,7 +491,7 @@ impl UnifiedQueryPlanner {
     fn plan_data_access(
         &self,
         file_metadata: &[FileMetadata],
-        collection_meta: &CollectionMetadata,
+        _collection_meta: &CollectionMetadata,
     ) -> Result<DataAccessPlan> {
         let mut selected_files = Vec::new();
         
@@ -530,7 +530,7 @@ impl UnifiedQueryPlanner {
     fn plan_data_access_for_search(
         &self,
         file_metadata: &[FileMetadata],
-        collection_meta: &CollectionMetadata,
+        _collection_meta: &CollectionMetadata,
         params: &SearchParams,
     ) -> Result<DataAccessPlan> {
         // This is where compression-aware planning logic lives
@@ -658,13 +658,13 @@ impl UnifiedQueryPlanner {
 
     // Helper methods...
     
-    fn extract_vector_search_from_sql(&self, query: &ParsedQuery) -> Result<Option<VectorSearchPlan>> {
+    fn extract_vector_search_from_sql(&self, _query: &ParsedQuery) -> Result<Option<VectorSearchPlan>> {
         // Extract vector search from SQL WHERE clause
         // This would parse VECTOR_SIMILARITY functions
         Ok(None)
     }
     
-    fn build_filter_expression(&self, where_clause: &Option<WhereClause>) -> Result<Option<FilterExpression>> {
+    fn build_filter_expression(&self, _where_clause: &Option<WhereClause>) -> Result<Option<FilterExpression>> {
         // Convert SQL WHERE to FilterExpression
         Ok(None)
     }

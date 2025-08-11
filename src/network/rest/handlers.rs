@@ -32,13 +32,11 @@ use std::sync::Arc;
 
 use crate::api_handlers::{UnifiedHandlers, conversions};
 use crate::core::search::SearchResult;
-use tracing::{debug, error, info, warn};
 
 use crate::proto::proximadb::{
-    self, 
     OperationMetrics, IndexConfig, QuantizationConfig, QuantizationLevel,
     CollectionConfig, IndexingAlgorithm, IndexUpdateMode, StorageEngine,
-    DistanceMetric, FilterableDataType, VectorOperation, StorageEngineCompatibility,
+    DistanceMetric, FilterableDataType, StorageEngineCompatibility,
     vector_operation_response::ResultPayload,
     quantization_level::LevelType,
     NoQuantization, UniformQuantization, ProductQuantization,
@@ -964,7 +962,7 @@ pub async fn get_collection_metrics(
     let include_hints = params.get("include_hints")
         .map(|v| v.parse().unwrap_or(true))
         .unwrap_or(true);
-    let include_history = params.get("include_history")
+    let _include_history = params.get("include_history")
         .map(|v| v.parse().unwrap_or(false))
         .unwrap_or(false);
     

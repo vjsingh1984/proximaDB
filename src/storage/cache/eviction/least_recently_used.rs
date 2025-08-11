@@ -28,7 +28,7 @@ impl<K: Hash + Eq + Clone> LRUStrategy<K> {
             order.remove(pos);
             
             // Update positions for all keys after the removed one
-            for (k, p) in positions.iter_mut() {
+            for (_k, p) in positions.iter_mut() {
                 if *p > pos {
                     *p -= 1;
                 }

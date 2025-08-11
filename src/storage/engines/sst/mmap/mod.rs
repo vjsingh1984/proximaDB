@@ -5,7 +5,6 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use tracing::{debug, error, info, warn};
 
 /// SST file index entry
 #[derive(Debug, Clone)]
@@ -28,7 +27,7 @@ pub struct MmapReader {
 }
 
 impl MmapReader {
-    pub fn new(collection_id: String, data_dir: PathBuf) -> Result<Self> {
+    pub fn new(_collection_id: String, data_dir: PathBuf) -> Result<Self> {
         Ok(Self {
             data_dir,
             sst_files: Arc::new(RwLock::new(Vec::new())),

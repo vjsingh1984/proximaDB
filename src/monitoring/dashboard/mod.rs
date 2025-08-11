@@ -192,7 +192,7 @@ async fn metrics_endpoint(
         }
         "prometheus" | _ => {
             let metrics = state.metrics_collector.get_current_metrics().await;
-            use crate::metrics::exporters::{MetricsExporter, PrometheusExporter};
+            use crate::metrics::exporters::PrometheusExporter;
             let exporter = PrometheusExporter::new();
             exporter
                 .export_system_metrics(&metrics)

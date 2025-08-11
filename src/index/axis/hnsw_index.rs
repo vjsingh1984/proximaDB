@@ -27,7 +27,7 @@ use std::collections::{BinaryHeap, HashMap, HashSet};
 use std::cmp::Ordering;
 use std::sync::{Arc, RwLock, atomic::{AtomicUsize, Ordering as AtomicOrdering}};
 use dashmap::DashMap;
-use tracing::{debug, info};
+use tracing::info;
 
 use crate::compute::distance_computation::DistanceMetric;
 use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
@@ -175,7 +175,7 @@ impl AxisHnswIndex {
     fn get_random_level(&self) -> usize {
         let mut rng = self.rng_state.write().unwrap();
         let mut level = 0;
-        let ml = 1.0 / (2.0_f32.ln()); // 1/ln(2) ≈ 1.44
+        let _ml = 1.0 / (2.0_f32.ln()); // 1/ln(2) ≈ 1.44
         
         let mut random_val = self.fast_random(&mut rng) as f32 / u32::MAX as f32;
         
@@ -525,7 +525,7 @@ impl AxisHnswIndex {
     }
     
     /// Add a single vector to the index
-    pub async fn add_vector(&mut self, id: String, vector: Vec<f32>, metadata: Option<HashMap<String, serde_json::Value>>) -> Result<()> {
+    pub async fn add_vector(&mut self, id: String, vector: Vec<f32>, _metadata: Option<HashMap<String, serde_json::Value>>) -> Result<()> {
         let record = Arc::new(crate::proto::proximadb::VectorRecord {
             id: Some(id.clone()),
             vector,

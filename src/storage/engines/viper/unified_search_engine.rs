@@ -12,7 +12,7 @@ use async_trait::async_trait;
 use serde_json::json;
 use std::collections::HashMap;
 use std::sync::Arc;
-use tracing::{debug, info, warn};
+use tracing::{debug, info};
 
 use crate::core::search::{
     SearchParams, SearchResultSet, UnifiedSearchEngine, UnifiedSearchContext,
@@ -138,13 +138,13 @@ impl UnifiedSearchEngine for ViperUnifiedSearchEngine {
         &self,
         context: &UnifiedSearchContext,
         params: &SearchParams,
-        distance_compute: &UnifiedDistanceCompute,
-        quantization_engine: Option<&UnifiedQuantizationEngine>,
+        _distance_compute: &UnifiedDistanceCompute,
+        _quantization_engine: Option<&UnifiedQuantizationEngine>,
     ) -> Result<SearchResultSet> {
         let start_time = std::time::Instant::now();
         
         info!("🔍 VIPER Search: collection={}, k={}", context.collection_id, params.top_k.unwrap_or(10));
-        if let Some(filter_expr) = &params.filter_expression {
+        if let Some(_filter_expr) = &params.filter_expression {
             info!("🔍 VIPER Search has filter expression");
         }
         

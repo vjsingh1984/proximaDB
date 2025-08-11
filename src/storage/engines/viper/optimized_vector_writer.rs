@@ -7,16 +7,15 @@
 //! - Adaptive compression based on vector characteristics
 
 use anyhow::{Context, Result};
-use arrow_array::{Array, BinaryArray, Float32Array, ListArray, RecordBatch};
+use arrow_array::{Array, BinaryArray, ListArray, RecordBatch};
 use arrow_array::builder::{BinaryBuilder, ListBuilder, Float32Builder};
 use arrow_schema::{DataType, Field, Schema};
-use bytemuck::{cast_slice, try_cast_slice};
 use parquet::arrow::ArrowWriter;
 use parquet::basic::{Compression, GzipLevel, ZstdLevel};
 use parquet::file::properties::WriterProperties;
 use std::io::Write;
 use std::sync::Arc;
-use tracing::{debug, info, trace};
+use tracing::{debug, info};
 
 use crate::core::serialization::{VectorSerializationConfig, CompressionAlgorithm};
 use crate::core::VectorRecord;
@@ -162,7 +161,7 @@ impl OptimizedVectorWriter {
             return Err(anyhow::anyhow!("Cannot create batch from empty records"));
         }
 
-        let record_count = records.len();
+        let _record_count = records.len();
         
         // Build ID array
         let ids: Vec<String> = records.iter()

@@ -22,9 +22,8 @@ use crate::storage::engines::viper::ViperEngine;
 use crate::storage::engines::sst::SstStorage;
 use crate::storage::traits::FlushResult;
 use crate::index::axis::AxisManager;
-use crate::core::VectorRecord;
 
-use super::compaction_axis_integration::{CompactionAxisUpdater, CompactionIndexStats};
+use super::compaction_axis_integration::CompactionAxisUpdater;
 
 /// Background compaction coordinator
 /// 

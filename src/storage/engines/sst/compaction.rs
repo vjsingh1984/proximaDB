@@ -26,7 +26,6 @@ use crate::storage::optimization::{MetadataSorter, SortingStats};
 use crate::storage::Result;
 use crate::storage::transaction_coordinator::{TransactionCoordinator, StagingConfig, TransactionStageType};
 use chrono::Utc;
-use rand::Rng;
 use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -1064,7 +1063,7 @@ impl CompactionManager {
 
     /// Generate output file path for compacted SST
     /// Uses centralized filename generator to ensure consistency
-    fn generate_output_file_path(&self, collection_id: &str, collection_dir: &Path, level: u8) -> PathBuf {
+    fn generate_output_file_path(&self, _collection_id: &str, collection_dir: &Path, level: u8) -> PathBuf {
         // Use centralized filename generator for consistency across codebase
         // SstFilenameGenerator is collection-agnostic, only takes level
         let filename = super::SstFilenameGenerator::generate_compaction_filename(level);

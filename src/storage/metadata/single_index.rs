@@ -25,7 +25,6 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 use crate::proto::proximadb::Collection as Collection;
-use tracing::{debug, error, info};
 
 /// Collection index entry - contains both record and secondary keys
 #[derive(Debug, Clone)]

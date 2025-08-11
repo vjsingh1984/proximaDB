@@ -610,7 +610,7 @@ impl UnifiedHandlers {
     }
     
     /// Get collection-specific metrics (placeholder until metrics service is integrated)
-    pub async fn get_collection_metrics(&self, collection_id: &str, include_hints: bool) -> Result<serde_json::Value> {
+    pub async fn get_collection_metrics(&self, collection_id: &str, _include_hints: bool) -> Result<serde_json::Value> {
         debug!("📊 UnifiedHandlers: Getting metrics for collection {}", collection_id);
         
         // TODO: Replace with actual metrics query service
@@ -636,7 +636,7 @@ impl UnifiedHandlers {
     }
     
     /// Get query optimization hints (placeholder until metrics service is integrated)
-    pub async fn get_query_hints(&self, collection_id: &str, query_type: Option<String>) -> Result<serde_json::Value> {
+    pub async fn get_query_hints(&self, collection_id: &str, _query_type: Option<String>) -> Result<serde_json::Value> {
         debug!("📊 UnifiedHandlers: Getting query hints for collection {}", collection_id);
         
         // TODO: Replace with actual metrics query service

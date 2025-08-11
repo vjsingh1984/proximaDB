@@ -12,7 +12,6 @@ use async_trait::async_trait;
 use std::sync::Arc;
 
 use crate::compute::distance_computation::DistanceMetric as CoreDistanceMetric;
-use crate::compute::distance_computation::engine::DistanceComputeProvider;
 use crate::core::{String, VectorId, VectorRecord};
 use crate::storage::memtable::specialized::wal_behavior::WALVectorBatch;
 use crate::storage::persistence::filesystem::FilesystemFactory;
@@ -20,7 +19,6 @@ use crate::storage::traits::UnifiedStorageEngine;
 
 use super::{WALConfig, WALStats};
 use crate::storage::traits::FlushResult;
-use tracing::{debug, error, info, warn};
 
 /// Modern batch-oriented Write Buffer strategy trait
 /// 
@@ -142,7 +140,7 @@ pub trait WALBatchStrategy: Send + Sync + std::fmt::Debug {
             
             // Extract collection_id from cloud URL filename since VectorRecord no longer stores it
             // Expected format: write_buffer_batch_{collection_id}_{timestamp}_{batch_uuid}.bin
-            let collection_id = {
+            let _collection_id = {
                 let path_parts: Vec<&str> = cloud_url.split('/').last()
                     .unwrap_or("unknown")
                     .split('_')
@@ -535,14 +533,14 @@ pub trait WALBatchStrategy: Send + Sync + std::fmt::Debug {
     /// - Bincode: bincode::serialize(vectors)
     /// - Avro: serialize_avro_vector_batch(vectors) 
     /// - Proto: serialize_proto_vector_batch(vectors)
-    fn serialize_vectors_for_disk(&self, vectors: &[VectorRecord]) -> Result<Vec<u8>> {
+    fn serialize_vectors_for_disk(&self, _vectors: &[VectorRecord]) -> Result<Vec<u8>> {
         // Default implementation - strategies must override 
         Err(anyhow::anyhow!("serialize_vectors_for_disk not implemented for {}", self.strategy_name()))
     }
     
     /// ✅ ONLY METHOD EACH STRATEGY NEEDS: Deserialize vectors from strategy format
     /// Used during recovery to load Write Buffer files back into memtable
-    fn deserialize_vectors_from_disk(&self, data: &[u8]) -> Result<Vec<VectorRecord>> {
+    fn deserialize_vectors_from_disk(&self, _data: &[u8]) -> Result<Vec<VectorRecord>> {
         // Default implementation - strategies must override
         Err(anyhow::anyhow!("deserialize_vectors_from_disk not implemented for {}", self.strategy_name()))
     }

@@ -1,12 +1,10 @@
 use super::{CacheTier, StorageBackend, StorageError};
-use crate::storage::cache::traits::CacheValue;
 use async_trait::async_trait;
 use dashmap::DashMap;
-use std::fmt::{self, Debug};
+use std::fmt::Debug;
 use std::hash::Hash;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
-use std::any::Any;
 
 /// In-memory storage backend using DashMap for concurrent access
 #[derive(Clone)]
@@ -56,7 +54,7 @@ where
 }
 
 // Helper function to get size based on type
-fn estimate_size<V>(value: &V) -> usize {
+fn estimate_size<V>(_value: &V) -> usize {
     // Try to use CacheValue trait if available
     // For simplicity, use a conservative estimate
     let base_size = std::mem::size_of::<V>();

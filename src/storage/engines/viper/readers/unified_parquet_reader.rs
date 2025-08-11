@@ -672,10 +672,10 @@ impl UnifiedParquetReader {
         params: &crate::core::search::SearchParams,
         context: &CollectionContext,
     ) -> Result<Vec<VectorRecord>> {
-        let mut all_vectors = Vec::new();
+        let all_vectors = Vec::new();
         
         // Select optimal columns for metadata filtering
-        let columns = self.select_optimal_columns(params, context);
+        let _columns = self.select_optimal_columns(params, context);
         
         // Note: Parquet-level filter pushdown can be added here in the future
         // for complex FilterExpression optimization
@@ -1327,7 +1327,7 @@ impl UnifiedParquetReader {
     async fn build_reader_from_ranges(
         &self,
         range_data: Vec<Vec<u8>>,
-        metadata: &parquet::file::metadata::ParquetMetaData,
+        _metadata: &parquet::file::_metadata::ParquetMetaData,
         row_groups: Vec<usize>,
         columns: Vec<&str>,
     ) -> Result<Vec<arrow_array::RecordBatch>> {
@@ -1349,9 +1349,9 @@ impl UnifiedParquetReader {
     /// Parse a single row group with column projection
     async fn parse_row_group_with_projection(
         &self,
-        data: Vec<u8>,
-        row_group: &parquet::format::RowGroup,
-        columns: &[&str],
+        _data: Vec<u8>,
+        _row_group: &parquet::format::RowGroup,
+        _columns: &[&str],
     ) -> Result<arrow_array::RecordBatch> {
         // This would require implementing a custom Parquet row group parser
         // For now, return error indicating not implemented

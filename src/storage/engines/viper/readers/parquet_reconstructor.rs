@@ -249,7 +249,7 @@ impl ParquetReconstructor {
     fn parse_range_data_to_columns(
         &self,
         range_data: Vec<RangeData>,
-        metadata: &ParquetMetaData,
+        _metadata: &ParquetMetaData,
     ) -> Result<Vec<ColumnChunkData>> {
         let mut column_chunks = Vec::new();
         
@@ -305,7 +305,7 @@ impl ParquetReconstructor {
     fn create_record_batch_from_columns(
         &self,
         parsed_columns: HashMap<String, ParsedColumn>,
-        query: &VectorQuery,
+        _query: &VectorQuery,
     ) -> Result<RecordBatch> {
         let mut fields = Vec::new();
         let mut arrays: Vec<Arc<dyn Array>> = Vec::new();
@@ -338,7 +338,7 @@ impl ParquetReconstructor {
     fn create_record_batch_from_chunk_data(
         &self,
         chunks: Vec<ColumnChunkData>,
-        query: &VectorQuery,
+        _query: &VectorQuery,
     ) -> Result<RecordBatch> {
         debug!("🏗️ Creating record batch from {} column chunks", chunks.len());
         
@@ -399,7 +399,7 @@ impl ParquetReconstructor {
     fn extract_vectors_from_batch(
         &self,
         record_batch: &RecordBatch,
-        query: &VectorQuery,
+        _query: &VectorQuery,
     ) -> Result<Vec<VectorRecord>> {
         let mut vector_records = Vec::new();
         
@@ -496,17 +496,17 @@ impl ParquetReconstructor {
         record_batch.num_rows() * record_batch.num_columns() * 16 // 16 bytes per value estimate
     }
 
-    fn extract_string_value(&self, column: &Arc<dyn Array>, row_idx: usize) -> Result<String> {
+    fn extract_string_value(&self, _column: &Arc<dyn Array>, row_idx: usize) -> Result<String> {
         // TODO: Implement proper string extraction from Arrow arrays
         Ok(format!("value_{}", row_idx))
     }
 
-    fn extract_vector_value(&self, column: &Arc<dyn Array>, row_idx: usize) -> Result<Vec<f32>> {
+    fn extract_vector_value(&self, _column: &Arc<dyn Array>, _row_idx: usize) -> Result<Vec<f32>> {
         // TODO: Implement proper vector extraction from Arrow arrays
         Ok(vec![0.0f32; 128])
     }
 
-    fn extract_metadata_value(&self, column: &Arc<dyn Array>, row_idx: usize) -> Result<Vec<crate::proto::proximadb::MetadataItem>> {
+    fn extract_metadata_value(&self, _column: &Arc<dyn Array>, _row_idx: usize) -> Result<Vec<crate::proto::proximadb::MetadataItem>> {
         // TODO: Implement proper metadata extraction and conversion to MetadataItem
         Ok(Vec::new())
     }

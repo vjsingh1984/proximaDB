@@ -20,7 +20,6 @@
 
 use anyhow::{Context, Result};
 use async_trait::async_trait;
-use rand::seq::SliceRandom;
 use std::sync::Arc;
 use std::collections::HashMap;
 use tokio::sync::RwLock;
@@ -92,7 +91,7 @@ impl CollectionService {
         // SDK defines compression config in collection metadata and it drives datablock compression
         if let Some(ref compression) = enriched_config.compression {
             use crate::storage::engine_capabilities::EngineCapabilities;
-            use crate::proto::proximadb::{CompressionAlgorithm, StorageEngine};
+            use crate::proto::proximadb::CompressionAlgorithm;
             
             // Convert engine type to enum
             let engine = EngineCapabilities::engine_from_int(config.storage_engine);
@@ -183,7 +182,7 @@ impl CollectionService {
         };
         
         // Create storage directories
-        let storage_created = self
+        let _storage_created = self
             .create_storage_directories(&base_location, &enriched_config.name, &uuid)
             .await
             .context("Failed to create storage directories")?;
@@ -312,7 +311,7 @@ impl CollectionService {
     /// Convert proto IndexConfig to internal IndexConfig
     fn convert_proto_index_config(&self, _proto_config: &crate::proto::proximadb::IndexConfig) -> Result<crate::index::config::IndexConfig> {
         // Extract algorithm name from proto config
-        let algorithm_name = match _proto_config.algorithm {
+        let _algorithm_name = match _proto_config.algorithm {
             1 => "HNSW",
             2 => "IVF", 
             3 => "PQ",
@@ -758,9 +757,9 @@ impl CollectionService {
     fn resolve_compression_config(
         &self,
         requested: Option<&crate::proto::proximadb::CompressionConfig>,
-        storage_engine: i32,
+        _storage_engine: i32,
     ) -> Option<crate::proto::proximadb::CompressionConfig> {
-        use crate::proto::proximadb::{CompressionAlgorithm, CompressionConfig, StorageEngine};
+        use crate::proto::proximadb::{CompressionAlgorithm, CompressionConfig};
         
         // If compression explicitly requested, validate and use it
         if let Some(config) = requested {

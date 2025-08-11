@@ -8,7 +8,6 @@
 //! Uses case-sensitive alphanumeric encoding (0-9, A-Z, a-z) to convert
 //! microsecond timestamps into compact strings.
 
-use tracing::{debug};
 
 const BASE62_CHARS: &[u8] = b"0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
 

@@ -1,11 +1,9 @@
 use crate::proto::proximadb::VectorRecord;
 use crate::storage::cache::base::BaseCacheImpl;
 use crate::storage::cache::traits::{BaseCache, CacheKey, CacheValue};
-use async_trait::async_trait;
+use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use serde::{Deserialize, Serialize};
-use std::sync::Arc;
 use anyhow::Result;
-use tracing::{debug, error, info};
 
 /// Partitioned key for collection-aware storage
 #[derive(Debug, Clone, Hash, PartialEq, Eq, Serialize, Deserialize)]
@@ -282,7 +280,7 @@ impl VectorStore {
                 crate::proto::proximadb::MetadataItem {
                     key: "compressed_block".to_string(),
                     value: Some(crate::proto::proximadb::metadata_item::Value::StringValue(
-                        base64::encode(&compressed_data)
+                        BASE64.encode(&compressed_data)
                     )),
                 },
                 crate::proto::proximadb::MetadataItem {
@@ -325,7 +323,7 @@ impl VectorStore {
             match item.key.as_str() {
                 "compressed_block" => {
                     if let Some(crate::proto::proximadb::metadata_item::Value::StringValue(data)) = &item.value {
-                        compressed_data = base64::decode(data).ok();
+                        compressed_data = BASE64.decode(data).ok();
                     }
                 }
                 "compression_type" => {

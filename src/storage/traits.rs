@@ -11,7 +11,6 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use crate::proto::proximadb::Collection;
-use tracing::{debug, error, info, warn};
 // Core types imported as needed in implementations
 
 /// Strategy enum for selecting storage engine type
@@ -181,7 +180,7 @@ pub trait UnifiedStorageEngine: Send + Sync {
     }
 
     /// Check if collection has storage assignment
-    async fn has_storage_assignment(&self, collection_id: &str) -> bool {
+    async fn has_storage_assignment(&self, _collection_id: &str) -> bool {
         // Collections always have storage now, it's part of their metadata
         true
     }

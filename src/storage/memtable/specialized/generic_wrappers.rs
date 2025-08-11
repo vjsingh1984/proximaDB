@@ -12,7 +12,6 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 
 use crate::storage::memtable::core::{MemtableConfig, MemtableCore};
-use crate::storage::memtable::implementations::btree::BTreeMemtable;
 
 /// Generic metrics wrapper - adds enhanced metrics to any memtable implementation
 #[derive(Debug)]

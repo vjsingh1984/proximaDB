@@ -15,8 +15,8 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use tracing::{debug, info};
 
-use crate::core::search::{SearchParams, FilterExpression};
-use crate::proto::proximadb::{CompressionConfig, CompressionAlgorithm};
+use crate::core::search::SearchParams;
+use crate::proto::proximadb::CompressionAlgorithm;
 
 /// Compression-aware query planner that optimizes query execution
 /// based on data compression characteristics

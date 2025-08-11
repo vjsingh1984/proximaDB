@@ -10,7 +10,7 @@
 
 use anyhow::{Context, Result};
 use arrow_array::{Array, Int64Array, RecordBatch, StringArray};
-use arrow_array::builder::{ListBuilder, Int8Builder, UInt8Builder};
+use arrow_array::builder::{Int8Builder, UInt8Builder};
 use arrow_schema::{DataType, Field, Schema};
 use parquet::arrow::ArrowWriter;
 use parquet::file::properties::WriterProperties;
@@ -26,7 +26,6 @@ use crate::storage::transaction_coordinator::{TransactionCoordinator, StagingCon
 
 use crate::core::{String, VectorRecord};
 use crate::storage::optimization::{MetadataSorter, SortingStats};
-use crate::metrics::{InternalMetricsUpdater, MetricsUpdate};
 use super::schema::SchemaManager;
 
 /// Flush manager for VIPER storage engine with atomic writes
@@ -664,7 +663,7 @@ impl FlushManager {
             // Create INT8 quantized vector array
             let mut int8_list_builder = ListBuilder::new(Int8Builder::new());
             for int8_vector in vector_int8_data {
-                let mut value_builder = int8_list_builder.values();
+                let value_builder = int8_list_builder.values();
                 for &val in &int8_vector {
                     value_builder.append_value(val);
                 }
@@ -676,7 +675,7 @@ impl FlushManager {
             // Create PQ8 quantized vector array
             let mut pq8_list_builder = ListBuilder::new(UInt8Builder::new());
             for pq8_vector in vector_pq8_data {
-                let mut value_builder = pq8_list_builder.values();
+                let value_builder = pq8_list_builder.values();
                 for &val in &pq8_vector {
                     value_builder.append_value(val);
                 }
@@ -688,7 +687,7 @@ impl FlushManager {
             // Create PQ4 quantized vector array  
             let mut pq4_list_builder = ListBuilder::new(UInt8Builder::new());
             for pq4_vector in vector_pq4_data {
-                let mut value_builder = pq4_list_builder.values();
+                let value_builder = pq4_list_builder.values();
                 for &val in &pq4_vector {
                     value_builder.append_value(val);
                 }
@@ -719,7 +718,7 @@ impl FlushManager {
         let mut buffer = Vec::new();
         
         // Get compression from collection config if available, otherwise use viper defaults
-        let (compression_algo, compression_level) = if let Some(ref collection) = collection_config {
+        let (compression_algo, _compression_level) = if let Some(ref collection) = collection_config {
             if let Some(ref config) = collection.config {
                 if let Some(ref compression) = config.compression {
                     use crate::proto::proximadb::CompressionAlgorithm;
@@ -1023,7 +1022,7 @@ impl FlushManager {
     }
 
     /// Check if compaction should be triggered
-    async fn check_compaction_trigger(&self, collection_id: &str) -> Result<bool> {
+    async fn check_compaction_trigger(&self, _collection_id: &str) -> Result<bool> {
         // Compaction triggers based on multiple factors
         // Note: This is deferred to the CompactionManager which has full context
         // about file counts, sizes, and collection-specific thresholds.

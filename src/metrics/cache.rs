@@ -7,12 +7,10 @@ use serde::{Serialize, Deserialize};
 use anyhow::Result;
 
 use crate::metrics::{
-    InternalMetricsUpdater, MetricsUpdate, CollectionMetrics,
-    GlobalMetrics, AggregationWindow, MetricsAggregationEngine,
+    InternalMetricsUpdater, AggregationWindow, MetricsAggregationEngine,
 };
 use crate::storage::cache::metrics::CacheMetrics as BaseCacheMetrics;
 use crate::storage::cache::backend::CacheTier;
-use tracing::{debug, error, info, warn};
 
 /// Cache metrics snapshot that work with the broader metrics framework
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -219,9 +217,9 @@ impl CacheMetricsCollector {
     
     /// Report metrics to the main metrics system
     async fn report_to_metrics_system(
-        updater: &dyn InternalMetricsUpdater,
+        _updater: &dyn InternalMetricsUpdater,
         aggregator: &MetricsAggregationEngine,
-        metrics: &CacheMetricsSnapshot,
+        _metrics: &CacheMetricsSnapshot,
     ) -> Result<()> {
         // Cache metrics are global, not per-collection
         // We'll aggregate them into the aggregator for different windows

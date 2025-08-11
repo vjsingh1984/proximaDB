@@ -352,7 +352,7 @@ impl SstableWriter {
         index_entries: &mut Vec<IndexEntry>,
         current_block: &[SstRecord],
         block_id: u32,
-        current_block_size: usize,
+        _current_block_size: usize,
     ) -> Result<()> {
         let data_block = DataBlock::new(block_id, current_block.to_vec());
         

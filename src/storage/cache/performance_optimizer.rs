@@ -7,10 +7,10 @@ use tokio::sync::RwLock;
 use anyhow::Result;
 
 use crate::storage::cache::{
-    CrossCacheOrchestrator, CacheType, BaseCache,
+    CrossCacheOrchestrator, CacheType,
     config::{CacheConfig, EvictionPolicy},
 };
-use crate::metrics::{CacheMetricsSnapshot, CacheOptimizationHints};
+use crate::metrics::CacheMetricsSnapshot;
 
 /// Cache performance optimizer
 pub struct CacheOptimizer {
@@ -301,7 +301,7 @@ impl CacheOptimizer {
     
     /// Predict performance improvement
     async fn predict_improvement(&self, metrics: &CacheMetricsSnapshot) -> PredictedImprovement {
-        let model = self.auto_tuner.model.read().await;
+        let _model = self.auto_tuner.model.read().await;
         
         // Simplified prediction
         let current_hit_rate = metrics.overall_hit_rate;
@@ -328,7 +328,6 @@ impl CacheOptimizer {
         // Get metrics before optimization
         let cache_metrics = self.orchestrator.metrics();
         use crate::metrics::cache::{TierMetrics, MemoryMetrics, EvictionMetrics, CoordinationMetrics};
-use tracing::{debug, error, info};
         let metrics_before = CacheMetricsSnapshot {
             overall_hit_rate: cache_metrics.hit_rate(),
             l1_metrics: TierMetrics {

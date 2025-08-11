@@ -21,7 +21,7 @@ use std::hash::Hash;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use tracing::{debug, info};
+use tracing::info;
 
 use crate::common::adaptive_structures::{
     AdaptiveStore, AdaptiveStoreConfig, BackendType, IndexStructure,
@@ -34,8 +34,7 @@ use crate::index::axis::types::IndexAlgorithm;
 use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
 use crate::proto::proximadb::VectorRecord;
 use crate::index::axis::clustering::{
-    AxisClusteringEngine, ClusteringAlgorithm, ClusteringConfig, 
-    KMeansConfig, KMeansInit, DBSCANConfig
+    AxisClusteringEngine, ClusteringAlgorithm, ClusteringConfig
 };
 
 /// Partitioned key for collection-aware storage
@@ -691,7 +690,7 @@ impl UnifiedIvfIndex {
     async fn train_hierarchical_kmeans(
         &self, 
         vectors: &[Vec<f32>], 
-        branching_factor: usize
+        _branching_factor: usize
     ) -> Result<Arc<Vec<Vec<f32>>>> {
         // Two-level clustering: first coarse, then fine
         let n_coarse = (self.config.n_clusters as f64).sqrt() as usize;
@@ -860,7 +859,7 @@ impl UnifiedIvfIndex {
         let centroids = CentroidStore::new(config.n_clusters, config.dimension);
         
         // Create elastic posting list store with collection partitioning
-        let posting_store_config = AdaptiveStoreConfig {
+        let _posting_store_config = AdaptiveStoreConfig {
             collection_id: collection_id.clone(),
             backend_type: BackendType::Index {
                 structure: IndexStructure::DashMap {
@@ -1312,7 +1311,7 @@ impl crate::index::axis::index_factory::AxisVectorIndex for UnifiedIvfIndex {
         &self,
         query: &[f32],
         k: usize,
-        filter: Option<&(dyn for<'a> Fn(&'a VectorRecord) -> bool + Send + Sync)>,
+        _filter: Option<&(dyn for<'a> Fn(&'a VectorRecord) -> bool + Send + Sync)>,
     ) -> Result<Vec<(String, f32)>> {
         // Call the existing search method with default parameters
         let results = self.search(query, k, None).await?;

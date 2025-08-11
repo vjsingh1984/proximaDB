@@ -42,15 +42,11 @@ use crate::storage::traits::{
     CompactionParameters, CompactionResult, FlushParameters, FlushResult, StorageEngineStrategy,
     UnifiedStorageEngine,
 };
-use crate::storage::transaction_coordinator::{TransactionCoordinator, StagingConfig, TransactionStageType};
+use crate::storage::transaction_coordinator::TransactionCoordinator;
 use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
 use crate::compute::quantization::unified::{UnifiedQuantizationEngine, CodebookStore, InMemoryCodebookStore};
 use crate::core::search::UnifiedSearchEngine;
 use crate::proto::proximadb::MetadataItem;
-use crate::services::collection_service::CollectionService;
-use crate::compute::distance_computation::DistanceMetric;
-use crate::core::search::FilterExpression;
-use unified_search_engine::{SstUnifiedSearchEngine, SstSearchConfig};
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 use chrono::Utc;
@@ -1650,7 +1646,7 @@ impl UnifiedStorageEngine for SstStorage {
             .and_then(|collection| collection.config.as_ref())
             .and_then(|config| config.compression.clone());
             
-        if let Some(ref compression) = compression_config {
+        if let Some(ref _compression) = compression_config {
             info!("🗜️ SST: Using SDK-driven compression for collection {}", collection_id);
         } else {
             info!("🗜️ SST: No compression configuration from SDK for collection {}", collection_id);
@@ -2523,7 +2519,7 @@ impl SstStorage {
             
             // Get file size
             let metadata = tokio::fs::metadata(path).await?;
-            let file_size = metadata.len();
+            let _file_size = metadata.len();
             
             // Calculate min/max keys and sequences from records in this SSTable
             let sstable_records: Vec<&SstRecord> = flushed_records.iter()
@@ -2534,10 +2530,10 @@ impl SstStorage {
                 continue;
             }
             
-            let min_key = sstable_records.iter().map(|r| &r.id).min().cloned().unwrap_or_default();
-            let max_key = sstable_records.iter().map(|r| &r.id).max().cloned().unwrap_or_default();
-            let min_sequence = sstable_records.iter().map(|r| r.sequence_number).min().unwrap_or(0);
-            let max_sequence = sstable_records.iter().map(|r| r.sequence_number).max().unwrap_or(0);
+            let _min_key = sstable_records.iter().map(|r| &r.id).min().cloned().unwrap_or_default();
+            let _max_key = sstable_records.iter().map(|r| &r.id).max().cloned().unwrap_or_default();
+            let _min_sequence = sstable_records.iter().map(|r| r.sequence_number).min().unwrap_or(0);
+            let _max_sequence = sstable_records.iter().map(|r| r.sequence_number).max().unwrap_or(0);
             
             
             // SSTable file is now discoverable via directory listing
@@ -2927,7 +2923,7 @@ impl SstStorage {
         info!("🗜️ SST Engine: Starting collection compaction for {}", collection_id);
         
         // Get storage location from collection config - skip if not provided
-        let storage_location = match collection_config
+        let _storage_location = match collection_config
             .and_then(|c| c.storage_assignment.as_ref()) {
             Some(assignment) => assignment.base_location.clone(),
             None => {
@@ -2977,7 +2973,7 @@ impl SstStorage {
             )
             .unwrap_or_default();
             
-        let merged_vectors = result.engine_metrics.get("merged_vectors_count")
+        let _merged_vectors = result.engine_metrics.get("merged_vectors_count")
             .and_then(|v| v.as_u64())
             .unwrap_or(0);
             

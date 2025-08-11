@@ -131,8 +131,8 @@ impl UnifiedSearchEngine for SstUnifiedSearchEngine {
         &self,
         context: &UnifiedSearchContext,
         params: &SearchParams,
-        distance_compute: &UnifiedDistanceCompute,
-        quantization_engine: Option<&UnifiedQuantizationEngine>,
+        _distance_compute: &UnifiedDistanceCompute,
+        _quantization_engine: Option<&UnifiedQuantizationEngine>,
     ) -> Result<SearchResultSet> {
         let start_time = std::time::Instant::now();
         
@@ -261,7 +261,7 @@ impl UnifiedSearchEngine for SstUnifiedSearchEngine {
         ))
     }
     
-    async fn can_handle(&self, context: &UnifiedSearchContext, params: &SearchParams) -> bool {
+    async fn can_handle(&self, _context: &UnifiedSearchContext, _params: &SearchParams) -> bool {
         // LSM can handle all collections in its assigned storage path
         true
     }
@@ -510,7 +510,7 @@ impl SstUnifiedSearchEngine {
         results: Vec<SearchResult>,
     ) -> Result<Vec<SearchResult>> {
         use std::collections::BTreeMap;
-use tracing::{debug, error, info};
+use tracing::debug;
         
         // Log MVCC processing if debug enabled
         debug!("🔍 MVCC: Processing {} results", results.len());

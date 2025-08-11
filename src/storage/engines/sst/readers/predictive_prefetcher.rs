@@ -352,7 +352,7 @@ impl PredictivePrefetcher {
     
     /// Prefetch a single block
     async fn prefetch_block(&self, key: &BlockCacheKey) -> Result<()> {
-        let start = Instant::now();
+        let _start = Instant::now();
         
         // Check if block is already cached
         if self.prefetch_cache.contains_key(key) {

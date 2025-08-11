@@ -41,7 +41,7 @@ impl CompactionAxisUpdater {
     pub async fn update_indexes_after_compaction(
         &self,
         collection_id: &str,
-        compaction_result: &CompactionResult,
+        _compaction_result: &CompactionResult,
         deleted_vector_ids: &[String],
         merged_vectors: &[VectorRecord],
     ) -> Result<()> {
@@ -118,7 +118,7 @@ impl CompactionAxisUpdater {
             collection_id
         );
 
-        let deleted_set: HashSet<&str> = deleted_vector_ids.iter().map(|s| s.as_str()).collect();
+        let _deleted_set: HashSet<&str> = deleted_vector_ids.iter().map(|s| s.as_str()).collect();
         let mut removal_errors = Vec::new();
 
         for (index_name, index) in indexes {

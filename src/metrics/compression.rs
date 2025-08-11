@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 use dashmap::DashMap;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 /// Compression metrics for a single collection
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]

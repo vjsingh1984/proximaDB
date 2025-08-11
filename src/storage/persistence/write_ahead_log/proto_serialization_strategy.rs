@@ -7,7 +7,7 @@ use anyhow::{Context, Result};
 use async_trait::async_trait;
 use std::sync::Arc;
 use std::collections::HashMap;
-use tracing::{debug, info, warn};
+use tracing::{debug, info};
 
 use super::batch_strategy::WALBatchStrategy;
 use super::{FlushResult, WALConfig, WALStats, BatchId};
@@ -216,8 +216,8 @@ impl WALBatchStrategy for ProtoSerializationStrategy {
 
     async fn delete_vector(
         &self,
-        collection_id: &str,
-        vector_id: &crate::core::VectorId,
+        _collection_id: &str,
+        _vector_id: &crate::core::VectorId,
     ) -> Result<u64> {
         // For now, deletion is not implemented in clean architecture
         // TODO: Implement deletion through memtable manager
@@ -234,14 +234,14 @@ impl WALBatchStrategy for ProtoSerializationStrategy {
 
     async fn search_vectors_similarity(
         &self,
-        collection_id: &str,
-        query_vector: &[f32],
-        k: usize,
-        distance_metric: Option<crate::compute::distance_computation::DistanceMetric>,
+        _collection_id: &str,
+        _query_vector: &[f32],
+        _k: usize,
+        _distance_metric: Option<crate::compute::distance_computation::DistanceMetric>,
     ) -> Result<Vec<(String, f32, VectorRecord)>> {
         // For now, similarity search is delegated to storage engine
         let engine = self.storage_engine.read().await;
-        if let Some(engine) = engine.as_ref() {
+        if let Some(_engine) = engine.as_ref() {
             // TODO: Implement similarity search through storage engine
             Err(anyhow::anyhow!("Similarity search should be done through storage engine"))
         } else {
@@ -287,8 +287,8 @@ impl WALBatchStrategy for ProtoSerializationStrategy {
             });
         }
         
-        let mut total_vectors = 0;
-        let mut total_bytes = 0u64;
+        let mut _total_vectors = 0;
+        let mut _total_bytes = 0u64;
         
         // Prepare vectors for flush
         let mut all_vectors = Vec::new();
@@ -297,8 +297,8 @@ impl WALBatchStrategy for ProtoSerializationStrategy {
         for batch in &unflushed {
             all_vectors.extend(batch.vector_records.as_ref().iter().cloned());
             batch_ids.push(batch.batch_id.clone());
-            total_vectors += batch.vector_records.len();
-            total_bytes += batch.total_size_bytes as u64;
+            _total_vectors += batch.vector_records.len();
+            _total_bytes += batch.total_size_bytes as u64;
         }
         
         // Use storage engine's do_flush method
@@ -345,10 +345,10 @@ impl WALBatchStrategy for ProtoSerializationStrategy {
         })
     }
 
-    async fn compact_collection(&self, collection_id: &str) -> Result<u64> {
+    async fn compact_collection(&self, _collection_id: &str) -> Result<u64> {
         // Compaction is handled by storage engine
         let engine = self.storage_engine.read().await;
-        if let Some(engine) = engine.as_ref() {
+        if let Some(_engine) = engine.as_ref() {
             // TODO: Call engine's compaction method
             Ok(0)
         } else {

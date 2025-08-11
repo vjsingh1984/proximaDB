@@ -25,7 +25,7 @@ use crate::storage::engines::sst::bloom_filter::SstableBloomFilter;
 use crate::storage::engines::sst::{SstableHeader, DataBlock, IndexEntry, SstRecord, CompressionAlgorithmSst};
 use crate::core::bloom::{BloomFilterConfig, BloomStrategy};
 use crate::storage::cache::specialized::{VectorStore, IndexNodeCache, BitmapFilterCache};
-use crate::storage::cache::specialized::vector_store::{SstBlockKey, CompressedBlock, CompressionType};
+use crate::storage::cache::specialized::vector_store::SstBlockKey;
 
 /// Unified SSTable Reader with automatic optimization selection
 pub struct UnifiedSstableReader {
@@ -536,13 +536,13 @@ impl UnifiedSstableReader {
         context: &CollectionContext,
         use_block_cache: bool,
     ) -> Result<Vec<DataBlock>> {
-        use tokio::task::JoinSet;
+        
         use tokio::sync::Semaphore;
         use std::sync::Arc;
         
         // Limit concurrent file operations to avoid resource exhaustion
         let max_concurrent_files = num_cpus::get().min(8);
-        let semaphore = Arc::new(Semaphore::new(max_concurrent_files));
+        let _semaphore = Arc::new(Semaphore::new(max_concurrent_files));
         
         info!("🚀 Starting parallel SSTable full scan across {} files (max concurrency: {})", 
               context.sstable_files.len(), max_concurrent_files);
@@ -640,7 +640,7 @@ impl UnifiedSstableReader {
             debug!("📂 Processing SSTable file {} of {}: {}", file_idx + 1, context.sstable_files.len(), file_path);
             
             // Get bloom filter - either from cache or load from disk
-            let bloom_filter: Option<SstableBloomFilter> = if !skip_bloom {
+            let _bloom_filter: Option<SstableBloomFilter> = if !skip_bloom {
                 // First check if we have a cached bloom filter
                 if let Some(_cached_result) = self.bloom_cache.get_with_hooks(&file_path.to_string()).await {
                     // We have a cached version, but it's a simplified bitmap
@@ -862,7 +862,7 @@ impl UnifiedSstableReader {
 
     /// Load a specific block with caching
     async fn load_block_with_cache(&self, context: &CollectionContext, block_idx: usize) -> Result<Option<DataBlock>> {
-        let cache_key = BlockCacheKey {
+        let _cache_key = BlockCacheKey {
             file_path: context.file_path.clone(),
             block_id: block_idx as u32,
             block_index: block_idx,
@@ -1439,7 +1439,7 @@ impl UnifiedSstableReader {
             }
             debug!("Bloom data first 20 bytes: {:?}", &bloom_data[..bloom_data.len().min(20)]);
             
-            let bloom_filter: SstableBloomFilter = match SstableBloomFilter::deserialize(&bloom_data) {
+            let _bloom_filter: SstableBloomFilter = match SstableBloomFilter::deserialize(&bloom_data) {
                 Ok(bf) => bf,
                 Err(e) => {
                     warn!("Deserialization error: {:?}", e);

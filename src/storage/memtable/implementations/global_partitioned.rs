@@ -7,7 +7,7 @@
 //! - Efficient per-collection flush isolation
 
 use anyhow::Result;
-use tracing::{debug, info, warn, error};
+use tracing::debug;
 use std::collections::HashMap;
 use std::fmt::Debug;
 use std::sync::atomic::{AtomicU64, Ordering};

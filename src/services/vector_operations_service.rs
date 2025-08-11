@@ -18,7 +18,7 @@ use tracing::{debug, error, info, warn};
 use crate::core::bloom::BloomFilterStrategy;
 
 use crate::compute::distance_computation::DistanceMetric;
-use crate::compute::distance_computation::engine::{UnifiedDistanceCompute, SimilarityResult};
+use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
 use crate::core::search::{SearchResult, SearchDebugInfo, SearchParams};
 use crate::core::search::multi_tier_deduplication::{MultiTierDeduplicator, TieredSearchCandidate, StorageTier, DeduplicationStorageEngine};
 use crate::core::{VectorRecord, proto_metadata_helper};
@@ -37,7 +37,7 @@ use crate::storage::background_flush_context::BackgroundFlushContext;
 // use crate::index::axis::manager::AxisManager;  // TODO: Integrate AxisManager properly
 use crate::services::collection_service::CollectionService;
 use crate::proto::proximadb::{StorageEngine, metadata_item::Value as MetadataValue};
-use crate::query::unified_query_planner::{UnifiedQueryPlanner, PlannerConfig, UnifiedExecutionPlan};
+use crate::query::unified_query_planner::{UnifiedQueryPlanner, PlannerConfig};
 
 /// Optimized Vector Service with direct memtable access
 /// 
@@ -512,7 +512,7 @@ impl VectorOperationsService {
         query_vector: Vec<f32>,
         k: usize,
         distance_metric: DistanceMetric,
-        search_params: Option<SearchParams>,
+        _search_params: Option<SearchParams>,
         config: Option<StreamingSearchConfig>,
     ) -> Result<SearchResultStream> {
         info!(
@@ -727,8 +727,8 @@ impl VectorOperationsService {
         &self,
         collection_id: &str,
         vector_id: &str,
-        include_vector: bool,
-        include_metadata: bool,
+        _include_vector: bool,
+        _include_metadata: bool,
     ) -> Result<Option<VectorRecord>> {
         // First check WAL/memtable for unflushed data
         if let Ok(Some(vector)) = self.global_memtable.get_vector_by_id(collection_id, vector_id).await {
@@ -969,7 +969,7 @@ impl VectorOperationsService {
         // 2. Use indexes for flushed data (if available) OR raw storage scan
         // 3. Merge and deduplicate results
         let mut all_results = Vec::with_capacity(k * 3);
-        let mut skip_storage_scan = false;
+        let mut _skip_storage_scan = false;
         
         // Step 1: Check if collection has indexes configured and use them first
         if let Some(collection_service) = &self.collection_service {
@@ -984,7 +984,7 @@ impl VectorOperationsService {
                         // When AxisManager is integrated, it will be called from storage engine
                         // StorageEngine::search() already checks Axis indexes for flushed data
                         // We just need to skip the raw storage scan since indexes will handle it
-                        skip_storage_scan = true;
+                        _skip_storage_scan = true;
                         info!("🎯 INDEX: Collection has indexes, storage engine will use them for flushed data");
                     } else {
                         debug!("📊 Collection {} has no indexes, storage engine will scan raw data", collection_id);
@@ -1468,7 +1468,7 @@ impl VectorOperationsService {
         // Extract filter expression from search params
         let filter_expression = search_params.and_then(|p| p.filter_expression.as_ref());
         
-        if let Some(expr) = filter_expression {
+        if let Some(_expr) = filter_expression {
             debug!("🎯 VIPER: Using filter expression for columnar predicate pushdown");
         }
 
@@ -1516,7 +1516,7 @@ impl VectorOperationsService {
         // Extract filter expression from search params
         let filter_expression = search_params.and_then(|p| p.filter_expression.as_ref());
         
-        if let Some(expr) = filter_expression {
+        if let Some(_expr) = filter_expression {
             debug!("🎯 LSM: Using filter expression for bloom filter hints and range queries");
         }
 
@@ -2182,7 +2182,7 @@ impl DirectWalRecovery for VectorOperationsService {
     /// Discover WAL files and group them by collection using metadata
     async fn discover_wal_files(&self) -> Result<std::collections::HashMap<String, Vec<std::path::PathBuf>>> {
         use std::collections::HashMap;
-        use crate::services::collection_service::CollectionService;
+        
         
         info!("🔧 VectorOperationsService::discover_wal_files - Starting WAL file discovery from metadata...");
         let mut collection_wal_files: HashMap<String, Vec<std::path::PathBuf>> = HashMap::new();

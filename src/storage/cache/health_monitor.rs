@@ -5,15 +5,12 @@ use std::time::{Duration, SystemTime};
 use std::collections::HashMap;
 use tokio::sync::RwLock;
 use serde::{Serialize, Deserialize};
-use anyhow::Result;
 
 use crate::storage::cache::{
-    CrossCacheOrchestrator, CacheType, BaseCache,
-    VectorStore, QueryCache, BitmapFilterCache,
-    IndexNodeCache, MetadataStore,
+    CrossCacheOrchestrator, CacheType,
 };
 use crate::storage::cache::config::CacheConfig;
-use crate::metrics::{CacheMetricsSnapshot, CacheMetricsCollector};
+use crate::metrics::CacheMetricsSnapshot;
 
 /// Cache monitoring dashboard for real-time insights
 pub struct CacheMonitoringDashboard {
@@ -496,7 +493,7 @@ impl PerformanceProfiler {
     
     async fn flush_to_disk(&self, profiles: &[PerformanceProfile]) {
         // Would write to actual file
-        let json = serde_json::to_string_pretty(profiles).unwrap();
+        let _json = serde_json::to_string_pretty(profiles).unwrap();
         // std::fs::write(&self.output_path, json).ok();
     }
 }

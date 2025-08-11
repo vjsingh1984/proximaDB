@@ -20,13 +20,12 @@
 //! with LRU eviction and smart cache invalidation strategies optimized for
 //! vector database workloads.
 
-use anyhow::Result;
 use dashmap::DashMap;
 use serde::{Deserialize, Serialize};
 use std::hash::{Hash, Hasher};
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Maximum number of cached query results (memory-conscious for SQL parsing workload)
 const DEFAULT_MAX_CACHE_ENTRIES: usize = 1000;
@@ -313,7 +312,7 @@ impl QueryCache {
     /// Clear all cache entries
     pub fn clear(&self) {
         let size = self.cache.len();
-        let memory = self.get_total_memory_usage();
+        let _memory = self.get_total_memory_usage();
         
         self.cache.clear();
         

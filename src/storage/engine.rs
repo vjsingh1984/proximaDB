@@ -1,5 +1,4 @@
-use crate::core::search::SearchResult;
-use crate::core::{BatchSearchRequest, String, StorageConfig, VectorId, VectorRecord};
+use crate::core::{String, StorageConfig, VectorId, VectorRecord};
 use crate::index::{AxisConfig, AxisManager};
 use crate::storage::persistence::write_ahead_log::{WALConfig, WriteAheadLogManager};
 use crate::storage::{
@@ -14,8 +13,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use futures;
-use tracing::{debug, error, info, warn};
+use tracing::info;
 
 /// Calculate cosine similarity between two vectors
 fn calculate_cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
@@ -175,7 +173,7 @@ impl StorageEngine {
         let compaction_manager = Arc::new(CompactionManager::new(config.sst_config.clone()));
         
         // Create singleton SST storage instance
-        let sst_storage = Arc::new(SstStorage::new(
+        let _sst_storage = Arc::new(SstStorage::new(
             config.sst_config.clone(),
             filesystem.clone(),
             Arc::new(crate::compute::distance_computation::engine::UnifiedDistanceCompute::default()),

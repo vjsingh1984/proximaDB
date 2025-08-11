@@ -166,7 +166,7 @@ impl ParquetTestDataGenerator {
         let mut record_batches = Vec::new();
         let batch_size = 2000;
         
-        for batch_idx in 0..(config.num_rows / batch_size) {
+        for _batch_idx in 0..(config.num_rows / batch_size) {
             let batch_config = TestDataConfig {
                 num_rows: batch_size,
                 ..config.clone()
@@ -392,7 +392,7 @@ impl ParquetTestDataGenerator {
         arrays.push(Arc::new(vectors));
         
         // Quantized columns
-        for quant_type in &config.quantization_types {
+        for _quant_type in &config.quantization_types {
             // Skip quantized vectors for now - needs separate implementation
             // TODO: Generate quantized vectors properly
         }

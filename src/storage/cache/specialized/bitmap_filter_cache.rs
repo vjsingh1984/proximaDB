@@ -2,7 +2,6 @@
 
 use std::sync::Arc;
 use std::collections::HashMap;
-use async_trait::async_trait;
 use anyhow::Result;
 use roaring::RoaringBitmap;
 use tokio::sync::RwLock;
@@ -232,7 +231,7 @@ impl BitmapFilterCache {
     }
     
     /// Compute filter bitmap (placeholder - would call actual filter evaluation)
-    async fn compute_filter_bitmap(&self, component: &FilterComponent) -> Result<RoaringBitmap> {
+    async fn compute_filter_bitmap(&self, _component: &FilterComponent) -> Result<RoaringBitmap> {
         // This would actually evaluate the filter against the data
         // For now, return a sample bitmap
         let mut bitmap = RoaringBitmap::new();

@@ -26,14 +26,13 @@
 //! - S3 → Disk promotion uses /tmp (if NVMe not configured) or HDD as staging
 
 use anyhow::{anyhow, Result};
-use async_trait::async_trait;
+use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tracing::{debug, info, warn};
 
-use crate::common::tier_policy_engine::StorageTier;
 use crate::storage::engines::sst::sstable_writer::SstableWriter;
 use crate::storage::engines::sst::readers::unified_sstable_reader::UnifiedSstableReader;
 
@@ -278,8 +277,8 @@ impl<T: IndexData> UniversalIndexStorage<T> {
                         .await
                         .map_err(|e| anyhow!("Failed to create filesystem: {}", e))?;
                 let filesystem = Arc::new(filesystem_factory);
-                let mut writer = SstableWriter::new(&file_path, 4096, filesystem);
-                let value = bincode::serialize(&data)?;
+                let writer = SstableWriter::new(&file_path, 4096, filesystem);
+                let _value = bincode::serialize(&data)?;
                 // Note: SstableWriter doesn't have add method, need to use write_records
                 let mut records = std::collections::BTreeMap::new();
                 records.insert(id.to_string(), crate::storage::engines::sst::SstRecord {
@@ -330,7 +329,7 @@ impl<T: IndexData> UniversalIndexStorage<T> {
                 let reader = UnifiedSstableReader::new(filesystem);
                 // UnifiedSstableReader's get_vector returns a VectorRecord, not raw bytes
                 // We need to handle this differently
-                if let Some(vector_record) = reader.get_vector(&file_path.to_string_lossy(), id).await? {
+                if let Some(_vector_record) = reader.get_vector(&file_path.to_string_lossy(), id).await? {
                     // For now, we can't directly deserialize since we get a VectorRecord
                     // This would need a different storage approach
                     debug!("Found record {} in SST but cannot deserialize generic type T from VectorRecord", id);
@@ -423,7 +422,7 @@ impl<T: IndexData> UniversalIndexStorage<T> {
                         crate::proto::proximadb::MetadataItem {
                             key: "serialized_data".to_string(),
                             value: Some(crate::proto::proximadb::metadata_item::Value::StringValue(
-                                base64::encode(&value)
+                                BASE64.encode(&value)
                             )),
                         }
                     ],

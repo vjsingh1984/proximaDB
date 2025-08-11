@@ -776,7 +776,7 @@ where
     async fn new_dashmap(
         collection_id: String,
         initial_capacity: usize,
-        memory_limit_mb: Option<usize>,
+        _memory_limit_mb: Option<usize>,
         tier_policy: UnifiedTierPolicy,
         config: AdaptiveStoreConfig,
         tier_manager: Arc<UniversalTierManager>,

@@ -258,7 +258,7 @@ impl AnnoyTree {
     fn search(
         &self,
         query: &[f32],
-        k: usize,
+        _k: usize,
         candidates: &mut Vec<(String, f32)>,
         vectors: &HashMap<String, Arc<VectorRecord>>,
         distance_compute: &UnifiedDistanceCompute,
@@ -580,7 +580,7 @@ impl AxisVectorIndex for AxisAnnoyIndex {
             .into_iter()
             .filter_map(|key| {
                 self.vectors.get(&key).map(|v| {
-                    let map_key = if let Some(ref coll_id) = self.collection_id {
+                    let map_key = if let Some(ref _coll_id) = self.collection_id {
                         // Use original key for map (tree will handle prefixing)
                         key.clone()
                     } else {

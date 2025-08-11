@@ -1,7 +1,6 @@
 //! Cache configuration for production deployment
 
 use serde::{Deserialize, Serialize};
-use std::time::Duration;
 use anyhow::Result;
 
 /// Complete cache configuration for production deployment

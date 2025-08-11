@@ -14,7 +14,7 @@ use std::collections::HashMap;
 
 use crate::compute::distance_computation::DistanceMetric;
 use crate::services::collection_service::CollectionService;
-use crate::proto::proximadb::{Collection, FilterableColumnSpec};
+use crate::proto::proximadb::FilterableColumnSpec;
 
 /// Storage engine types supported by ProximaDB
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

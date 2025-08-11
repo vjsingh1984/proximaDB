@@ -12,11 +12,9 @@ use tracing::{debug, info, warn};
 
 use crate::core::VectorRecord;
 use crate::core::search::{FilterExpression, ComparisonOperator};
-use crate::storage::engines::sst::{IndexEntry, DataBlock, SstRecord, CompressionAlgorithmSst};
+use crate::storage::engines::sst::{IndexEntry, DataBlock};
 use crate::storage::engines::sst::bloom_filter::SstableBloomFilter;
 use crate::storage::engines::sst::optimized_row_filter::{SSTRowFilterEvaluator, SSTBatchFilterEvaluator};
-use crate::proto::proximadb::{MetadataItem, metadata_item};
-use serde_json;
 
 /// Complete SST filtering pipeline with all three stages
 /// Uses immutable Arc types for optimal read performance

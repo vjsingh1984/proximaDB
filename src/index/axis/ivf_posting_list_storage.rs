@@ -24,7 +24,6 @@
 //! - Disk ↔ Cloud movement preserves format (no conversion)
 
 use anyhow::{anyhow, Result};
-use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tracing::{debug, info};
@@ -159,7 +158,7 @@ impl PostingListStorage {
                         .await
                         .map_err(|e| anyhow!("Failed to create filesystem: {}", e))?
                 );
-                let mut writer = SstableWriter::new(&path, 4096, filesystem);
+                let writer = SstableWriter::new(&path, 4096, filesystem);
                 
                 // Convert entries to SST records
                 let mut records = std::collections::BTreeMap::new();
@@ -257,8 +256,8 @@ impl PostingListStorage {
                         .await
                         .map_err(|e| anyhow!("Failed to create filesystem: {}", e))?
                 );
-                let reader = UnifiedSstableReader::new(filesystem);
-                let mut entries = Vec::new();
+                let _reader = UnifiedSstableReader::new(filesystem);
+                let entries = Vec::new();
                 
                 // Read all entries for this cluster
                 // Note: SSTable reader doesn't have scan method currently,

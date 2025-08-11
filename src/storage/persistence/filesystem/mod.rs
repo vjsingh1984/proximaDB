@@ -324,7 +324,7 @@ pub trait FileSystem: Send + Sync + std::fmt::Debug {
     /// Sync file data to disk (fsync/fdatasync)
     /// Ensures data durability after write operations
     /// Returns Ok(()) if sync is not supported by the filesystem
-    async fn sync_file(&self, path: &str) -> FsResult<()> {
+    async fn sync_file(&self, _path: &str) -> FsResult<()> {
         // Default implementation - no sync
         // Filesystems that support sync should override
         Ok(())

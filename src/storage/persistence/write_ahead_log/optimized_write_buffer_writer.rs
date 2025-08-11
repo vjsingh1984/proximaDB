@@ -342,7 +342,7 @@ impl OptimizedWriteBufferWriter {
         collection_id: &str,
         requests: Vec<WalWriteRequest>,
         config: &WALConfig,
-        assignment_cache: &Arc<RwLock<HashMap<String, CachedAssignment>>>,
+        _assignment_cache: &Arc<RwLock<HashMap<String, CachedAssignment>>>,
         directory_cache: &Arc<RwLock<HashMap<String, Instant>>>,
         filesystem_factory: &FilesystemFactory,
         metrics: &Arc<RwLock<WalWriterMetrics>>,
@@ -459,7 +459,7 @@ impl OptimizedWriteBufferWriter {
     
     /// Write combined batch with optimized atomic write
     async fn write_combined_batch(
-        collection_id: &str,
+        _collection_id: &str,
         vectors: &[VectorRecord],
         sequences: &[u64],
         format: &OptimizedFormat,

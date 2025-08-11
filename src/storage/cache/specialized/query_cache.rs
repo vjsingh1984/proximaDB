@@ -4,7 +4,6 @@ use crate::storage::cache::traits::{BaseCache, CacheKey, CacheValue};
 use serde::{Deserialize, Serialize};
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
-use std::sync::Arc;
 use std::time::SystemTime;
 
 /// Query key that includes the query parameters

@@ -21,9 +21,8 @@ use super::config::SyncMode;
 
 use crate::storage::traits::{FlushParameters, FlushResult, UnifiedStorageEngine};
 use crate::storage::background_flush_context::BackgroundFlushContext;
-use crate::metrics::{InternalMetricsUpdater, MetricsUpdate};
 use super::enhanced_flush_result::EnhancedFlushResult;
-use super::flush_result_optimization::{OptimizedFlushCoordinator, OptimizedFlushResult};
+use super::flush_result_optimization::OptimizedFlushCoordinator;
 
 /// Flush state tracking for coordinated WAL cleanup
 #[derive(Debug, Clone)]
@@ -170,7 +169,7 @@ impl WALFlushCoordinator {
             collection_id
         );
 
-        let flush_id = uuid::Uuid::new_v4().to_string();
+        let _flush_id = uuid::Uuid::new_v4().to_string();
 
         // Step 1: Extract vector records from FlushDataSource + Mark for cleanup
         let vector_records = match &flush_data {

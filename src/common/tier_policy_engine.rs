@@ -755,7 +755,7 @@ impl RuleBasedTierPolicy {
     }
     
     /// Check if a rule matches the current data characteristics
-    fn rule_matches(&self, rule: &DefaultPlacementRule, workload: &WorkloadPattern, access_frequency: f64, age_days: u32) -> bool {
+    fn rule_matches(&self, rule: &DefaultPlacementRule, _workload: &WorkloadPattern, access_frequency: f64, age_days: u32) -> bool {
         // Simple matching logic - can be enhanced
         match &rule.condition {
             PlacementCondition::AccessFrequency { min_accesses_per_day, max_accesses_per_day } => {
@@ -950,7 +950,7 @@ impl GlobalTierManager {
     /// Rebalance tiers for a collection using rule-based policy
     pub async fn rebalance_collection_tiers(
         &self,
-        collection_id: &str,
+        _collection_id: &str,
         _tier_policy: &SmartTierPolicy, // Keep for API compatibility, but use rule-based instead
     ) -> Result<crate::common::adaptive_structures::TierRebalanceResult> {
         use crate::common::adaptive_structures::TierRebalanceResult;
@@ -1258,10 +1258,10 @@ impl SmartTierPolicy {
     pub fn for_index_workload_constrained(
         collection_config: CollectionStorageConfig,
         server_available_tiers: &[StorageTier],
-        server_tier_configs: &HashMap<StorageTier, TierConfig>,
+        _server_tier_configs: &HashMap<StorageTier, TierConfig>,
     ) -> Self {
         // Filter server tiers by collection constraints
-        let available_tiers: Vec<StorageTier> = server_available_tiers.iter()
+        let _available_tiers: Vec<StorageTier> = server_available_tiers.iter()
             .filter(|tier| collection_config.is_tier_allowed(tier))
             .cloned()
             .collect();
