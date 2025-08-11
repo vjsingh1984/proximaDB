@@ -1058,6 +1058,386 @@ pub struct TierMetrics {
 - [ ] Build failover mechanisms
 - [ ] Create operational dashboards
 
+== Inter-AZ Clustering & Regional Affinity
+
+=== Multi-Zone Architecture
+
+[source,rust]
+----
+pub struct MultiZoneTierManager {
+    /// Zone-aware tier managers
+    zone_managers: HashMap<AvailabilityZone, Arc<UnifiedTierManager>>,
+    
+    /// Cross-zone replication strategy
+    replication_strategy: ReplicationStrategy,
+    
+    /// Zone affinity configuration
+    affinity_config: ZoneAffinityConfig,
+    
+    /// Regional metadata store
+    regional_metadata: Arc<RegionalMetadataStore>,
+}
+
+#[derive(Debug, Clone)]
+pub struct AvailabilityZone {
+    pub provider: CloudProvider,
+    pub region: String,
+    pub zone: String,
+    pub primary_storage: StorageLocation,
+}
+
+#[derive(Debug, Clone)]
+pub enum StorageLocation {
+    /// Local EBS/Persistent Disk for zone affinity
+    ZoneLocal {
+        volume_id: String,
+        mount_path: PathBuf,
+    },
+    
+    /// Regional S3/GCS bucket
+    Regional {
+        bucket: String,
+        region: String,
+        storage_class: String,
+    },
+    
+    /// Cross-region replicated
+    MultiRegion {
+        primary_region: String,
+        replica_regions: Vec<String>,
+    },
+}
+
+#[derive(Debug, Clone)]
+pub struct ZoneAffinityConfig {
+    /// Prefer zone-local storage for hot data
+    pub zone_local_preference: bool,
+    
+    /// Replicate hot indexes across zones
+    pub cross_zone_replication: bool,
+    
+    /// Pin collections to specific zones
+    pub collection_zone_affinity: HashMap<String, String>,
+    
+    /// Failover strategy
+    pub failover_mode: FailoverMode,
+}
+----
+
+=== Zone-Aware Index Placement
+
+[source,rust]
+----
+impl MultiZoneTierManager {
+    /// Place index with zone affinity
+    pub async fn place_index_with_affinity(
+        &self,
+        collection_id: &str,
+        index: &dyn AxisVectorIndex,
+    ) -> Result<IndexPlacement> {
+        // Check collection affinity
+        let preferred_zone = self.get_preferred_zone(collection_id)?;
+        
+        // Determine storage location based on heat and affinity
+        let heat_score = self.calculate_heat_score(collection_id);
+        
+        let placement = match heat_score {
+            90..=100 => {
+                // Very hot: replicate across zones in memory
+                IndexPlacement::MultiZone {
+                    primary: preferred_zone.clone(),
+                    replicas: self.get_replica_zones(&preferred_zone),
+                    tier: TierLevel::Memory,
+                }
+            }
+            70..=89 => {
+                // Hot: zone-local EBS/PD
+                IndexPlacement::ZoneLocal {
+                    zone: preferred_zone,
+                    storage: StorageLocation::ZoneLocal {
+                        volume_id: self.get_zone_volume(&preferred_zone)?,
+                        mount_path: self.get_mount_path(&preferred_zone)?,
+                    },
+                    tier: TierLevel::L2_NetworkDisk,
+                }
+            }
+            30..=69 => {
+                // Warm: regional S3/GCS
+                IndexPlacement::Regional {
+                    region: self.get_region(&preferred_zone)?,
+                    bucket: self.get_regional_bucket()?,
+                    tier: TierLevel::L3_CloudHot,
+                }
+            }
+            _ => {
+                // Cold: cross-region archive
+                IndexPlacement::Archive {
+                    primary_region: self.get_primary_region()?,
+                    tier: TierLevel::L5_Archive,
+                }
+            }
+        };
+        
+        // Update metadata with placement
+        self.regional_metadata.update_placement(
+            collection_id,
+            &placement,
+        ).await?;
+        
+        Ok(placement)
+    }
+    
+    /// Handle zone failure
+    pub async fn handle_zone_failure(
+        &self,
+        failed_zone: &AvailabilityZone,
+    ) -> Result<()> {
+        warn!("⚠️ Zone failure detected: {:?}", failed_zone);
+        
+        // Get affected collections
+        let affected = self.regional_metadata
+            .get_collections_in_zone(failed_zone)
+            .await?;
+        
+        // Failover based on strategy
+        match self.affinity_config.failover_mode {
+            FailoverMode::Automatic => {
+                // Immediate failover to replicas
+                for collection_id in affected {
+                    self.failover_collection(&collection_id, failed_zone).await?;
+                }
+            }
+            FailoverMode::Manual => {
+                // Alert and wait for manual intervention
+                self.alert_zone_failure(failed_zone, &affected).await?;
+            }
+            FailoverMode::ReadOnly => {
+                // Switch to read-only from replicas
+                for collection_id in affected {
+                    self.enable_read_only_mode(&collection_id).await?;
+                }
+            }
+        }
+        
+        Ok(())
+    }
+}
+----
+
+=== Regional Metadata Management
+
+[source,rust]
+----
+pub struct RegionalMetadataStore {
+    /// Primary metadata location (DynamoDB/Firestore/CosmosDB)
+    primary_store: Arc<dyn MetadataBackend>,
+    
+    /// Zone-local caches
+    zone_caches: HashMap<String, Arc<LocalMetadataCache>>,
+    
+    /// Cross-zone synchronization
+    sync_manager: Arc<MetadataSyncManager>,
+}
+
+impl RegionalMetadataStore {
+    /// Update storage location in metadata
+    pub async fn update_storage_location(
+        &self,
+        collection_id: &str,
+        location: StorageLocation,
+    ) -> Result<()> {
+        // Update primary store
+        let metadata = CollectionMetadata {
+            collection_id: collection_id.to_string(),
+            storage_location: location.clone(),
+            last_updated: Utc::now(),
+            version: self.increment_version(collection_id).await?,
+        };
+        
+        self.primary_store.put(&metadata).await?;
+        
+        // Invalidate zone caches
+        for cache in self.zone_caches.values() {
+            cache.invalidate(collection_id).await;
+        }
+        
+        // Sync to other zones
+        self.sync_manager.broadcast_update(&metadata).await?;
+        
+        Ok(())
+    }
+    
+    /// Get optimal read location
+    pub async fn get_optimal_read_location(
+        &self,
+        collection_id: &str,
+        requester_zone: &str,
+    ) -> Result<StorageLocation> {
+        let metadata = self.get_metadata(collection_id).await?;
+        
+        // Check for zone-local replica
+        if let Some(local_replica) = self.find_zone_local_replica(
+            &metadata.storage_location,
+            requester_zone,
+        ) {
+            return Ok(local_replica);
+        }
+        
+        // Check for same-region replica
+        if let Some(regional_replica) = self.find_regional_replica(
+            &metadata.storage_location,
+            requester_zone,
+        ) {
+            return Ok(regional_replica);
+        }
+        
+        // Return primary location
+        Ok(metadata.storage_location)
+    }
+}
+----
+
+=== Configuration Examples
+
+==== AWS Multi-AZ Setup
+
+[source,toml]
+----
+[axis.clustering]
+mode = "multi_az"
+primary_region = "us-east-1"
+
+[[axis.clustering.zones]]
+zone = "us-east-1a"
+role = "primary"
+storage = [
+    { type = "ebs_gp3", size_gb = 1000, mount = "/mnt/indexes-1a" },
+    { type = "instance_store", mount = "/mnt/nvme" }
+]
+
+[[axis.clustering.zones]]
+zone = "us-east-1b"
+role = "replica"
+storage = [
+    { type = "ebs_gp3", size_gb = 1000, mount = "/mnt/indexes-1b" }
+]
+
+[[axis.clustering.zones]]
+zone = "us-east-1c"
+role = "replica"
+storage = [
+    { type = "ebs_gp3", size_gb = 1000, mount = "/mnt/indexes-1c" }
+]
+
+[axis.clustering.regional_storage]
+s3_bucket = "proximadb-indexes-us-east-1"
+s3_region = "us-east-1"
+storage_class = "STANDARD_IA"
+
+[axis.clustering.affinity]
+zone_local_preference = true
+cross_zone_replication = true
+failover_mode = "automatic"
+
+# Collection-specific affinity
+[axis.clustering.collection_affinity]
+high_priority_collection = "us-east-1a"  # Pin to primary zone
+replicated_collection = "*"              # Replicate all zones
+----
+
+==== GCP Multi-Zone Setup
+
+[source,toml]
+----
+[axis.clustering]
+mode = "multi_zone"
+primary_region = "us-central1"
+
+[[axis.clustering.zones]]
+zone = "us-central1-a"
+role = "primary"
+storage = [
+    { type = "pd_extreme", size_gb = 500, mount = "/mnt/indexes-a" },
+    { type = "local_ssd", mount = "/mnt/local-ssd" }
+]
+
+[[axis.clustering.zones]]
+zone = "us-central1-b"
+role = "replica"
+storage = [
+    { type = "pd_ssd", size_gb = 500, mount = "/mnt/indexes-b" }
+]
+
+[axis.clustering.regional_storage]
+gcs_bucket = "proximadb-indexes-us-central1"
+storage_class = "STANDARD"
+
+[axis.clustering.cross_region_backup]
+enabled = true
+backup_regions = ["us-east1", "europe-west1"]
+backup_class = "NEARLINE"
+----
+
+=== Zone-Aware Query Routing
+
+[source,rust]
+----
+impl MultiZoneTierManager {
+    /// Route query to optimal zone
+    pub async fn route_query(
+        &self,
+        query: VectorQuery,
+        client_zone: Option<String>,
+    ) -> Result<QueryResult> {
+        let collection_id = &query.collection_id;
+        
+        // Determine query zone preference
+        let target_zone = if let Some(zone) = client_zone {
+            // Client-specified zone preference
+            zone
+        } else {
+            // Auto-detect optimal zone
+            self.find_optimal_query_zone(collection_id).await?
+        };
+        
+        // Check if index is available in target zone
+        if let Some(zone_manager) = self.zone_managers.get(&target_zone) {
+            if zone_manager.has_index(collection_id).await {
+                // Execute locally in zone
+                return zone_manager.execute_query(query).await;
+            }
+        }
+        
+        // Fallback to cross-zone query
+        self.execute_cross_zone_query(query, &target_zone).await
+    }
+    
+    async fn execute_cross_zone_query(
+        &self,
+        query: VectorQuery,
+        preferred_zone: &str,
+    ) -> Result<QueryResult> {
+        // Find zones with the index
+        let available_zones = self.find_zones_with_index(&query.collection_id).await?;
+        
+        // Sort by network distance from preferred zone
+        let sorted_zones = self.sort_by_network_distance(available_zones, preferred_zone);
+        
+        // Try zones in order of proximity
+        for zone in sorted_zones {
+            if let Ok(result) = self.zone_managers[&zone]
+                .execute_query(query.clone())
+                .await
+            {
+                return Ok(result);
+            }
+        }
+        
+        Err(anyhow!("No zone could execute query"))
+    }
+}
+----
+
 == Conclusion
 
 This unified design provides:
@@ -1068,9 +1448,13 @@ This unified design provides:
 4. **Deployment adaptability**: Works across on-prem, cloud-managed, cloud-native
 5. **Durable storage**: S3 as configurable durability layer
 6. **Comprehensive monitoring**: Full observability of tier operations
+7. **Multi-AZ clustering**: Zone affinity with automatic failover
+8. **Regional metadata**: Centralized metadata with zone-local caching
+9. **Cross-zone replication**: Hot data replicated for high availability
+10. **Zone-aware routing**: Queries routed to optimal zone for minimal latency
 
-The architecture maximizes performance when resources are available while gracefully degrading to cost-effective operation under constraints.
+The architecture maximizes performance when resources are available while gracefully degrading to cost-effective operation under constraints, with full support for multi-zone deployments and regional affinity.
 
 ---
 _Last Updated: 2025-08-11_
-_Status: Unified Architecture Complete_
+_Status: Unified Architecture Complete with Multi-AZ Support_

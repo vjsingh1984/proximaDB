@@ -260,25 +260,33 @@ impl IndexMemoryTracker {
         &self,
         collection_id: &str,
     ) -> Result<bool> {
-        if let Some(mut status) = self.collection_status.get_mut(collection_id) {
-            if let Some(disk_location) = &status.disk_location {
+        // First check if disk location exists
+        let disk_location = {
+            if let Some(status) = self.collection_status.get(collection_id) {
+                status.disk_location.clone()
+            } else {
+                return Ok(false);
+            }
+        };
+        
+        if let Some(location) = disk_location {
+            // Now update the state
+            if let Some(mut status) = self.collection_status.get_mut(collection_id) {
                 status.memory_state = MemoryState::Loading {
                     progress_percentage: 0.0,
                 };
-                
-                info!("📥 AXIS: Loading index from disk for collection {} ({})",
-                      collection_id, disk_location);
-                
-                // TODO: Actual loading implementation would go here
-                // This would involve reading the serialized index from disk
-                // and reconstructing it in memory
-                
-                Ok(true)
-            } else {
-                Ok(false) // No disk location available
             }
+            
+            info!("📥 AXIS: Loading index from disk for collection {} ({})",
+                  collection_id, location);
+            
+            // TODO: Actual loading implementation would go here
+            // This would involve reading the serialized index from disk
+            // and reconstructing it in memory
+            
+            Ok(true)
         } else {
-            Ok(false)
+            Ok(false) // No disk location available
         }
     }
 }

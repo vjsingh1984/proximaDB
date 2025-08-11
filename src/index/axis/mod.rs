@@ -22,6 +22,7 @@ pub mod universal_index_storage;   // Universal storage handler for all indexes
 pub use ivf_unified as ivf_index;
 pub mod lsh_index;
 pub mod manager;
+pub mod memory_tracker;  // AXIS index memory residency tracking
 pub mod migration_engine;
 pub mod monitor;
 pub mod strategy;
@@ -66,6 +67,10 @@ pub use lsh_index::{AxisLshConfig, AxisLshIndex, LshStats};
 pub use manager::{
     AxisManager, FilterOperator, HybridQuery, MetadataFilter, MigrationStatus, QueryResult,
     ScoredResult, VectorQuery,
+};
+pub use memory_tracker::{
+    IndexMemoryTracker, IndexMemoryStatus, IndexType as MemTrackerIndexType, 
+    MemoryState, EvictionReason, MemoryStats,
 };
 pub use migration_engine::{IndexMigrationEngine, MigrationPlan, MigrationResult};
 pub use monitor::PerformanceMonitor;
