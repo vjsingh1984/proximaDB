@@ -90,10 +90,10 @@ impl std::fmt::Debug for DecompressionCache {
 impl DecompressionCache {
     /// Create a new decompression cache from configuration
     pub fn from_config(config: CacheConfig) -> Self {
-        // Apply smart defaults and caps
+        // Apply configurable limits
         let max_size_mb = config.max_size_mb
-            .min(8192)  // Cap at 8GB
-            .max(64);   // Minimum 64MB
+            .min(config.max_cap_mb)     // Apply cap
+            .max(config.min_size_mb);   // Apply minimum
         
         let max_size_bytes = max_size_mb * 1024 * 1024;
         let capacity = NonZeroUsize::new(1000).unwrap(); // Start with 1000 entries
@@ -307,9 +307,13 @@ impl DecompressionCache {
         
         // Check if adding this block would exceed cache size
         let mut current_size = self.current_size_bytes.write().await;
+        
         if *current_size + size_bytes > self.max_size_bytes {
             // Need to evict blocks
-            self.evict_blocks(*current_size + size_bytes - self.max_size_bytes).await?;
+            let bytes_to_free = *current_size + size_bytes - self.max_size_bytes;
+            drop(current_size); // Release the lock before calling evict_blocks
+            self.evict_blocks(bytes_to_free).await?;
+            current_size = self.current_size_bytes.write().await; // Re-acquire the lock
         }
         
         // Create cached block
@@ -500,6 +504,12 @@ impl DecompressionCache {
 pub struct CacheConfig {
     /// Maximum cache size in MB
     pub max_size_mb: usize,
+    /// Minimum cache size in MB (0 = no minimum)
+    #[serde(default)]
+    pub min_size_mb: usize,
+    /// Maximum cache size cap in MB (0 = no cap)
+    #[serde(default = "CacheConfig::default_max_cap")]
+    pub max_cap_mb: usize,
     /// Enable prefetching
     pub enable_prefetch: bool,
     /// Prefetch threshold (number of accesses before prefetching related blocks)
@@ -514,6 +524,8 @@ impl Default for CacheConfig {
     fn default() -> Self {
         Self {
             max_size_mb: 512,        // 512MB default
+            min_size_mb: 64,         // 64MB minimum in production
+            max_cap_mb: 8192,        // 8GB cap
             enable_prefetch: true,
             prefetch_threshold: 3,   // Prefetch after 3 accesses
             ttl_seconds: 0,          // No TTL by default
@@ -522,13 +534,36 @@ impl Default for CacheConfig {
     }
 }
 
+impl CacheConfig {
+    /// Default maximum cap value
+    fn default_max_cap() -> usize {
+        8192 // 8GB
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    /// Create a test cache config with minimal values
+    fn test_cache_config(max_size_mb: usize) -> CacheConfig {
+        CacheConfig {
+            max_size_mb,
+            min_size_mb: 0,      // No minimum for tests
+            max_cap_mb: 8192,    // Keep cap at 8GB
+            enable_prefetch: false,
+            prefetch_threshold: 3,
+            ttl_seconds: 0,
+            invalidation_check_interval_seconds: 0,
+        }
+    }
+
     #[tokio::test]
     async fn test_cache_basic_operations() {
-        let cache = DecompressionCache::new(10); // 10MB cache
+        // Initialize hardware capabilities for testing
+        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        
+        let cache = DecompressionCache::from_config(test_cache_config(10)); // 10MB cache
         
         let key = BlockCacheKey {
             file_path: "test.sst".to_string(),
@@ -555,22 +590,26 @@ mod tests {
 
     #[tokio::test]
     async fn test_cache_eviction() {
-        let cache = DecompressionCache::new(1); // 1MB cache - very small for testing
+        // Initialize hardware capabilities for testing
+        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
         
-        // Fill cache with blocks
-        for i in 0..100 {
+        let cache = DecompressionCache::from_config(test_cache_config(1)); // 1MB cache - very small for testing
+        
+        // Fill cache with blocks - create fewer but larger blocks to ensure we exceed cache size
+        for i in 0..20 {
             let key = BlockCacheKey {
                 file_path: "test.sst".to_string(),
                 block_id: i,
                 block_offset: 0,
             };
             
-            // Create a block with some data
+            // Create a large block with 500 records, each with 256-dim vectors
+            // This should be approximately 500 * (256 * 4 + overhead) = ~512KB per block
             let mut records = vec![];
-            for j in 0..100 {
+            for j in 0..500 {
                 records.push(SstRecord {
-                    id: format!("id_{}", j),
-                    vector: vec![0.0; 128], // 128-dim vector
+                    id: format!("id_long_name_for_testing_{}", j),
+                    vector: vec![0.0; 256], // 256-dim vector = 1KB per vector
                     metadata: vec![],
                     timestamp: 0,
                     updated_at: None,
@@ -588,7 +627,8 @@ mod tests {
         
         // Check that evictions happened
         let stats = cache.get_stats().await;
-        assert!(stats.evictions > 0);
+        assert!(stats.evictions > 0, "Expected evictions but got none. Cache stats: hits={}, misses={}, evictions={}, peak_size={}", 
+                stats.hits, stats.misses, stats.evictions, stats.peak_size_bytes);
         
         // Cache size should be under limit
         let current_size = cache.get_current_size().await;

@@ -7,9 +7,22 @@ mod tests {
     use std::sync::Arc;
     use tokio::time::{sleep, Duration};
 
+    /// Create a test cache config with minimal values
+    fn test_cache_config(max_size_mb: usize) -> CacheConfig {
+        CacheConfig {
+            max_size_mb,
+            min_size_mb: 0,      // No minimum for tests
+            max_cap_mb: 8192,    // Keep cap at 8GB
+            enable_prefetch: false,
+            prefetch_threshold: 3,
+            ttl_seconds: 0,
+            invalidation_check_interval_seconds: 0,
+        }
+    }
+
     #[tokio::test]
     async fn test_cache_basic_operations() {
-        let cache = DecompressionCache::new(10); // 10MB cache
+        let cache = DecompressionCache::from_config(test_cache_config(10)); // 10MB cache
         
         let key = BlockCacheKey {
             file_path: "test.sst".to_string(),
@@ -36,7 +49,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_cache_eviction() {
-        let cache = DecompressionCache::new(1); // 1MB cache - very small for testing
+        let cache = DecompressionCache::from_config(test_cache_config(1)); // 1MB cache - very small for testing
         
         // Fill cache with blocks
         for i in 0..100 {
@@ -78,7 +91,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_cache_invalidation_by_file() {
-        let cache = DecompressionCache::new(10);
+        let cache = DecompressionCache::from_config(test_cache_config(10));
         
         // Add multiple blocks from same file
         for i in 0..5 {
@@ -130,7 +143,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_cache_invalidation_by_collection() {
-        let cache = DecompressionCache::new(10);
+        let cache = DecompressionCache::from_config(test_cache_config(10));
         
         // Add blocks for collection1
         for i in 0..3 {
@@ -182,7 +195,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_cache_hit_rate() {
-        let cache = DecompressionCache::new(10);
+        let cache = DecompressionCache::from_config(test_cache_config(10));
         
         let key1 = BlockCacheKey {
             file_path: "test.sst".to_string(),
@@ -215,7 +228,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_cache_prefetching() {
-        let cache = DecompressionCache::new(10);
+        let cache = DecompressionCache::from_config(test_cache_config(10));
         
         // Simulate prefetching multiple blocks
         let file_path = "prefetch_test.sst";
@@ -256,7 +269,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_cache_by_compression_algorithm() {
-        let cache = DecompressionCache::new(10);
+        let cache = DecompressionCache::from_config(test_cache_config(10));
         
         // Add blocks with different compression algorithms
         let algorithms = vec![
@@ -289,6 +302,8 @@ mod tests {
     async fn test_cache_config() {
         let config = CacheConfig {
             max_size_mb: 256,
+            min_size_mb: 0,      // No minimum for tests
+            max_cap_mb: 8192,    // 8GB cap
             enable_prefetch: true,
             prefetch_threshold: 5,
             ttl_seconds: 300,
