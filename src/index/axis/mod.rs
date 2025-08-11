@@ -25,6 +25,8 @@ pub mod manager;
 pub mod memory_tracker;  // AXIS index memory residency tracking
 pub mod collection_state; // Collection-level tier state management
 pub mod tiering_manager;  // Intelligent tiering orchestration
+pub mod serialization;    // Index serialization and delta management
+pub mod recovery;         // Index recovery and restoration
 pub mod migration_engine;
 pub mod monitor;
 pub mod strategy;
@@ -79,6 +81,13 @@ pub use collection_state::{
 };
 pub use tiering_manager::{
     AxisTieringManager, AxisTieringConfig, TieringStats,
+};
+pub use serialization::{
+    IndexSerializer, IndexMetadata, IndexCheckpoint, IndexDelta, DeltaManager,
+    IndexType as SerializedIndexType, DeltaOperation, SerializableIndex,
+};
+pub use recovery::{
+    IndexRecoveryManager, RecoveryConfig, RecoveryStatus, RecoveryStats,
 };
 pub use migration_engine::{IndexMigrationEngine, MigrationPlan, MigrationResult};
 pub use monitor::PerformanceMonitor;
