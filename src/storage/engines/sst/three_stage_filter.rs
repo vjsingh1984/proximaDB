@@ -468,8 +468,8 @@ mod tests {
             DataBlock {
                 block_id: 0,
                 records: vec![
-                    VectorRecord {
-                        id: Some("vec1".to_string()),
+                    crate::storage::engines::sst::SstRecord {
+                        id: "vec1".to_string(),
                         vector: vec![0.1; 128],
                         metadata: vec![
                             crate::proto::proximadb::MetadataItem {
@@ -481,12 +481,12 @@ mod tests {
                         updated_at: None,
                         expires_at: None,
                         version: Some(1),
-                        rank: None,
-                        score: None,
-                        distance: None,
+                        is_tombstone: false,
+                        sequence_number: 1,
+                        level: 0,
                     },
-                    VectorRecord {
-                        id: Some("vec2".to_string()),
+                    crate::storage::engines::sst::SstRecord {
+                        id: "vec2".to_string(),
                         vector: vec![0.2; 128],
                         metadata: vec![
                             crate::proto::proximadb::MetadataItem {
@@ -498,12 +498,12 @@ mod tests {
                         updated_at: None,
                         expires_at: None,
                         version: Some(1),
-                        rank: None,
-                        score: None,
-                        distance: None,
+                        is_tombstone: false,
+                        sequence_number: 2,
+                        level: 0,
                     },
-                    VectorRecord {
-                        id: Some("vec3".to_string()),
+                    crate::storage::engines::sst::SstRecord {
+                        id: "vec3".to_string(),
                         vector: vec![0.3; 128],
                         metadata: vec![
                             crate::proto::proximadb::MetadataItem {
@@ -515,13 +515,13 @@ mod tests {
                         updated_at: None,
                         expires_at: None,
                         version: Some(1),
-                        rank: None,
-                        score: None,
-                        distance: None,
+                        is_tombstone: false,
+                        sequence_number: 3,
+                        level: 0,
                     },
                 ],
                 uncompressed_size: 1024,
-                compression_algorithm: 0, // COMPRESSION_NONE
+                compression_algorithm: crate::storage::engines::sst::CompressionAlgorithmSst::None,
                 compression_ratio: 1.0,
             },
         ]
