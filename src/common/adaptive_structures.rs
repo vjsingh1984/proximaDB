@@ -54,7 +54,7 @@ use std::hash::Hash;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::RwLock;
-use tracing::{debug, info, warn};
+use tracing::{debug, info};
 
 use crate::common::concurrent_structures::{AtomicMetrics, MetricsSnapshot};
 use crate::common::tier_policy_engine::{

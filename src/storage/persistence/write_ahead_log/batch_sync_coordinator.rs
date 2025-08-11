@@ -9,7 +9,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::{Mutex, RwLock};
 use tokio::time::interval;
-use tracing::{debug, info, warn};
+use tracing::{debug, info};
 
 use crate::storage::persistence::write_ahead_log::config::DurabilityLevel;
 use crate::storage::persistence::write_ahead_log::WriteBufferDiskManager;

@@ -24,7 +24,7 @@
 
 use anyhow::{anyhow, Result};
 use std::sync::{Arc, Mutex};
-use tracing::{debug, info, warn};
+use tracing::{debug, info};
 
 use crate::core::hardware_capabilities::{GpuBackend, GpuDevice, get_hardware_capabilities};
 use crate::query::sql_engine::parser::{SqlParser, ParsedQuery};

@@ -13,7 +13,7 @@ mod tests {
     use crate::core::VectorRecord;
     use crate::index::axis::types::{DataType, IndexAlgorithm, IndexSpecification};
     use crate::index::axis::index_factory::IndexFactory;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info};
 
     fn create_test_vector(id: &str, dimension: usize) -> VectorRecord {
         VectorRecord {

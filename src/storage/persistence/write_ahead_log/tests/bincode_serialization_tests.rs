@@ -16,7 +16,7 @@ use crate::storage::persistence::write_ahead_log::{
 use crate::storage::persistence::filesystem::FilesystemFactory;
 use crate::storage::memtable::specialized::wal_behavior::WALVectorBatch;
 use crate::compute::distance_computation::DistanceMetric;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info};
 
 /// Create test configuration
 fn create_test_config() -> WALConfig {

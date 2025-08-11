@@ -24,7 +24,7 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 use crate::proto::proximadb::Collection as Collection;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info};
 
 /// Performance metrics for monitoring and optimization
 #[derive(Debug, Clone, Serialize, Deserialize)]

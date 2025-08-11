@@ -11,7 +11,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::{RwLock, Semaphore};
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info};
 
 use crate::core::VectorRecord;
 use crate::storage::persistence::filesystem::{Filesystem, FilesystemFactory};

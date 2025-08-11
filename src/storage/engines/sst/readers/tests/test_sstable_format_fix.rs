@@ -7,7 +7,7 @@ use crate::core::config::SstConfig;
 use std::sync::Arc;
 use std::collections::BTreeMap;
 use tempfile::TempDir;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info};
 
 fn create_test_config() -> SstConfig {
     SstConfig {

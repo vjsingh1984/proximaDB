@@ -13,7 +13,7 @@ mod tests {
     };
     use crate::compute::distance_computation::DistanceMetric;
     use std::collections::HashMap;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info};
 
     /// Mock collection service that tracks how many times it's called
     struct MockCollectionService {

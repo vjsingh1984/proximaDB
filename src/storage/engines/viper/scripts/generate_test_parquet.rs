@@ -11,7 +11,7 @@
 
 use std::env;
 use std::path::Path;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<String> = env::args().collect();

@@ -28,7 +28,7 @@ use std::cmp::Ordering;
 use std::sync::Arc;
 use tokio::sync::{broadcast, Mutex, RwLock};
 use tokio::time::{Duration, Instant};
-use tracing::{debug, info, warn};
+use tracing::{debug, info};
 
 // use super::ml_clustering::{KMeansConfig, MLClusteringEngine}; // Moved to AXIS
 use super::quantization::{QuantizationConfig, VectorQuantizationEngine};

@@ -10,7 +10,7 @@
 
 use crate::core::VectorRecord;
 use std::collections::{HashMap, BTreeMap};
-use tracing::{debug, warn};
+use tracing::{debug};
 
 /// MVCC resolution result for a single record
 #[derive(Debug, Clone)]

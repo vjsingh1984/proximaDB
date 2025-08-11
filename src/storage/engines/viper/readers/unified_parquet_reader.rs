@@ -6,7 +6,7 @@
 use anyhow::Result;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
-use tracing::{debug, info, warn};
+use tracing::{debug, info};
 
 use crate::core::VectorRecord;
 use crate::core::search::FilterExpression;

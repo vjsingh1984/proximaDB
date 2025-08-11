@@ -22,7 +22,7 @@ mod tests {
     };
     use crate::storage::persistence::filesystem::FilesystemFactory;
     use crate::storage::memtable::specialized::wal_behavior::WALVectorBatch;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info};
     
     /// Helper to create test vector with metadata
     fn create_test_vector(id: &str, values: Vec<f32>, metadata: HashMap<&str, &str>) -> VectorRecord {

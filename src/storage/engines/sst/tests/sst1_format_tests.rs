@@ -9,7 +9,7 @@ mod tests {
     use crate::storage::persistence::filesystem::FilesystemFactory;
     use tempfile::TempDir;
     use std::sync::Arc;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info};
 
     #[tokio::test]
     async fn test_sst1_magic_bytes_write_and_read() {

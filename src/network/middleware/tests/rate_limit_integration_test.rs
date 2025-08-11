@@ -2,7 +2,7 @@
 //! Tests the end-to-end flow from TOML parsing to middleware wiring
 
 use crate::network::middleware::RateLimitConfig;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info};
 
 #[test]
 fn test_rate_limit_config_defaults() {
@@ -65,7 +65,7 @@ async fn test_rate_limit_config_conversion() {
 fn test_local_demo_config_toml_parsing() {
     // Test parsing a simple TOML config that disables rate limiting
     use toml;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info};
     
     let toml_content = r#"
 [network]

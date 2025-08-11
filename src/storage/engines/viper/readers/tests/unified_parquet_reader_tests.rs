@@ -17,7 +17,7 @@ mod tests {
     use serde_json::json;
     use tempfile::TempDir;
     use anyhow::Result;
-    use tracing::{debug, error, info, warn};
+    use tracing::{debug, error, info};
     use arrow_array::{Array, RecordBatch, StringArray, Int64Array, Float32Array};
     use arrow_schema::{DataType, Field, Schema};
     use parquet::arrow::ArrowWriter;
@@ -258,7 +258,7 @@ mod tests {
     ) -> Result<()> {
         use arrow_array::builder::{ListBuilder, Float32Builder, StringBuilder};
         use tokio::fs;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info};
         
         // Ensure parent directory exists
         if let Some(parent) = std::path::Path::new(file_path).parent() {

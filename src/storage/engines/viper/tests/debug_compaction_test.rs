@@ -4,7 +4,7 @@
 use std::sync::Arc;
 use tempfile::TempDir;
 use anyhow::Result;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info};
 
 use crate::core::VectorRecord;
 use crate::proto::proximadb::MetadataItem;

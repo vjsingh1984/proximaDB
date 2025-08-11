@@ -332,7 +332,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info};
 
     #[tokio::test]
     async fn test_btree_basic_operations() {

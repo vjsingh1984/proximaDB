@@ -32,7 +32,7 @@ mod tests {
     use std::thread;
     use std::time::{Duration, Instant};
     use std::sync::atomic::{AtomicUsize, Ordering};
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info};
     
     /// Test complete SQL parsing pipeline with all optimizations
     #[test]

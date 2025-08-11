@@ -41,7 +41,7 @@ pub use planner::{QueryPlanner, ExecutionPlan};
 use anyhow::Result;
 use std::sync::Arc;
 use crate::services::{VectorOperationsService, CollectionService};
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info};
 
 /// SQL Engine for ProximaDB with unified caching
 pub struct SqlEngine {

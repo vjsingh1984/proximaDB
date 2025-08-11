@@ -13,7 +13,7 @@ mod tests {
     use crate::core::VectorRecord;
     use std::collections::HashMap;
     use std::time::Instant;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info};
 
     fn create_test_vector(id: &str, values: Vec<f32>) -> VectorRecord {
         VectorRecord {

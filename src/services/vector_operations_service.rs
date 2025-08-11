@@ -13,7 +13,7 @@
 use anyhow::{Context, Result};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info};
 
 use crate::core::bloom::BloomFilterStrategy;
 

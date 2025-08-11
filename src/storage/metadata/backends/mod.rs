@@ -30,7 +30,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 use super::{CollectionMetadata, MetadataFilter, MetadataOperation, SystemMetadata};
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info};
 
 
 /// Metadata backend configuration

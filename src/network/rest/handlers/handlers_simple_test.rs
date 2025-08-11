@@ -3,7 +3,7 @@ mod tests {
     use super::*;
     use crate::core::proto_metadata_helper;
     use crate::proto::proximadb::{MetadataItem, metadata_item};
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info};
 
     #[test]
     fn test_metadata_conversion_issue() {

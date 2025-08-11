@@ -6,7 +6,7 @@ use crate::core::config::SstConfig;
 use std::sync::Arc;
 use std::collections::BTreeMap;
 use tempfile::TempDir;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info};
 
 fn create_test_config() -> SstConfig {
     SstConfig {
@@ -100,7 +100,7 @@ async fn test_simple_sstable_write_read() {
     
     while (cursor.position() as usize) < index_data.len() {
         use std::io::Read;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info};
         
         // Read entry length
         let mut len_bytes = [0u8; 4];

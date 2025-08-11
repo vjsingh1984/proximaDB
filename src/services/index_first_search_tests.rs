@@ -254,7 +254,7 @@ mod tests {
         info!("🧪 Testing performance improvement with index-first strategy");
         
         use std::time::Instant;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info};
         
         // Measure search time with and without indexes
         let iterations = 10;

@@ -20,7 +20,7 @@ use clap::Parser;
 use proximadb::core::hardware_capabilities::initialize_hardware_capabilities;
 use proximadb::{ConfigLoader, ProximaDB};
 use std::path::{Path, PathBuf};
-use tracing::{error, info, warn};
+use tracing::{error, info};
 
 #[derive(Parser)]
 #[command(name = "proximadb-server")]

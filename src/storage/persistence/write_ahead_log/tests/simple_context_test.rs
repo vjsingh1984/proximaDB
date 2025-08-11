@@ -8,7 +8,7 @@ mod tests {
     };
     use crate::compute::distance_computation::DistanceMetric;
     use std::collections::HashMap;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info};
 
     #[tokio::test]
     async fn test_background_flush_context_creation() {

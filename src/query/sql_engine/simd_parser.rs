@@ -697,7 +697,7 @@ mod tests {
     fn test_concurrent_access() {
         use std::sync::Arc;
         use std::thread;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info};
         
         let handles: Vec<_> = (0..10).map(|i| {
             thread::spawn(move || {

@@ -9,7 +9,7 @@
 
 use std::sync::Arc;
 use tempfile::TempDir;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info};
 
 use crate::core::VectorRecord;
 use crate::proto::proximadb::MetadataItem;
@@ -663,7 +663,7 @@ async fn test_search_vectors_unified() {
     {
         use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
         use arrow_array::Array;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info};
         
         // Find the parquet file again
         let mut parquet_path = String::new();

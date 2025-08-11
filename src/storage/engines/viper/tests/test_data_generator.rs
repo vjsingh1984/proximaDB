@@ -418,7 +418,7 @@ impl TestDataGenerator {
 mod tests {
     use super::*;
     use tempfile::TempDir;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info};
     
     #[test]
     fn test_data_generator_creation() {

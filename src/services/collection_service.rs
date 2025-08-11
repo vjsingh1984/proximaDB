@@ -24,7 +24,7 @@ use rand::seq::SliceRandom;
 use std::sync::Arc;
 use std::collections::HashMap;
 use tokio::sync::RwLock;
-use tracing::{debug, info, warn};
+use tracing::{debug, info};
 
 // Using String directly instead of String alias for proto-first architecture
 use crate::proto::proximadb::{CollectionConfig, Collection};

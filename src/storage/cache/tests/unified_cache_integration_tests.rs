@@ -384,7 +384,7 @@ mod unified_search_cache_tests {
 mod performance_tests {
     use super::*;
     use std::time::Instant;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info};
     
     #[tokio::test]
     async fn test_batch_caching_performance() {

@@ -30,7 +30,6 @@ use serde::de::DeserializeOwned;
 use serde::Serialize;
 use std::hash::Hash;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
-use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 /// Generic concurrent storage with automatic metrics tracking

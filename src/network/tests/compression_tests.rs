@@ -4,7 +4,7 @@ mod tests {
     use flate2::write::GzEncoder;
     use flate2::Compression;
     use std::io::{Read, Write};
-    use tracing::{debug, error, info, warn};
+    use tracing::{debug, error, info};
 
     #[test]
     fn test_gzip_compression() {
@@ -105,7 +105,7 @@ mod tests {
             }),
             ("deflate", {
                 use flate2::write::DeflateEncoder;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info};
                 let mut encoder = DeflateEncoder::new(Vec::new(), Compression::default());
                 encoder.write_all(&vector_data).unwrap();
                 encoder.finish().unwrap()

@@ -12,7 +12,7 @@ mod tests {
     use std::sync::Arc;
     use tokio::fs;
     use anyhow::Result;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info};
 
     async fn create_test_store() -> Result<MetricsPersistenceLayer> {
         let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();

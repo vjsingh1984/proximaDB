@@ -18,7 +18,7 @@
 
 use anyhow::{anyhow, Result};
 use std::sync::Arc;
-use tracing::{debug, info, warn};
+use tracing::{debug, info};
 
 use super::distance::{DistanceCompute, DistanceMetric};
 use crate::compute::distance_computation::engine::{GpuAccelerator, HardwareBackend};

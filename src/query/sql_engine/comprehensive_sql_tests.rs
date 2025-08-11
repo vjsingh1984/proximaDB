@@ -40,7 +40,7 @@ mod tests {
     };
     use crate::services::vector_operations_service::VectorOperationsService;
     use crate::proto::proximadb::{VectorRecord, MetadataItem};
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info};
 
     /// Test vector data structure for SQL testing
     #[derive(Debug, Clone)]

@@ -11,7 +11,7 @@ mod tests {
     use crate::core::bloom::strategies::composite::CompositeBloomFilterBuilder;
     use crate::storage::engines::sst::bloom_filter::{SstableBloomFilter, BloomFilterStats};
     use std::collections::HashMap;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info};
     
     #[test]
     fn test_bloom_filter_basic_operations() {

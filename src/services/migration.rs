@@ -17,7 +17,7 @@ use uuid::Uuid;
 
 
 use crate::storage::{
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info};
     metadata_store::{StrategyChangeStatus, StrategyChangeType},
     strategy::{CollectionStrategyConfig, StorageEngineType, IndexingAlgorithm, DistanceMetric},
     MetadataStore,

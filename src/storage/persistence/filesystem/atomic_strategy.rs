@@ -21,7 +21,7 @@ use rand;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info};
 
 use super::{FileOptions, FileSystem, FilesystemError, FsResult};
 

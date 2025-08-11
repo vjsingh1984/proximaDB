@@ -27,7 +27,7 @@ use std::collections::{BinaryHeap, HashMap, HashSet};
 use std::cmp::Ordering;
 use std::sync::{Arc, RwLock, atomic::{AtomicUsize, Ordering as AtomicOrdering}};
 use dashmap::DashMap;
-use tracing::{debug, info, warn};
+use tracing::{debug, info};
 
 use crate::compute::distance_computation::DistanceMetric;
 use crate::compute::distance_computation::engine::UnifiedDistanceCompute;

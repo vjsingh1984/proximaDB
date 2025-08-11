@@ -608,7 +608,7 @@ impl Default for PrefetchConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info};
     
     #[tokio::test]
     #[ignore = "Test hangs - needs investigation"]

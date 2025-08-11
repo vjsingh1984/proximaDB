@@ -5,7 +5,7 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use anyhow::Result;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info};
 
 /// Partitioned key for collection-aware storage
 #[derive(Debug, Clone, Hash, PartialEq, Eq, Serialize, Deserialize)]

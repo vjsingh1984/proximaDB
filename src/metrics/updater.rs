@@ -14,7 +14,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;
 use tokio::sync::{mpsc, RwLock};
-use tracing::{debug, warn};
+use tracing::{debug};
 
 use super::{schema::{CollectionMetrics, FilterableColumnStats}, store::MetricsPersistenceLayer};
 

@@ -368,7 +368,7 @@ mod tests {
     use std::sync::Arc;
     use std::thread;
     use std::time::Instant;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info};
     
     #[test]
     fn test_pool_basic_functionality() {

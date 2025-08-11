@@ -10,7 +10,7 @@ use chrono::{DateTime, Utc};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info};
 
 use super::{
     AdaptiveIndexEngine, AxisClusteringEngine, AxisConfig, ClusteringConfig,

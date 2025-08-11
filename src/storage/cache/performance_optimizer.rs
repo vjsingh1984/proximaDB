@@ -328,7 +328,7 @@ impl CacheOptimizer {
         // Get metrics before optimization
         let cache_metrics = self.orchestrator.metrics();
         use crate::metrics::cache::{TierMetrics, MemoryMetrics, EvictionMetrics, CoordinationMetrics};
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info};
         let metrics_before = CacheMetricsSnapshot {
             overall_hit_rate: cache_metrics.hit_rate(),
             l1_metrics: TierMetrics {

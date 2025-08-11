@@ -219,7 +219,7 @@ mod tests {
     fn test_concurrent_gpu_parser_access() {
         use std::sync::Arc;
         use std::thread;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info};
         
         let parser_mutex = get_global_gpu_parser();
         let handles: Vec<_> = (0..5).map(|i| {

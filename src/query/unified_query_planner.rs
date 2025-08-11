@@ -13,7 +13,7 @@ use anyhow::{anyhow, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
-use tracing::{debug, info, warn};
+use tracing::{debug, info};
 
 use crate::core::search::{SearchParams, FilterExpression};
 use crate::proto::proximadb::{CompressionConfig, CompressionAlgorithm};

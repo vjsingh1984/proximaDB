@@ -29,7 +29,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::io::Error as IoError;
 use url::Url;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info};
 
 pub mod atomic_strategy;
 pub mod auth;

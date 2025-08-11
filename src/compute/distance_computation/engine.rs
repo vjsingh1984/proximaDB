@@ -43,7 +43,7 @@ use crate::core::hardware_capabilities::{get_hardware_capabilities, HardwareCapa
 
 // Re-export HardwareBackend for public use
 pub use crate::core::hardware_capabilities::HardwareBackend;
-use std::sync::{Arc, OnceLock};
+use std::sync::Arc;
 use std::cmp::Ordering;
 
 // ============================================================================

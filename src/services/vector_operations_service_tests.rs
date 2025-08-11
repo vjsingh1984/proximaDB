@@ -9,7 +9,7 @@ mod tests {
     use std::sync::Arc;
     use tempfile::TempDir;
     use std::collections::HashMap;
-    use tracing::{debug, error, info, warn};
+    use tracing::{debug, error, info};
 
     use crate::core::{Config, VectorRecord};
     use crate::proto::proximadb::{VectorRecord as ProtoVectorRecord, MetadataItem, metadata_item};

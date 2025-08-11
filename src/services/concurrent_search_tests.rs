@@ -335,7 +335,7 @@ mod tests {
         info!("🧪 Testing performance improvement from eliminating double WAL scan");
         
         use std::time::Instant;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info};
         
         // Simulate old behavior (with double scan)
         async fn search_with_double_scan(data_size: usize) -> std::time::Duration {

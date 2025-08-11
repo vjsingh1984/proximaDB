@@ -510,7 +510,7 @@ impl SstUnifiedSearchEngine {
         results: Vec<SearchResult>,
     ) -> Result<Vec<SearchResult>> {
         use std::collections::BTreeMap;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info};
         
         // Log MVCC processing if debug enabled
         debug!("🔍 MVCC: Processing {} results", results.len());

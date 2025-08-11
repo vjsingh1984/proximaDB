@@ -273,7 +273,7 @@ unsafe fn reduce_sum_ps_256(v: __m256) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info};
 
     #[test]
     #[cfg(target_arch = "x86_64")]

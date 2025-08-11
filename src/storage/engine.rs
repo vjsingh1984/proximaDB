@@ -15,7 +15,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use futures;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info};
 
 /// Calculate cosine similarity between two vectors
 fn calculate_cosine_similarity(a: &[f32], b: &[f32]) -> f32 {

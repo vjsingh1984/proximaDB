@@ -22,7 +22,7 @@ fn create_test_config() -> SstConfig {
     }
 }
 use serde_json::json;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info};
 
 #[tokio::test]
 #[ignore = "Needs investigation - Bincode deserialization issue"]

@@ -10,7 +10,7 @@ use anyhow::{Context, Result};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use tokio::sync::{Semaphore, RwLock};
-use tracing::{debug, info, warn};
+use tracing::{debug, info};
 
 /// Recovery thread pool that manages resources during startup
 #[derive(Debug)]

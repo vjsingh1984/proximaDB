@@ -24,7 +24,6 @@
 //! Data movement between tiers respects format boundaries
 
 use anyhow::{anyhow, Result};
-use async_trait::async_trait;
 use std::sync::Arc;
 use tracing::{info, debug};
 

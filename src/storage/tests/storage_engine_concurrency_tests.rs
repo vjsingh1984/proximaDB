@@ -14,7 +14,7 @@ mod tests {
     use std::sync::Arc;
     use tokio::task::JoinSet;
     use std::time::SystemTime;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info};
 
     async fn create_test_engine() -> (Arc<StorageEngine>, std::path::PathBuf) {
         

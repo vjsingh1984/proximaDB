@@ -473,7 +473,7 @@ pub struct PerformanceWinners {
 #[cfg(test)]
 mod tests {
     use super::*;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info};
 
     #[tokio::test]
     async fn test_memtable_factory() {

@@ -730,7 +730,7 @@ pub async fn run_all_coverage_tests() -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info};
     
     #[tokio::test]
     async fn run_comprehensive_coverage_tests() {

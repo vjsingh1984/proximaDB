@@ -23,7 +23,7 @@ mod tests {
     use tokio::sync::{Mutex, RwLock};
     use tokio::time::{sleep, Duration};
     use anyhow::Result;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info};
 
     /// Mock storage engine for integration testing
     #[derive(Debug, Clone)]

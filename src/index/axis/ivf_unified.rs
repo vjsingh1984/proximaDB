@@ -21,7 +21,7 @@ use std::hash::Hash;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use tracing::{debug, info, warn};
+use tracing::{debug, info};
 
 use crate::common::adaptive_structures::{
     AdaptiveStore, AdaptiveStoreConfig, BackendType, IndexStructure,

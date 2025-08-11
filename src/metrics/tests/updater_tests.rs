@@ -11,7 +11,7 @@ mod tests {
     use std::sync::Arc;
     use tokio::time::{sleep, Duration};
     use anyhow::Result;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info};
 
     async fn create_test_updater() -> Result<Arc<MetricsUpdateService>> {
         let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
