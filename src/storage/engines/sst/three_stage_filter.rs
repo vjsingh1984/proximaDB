@@ -521,7 +521,7 @@ mod tests {
                     },
                 ],
                 uncompressed_size: 1024,
-                compression_algorithm: crate::proto::proximadb::CompressionAlgorithm::None as i32,
+                compression_algorithm: 0, // COMPRESSION_NONE
                 compression_ratio: 1.0,
             },
         ]
