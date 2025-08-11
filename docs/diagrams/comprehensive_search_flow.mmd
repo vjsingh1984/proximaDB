@@ -51,6 +51,7 @@ sequenceDiagram
             
             alt Index In Memory
                 AxisIndex-->>VectorOpsService: index_handle
+                Note over AxisIndex: IndexMemoryTracker confirms<br/>residency status
                 VectorOpsService->>AxisIndex: query(vector, k, filters, data_urls)
                 
                 alt Product Quantization (PQ) Enabled
@@ -68,7 +69,16 @@ sequenceDiagram
                 AxisIndex-->>VectorOpsService: Indexed search results
             else Index Evicted/On Disk
                 AxisIndex-->>VectorOpsService: null (index unavailable)
-                Note over VectorOpsService: Fallback to storage scan<br/>with bloom filter optimization
+                Note over AxisIndex: CollectionStateManager tracks<br/>tier placement (Disk/Cloud)
+                
+                alt Hot Collection - Auto Promote
+                    AxisIndex->>AxisIndex: Load from disk/cloud<br/>via UnifiedTierManager
+                    AxisIndex-->>VectorOpsService: Index restored
+                    VectorOpsService->>AxisIndex: query(vector, k, filters)
+                    AxisIndex-->>VectorOpsService: Indexed search results
+                else Cold Collection - Scan Storage
+                    Note over VectorOpsService: Fallback to storage scan<br/>with bloom filter optimization
+                end
             end
         else No Indexes - Direct Storage Scan
             par Parallel Storage Search

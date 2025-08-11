@@ -12,6 +12,17 @@ _High-level system architecture showing all major components_
 
 _For detailed technical architecture, see link:../diagrams/technical-architecture-complete.mmd[navigation hub] with links to link:../diagrams/technical-api-protocols.mmd[API/protocols], link:../diagrams/technical-storage-architecture.mmd[storage], link:../diagrams/technical-hardware-acceleration.mmd[hardware acceleration], and more._
 
+=== AXIS Tiering Architecture
+
+image::axis-tiering-architecture.svg[AXIS Tiering Architecture, width=900]
+_Unified tiering system for intelligent index management across memory, disk, and cloud storage_
+
+image::axis-tiering-search-flow.svg[AXIS Tiering Search Flow, width=900]
+_Query execution flow with automatic tier management and promotion/demotion logic_
+
+image::axis-multi-az-architecture.svg[Multi-AZ AXIS Deployment, width=900]
+_Zone-aware clustering with regional affinity and automatic failover_
+
 === Design Principles
 * **Proto-first**: Zero double serialization, native proto flow
 * **Hardware acceleration**: Auto GPU/SIMD detection

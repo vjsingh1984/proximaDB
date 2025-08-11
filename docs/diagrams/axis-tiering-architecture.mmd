@@ -1,0 +1,111 @@
+graph TB
+    subgraph "AXIS Unified Tiering Architecture"
+        subgraph "Query Layer"
+            QR[Query Router]
+            QE[Query Executor]
+            TAS[Tier-Aware Scheduler]
+        end
+        
+        subgraph "Tier Management"
+            UTM[UnifiedTierManager]
+            CSM[CollectionStateManager]
+            IMT[IndexMemoryTracker]
+            HSC[HeatScorer]
+            TPE[TierPolicyEngine]
+        end
+        
+        subgraph "Storage Tiers"
+            subgraph "L0: Memory"
+                MEM[In-Memory Indexes<br/>HNSW/IVF/PQ]
+                MAC[Memory Access<br/>~1μs latency]
+            end
+            
+            subgraph "L1: Local Fast"
+                NVMe[NVMe/SSD Storage<br/>10-50μs latency]
+                LST[Local State Tracking]
+            end
+            
+            subgraph "L2: Network Disk"
+                EBS[EBS/PD/Azure Disk<br/>100-500μs latency]
+                PVC[Persistent Volume Claims]
+            end
+            
+            subgraph "L3: Cloud Hot"
+                S3E[S3 Express/GCS Standard<br/>5-20ms latency]
+                REG[Regional Storage]
+            end
+            
+            subgraph "L4: Cloud Cool"
+                S3S[S3 Standard/GCS Nearline<br/>50-200ms latency]
+                CRS[Cross-Region Replicas]
+            end
+            
+            subgraph "L5: Archive"
+                GLA[Glacier/Archive<br/>Hours latency]
+                LTS[Long-term Storage]
+            end
+        end
+        
+        subgraph "Multi-AZ Support"
+            MZM[MultiZoneTierManager]
+            ZAF[Zone Affinity Config]
+            RMS[Regional Metadata Store]
+            FAI[Failover Handler]
+        end
+        
+        subgraph "FileSystem API"
+            FSM[FileSystemManager]
+            LFS[LocalFileSystem]
+            S3FS[S3FileSystem]
+            GCSFS[GCSFileSystem]
+            AZFS[AzureFileSystem]
+        end
+    end
+    
+    %% Query Flow
+    QR --> QE
+    QE --> TAS
+    TAS --> UTM
+    
+    %% Tier Management Connections
+    UTM --> CSM
+    UTM --> IMT
+    UTM --> HSC
+    UTM --> TPE
+    
+    %% Storage Tier Flow
+    MEM <--> NVMe
+    NVMe <--> EBS
+    EBS <--> S3E
+    S3E <--> S3S
+    S3S <--> GLA
+    
+    %% Multi-AZ Integration
+    UTM --> MZM
+    MZM --> ZAF
+    MZM --> RMS
+    MZM --> FAI
+    
+    %% FileSystem Integration
+    UTM --> FSM
+    FSM --> LFS
+    FSM --> S3FS
+    FSM --> GCSFS
+    FSM --> AZFS
+    
+    %% Tier Operations
+    CSM -.->|Promote| MEM
+    CSM -.->|Demote| NVMe
+    IMT -.->|Evict| NVMe
+    IMT -.->|Load| MEM
+    HSC -.->|Score| TPE
+    TPE -.->|Policy| CSM
+    
+    style MEM fill:#e1f5fe
+    style NVMe fill:#fff3e0
+    style EBS fill:#fce4ec
+    style S3E fill:#f3e5f5
+    style S3S fill:#ede7f6
+    style GLA fill:#e8eaf6
+    style UTM fill:#c5e1a5
+    style MZM fill:#ffccbc

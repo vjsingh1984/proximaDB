@@ -23,6 +23,8 @@ pub use ivf_unified as ivf_index;
 pub mod lsh_index;
 pub mod manager;
 pub mod memory_tracker;  // AXIS index memory residency tracking
+pub mod collection_state; // Collection-level tier state management
+pub mod tiering_manager;  // Intelligent tiering orchestration
 pub mod migration_engine;
 pub mod monitor;
 pub mod strategy;
@@ -71,6 +73,12 @@ pub use manager::{
 pub use memory_tracker::{
     IndexMemoryTracker, IndexMemoryStatus, IndexType as MemTrackerIndexType, 
     MemoryState, EvictionReason, MemoryStats,
+};
+pub use collection_state::{
+    CollectionStateManager, CollectionTierState, TierLevel, CloudStorageType,
+};
+pub use tiering_manager::{
+    AxisTieringManager, AxisTieringConfig, TieringStats,
 };
 pub use migration_engine::{IndexMigrationEngine, MigrationPlan, MigrationResult};
 pub use monitor::PerformanceMonitor;

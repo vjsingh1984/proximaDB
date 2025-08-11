@@ -1,0 +1,116 @@
+graph TB
+    subgraph "Multi-AZ AXIS Deployment"
+        subgraph "Availability Zone A (Primary)"
+            subgraph "AZ-A Resources"
+                SVRA[ProximaDB Server A]
+                MEMA[Memory Indexes]
+                EBSA[EBS Volume A<br/>Zone-local storage]
+                NVMEA[Instance Store NVMe]
+            end
+        end
+        
+        subgraph "Availability Zone B (Replica)"
+            subgraph "AZ-B Resources"
+                SVRB[ProximaDB Server B]
+                MEMB[Memory Indexes]
+                EBSB[EBS Volume B<br/>Zone-local storage]
+                NVMEB[Instance Store NVMe]
+            end
+        end
+        
+        subgraph "Availability Zone C (Replica)"
+            subgraph "AZ-C Resources"
+                SVRC[ProximaDB Server C]
+                MEMC[Memory Indexes]
+                EBSC[EBS Volume C<br/>Zone-local storage]
+                NVMEC[Instance Store NVMe]
+            end
+        end
+        
+        subgraph "Regional Services"
+            subgraph "Metadata Management"
+                DDB[DynamoDB/Firestore<br/>Regional Metadata Store]
+                REDIS[ElastiCache/Redis<br/>Metadata Cache]
+            end
+            
+            subgraph "Regional Storage"
+                S3R[S3 Regional Bucket<br/>Cross-AZ accessible]
+                S3E[S3 Express One Zone<br/>AZ-specific]
+            end
+            
+            subgraph "Cross-Region Backup"
+                S3X[S3 Cross-Region<br/>Replication]
+                GLA[Glacier Archive]
+            end
+        end
+        
+        subgraph "Zone Coordination"
+            MZM[MultiZoneTierManager]
+            ZAC[Zone Affinity Config]
+            FLO[Failover Orchestrator]
+            LDR[Leader Election]
+        end
+    end
+    
+    %% Server connections to local storage
+    SVRA --> MEMA
+    SVRA --> EBSA
+    SVRA --> NVMEA
+    
+    SVRB --> MEMB
+    SVRB --> EBSB
+    SVRB --> NVMEB
+    
+    SVRC --> MEMC
+    SVRC --> EBSC
+    SVRC --> NVMEC
+    
+    %% Servers to regional services
+    SVRA --> DDB
+    SVRB --> DDB
+    SVRC --> DDB
+    
+    SVRA --> REDIS
+    SVRB --> REDIS
+    SVRC --> REDIS
+    
+    SVRA --> S3R
+    SVRB --> S3R
+    SVRC --> S3R
+    
+    %% Zone coordination
+    MZM --> SVRA
+    MZM --> SVRB
+    MZM --> SVRC
+    
+    MZM --> ZAC
+    MZM --> FLO
+    MZM --> LDR
+    
+    %% Metadata synchronization
+    DDB --> REDIS
+    
+    %% Storage tiering
+    EBSA -.->|Demote| S3R
+    EBSB -.->|Demote| S3R
+    EBSC -.->|Demote| S3R
+    
+    S3R -.->|Archive| S3X
+    S3X -.->|Long-term| GLA
+    
+    %% Failover paths
+    FLO -.->|Zone A fails| SVRB
+    FLO -.->|Zone B fails| SVRC
+    FLO -.->|Zone C fails| SVRA
+    
+    %% Data replication
+    MEMA -.->|Replicate hot| MEMB
+    MEMB -.->|Replicate hot| MEMC
+    MEMC -.->|Replicate hot| MEMA
+    
+    style SVRA fill:#c5e1a5
+    style SVRB fill:#ffccbc
+    style SVRC fill:#d1c4e9
+    style DDB fill:#fff3e0
+    style S3R fill:#e1f5fe
+    style MZM fill:#ffcdd2
