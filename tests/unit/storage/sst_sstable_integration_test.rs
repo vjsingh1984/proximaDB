@@ -2,6 +2,7 @@
 /// Tests the full cycle of writing and reading SSTable files
 
 use std::sync::Arc;
+use tracing::{debug, error, info, warn};
 use std::collections::HashMap;
 use tempfile::TempDir;
 use proximadb::core::{VectorRecord, MetadataItem};
@@ -12,7 +13,7 @@ use proximadb::storage::engines::sst::readers::unified_sstable_reader::{
 use proximadb::storage::engines::sst::SstRecord;
 use proximadb::core::bloom::BloomFilterConfig;
 use proximadb::storage::persistence::filesystem::FilesystemFactory;
-use proximadb::compute::distance::DistanceMetric;
+use proximadb::compute::distance_computation::DistanceMetric;
 use proximadb::core::search::{SearchParams};
 use anyhow::Result;
 
@@ -99,19 +100,19 @@ async fn test_sstable_write_read_integration() -> Result<()> {
     }
     
     writer.write_records(entries).await?;
-    println!("Wrote {} vectors to SSTable: {}", vectors.len(), sst_path);
+    debug!("Wrote {} vectors to SSTable: {}", vectors.len(), sst_path);
     
     // Create reader
     let reader = UnifiedSstableReader::new(filesystem.clone());
     
     // Load metadata
     reader.load_metadata(&sst_path).await?;
-    println!("Loaded SSTable metadata");
+    debug!("Loaded SSTable metadata");
     
     // Test bloom filter
     let might_contain_vec1 = reader.might_contain_key(&sst_path, "vec1").await;
     let might_contain_vec4 = reader.might_contain_key(&sst_path, "vec4").await;
-    println!("Bloom filter test - vec1: {}, vec4 (shouldn't exist): {}", 
+    debug!("Bloom filter test - vec1: {}, vec4 (shouldn't exist): {}", 
              might_contain_vec1, might_contain_vec4);
     
     assert!(might_contain_vec1, "Bloom filter should indicate vec1 might exist");
@@ -137,7 +138,7 @@ async fn test_sstable_write_read_integration() -> Result<()> {
     };
     
     let results = reader.search_vectors(&search_params, &context).await?;
-    println!("Search returned {} results", results.len());
+    debug!("Search returned {} results", results.len());
     
     // Verify results
     assert!(!results.is_empty(), "Should find results");
@@ -156,7 +157,7 @@ async fn test_sstable_write_read_integration() -> Result<()> {
     };
     
     let filtered_results = reader.search_vectors(&filtered_params, &context).await?;
-    println!("Filtered search (category=A) returned {} results", filtered_results.len());
+    debug!("Filtered search (category=A) returned {} results", filtered_results.len());
     
     // Should return vec1 and vec3 (category A), not vec2 (category B)
     assert_eq!(filtered_results.len(), 2, "Should find 2 results with category A");

@@ -49,7 +49,7 @@ async fn test_direct_arrow_strategy() -> Result<()> {
     assert!(result.processing_time_ms > 0);
     assert!(result.bytes_read > 0);
     
-    println!("✅ DirectArrow strategy test passed");
+    info!("✅ DirectArrow strategy test passed");
     Ok(())
 }
 
@@ -91,7 +91,7 @@ async fn test_metadata_filtered_strategy() -> Result<()> {
     assert!(result.processing_time_ms > 0);
     assert!(result.optimization_stats.seek_operations >= 0);
     
-    println!("✅ MetadataFiltered strategy test passed");
+    info!("✅ MetadataFiltered strategy test passed");
     Ok(())
 }
 
@@ -130,7 +130,7 @@ async fn test_quantized_two_stage_strategy() -> Result<()> {
     assert!(result.total_candidates > 0);
     assert!(result.processing_time_ms > 0);
     
-    println!("✅ QuantizedTwoStage strategy test passed");
+    info!("✅ QuantizedTwoStage strategy test passed");
     Ok(())
 }
 
@@ -182,7 +182,7 @@ async fn test_hybrid_strategy() -> Result<()> {
     assert!(result.processing_time_ms > 0);
     assert!(result.total_candidates >= 0);
     
-    println!("✅ Hybrid strategy test passed");
+    info!("✅ Hybrid strategy test passed");
     Ok(())
 }
 
@@ -252,7 +252,7 @@ async fn test_strategy_selector_logic() -> Result<()> {
         }
         _ => {
             // DirectArrow may be selected based on thresholds
-            println!("DirectArrow selected instead of MetadataFiltered (acceptable)");
+            debug!("DirectArrow selected instead of MetadataFiltered (acceptable)");
         }
     }
     
@@ -285,7 +285,7 @@ async fn test_strategy_selector_logic() -> Result<()> {
         _ => panic!("Expected DirectArrow with projection for large dataset"),
     }
     
-    println!("✅ Strategy selector logic test passed");
+    info!("✅ Strategy selector logic test passed");
     Ok(())
 }
 
@@ -324,7 +324,7 @@ async fn test_multi_file_coordination() -> Result<()> {
     assert!(result.vectors.len() <= 50); // Global ranking should limit to k
     assert!(result.processing_time_ms > 0);
     
-    println!("✅ Multi-file coordination test passed");
+    info!("✅ Multi-file coordination test passed");
     Ok(())
 }
 
@@ -377,7 +377,7 @@ async fn test_error_handling() -> Result<()> {
     let result_empty_vector = reader.execute_query(query_empty_vector).await;
     // Should handle gracefully (implementation dependent)
     
-    println!("✅ Error handling test passed");
+    info!("✅ Error handling test passed");
     Ok(())
 }
 
@@ -421,10 +421,10 @@ async fn test_performance_characteristics() -> Result<()> {
         assert!(result.processing_time_ms > 0);
         assert_eq!(result.vectors.len(), 20.min(size));
         
-        println!("📊 Size {}: {}ms (strategy: {})", size, duration.as_millis(), result.strategy_used);
+        debug!("📊 Size {}: {}ms (strategy: {})", size, duration.as_millis(), result.strategy_used);
     }
     
-    println!("✅ Performance characteristics test passed");
+    info!("✅ Performance characteristics test passed");
     Ok(())
 }
 
@@ -467,13 +467,13 @@ async fn test_caching_behavior() -> Result<()> {
     // Second query might be slightly faster due to caching
     // (though this depends on implementation details)
     
-    println!("✅ Caching behavior test passed");
+    info!("✅ Caching behavior test passed");
     Ok(())
 }
 
 /// Run all strategy tests
 pub async fn run_all_strategy_tests() -> Result<()> {
-    println!("🧪 Running comprehensive strategy tests...");
+    debug!("🧪 Running comprehensive strategy tests...");
     
     test_direct_arrow_strategy().await?;
     test_metadata_filtered_strategy().await?;
@@ -485,13 +485,14 @@ pub async fn run_all_strategy_tests() -> Result<()> {
     test_performance_characteristics().await?;
     test_caching_behavior().await?;
     
-    println!("🎉 All strategy tests passed!");
+    debug!("🎉 All strategy tests passed!");
     Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+use tracing::{debug, error, info, warn};
     
     #[tokio::test]
     async fn run_comprehensive_strategy_tests() {

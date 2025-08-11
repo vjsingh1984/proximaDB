@@ -9,14 +9,14 @@ graph TB
     end
     
     subgraph "Core Engine"
-        Services[<b>Core Services</b><br/>VectorOperations / Collections / Streaming]
-        Compute[<b>Compute Layer</b><br/>GPU / SIMD / Distance Engine]
-        Index[<b>Index Layer</b><br/>HNSW / IVF / LSH / Annoy / Flat / PQ]
+        Services[<b>Core Services</b><br/>Vector Operations / Collections / Streaming]
+        Compute[<b>Compute Layer</b><br/>Distance Computation / Hardware Acceleration]
+        Index[<b>Index Layer</b><br/>6 Indexing Algorithms]
     end
     
     subgraph "Data Management"
-        Storage[<b>Storage Engines</b><br/>VIPER Columnar / SST Row-based]
-        Cache[<b>Cache System</b><br/>Multi-tier / Pattern-aware]
+        Storage[<b>Dual Storage Engines</b><br/>Columnar & Row-based]
+        Cache[<b>Unified Cache System</b><br/>Multi-tier Caching]
     end
     
     subgraph "Infrastructure"

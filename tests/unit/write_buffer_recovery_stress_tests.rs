@@ -163,6 +163,7 @@ mod tests {
     #[tokio::test]
     async fn stress_test_large_wal_files() -> Result<()> {
         use std::time::Instant;
+use tracing::{debug, error, info, warn};
         
         let start = Instant::now();
         let temp_dir = TempDir::new()?;

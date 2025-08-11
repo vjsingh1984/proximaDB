@@ -410,7 +410,7 @@ impl WriteBufferUserConfig {
 /// SST (Sorted String Table) engine configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SstConfig {
-    /// Number of levels in the LSM tree
+    /// Number of levels in the SST tree
     pub level_count: u8,
     /// Minimum files before compaction triggers
     pub compaction_threshold: u32,
@@ -598,6 +598,34 @@ pub struct ApiConfig {
     pub max_request_size_mb: u64,
     pub timeout_seconds: u64,
     pub enable_tls: Option<bool>,
+    
+    /// Enable REST API compression (default: false)
+    #[serde(default = "default_false")]
+    pub rest_compression: bool,
+    
+    /// Enable gRPC compression (default: false)
+    #[serde(default = "default_false")]
+    pub grpc_compression: bool,
+    
+    /// Compression algorithm: "gzip", "deflate", "br" (default: "gzip")
+    #[serde(default = "default_compression_algorithm")]
+    pub compression_algorithm: String,
+    
+    /// Compression level 1-9 for gzip, 1-11 for brotli (default: 6)
+    #[serde(default = "default_compression_level_api")]
+    pub compression_level: i32,
+}
+
+fn default_false() -> bool {
+    false
+}
+
+fn default_compression_algorithm() -> String {
+    "gzip".to_string()
+}
+
+fn default_compression_level_api() -> i32 {
+    6
 }
 
 /// WAL storage configuration supporting multiple directories and cloud storage
@@ -749,6 +777,10 @@ impl Default for Config {
                 max_request_size_mb: 64,
                 timeout_seconds: 30,
                 enable_tls: Some(false),
+                rest_compression: false,         // All defaults false as requested
+                grpc_compression: false,         // All defaults false as requested
+                compression_algorithm: "gzip".to_string(),
+                compression_level: 6,
             },
             monitoring: MonitoringConfig {
                 metrics_enabled: true,

@@ -58,7 +58,7 @@ use proximadb::storage::engines::viper::{
 use proximadb::proto::proximadb::{MetadataItem, Collection};
 use proximadb::core::search::{SearchParams, FilterExpression};
 use proximadb::storage::traits::UnifiedStorageEngine;
-use proximadb::storage::transaction_coordinator::UnifiedAtomicCoordinator;
+use proximadb::storage::transaction_coordinator::TransactionCoordinator;
 use proximadb::storage::persistence::filesystem::FilesystemFactory;
 use proximadb::storage::metadata::store::MetadataStore;
 use std::sync::Arc;
@@ -264,7 +264,7 @@ async fn test_viper_flush_with_compression() -> anyhow::Result<()> {
     let metadata_url = format!("file://{}/metadata", temp_dir.path().display());
     let storage_url = format!("file://{}/storage", temp_dir.path().display());
     
-    let coordinator = Arc::new(UnifiedAtomicCoordinator::new(
+    let coordinator = Arc::new(TransactionCoordinator::new(
         filesystem.clone(),
         None
     ).await.unwrap());
@@ -303,6 +303,10 @@ async fn test_viper_flush_with_compression() -> anyhow::Result<()> {
                     },
             ],
             ..Default::default()
+        }),
+        storage_assignment: Some(proximadb::proto::proximadb::StorageAssignment {
+            base_location: temp_dir.path().to_str().unwrap().to_string(),
+            assigned_at: chrono::Utc::now().timestamp_micros(),
         }),
         ..Default::default()
     };
@@ -369,7 +373,7 @@ async fn test_viper_search_compressed_data() -> anyhow::Result<()> {
     let metadata_url = format!("file://{}/metadata", temp_dir.path().display());
     let storage_url = format!("file://{}/storage", temp_dir.path().display());
     
-    let coordinator = Arc::new(UnifiedAtomicCoordinator::new(
+    let coordinator = Arc::new(TransactionCoordinator::new(
         filesystem.clone(),
         None
     ).await.unwrap());
@@ -443,7 +447,7 @@ async fn test_viper_compaction_with_compression() -> anyhow::Result<()> {
     let filesystem = Arc::new(FilesystemFactory::new(Default::default()).await?);
     let metadata_url = format!("file://{}/metadata", temp_dir.path().display());
     
-    let coordinator = Arc::new(UnifiedAtomicCoordinator::new(
+    let coordinator = Arc::new(TransactionCoordinator::new(
         filesystem.clone(),
         None
     ).await.unwrap());
@@ -467,6 +471,10 @@ async fn test_viper_compaction_with_compression() -> anyhow::Result<()> {
             optimization_hints: None,
             ..Default::default()
             }),
+        storage_assignment: Some(proximadb::proto::proximadb::StorageAssignment {
+            base_location: temp_dir.path().to_str().unwrap().to_string(),
+            assigned_at: chrono::Utc::now().timestamp_micros(),
+        }),
         ..Default::default()
     };
     
@@ -538,7 +546,7 @@ async fn test_compression_algorithms_comparison() -> anyhow::Result<()> {
         let filesystem = Arc::new(FilesystemFactory::new(Default::default()).await?);
         let metadata_url = format!("file://{}/metadata", temp_dir.path().display());
         
-        let coordinator = Arc::new(UnifiedAtomicCoordinator::new(
+        let coordinator = Arc::new(TransactionCoordinator::new(
             filesystem.clone(),
             None
         ).await.unwrap());
@@ -559,6 +567,10 @@ async fn test_compression_algorithms_comparison() -> anyhow::Result<()> {
             config: Some(proximadb::proto::proximadb::CollectionConfig {
                 dimension: 512,
                 ..Default::default()
+            }),
+            storage_assignment: Some(proximadb::proto::proximadb::StorageAssignment {
+                base_location: temp_dir.path().to_str().unwrap().to_string(),
+                assigned_at: chrono::Utc::now().timestamp_micros(),
             }),
             ..Default::default()
         };
@@ -620,7 +632,7 @@ async fn test_compression_algorithm_vs_disabled() -> anyhow::Result<()> {
         let filesystem = Arc::new(FilesystemFactory::new(Default::default()).await?);
         let metadata_url = format!("file://{}/metadata", temp_dir.path().display());
         
-        let coordinator = Arc::new(UnifiedAtomicCoordinator::new(
+        let coordinator = Arc::new(TransactionCoordinator::new(
             filesystem.clone(),
             None
         ).await.unwrap());
@@ -641,6 +653,10 @@ async fn test_compression_algorithm_vs_disabled() -> anyhow::Result<()> {
             config: Some(proximadb::proto::proximadb::CollectionConfig {
                 dimension: 256, // Common embedding dimension (sentence-transformers, etc.)
                 ..Default::default()
+            }),
+            storage_assignment: Some(proximadb::proto::proximadb::StorageAssignment {
+                base_location: temp_dir.path().to_str().unwrap().to_string(),
+                assigned_at: chrono::Utc::now().timestamp_micros(),
             }),
             ..Default::default()
         };
@@ -711,12 +727,12 @@ async fn test_compression_algorithm_vs_disabled() -> anyhow::Result<()> {
     // With 256D sparse vectors, we should get decent compression 
     // Temporarily relaxed for debugging - let's see what we actually get
     if compression_ratio >= 95.0 {
-        println!("⚠️  WARNING: Very poor compression {:.2}% - investigating...", compression_ratio);
+        debug!("⚠️  WARNING: Very poor compression {:.2}% - investigating...", compression_ratio);
         // This suggests either vectors aren't sparse or compression isn't working
     } else if compression_ratio >= 85.0 {
-        println!("📊 Moderate compression {:.2}% - acceptable but could be better", compression_ratio);
+        debug!("📊 Moderate compression {:.2}% - acceptable but could be better", compression_ratio);
     } else {
-        println!("✅ Good compression {:.2}% - as expected for sparse vectors", compression_ratio);
+        debug!("✅ Good compression {:.2}% - as expected for sparse vectors", compression_ratio);
     }
     
     // For now, just ensure we get SOME compression benefit

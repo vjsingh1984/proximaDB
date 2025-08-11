@@ -4,12 +4,13 @@
 //! to ensure reliable testing without cross-test contamination.
 
 use anyhow::Result;
+use tracing::{debug, error, info, warn};
 use std::collections::{HashMap, HashSet};
 
 use super::test_utils::{IsolatedTestEnvironment, MultiEnvironmentTest};
 use proximadb::core::search::{FilterExpression, ComparisonOperator};
 use proximadb::core::VectorRecord;
-use proximadb::compute::distance::DistanceMetric;
+use proximadb::compute::distance_computation::DistanceMetric;
 use proximadb::storage::traits::{FlushParameters, CompactionParameters, UnifiedStorageEngine};
 
 #[tokio::test]
@@ -21,7 +22,7 @@ async fn test_isolated_sst_basic_operations() -> Result<()> {
     
     // Create test vectors
     let vectors = env.create_test_vectors(10);
-    println!("📝 Created {} test vectors for collection: {}", vectors.len(), env.collection_id());
+    debug!("📝 Created {} test vectors for collection: {}", vectors.len(), env.collection_id());
     
     // Insert and flush vectors
     let flush_params = FlushParameters {
@@ -29,6 +30,7 @@ async fn test_isolated_sst_basic_operations() -> Result<()> {
         vector_records: vectors,
         force: true,
         synchronous: true,
+        collection_config: None,
         ..Default::default()
     };
     
@@ -37,8 +39,10 @@ async fn test_isolated_sst_basic_operations() -> Result<()> {
     
     // Search without filters
     let query_vector = env.create_query_vector();
+    let storage_url = format!("file://{}/{}/data", env.temp_dir.path().to_str().unwrap(), env.collection_id());
     let results = engine.search_vectors_unified(
         env.collection_id(),
+        &storage_url,
         &query_vector,
         5,
         &DistanceMetric::Cosine,
@@ -48,9 +52,9 @@ async fn test_isolated_sst_basic_operations() -> Result<()> {
     ).await?;
     
     // Verify results
-    println!("🔍 Search returned {} results", results.len());
+    debug!("🔍 Search returned {} results", results.len());
     for (i, result) in results.iter().enumerate() {
-        println!("  Result {}: id={}, score={}", 
+        debug!("  Result {}: id={}, score={}", 
                  i, result.id, result.score);
     }
     assert!(!results.is_empty(), "Should find search results");
@@ -65,7 +69,7 @@ async fn test_isolated_sst_basic_operations() -> Result<()> {
             "Result ID {} should belong to collection {}", result.id, env.collection_id());
     }
     
-    println!("✅ Basic SST operations test passed for collection: {}", env.collection_id());
+    debug!("✅ Basic SST operations test passed for collection: {}", env.collection_id());
     Ok(())
 }
 
@@ -83,6 +87,7 @@ async fn test_isolated_sst_metadata_filtering() -> Result<()> {
         vector_records: vectors,
         force: true,
         synchronous: true,
+        collection_config: None,
         ..Default::default()
     };
     let result = engine.do_flush(&flush_params).await?;
@@ -95,8 +100,10 @@ async fn test_isolated_sst_metadata_filtering() -> Result<()> {
         value: serde_json::Value::String("A".to_string()),
     };
     
+    let storage_url = format!("file://{}/{}/data", env.temp_dir.path().to_str().unwrap(), env.collection_id());
     let filtered_results = engine.search_vectors_unified(
         env.collection_id(),
+        &storage_url,
         &env.create_query_vector(),
         10,
         &DistanceMetric::Cosine,
@@ -121,6 +128,7 @@ async fn test_isolated_sst_metadata_filtering() -> Result<()> {
     
     let type_results = engine.search_vectors_unified(
         env.collection_id(),
+        &storage_url,
         &env.create_query_vector(),
         10,
         &DistanceMetric::Cosine,
@@ -131,9 +139,9 @@ async fn test_isolated_sst_metadata_filtering() -> Result<()> {
     
     assert!(!type_results.is_empty(), "Should find results with type primary");
     
-    println!("✅ Metadata filtering test passed for collection: {}", env.collection_id());
-    println!("   Found {} results with category A", filtered_results.len());
-    println!("   Found {} results with type primary", type_results.len());
+    debug!("✅ Metadata filtering test passed for collection: {}", env.collection_id());
+    debug!("   Found {} results with category A", filtered_results.len());
+    debug!("   Found {} results with type primary", type_results.len());
     Ok(())
 }
 
@@ -144,7 +152,7 @@ async fn test_isolated_sst_flush_and_compaction() -> Result<()> {
     let env = IsolatedTestEnvironment::new().await?;
     let mut engine = env.create_sst_engine().await?;
     
-    println!("🔍 DEBUG TEST: Created SST engine for collection: {}", env.collection_id());
+    debug!("🔍 DEBUG TEST: Created SST engine for collection: {}", env.collection_id());
     
     // Insert multiple batches to trigger compaction
     let batch_size = 5;
@@ -159,9 +167,9 @@ async fn test_isolated_sst_flush_and_compaction() -> Result<()> {
             vector
         }).collect();
         
-        println!("🔍 DEBUG TEST: Flushing batch {} with {} vectors", batch + 1, vectors.len());
+        debug!("🔍 DEBUG TEST: Flushing batch {} with {} vectors", batch + 1, vectors.len());
         for (i, v) in vectors.iter().take(2).enumerate() {
-            println!("🔍 DEBUG TEST:   Vector {}: id={:?}", i, v.id);
+            debug!("🔍 DEBUG TEST:   Vector {}: id={:?}", i, v.id);
         }
         
         let flush_params = FlushParameters {
@@ -169,12 +177,13 @@ async fn test_isolated_sst_flush_and_compaction() -> Result<()> {
             vector_records: vectors,
             force: true,
             synchronous: true,
+            collection_config: None,
             ..Default::default()
         };
         
         let result = engine.do_flush(&flush_params).await?;
         assert!(result.success, "Flush should succeed");
-        println!("📦 Flushed batch {} of {} - entries_flushed={}, bytes_written={}", 
+        debug!("📦 Flushed batch {} of {} - entries_flushed={}, bytes_written={}", 
             batch + 1, num_batches, result.entries_flushed, result.bytes_written);
     }
     
@@ -184,14 +193,17 @@ async fn test_isolated_sst_flush_and_compaction() -> Result<()> {
         collection_id: Some(env.collection_id().to_string()),
         force: true,
         synchronous: true,
+        collection_config: None,
         ..Default::default()
     };
     let result = engine.compact(compact_params).await?;
     assert!(result.success, "Compaction should succeed");
     
     // Verify all vectors are still searchable after compaction
+    let storage_url = format!("file://{}/{}/data", env.temp_dir.path().to_str().unwrap(), env.collection_id());
     let all_results = engine.search_vectors_unified(
         env.collection_id(),
+        &storage_url,
         &env.create_query_vector(),
         100, // Request all vectors
         &DistanceMetric::Euclidean,
@@ -213,8 +225,8 @@ async fn test_isolated_sst_flush_and_compaction() -> Result<()> {
             "Duplicate result ID found: {}", result.id);
     }
     
-    println!("✅ Flush and compaction test passed for collection: {}", env.collection_id());
-    println!("   Found all {} vectors after compaction", total_vectors);
+    debug!("✅ Flush and compaction test passed for collection: {}", env.collection_id());
+    debug!("   Found all {} vectors after compaction", total_vectors);
     Ok(())
 }
 
@@ -261,6 +273,7 @@ async fn test_isolated_sst_concurrent_operations() -> Result<()> {
                 vector_records: vectors,
                 force: true,
                 synchronous: true,
+                collection_config: None,
                 ..Default::default()
             };
             
@@ -283,7 +296,7 @@ async fn test_isolated_sst_concurrent_operations() -> Result<()> {
                 }
             }
             Err(e) => {
-                println!("⚠️ Concurrent flush failed: {}", e);
+                debug!("⚠️ Concurrent flush failed: {}", e);
             }
         }
     }
@@ -296,8 +309,10 @@ async fn test_isolated_sst_concurrent_operations() -> Result<()> {
         "Should have flushed expected total");
     
     // Verify all vectors are searchable
+    let storage_url = format!("file://{}/{}/data", env.temp_dir.path().to_str().unwrap(), env.collection_id());
     let search_results = engine.search_vectors_unified(
         env.collection_id(),
+        &storage_url,
         &env.create_query_vector(),
         100,
         &DistanceMetric::Euclidean,
@@ -309,8 +324,8 @@ async fn test_isolated_sst_concurrent_operations() -> Result<()> {
     assert_eq!(search_results.len(), expected_total as usize,
         "Should find all items after concurrent operations");
     
-    println!("✅ Concurrent operations test passed for collection: {}", env.collection_id());
-    println!("   {} concurrent batches, {} total items written", successful_flushes, total_flushed);
+    debug!("✅ Concurrent operations test passed for collection: {}", env.collection_id());
+    debug!("   {} concurrent batches, {} total items written", successful_flushes, total_flushed);
     Ok(())
 }
 
@@ -340,8 +355,10 @@ async fn test_isolated_sst_recovery_persistence() -> Result<()> {
         let engine = env.create_sst_engine().await?;
         
         // Search for persisted data
+        let storage_url = format!("file://{}/{}/data", env.temp_dir.path().to_str().unwrap(), env.collection_id());
         let results = engine.search_vectors_unified(
             env.collection_id(),
+            &storage_url,
             &env.create_query_vector(),
             10,
             &DistanceMetric::Cosine,
@@ -366,8 +383,8 @@ async fn test_isolated_sst_recovery_persistence() -> Result<()> {
         assert_eq!(original_ids, found_ids, "Persisted vector IDs should match original");
     }
     
-    println!("✅ Recovery persistence test passed for collection: {}", env.collection_id());
-    println!("   Successfully recovered {} items after system restart", original_vectors.len());
+    debug!("✅ Recovery persistence test passed for collection: {}", env.collection_id());
+    debug!("   Successfully recovered {} items after system restart", original_vectors.len());
     Ok(())
 }
 
@@ -393,17 +410,20 @@ async fn test_isolated_multi_collection_isolation() -> Result<()> {
             vector_records: vectors,
             force: true,
             synchronous: true,
+            collection_config: None,
             ..Default::default()
         };
         let result = engine.do_flush(&flush_params).await?;
         assert!(result.success, "Flush should succeed");
-        println!("📁 Inserted data in collection {}: {}", i, env.collection_id());
+        debug!("📁 Inserted data in collection {}: {}", i, env.collection_id());
     }
     
     // Verify complete isolation - each collection should only see its own data
     for (i, (env, engine)) in multi_env.environments.iter().zip(engines.iter()).enumerate() {
+        let storage_url = format!("file://{}/{}/data", env.temp_dir.path().to_str().unwrap(), env.collection_id());
         let results = engine.search_vectors_unified(
             env.collection_id(),
+            &storage_url,
             &env.create_query_vector(),
             10,
             &DistanceMetric::Cosine,
@@ -432,9 +452,9 @@ async fn test_isolated_multi_collection_isolation() -> Result<()> {
         }
     }
     
-    println!("✅ Multi-collection isolation test completed");
+    debug!("✅ Multi-collection isolation test completed");
     for (i, env) in multi_env.environments.iter().enumerate() {
-        println!("   Collection {}: {} (isolated)", i, env.collection_id());
+        debug!("   Collection {}: {} (isolated)", i, env.collection_id());
     }
     Ok(())
 }
@@ -494,6 +514,7 @@ async fn test_isolated_sst_distance_metrics() -> Result<()> {
         vector_records: vectors,
         force: true,
         synchronous: true,
+        collection_config: None,
         ..Default::default()
     };
     let result = engine.do_flush(&flush_params).await?;
@@ -508,9 +529,11 @@ async fn test_isolated_sst_distance_metrics() -> Result<()> {
         DistanceMetric::DotProduct,
     ];
     
+    let storage_url = format!("file://{}/{}/data", env.temp_dir.path().to_str().unwrap(), env.collection_id());
     for metric in metrics {
         let results = engine.search_vectors_unified(
             env.collection_id(),
+            &storage_url,
             &query_vector,
             3,
             &metric,
@@ -534,10 +557,10 @@ async fn test_isolated_sst_distance_metrics() -> Result<()> {
             _ => {} // Other metrics not tested in this specific test
         }
         
-        println!("📐 {:?} metric: closest distance = {:.4}", metric, distance);
+        debug!("📐 {:?} metric: closest distance = {:.4}", metric, distance);
     }
     
-    println!("✅ Distance metrics test passed for collection: {}", env.collection_id());
+    debug!("✅ Distance metrics test passed for collection: {}", env.collection_id());
     Ok(())
 }
 
@@ -590,11 +613,12 @@ async fn test_isolated_sst_large_dataset() -> Result<()> {
             vector_records: vectors,
             force: true,
             synchronous: true,
+            collection_config: None,
             ..Default::default()
         };
         let result = engine.do_flush(&flush_params).await?;
         assert!(result.success, "Flush should succeed");
-        println!("📦 Inserted batch {} of {} ({} vectors)", batch + 1, num_batches, batch_size);
+        debug!("📦 Inserted batch {} of {} ({} vectors)", batch + 1, num_batches, batch_size);
         
         // Give the manifest time to update
         tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
@@ -606,8 +630,10 @@ async fn test_isolated_sst_large_dataset() -> Result<()> {
     // Test various search scenarios
     
     // 1. Search for top-k results
+    let storage_url = format!("file://{}/{}/data", env.temp_dir.path().to_str().unwrap(), env.collection_id());
     let top_k_results = engine.search_vectors_unified(
         env.collection_id(),
+        &storage_url,
         &vec![0.1, 0.2, 0.3],
         15,
         &DistanceMetric::Euclidean,
@@ -627,6 +653,7 @@ async fn test_isolated_sst_large_dataset() -> Result<()> {
     
     let batch_results = engine.search_vectors_unified(
         env.collection_id(),
+        &storage_url,
         &vec![0.5, 0.6, 0.7],
         30,
         &DistanceMetric::Cosine,
@@ -635,12 +662,13 @@ async fn test_isolated_sst_large_dataset() -> Result<()> {
         true
     ).await?;
     
-    println!("DEBUG: batch_filter = {:?}", batch_filter);
-    println!("DEBUG: batch_results.len() = {}", batch_results.len());
+    debug!("DEBUG: batch_filter = {:?}", batch_filter);
+    debug!("DEBUG: batch_results.len() = {}", batch_results.len());
     if batch_results.is_empty() {
         // Let's check without filter to see what metadata we have
         let debug_results = engine.search_vectors_unified(
             env.collection_id(),
+            &storage_url,
             &vec![0.5, 0.6, 0.7],
             5,
             &DistanceMetric::Cosine,
@@ -648,9 +676,9 @@ async fn test_isolated_sst_large_dataset() -> Result<()> {
             true,
             true
         ).await?;
-        println!("DEBUG: Sample results without filter:");
+        debug!("DEBUG: Sample results without filter:");
         for (i, result) in debug_results.iter().enumerate() {
-            println!("  Result {}: id={}, metadata={:?}", i, result.id, result.metadata);
+            debug!("  Result {}: id={}, metadata={:?}", i, result.id, result.metadata);
         }
     }
     
@@ -660,6 +688,7 @@ async fn test_isolated_sst_large_dataset() -> Result<()> {
     // 3. Search across all data to verify completeness
     let all_results = engine.search_vectors_unified(
         env.collection_id(),
+        &storage_url,
         &vec![0.5, 0.5, 0.5],
         200, // Request more than we have
         &DistanceMetric::DotProduct,
@@ -671,8 +700,8 @@ async fn test_isolated_sst_large_dataset() -> Result<()> {
     assert_eq!(all_results.len(), total_vectors,
         "Should find all {} vectors in the collection", total_vectors);
     
-    println!("✅ Large dataset test passed for collection: {}", env.collection_id());
-    println!("   Dataset: {} vectors, Top-K: {}, Filtered: {}, All: {}", 
+    debug!("✅ Large dataset test passed for collection: {}", env.collection_id());
+    debug!("   Dataset: {} vectors, Top-K: {}, Filtered: {}, All: {}", 
              total_vectors, top_k_results.len(), batch_results.len(), all_results.len());
     Ok(())
 }

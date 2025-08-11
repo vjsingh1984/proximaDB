@@ -262,6 +262,7 @@ mod tests {
                 estimated_size_mb: 50.0,
                 is_cloud_storage: false,
                 supports_range_requests: false,
+                file_paths: None,
             },
             filterable_columns: vec![
                 FilterableColumn {
@@ -470,6 +471,7 @@ mod tests {
         // Note: UnifiedQuantizationEngine requires a CodebookStore, which would need to be mocked for tests
         // For now, we'll create a simple in-memory codebook store
         use crate::compute::quantization::unified::{InMemoryCodebookStore, CodebookStore};
+use tracing::{debug, error, info, warn};
         let codebook_store = Arc::new(InMemoryCodebookStore::new()) as Arc<dyn CodebookStore>;
         let quantization_engine = Arc::new(UnifiedQuantizationEngine::new(distance_compute.clone(), codebook_store));
         

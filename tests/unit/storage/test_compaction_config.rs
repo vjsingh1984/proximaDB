@@ -4,6 +4,7 @@
 //! and integration with flush operations.
 
 use anyhow::Result;
+use tracing::{debug, error, info, warn};
 use std::sync::Arc;
 use tempfile::TempDir;
 
@@ -11,7 +12,7 @@ use proximadb::core::SstConfig;
 use proximadb::storage::engines::sst::compaction::{CompactionManager, CompactionTask, CompactionPriority};
 use proximadb::storage::engines::sst::SstRecord;
 use proximadb::storage::persistence::write_ahead_log::background_manager::BackgroundMaintenanceManager;
-use proximadb::storage::persistence::write_ahead_log::config::WriteBufferConfig;
+use proximadb::storage::persistence::write_ahead_log::config::WALConfig;
 
 /// Helper function to create test LSM records
 fn create_test_lsm_records(collection_id: &str, count: usize) -> Vec<SstRecord> {
@@ -70,7 +71,7 @@ async fn test_compaction_threshold_configuration() -> Result<()> {
     assert!(custom_config.compaction_threshold > 0);
     assert!(custom_config.compaction_threshold < 10); // Reasonable upper bound
     
-    println!("✅ Compaction threshold configuration test passed");
+    debug!("✅ Compaction threshold configuration test passed");
     Ok(())
 }
 
@@ -123,7 +124,7 @@ async fn test_compaction_trigger_conditions() -> Result<()> {
     assert!(stats.bytes_written > 0);
     assert!(output_file.exists());
     
-    println!("✅ Compaction trigger conditions test passed");
+    debug!("✅ Compaction trigger conditions test passed");
     Ok(())
 }
 
@@ -170,10 +171,10 @@ async fn test_compaction_priority_levels() -> Result<()> {
         assert_eq!(stats.total_compactions, 1);
         assert!(output_file.exists());
         
-        println!("Compaction with priority {:?} completed", priority);
+        debug!("Compaction with priority {:?} completed", priority);
     }
     
-    println!("✅ Compaction priority levels test passed");
+    debug!("✅ Compaction priority levels test passed");
     Ok(())
 }
 
@@ -285,7 +286,7 @@ async fn test_compaction_with_expired_records() -> Result<()> {
     
     assert_eq!(remaining_records.len(), 50); // Only active records should remain
     
-    println!("✅ Compaction with expired records test passed");
+    debug!("✅ Compaction with expired records test passed");
     Ok(())
 }
 
@@ -314,7 +315,7 @@ async fn test_compaction_background_integration() -> Result<()> {
     let stats = manager.get_stats().await;
     assert!(stats.total_flush_operations > 0 || stats.total_compaction_operations > 0);
     
-    println!("✅ Compaction background integration test passed");
+    debug!("✅ Compaction background integration test passed");
     Ok(())
 }
 
@@ -366,10 +367,10 @@ async fn test_compaction_level_configuration() -> Result<()> {
         assert_eq!(stats.total_compactions, 1);
         assert!(output_file.exists());
         
-        println!("Level {} configuration test passed", level_count);
+        debug!("Level {} configuration test passed", level_count);
     }
     
-    println!("✅ Compaction level configuration test passed");
+    debug!("✅ Compaction level configuration test passed");
     Ok(())
 }
 
@@ -420,11 +421,11 @@ async fn test_compaction_performance_metrics() -> Result<()> {
     // Calculate throughput
     let throughput_mb_per_sec = (stats.bytes_read as f64 / (1024.0 * 1024.0)) / compaction_duration.as_secs_f64();
     
-    println!("✅ Compaction performance metrics test passed");
-    println!("   Compaction duration: {:?}", compaction_duration);
-    println!("   Bytes read: {}", stats.bytes_read);
-    println!("   Bytes written: {}", stats.bytes_written);
-    println!("   Throughput: {:.2} MB/sec", throughput_mb_per_sec);
+    debug!("✅ Compaction performance metrics test passed");
+    debug!("   Compaction duration: {:?}", compaction_duration);
+    debug!("   Bytes read: {}", stats.bytes_read);
+    debug!("   Bytes written: {}", stats.bytes_written);
+    debug!("   Throughput: {:.2} MB/sec", throughput_mb_per_sec);
     
     Ok(())
 }

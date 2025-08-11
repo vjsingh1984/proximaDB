@@ -7,6 +7,7 @@ use crate::core::config::SstConfig;
 use std::sync::Arc;
 use std::collections::BTreeMap;
 use tempfile::TempDir;
+use tracing::{debug, error, info, warn};
 
 fn create_test_config() -> SstConfig {
     SstConfig {
@@ -18,6 +19,9 @@ fn create_test_config() -> SstConfig {
 
 #[tokio::test]
 async fn test_sstable_format_with_bloom_filter() {
+    // Initialize hardware capabilities for testing
+    let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+    
     // Initialize tracing for debugging
     let _ = tracing_subscriber::fmt::try_init();
     // Create temp directory
@@ -63,24 +67,24 @@ async fn test_sstable_format_with_bloom_filter() {
     reader.load_metadata(&file_url).await.unwrap();
     
     // Test bloom filter functionality
-    println!("Testing bloom filter...");
+    debug!("Testing bloom filter...");
     let contains_005 = reader.might_contain_key(&file_url, "vec_005").await;
     let contains_009 = reader.might_contain_key(&file_url, "vec_009").await;
     let contains_fake = reader.might_contain_key(&file_url, "fake_key").await;
     
-    println!("Bloom filter results:");
-    println!("  vec_005: {}", contains_005);
-    println!("  vec_009: {}", contains_009);
-    println!("  fake_key: {}", contains_fake);
+    debug!("Bloom filter results:");
+    debug!("  vec_005: {}", contains_005);
+    debug!("  vec_009: {}", contains_009);
+    debug!("  fake_key: {}", contains_fake);
     
     assert!(contains_005, "Bloom filter should report vec_005 might exist");
     assert!(contains_009, "Bloom filter should report vec_009 might exist");
     
     // Test retrieving a vector
-    println!("\nTesting vector retrieval...");
+    debug!("\nTesting vector retrieval...");
     match reader.get_vector(&file_url, "vec_005").await {
         Ok(Some(vector)) => {
-            println!("✓ Found vector: {:?}", vector.id);
+            debug!("✓ Found vector: {:?}", vector.id);
             assert_eq!(vector.id, Some("vec_005".to_string()));
         }
         Ok(None) => {
@@ -110,7 +114,7 @@ async fn test_sstable_empty_file_handling() {
     let result = reader.load_metadata(&file_url).await;
     assert!(result.is_err(), "Expected error for empty file");
     let error_msg = result.unwrap_err().to_string();
-    println!("Actual error: {}", error_msg);
+    debug!("Actual error: {}", error_msg);
     assert!(error_msg.contains("Failed to read header length") || 
             error_msg.contains("expected at least 4 bytes") ||
             error_msg.contains("unexpected end of file") ||
@@ -137,10 +141,11 @@ async fn test_sstable_truncated_file_handling() {
     let result = reader.load_metadata(&file_url).await;
     assert!(result.is_err(), "Expected error for truncated file");
     let error_msg = result.unwrap_err().to_string();
-    println!("Actual error for truncated file: {}", error_msg);
+    debug!("Actual error for truncated file: {}", error_msg);
     assert!(error_msg.contains("Failed to read complete header") || 
             error_msg.contains("Failed to read header") ||
             error_msg.contains("unexpected end of file") ||
-            error_msg.contains("failed to fill whole buffer"),
-            "Expected error about incomplete header, got: {}", error_msg);
+            error_msg.contains("failed to fill whole buffer") ||
+            error_msg.contains("SSTable file too small"),
+            "Expected error about incomplete header or file size, got: {}", error_msg);
 }

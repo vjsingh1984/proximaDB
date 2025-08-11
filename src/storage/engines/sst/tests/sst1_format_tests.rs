@@ -9,6 +9,7 @@ mod tests {
     use crate::storage::persistence::filesystem::FilesystemFactory;
     use tempfile::TempDir;
     use std::sync::Arc;
+use tracing::{debug, error, info, warn};
 
     #[tokio::test]
     async fn test_sst1_magic_bytes_write_and_read() {
@@ -102,7 +103,7 @@ mod tests {
             filesystem.clone(),
         ).await.unwrap();
         
-        println!("Compressed SSTable written: {} bytes", result.bytes_written);
+        debug!("Compressed SSTable written: {} bytes", result.bytes_written);
         
         // Read and verify
         let reader = UnifiedSstableReader::new(filesystem.clone());
@@ -185,7 +186,7 @@ mod tests {
                 filesystem.clone(),
             ).await.unwrap();
             
-            println!("{:?} compression: {} bytes", algo, result.bytes_written);
+            debug!("{:?} compression: {} bytes", algo, result.bytes_written);
             
             // Verify we can read it back
             let reader = UnifiedSstableReader::new(filesystem.clone());
@@ -243,7 +244,7 @@ mod tests {
                 filesystem.clone(),
             ).await.unwrap();
             
-            println!("Block size {}: {} bytes, {} blocks", 
+            debug!("Block size {}: {} bytes, {} blocks", 
                      block_size, result.bytes_written, result.blocks_written);
             
             // Verify readability

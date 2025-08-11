@@ -32,11 +32,12 @@ mod tests {
     use std::thread;
     use std::time::{Duration, Instant};
     use std::sync::atomic::{AtomicUsize, Ordering};
+use tracing::{debug, error, info, warn};
     
     /// Test complete SQL parsing pipeline with all optimizations
     #[test]
     fn test_complete_sql_pipeline() {
-        println!("🧪 Testing complete high-performance SQL pipeline...");
+        debug!("🧪 Testing complete high-performance SQL pipeline...");
         
         // Test queries with vector similarity
         let test_queries = vec![
@@ -78,7 +79,7 @@ mod tests {
         let elapsed = start.elapsed();
         let total_queries = test_queries.len() * 10;
         
-        println!("✅ Parsed {} queries in {:?} ({:.0} queries/sec)", 
+        info!("✅ Parsed {} queries in {:?} ({:.0} queries/sec)", 
                total_queries, elapsed, total_queries as f64 / elapsed.as_secs_f64());
         
         // Check parser pool statistics
@@ -86,21 +87,21 @@ mod tests {
         let stats = pool.get_stats();
         let (created, reused, pool_size, peak) = stats.get_stats();
         
-        println!("📊 Parser Pool Stats - Created: {}, Reused: {}, Pool Size: {}, Peak: {}", 
+        debug!("📊 Parser Pool Stats - Created: {}, Reused: {}, Pool Size: {}, Peak: {}", 
                created, reused, pool_size, peak);
         
         // Should have excellent reuse ratio
         if created + reused > 0 {
             let reuse_ratio = reused as f64 / (created + reused) as f64;
             assert!(reuse_ratio > 0.7, "Parser reuse ratio should be >70%, got {:.1}%", reuse_ratio * 100.0);
-            println!("✅ Parser reuse ratio: {:.1}%", reuse_ratio * 100.0);
+            info!("✅ Parser reuse ratio: {:.1}%", reuse_ratio * 100.0);
         }
     }
     
     /// Test SIMD vector parsing integration
     #[test]
     fn test_simd_vector_integration() {
-        println!("🧪 Testing SIMD vector parsing integration...");
+        debug!("🧪 Testing SIMD vector parsing integration...");
         
         let vector_test_cases = vec![
             "[1.0, 2.0, 3.0, 4.0]", // SSE4.1 size
@@ -140,13 +141,13 @@ mod tests {
         }
         
         let elapsed = start.elapsed();
-        println!("✅ SIMD vector parsing completed in {:?}", elapsed);
+        info!("✅ SIMD vector parsing completed in {:?}", elapsed);
     }
     
     /// Test query result caching integration
     #[test]
     fn test_query_result_caching() {
-        println!("🧪 Testing query result caching integration...");
+        debug!("🧪 Testing query result caching integration...");
         
         let cache = get_global_query_cache();
         let initial_stats = cache.stats();
@@ -189,8 +190,8 @@ mod tests {
         assert!(hits_delta >= 3, "Expected at least 3 cache hits, got {}", hits_delta);
         assert!(misses_delta >= 1, "Expected at least 1 cache miss, got {}", misses_delta);
         
-        println!("✅ Cache operations: {} hits, {} misses", hits_delta, misses_delta);
-        println!("📊 Cache Stats: {}", final_stats.summary());
+        info!("✅ Cache operations: {} hits, {} misses", hits_delta, misses_delta);
+        debug!("📊 Cache Stats: {}", final_stats.summary());
         
         // Test collection-based invalidation
         cache.invalidate_collection("collection_1");
@@ -205,18 +206,18 @@ mod tests {
         let key2 = QueryCacheKey::new("SELECT id FROM users", "collection_2", None);
         assert!(get_cached_query_result(&key2).is_some(), "collection_2 should still be cached");
         
-        println!("✅ Collection-based cache invalidation working");
+        info!("✅ Collection-based cache invalidation working");
     }
     
     /// Test concurrent access to all components
     #[test]
     fn test_concurrent_integration() {
-        println!("🧪 Testing concurrent integration of all SQL engine components...");
+        debug!("🧪 Testing concurrent integration of all SQL engine components...");
         
         let num_threads = num_cpus::get();
         let queries_per_thread = 25; // Minimum as requested
         
-        println!("📊 Testing with {} threads, {} queries per thread", num_threads, queries_per_thread);
+        debug!("📊 Testing with {} threads, {} queries per thread", num_threads, queries_per_thread);
         
         let success_counter = Arc::new(AtomicUsize::new(0));
         let error_counter = Arc::new(AtomicUsize::new(0));
@@ -326,13 +327,13 @@ mod tests {
         let successes = success_counter.load(Ordering::Relaxed);
         let errors = error_counter.load(Ordering::Relaxed);
         
-        println!("🎯 Concurrent Integration Test Results:");
-        println!("  Total operations: {}", total_operations);
-        println!("  Successful: {}", successes);
-        println!("  Errors: {}", errors);
-        println!("  Success rate: {:.1}%", (successes as f64 / total_operations as f64) * 100.0);
-        println!("  Duration: {:?}", elapsed);
-        println!("  Throughput: {:.0} operations/sec", total_operations as f64 / elapsed.as_secs_f64());
+        info!("🎯 Concurrent Integration Test Results:");
+        debug!("  Total operations: {}", total_operations);
+        debug!("  Successful: {}", successes);
+        debug!("  Errors: {}", errors);
+        debug!("  Success rate: {:.1}%", (successes as f64 / total_operations as f64) * 100.0);
+        debug!("  Duration: {:?}", elapsed);
+        debug!("  Throughput: {:.0} operations/sec", total_operations as f64 / elapsed.as_secs_f64());
         
         // Should have very high success rate
         assert_eq!(successes, total_operations, "All operations should succeed in concurrent test");
@@ -343,13 +344,13 @@ mod tests {
         let pool_stats = pool.get_stats();
         let (created, reused, pool_size, peak) = pool_stats.get_stats();
         
-        println!("📊 Final Component Statistics:");
-        println!("  Parser Pool - Created: {}, Reused: {}, Pool Size: {}, Peak: {}", 
+        debug!("📊 Final Component Statistics:");
+        debug!("  Parser Pool - Created: {}, Reused: {}, Pool Size: {}, Peak: {}", 
                created, reused, pool_size, peak);
         
         let cache = get_global_query_cache();
         let cache_stats = cache.stats();
-        println!("  Query Cache - {}", cache_stats.summary());
+        debug!("  Query Cache - {}", cache_stats.summary());
         
         // Validate resource efficiency
         let cpu_count = num_cpus::get();
@@ -360,13 +361,13 @@ mod tests {
             assert!(reuse_ratio > 0.6, "Parser reuse ratio should be >60% under load, got {:.1}%", reuse_ratio * 100.0);
         }
         
-        println!("✅ All concurrent integration tests passed!");
+        info!("✅ All concurrent integration tests passed!");
     }
     
     /// Test memory efficiency under load
     #[test]
     fn test_memory_efficiency() {
-        println!("🧪 Testing memory efficiency of SQL engine components...");
+        debug!("🧪 Testing memory efficiency of SQL engine components...");
         
         let initial_cache_memory = get_global_query_cache().get_total_memory_usage();
         
@@ -391,8 +392,8 @@ mod tests {
         let elapsed = start.elapsed();
         let final_cache_memory = get_global_query_cache().get_total_memory_usage();
         
-        println!("✅ Processed 500 operations in {:?}", elapsed);
-        println!("📊 Memory usage - Initial: {}KB, Final: {}KB, Delta: {}KB",
+        info!("✅ Processed 500 operations in {:?}", elapsed);
+        debug!("📊 Memory usage - Initial: {}KB, Final: {}KB, Delta: {}KB",
                initial_cache_memory / 1024,
                final_cache_memory / 1024,
                (final_cache_memory.saturating_sub(initial_cache_memory)) / 1024);
@@ -405,11 +406,11 @@ mod tests {
         let cache = get_global_query_cache();
         let cache_size = cache.size();
         
-        println!("📊 Resource Usage Summary:");
-        println!("  Parser instances created: {}", created);
-        println!("  Current parser pool size: {}", pool_size);
-        println!("  Query cache entries: {}", cache_size);
-        println!("  Cache memory usage: {}KB", final_cache_memory / 1024);
+        debug!("📊 Resource Usage Summary:");
+        debug!("  Parser instances created: {}", created);
+        debug!("  Current parser pool size: {}", pool_size);
+        debug!("  Query cache entries: {}", cache_size);
+        debug!("  Cache memory usage: {}KB", final_cache_memory / 1024);
         
         // Resource usage should be reasonable
         let cpu_count = num_cpus::get();
@@ -421,17 +422,17 @@ mod tests {
         // Reuse ratio should be excellent
         if created + reused > 0 {
             let reuse_ratio = reused as f64 / (created + reused) as f64;
-            println!("  Parser reuse ratio: {:.1}%", reuse_ratio * 100.0);
+            debug!("  Parser reuse ratio: {:.1}%", reuse_ratio * 100.0);
             assert!(reuse_ratio > 0.8, "Should have >80% reuse ratio under sustained load");
         }
         
-        println!("✅ Memory efficiency test passed!");
+        info!("✅ Memory efficiency test passed!");
     }
     
     /// Benchmark complete SQL engine performance
     #[test]
     fn test_performance_benchmark() {
-        println!("🧪 Benchmarking complete SQL engine performance...");
+        debug!("🧪 Benchmarking complete SQL engine performance...");
         
         // Warm up all components
         let pool = get_global_pool();
@@ -471,7 +472,7 @@ mod tests {
         //         let gpu_results = pool.parse_sql_batch_gpu(queries);
         //         let gpu_elapsed = gpu_start.elapsed();
         //         
-        //         println!("Batch size {}: CPU {:?}, GPU {:?}, Speedup: {:.2}x", 
+        //         debug!("Batch size {}: CPU {:?}, GPU {:?}, Speedup: {:.2}x", 
         //                  size, cpu_elapsed, gpu_elapsed, 
         //                  cpu_elapsed.as_secs_f64() / gpu_elapsed.as_secs_f64());
         //     }
@@ -500,11 +501,11 @@ mod tests {
         let total_queries = iterations * benchmark_queries.len();
         let throughput = total_queries as f64 / elapsed.as_secs_f64();
         
-        println!("🚀 Performance Benchmark Results:");
-        println!("  Total queries: {}", total_queries);
-        println!("  Duration: {:?}", elapsed);
-        println!("  Throughput: {:.0} queries/sec", throughput);
-        println!("  Average latency: {:.2}μs per query", 
+        debug!("🚀 Performance Benchmark Results:");
+        debug!("  Total queries: {}", total_queries);
+        debug!("  Duration: {:?}", elapsed);
+        debug!("  Throughput: {:.0} queries/sec", throughput);
+        debug!("  Average latency: {:.2}μs per query", 
                elapsed.as_micros() as f64 / total_queries as f64);
         
         // Performance should be excellent
@@ -517,15 +518,15 @@ mod tests {
         let cache = get_global_query_cache();
         let cache_stats = cache.stats();
         
-        println!("📊 Final Performance Statistics:");
-        println!("  Parser Pool - Created: {}, Reused: {}", created, reused);
-        println!("  Query Cache - {}", cache_stats.summary());
+        debug!("📊 Final Performance Statistics:");
+        debug!("  Parser Pool - Created: {}, Reused: {}", created, reused);
+        debug!("  Query Cache - {}", cache_stats.summary());
         
         if created + reused > 0 {
             let reuse_ratio = reused as f64 / (created + reused) as f64;
-            println!("  Parser reuse efficiency: {:.1}%", reuse_ratio * 100.0);
+            debug!("  Parser reuse efficiency: {:.1}%", reuse_ratio * 100.0);
         }
         
-        println!("✅ Performance benchmark completed successfully!");
+        info!("✅ Performance benchmark completed successfully!");
     }
 }

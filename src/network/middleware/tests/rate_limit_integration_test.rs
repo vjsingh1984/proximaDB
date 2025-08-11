@@ -2,6 +2,7 @@
 //! Tests the end-to-end flow from TOML parsing to middleware wiring
 
 use crate::network::middleware::RateLimitConfig;
+use tracing::{debug, error, info, warn};
 
 #[test]
 fn test_rate_limit_config_defaults() {
@@ -64,6 +65,7 @@ async fn test_rate_limit_config_conversion() {
 fn test_local_demo_config_toml_parsing() {
     // Test parsing a simple TOML config that disables rate limiting
     use toml;
+use tracing::{debug, error, info, warn};
     
     let toml_content = r#"
 [network]
@@ -88,7 +90,7 @@ enabled = false
         }
     }
     
-    println!("✅ TOML parsing works correctly for rate limit config");
+    info!("✅ TOML parsing works correctly for rate limit config");
 }
 
 #[tokio::test]
@@ -119,5 +121,5 @@ async fn test_rate_limit_layer_creation() {
     let disabled_layer = crate::network::middleware::RateLimitLayer::disabled();
     let limited_layer = crate::network::middleware::RateLimitLayer::with_limits(100, 10);
     
-    println!("✅ Rate limit layer creation tests passed");
+    info!("✅ Rate limit layer creation tests passed");
 }

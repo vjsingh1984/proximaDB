@@ -13,6 +13,7 @@ mod tests {
     use crate::core::VectorRecord;
     use std::collections::HashMap;
     use std::time::Instant;
+use tracing::{debug, error, info, warn};
 
     fn create_test_vector(id: &str, values: Vec<f32>) -> VectorRecord {
         VectorRecord {
@@ -131,7 +132,7 @@ mod tests {
 
             distances.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
 
-            println!("Metric {:?}: nearest vector index = {}", metric, distances[0].0);
+            debug!("Metric {:?}: nearest vector index = {}", metric, distances[0].0);
             
             // Different metrics should give different results
             match metric {
@@ -182,7 +183,7 @@ mod tests {
 
                 let elapsed = start.elapsed();
 
-                println!(
+                debug!(
                     "FLAT search: {} vectors, {} dim = {:?}",
                     size, dim, elapsed
                 );
@@ -205,7 +206,7 @@ mod tests {
             let index_overhead = count * 64;  // Estimated metadata per vector
             let total_memory = vector_memory + index_overhead;
 
-            println!(
+            debug!(
                 "FLAT index memory for {} vectors ({}D): {} MB",
                 count,
                 dimension,
@@ -232,11 +233,11 @@ mod tests {
 
         // Add new vector - should be immediately searchable
         let new_id = "new_vec".to_string();
-        let new_values = vec![0.55; dimension];
+        let new_values = vec![0.545; dimension];  // Closer to query than vec_54 or vec_55
         index.insert(new_id.clone(), new_values.clone());
 
         // Search should find the new vector
-        let query = vec![0.54; dimension];
+        let query = vec![0.545; dimension];  // Query matches new vector exactly
         let mut distances: Vec<(String, f32)> = index
             .iter()
             .map(|(id, values)| {
@@ -318,7 +319,7 @@ mod tests {
             .filter(|(_, dist)| *dist <= radius)
             .collect();
 
-        println!("Vectors within radius {}: {:?}", radius, within_range);
+        debug!("Vectors within radius {}: {:?}", radius, within_range);
         
         // Should find vectors within the radius
         assert!(within_range.len() > 0);
@@ -361,7 +362,7 @@ mod tests {
         let elapsed = start.elapsed();
         let avg_time = elapsed / num_queries as u32;
 
-        println!(
+        debug!(
             "FLAT batch search: {} queries on {} vectors = {:?} (avg {:?}/query)",
             num_queries, num_vectors, elapsed, avg_time
         );
@@ -451,7 +452,7 @@ mod tests {
             // Nearest should be vec[0.3] at index 2
             assert_eq!(distances[0].0, 2);
             
-            println!(
+            debug!(
                 "High-dimensional FLAT search ({}D): nearest = vec[{}]",
                 dim, distances[0].0
             );

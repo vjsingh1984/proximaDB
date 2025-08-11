@@ -11,6 +11,7 @@
 
 use std::env;
 use std::path::Path;
+use tracing::{debug, error, info, warn};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<String> = env::args().collect();
@@ -23,10 +24,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .and_then(|s| s.parse::<usize>().ok())
         .unwrap_or(768);
     
-    println!("Generating test Parquet files:");
-    println!("  Output directory: {}", output_dir);
-    println!("  Number of vectors: {}", num_vectors);
-    println!("  Vector dimension: {}", dimension);
+    debug!("Generating test Parquet files:");
+    debug!("  Output directory: {}", output_dir);
+    debug!("  Number of vectors: {}", num_vectors);
+    debug!("  Vector dimension: {}", dimension);
     
     // Create output directory
     std::fs::create_dir_all(output_dir)?;
@@ -35,31 +36,31 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // The actual implementation is in src/storage/engines/viper/tests/test_data_generator.rs
     // To use it, run the integration tests or build a test binary that imports the module
     
-    println!("\n⚠️  This is a placeholder script.");
-    println!("To generate actual test data, use one of these methods:");
-    println!();
-    println!("1. Run the integration tests:");
-    println!("   cargo test --test two_stage_search_integration");
-    println!();
-    println!("2. Build and run the test data generator:");
-    println!("   cargo test --lib test_data_generator::tests::test_parquet_file_creation");
-    println!();
-    println!("3. Use the Rust API directly in your code:");
-    println!("   ```rust");
-    println!("   use proximadb::storage::engines::viper::tests::test_data_generator::{TestDataGenerator, TestDataConfig};");
-    println!("   ");
-    println!("   let config = TestDataConfig {{");
-    println!("       num_vectors: {},", num_vectors);
-    println!("       dimension: {},", dimension);
-    println!("       include_pq8: true,");
-    println!("       include_pq4: true,");
-    println!("       pq_num_subvectors: {},", dimension / 8);
-    println!("       ..Default::default()");
-    println!("   }};");
-    println!("   ");
-    println!("   let mut generator = TestDataGenerator::new(config);");
-    println!("   generator.create_parquet_file(\"{}/test_vectors.parquet\")?;", output_dir);
-    println!("   ```");
+    debug!("\n⚠️  This is a placeholder script.");
+    debug!("To generate actual test data, use one of these methods:");
+    debug!();
+    debug!("1. Run the integration tests:");
+    debug!("   cargo test --test two_stage_search_integration");
+    debug!();
+    debug!("2. Build and run the test data generator:");
+    debug!("   cargo test --lib test_data_generator::tests::test_parquet_file_creation");
+    debug!();
+    debug!("3. Use the Rust API directly in your code:");
+    debug!("   ```rust");
+    debug!("   use proximadb::storage::engines::viper::tests::test_data_generator::{TestDataGenerator, TestDataConfig};");
+    debug!("   ");
+    debug!("   let config = TestDataConfig {{");
+    debug!("       num_vectors: {},", num_vectors);
+    debug!("       dimension: {},", dimension);
+    debug!("       include_pq8: true,");
+    debug!("       include_pq4: true,");
+    debug!("       pq_num_subvectors: {},", dimension / 8);
+    debug!("       ..Default::default()");
+    debug!("   }};");
+    debug!("   ");
+    debug!("   let mut generator = TestDataGenerator::new(config);");
+    debug!("   generator.create_parquet_file(\"{}/test_vectors.parquet\")?;", output_dir);
+    debug!("   ```");
     
     Ok(())
 }

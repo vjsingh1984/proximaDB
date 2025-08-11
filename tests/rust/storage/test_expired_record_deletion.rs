@@ -1,4 +1,5 @@
 use anyhow::Result;
+use tracing::{debug, error, info, warn};
 use chrono::Utc;
 use std::collections::HashMap;
 use std::time::Duration;
@@ -148,7 +149,7 @@ async fn test_lsm_expired_record_deletion() -> Result<()> {
     assert!(ids.contains(&&"permanent_1".to_string()), "Permanent record should remain");
     assert!(!ids.contains(&&"expired_1".to_string()), "Expired record should be deleted");
     
-    println!("✅ LSM expired record deletion test passed!");
+    debug!("✅ LSM expired record deletion test passed!");
     Ok(())
 }
 
@@ -156,6 +157,6 @@ async fn test_lsm_expired_record_deletion() -> Result<()> {
 async fn test_viper_expired_record_deletion() -> Result<()> {
     // This test would verify VIPER's expired record deletion during compaction
     // The logic is already implemented in compact_parquet_files method
-    println!("✅ VIPER expired record deletion is implemented in compact_parquet_files method");
+    debug!("✅ VIPER expired record deletion is implemented in compact_parquet_files method");
     Ok(())
 }

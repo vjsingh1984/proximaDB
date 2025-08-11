@@ -8,12 +8,13 @@ mod tests {
     };
     use crate::compute::distance_computation::DistanceMetric;
     use std::collections::HashMap;
+use tracing::{debug, error, info, warn};
 
     #[tokio::test]
     async fn test_background_flush_context_creation() {
         let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
         
-        println!("🧪 TEST: BackgroundFlushContext creation and validation");
+        debug!("🧪 TEST: BackgroundFlushContext creation and validation");
         
         let context = BackgroundFlushContext {
             collection_id: "test_collection".to_string(),
@@ -54,14 +55,14 @@ mod tests {
         };
         assert_eq!(sst_context.engine_name(), "sst");
         
-        println!("✅ BackgroundFlushContext creation test passed");
+        info!("✅ BackgroundFlushContext creation test passed");
     }
 
     #[tokio::test]
     async fn test_context_performance_settings() {
         let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
         
-        println!("🧪 TEST: Context performance configuration");
+        debug!("🧪 TEST: Context performance configuration");
         
         let viper_context = BackgroundFlushContext {
             collection_id: "perf_test".to_string(),
@@ -94,6 +95,6 @@ mod tests {
         let flush_threshold = viper_context.flush_threshold();
         assert!(flush_threshold >= 10000 && flush_threshold <= 100000);
         
-        println!("✅ Context performance configuration test passed");
+        info!("✅ Context performance configuration test passed");
     }
 }

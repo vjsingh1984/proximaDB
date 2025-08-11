@@ -12,40 +12,41 @@ mod tests {
     use crate::compute::distance_computation::engine::{UnifiedDistanceCompute, HardwareBackend, DistanceMode};
     use crate::compute::distance_computation::{DistanceMetric, PlatformCapability};
     use std::time::Instant;
+use tracing::{debug, error, info, warn};
 
     /// Test that UnifiedDistanceCompute correctly selects GPU when available
     #[tokio::test]
     async fn test_unified_distance_gpu_selection() {
-        println!("🔍 Testing UnifiedDistanceCompute GPU backend selection...");
+        debug!("🔍 Testing UnifiedDistanceCompute GPU backend selection...");
         
         let compute = UnifiedDistanceCompute::default();
         
         let preferred_backend = compute.preferred_backend();
         let available_backends = compute.available_backends();
         
-        println!("🎯 Preferred backend: {}", preferred_backend);
-        println!("📋 Available backends: {:?}", available_backends);
+        info!("🎯 Preferred backend: {}", preferred_backend);
+        debug!("📋 Available backends: {:?}", available_backends);
         
         // Verify that we have a sensible selection
         match preferred_backend {
             HardwareBackend::Cuda => {
-                println!("✅ CUDA GPU selected as preferred backend");
+                info!("✅ CUDA GPU selected as preferred backend");
                 assert!(available_backends.contains(&HardwareBackend::Cuda));
             }
             HardwareBackend::Rocm => {
-                println!("✅ ROCm GPU selected as preferred backend");
+                info!("✅ ROCm GPU selected as preferred backend");
                 assert!(available_backends.contains(&HardwareBackend::Rocm));
             }
             HardwareBackend::Mps => {
-                println!("✅ Metal Performance Shaders selected as preferred backend");
+                info!("✅ Metal Performance Shaders selected as preferred backend");
                 assert!(available_backends.contains(&HardwareBackend::Mps));
             }
             HardwareBackend::OpenCL => {
-                println!("✅ OpenCL GPU selected as preferred backend");
+                info!("✅ OpenCL GPU selected as preferred backend");
                 assert!(available_backends.contains(&HardwareBackend::OpenCL));
             }
             HardwareBackend::CpuSimd(capability) => {
-                println!("✅ CPU SIMD selected as preferred backend: {}", capability);
+                info!("✅ CPU SIMD selected as preferred backend: {}", capability);
                 assert!(matches!(
                     capability,
                     PlatformCapability::X86Avx512 | 
@@ -58,7 +59,7 @@ mod tests {
                 ));
             }
             HardwareBackend::Scalar => {
-                println!("⚠️ Scalar backend selected (no acceleration available)");
+                warn!("⚠️ Scalar backend selected (no acceleration available)");
             }
         }
         
@@ -66,13 +67,13 @@ mod tests {
         assert!(available_backends.iter().any(|b| matches!(b, HardwareBackend::CpuSimd(_))));
         assert!(available_backends.contains(&HardwareBackend::Scalar));
         
-        println!("✅ Backend selection validation passed");
+        info!("✅ Backend selection validation passed");
     }
 
     /// Test GPU threshold selection logic
     #[tokio::test]
     async fn test_gpu_threshold_selection() {
-        println!("🔍 Testing GPU threshold selection logic...");
+        debug!("🔍 Testing GPU threshold selection logic...");
         
         let mut compute = UnifiedDistanceCompute::default();
         compute.set_gpu_enabled(true);
@@ -89,7 +90,7 @@ mod tests {
         let small_results = compute.calculate_distance_batch(&small_query, &small_refs, &DistanceMetric::Cosine);
         let small_duration = start.elapsed();
         
-        println!("📊 Small batch (3D, 2 vectors): {} results in {:?}", small_results.len(), small_duration);
+        debug!("📊 Small batch (3D, 2 vectors): {} results in {:?}", small_results.len(), small_duration);
         assert_eq!(small_results.len(), 2);
         
         // Test medium vectors (should use CPU SIMD)
@@ -101,7 +102,7 @@ mod tests {
         let medium_results = compute.calculate_distance_batch(&medium_query, &medium_refs, &DistanceMetric::Cosine);
         let medium_duration = start.elapsed();
         
-        println!("📊 Medium batch (64D, 50 vectors): {} results in {:?}", medium_results.len(), medium_duration);
+        debug!("📊 Medium batch (64D, 50 vectors): {} results in {:?}", medium_results.len(), medium_duration);
         assert_eq!(medium_results.len(), 50);
         
         // Test large vectors (should attempt GPU if available)
@@ -113,7 +114,7 @@ mod tests {
         let large_results = compute.calculate_distance_batch(&large_query, &large_refs, &DistanceMetric::Cosine);
         let large_duration = start.elapsed();
         
-        println!("📊 Large batch (128D, 200 vectors): {} results in {:?}", large_results.len(), large_duration);
+        debug!("📊 Large batch (128D, 200 vectors): {} results in {:?}", large_results.len(), large_duration);
         assert_eq!(large_results.len(), 200);
         
         // Verify results are consistent regardless of backend used
@@ -122,27 +123,27 @@ mod tests {
             assert!(!result.raw_value.is_nan());
             assert!(!result.rank_value.is_nan());
             assert!(result.normalized_score >= 0.0 && result.normalized_score <= 1.0);
-            println!("  Small result {}: raw={:.4}, normalized={:.4}, rank={:.4}", 
+            debug!("  Small result {}: raw={:.4}, normalized={:.4}, rank={:.4}", 
                 idx, result.raw_value, result.normalized_score, result.rank_value);
         }
         
-        println!("✅ GPU threshold selection tests passed");
+        info!("✅ GPU threshold selection tests passed");
     }
 
     /// Test GPU enable/disable functionality
     #[tokio::test]
     async fn test_gpu_enable_disable() {
-        println!("🔍 Testing GPU enable/disable functionality...");
+        debug!("🔍 Testing GPU enable/disable functionality...");
         
         let mut compute = UnifiedDistanceCompute::default();
         
         let initial_backend = compute.preferred_backend();
-        println!("🎯 Initial preferred backend: {}", initial_backend);
+        info!("🎯 Initial preferred backend: {}", initial_backend);
         
         // Disable GPU
         compute.set_gpu_enabled(false);
         let disabled_backend = compute.preferred_backend();
-        println!("❌ GPU disabled, backend: {}", disabled_backend);
+        error!("❌ GPU disabled, backend: {}", disabled_backend);
         
         // Should fall back to CPU SIMD
         assert!(matches!(disabled_backend, HardwareBackend::CpuSimd(_)));
@@ -150,7 +151,7 @@ mod tests {
         // Re-enable GPU
         compute.set_gpu_enabled(true);
         let enabled_backend = compute.preferred_backend();
-        println!("✅ GPU re-enabled, backend: {}", enabled_backend);
+        info!("✅ GPU re-enabled, backend: {}", enabled_backend);
         
         // Test with actual computation
         let test_vectors = vec![vec![1.0, 0.0], vec![0.0, 1.0]];
@@ -170,16 +171,16 @@ mod tests {
         for (cpu_result, gpu_result) in cpu_results.iter().zip(gpu_results.iter()) {
             let diff = (cpu_result.raw_value - gpu_result.raw_value).abs();
             assert!(diff < 0.01, "CPU and GPU results should be very similar");
-            println!("  Distance difference: {:.6}", diff);
+            debug!("  Distance difference: {:.6}", diff);
         }
         
-        println!("✅ GPU enable/disable tests passed");
+        info!("✅ GPU enable/disable tests passed");
     }
 
     /// Test distance computation consistency across backends
     #[tokio::test]
     async fn test_backend_consistency() {
-        println!("🔍 Testing distance computation consistency across backends...");
+        debug!("🔍 Testing distance computation consistency across backends...");
         
         let compute = UnifiedDistanceCompute::default();
         
@@ -192,7 +193,7 @@ mod tests {
         ];
         
         for (vec_a, vec_b, metric, description) in test_cases {
-            println!("🧪 Testing {} vectors with {:?}", description, metric);
+            debug!("🧪 Testing {} vectors with {:?}", description, metric);
             
             // Test with different modes
             let modes = vec![
@@ -204,7 +205,7 @@ mod tests {
             for mode in modes {
                 let result = compute.calculate_distance_with_mode(&vec_a, &vec_b, &metric, mode);
                 
-                println!("  Mode {:?}: raw={:.4}, normalized={:.4}, rank={:.4}", 
+                debug!("  Mode {:?}: raw={:.4}, normalized={:.4}, rank={:.4}", 
                     mode, result.raw_value, result.normalized_score, result.rank_value);
                 
                 // Validate result properties
@@ -230,13 +231,13 @@ mod tests {
             }
         }
         
-        println!("✅ Backend consistency tests passed");
+        info!("✅ Backend consistency tests passed");
     }
 
     /// Test error handling and fallback behavior
     #[tokio::test]
     async fn test_error_handling_and_fallback() {
-        println!("🔍 Testing error handling and fallback behavior...");
+        debug!("🔍 Testing error handling and fallback behavior...");
         
         let compute = UnifiedDistanceCompute::default();
         
@@ -246,7 +247,7 @@ mod tests {
         
         let result = compute.calculate_distance(&vec_a, &vec_b, &DistanceMetric::Cosine);
         
-        println!("📊 Dimension mismatch result: raw={}, normalized={}, rank={}", 
+        debug!("📊 Dimension mismatch result: raw={}, normalized={}, rank={}", 
             result.raw_value, result.normalized_score, result.rank_value);
         
         assert!(result.raw_value.is_infinite(), "Should return infinity for dimension mismatch");
@@ -259,7 +260,7 @@ mod tests {
         
         let zero_result = compute.calculate_distance(&zero_vec, &normal_vec, &DistanceMetric::Cosine);
         
-        println!("📊 Zero vector result: raw={}, normalized={}, rank={}", 
+        debug!("📊 Zero vector result: raw={}, normalized={}, rank={}", 
             zero_result.raw_value, zero_result.normalized_score, zero_result.rank_value);
         
         // Zero vector should be handled gracefully
@@ -271,19 +272,19 @@ mod tests {
         
         let large_result = compute.calculate_distance(&large_vec_a, &large_vec_b, &DistanceMetric::Cosine);
         
-        println!("📊 Large vector result: raw={}, normalized={}, rank={}", 
+        debug!("📊 Large vector result: raw={}, normalized={}, rank={}", 
             large_result.raw_value, large_result.normalized_score, large_result.rank_value);
         
         assert!(!large_result.raw_value.is_nan(), "Large vectors should not produce NaN");
         assert!(large_result.raw_value.abs() < 0.01, "Identical large vectors should have near-zero distance");
         
-        println!("✅ Error handling and fallback tests passed");
+        info!("✅ Error handling and fallback tests passed");
     }
 
     /// Test performance scaling with different vector sizes
     #[tokio::test]
     async fn test_performance_scaling() {
-        println!("🔍 Testing performance scaling with different vector sizes...");
+        debug!("🔍 Testing performance scaling with different vector sizes...");
         
         let compute = UnifiedDistanceCompute::default();
         
@@ -306,7 +307,7 @@ mod tests {
                 
                 let vectors_per_sec = (batch_size as f64) / duration.as_secs_f64();
                 
-                println!("📊 {}D vectors, batch {}: {:.0} vectors/sec ({:?})", 
+                debug!("📊 {}D vectors, batch {}: {:.0} vectors/sec ({:?})", 
                     dim, batch_size, vectors_per_sec, duration);
                 
                 // Verify all results are valid
@@ -318,6 +319,6 @@ mod tests {
             }
         }
         
-        println!("✅ Performance scaling tests completed");
+        info!("✅ Performance scaling tests completed");
     }
 }

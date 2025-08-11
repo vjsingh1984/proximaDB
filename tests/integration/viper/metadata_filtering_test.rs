@@ -4,6 +4,7 @@
 //! from actual Parquet files created by the VIPER engine flush process.
 
 use std::sync::Arc;
+use tracing::{debug, error, info, warn};
 use std::collections::HashMap;
 use tempfile::TempDir;
 
@@ -13,7 +14,7 @@ use proximadb::services::VectorOperationsService;
 use proximadb::storage::engines::viper::ViperEngine;
 use proximadb::storage::persistence::filesystem::FilesystemFactory;
 use proximadb::storage::memtable::implementations::global_partitioned::GlobalPartitionedMemtable;
-use proximadb::compute::distance::DistanceMetric;
+use proximadb::compute::distance_computation::DistanceMetric;
 use proximadb::core::search::SearchResult;
 
 #[tokio::test]
@@ -23,7 +24,7 @@ async fn test_viper_metadata_filtering_integration() {
     // This is a simplified test that focuses on the key issue:
     // Testing that VIPER metadata filtering works with the unified search pipeline
     
-    println!("🚀 Starting VIPER metadata filtering integration test");
+    debug!("🚀 Starting VIPER metadata filtering integration test");
     
     // For now, we'll skip this test as it requires significant setup
     // The key finding from our investigation is that metadata filtering
@@ -32,7 +33,7 @@ async fn test_viper_metadata_filtering_integration() {
     // from both the extra_meta column AND the filterable columns written
     // during flush.
     
-    println!("✅ Test completed - metadata filtering implementation verified");
+    debug!("✅ Test completed - metadata filtering implementation verified");
     
     // The full integration test would require:
     // 1. Setting up a complete ProximaDB environment

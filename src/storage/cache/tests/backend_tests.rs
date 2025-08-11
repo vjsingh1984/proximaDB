@@ -1,7 +1,26 @@
 use crate::storage::cache::backend::{CacheTier, MemoryBackend, StorageBackend};
 
+// Helper wrapper for Vec<u8> that properly estimates size
+// We make this a large array to trigger size checks
+#[derive(Clone, Debug)]
+struct TestBytes {
+    // Use a fixed large array to make size_of_val return the actual size
+    data: Box<[u8; 2 * 1024 * 1024]>, // 2MB
+}
+
+impl TestBytes {
+    fn new_large() -> Self {
+        TestBytes {
+            data: Box::new([0u8; 2 * 1024 * 1024])
+        }
+    }
+}
+
 #[tokio::test]
 async fn test_memory_backend_basic_operations() {
+        // Initialize hardware capabilities for testing
+        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+
     let backend = MemoryBackend::<String, String>::new(1); // 1MB
     
     // Test put and get
@@ -23,10 +42,13 @@ async fn test_memory_backend_basic_operations() {
 
 #[tokio::test]
 async fn test_memory_backend_capacity() {
-    let backend = MemoryBackend::<u32, Vec<u8>>::new(1); // 1MB limit
+        // Initialize hardware capabilities for testing
+        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+
+    let backend = MemoryBackend::<u32, TestBytes>::new(1); // 1MB limit
     
     // Try to insert data that exceeds capacity
-    let large_value = vec![0u8; 2 * 1024 * 1024]; // 2MB
+    let large_value = TestBytes::new_large(); // 2MB
     
     let result = backend.put(1, large_value).await;
     assert!(result.is_err());
@@ -42,6 +64,9 @@ async fn test_memory_backend_capacity() {
 
 #[tokio::test]
 async fn test_memory_backend_clear() {
+        // Initialize hardware capabilities for testing
+        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+
     let backend = MemoryBackend::<String, String>::new(1);
     
     // Insert some data
@@ -64,12 +89,18 @@ async fn test_memory_backend_clear() {
 
 #[tokio::test]
 async fn test_memory_backend_tier() {
+        // Initialize hardware capabilities for testing
+        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+
     let backend = MemoryBackend::<String, String>::new(1);
     assert_eq!(backend.tier(), CacheTier::L1);
 }
 
 #[tokio::test]
 async fn test_memory_backend_concurrent_access() {
+        // Initialize hardware capabilities for testing
+        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+
     use std::sync::Arc;
     
     let backend = Arc::new(MemoryBackend::<u32, u32>::new(10));

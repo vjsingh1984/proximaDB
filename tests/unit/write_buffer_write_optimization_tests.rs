@@ -14,6 +14,7 @@
 //! - Performance benchmarks
 
 use anyhow::Result;
+use tracing::{debug, error, info, warn};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::oneshot;
@@ -403,12 +404,12 @@ mod performance_benchmarks {
         // Calculate improvement
         let speedup = single_duration.as_secs_f64() / batched_duration.as_secs_f64();
         
-        println!("Performance Benchmark Results:");
-        println!("  Single writes: {:?} total, {} µs avg latency", 
+        debug!("Performance Benchmark Results:");
+        debug!("  Single writes: {:?} total, {} µs avg latency", 
                  single_duration, 
                  single_latency.load(Ordering::Relaxed) / NUM_WRITES as u64);
-        println!("  Batched writes: {:?} total", batched_duration);
-        println!("  Speedup: {:.2}x", speedup);
+        debug!("  Batched writes: {:?} total", batched_duration);
+        debug!("  Speedup: {:.2}x", speedup);
         
         // Batched should be significantly faster
         assert!(speedup > 2.0, "Expected at least 2x speedup, got {:.2}x", speedup);
@@ -451,10 +452,10 @@ mod performance_benchmarks {
         let cache_misses = metrics.cache_misses.load(Ordering::Relaxed);
         let hit_rate = cache_hits as f64 / (cache_hits + cache_misses) as f64;
         
-        println!("Cache Effectiveness:");
-        println!("  Cache hits: {}", cache_hits);
-        println!("  Cache misses: {}", cache_misses);
-        println!("  Hit rate: {:.2}%", hit_rate * 100.0);
+        debug!("Cache Effectiveness:");
+        debug!("  Cache hits: {}", cache_hits);
+        debug!("  Cache misses: {}", cache_misses);
+        debug!("  Hit rate: {:.2}%", hit_rate * 100.0);
         
         // Should have high cache hit rate after first round
         assert!(hit_rate > 0.7, "Expected >70% cache hit rate, got {:.2}%", hit_rate * 100.0);

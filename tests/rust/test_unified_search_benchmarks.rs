@@ -13,7 +13,7 @@ use std::time::{Duration, Instant};
 use proximadb::proto::proximadb::{
     VectorRecord, MetadataItem, StorageEngine,
 };
-use proximadb::compute::distance::DistanceMetric;
+use proximadb::compute::distance_computation::DistanceMetric;
 use proximadb::core::SearchResult;
 use proximadb::services::VectorOperationsService;
 use proximadb::services::collection_service::CollectionService;
@@ -437,14 +437,14 @@ impl UnifiedSearchBenchmark {
     
     /// Print benchmark summary
     fn print_summary(&self, results: &[BenchmarkResult]) {
-        println!("\n📊 Unified Search Benchmark Results");
-        println!("═══════════════════════════════════════════════════════════════════════");
-        println!("{:<30} {:>10} {:>10} {:>10} {:>10} {:>10}", 
+        debug!("\n📊 Unified Search Benchmark Results");
+        debug!("═══════════════════════════════════════════════════════════════════════");
+        debug!("{:<30} {:>10} {:>10} {:>10} {:>10} {:>10}", 
                  "Operation", "Throughput", "P50 (ms)", "P95 (ms)", "P99 (ms)", "Total (ms)");
-        println!("───────────────────────────────────────────────────────────────────────");
+        debug!("───────────────────────────────────────────────────────────────────────");
         
         for result in results {
-            println!("{:<30} {:>10.1} {:>10.2} {:>10.2} {:>10.2} {:>10.1}",
+            debug!("{:<30} {:>10.1} {:>10.2} {:>10.2} {:>10.2} {:>10.1}",
                      result.operation,
                      result.throughput_ops_per_sec,
                      result.latency_p50_ms,
@@ -453,7 +453,7 @@ impl UnifiedSearchBenchmark {
                      result.duration_ms);
         }
         
-        println!("═══════════════════════════════════════════════════════════════════════");
+        debug!("═══════════════════════════════════════════════════════════════════════");
     }
 }
 

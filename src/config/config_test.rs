@@ -3,6 +3,8 @@
 //! This module ensures complete configuration field coverage and validates
 //! that the default config system properly merges with user overrides.
 
+use tracing::{debug, info};
+
 #[cfg(test)]
 mod tests {
     use crate::config::{Config, ServerConfig, StorageConfig, SstConfig, WriteBufferUserConfig, ApiConfig, MonitoringConfig, ConsensusConfig};
@@ -14,7 +16,7 @@ mod tests {
     /// Test that all required fields are present in default configuration
     #[test]
     fn test_default_config_completeness() {
-        println!("🔧 Testing default configuration completeness...");
+        info!("🔧 Testing default configuration completeness...");
         
         // This should not panic - all required fields must be present
         let config = Config::load_with_defaults(None)
@@ -114,13 +116,13 @@ mod tests {
         assert!(config.consensus.heartbeat_interval_ms > 0, "Consensus heartbeat_interval_ms should be positive");
         assert!(config.consensus.snapshot_threshold > 0, "Consensus snapshot_threshold should be positive");
         
-        println!("✅ Default configuration completeness test passed");
+        info!("✅ Default configuration completeness test passed");
     }
     
     /// Test that user overrides properly merge with defaults
     #[test]
     fn test_config_override_merging() {
-        println!("🔧 Testing configuration override merging...");
+        debug!("🔧 Testing configuration override merging...");
         
         let temp_dir = TempDir::new().expect("Failed to create temp dir");
         let config_file = temp_dir.path().join("test_override.toml");
@@ -165,13 +167,13 @@ rest_port = 9997
         assert!(config.storage.lsm_config.memtable_size_mb > 0, "Default LSM memtable_size_mb should be preserved");
         assert!(config.api.timeout_seconds > 0, "Default API timeout_seconds should be preserved");
         
-        println!("✅ Configuration override merging test passed");
+        info!("✅ Configuration override merging test passed");
     }
     
     /// Test that incomplete user config still works with defaults
     #[test]
     fn test_minimal_user_config() {
-        println!("🔧 Testing minimal user configuration with defaults...");
+        debug!("🔧 Testing minimal user configuration with defaults...");
         
         let temp_dir = TempDir::new().expect("Failed to create temp dir");
         let config_file = temp_dir.path().join("minimal.toml");
@@ -199,13 +201,13 @@ node_id = "minimal-test"
         assert!(config.storage.lsm_config.memtable_size_mb > 0);
         assert!(config.api.grpc_port > 0);
         
-        println!("✅ Minimal user configuration test passed");
+        info!("✅ Minimal user configuration test passed");
     }
     
     /// Test config validation catches invalid values
     #[test]
     fn test_config_validation() {
-        println!("🔧 Testing configuration validation...");
+        debug!("🔧 Testing configuration validation...");
         
         let temp_dir = TempDir::new().expect("Failed to create temp dir");
         let config_file = temp_dir.path().join("invalid.toml");
@@ -230,7 +232,7 @@ timeout_seconds = 0  # Invalid timeout
         
         match result {
             Err(_) => {
-                println!("✅ Configuration validation correctly rejected invalid config");
+                info!("✅ Configuration validation correctly rejected invalid config");
             }
             Ok(_) => {
                 panic!("Configuration validation should have failed for invalid values");
@@ -241,7 +243,7 @@ timeout_seconds = 0  # Invalid timeout
     /// Test that all configuration fields are documented
     #[test]
     fn test_config_field_documentation() {
-        println!("🔧 Testing configuration field documentation...");
+        debug!("🔧 Testing configuration field documentation...");
         
         // Read the default config file
         let defaults_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -266,13 +268,13 @@ timeout_seconds = 0  # Invalid timeout
             );
         }
         
-        println!("✅ Configuration field documentation test passed");
+        info!("✅ Configuration field documentation test passed");
     }
     
     /// Integration test that validates server startup with merged config
     #[test]
     fn test_server_startup_with_merged_config() {
-        println!("🔧 Testing server startup with merged configuration...");
+        debug!("🔧 Testing server startup with merged configuration...");
         
         let temp_dir = TempDir::new().expect("Failed to create temp dir");
         let config_file = temp_dir.path().join("startup_test.toml");
@@ -320,6 +322,6 @@ rest_port = 15678
         assert!(!config.storage.wal_config.strategy_type.is_empty());
         assert!(config.storage.lsm_config.memtable_size_mb > 0);
         
-        println!("✅ Server startup configuration test passed");
+        info!("✅ Server startup configuration test passed");
     }
 }

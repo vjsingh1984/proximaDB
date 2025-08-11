@@ -22,7 +22,7 @@
 
 use anyhow::{anyhow, Result};
 use std::arch::x86_64::*;
-use tracing::info;
+use tracing::{debug, info};
 use crate::core::hardware_capabilities::{get_hardware_capabilities, try_get_hardware_capabilities};
 
 /// SIMD capabilities detected at runtime
@@ -492,7 +492,7 @@ mod tests {
     #[test]
     fn test_simd_capabilities_detection() {
         let caps = SimdCapabilities::detect();
-        println!("Detected SIMD capabilities: {}", caps.to_string());
+        debug!("Detected SIMD capabilities: {}", caps.to_string());
         
         // Should always detect some capability or fallback to scalar
         assert!(caps.to_string().len() > 0);
@@ -555,7 +555,7 @@ mod tests {
         
         // Check that appropriate SIMD paths were used
         let stats = parser.stats();
-        println!("SIMD path usage: AVX2={}, SSE4.1={}, Scalar={}", 
+        debug!("SIMD path usage: AVX2={}, SSE4.1={}, Scalar={}", 
                 stats.avx2_operations, stats.sse41_operations, stats.scalar_operations);
         
         if caps.has_avx2 {
@@ -602,7 +602,7 @@ mod tests {
             test_vectors.push(vector_str);
         }
         
-        println!("Testing with {} vectors of dimension {} ({} total elements)", 
+        debug!("Testing with {} vectors of dimension {} ({} total elements)", 
                  num_vectors, vector_dim, num_vectors * vector_dim);
         
         // Warm up both parsers
@@ -630,21 +630,21 @@ mod tests {
         let total_parses = iterations * num_vectors;
         let total_elements = total_parses * vector_dim;
         
-        println!("Performance comparison ({} iterations, {} vectors/iter, {} elements/vector):", 
+        debug!("Performance comparison ({} iterations, {} vectors/iter, {} elements/vector):", 
                  iterations, num_vectors, vector_dim);
-        println!("  SIMD parser: {:?} ({:.2} μs/parse, {:.1} MB/s)", 
+        debug!("  SIMD parser: {:?} ({:.2} μs/parse, {:.1} MB/s)", 
                  simd_elapsed, 
                  simd_elapsed.as_micros() as f64 / total_parses as f64,
                  (total_elements as f64 * 4.0) / (simd_elapsed.as_secs_f64() * 1024.0 * 1024.0));
-        println!("  JSON parser: {:?} ({:.2} μs/parse, {:.1} MB/s)", 
+        debug!("  JSON parser: {:?} ({:.2} μs/parse, {:.1} MB/s)", 
                  json_elapsed,
                  json_elapsed.as_micros() as f64 / total_parses as f64,
                  (total_elements as f64 * 4.0) / (json_elapsed.as_secs_f64() * 1024.0 * 1024.0));
         
         let speedup = json_elapsed.as_secs_f64() / simd_elapsed.as_secs_f64();
-        println!("  Speedup: {:.2}x", speedup);
+        debug!("  Speedup: {:.2}x", speedup);
         
-        println!("{}", simd_parser.performance_summary());
+        debug!("{}", simd_parser.performance_summary());
         
         // With large vectors, SIMD should be competitive with JSON, but may still
         // be slower due to JSON parser's highly optimized implementation and memory allocation patterns.
@@ -697,6 +697,7 @@ mod tests {
     fn test_concurrent_access() {
         use std::sync::Arc;
         use std::thread;
+use tracing::{debug, error, info, warn};
         
         let handles: Vec<_> = (0..10).map(|i| {
             thread::spawn(move || {

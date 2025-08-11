@@ -1,4 +1,5 @@
 // Unit test to verify WAL search functionality
+use tracing::{debug, error, info, warn};
 // This is a standalone test to verify the critical fix
 
 #[cfg(test)]
@@ -47,28 +48,28 @@ mod wal_search_tests {
     ) -> Vec<(String, f32, MockWalEntry)> {
         let mut scored_entries = Vec::new();
         
-        println!("🔧 [TEST] WAL search: found {} total entries for collection {}", 
+        debug!("🔧 [TEST] WAL search: found {} total entries for collection {}", 
                  all_entries.len(), collection_id);
         
         for (idx, entry) in all_entries.iter().enumerate() {
             if let MockWalOperation::Insert { vector_id, record, .. } = &entry.operation {
-                println!("🔧 [TEST] WAL entry {}: vector_id={}, vector_len={}", 
+                debug!("🔧 [TEST] WAL entry {}: vector_id={}, vector_len={}", 
                          idx, vector_id, record.vector.len());
                 
                 // This is the FIXED logic - using 'record.vector' instead of 'record.dense_vector'
                 let score = compute_cosine_similarity(query_vector, &record.vector);
-                println!("🔧 [TEST] WAL similarity score for {}: {}", vector_id, score);
+                debug!("🔧 [TEST] WAL similarity score for {}: {}", vector_id, score);
                 scored_entries.push((vector_id.clone(), score, entry.clone()));
             }
         }
         
-        println!("🔧 [TEST] WAL search: computed {} similarity scores", scored_entries.len());
+        debug!("🔧 [TEST] WAL search: computed {} similarity scores", scored_entries.len());
         
         // Sort by score (descending) and take top k
         scored_entries.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
         scored_entries.truncate(k);
         
-        println!("🔧 [TEST] WAL search: returning top {} results", scored_entries.len());
+        debug!("🔧 [TEST] WAL search: returning top {} results", scored_entries.len());
         scored_entries
     }
     
@@ -90,7 +91,7 @@ mod wal_search_tests {
     
     #[test]
     fn test_wal_search_finds_vectors() {
-        println!("\n🔧 Testing WAL Search - Vector Discovery");
+        debug!("\n🔧 Testing WAL Search - Vector Discovery");
         
         // Create test data
         let test_vector = vec![1.0, 0.0];
@@ -136,12 +137,12 @@ mod wal_search_tests {
         assert_eq!(results[0].0, "test_vector_1", "Should find the correct vector");
         assert!((results[0].1 - 1.0).abs() < 0.001, "Should have similarity score close to 1.0 for exact match");
         
-        println!("✅ Test passed: WAL search correctly finds vectors using the fixed logic");
+        debug!("✅ Test passed: WAL search correctly finds vectors using the fixed logic");
     }
     
     #[test]
     fn test_wal_search_similarity_ranking() {
-        println!("\n🔧 Testing WAL Search - Similarity Ranking");
+        debug!("\n🔧 Testing WAL Search - Similarity Ranking");
         
         let query_vector = vec![1.0, 0.0];
         let test_collection = "test_collection";
@@ -201,16 +202,16 @@ mod wal_search_tests {
         assert!(results[0].1 >= results[1].1, "Scores should be in descending order");
         assert!(results[1].1 >= results[2].1, "Scores should be in descending order");
         
-        println!("✅ Test passed: WAL search correctly ranks vectors by similarity");
+        debug!("✅ Test passed: WAL search correctly ranks vectors by similarity");
     }
 }
 
 fn main() {
     // Run the tests
-    println!("🔬 WAL Search Unit Tests - Verifying Critical Fix");
-    println!("=" * 60);
+    debug!("🔬 WAL Search Unit Tests - Verifying Critical Fix");
+    debug!("=" * 60);
     
     // This would normally be run with `cargo test`
-    println!("Run with: cargo test test_wal_search_unit");
-    println!("This verifies the core WAL search logic that was fixed");
+    debug!("Run with: cargo test test_wal_search_unit");
+    debug!("This verifies the core WAL search logic that was fixed");
 }

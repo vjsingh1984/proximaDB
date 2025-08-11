@@ -21,12 +21,13 @@ use proximadb::storage::persistence::filesystem::{
     s3::{S3Config, CredentialConfig, CredentialProviderType, S3StorageClass},
     gcs::{GcsConfig, GcsCredentialConfig, GcsCredentialProviderType, GcsStorageClass},
 };
-use proximadb::storage::transaction_coordinator::{UnifiedAtomicCoordinator, StagingConfig, StagingOperationType};
+use proximadb::storage::transaction_coordinator::{TransactionCoordinator, StagingConfig, StagingOperationType};
 use std::sync::Arc;
 use std::process::{Command, Child, Stdio};
 use std::path::PathBuf;
 use std::time::Duration;
 use tokio::time::sleep;
+use tracing::{debug};
 
 // ... rest of the original test code ...
 */
@@ -34,9 +35,11 @@ use tokio::time::sleep;
 // Placeholder test to ensure the file compiles
 #[cfg(test)]
 mod tests {
+    use tracing::debug;
+
     #[test]
     fn cloud_emulator_tests_disabled() {
         // Cloud emulator tests are disabled because cloud storage backends are commented out
-        println!("Cloud emulator tests are disabled - cloud storage backends are unused");
+        debug!("Cloud emulator tests are disabled - cloud storage backends are unused");
     }
 }

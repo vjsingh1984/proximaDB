@@ -15,6 +15,7 @@
  */
 
 use proximadb::core::{
+use tracing::{debug, error, info, warn};
     ApiConfig, Config, ConsensusConfig, SstConfig, MonitoringConfig, ServerConfig, StorageConfig,
     bloom::BloomFilterConfig,
 };
@@ -107,7 +108,7 @@ async fn test_authentication_middleware() {
     let http_address = db.http_address().unwrap();
     let base_url = format!("http://{}", http_address);
 
-    println!("Testing authentication against: {}", base_url);
+    debug!("Testing authentication against: {}", base_url);
 
     // Test 1: Health endpoint should work without authentication (when require_auth_for_health is false)
     let response = client
@@ -143,7 +144,7 @@ async fn test_authentication_middleware() {
         .unwrap();
     assert_eq!(response.status(), 401); // Unauthorized
 
-    println!("Authentication middleware test passed!");
+    debug!("Authentication middleware test passed!");
 
     // Stop the database
     db.stop().await.unwrap();
@@ -222,7 +223,7 @@ async fn test_rate_limiting_middleware() {
     let http_address = db.http_address().unwrap();
     let base_url = format!("http://{}", http_address);
 
-    println!("Testing rate limiting against: {}", base_url);
+    debug!("Testing rate limiting against: {}", base_url);
 
     // Test 1: Health endpoint should work without rate limiting (when limit_health_endpoints is false)
     let response = client
@@ -239,7 +240,7 @@ async fn test_rate_limiting_middleware() {
             .send()
             .await
             .unwrap();
-        println!("Request {}: {}", i, response.status());
+        debug!("Request {}: {}", i, response.status());
         assert_eq!(response.status(), 200); // Should work within limit
     }
 
@@ -249,10 +250,10 @@ async fn test_rate_limiting_middleware() {
         .send()
         .await
         .unwrap();
-    println!("Rate limited request: {}", response.status());
+    debug!("Rate limited request: {}", response.status());
     assert_eq!(response.status(), 429); // Too Many Requests
 
-    println!("Rate limiting middleware test passed!");
+    debug!("Rate limiting middleware test passed!");
 
     // Stop the database
     db.stop().await.unwrap();

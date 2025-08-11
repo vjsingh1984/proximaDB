@@ -1,4 +1,5 @@
 use anyhow::Result;
+use tracing::{debug, error, info, warn};
 use chrono::Utc;
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -151,11 +152,11 @@ async fn test_lsm_compaction_expired_deletion_unit() -> Result<()> {
     assert!(!remaining_ids.contains(&&"expired_1".to_string()), "Expired record should be deleted");
     assert!(!remaining_ids.contains(&&"old_tombstone".to_string()), "Old tombstone should be removed");
     
-    println!("✅ LSM compaction expired deletion unit test passed!");
-    println!("   - Input records: {}", test_records.len());
-    println!("   - Remaining records: {}", remaining_records.len());
-    println!("   - Expired deleted: {}", stats.expired_records_deleted);
-    println!("   - Tombstones removed: {}", stats.tombstones_removed);
+    debug!("✅ LSM compaction expired deletion unit test passed!");
+    debug!("   - Input records: {}", test_records.len());
+    debug!("   - Remaining records: {}", remaining_records.len());
+    debug!("   - Expired deleted: {}", stats.expired_records_deleted);
+    debug!("   - Tombstones removed: {}", stats.tombstones_removed);
     
     Ok(())
 }
@@ -184,7 +185,7 @@ async fn test_viper_expired_record_logic_unit() -> Result<()> {
         if let Some(expires_at) = expires_at {
             if expires_at < current_time {
                 expired_count += 1;
-                println!("⏰ VIPER: Skipping expired record {} (expired at {})", record_id, expires_at);
+                debug!("⏰ VIPER: Skipping expired record {} (expired at {})", record_id, expires_at);
                 continue;
             }
         }
@@ -201,10 +202,10 @@ async fn test_viper_expired_record_logic_unit() -> Result<()> {
     assert!(kept_ids.contains(&"future_record"), "Future expiry record should be kept");
     assert!(!kept_ids.contains(&"expired_record"), "Expired record should be filtered out");
     
-    println!("✅ VIPER expired record logic unit test passed!");
-    println!("   - Input records: 3");
-    println!("   - Kept records: {}", kept_records.len());
-    println!("   - Expired filtered: {}", expired_count);
+    debug!("✅ VIPER expired record logic unit test passed!");
+    debug!("   - Input records: 3");
+    debug!("   - Kept records: {}", kept_records.len());
+    debug!("   - Expired filtered: {}", expired_count);
     
     Ok(())
 }
@@ -237,7 +238,7 @@ async fn test_expiry_edge_cases_unit() -> Result<()> {
                   name, expires_at, current_time, should_be_expired);
     }
     
-    println!("✅ Expiry edge cases unit test passed!");
+    debug!("✅ Expiry edge cases unit test passed!");
     Ok(())
 }
 
@@ -265,6 +266,6 @@ async fn test_tombstone_cleanup_unit() -> Result<()> {
                   name, age, should_keep);
     }
     
-    println!("✅ Tombstone cleanup unit test passed!");
+    debug!("✅ Tombstone cleanup unit test passed!");
     Ok(())
 }

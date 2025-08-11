@@ -22,7 +22,7 @@
 
 use anyhow::Result;
 use std::sync::{Arc, OnceLock};
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 use num_cpus;
 
 // No longer importing duplicate CpuFeatures from compute module
@@ -617,7 +617,7 @@ mod tests {
         assert!(caps.memory.total_memory > 0);
         assert!(caps.memory.recommended_cache_size > 0);
         
-        println!("Detected hardware: {:?}", caps);
+        debug!("Detected hardware: {:?}", caps);
     }
     
     #[test]

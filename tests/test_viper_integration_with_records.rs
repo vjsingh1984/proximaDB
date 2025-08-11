@@ -12,6 +12,7 @@ use proximadb::core::VectorRecord;
 use proximadb::storage::engines::viper::ViperEngine;
 use proximadb::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
 use proximadb::storage::traits::{CompactionParameters, FlushParameters, UnifiedStorageEngine};
+use tracing::{debug, error, info};
 
 /// Helper function to create VIPER storage engine
 async fn create_viper_engine(_temp_dir: &TempDir) -> Result<ViperEngine> {
@@ -56,10 +57,10 @@ async fn test_viper_engine_flush_with_10_records() -> Result<()> {
         test_records.push(vector_record);
     }
 
-    println!("📝 Created 10 test records for VIPER engine");
-    println!("   - Records prepared: {}", test_records.len());
-    println!("   - Sample record ID: {:?}", test_records[0].id);
-    println!("   - Sample vector: {:?}", test_records[0].vector);
+    info!("📝 Created 10 test records for VIPER engine");
+    debug!("   - Records prepared: {}", test_records.len());
+    debug!("   - Sample record ID: {:?}", test_records[0].id);
+    debug!("   - Sample vector: {:?}", test_records[0].vector);
 
     // Test collection-level flush (VIPER supports collection-level operations)
     // Note: VIPER will get 0 records from memtable since WAL integration is pending
@@ -72,33 +73,27 @@ async fn test_viper_engine_flush_with_10_records() -> Result<()> {
     assert!(flush_result.success);
     assert!(flush_result.duration_ms < u64::MAX); // Check it's not uninitialized
 
-    println!("✅ VIPER engine flush operations verified");
-    println!("   - Success: {}", flush_result.success);
-    println!("   - Duration: {}ms", flush_result.duration_ms);
-    println!(
-        "   - Collections affected: {:?}",
-        flush_result.collections_affected
-    );
-    println!(
-        "   - Entries flushed: {}",
+    info!("✅ VIPER engine flush operations verified");
+    info!("   - Success: {}", flush_result.success);
+    debug!("   - Duration: {}ms", flush_result.duration_ms);
+    debug!("   - Collections affected: {:?}",
+        flush_result.collections_affected);
+    info!("   - Entries flushed: {}",
         if flush_result.entries_flushed == u64::MAX {
             "uninitialized".to_string()
         } else {
             flush_result.entries_flushed.to_string()
-        }
-    );
-    println!(
-        "   - Bytes written: {}",
+        });
+    info!("   - Bytes written: {}",
         if flush_result.bytes_written == u64::MAX {
             "uninitialized".to_string()
         } else {
             flush_result.bytes_written.to_string()
-        }
-    );
+        });
 
     // Note: Since WAL integration is pending, VIPER returns 0 records from memtable
     // But the flush mechanism and infrastructure is working correctly
-    println!("📋 Note: WAL integration pending - engine infrastructure verified");
+    debug!("📋 Note: WAL integration pending - engine infrastructure verified");
 
     Ok(())
 }
@@ -136,8 +131,8 @@ async fn test_viper_engine_compaction_with_10_records() -> Result<()> {
         test_records.push(vector_record);
     }
 
-    println!("📝 Created 10 test records for VIPER compaction test");
-    println!("   - Records prepared: {}", test_records.len());
+    info!("📝 Created 10 test records for VIPER compaction test");
+    debug!("   - Records prepared: {}", test_records.len());
 
     // First perform a flush to create some Parquet files
     let flush_params = FlushParameters::new()
@@ -156,31 +151,25 @@ async fn test_viper_engine_compaction_with_10_records() -> Result<()> {
     assert!(compact_result.success);
     assert!(compact_result.duration_ms < u64::MAX); // Check it's not uninitialized
 
-    println!("✅ VIPER engine compaction operations verified");
-    println!("   - Success: {}", compact_result.success);
-    println!("   - Duration: {}ms", compact_result.duration_ms);
-    println!(
-        "   - Collections affected: {:?}",
-        compact_result.collections_affected
-    );
-    println!(
-        "   - Entries processed: {}",
+    info!("✅ VIPER engine compaction operations verified");
+    info!("   - Success: {}", compact_result.success);
+    debug!("   - Duration: {}ms", compact_result.duration_ms);
+    debug!("   - Collections affected: {:?}",
+        compact_result.collections_affected);
+    info!("   - Entries processed: {}",
         if compact_result.entries_processed == u64::MAX {
             "uninitialized".to_string()
         } else {
             compact_result.entries_processed.to_string()
-        }
-    );
-    println!(
-        "   - Entries removed: {}",
+        });
+    info!("   - Entries removed: {}",
         if compact_result.entries_removed == u64::MAX {
             "uninitialized".to_string()
         } else {
             compact_result.entries_removed.to_string()
-        }
-    );
+        });
 
-    println!("📋 Note: WAL integration pending - compaction infrastructure verified");
+    debug!("📋 Note: WAL integration pending - compaction infrastructure verified");
 
     Ok(())
 }
@@ -203,34 +192,26 @@ async fn test_viper_engine_capabilities() -> Result<()> {
     assert!(viper_engine.supports_atomic_operations()); // VIPER has atomic staging operations
     assert!(viper_engine.supports_background_operations()); // VIPER supports background ops
 
-    println!("✅ VIPER engine capabilities verified");
-    println!(
-        "   - Engine: {} v{}",
+    info!("✅ VIPER engine capabilities verified");
+    debug!("   - Engine: {} v{}",
         viper_engine.engine_name(),
-        viper_engine.engine_version()
-    );
-    println!(
-        "   - Collection-level ops: {}",
-        viper_engine.supports_collection_level_operations()
-    );
-    println!(
-        "   - Atomic ops: {}",
-        viper_engine.supports_atomic_operations()
-    );
-    println!(
-        "   - Background ops: {}",
-        viper_engine.supports_background_operations()
-    );
+        viper_engine.engine_version());
+    debug!("   - Collection-level ops: {}",
+        viper_engine.supports_collection_level_operations());
+    debug!("   - Atomic ops: {}",
+        viper_engine.supports_atomic_operations());
+    debug!("   - Background ops: {}",
+        viper_engine.supports_background_operations());
 
     // Test engine statistics
     let stats = viper_engine.get_engine_stats().await?;
     assert_eq!(stats.engine_name, "VIPER");
     assert_eq!(stats.engine_version, "1.0.0");
 
-    println!("✅ VIPER engine stats verified");
-    println!("   - Storage bytes: {}", stats.total_storage_bytes);
-    println!("   - Memory usage: {}", stats.memory_usage_bytes);
-    println!("   - Collections: {}", stats.collection_count);
+    info!("✅ VIPER engine stats verified");
+    debug!("   - Storage bytes: {}", stats.total_storage_bytes);
+    debug!("   - Memory usage: {}", stats.memory_usage_bytes);
+    debug!("   - Collections: {}", stats.collection_count);
 
     // Test health check
     let health = viper_engine.health_check().await?;
@@ -238,11 +219,11 @@ async fn test_viper_engine_capabilities() -> Result<()> {
     assert_eq!(health.error_count, 0);
     assert!(health.response_time_ms >= 0.0);
 
-    println!("✅ VIPER engine health check verified");
-    println!("   - Healthy: {}", health.healthy);
-    println!("   - Status: {}", health.status);
-    println!("   - Response time: {:.2}ms", health.response_time_ms);
-    println!("   - Error count: {}", health.error_count);
+    info!("✅ VIPER engine health check verified");
+    debug!("   - Healthy: {}", health.healthy);
+    debug!("   - Status: {}", health.status);
+    debug!("   - Response time: {:.2}ms", health.response_time_ms);
+    error!("   - Error count: {}", health.error_count);
 
     Ok(())
 }

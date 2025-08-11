@@ -9,7 +9,7 @@ use serde_json::json;
 
 use proximadb::core::VectorRecord;
 use proximadb::core::search::{SearchParams, SearchResult};
-use proximadb::compute::distance::DistanceMetric;
+use proximadb::compute::distance_computation::DistanceMetric;
 use proximadb::compute::distance_computation::UnifiedDistanceCompute;
 use proximadb::core::search::unified_interface::{
     UnifiedSearchContext, CollectionConfig, FilterableColumn,
@@ -96,6 +96,10 @@ fn create_test_search_context() -> UnifiedSearchContext {
         estimated_size_mb: 10.0,
         file_count: 5,
         supports_range_requests: true,
+        file_paths: Some(vec![
+            "/tmp/test_collection/data_001.parquet".to_string(),
+            "/tmp/test_collection/data_002.parquet".to_string(),
+        ]),
     };
     
     UnifiedSearchContext {

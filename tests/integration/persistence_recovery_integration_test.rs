@@ -1,6 +1,7 @@
 // Integration tests for persistence and recovery to detect hanging issues early
 
 use proximadb::core::{Config, ServerConfig, StorageConfig, StorageLocation, ApiConfig, MonitoringConfig};
+use tracing::{debug, error, info, warn};
 use proximadb::ProximaDB;
 use std::sync::Arc;
 use std::time::Duration;
@@ -22,11 +23,11 @@ async fn test_server_startup_timeout() {
     match result {
         Ok(Ok(_db)) => {
             // Server started successfully
-            println!("✅ Server started within timeout");
+            debug!("✅ Server started within timeout");
         }
         Ok(Err(e)) => {
             // Server failed to start (which is ok for this test)
-            println!("Server failed to start: {:?}", e);
+            debug!("Server failed to start: {:?}", e);
         }
         Err(_) => {
             panic!("❌ Server startup timed out - possible hang detected!");
@@ -56,10 +57,10 @@ async fn test_metadata_recovery_timeout() {
     
     match result {
         Ok(Ok(_db)) => {
-            println!("✅ Metadata recovery completed within timeout");
+            debug!("✅ Metadata recovery completed within timeout");
         }
         Ok(Err(e)) => {
-            println!("Metadata recovery failed: {:?}", e);
+            debug!("Metadata recovery failed: {:?}", e);
         }
         Err(_) => {
             panic!("❌ Metadata recovery timed out - possible hang detected!");
@@ -90,10 +91,10 @@ async fn test_storage_engine_initialization_timeout() {
     
     match result {
         Ok(Ok(_)) => {
-            println!("✅ Storage operations completed within timeout");
+            debug!("✅ Storage operations completed within timeout");
         }
         Ok(Err(e)) => {
-            println!("Storage operations failed: {:?}", e);
+            debug!("Storage operations failed: {:?}", e);
         }
         Err(_) => {
             panic!("❌ Storage operations timed out - possible hang detected!");
@@ -121,7 +122,7 @@ async fn test_concurrent_metadata_operations_no_deadlock() {
                 let _ = db_clone.create_collection(
                     collection_name,
                     128, // dimension
-                    proximadb::compute::distance::DistanceMetric::Cosine,
+                    proximadb::compute::distance_computation::DistanceMetric::Cosine,
                     None,
                     None
                 ).await;
@@ -138,10 +139,10 @@ async fn test_concurrent_metadata_operations_no_deadlock() {
     
     match result {
         Ok(Ok(_)) => {
-            println!("✅ Concurrent operations completed without deadlock");
+            debug!("✅ Concurrent operations completed without deadlock");
         }
         Ok(Err(e)) => {
-            println!("Concurrent operations failed: {:?}", e);
+            debug!("Concurrent operations failed: {:?}", e);
         }
         Err(_) => {
             panic!("❌ Concurrent operations timed out - possible deadlock detected!");
@@ -162,7 +163,7 @@ async fn test_recovery_after_crash_simulation() {
         db.create_collection(
             "test_collection".to_string(),
             128,
-            proximadb::compute::distance::DistanceMetric::Cosine,
+            proximadb::compute::distance_computation::DistanceMetric::Cosine,
             None,
             None
         ).await.unwrap();
@@ -202,7 +203,7 @@ async fn test_recovery_after_crash_simulation() {
     
     match result {
         Ok(Ok(_)) => {
-            println!("✅ Recovery after crash completed successfully");
+            debug!("✅ Recovery after crash completed successfully");
         }
         Ok(Err(e)) => {
             panic!("Recovery failed: {:?}", e);
@@ -237,10 +238,10 @@ async fn test_write_ahead_log_recovery_no_hang() {
     
     match result {
         Ok(Ok(_)) => {
-            println!("✅ Write buffer recovery completed within timeout");
+            debug!("✅ Write buffer recovery completed within timeout");
         }
         Ok(Err(e)) => {
-            println!("Write buffer recovery failed: {:?}", e);
+            debug!("Write buffer recovery failed: {:?}", e);
         }
         Err(_) => {
             panic!("❌ Write buffer recovery timed out - possible hang detected!");
@@ -259,7 +260,7 @@ async fn test_atomic_operations_no_hang() {
             proximadb::storage::persistence::filesystem::FilesystemFactory::new(Default::default()).await?
         );
         
-        let coordinator = proximadb::storage::transaction_coordinator::UnifiedAtomicCoordinator::new(
+        let coordinator = proximadb::storage::transaction_coordinator::TransactionCoordinator::new(
             filesystem_factory,
             Some(temp_dir.path().to_str().unwrap().to_string()),
         ).await?;
@@ -282,10 +283,10 @@ async fn test_atomic_operations_no_hang() {
     
     match result {
         Ok(Ok(_)) => {
-            println!("✅ Atomic operations completed within timeout");
+            debug!("✅ Atomic operations completed within timeout");
         }
         Ok(Err(e)) => {
-            println!("Atomic operations failed: {:?}", e);
+            debug!("Atomic operations failed: {:?}", e);
         }
         Err(_) => {
             panic!("❌ Atomic operations timed out - possible hang detected!");
@@ -308,7 +309,7 @@ async fn test_checkpoint_creation_no_hang() {
             db.create_collection(
                 format!("checkpoint_test_{}", i),
                 64,
-                proximadb::compute::distance::DistanceMetric::Euclidean,
+                proximadb::compute::distance_computation::DistanceMetric::Euclidean,
                 None,
                 None
             ).await?;
@@ -325,10 +326,10 @@ async fn test_checkpoint_creation_no_hang() {
     
     match result {
         Ok(Ok(_)) => {
-            println!("✅ Checkpoint creation and recovery completed within timeout");
+            debug!("✅ Checkpoint creation and recovery completed within timeout");
         }
         Ok(Err(e)) => {
-            println!("Checkpoint operation failed: {:?}", e);
+            debug!("Checkpoint operation failed: {:?}", e);
         }
         Err(_) => {
             panic!("❌ Checkpoint operation timed out - possible hang detected!");
@@ -398,10 +399,10 @@ mod advanced_recovery_tests {
         
         match result {
             Ok(Ok(_)) => {
-                println!("✅ Partial write recovery completed successfully");
+                debug!("✅ Partial write recovery completed successfully");
             }
             Ok(Err(e)) => {
-                println!("Partial write recovery failed: {:?}", e);
+                debug!("Partial write recovery failed: {:?}", e);
             }
             Err(_) => {
                 panic!("❌ Partial write recovery timed out!");
@@ -430,7 +431,7 @@ mod advanced_recovery_tests {
         
         match result {
             Ok(_) => {
-                println!("✅ Corrupted metadata handled gracefully");
+                debug!("✅ Corrupted metadata handled gracefully");
             }
             Err(_) => {
                 panic!("❌ Corrupted metadata recovery timed out!");

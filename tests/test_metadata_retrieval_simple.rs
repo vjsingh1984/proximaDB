@@ -4,6 +4,7 @@
 use proximadb::proto::proximadb::proxima_db_client::ProximaDbClient;
 use proximadb::proto::proximadb::*;
 use std::collections::HashMap;
+use tracing::{debug};
 
 #[tokio::test]
 #[ignore] // Requires server to be running
@@ -104,15 +105,15 @@ async fn test_metadata_retrieval_works() {
             let first_result = &results.results[0];
             
             // In a search result, we'd check the metadata here
-            println!("Got search result: {:?}", first_result.id);
+            debug!("Got search result: {:?}", first_result.id);
         }
         Some(vector_operation_response::ResultPayload::AvroResults(avro_data)) => {
-            println!("Got Avro results (large dataset)");
+            debug!("Got Avro results (large dataset)");
             // Would need to decode Avro data
         }
         None => {
             // For get operations, the vector might be in vector_ids or another field
-            println!("No result payload in response");
+            debug!("No result payload in response");
         }
     }
 
@@ -142,17 +143,17 @@ async fn test_metadata_retrieval_works() {
             assert!(!results.results.is_empty(), "Should have search results");
             
             for result in &results.results {
-                println!("Search result: id={:?}, score={:?}", result.id, result.score);
+                debug!("Search result: id={:?}, score={:?}", result.id, result.score);
                 if !result.metadata.is_empty() {
-                    println!("  Metadata found: {} items", result.metadata.len());
+                    debug!("  Metadata found: {} items", result.metadata.len());
                     for meta in &result.metadata {
-                        println!("    {}: {:?}", meta.key, meta.value);
+                        debug!("    {}: {:?}", meta.key, meta.value);
                     }
                 }
             }
         }
         _ => {
-            println!("Unexpected result format");
+            debug!("Unexpected result format");
         }
     }
     

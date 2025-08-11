@@ -1,6 +1,7 @@
 // Common test utilities
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Once;
+use tracing::{debug, error, info, warn};
 
 pub mod test_assignments;
 
@@ -51,7 +52,7 @@ pub fn ensure_test_directories() {
             if let Err(e) = std::fs::create_dir_all(dir) {
                 // Only log if it's not "already exists" error
                 if e.kind() != std::io::ErrorKind::AlreadyExists {
-                    eprintln!("Warning: Failed to create test directory {}: {}", dir, e);
+                    debug!("Warning: Failed to create test directory {}: {}", dir, e);
                 }
             }
         }

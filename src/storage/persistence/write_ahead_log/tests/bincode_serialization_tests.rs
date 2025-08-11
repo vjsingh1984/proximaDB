@@ -16,6 +16,7 @@ use crate::storage::persistence::write_ahead_log::{
 use crate::storage::persistence::filesystem::FilesystemFactory;
 use crate::storage::memtable::specialized::wal_behavior::WALVectorBatch;
 use crate::compute::distance_computation::DistanceMetric;
+use tracing::{debug, error, info, warn};
 
 /// Create test configuration
 fn create_test_config() -> WALConfig {
@@ -165,7 +166,7 @@ async fn test_bincode_large_batch_performance() {
     let write_duration = start.elapsed();
     
     assert_eq!(sequences.len(), 1000);
-    println!("Bincode wrote 1000 vectors in {:?}", write_duration);
+    debug!("Bincode wrote 1000 vectors in {:?}", write_duration);
     
     // Verify retrieval performance
     let start = std::time::Instant::now();
@@ -176,7 +177,7 @@ async fn test_bincode_large_batch_performance() {
     let read_duration = start.elapsed();
     
     assert_eq!(retrieved.len(), 1000);
-    println!("Bincode read 1000 vectors in {:?}", read_duration);
+    debug!("Bincode read 1000 vectors in {:?}", read_duration);
 }
 
 #[tokio::test]

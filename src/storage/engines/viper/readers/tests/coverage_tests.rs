@@ -80,7 +80,7 @@ async fn test_reader_config_variations() -> Result<()> {
     assert!(result2.processing_time_ms > 0);
     assert!(result3.processing_time_ms > 0);
     
-    println!("✅ Reader config variations test passed");
+    info!("✅ Reader config variations test passed");
     Ok(())
 }
 
@@ -173,7 +173,7 @@ async fn test_all_filter_value_types() -> Result<()> {
     let result_exists = reader.execute_query(query_exists).await?;
     assert!(result_exists.processing_time_ms > 0);
     
-    println!("✅ All filter value types test passed");
+    info!("✅ All filter value types test passed");
     Ok(())
 }
 
@@ -216,7 +216,7 @@ async fn test_all_quantization_methods() -> Result<()> {
         let result = reader.execute_query(query).await?;
         assert!(result.processing_time_ms > 0);
         
-        println!("✅ Quantization method {:?} test passed", query_method);
+        info!("✅ Quantization method {:?} test passed", query_method);
     }
     
     Ok(())
@@ -260,7 +260,7 @@ async fn test_all_distance_metrics() -> Result<()> {
         assert_eq!(result.vectors.len(), 10);
         assert!(result.processing_time_ms > 0);
         
-        println!("✅ Distance metric {:?} test passed", metric);
+        info!("✅ Distance metric {:?} test passed", metric);
     }
     
     Ok(())
@@ -352,7 +352,7 @@ async fn test_edge_cases() -> Result<()> {
     let result_empty_filters = reader.execute_query(query_empty_filters).await?;
     assert!(result_empty_filters.processing_time_ms > 0);
     
-    println!("✅ Edge cases test passed");
+    info!("✅ Edge cases test passed");
     Ok(())
 }
 
@@ -404,7 +404,7 @@ async fn test_comprehensive_error_conditions() -> Result<()> {
     // This may error or handle gracefully depending on implementation
     let _result_empty_vector = reader.execute_query(query_empty_vector).await;
     
-    println!("✅ Comprehensive error conditions test passed");
+    info!("✅ Comprehensive error conditions test passed");
     Ok(())
 }
 
@@ -449,7 +449,7 @@ async fn test_cache_behavior_extensive() -> Result<()> {
         let result = reader.execute_query(query).await?;
         assert_eq!(result.vectors.len(), 10);
         
-        println!("Processed file {} with cache", i);
+        debug!("Processed file {} with cache", i);
     }
     
     // Query first file again - should demonstrate cache behavior
@@ -466,7 +466,7 @@ async fn test_cache_behavior_extensive() -> Result<()> {
     let result_repeat = reader.execute_query(query_repeat).await?;
     assert_eq!(result_repeat.vectors.len(), 10);
     
-    println!("✅ Cache behavior extensive test passed");
+    info!("✅ Cache behavior extensive test passed");
     Ok(())
 }
 
@@ -569,7 +569,7 @@ async fn test_strategy_selection_thresholds() -> Result<()> {
         }
     }
     
-    println!("✅ Strategy selection thresholds test passed");
+    info!("✅ Strategy selection thresholds test passed");
     Ok(())
 }
 
@@ -650,7 +650,7 @@ async fn test_optimization_statistics() -> Result<()> {
         assert!(total_activity > 0 || result.processing_time_ms > 0);
     }
     
-    println!("✅ Optimization statistics test passed");
+    info!("✅ Optimization statistics test passed");
     Ok(())
 }
 
@@ -704,13 +704,13 @@ async fn test_return_vectors_flag() -> Result<()> {
     // Both should return same number of results
     assert_eq!(result_with_vectors.vectors.len(), result_without_vectors.vectors.len());
     
-    println!("✅ Return vectors flag test passed");
+    info!("✅ Return vectors flag test passed");
     Ok(())
 }
 
 /// Run all coverage tests
 pub async fn run_all_coverage_tests() -> Result<()> {
-    println!("🎯 Running comprehensive coverage tests for 80%+ coverage...");
+    info!("🎯 Running comprehensive coverage tests for 80%+ coverage...");
     
     test_reader_config_variations().await?;
     test_all_filter_value_types().await?;
@@ -723,13 +723,14 @@ pub async fn run_all_coverage_tests() -> Result<()> {
     test_optimization_statistics().await?;
     test_return_vectors_flag().await?;
     
-    println!("🎉 All coverage tests passed! Target: 80%+ coverage achieved");
+    debug!("🎉 All coverage tests passed! Target: 80%+ coverage achieved");
     Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+use tracing::{debug, error, info, warn};
     
     #[tokio::test]
     async fn run_comprehensive_coverage_tests() {

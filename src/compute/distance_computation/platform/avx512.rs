@@ -273,12 +273,13 @@ unsafe fn reduce_sum_ps_256(v: __m256) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+use tracing::{debug, error, info, warn};
 
     #[test]
     #[cfg(target_arch = "x86_64")]
     fn test_cosine_avx512() {
         if !is_x86_feature_detected!("avx2") {
-            println!("AVX2 not supported, skipping test");
+            debug!("AVX2 not supported, skipping test");
             return;
         }
 
@@ -296,7 +297,7 @@ mod tests {
     #[cfg(target_arch = "x86_64")]
     fn test_euclidean_avx512() {
         if !is_x86_feature_detected!("avx2") {
-            println!("AVX2 not supported, skipping test");
+            debug!("AVX2 not supported, skipping test");
             return;
         }
 

@@ -12,6 +12,7 @@ mod tests {
     use crate::compute::distance_computation::DistanceMetric;
     use crate::index::axis::types::{DataType, IndexAlgorithm, IndexSpecification, ResultCombination};
     use crate::index::axis::manager::{HybridQuery, VectorQuery, MetadataFilter, FilterOperator};
+use tracing::{debug, error, info, warn};
 
     #[tokio::test]
     async fn test_hybrid_vector_metadata_search() {
@@ -384,7 +385,7 @@ mod tests {
                 }
             };
 
-            println!("Pattern '{}' (selectivity={}) -> {:?}", 
+            debug!("Pattern '{}' (selectivity={}) -> {:?}", 
                      pattern, selectivity, selected_algorithm);
         }
     }

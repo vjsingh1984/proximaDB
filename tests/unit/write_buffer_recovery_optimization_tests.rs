@@ -281,11 +281,11 @@ mod recovery_tests {
         ).await?;
         let recovery_time = start.elapsed();
         
-        println!("Recovery Performance:");
-        println!("  Total files: {}", all_files.len());
-        println!("  Total vectors: {}", 50 * 1000);
-        println!("  Recovery time: {:?}", recovery_time);
-        println!("  Throughput: {:.0} vectors/sec", 
+        debug!("Recovery Performance:");
+        debug!("  Total files: {}", all_files.len());
+        debug!("  Total vectors: {}", 50 * 1000);
+        debug!("  Recovery time: {:?}", recovery_time);
+        debug!("  Throughput: {:.0} vectors/sec", 
                  (50000.0 / recovery_time.as_secs_f64()));
         
         // Should recover reasonably fast
@@ -584,6 +584,7 @@ mod recovery_stress_tests {
             
             // Deserialize to verify data integrity
             use crate::storage::persistence::write_ahead_log::serialization::{ProtocolBuffersSerializer, VectorBatchSerializer};
+use tracing::{debug, error, info, warn};
             let serializer = ProtocolBuffersSerializer::new();
             let vectors = serializer.deserialize_batch(&data)?;
             total_vectors_recovered += vectors.len();

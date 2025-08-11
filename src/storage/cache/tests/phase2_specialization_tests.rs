@@ -10,6 +10,9 @@ use tokio::sync::RwLock;
 /// Test specialized VectorStore
 #[tokio::test]
 async fn test_vector_data_cache_specialization() {
+        // Initialize hardware capabilities for testing
+        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+
     let cache = VectorStore::new(1024 * 1024); // 1MB
     
     // Test similarity-based operations
@@ -74,6 +77,9 @@ async fn test_vector_data_cache_specialization() {
 /// Test QueryCache specialization
 #[tokio::test]
 async fn test_query_result_cache_specialization() {
+        // Initialize hardware capabilities for testing
+        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+
     use crate::storage::cache::specialized::query_cache::{QueryKey, CachedQueryResult};
     use crate::proto::proximadb::SearchResult;
     use std::time::SystemTime;
@@ -129,6 +135,9 @@ async fn test_query_result_cache_specialization() {
 /// Test MetadataStore specialization
 #[tokio::test]
 async fn test_metadata_cache_specialization() {
+        // Initialize hardware capabilities for testing
+        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+
     let cache = MetadataStore::new(1024 * 1024); // 1MB
     
     // Test different metadata types
@@ -149,17 +158,17 @@ async fn test_metadata_cache_specialization() {
     cache.put_schema_metadata("schema1", schema_metadata.clone()).await;
     
     // Retrieve metadata
-    let retrieved_coll = cache.get_collection_metadata("coll1").await;
+    let retrieved_coll: Option<CollectionMetadata> = cache.get_collection_metadata("coll1").await;
     assert!(retrieved_coll.is_some());
     assert_eq!(retrieved_coll.unwrap().dimension, 128);
     
-    let retrieved_schema = cache.get_schema_metadata("schema1").await;
+    let retrieved_schema: Option<SchemaMetadata> = cache.get_schema_metadata("schema1").await;
     assert!(retrieved_schema.is_some());
     assert_eq!(retrieved_schema.unwrap().version, 1);
     
     // Test bulk invalidation for collection
     cache.invalidate_collection("coll1").await;
-    let retrieved_coll = cache.get_collection_metadata("coll1").await;
+    let retrieved_coll: Option<CollectionMetadata> = cache.get_collection_metadata("coll1").await;
     assert!(retrieved_coll.is_none());
 }
 
@@ -180,7 +189,7 @@ struct SearchResult {
     metadata: Option<serde_json::Value>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 struct CollectionMetadata {
     id: String,
     dimension: usize,
@@ -188,7 +197,7 @@ struct CollectionMetadata {
     index_type: String,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 struct SchemaMetadata {
     version: u32,
     fields: Vec<String>,
@@ -226,24 +235,5 @@ impl QueryCache {
     }
 }
 
-impl MetadataStore {
-    async fn put_collection_metadata(&self, key: &str, _metadata: CollectionMetadata) {
-        // Would store in specialized way
-    }
-    
-    async fn get_collection_metadata(&self, _key: &str) -> Option<CollectionMetadata> {
-        None // Placeholder
-    }
-    
-    async fn put_schema_metadata(&self, _key: &str, _metadata: SchemaMetadata) {
-        // Would store in specialized way
-    }
-    
-    async fn get_schema_metadata(&self, _key: &str) -> Option<SchemaMetadata> {
-        None // Placeholder
-    }
-    
-    async fn invalidate_collection(&self, _collection: &str) {
-        // Would invalidate all metadata for collection
-    }
-}
+// MetadataStore methods are now implemented in the actual MetadataStore struct
+// in src/storage/cache/specialized/metadata_store.rs

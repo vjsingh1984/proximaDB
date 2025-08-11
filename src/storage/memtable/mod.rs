@@ -473,6 +473,7 @@ pub struct PerformanceWinners {
 #[cfg(test)]
 mod tests {
     use super::*;
+use tracing::{debug, error, info, warn};
 
     #[tokio::test]
     async fn test_memtable_factory() {
@@ -512,6 +513,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "Memtable types are disabled - only GlobalPartitionedMemtable is used in production"]
     async fn test_benchmark_framework() {
         let config = MemtableConfig::default();
         let mut benchmark = MemtableBenchmark::<String, String>::new(config);

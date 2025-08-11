@@ -2,6 +2,7 @@
 mod recovery_stress_tests {
     type Result<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>>;
     use std::sync::Arc;
+    use tracing::{debug, info};
     use std::collections::HashMap;
     use tempfile::TempDir;
     use tokio::fs;
@@ -69,6 +70,10 @@ mod recovery_stress_tests {
                 max_request_size_mb: 100,
                 timeout_seconds: 30,
                 enable_tls: None,
+                rest_compression: false,
+                grpc_compression: false,
+                compression_algorithm: "gzip".to_string(),
+                compression_level: 6,
             },
             consensus: ConsensusConfig {
                 node_id: None,
@@ -110,7 +115,7 @@ mod recovery_stress_tests {
                 create_test_data(base_path, &collection_id, files_per_collection).await?;
             }
             
-            println!("Created {} collections with {} files each", num_collections, files_per_collection);
+            info!("Created {} collections with {} files each", num_collections, files_per_collection);
             
             db.stop().await?;
         }
@@ -122,7 +127,7 @@ mod recovery_stress_tests {
             db.start().await?;
             
             let recovery_time = start.elapsed();
-            println!("Recovery completed in {:?} for {} collections", recovery_time, num_collections);
+            info!("Recovery completed in {:?} for {} collections", recovery_time, num_collections);
             
             // Verify data integrity by checking that collections exist
             for i in (0..num_collections).step_by(5) {
@@ -279,7 +284,7 @@ mod recovery_stress_tests {
             db.start().await?;
             
             let recovery_time = start.elapsed();
-            println!("Concurrent recovery completed in {:?}", recovery_time);
+            info!("Concurrent recovery completed in {:?}", recovery_time);
             
             // Verify all collections are accessible
             for i in 0..10 {
@@ -330,7 +335,7 @@ mod recovery_stress_tests {
             let peak_memory = get_current_memory_usage();
             let memory_increase = peak_memory.saturating_sub(start_memory);
             
-            println!("Memory increase during recovery: {} MB", memory_increase / 1024 / 1024);
+            debug!("Memory increase during recovery: {} MB", memory_increase / 1024 / 1024);
             
             // Memory increase should be reasonable (not loading everything at once)
             assert!(

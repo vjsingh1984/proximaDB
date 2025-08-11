@@ -245,7 +245,7 @@ mod tests {
     #[tokio::test]
     async fn test_compaction_result_in_engine_metrics() {
         let temp_dir = TempDir::new().unwrap();
-        // Create a mock LSM tree for testing
+        // Create a mock SST tree for testing
         // In a real scenario, we'd need a proper LsmTree instance
         // For this test, we'll verify the structure of CompactionResult
         

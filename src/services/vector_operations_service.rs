@@ -13,7 +13,7 @@
 use anyhow::{Context, Result};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
-use tracing::{debug, info, warn, error};
+use tracing::{debug, error, info, warn};
 
 use crate::core::bloom::BloomFilterStrategy;
 
@@ -618,12 +618,17 @@ impl VectorOperationsService {
                 if let Some(collection) = collection_service.get_proto_collection(collection_id).await? {
                     collection.storage_assignment
                         .map(|sa| sa.base_location)
-                        .unwrap_or_else(|| "file:///data".to_string())
+                        .ok_or_else(|| {
+                            error!("❌ Collection '{}' has no storage assignment. All collections must have storage assignments.", collection_id);
+                            anyhow::anyhow!("Collection '{}' has no storage assignment", collection_id)
+                        })?
                 } else {
-                    "file:///data".to_string()
+                    error!("❌ Collection '{}' not found in collection service", collection_id);
+                    return Err(anyhow::anyhow!("Collection '{}' not found", collection_id));
                 }
             } else {
-                "file:///data".to_string()
+                error!("❌ Collection service not available - cannot determine storage location for '{}'", collection_id);
+                return Err(anyhow::anyhow!("Collection service not available"));
             };
             
             // Convert Arc<Vec<VectorRecord>> to Vec<VectorRecord> for the writer
@@ -1282,8 +1287,7 @@ impl VectorOperationsService {
             info!("✅ GLOBAL_FLUSH: Completed intelligent flush operation");
         });
     }
-    
-    
+
     /*
         &self,
         collection_id: &str,
@@ -1457,6 +1461,9 @@ impl VectorOperationsService {
     ) -> Result<Vec<SearchResult>> {
         debug!("🔍 Searching VIPER engine for collection {} with predicate pushdown", collection_id);
         
+        // Get storage URL for this collection
+        let storage_url = self.get_collection_storage_url(collection_id).await?;
+        
         // VIPER ENGINE OPTIMIZATION: Use columnar capabilities and predicate pushdown
         // Extract filter expression from search params
         let filter_expression = search_params.and_then(|p| p.filter_expression.as_ref());
@@ -1469,6 +1476,7 @@ impl VectorOperationsService {
         // VIPER implements columnar predicate pushdown and Parquet filtering
         match self.viper_engine.search_vectors_unified(
             collection_id,
+            &storage_url,
             query_vector,
             k,
             &distance_metric,
@@ -1501,6 +1509,9 @@ impl VectorOperationsService {
     ) -> Result<Vec<SearchResult>> {
         debug!("🔍 Searching LSM engine for collection {} with bloom filter optimization", collection_id);
         
+        // Get storage URL for this collection
+        let storage_url = self.get_collection_storage_url(collection_id).await?;
+        
         // LSM ENGINE OPTIMIZATION: Use bloom filters, range scans, and SSTable optimizations
         // Extract filter expression from search params
         let filter_expression = search_params.and_then(|p| p.filter_expression.as_ref());
@@ -1513,6 +1524,7 @@ impl VectorOperationsService {
         // LSM implements bloom filter hints and range scans
         match self.sst_engine.search_vectors_unified(
             collection_id,
+            &storage_url,
             query_vector,
             k,
             &distance_metric,
@@ -2172,27 +2184,27 @@ impl DirectWalRecovery for VectorOperationsService {
         use std::collections::HashMap;
         use crate::services::collection_service::CollectionService;
         
-        println!("🔧 VectorOperationsService::discover_wal_files - Starting WAL file discovery from metadata...");
+        info!("🔧 VectorOperationsService::discover_wal_files - Starting WAL file discovery from metadata...");
         let mut collection_wal_files: HashMap<String, Vec<std::path::PathBuf>> = HashMap::new();
         
         // Get collection service to access metadata
         let collection_service = match &self.collection_service {
             Some(cs) => cs,
             None => {
-                println!("⚠️ VectorOperationsService::discover_wal_files - No collection service available, cannot discover WAL files from metadata");
+                error!("⚠️ VectorOperationsService::discover_wal_files - No collection service available, cannot discover WAL files from metadata");
                 return Ok(collection_wal_files);
             }
         };
         
         // List all collections from metadata
         let collections = collection_service.list_collections().await?;
-        println!("🔧 VectorOperationsService::discover_wal_files - Found {} collections in metadata", collections.len());
+        debug!("🔧 VectorOperationsService::discover_wal_files - Found {} collections in metadata", collections.len());
         
         for collection in collections {
             // Check if collection has storage assignment
             if let Some(storage_assignment) = &collection.storage_assignment {
                 let wal_url = format!("{}/{}/write_buffer", storage_assignment.base_location, collection.id);
-                println!("🔧 VectorOperationsService::discover_wal_files - Processing collection '{}' with WAL location: {}", 
+                debug!("🔧 VectorOperationsService::discover_wal_files - Processing collection '{}' with WAL location: {}", 
                     collection.id, wal_url);
                 
                 // Extract base path from WAL location
@@ -2210,10 +2222,10 @@ impl DirectWalRecovery for VectorOperationsService {
                     let mut wal_files = Vec::new();
                     
                     // Find WAL files in logs directory
-                    println!("🔧 VectorOperationsService::discover_wal_files - Scanning logs directory: {:?}", logs_dir);
+                    debug!("🔧 VectorOperationsService::discover_wal_files - Scanning logs directory: {:?}", logs_dir);
                     if let Ok(log_entries) = std::fs::read_dir(&logs_dir) {
                         let log_entries_vec: Vec<_> = log_entries.flatten().collect();
-                        println!("🔧 VectorOperationsService::discover_wal_files - Found {} log entries", log_entries_vec.len());
+                        debug!("🔧 VectorOperationsService::discover_wal_files - Found {} log entries", log_entries_vec.len());
                         
                         for log_entry in log_entries_vec {
                             let file_name = log_entry.file_name().to_string_lossy().to_string();
@@ -2221,25 +2233,25 @@ impl DirectWalRecovery for VectorOperationsService {
                                (file_name.ends_with(".pbwal") || 
                                 file_name.ends_with(".bcwal") || 
                                 file_name.ends_with(".avwal")) {
-                                println!("🔧 VectorOperationsService::discover_wal_files - Found WAL file: {:?}", log_entry.path());
+                                debug!("🔧 VectorOperationsService::discover_wal_files - Found WAL file: {:?}", log_entry.path());
                                 wal_files.push(log_entry.path());
                             }
                         }
                     }
                     
                     if !wal_files.is_empty() {
-                        println!("🔧 VectorOperationsService::discover_wal_files - Adding collection '{}' with {} WAL files", collection.id, wal_files.len());
+                        debug!("🔧 VectorOperationsService::discover_wal_files - Adding collection '{}' with {} WAL files", collection.id, wal_files.len());
                         // Sort WAL files by sequence for proper ordering
                         wal_files.sort();
                         collection_wal_files.insert(collection.id.clone(), wal_files);
                     } else {
-                        println!("⚠️ VectorOperationsService::discover_wal_files - No WAL files found for collection '{}'", collection.id);
+                        warn!("⚠️ VectorOperationsService::discover_wal_files - No WAL files found for collection '{}'", collection.id);
                     }
                 } else {
-                    println!("⚠️ VectorOperationsService::discover_wal_files - Logs directory does not exist: {:?}", logs_dir);
+                    warn!("⚠️ VectorOperationsService::discover_wal_files - Logs directory does not exist: {:?}", logs_dir);
                 }
             } else {
-                println!("⚠️ VectorOperationsService::discover_wal_files - Collection '{}' has no storage assignment", collection.id);
+                warn!("⚠️ VectorOperationsService::discover_wal_files - Collection '{}' has no storage assignment", collection.id);
             }
         }
         
@@ -2522,6 +2534,21 @@ impl DirectWalRecovery for VectorOperationsService {
 }
 
 impl VectorOperationsService {
+    /// Get storage URL for a collection from collection service
+    async fn get_collection_storage_url(&self, collection_id: &str) -> Result<String> {
+        // Get from collection service if available
+        if let Some(collection_service) = &self.collection_service {
+            if let Some(collection) = collection_service.get_proto_collection(collection_id).await? {
+                if let Some(storage_assignment) = &collection.storage_assignment {
+                    return Ok(format!("file://{}", storage_assignment.base_location));
+                }
+            }
+        }
+        
+        // Fallback to default location
+        Ok(format!("file:///data/{}/data", collection_id))
+    }
+
     /// Apply multi-tier deduplication with early termination support
     fn apply_multi_tier_deduplication(
         &self, 
@@ -2640,5 +2667,4 @@ pub struct InsertResult {
 // Note: Tests are currently disabled because VectorOperationsService requires
 // real ViperEngine and LsmTree instances, not mocks.
 // TODO: Refactor to use trait abstractions or integration tests.
-
 

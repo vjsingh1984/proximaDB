@@ -368,6 +368,7 @@ mod tests {
     use std::sync::Arc;
     use std::thread;
     use std::time::Instant;
+use tracing::{debug, error, info, warn};
     
     #[test]
     fn test_pool_basic_functionality() {
@@ -429,7 +430,7 @@ mod tests {
         }
         
         let (created, reused, _, _) = stats.get_stats();
-        println!("Concurrent test - Created: {}, Reused: {}, CPUs: {}", created, reused, num_cpus);
+        debug!("Concurrent test - Created: {}, Reused: {}, CPUs: {}", created, reused, num_cpus);
         
         // Should have good reuse ratio
         assert!(reused > 0);
@@ -488,16 +489,16 @@ mod tests {
         let (created, reused, pool_size, peak) = stats.get_stats();
         
         let total_queries = iterations * queries.len();
-        println!("SQL Parser Performance Test Results:");
-        println!("  {} queries parsed in {:?}", total_queries, elapsed);
-        println!("  Throughput: {:.0} queries/sec", total_queries as f64 / elapsed.as_secs_f64());
-        println!("  Pool stats - Created: {}, Reused: {}, Pool size: {}, Peak: {}", 
+        debug!("SQL Parser Performance Test Results:");
+        debug!("  {} queries parsed in {:?}", total_queries, elapsed);
+        debug!("  Throughput: {:.0} queries/sec", total_queries as f64 / elapsed.as_secs_f64());
+        debug!("  Pool stats - Created: {}, Reused: {}, Pool size: {}, Peak: {}", 
                 created, reused, pool_size, peak);
         
         // Should have high reuse ratio for performance with conservative pool size
         let total_operations = created + reused;
         let reuse_ratio = reused as f64 / total_operations as f64;
-        println!("  Parser reuse ratio: {:.1}%", reuse_ratio * 100.0);
+        debug!("  Parser reuse ratio: {:.1}%", reuse_ratio * 100.0);
         
         // With limited pool size, should have excellent reuse
         assert!(reuse_ratio > 0.85, "Reuse ratio should be >85% with limited pool, got {:.2}", reuse_ratio);
@@ -562,11 +563,11 @@ mod tests {
         let elapsed = start.elapsed();
         let expected_total = num_threads * queries_per_thread;
         
-        println!("SQL Parser Stress Test Results:");
-        println!("  Threads: {} (CPU count: {})", num_threads, num_cpus);
-        println!("  Queries per thread: {}", queries_per_thread);
-        println!("  Total queries: {}/{} successful in {:?}", total_success, expected_total, elapsed);
-        println!("  Throughput: {:.0} queries/sec", expected_total as f64 / elapsed.as_secs_f64());
+        debug!("SQL Parser Stress Test Results:");
+        debug!("  Threads: {} (CPU count: {})", num_threads, num_cpus);
+        debug!("  Queries per thread: {}", queries_per_thread);
+        debug!("  Total queries: {}/{} successful in {:?}", total_success, expected_total, elapsed);
+        debug!("  Throughput: {:.0} queries/sec", expected_total as f64 / elapsed.as_secs_f64());
         
         // Should have very high success rate
         assert_eq!(total_success, expected_total);
@@ -574,7 +575,7 @@ mod tests {
         let stats = pool.get_stats();
         let (created, reused, _, _) = stats.get_stats();
         let reuse_ratio = reused as f64 / (created + reused) as f64 * 100.0;
-        println!("  Parser stats - Created: {}, Reused: {} ({:.1}% reuse)", created, reused, reuse_ratio);
+        debug!("  Parser stats - Created: {}, Reused: {} ({:.1}% reuse)", created, reused, reuse_ratio);
         
         // Should have excellent reuse ratio with limited pool size
         assert!(reuse_ratio > 70.0, "Parser reuse ratio should be >70%, got {:.1}%", reuse_ratio);

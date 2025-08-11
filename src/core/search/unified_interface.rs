@@ -80,6 +80,8 @@ pub struct StorageInfo {
     pub file_count: usize,
     /// Support for range requests
     pub supports_range_requests: bool,
+    /// Actual file paths (optional, used when available to avoid filesystem queries)
+    pub file_paths: Option<Vec<String>>,
 }
 
 /// Unified search interface - implemented by all engines
@@ -324,6 +326,7 @@ impl UnifiedSearchOrchestrator {
             estimated_size_mb: 1000.0,
             file_count: 10,
             supports_range_requests: true,
+            file_paths: None,
         })
     }
 }

@@ -4,6 +4,7 @@
 //! that achieves 95% reduction in metadata filtering overhead.
 
 use anyhow::Result;
+use tracing::{debug, error, info, warn};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio;
@@ -122,7 +123,7 @@ mod bloom_filter_tests {
             assert_eq!(category_value, &serde_json::json!("A"), "All results should have category=A");
         }
 
-        println!("✅ Bloom filter metadata filtering test passed");
+        debug!("✅ Bloom filter metadata filtering test passed");
         Ok(())
     }
 
@@ -174,7 +175,7 @@ mod bloom_filter_tests {
         assert_eq!(results.len(), 1, "Complex AND filter should return 1 matching vector");
         assert_eq!(results[0].id, "num_1", "Should return the vector with both score=85 and tier=gold");
 
-        println!("✅ Bloom filter complex expressions test passed");
+        debug!("✅ Bloom filter complex expressions test passed");
         Ok(())
     }
 
@@ -237,7 +238,7 @@ mod bloom_filter_tests {
             assert!(results.iter().any(|r| r.id == "dist_1"), "Should find reference vector with {:?}", metric);
         }
 
-        println!("✅ Bloom filter with all distance metrics test passed");
+        debug!("✅ Bloom filter with all distance metrics test passed");
         Ok(())
     }
 
@@ -302,7 +303,7 @@ mod bloom_filter_tests {
             "Bloom filter search should complete quickly, took {}ms", 
             search_duration.as_millis());
 
-        println!("✅ Bloom filter performance benchmark passed in {}ms", search_duration.as_millis());
+        debug!("✅ Bloom filter performance benchmark passed in {}ms", search_duration.as_millis());
         Ok(())
     }
 
@@ -353,7 +354,7 @@ mod bloom_filter_tests {
         let test_value = result.metadata.get("test").unwrap();
         assert_eq!(test_value, &serde_json::json!("structure"), "Metadata should be correctly converted");
 
-        println!("✅ SearchResult structure test passed");
+        debug!("✅ SearchResult structure test passed");
         Ok(())
     }
 }

@@ -1,6 +1,7 @@
 // Test suite for SST atomic operations with unified atomic coordinator
 
 use proximadb::storage::engines::sst::SstStorage;
+use tracing::{debug, error, info, warn};
 use proximadb::storage::persistence::filesystem::FilesystemFactory;
 use proximadb::core::VectorRecord;
 use proximadb::proto::proximadb::MetadataItem;
@@ -67,9 +68,9 @@ async fn test_lsm_atomic_flush_creates_staging_directory() {
             .collect();
         
         if !initial_sst_files.is_empty() {
-            println!("WARNING: Found {} SSTable files immediately after creation (before flush):", initial_sst_files.len());
+            debug!("WARNING: Found {} SSTable files immediately after creation (before flush):", initial_sst_files.len());
             for file in &initial_sst_files {
-                println!("  - {}", file.name);
+                debug!("  - {}", file.name);
             }
         }
     }
@@ -113,10 +114,10 @@ async fn test_lsm_atomic_flush_creates_staging_directory() {
     
     // Get the storage assignment to find the actual data directory
     let data_dir = test_assignment.data_url.strip_prefix("file://").unwrap_or(&test_assignment.data_url);
-    println!("DEBUG: Storage assignment data URL: {}", test_assignment.data_url);
-    println!("DEBUG: Data directory: {}", data_dir);
-    println!("DEBUG: Base path: {}", base_path.to_str().unwrap());
-    println!("DEBUG: Collection ID: {}", collection_id);
+    debug!("DEBUG: Storage assignment data URL: {}", test_assignment.data_url);
+    debug!("DEBUG: Data directory: {}", data_dir);
+    debug!("DEBUG: Base path: {}", base_path.to_str().unwrap());
+    debug!("DEBUG: Collection ID: {}", collection_id);
     
     // Verify staging directory was created and cleaned up
     let staging_dir = format!("{}/__flush", data_dir);
@@ -138,10 +139,10 @@ async fn test_lsm_atomic_flush_creates_staging_directory() {
     
     // Debug: print all files found
     if sst_files.len() != 1 {
-        println!("DEBUG: Found {} SSTable files in {}", sst_files.len(), data_dir);
-        println!("DEBUG: Looking for files containing collection_id: {}", collection_id);
+        debug!("DEBUG: Found {} SSTable files in {}", sst_files.len(), data_dir);
+        debug!("DEBUG: Looking for files containing collection_id: {}", collection_id);
         for (i, file) in entries.iter().enumerate() {
-            println!("  [{}] {} (matches: {})", i, file.name, file.name.contains(collection_id));
+            debug!("  [{}] {} (matches: {})", i, file.name, file.name.contains(collection_id));
         }
     }
     
@@ -237,7 +238,7 @@ async fn test_lsm_atomic_flush_rollback_on_failure() {
         
         // Empty vectors may or may not create SSTable files depending on implementation
         // If no files are created, that's also acceptable for empty vectors
-        println!("DEBUG: Found {} SSTable files for empty vector flush", sst_files.len());
+        debug!("DEBUG: Found {} SSTable files for empty vector flush", sst_files.len());
     }
     
     // Verify staging directory is cleaned up
@@ -320,19 +321,19 @@ async fn test_lsm_atomic_compaction_with_staging() {
     
     let compact_result = lsm_tree.compact(compact_params).await.unwrap();
     
-    println!("Compact result: {:?}", compact_result);
+    debug!("Compact result: {:?}", compact_result);
     assert!(compact_result.success, "Compaction failed: {:?}", compact_result);
     
     // With proper SSTable data block parsing, compaction should now process entries
     if compact_result.entries_processed == 0 {
-        println!("⚠️  COMPACTION: No entries processed - check if SSTable parsing worked");
-        println!("   Bytes read: {}, Input files: {}", compact_result.bytes_read, compact_result.input_files);
+        debug!("⚠️  COMPACTION: No entries processed - check if SSTable parsing worked");
+        debug!("   Bytes read: {}, Input files: {}", compact_result.bytes_read, compact_result.input_files);
         // Still verify that compaction ran and read files
         assert!(compact_result.bytes_read > 0, "Should have read some bytes");
     } else {
         // This is the expected case with proper SSTable parsing
         assert!(compact_result.entries_processed > 0, "Should have processed some entries");
-        println!("✅ COMPACTION: Successfully processed {} entries", compact_result.entries_processed);
+        debug!("✅ COMPACTION: Successfully processed {} entries", compact_result.entries_processed);
     }
     
     // Wait a bit for atomic operations to complete
@@ -353,11 +354,11 @@ async fn test_lsm_atomic_compaction_with_staging() {
     // Verify SSTable files exist
     // Get the storage assignment to find the actual data directory
     let data_dir = test_assignment.data_url.strip_prefix("file://").unwrap_or(&test_assignment.data_url);
-    println!("DEBUG TEST: Storage assignment data URL: {}", test_assignment.data_url);
-    println!("DEBUG TEST: Looking for SSTable files in: {}", data_dir);
+    debug!("DEBUG TEST: Storage assignment data URL: {}", test_assignment.data_url);
+    debug!("DEBUG TEST: Looking for SSTable files in: {}", data_dir);
     
     // First check if the directory exists
-    println!("DEBUG TEST: Checking if data directory exists: {}", data_dir);
+    debug!("DEBUG TEST: Checking if data directory exists: {}", data_dir);
     if !fs.exists(&data_dir).await.unwrap() {
         panic!("Data directory does not exist: {}", data_dir);
     }
@@ -373,7 +374,7 @@ async fn test_lsm_atomic_compaction_with_staging() {
     // 1. How many files were compacted together
     // 2. Whether the compaction created multiple output files (partitioned compaction)
     // 3. Any auxiliary files (indexes, bloom filters)
-    println!("DEBUG TEST: Found {} SSTable files in data directory after compaction", sst_files.len());
+    debug!("DEBUG TEST: Found {} SSTable files in data directory after compaction", sst_files.len());
     assert!(sst_files.len() > 0, "Should have at least one SSTable after compaction. Directory {} has no SST files!", data_dir);
     
     // Explicitly keep temp_dir alive until the very end of test to prevent cleanup
@@ -463,7 +464,7 @@ async fn test_lsm_sequential_flush_within_collection() {
     // With sequential flushes, SST storage may optimize and create fewer files
     // or one file per flush depending on implementation
     assert!(sst_files.len() >= 1, "Should have at least one SSTable after sequential flushes, but found {}", sst_files.len());
-    println!("Created {} SSTable files from 5 sequential flushes", sst_files.len());
+    debug!("Created {} SSTable files from 5 sequential flushes", sst_files.len());
 }
 
 #[tokio::test]

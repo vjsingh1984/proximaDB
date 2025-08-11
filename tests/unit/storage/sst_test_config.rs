@@ -1,6 +1,7 @@
 //! Consistent configuration for SST tests
 
 use proximadb::core::{SstConfig, BloomFilterConfig, WriteBufferUserConfig};
+use tracing::{debug, error, info, warn};
 use proximadb::storage::persistence::filesystem::FilesystemConfig;
 use std::path::Path;
 
@@ -103,7 +104,7 @@ impl PersistentTestAssignments {
             cache.insert(collection_id.to_string(), assignment.clone());
         }
 
-        println!("Created persistent test assignment for {}: {}", collection_id, data_url);
+        debug!("Created persistent test assignment for {}: {}", collection_id, data_url);
 
         Ok(assignment)
     }
@@ -308,7 +309,7 @@ pub async fn setup_storage_assignment(collection_id: &str, _base_path: &str) -> 
     if let Some(assignment) = assignment {
         // If assignment differs from our persistent one, update the persistent storage
         if assignment.data_url != test_assignment.data_url {
-            println!("Assignment service returned different URL: {} vs persistent {}", 
+            debug!("Assignment service returned different URL: {} vs persistent {}", 
                     assignment.data_url, test_assignment.data_url);
             
             // Update our persistent assignment to match what assignment service returned
@@ -331,7 +332,7 @@ pub async fn setup_storage_assignment(collection_id: &str, _base_path: &str) -> 
         
         let data_path = assignment.data_url.strip_prefix("file://").unwrap_or(&assignment.data_url);
         tokio::fs::create_dir_all(data_path).await?;
-        println!("Created data directory: {}", data_path);
+        debug!("Created data directory: {}", data_path);
     } else {
         return Err(anyhow::anyhow!("Assignment was not created for collection {}", collection_id));
     }
@@ -340,7 +341,7 @@ pub async fn setup_storage_assignment(collection_id: &str, _base_path: &str) -> 
     // Just use the test assignment directly
     let data_path = test_assignment.data_url.strip_prefix("file://").unwrap_or(&test_assignment.data_url);
     tokio::fs::create_dir_all(data_path).await?;
-    println!("Created data directory: {}", data_path);
+    debug!("Created data directory: {}", data_path);
     
     Ok(test_assignment)
 }
@@ -371,7 +372,7 @@ pub async fn cleanup_sstable_files(collection_id: &str) -> anyhow::Result<()> {
             while let Some(entry) = entries.next_entry().await? {
                 let path = entry.path();
                 if path.is_file() && path.extension().map_or(false, |ext| ext == "sst") {
-                    println!("Cleaning up SSTable file: {}", path.display());
+                    debug!("Cleaning up SSTable file: {}", path.display());
                     let _ = fs::remove_file(&path).await; // Ignore errors for missing files
                 }
             }

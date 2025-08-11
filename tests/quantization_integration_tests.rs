@@ -14,6 +14,7 @@ use proximadb::storage::engines::viper::quantization::{
     VectorQuantizationEngine, QuantizationConfig as ViperQuantizationConfig, QuantizationLevel
 };
 use proximadb::core::VectorRecord;
+use tracing::{debug, error, info};
 
 /// Generate test vectors for quantization testing
 fn generate_test_vectors(count: usize, dimensions: usize) -> Vec<Vec<f32>> {
@@ -179,10 +180,10 @@ async fn test_viper_quantization_integration() -> Result<()> {
     assert!(original_bytes > quantized_bytes);
     assert!(compression_ratio > 1.0);
     
-    println!("🔧 VIPER quantization test passed");
-    println!("   Model dimension: {}", model.dimension);
-    println!("   Compression ratio: {:.2}x", compression_ratio);
-    println!("   Storage savings: {} -> {} bytes", original_bytes, quantized_bytes);
+    debug!("🔧 VIPER quantization test passed");
+    debug!("   Model dimension: {}", model.dimension);
+    debug!("   Compression ratio: {:.2}x", compression_ratio);
+    debug!("   Storage savings: {} -> {} bytes", original_bytes, quantized_bytes);
     
     Ok(())
 }
@@ -230,9 +231,9 @@ async fn test_adaptive_quantization_selection() -> Result<()> {
     // Should select binary or low-bit quantization for sparse data
     assert!(sparse_model.level.bits_per_value() <= 4);
     
-    println!("🎯 Adaptive selection results:");
-    println!("  Dense data: {:?}", dense_model.level);
-    println!("  Sparse data: {:?}", sparse_model.level);
+    info!("🎯 Adaptive selection results:");
+    debug!("  Dense data: {:?}", dense_model.level);
+    debug!("  Sparse data: {:?}", sparse_model.level);
     
     Ok(())
 }
@@ -267,7 +268,7 @@ async fn test_quantization_error_handling() -> Result<()> {
     let mut tiny_engine = VectorQuantizationEngine::new(tiny_config);
     assert!(tiny_engine.train_model(&tiny_vectors).is_ok());
     
-    println!("✅ Error handling tests passed");
+    error!("✅ Error handling tests passed");
     
     Ok(())
 }
@@ -304,12 +305,12 @@ async fn test_quantization_quality_metrics() -> Result<()> {
         assert!(error < 0.5); // Reasonable reconstruction error
     }
     
-    println!("📊 Quality metrics:");
-    println!("  Search quality retention: {:.2}%", 
+    info!("📊 Quality metrics:");
+    debug!("  Search quality retention: {:.2}%", 
              model.quality_metrics.search_quality_retention * 100.0);
-    println!("  Compression ratio: {:.2}x", 
+    debug!("  Compression ratio: {:.2}x", 
              model.quality_metrics.compression_ratio);
-    println!("  Training time: {:.2}ms", 
+    debug!("  Training time: {:.2}ms", 
              model.quality_metrics.quantization_time_ms);
     
     Ok(())
@@ -345,7 +346,7 @@ async fn test_model_serialization() -> Result<()> {
     let quantized = new_engine.quantize_vectors(&test_records)?;
     assert_eq!(quantized.len(), test_records.len());
     
-    println!("✅ Model serialization test passed");
+    info!("✅ Model serialization test passed");
     
     Ok(())
 }

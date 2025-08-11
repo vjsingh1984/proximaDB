@@ -16,11 +16,11 @@ use crate::network::multi_server::{GrpcHttpServerConfig, MultiServerConfig, Rest
 #[derive(Debug, Clone)]
 pub struct RestHttpServerBuilder {
     bind_address: SocketAddr,
-    tls_bind_address: Option<SocketAddr>,
     enable_rest: bool,
     enable_dashboard: bool,
     enable_metrics: bool,
     enable_health: bool,
+    rest_compression: bool,  // Clear, specific naming
     tls_cert_file: Option<String>,
     tls_key_file: Option<String>,
 }
@@ -29,11 +29,11 @@ impl Default for RestHttpServerBuilder {
     fn default() -> Self {
         Self {
             bind_address: "0.0.0.0:5678".parse().unwrap(),
-            tls_bind_address: None,
             enable_rest: true,
             enable_dashboard: true,
             enable_metrics: true,
             enable_health: true,
+            rest_compression: false,  // Clear naming, default false
             tls_cert_file: None,
             tls_key_file: None,
         }
@@ -52,11 +52,7 @@ impl RestHttpServerBuilder {
         self
     }
 
-    /// Set bind address for TLS HTTPS server
-    pub fn tls_bind_address<T: Into<SocketAddr>>(mut self, addr: T) -> Self {
-        self.tls_bind_address = Some(addr.into());
-        self
-    }
+    // TLS uses the same port as non-TLS (5678 for REST)
 
     /// Enable/disable REST API endpoints
     pub fn enable_rest(mut self, enabled: bool) -> Self {
@@ -79,6 +75,12 @@ impl RestHttpServerBuilder {
     /// Enable/disable health check endpoint
     pub fn enable_health(mut self, enabled: bool) -> Self {
         self.enable_health = enabled;
+        self
+    }
+
+    /// Enable/disable REST compression
+    pub fn rest_compression(mut self, enabled: bool) -> Self {
+        self.rest_compression = enabled;
         self
     }
 
@@ -135,7 +137,7 @@ impl RestHttpServerBuilder {
             enable_dashboard: self.enable_dashboard,
             enable_metrics: self.enable_metrics,
             enable_health: self.enable_health,
-            enable_compression: false, // Default to false for better debugging and troubleshooting
+            enable_compression: self.rest_compression, // Clear mapping to config
             tls_cert_file: self.tls_cert_file,
             tls_key_file: self.tls_key_file,
         })
@@ -176,8 +178,8 @@ impl RestHttpServerBuilder {
 #[derive(Debug, Clone)]
 pub struct GrpcHttpServerBuilder {
     bind_address: SocketAddr,
-    tls_bind_address: Option<SocketAddr>,
     enable_grpc: bool,
+    grpc_compression: bool,  // Clear, specific naming
     tls_cert_file: Option<String>,
     tls_key_file: Option<String>,
     max_message_size: usize,
@@ -187,9 +189,9 @@ pub struct GrpcHttpServerBuilder {
 impl Default for GrpcHttpServerBuilder {
     fn default() -> Self {
         Self {
-            bind_address: "0.0.0.0:5680".parse().unwrap(),
-            tls_bind_address: None,
+            bind_address: "0.0.0.0:5679".parse().unwrap(),  // Standard gRPC port
             enable_grpc: true,
+            grpc_compression: false,  // Clear naming, default false
             tls_cert_file: None,
             tls_key_file: None,
             max_message_size: 64 * 1024 * 1024, // 64MB for bulk vector inserts
@@ -210,11 +212,7 @@ impl GrpcHttpServerBuilder {
         self
     }
 
-    /// Set bind address for TLS gRPC server
-    pub fn tls_bind_address<T: Into<SocketAddr>>(mut self, addr: T) -> Self {
-        self.tls_bind_address = Some(addr.into());
-        self
-    }
+    // TLS uses the same port as non-TLS (5679 for gRPC)
 
     /// Enable/disable gRPC endpoints
     pub fn enable_grpc(mut self, enabled: bool) -> Self {
@@ -231,6 +229,12 @@ impl GrpcHttpServerBuilder {
     /// Enable/disable gRPC reflection
     pub fn enable_reflection(mut self, enabled: bool) -> Self {
         self.enable_reflection = enabled;
+        self
+    }
+
+    /// Enable/disable gRPC compression
+    pub fn grpc_compression(mut self, enabled: bool) -> Self {
+        self.grpc_compression = enabled;
         self
     }
 
@@ -284,11 +288,11 @@ impl GrpcHttpServerBuilder {
         Ok(GrpcHttpServerConfig {
             port: self.bind_address.port(),
             bind_address: self.bind_address,
-            tls_bind_address: self.tls_bind_address,
+            tls_bind_address: None,  // No separate TLS port - same port for TLS
             enable_grpc: self.enable_grpc,
             max_message_size: self.max_message_size,
             enable_reflection: self.enable_reflection,
-            enable_compression: true, // Default to true
+            enable_compression: self.grpc_compression, // Clear mapping to config
             tls_cert_file: self.tls_cert_file,
             tls_key_file: self.tls_key_file,
         })
@@ -395,7 +399,13 @@ impl MultiServerBuilder {
     }
 
     /// Build the complete multi-server configuration
-    pub fn build(self) -> Result<MultiServerConfig> {
+    pub fn build(mut self) -> Result<MultiServerConfig> {
+        // Apply API config compression settings to builders if available
+        if let Some(ref api_config) = self.api_config {
+            self.http_builder = self.http_builder.rest_compression(api_config.rest_compression);
+            self.grpc_builder = self.grpc_builder.grpc_compression(api_config.grpc_compression);
+        }
+
         let http_config = self
             .http_builder
             .build_with_validation()
@@ -418,7 +428,7 @@ impl MultiServerBuilder {
         info!("🛠️  Building development configuration (non-TLS)");
         Self::new()
             .http(|h| h.bind_address("0.0.0.0:5678".parse::<SocketAddr>().unwrap()))
-            .grpc(|g| g.bind_address("0.0.0.0:5680".parse::<SocketAddr>().unwrap()))
+            .grpc(|g| g.bind_address("0.0.0.0:5679".parse::<SocketAddr>().unwrap()))
             .build()
     }
 
@@ -428,12 +438,10 @@ impl MultiServerBuilder {
         Self::new()
             .with_default_tls()
             .http(|h| {
-                h.bind_address("0.0.0.0:5678".parse::<SocketAddr>().unwrap())
-                    .tls_bind_address("0.0.0.0:5679".parse::<SocketAddr>().unwrap())
+                h.bind_address("0.0.0.0:5678".parse::<SocketAddr>().unwrap()) // Same port for TLS
             })
             .grpc(|g| {
-                g.bind_address("0.0.0.0:5680".parse::<SocketAddr>().unwrap())
-                    .tls_bind_address("0.0.0.0:5681".parse::<SocketAddr>().unwrap())
+                g.bind_address("0.0.0.0:5679".parse::<SocketAddr>().unwrap()) // Same port for TLS
             })
             .build()
     }
@@ -480,7 +488,7 @@ mod tests {
     fn test_development_config() {
         let config = MultiServerBuilder::development().unwrap();
         assert_eq!(config.http_config.port, 5678);
-        assert_eq!(config.grpc_config.bind_address.port(), 5680);
+        assert_eq!(config.grpc_config.bind_address.port(), 5679);
         assert!(!config.http_config.is_tls_enabled());
         assert!(!config.grpc_config.is_tls_enabled());
     }

@@ -136,23 +136,19 @@ impl CompactionManager {
     // }
 
     /// Discover files that can be compacted for a collection
-    async fn discover_compactable_files(&self, collection_id: &str) -> Result<Vec<String>> {
+    async fn discover_compactable_files(&self, collection_id: &str, collection_config: Option<&crate::proto::proximadb::Collection>) -> Result<Vec<String>> {
         debug!("Discovering compactable files for collection: {}", collection_id);
         
-        // Get storage assignment for the collection from metadata
-        let collection_service = self.collection_service.read().await;
-        let collection_service = collection_service.as_ref()
-            .ok_or_else(|| anyhow::anyhow!("Collection service not initialized"))?;
-        
-        let collection = match collection_service.get_proto_collection(collection_id).await? {
+        // Use provided collection config or return empty if not available
+        let collection = match collection_config {
             Some(col) => col,
             None => {
-                debug!("🔍 Collection {} not found, skipping compaction", collection_id);
+                debug!("🔍 Collection config not provided for {}, skipping compaction", collection_id);
                 return Ok(vec![]); // Return empty list instead of failing
             }
         };
         
-        let storage_assignment = match collection.storage_assignment {
+        let storage_assignment = match &collection.storage_assignment {
             Some(assignment) => assignment,
             None => {
                 debug!("🔍 No storage assignment found for collection {}, skipping compaction", collection_id);
@@ -298,28 +294,8 @@ impl CompactionManager {
         &self,
         collection_id: &str,
         input_files: Vec<String>,
+        collection_config: Option<&crate::proto::proximadb::Collection>,
     ) -> Result<ViperCompactionResult> {
-        // Fetch collection configuration using unified interface
-        let collection_config = {
-            let service_lock = self.collection_service.read().await;
-            if let Some(ref service) = *service_lock {
-                match service.get_proto_collection(collection_id).await {
-                    Ok(Some(collection)) => Some(collection),
-                    Ok(None) => {
-                        warn!("⚠️ Collection {} not found during compaction", collection_id);
-                        None
-                    }
-                    Err(e) => {
-                        warn!("⚠️ Failed to get collection {}: {}", collection_id, e);
-                        None
-                    }
-                }
-            } else {
-                warn!("⚠️ No collection service available during compaction");
-                None
-            }
-        };
-        
         // Extract vector dimensions for efficient capacity planning
         let vector_dimensions = collection_config
             .as_ref()
@@ -330,7 +306,7 @@ impl CompactionManager {
         info!("🔧 VIPER COMPACTION: Starting with {} dimensions for collection {}", 
               vector_dimensions, collection_id);
         
-        self.compact_parquet_files_with_config(collection_id, input_files, vector_dimensions, collection_config).await
+        self.compact_parquet_files_with_config(collection_id, input_files, vector_dimensions, collection_config.cloned()).await
     }
     
     /// Internal compaction implementation with collection config
@@ -350,7 +326,7 @@ impl CompactionManager {
         
         // If no input files specified, discover them from storage
         let input_files = if input_files.is_empty() {
-            self.discover_compactable_files(collection_id).await?
+            self.discover_compactable_files(collection_id, collection_config.as_ref()).await?
         } else {
             input_files
         };
@@ -376,15 +352,11 @@ impl CompactionManager {
         
         info!("📋 Input files for compaction: {:?}", input_files);
         
-        // Determine base storage directory from collection metadata
-        let collection_service = self.collection_service.read().await;
-        let collection_service = collection_service.as_ref()
-            .ok_or_else(|| anyhow::anyhow!("Collection service not initialized"))?;
-        
-        let collection = match collection_service.get_proto_collection(collection_id).await? {
+        // Use provided collection config or return empty result if not available
+        let collection = match &collection_config {
             Some(col) => col,
             None => {
-                info!("🔍 Collection {} not found, compaction not needed", collection_id);
+                info!("🔍 Collection config not provided for {}, skipping compaction", collection_id);
                 return Ok(ViperCompactionResult {
                     input_files: vec![],
                     output_files: vec![],
@@ -396,7 +368,7 @@ impl CompactionManager {
             }
         };
         
-        let storage_assignment = match collection.storage_assignment {
+        let storage_assignment = match &collection.storage_assignment {
             Some(assignment) => assignment,
             None => {
                 info!("🔍 No storage assignment found for collection {}, compaction not needed", collection_id);
@@ -736,6 +708,8 @@ impl CompactionManager {
             "🔄 [ATOMIC COMPACTION] Starting atomic compaction operation for collection {}",
             collection_id
         );
+        debug!("🔄 [DEBUG] Starting atomic compaction for collection: {}", collection_id);
+        debug!("    base_storage_url: {}", base_storage_url);
         
         // Begin atomic operation for compaction
         // Note: base_storage_url already includes collection path, so don't set collection_id
@@ -749,10 +723,21 @@ impl CompactionManager {
             skip_uuid_subdir: true,  // Use simple __compact directory without UUID subdirectory
         };
         
+        debug!("📋 [DEBUG] StagingConfig for compaction:");
+        debug!("    base_url: {}", staging_config.base_url);
+        debug!("    collection_id: {:?}", staging_config.collection_id);
+        debug!("    operation_type: {:?}", staging_config.operation_type);
+        debug!("    skip_uuid_subdir: {}", staging_config.skip_uuid_subdir);
+        
         let atomic_op = self.atomic_coordinator
             .begin_atomic_operation(&staging_config)
             .await
             .context("Failed to begin atomic compaction operation")?;
+        
+        debug!("📦 [DEBUG] Atomic operation created:");
+        debug!("    operation_id: {}", atomic_op.operation_id);
+        debug!("    staging_url: {}", atomic_op.staging_url);
+        debug!("    final_url: {}", atomic_op.final_url);
         
         // Split records across multiple output files
         let mut output_files = Vec::new();
@@ -823,19 +808,26 @@ impl CompactionManager {
         }
         
         // Finalize atomic operation - this will atomically move all files to final location
+        debug!("🔄 [DEBUG] About to finalize atomic operation: {}", atomic_op.operation_id);
         self.atomic_coordinator
             .finalize_atomic_operation(&atomic_op.operation_id)
             .await
             .context("Failed to finalize atomic compaction")?;
+        info!("✅ [DEBUG] Atomic operation finalized successfully");
         
         // Add a small delay to ensure filesystem operations complete
         tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
         
         // Verify all compacted files exist before deleting input files
         info!("🔍 Verifying {} compacted files exist before cleanup", output_files.len());
+        debug!("🔍 [DEBUG] Verifying {} compacted files exist", output_files.len());
         
         for (idx, output_file) in output_files.iter().enumerate() {
-            if !fs.exists(output_file).await? {
+            debug!("    [DEBUG] Checking file {}: {}", idx, output_file);
+            let exists = fs.exists(output_file).await?;
+            debug!("    [DEBUG] File exists: {}", exists);
+            if !exists {
+                debug!("    ❌ [DEBUG] File verification failed!");
                 return Err(anyhow::anyhow!(
                     "Compacted file {} ({}/{}) does not exist after atomic operation - aborting input file deletion for safety",
                     output_file, idx + 1, output_files.len()

@@ -17,6 +17,7 @@ mod tests {
     use serde_json::json;
     use tempfile::TempDir;
     use anyhow::Result;
+    use tracing::{debug, error, info, warn};
     use arrow_array::{Array, RecordBatch, StringArray, Int64Array, Float32Array};
     use arrow_schema::{DataType, Field, Schema};
     use parquet::arrow::ArrowWriter;
@@ -38,6 +39,7 @@ mod tests {
             estimated_size_mb: 100.0,
             estimated_document_count: 10000,
             is_cloud_storage: false,
+            io_optimization_hints: None,
         }
     }
 
@@ -256,6 +258,7 @@ mod tests {
     ) -> Result<()> {
         use arrow_array::builder::{ListBuilder, Float32Builder, StringBuilder};
         use tokio::fs;
+use tracing::{debug, error, info, warn};
         
         // Ensure parent directory exists
         if let Some(parent) = std::path::Path::new(file_path).parent() {
@@ -446,6 +449,7 @@ mod tests {
             estimated_size_mb: 1.0,
             estimated_document_count: 5,
             is_cloud_storage: false,
+            io_optimization_hints: None,
         };
         
         let results = reader.search_vectors(&search_params, &context).await?;
@@ -458,6 +462,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_search_vectors_basic() -> Result<()> {
+        // Initialize hardware capabilities for testing
+        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        
         let temp_dir = TempDir::new()?;
         let file_path = format!("{}/search_test.parquet", temp_dir.path().display());
         
@@ -476,6 +483,9 @@ mod tests {
             };
             test_vectors.push(vec);
         }
+        
+        // Clone for debug output later
+        let test_vectors_debug = test_vectors.clone();
         
         // Write to parquet file
         create_test_parquet_file(&file_path, test_vectors, 3).await?;
@@ -509,6 +519,7 @@ mod tests {
             estimated_size_mb: 1.0,
             estimated_document_count: 5,
             is_cloud_storage: false,
+            io_optimization_hints: None,
         };
         
         // Search
@@ -517,6 +528,19 @@ mod tests {
         // Verify
         assert!(!results.is_empty(), "Should find results");
         assert!(results.len() <= 3, "Should return at most 3 results");
+        
+        // Debug output
+        for (i, result) in results.iter().enumerate() {
+            debug!("Result {}: id={}, distance={:?}, score={:?}, semantic_distance={:?}", 
+                     i, result.id, result.distance, result.score, result.semantic_distance);
+        }
+        
+        // Also print the actual vectors to verify they were correctly written
+        debug!("Test vectors created:");
+        for vec in test_vectors_debug.iter() {
+            debug!("  {} -> {:?}", vec.id.as_ref().unwrap_or(&"<none>".to_string()), vec.vector);
+        }
+        
         assert_eq!(results[0].id, "vec_0", "First result should be exact match");
         
         Ok(())
@@ -549,6 +573,7 @@ mod tests {
             estimated_size_mb: 1.0,
             estimated_document_count: 0,
             is_cloud_storage: false,
+            io_optimization_hints: None,
         };
         
         let results = reader.search_vectors(&search_params, &context).await?;
@@ -580,6 +605,7 @@ mod tests {
             estimated_size_mb: 1.0,
             estimated_document_count: 0,
             is_cloud_storage: false,
+            io_optimization_hints: None,
         };
         
         let result = reader.search_vectors(&search_params, &context).await;
@@ -631,14 +657,15 @@ mod tests {
             estimated_size_mb: 1.0,
             estimated_document_count: 1,
             is_cloud_storage: false,
+            io_optimization_hints: None,
         };
         
         let results = reader.search_vectors(&search_params, &context).await?;
         
         // Debug output
-        println!("Found {} results from parquet file", results.len());
+        debug!("Found {} results from parquet file", results.len());
         if !results.is_empty() {
-            println!("First result: id={:?}, distance={:?}", 
+            debug!("First result: id={:?}, distance={:?}", 
                      results[0].id, results[0].semantic_distance);
         }
         

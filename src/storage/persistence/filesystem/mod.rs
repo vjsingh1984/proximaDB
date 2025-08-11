@@ -29,7 +29,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::io::Error as IoError;
 use url::Url;
-use tracing::{info, error};
+use tracing::{debug, error, info, warn};
 
 pub mod atomic_strategy;
 pub mod auth;
@@ -669,9 +669,12 @@ impl FilesystemFactory {
 
     /// Cross-storage atomic operations - handles full URLs for source and destination
     pub async fn copy_atomic(&self, from_url: &str, to_url: &str) -> FsResult<()> {
-        info!("📋 copy_atomic START");
+        info!("📋 [DEBUG] copy_atomic START");
         info!("    from_url: {}", from_url);
         info!("    to_url: {}", to_url);
+        debug!("📋 [DEBUG] copy_atomic START");
+        debug!("    from_url: {}", from_url);
+        debug!("    to_url: {}", to_url);
         
         let from_fs = self.get_filesystem(from_url)?;
         let to_fs = self.get_filesystem(to_url)?;
@@ -682,41 +685,57 @@ impl FilesystemFactory {
         
         info!("    from_path: {}", from_path);
         info!("    to_path: {}", to_path);
+        debug!("    [DEBUG] from_path resolved: {}", from_path);
+        debug!("    [DEBUG] to_path resolved: {}", to_path);
 
         // Read from source
         info!("    📖 Reading source file...");
+        debug!("    📖 [DEBUG] Reading source file from: {}", from_path);
         let data = from_fs.read(&from_path).await?;
         info!("    ✅ Read {} bytes", data.len());
+        debug!("    ✅ [DEBUG] Read {} bytes", data.len());
 
         // Write to destination atomically
         info!("    💾 Writing to destination atomically...");
+        debug!("    💾 [DEBUG] Writing to destination: {}", to_path);
         to_fs.write_atomic(&to_path, &data, None).await?;
         info!("    ✅ Write complete");
+        debug!("    ✅ [DEBUG] Write complete to: {}", to_path);
 
-        info!("📋 copy_atomic COMPLETE");
+        info!("📋 [DEBUG] copy_atomic COMPLETE");
+        debug!("📋 [DEBUG] copy_atomic COMPLETE");
         Ok(())
     }
 
     /// Move operation with atomic cross-storage support
     pub async fn move_atomic(&self, from_url: &str, to_url: &str) -> FsResult<()> {
-        info!("🚚 move_atomic START");
+        info!("🚚 [DEBUG] move_atomic START");
         info!("    from_url: {}", from_url);
         info!("    to_url: {}", to_url);
+        debug!("🚚 [DEBUG] move_atomic called:");
+        debug!("    from_url: {}", from_url);
+        debug!("    to_url: {}", to_url);
         
         // Copy first
         info!("    📋 Copying file atomically...");
+        debug!("    📋 [DEBUG] Copying file atomically...");
         self.copy_atomic(from_url, to_url).await?;
         info!("    ✅ Copy successful");
+        debug!("    ✅ [DEBUG] Copy successful");
 
         // Delete source after successful copy
         info!("    🗑️ Deleting source file...");
+        debug!("    🗑️ [DEBUG] Deleting source file...");
         let from_fs = self.get_filesystem(from_url)?;
         let from_path = Self::resolve_path(from_url)?;
         info!("    from_path extracted: {}", from_path);
+        debug!("    [DEBUG] from_path extracted: {}", from_path);
         from_fs.delete(&from_path).await?;
         info!("    ✅ Delete successful");
+        debug!("    ✅ [DEBUG] Delete successful");
 
-        info!("🚚 move_atomic COMPLETE");
+        info!("🚚 [DEBUG] move_atomic COMPLETE");
+        debug!("🚚 [DEBUG] move_atomic COMPLETE");
         Ok(())
     }
 
@@ -950,11 +969,11 @@ impl FilesystemFactory {
     /// This is the SINGLE method that should be used throughout the filesystem layer
     pub fn resolve_path(url: &str) -> FsResult<String> {
         // Debug logging can be removed once issues are resolved
-        println!("🔍 DEBUG resolve_path: Input URL = '{}'", url);
+        debug!("🔍 DEBUG resolve_path: Input URL = '{}'", url);
         
         // Case 1: No scheme present - return as-is (this preserves relative paths)
         if !url.contains("://") {
-            println!("🔍 DEBUG resolve_path: No scheme, returning as-is: '{}'", url);
+            debug!("🔍 DEBUG resolve_path: No scheme, returning as-is: '{}'", url);
             return Ok(url.to_string());
         }
         
@@ -968,28 +987,28 @@ impl FilesystemFactory {
             if url.starts_with("file://./") {
                 // Explicit relative path: file://./path/to/file
                 let relative_path = &url[7..]; // Remove "file://" prefix, keep "./"
-                println!("🔍 DEBUG resolve_path: Explicit relative path: '{}'", relative_path);
+                debug!("🔍 DEBUG resolve_path: Explicit relative path: '{}'", relative_path);
                 Ok(relative_path.to_string())
             } else if url.starts_with("file:///") {
                 // Absolute path: file:///absolute/path
                 let absolute_path = parsed_url.path();
-                println!("🔍 DEBUG resolve_path: Absolute path: '{}'", absolute_path);
+                debug!("🔍 DEBUG resolve_path: Absolute path: '{}'", absolute_path);
                 Ok(absolute_path.to_string())
             } else if url.starts_with("file://") {
                 // Implicit relative path: file://relative/path (treat as relative)
                 let relative_path = &url[7..]; // Remove "file://" prefix
-                println!("🔍 DEBUG resolve_path: Implicit relative path: '{}'", relative_path);
+                debug!("🔍 DEBUG resolve_path: Implicit relative path: '{}'", relative_path);
                 Ok(relative_path.to_string())
             } else {
                 // Fallback
                 let path = parsed_url.path();
-                println!("🔍 DEBUG resolve_path: Fallback path: '{}'", path);
+                debug!("🔍 DEBUG resolve_path: Fallback path: '{}'", path);
                 Ok(path.to_string())
             }
         } else {
             // Case 4: Non-file schemes (s3://, azure://, etc.)
             let path = parsed_url.path();
-            println!("🔍 DEBUG resolve_path: Non-file scheme path: '{}'", path);
+            debug!("🔍 DEBUG resolve_path: Non-file scheme path: '{}'", path);
             Ok(path.to_string())
         }
     }

@@ -4,6 +4,7 @@
 //! to ensure reliable testing without cross-test contamination.
 
 use anyhow::Result;
+use tracing::{debug, error, info, warn};
 use std::sync::Arc;
 
 use super::test_utils::IsolatedTestEnvironment;
@@ -40,7 +41,7 @@ async fn test_isolated_filesystem_basic_operations() -> Result<()> {
     let files = filesystem.list(&format!("{}", env.temp_dir.path().display())).await?;
     assert!(files.iter().any(|f| f.name.contains("test_file.txt")));
     
-    println!("✅ Basic filesystem operations test passed for collection: {}", env.collection_id());
+    debug!("✅ Basic filesystem operations test passed for collection: {}", env.collection_id());
     Ok(())
 }
 
@@ -74,7 +75,7 @@ async fn test_isolated_filesystem_directory_operations() -> Result<()> {
     assert_eq!(nested_files.len(), 1);
     assert!(nested_files[0].name.contains("nested_file.txt"));
     
-    println!("✅ Directory operations test passed for collection: {}", env.collection_id());
+    debug!("✅ Directory operations test passed for collection: {}", env.collection_id());
     Ok(())
 }
 
@@ -134,10 +135,10 @@ async fn test_isolated_filesystem_concurrent_operations() -> Result<()> {
         match handle.await? {
             Ok(file_id) => {
                 successful_operations += 1;
-                println!("📁 File {} operation succeeded", file_id);
+                debug!("📁 File {} operation succeeded", file_id);
             }
             Err(e) => {
-                println!("⚠️ File operation failed: {}", e);
+                debug!("⚠️ File operation failed: {}", e);
             }
         }
     }
@@ -155,8 +156,8 @@ async fn test_isolated_filesystem_concurrent_operations() -> Result<()> {
     assert_eq!(concurrent_files.len(), concurrent_operations,
         "Should have {} concurrent files", concurrent_operations);
     
-    println!("✅ Concurrent filesystem operations test passed for collection: {}", env.collection_id());
-    println!("   {} concurrent operations completed successfully", successful_operations);
+    debug!("✅ Concurrent filesystem operations test passed for collection: {}", env.collection_id());
+    debug!("   {} concurrent operations completed successfully", successful_operations);
     Ok(())
 }
 
@@ -191,7 +192,7 @@ async fn test_isolated_filesystem_error_handling() -> Result<()> {
     filesystem.delete(&valid_file).await?;
     assert!(!filesystem.exists(&valid_file).await?);
     
-    println!("✅ Error handling test passed for collection: {}", env.collection_id());
+    debug!("✅ Error handling test passed for collection: {}", env.collection_id());
     Ok(())
 }
 
@@ -243,8 +244,8 @@ async fn test_isolated_filesystem_large_file_operations() -> Result<()> {
     let file_info = large_file_info.unwrap();
     assert!(file_info.metadata.size > 1_000_000); // Should be ~1MB
     
-    println!("✅ Large file operations test passed for collection: {}", env.collection_id());
-    println!("   File size: {} bytes, Write: {:?}, Read: {:?}", 
+    debug!("✅ Large file operations test passed for collection: {}", env.collection_id());
+    debug!("   File size: {} bytes, Write: {:?}, Read: {:?}", 
              file_info.metadata.size, write_duration, read_duration);
     Ok(())
 }
@@ -305,9 +306,9 @@ async fn test_isolated_filesystem_multi_collection_isolation() -> Result<()> {
             "Environment {} filesystem should be pointing to its own directory", i);
     }
     
-    println!("✅ Multi-collection isolation test passed");
+    debug!("✅ Multi-collection isolation test passed");
     for (i, env) in environments.iter().enumerate() {
-        println!("   Environment {}: {} (isolated)", i, env.collection_id());
+        debug!("   Environment {}: {} (isolated)", i, env.collection_id());
     }
     Ok(())
 }

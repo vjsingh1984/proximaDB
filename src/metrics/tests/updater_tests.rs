@@ -11,9 +11,16 @@ mod tests {
     use std::sync::Arc;
     use tokio::time::{sleep, Duration};
     use anyhow::Result;
+use tracing::{debug, error, info, warn};
 
     async fn create_test_updater() -> Result<Arc<MetricsUpdateService>> {
         let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        
+        // Clean up test directory if it exists
+        let test_path = "/tmp/proximadb_metrics_updater_test";
+        if std::path::Path::new(test_path).exists() {
+            std::fs::remove_dir_all(test_path).ok();
+        }
         
         let config = MetricsConfig {
             enabled: true,
@@ -39,7 +46,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_flush_metrics_update() {
-        println!("🧪 TEST: Flush metrics update functionality");
+        debug!("🧪 TEST: Flush metrics update functionality");
         
         let updater = create_test_updater().await.unwrap();
         
@@ -68,12 +75,12 @@ mod tests {
         assert_eq!(collection_metrics.collection_id, "test_collection_flush");
         assert!(collection_metrics.total_flushes > 0);
         
-        println!("✅ Flush metrics update test passed");
+        info!("✅ Flush metrics update test passed");
     }
 
     #[tokio::test]
     async fn test_compaction_metrics_update() {
-        println!("🧪 TEST: Compaction metrics update functionality");
+        debug!("🧪 TEST: Compaction metrics update functionality");
         
         let updater = create_test_updater().await.unwrap();
         
@@ -103,12 +110,12 @@ mod tests {
         assert!(collection_metrics.total_compactions > 0);
         assert!(collection_metrics.last_compaction_duration_ms > 0);
         
-        println!("✅ Compaction metrics update test passed");
+        info!("✅ Compaction metrics update test passed");
     }
 
     #[tokio::test]
     async fn test_search_metrics_update() {
-        println!("🧪 TEST: Search metrics update functionality");
+        debug!("🧪 TEST: Search metrics update functionality");
         
         let updater = create_test_updater().await.unwrap();
         
@@ -138,12 +145,12 @@ mod tests {
         assert!(collection_metrics.total_searches > 0);
         assert!(collection_metrics.avg_search_latency_us > 0.0);
         
-        println!("✅ Search metrics update test passed");
+        info!("✅ Search metrics update test passed");
     }
 
     #[tokio::test]
     async fn test_operation_metrics_update() {
-        println!("🧪 TEST: Operation metrics update functionality");
+        debug!("🧪 TEST: Operation metrics update functionality");
         
         let updater = create_test_updater().await.unwrap();
         
@@ -171,12 +178,12 @@ mod tests {
         assert_eq!(collection_metrics.collection_id, "test_collection_operation");
         assert!(collection_metrics.total_inserts > 0);
         
-        println!("✅ Operation metrics update test passed");
+        info!("✅ Operation metrics update test passed");
     }
 
     #[tokio::test]
     async fn test_concurrent_metrics_updates() {
-        println!("🧪 TEST: Concurrent metrics updates");
+        debug!("🧪 TEST: Concurrent metrics updates");
         
         let updater = create_test_updater().await.unwrap();
         let updater = Arc::new(updater);
@@ -229,7 +236,7 @@ mod tests {
         // Allow time for all async updates to process
         sleep(Duration::from_millis(500)).await;
         
-        println!("📊 Completed concurrent updates for {} operations", completed_collections.len());
+        debug!("📊 Completed concurrent updates for {} operations", completed_collections.len());
         
         // Verify metrics were updated for all unique collections
         let store = updater.get_store();
@@ -243,16 +250,16 @@ mod tests {
             assert!(collection_metrics.total_flushes > 0, "No flush metrics for {}", collection_id);
             assert!(collection_metrics.total_searches > 0, "No search metrics for {}", collection_id);
             
-            println!("📋 Collection '{}': {} flushes, {} searches", 
+            debug!("📋 Collection '{}': {} flushes, {} searches", 
                    collection_id, collection_metrics.total_flushes, collection_metrics.total_searches);
         }
         
-        println!("✅ Concurrent metrics updates test passed");
+        info!("✅ Concurrent metrics updates test passed");
     }
 
     #[tokio::test]
     async fn test_metrics_aggregation_and_calculation() {
-        println!("🧪 TEST: Metrics aggregation and calculation");
+        debug!("🧪 TEST: Metrics aggregation and calculation");
         
         let updater = create_test_updater().await.unwrap();
         
@@ -293,18 +300,18 @@ mod tests {
         let actual_avg = collection_metrics.avg_search_latency_us;
         let diff = (expected_avg - actual_avg).abs();
         
-        println!("📊 Expected avg: {:.1}us, Actual avg: {:.1}us, Diff: {:.1}us", 
+        debug!("📊 Expected avg: {:.1}us, Actual avg: {:.1}us, Diff: {:.1}us", 
                expected_avg, actual_avg, diff);
         
         // Allow for some tolerance in floating-point calculations
         assert!(diff < 100.0, "Average latency calculation incorrect");
         
-        println!("✅ Metrics aggregation test passed");
+        info!("✅ Metrics aggregation test passed");
     }
 
     #[tokio::test]
     async fn test_error_handling_in_metrics_updates() {
-        println!("🧪 TEST: Error handling in metrics updates");
+        debug!("🧪 TEST: Error handling in metrics updates");
         
         let updater = create_test_updater().await.unwrap();
         
@@ -348,12 +355,12 @@ mod tests {
         let result = updater.record_search("error_test_collection", invalid_search_update).await;
         assert!(result.is_ok(), "Invalid timestamp should be handled gracefully: {:?}", result);
         
-        println!("✅ Error handling test passed");
+        info!("✅ Error handling test passed");
     }
 
     #[tokio::test]
     async fn test_metrics_updater_store_integration() {
-        println!("🧪 TEST: MetricsUpdater and PersistentStore integration");
+        debug!("🧪 TEST: MetricsUpdater and PersistentStore integration");
         
         let updater = create_test_updater().await.unwrap();
         
@@ -413,17 +420,17 @@ mod tests {
         assert!(collection_metrics.total_searches > 0);
         assert!(collection_metrics.avg_search_latency_us > 0.0);
         
-        println!("📊 Integrated metrics: {} flushes, {} compactions, {} searches",
+        debug!("📊 Integrated metrics: {} flushes, {} compactions, {} searches",
                collection_metrics.total_flushes,
                collection_metrics.total_compactions,
                collection_metrics.total_searches);
         
-        println!("✅ MetricsUpdater integration test passed");
+        info!("✅ MetricsUpdater integration test passed");
     }
 
     #[tokio::test]
     async fn test_metrics_timestamp_handling() {
-        println!("🧪 TEST: Metrics timestamp handling");
+        debug!("🧪 TEST: Metrics timestamp handling");
         
         let updater = create_test_updater().await.unwrap();
         
@@ -454,10 +461,10 @@ mod tests {
         assert_eq!(collection_metrics.last_flush_timestamp, current_time);
         assert!(collection_metrics.updated_at >= current_time);
         
-        println!("📅 Flush timestamp: {}, Updated at: {}", 
+        debug!("📅 Flush timestamp: {}, Updated at: {}", 
                collection_metrics.last_flush_timestamp, 
                collection_metrics.updated_at);
         
-        println!("✅ Timestamp handling test passed");
+        info!("✅ Timestamp handling test passed");
     }
 }

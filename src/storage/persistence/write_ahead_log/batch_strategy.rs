@@ -774,6 +774,7 @@ pub trait WALBatchStrategy: Send + Sync + std::fmt::Debug {
 
         // Create single-vector batch for deletion
         use super::BatchId;
+use tracing::{debug, error, info, warn};
         let batch_id = BatchId::new();
         let batch = WALVectorBatch {
             batch_id,

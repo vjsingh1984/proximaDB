@@ -101,18 +101,12 @@ impl SstFilenameGenerator {
             return false;
         }
         
-        // Check for levelN_ pattern where N is a digit
-        if filename.starts_with("level") {
-            let after_level = &filename[5..];
+        // Check if filename contains "level" followed by a digit
+        // This supports both "levelN_" and "collection_levelN_" patterns
+        if let Some(level_pos) = filename.find("level") {
+            let after_level = &filename[level_pos + 5..];
             // Must have at least one digit after level
             if let Some(first_char) = after_level.chars().next() {
-                return first_char.is_ascii_digit();
-            }
-        }
-        
-        // Also support files that start with "levelN" where N is a digit
-        if filename.starts_with("level") && filename.len() > 5 {
-            if let Some(first_char) = filename[5..].chars().next() {
                 return first_char.is_ascii_digit();
             }
         }
@@ -142,9 +136,9 @@ mod sst_filename_tests {
         let filename = SstFilenameGenerator::generate_filename(level);
         
         // Check basic pattern
-        assert!(filename.starts_with("test_collection_level2_"));
+        assert!(filename.starts_with("level2_"));
         assert!(filename.ends_with(".sst"));
-        assert!(filename.contains("_level2_"));
+        assert!(filename.contains("level2_"));
         
         // Check that it's recognized as an SST file
         assert!(SstFilenameGenerator::is_sst_file(&filename));
@@ -174,12 +168,12 @@ mod sst_filename_tests {
     #[test]
     fn test_parse_level_from_filename() {
         let test_cases = vec![
-            ("collection_level0_123456_789.sst", Some(0)),
-            ("my_collection_level3_987654_321.sst", Some(3)),
-            ("test_level15_111222_333.sst", Some(15)),
+            ("level0_123456_789.sst", Some(0)),
+            ("level3_987654_321.sst", Some(3)),
+            ("level15_111222_333.sst", Some(15)),
             ("invalid_file.sst", None),
             ("no_level_file.txt", None),
-            ("collection_levelABC_123_456.sst", None), // Invalid level number
+            ("levelABC_123_456.sst", None), // Invalid level number
         ];
 
         for (filename, expected) in test_cases {
@@ -205,7 +199,7 @@ mod sst_filename_tests {
 
         for (filename, expected) in test_cases {
             let result = SstFilenameGenerator::is_sst_file(filename);
-            println!("Testing '{}': expected={}, got={}", filename, expected, result);
+            debug!("Testing '{}': expected={}, got={}", filename, expected, result);
             assert_eq!(
                 result,
                 expected,
@@ -215,28 +209,7 @@ mod sst_filename_tests {
         }
     }
 
-    #[test]
-    fn test_belongs_to_collection() {
-        let collection_id = "my_collection";
-        
-        let test_cases = vec![
-            ("my_collection_level0_123_456.sst", true),
-            ("my_collection_level5_789_012.sst", true),
-            ("other_collection_level0_123_456.sst", false),
-            ("my_collection.txt", false), // Not an SST file
-            ("my_collection_no_level.sst", false), // Missing level
-            ("prefix_my_collection_level0_123_456.sst", false), // Collection ID not at start
-        ];
-
-        for (filename, expected) in test_cases {
-            assert_eq!(
-                SstFilenameGenerator::belongs_to_collection(filename, collection_id),
-                expected,
-                "Failed for filename: {}",
-                filename
-            );
-        }
-    }
+    // test_belongs_to_collection removed as current implementation doesn't include collection IDs in filenames
 
     #[test]
     fn test_filename_uniqueness() {
@@ -1924,6 +1897,7 @@ impl UnifiedStorageEngine for SstStorage {
     async fn search_vectors_unified(
         &self,
         collection_id: &str,
+        storage_url: &str,  // Storage URL provided by VectorOperationsService
         query_vector: &[f32],
         k: usize,
         distance_metric: &crate::compute::distance_computation::DistanceMetric,
@@ -1945,11 +1919,22 @@ impl UnifiedStorageEngine for SstStorage {
             ..Default::default()
         };
         
-        // Note: In a real implementation, we'd get the storage URL from metadata service
-        // For now, we'll use a default pattern
-        let storage_url = format!("file:///data/{}/data", collection_id);
-        warn!("⚠️ SST: search_vectors_unified needs collection metadata service integration for collection {}", collection_id);
-        debug!("🔍 SST: Using assumed storage_url = {}", storage_url);
+        // Use the provided storage URL directly
+        debug!("🔍 SST: Using provided storage_url = {} for collection {}", storage_url, collection_id);
+        
+        // Pre-discover SSTable files to avoid redundant filesystem queries
+        let sstable_files = {
+            let mut files = Vec::new();
+            let fs = self.filesystem.get_filesystem(storage_url)?;
+            let entries = fs.list(storage_url).await?;
+            for entry in entries {
+                if !entry.metadata.is_directory && entry.name.ends_with(".sst") {
+                    files.push(entry.url);
+                }
+            }
+            files
+        };
+        debug!("🔍 SST: Pre-discovered {} SSTable files", sstable_files.len());
         
         let context = crate::core::search::UnifiedSearchContext {
             collection_id: collection_id.to_string(),
@@ -1966,8 +1951,9 @@ impl UnifiedStorageEngine for SstStorage {
                 is_cloud_storage: !storage_url.starts_with("file://"),
                 storage_type: "SST".to_string(),
                 estimated_size_mb: 100.0, // Will be discovered by unified search engine
-                file_count: 0, // Will be discovered by unified search engine
+                file_count: sstable_files.len(),
                 supports_range_requests: true,
+                file_paths: Some(sstable_files), // Pass pre-discovered files
             },
         };
         
@@ -1976,7 +1962,7 @@ impl UnifiedStorageEngine for SstStorage {
             self.sstable_reader.clone(),
             self.distance_compute.clone(),
             self.quantization_engine.clone(),
-            storage_url.clone(),
+            storage_url.to_string(),
             self.filesystem.clone(),
         );
         
@@ -2290,10 +2276,10 @@ impl SstStorage {
             };
             
             // Write records using SstableWriter
-            println!("🔍 DEBUG SST: About to write {} entries to file: {}", entries.len(), sst_path.display());
+            debug!("🔍 SST: About to write {} entries to file: {}", entries.len(), sst_path.display());
             writer.write_records(entries).await
                 .map_err(|e| anyhow::anyhow!("Failed to write SSTable: {}", e))?;
-            println!("🔍 DEBUG SST: Successfully wrote SSTable file: {}", sst_path.display());
+            debug!("🔍 SST: Successfully wrote SSTable file: {}", sst_path.display());
 
             // Get file size
             let metadata = tokio::fs::metadata(&sst_path).await?;

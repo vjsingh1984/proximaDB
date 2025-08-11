@@ -26,7 +26,6 @@ use tokio::sync::{Mutex, RwLock};
 use tracing::{debug, error, info, warn};
 use uuid::Uuid;
 
-
 use crate::storage::persistence::filesystem::{
     atomic_strategy::{AtomicWriteConfig, AtomicWriteExecutor, AtomicWriteExecutorFactory},
     write_strategy::{MetadataWriteStrategy, WriteStrategyFactory},
@@ -284,7 +283,6 @@ impl ActiveTransaction {
     }
 }
 
-
 /// Unified atomic operations coordinator with ACID support
 pub struct TransactionCoordinator {
     /// Filesystem factory for multi-cloud support
@@ -479,7 +477,8 @@ impl TransactionCoordinator {
 
     /// Finalize atomic operation - move from staging to final location
     pub async fn finalize_atomic_operation(&self, operation_id: &OperationId) -> Result<()> {
-        info!("🔄 Finalizing atomic operation: {}", operation_id);
+        info!("🔄 [DEBUG] Finalizing atomic operation: {}", operation_id);
+        debug!("🔄 [DEBUG] Finalizing atomic operation: {}", operation_id);
 
         // Get operation metadata from DashMap
         let metadata = self.active_operations
@@ -487,26 +486,37 @@ impl TransactionCoordinator {
             .ok_or_else(|| anyhow::anyhow!("Operation not found: {}", operation_id))?
             .clone();
 
-        info!("📋 Operation metadata:");
+        info!("📋 [DEBUG] Operation metadata:");
+        info!("    operation_id: {}", metadata.operation_id);
         info!("    staging_url: {}", metadata.staging_url);
         info!("    final_url: {}", metadata.final_url);
         info!("    operation_type: {:?}", metadata.operation_type);
+        info!("    collection_id: {:?}", metadata.collection_id);
+        
+        debug!("📋 [DEBUG] Operation metadata:");
+        debug!("    staging_url: {}", metadata.staging_url);
+        debug!("    final_url: {}", metadata.final_url);
 
         // Update status to finalizing
         self.update_operation_status(operation_id, TransactionalOperationStatus::Finalizing)
             .await?;
 
         // List all files in staging directory
-        info!("📂 Listing staging directory: {}", metadata.staging_url);
+        info!("📂 [DEBUG] Listing staging directory: {}", metadata.staging_url);
+        debug!("📂 [DEBUG] Listing staging directory: {}", metadata.staging_url);
+        
         let staging_entries = self
             .filesystem
             .list(&metadata.staging_url)
             .await
             .context("Failed to list staging directory")?;
 
-        info!("📂 Found {} files in staging", staging_entries.len());
+        info!("📂 [DEBUG] Found {} files in staging", staging_entries.len());
+        debug!("📂 [DEBUG] Found {} files in staging", staging_entries.len());
+        
         for (idx, entry) in staging_entries.iter().enumerate() {
-            info!("    [{}] {} (dir: {})", idx, entry.name, entry.metadata.is_directory);
+            info!("    [{}] name={}, url={}, is_dir={}", idx, entry.name, entry.url, entry.metadata.is_directory);
+            debug!("    [{}] name={}, url={}, is_dir={}", idx, entry.name, entry.url, entry.metadata.is_directory);
         }
 
         // Move each file atomically from staging to final location
@@ -521,25 +531,35 @@ impl TransactionCoordinator {
                     entry.name
                 );
 
-                info!("🔄 Moving file:");
-                info!("    From: {}", staging_file_url);
-                info!("    To:   {}", final_file_url);
+                info!("🔄 [DEBUG] Moving file:");
+                info!("    From (staging): {}", staging_file_url);
+                info!("    To (final):     {}", final_file_url);
+                debug!("🔄 [DEBUG] Moving file:");
+                debug!("    From (staging): {}", staging_file_url);
+                debug!("    To (final):     {}", final_file_url);
 
                 // Use FilesystemFactory's atomic move which handles cross-storage scenarios
                 match self.filesystem
                     .move_atomic(&staging_file_url, &final_file_url)
                     .await {
                     Ok(_) => {
-                        info!("    ✅ Move successful");
+                        info!("    ✅ [DEBUG] Move successful");
+                        info!("    ✅ [DEBUG] Move successful");
                         // Verify the file exists at the final location
                         if let Ok(fs) = self.filesystem.get_filesystem(&final_file_url) {
                             if let Ok(exists) = fs.exists(&final_file_url).await {
-                                info!("    ✅ Verified file exists at final location: {}", exists);
+                                info!("    ✅ [DEBUG] Verified file exists at final location: {}", exists);
+                                info!("    ✅ [DEBUG] Verified file exists at final location: {}", exists);
+                            } else {
+                                warn!("    ⚠️ [DEBUG] Could not verify file at final location");
                             }
+                        } else {
+                            warn!("    ⚠️ [DEBUG] Could not get filesystem for verification");
                         }
                     },
                     Err(e) => {
-                        error!("    ❌ Move failed: {}", e);
+                        error!("    ❌ [DEBUG] Move failed: {}", e);
+                        error!("    ❌ [DEBUG] Move failed: {}", e);
                         return Err(anyhow::anyhow!(
                             "Failed to move {} to {}: {}",
                             staging_file_url, final_file_url, e
@@ -1064,7 +1084,6 @@ pub struct TransactionHandle<'a> {
     coordinator: &'a TransactionCoordinator,
     transaction: Arc<RwLock<ActiveTransaction>>,
 }
-
 
 impl<'a> TransactionHandle<'a> {
     /// Prepare the transaction (phase 1 of 2PC)

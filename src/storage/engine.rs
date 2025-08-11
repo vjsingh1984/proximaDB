@@ -14,8 +14,8 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use tracing::info;
 use futures;
+use tracing::{debug, error, info, warn};
 
 /// Calculate cosine similarity between two vectors
 fn calculate_cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
@@ -429,8 +429,8 @@ impl StorageEngine {
             }
         }
 
-        // Don't eagerly create LSM tree and MMAP reader - they will be created on first access
-        tracing::debug!("📁 Collection directories created, LSM tree will be initialized on first access");
+        // Don't eagerly create SST tree and MMAP reader - they will be created on first access
+        tracing::debug!("📁 Collection directories created, SST tree will be initialized on first access");
 
         // TODO: Create search index using metadata from SharedServices
         // For now, skip search index creation entirely
@@ -678,8 +678,10 @@ impl StorageEngine {
         // Note: SST storage is now singleton - no per-collection removal needed
         let reader_removed = self.mmap_readers.remove(collection_id).is_some();
 
-        // Always perform cleanup for collection deletion
-        if true {
+        // Check if collection exists (has readers or other resources)
+        // For now, we'll use reader_removed as a proxy for collection existence
+        // TODO: Check with metadata store once it's integrated
+        if reader_removed {
             // Collection-aware WAL cleanup - remove only this collection's entries
             tracing::debug!(
                 "🧹 Performing collection-aware WAL cleanup for: {}",
@@ -876,7 +878,7 @@ impl StorageEngine {
     }
 
     /// Get all vectors from a collection for linear search
-    /// Retrieves vectors from both LSM tree (recent writes) and MMAP readers (historical data)
+    /// Retrieves vectors from both SST tree (recent writes) and MMAP readers (historical data)
     pub async fn get_all_vectors(
         &self,
         collection_id: &str,

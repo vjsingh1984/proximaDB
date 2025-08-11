@@ -25,7 +25,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::{Mutex, RwLock};
 use tokio::time::Instant;
-use tracing::info;
+use tracing::{debug, error, info, warn};
 
 use crate::core::{String, CompressionAlgorithm, VectorRecord};
 use crate::storage::persistence::filesystem::FilesystemFactory;

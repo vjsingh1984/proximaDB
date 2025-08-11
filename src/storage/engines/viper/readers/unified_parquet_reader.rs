@@ -13,13 +13,24 @@ use crate::core::search::FilterExpression;
 use crate::compute::distance_computation::DistanceMetric;
 use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
 use crate::storage::persistence::filesystem::FilesystemFactory;
+use crate::storage::cache::specialized::MetadataStore;
 
 /// Unified Parquet Reader with automatic strategy selection
-#[derive(Debug)]
 pub struct UnifiedParquetReader {
     filesystem: Arc<FilesystemFactory>,
     strategy_selector: Arc<ReadingStrategySelector>,
-    cache: Arc<tokio::sync::RwLock<ReaderCache>>,
+    // REPLACED: Using central MetadataStore instead of custom ReaderCache
+    metadata_cache: Arc<MetadataStore>,
+}
+
+impl std::fmt::Debug for UnifiedParquetReader {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("UnifiedParquetReader")
+            .field("filesystem", &"FilesystemFactory")
+            .field("strategy_selector", &self.strategy_selector)
+            .field("metadata_cache", &"MetadataStore")
+            .finish()
+    }
 }
 
 /// Reading strategy selector based on query characteristics
@@ -151,6 +162,8 @@ pub struct CollectionContext {
     pub estimated_size_mb: f64,
     pub estimated_document_count: usize,
     pub is_cloud_storage: bool,
+    /// I/O optimization hints for efficient file access
+    pub io_optimization_hints: Option<HashMap<String, serde_json::Value>>,
 }
 
 /// Row group access patterns
@@ -210,12 +223,26 @@ impl UnifiedParquetReader {
         Self::with_config(filesystem, ReaderConfig::default())
     }
     
-    /// Create with custom configuration
+    /// Create with custom configuration (now uses central MetadataStore)
     pub fn with_config(filesystem: Arc<FilesystemFactory>, config: ReaderConfig) -> Self {
+        // Create central metadata cache instead of custom ReaderCache
+        let metadata_cache = Arc::new(MetadataStore::new(
+            config.schema_cache_size / 100 // Convert to MB (rough estimate)
+        ));
+        
+        Self::with_cache(filesystem, metadata_cache, config)
+    }
+    
+    /// Create with external cache instance for sharing across engines
+    pub fn with_cache(
+        filesystem: Arc<FilesystemFactory>,
+        metadata_cache: Arc<MetadataStore>,
+        config: ReaderConfig,
+    ) -> Self {
         Self {
             filesystem,
-            strategy_selector: Arc::new(ReadingStrategySelector::new(config.clone())),
-            cache: Arc::new(tokio::sync::RwLock::new(ReaderCache::new(config.schema_cache_size))),
+            strategy_selector: Arc::new(ReadingStrategySelector::new(config)),
+            metadata_cache,
         }
     }
     
@@ -587,7 +614,10 @@ impl UnifiedParquetReader {
         
         // Sort by distance (lower = better) and limit to k
         results.sort_by(|a, b| {
-            a.score.partial_cmp(&b.score).unwrap_or(std::cmp::Ordering::Equal)
+            // Use distance if available, otherwise use inverted score
+            let a_sort_value = a.distance.unwrap_or(1.0 - a.score);
+            let b_sort_value = b.distance.unwrap_or(1.0 - b.score);
+            a_sort_value.partial_cmp(&b_sort_value).unwrap_or(std::cmp::Ordering::Equal)
         });
         
         if let Some(k) = params.top_k {
@@ -733,6 +763,7 @@ impl UnifiedParquetReader {
             batch_count += 1;
             total_rows += num_rows;
             info!("📖 Batch {}: {} rows", batch_count, num_rows);
+            debug!("📖 [DEBUG] Batch {}: {} rows from file {}", batch_count, num_rows, file_path);
             
             // Step 1: Apply predicate pushdown - evaluate filters on metadata columns first
             let qualifying_row_indices = if let Some(filter) = filter_expr {
@@ -743,6 +774,7 @@ impl UnifiedParquetReader {
             };
             
             info!("📖 Predicate pushdown: {} out of {} rows qualify", qualifying_row_indices.len(), num_rows);
+            debug!("📖 [DEBUG] After filter: {} qualifying rows", qualifying_row_indices.len());
             
             // Step 2: Only read vector data for qualifying rows (optimized I/O)
             for row_idx in qualifying_row_indices {
@@ -1594,6 +1626,7 @@ mod tests {
             estimated_size_mb: 100.0,
             estimated_document_count: 1000,
             is_cloud_storage: false,
+            io_optimization_hints: None,
         };
         
         // This test verifies that the reader can handle SearchParams directly

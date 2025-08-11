@@ -2,6 +2,7 @@
 
 use proximadb::core::avro_unified::VectorRecord;
 use std::collections::HashMap;
+use tracing::{debug, info};
 
 #[test]
 fn test_zero_copy_serialization() {
@@ -30,8 +31,8 @@ fn test_zero_copy_serialization() {
         .expect("Serialization should succeed");
     let serialization_time = start.elapsed();
 
-    println!("✅ Serialization time: {:?}", serialization_time);
-    println!("✅ Serialized size: {} bytes", serialized.len());
+    info!("✅ Serialization time: {:?}", serialization_time);
+    info!("✅ Serialized size: {} bytes", serialized.len());
 
     // Test zero-copy deserialization
     let start = std::time::Instant::now();
@@ -39,7 +40,7 @@ fn test_zero_copy_serialization() {
         VectorRecord::from_avro_bytes(&serialized).expect("Deserialization should succeed");
     let deserialization_time = start.elapsed();
 
-    println!("✅ Deserialization time: {:?}", deserialization_time);
+    info!("✅ Deserialization time: {:?}", deserialization_time);
 
     // Verify the data is identical
     assert_eq!(record.id, deserialized.id);
@@ -48,7 +49,7 @@ fn test_zero_copy_serialization() {
     assert_eq!(record.metadata, deserialized.metadata);
     assert_eq!(record.timestamp, deserialized.timestamp);
 
-    println!("✅ Zero-copy round-trip verified!");
+    info!("✅ Zero-copy round-trip verified!");
 }
 
 #[test]
@@ -86,18 +87,14 @@ fn test_batch_serialization_performance() {
     let batch_time = start.elapsed();
     let avg_time_per_record = batch_time / 1000;
 
-    println!("📊 Batch serialization results:");
-    println!("   Total records: 1000");
-    println!("   Total time: {:?}", batch_time);
-    println!("   Average time per record: {:?}", avg_time_per_record);
-    println!(
-        "   Total serialized size: {} MB",
-        total_size as f64 / 1_048_576.0
-    );
-    println!(
-        "   Average size per record: {} KB",
-        total_size as f64 / 1000.0 / 1024.0
-    );
+    info!("📊 Batch serialization results:");
+    debug!("   Total records: 1000");
+    debug!("   Total time: {:?}", batch_time);
+    debug!("   Average time per record: {:?}", avg_time_per_record);
+    debug!("   Total serialized size: {} MB",
+        total_size as f64 / 1_048_576.0);
+    debug!("   Average size per record: {} KB",
+        total_size as f64 / 1000.0 / 1024.0);
 
     // Performance assertions
     assert!(
@@ -107,8 +104,8 @@ fn test_batch_serialization_performance() {
 }
 
 fn main() {
-    println!("🚀 Running zero-copy verification tests...\n");
+    debug!("🚀 Running zero-copy verification tests...\n");
     test_zero_copy_serialization();
-    println!("\n");
+    debug!("\n");
     test_batch_serialization_performance();
 }

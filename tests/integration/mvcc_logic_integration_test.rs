@@ -3,6 +3,7 @@
 //! This test verifies that MVCC logic is correctly applied in search results
 
 use proximadb::core::search::SearchResult;
+use tracing::{debug, error, info, warn};
 use std::collections::HashMap;
 use serde_json::json;
 
@@ -117,7 +118,7 @@ fn test_mvcc_integration_normal_progression() {
     assert_eq!(deduplicated[0].id, "doc1");
     assert_eq!(deduplicated[0].version, Some(3));
     
-    println!("✅ MVCC normal progression test passed");
+    debug!("✅ MVCC normal progression test passed");
 }
 
 #[test]
@@ -133,7 +134,7 @@ fn test_mvcc_integration_version_gap() {
     assert_eq!(deduplicated[0].id, "doc2");
     assert_eq!(deduplicated[0].version, Some(2)); // Stops at gap
     
-    println!("✅ MVCC version gap test passed");
+    debug!("✅ MVCC version gap test passed");
 }
 
 #[test]
@@ -150,7 +151,7 @@ fn test_mvcc_integration_duplicate_versions() {
     assert_eq!(deduplicated[0].version, Some(1));
     assert_eq!(deduplicated[0].timestamp, Some(100)); // Earliest wins
     
-    println!("✅ MVCC duplicate versions test passed");
+    debug!("✅ MVCC duplicate versions test passed");
 }
 
 #[test]
@@ -164,7 +165,7 @@ fn test_mvcc_integration_append_only_vectors() {
     let deduplicated = apply_mvcc_logic(results);
     assert_eq!(deduplicated.len(), 3); // All preserved
     
-    println!("✅ MVCC append-only vectors test passed");
+    debug!("✅ MVCC append-only vectors test passed");
 }
 
 #[test]
@@ -209,7 +210,7 @@ fn test_mvcc_integration_complex_scenario() {
     let no_id_count = deduplicated.iter().filter(|r| r.id.is_empty()).count();
     assert_eq!(no_id_count, 2);
     
-    println!("✅ MVCC complex scenario test passed");
+    debug!("✅ MVCC complex scenario test passed");
 }
 
 /// Test tombstone handling (simulated through metadata)
@@ -233,7 +234,7 @@ fn test_mvcc_integration_tombstone_handling() {
     assert_eq!(deduplicated[0].version, Some(2));
     assert_eq!(deduplicated[0].metadata.get("is_deleted"), Some(&json!(true)));
     
-    println!("✅ MVCC tombstone handling test passed");
+    debug!("✅ MVCC tombstone handling test passed");
 }
 
 /// Test version continuity with multiple documents
@@ -270,5 +271,5 @@ fn test_mvcc_integration_version_continuity_multiple_docs() {
     assert_eq!(deduplicated[2].id, "docZ");
     assert_eq!(deduplicated[2].version, Some(1));
     
-    println!("✅ MVCC version continuity with multiple docs test passed");
+    debug!("✅ MVCC version continuity with multiple docs test passed");
 }

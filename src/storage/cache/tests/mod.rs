@@ -27,3 +27,9 @@ mod phase5_production_tests;
 
 #[cfg(test)]
 mod integration_tests;
+
+#[cfg(test)]
+mod unified_cache_integration_tests;
+
+#[cfg(test)]
+mod viper_cache_integration_tests;

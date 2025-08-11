@@ -4,6 +4,7 @@
 //! using the current ProximaDB architecture.
 
 use anyhow::Result;
+use tracing::{debug, error, info, warn};
 use serde_json::json;
 use std::collections::HashMap;
 
@@ -29,7 +30,7 @@ async fn test_vector_record_creation() -> Result<()> {
     assert_eq!(vector_record["metadata"]["category"], "test");
     assert_eq!(vector_record["version"], 1);
     
-    println!("✅ Vector record creation test passed");
+    debug!("✅ Vector record creation test passed");
     Ok(())
 }
 
@@ -58,7 +59,7 @@ async fn test_vector_search_request_structure() -> Result<()> {
     assert_eq!(search_request["include_vectors"], true);
     assert_eq!(search_request["optimization_hints"]["enable_two_stage_search"], true);
     
-    println!("✅ Vector search request structure test passed");
+    debug!("✅ Vector search request structure test passed");
     Ok(())
 }
 
@@ -88,7 +89,7 @@ async fn test_collection_config_with_quantization() -> Result<()> {
     assert_eq!(quant_config["bits_per_code"], 8);
     assert_eq!(quant_config["num_subspaces"], 16);
     
-    println!("✅ Collection config with quantization test passed");
+    debug!("✅ Collection config with quantization test passed");
     Ok(())
 }
 
@@ -107,7 +108,7 @@ async fn test_distance_metric_types() -> Result<()> {
         assert_eq!(config["dimension"], 128);
     }
     
-    println!("✅ Distance metric types test passed");
+    debug!("✅ Distance metric types test passed");
     Ok(())
 }
 
@@ -127,7 +128,7 @@ async fn test_storage_engine_types() -> Result<()> {
         assert!(config["name"].as_str().unwrap().contains(&engine.to_lowercase()));
     }
     
-    println!("✅ Storage engine types test passed");
+    debug!("✅ Storage engine types test passed");
     Ok(())
 }
 
@@ -157,6 +158,6 @@ async fn test_vector_mutation_operations() -> Result<()> {
     assert_eq!(delete_request["operation"], "DELETE");
     assert_eq!(delete_request["soft_delete"], true);
     
-    println!("✅ Vector mutation operations test passed");
+    debug!("✅ Vector mutation operations test passed");
     Ok(())
 }

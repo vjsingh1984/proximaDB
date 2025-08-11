@@ -461,7 +461,7 @@ mod tests {
             &data_blocks,
         ).await.unwrap();
         
-        println!("Filter result: {}", result.stats.efficiency_report());
+        debug!("Filter result: {}", result.stats.efficiency_report());
         assert!(!result.qualifying_indices.is_empty(), "Should find some matches");
     }
     

@@ -4,6 +4,7 @@
 //! with the correct bloom filter configuration.
 
 use proximadb::storage::engines::sst::SstStorage;
+use tracing::{debug, error, info, warn};
 use proximadb::storage::persistence::filesystem::FilesystemFactory;
 use proximadb::storage::traits::{FlushParameters, UnifiedStorageEngine};
 use proximadb::core::VectorRecord;
@@ -36,7 +37,7 @@ async fn test_lsm_do_flush_with_bloom_filter() {
     // Create temp directory
     let temp_dir = TempDir::new().unwrap();
     let base_path = temp_dir.path();
-    eprintln!("TEST: Using temp directory: {}", base_path.to_str().unwrap());
+    debug!("TEST: Using temp directory: {}", base_path.to_str().unwrap());
     
     // Setup test directories
     setup_test_directories(base_path).await.unwrap();
@@ -70,7 +71,7 @@ async fn test_lsm_do_flush_with_bloom_filter() {
     // Create test vectors with metadata
     let now = chrono::Utc::now().timestamp() as u32;
     let test_id = format!("test_{}", chrono::Utc::now().timestamp());
-    eprintln!("TEST: Creating test with ID: {}", test_id);
+    debug!("TEST: Creating test with ID: {}", test_id);
     let vectors = vec![
         VectorRecord {
             id: Some("vec1".to_string()),
@@ -151,10 +152,10 @@ async fn test_lsm_do_flush_with_bloom_filter() {
     };
     
     // Call do_flush directly
-    println!("\n=== Testing SST do_flush ===");
+    debug!("\n=== Testing SST do_flush ===");
     let flush_result = lsm_engine.do_flush(&flush_params).await.unwrap();
     
-    println!("Flush result: success={}, entries_flushed={}, files_created={}", 
+    debug!("Flush result: success={}, entries_flushed={}, files_created={}", 
              flush_result.success, flush_result.entries_flushed, flush_result.files_created);
     
     assert!(flush_result.success, "Flush should succeed");
@@ -163,7 +164,7 @@ async fn test_lsm_do_flush_with_bloom_filter() {
     
     // Verify SSTable was created
     let storage_url = lsm_engine.get_collection_storage_url(collection_id).await.unwrap();
-    println!("Storage URL: {}", storage_url);
+    debug!("Storage URL: {}", storage_url);
     
     // Sleep a bit to ensure file is written
     tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
@@ -175,28 +176,29 @@ async fn test_lsm_do_flush_with_bloom_filter() {
         .filter(|entry| entry.name.ends_with(".sst"))
         .collect();
     
-    println!("Found {} SSTable files", sst_files.len());
+    debug!("Found {} SSTable files", sst_files.len());
     for file in &all_files {
-        println!("  File: {} (is_sst: {})", file.name, file.name.ends_with(".sst"));
+        debug!("  File: {} (is_sst: {})", file.name, file.name.ends_with(".sst"));
     }
     
     // If there are multiple SSTable files, this might be due to concurrent tests or multiple flushes
     // The key requirement is that the flush reported creating 1 file, and we have at least 1 file
     assert!(sst_files.len() >= 1, "Should have created at least 1 SSTable file");
     if sst_files.len() > 1 {
-        println!("WARNING: Found {} SSTable files, expected 1. This may be due to concurrent tests.", sst_files.len());
+        debug!("WARNING: Found {} SSTable files, expected 1. This may be due to concurrent tests.", sst_files.len());
     }
     
     for file in &sst_files {
-        println!("  - {} (size: {} bytes)", file.name, file.metadata.size);
+        debug!("  - {} (size: {} bytes)", file.name, file.metadata.size);
         assert!(file.metadata.size > 0, "SSTable file should not be empty");
     }
     
     // Now test search to verify the SSTable is readable
-    println!("\n=== Testing SST search ===");
+    debug!("\n=== Testing SST search ===");
     let query = vec![1.0, 0.0, 0.0];
     let results = lsm_engine.search_vectors_unified(
         collection_id,
+        &storage_url,
         &query,
         5,
         &DistanceMetric::Cosine,
@@ -205,7 +207,7 @@ async fn test_lsm_do_flush_with_bloom_filter() {
         true,
     ).await.unwrap();
     
-    println!("Search returned {} results", results.len());
+    debug!("Search returned {} results", results.len());
     assert!(!results.is_empty(), "Should find results from SSTable");
     
     // The closest vector should be vec1
@@ -213,7 +215,7 @@ async fn test_lsm_do_flush_with_bloom_filter() {
     assert!(results[0].distance.unwrap() < 0.001, "Distance should be near 0");
     
     // Test with metadata filter
-    println!("\n=== Testing SST search with metadata filter ===");
+    debug!("\n=== Testing SST search with metadata filter ===");
     let filter = proximadb::core::search::FilterExpression::Comparison {
         field: "category".to_string(),
         operator: proximadb::core::search::ComparisonOperator::Equals,
@@ -222,6 +224,7 @@ async fn test_lsm_do_flush_with_bloom_filter() {
     
     let filtered_results = lsm_engine.search_vectors_unified(
         collection_id,
+        &storage_url,
         &query,
         5,
         &DistanceMetric::Cosine,
@@ -230,8 +233,8 @@ async fn test_lsm_do_flush_with_bloom_filter() {
         true,
     ).await.unwrap();
     
-    println!("Filtered search returned {} results", filtered_results.len());
+    debug!("Filtered search returned {} results", filtered_results.len());
     assert_eq!(filtered_results.len(), 2, "Should find 2 vectors with category A");
     
-    println!("\n=== Test completed successfully ===");
+    debug!("\n=== Test completed successfully ===");
 }

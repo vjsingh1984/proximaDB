@@ -1,3 +1,5 @@
+use tracing::{debug};
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Initialize basic logging for build scripts
     tracing_subscriber::fmt::init();
@@ -20,6 +22,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .compile(&["proto/proximadb.proto"], &["proto"])?;
     tracing::info!("✅ Protobuf compilation complete");
 
-    println!("cargo:rerun-if-changed=proto/proximadb.proto");
+    debug!("cargo:rerun-if-changed=proto/proximadb.proto");
     Ok(())
 }

@@ -13,6 +13,7 @@ mod tests {
     use crate::core::VectorRecord;
     use crate::index::axis::types::{DataType, IndexAlgorithm, IndexSpecification};
     use crate::index::axis::index_factory::IndexFactory;
+use tracing::{debug, error, info, warn};
 
     fn create_test_vector(id: &str, dimension: usize) -> VectorRecord {
         VectorRecord {
@@ -66,10 +67,10 @@ mod tests {
     async fn test_pq_compression_ratios() {
         // Test different PQ configurations for compression
         let test_cases = vec![
-            (4, 8, 32.0),   // 4 subquantizers, 8 bits each = 4 bytes vs 128 bytes (32x compression)
-            (8, 8, 16.0),   // 8 subquantizers, 8 bits each = 8 bytes vs 128 bytes (16x compression)
-            (16, 8, 8.0),   // 16 subquantizers, 8 bits each = 16 bytes vs 128 bytes (8x compression)
-            (8, 4, 32.0),   // 8 subquantizers, 4 bits each = 4 bytes vs 128 bytes (32x compression)
+            (4, 8, 128.0),   // 4 subquantizers, 8 bits each = 4 bytes vs 512 bytes (128x compression)
+            (8, 8, 64.0),    // 8 subquantizers, 8 bits each = 8 bytes vs 512 bytes (64x compression)
+            (16, 8, 32.0),   // 16 subquantizers, 8 bits each = 16 bytes vs 512 bytes (32x compression)
+            (8, 4, 128.0),   // 8 subquantizers, 4 bits each = 4 bytes vs 512 bytes (128x compression)
         ];
 
         for (m, nbits, expected_ratio) in test_cases {
@@ -199,7 +200,7 @@ mod tests {
 
             let compression_ratio = original_memory as f32 / total_pq_memory as f32;
 
-            println!(
+            debug!(
                 "PQ memory for {} vectors: original={} MB, compressed={} MB, ratio={:.2}x",
                 count,
                 original_memory / 1_000_000,
@@ -233,7 +234,7 @@ mod tests {
                 algorithm,
             );
 
-            println!("Testing PQ configuration: {} (m={}, nbits={})", description, m, nbits);
+            debug!("Testing PQ configuration: {} (m={}, nbits={})", description, m, nbits);
             
             // When implemented, this should test actual search accuracy
             assert!(spec.supports_clustering());

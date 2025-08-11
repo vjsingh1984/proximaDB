@@ -4,6 +4,7 @@
 //! that were added to the proto definition and handlers.
 
 use anyhow::Result;
+use tracing::{debug, error, info, warn};
 use serde_json::json;
 
 #[tokio::test]
@@ -36,7 +37,7 @@ async fn test_quantization_config_creation() -> Result<()> {
     assert_eq!(optimization_hints["candidate_multiplier"], 2.0);
     assert_eq!(optimization_hints["quantization_hint"], "PQ8");
     
-    println!("✅ Quantization configuration test passed");
+    debug!("✅ Quantization configuration test passed");
     Ok(())
 }
 
@@ -74,7 +75,7 @@ async fn test_search_optimization_hints_parsing() -> Result<()> {
     assert_eq!(candidate_multiplier, 1.5);
     assert_eq!(quantization_hint, "FP32");
     
-    println!("✅ Search optimization hints parsing test passed");
+    debug!("✅ Search optimization hints parsing test passed");
     Ok(())
 }
 
@@ -102,7 +103,7 @@ async fn test_rest_search_request_with_optimization_hints() -> Result<()> {
     assert_eq!(hints["candidate_multiplier"], 2.0);
     assert_eq!(hints["quantization_hint"], "PQ8");
     
-    println!("✅ REST search request with optimization hints test passed");
+    debug!("✅ REST search request with optimization hints test passed");
     Ok(())
 }
 
@@ -131,7 +132,7 @@ async fn test_grpc_optimization_hints_structure() -> Result<()> {
     assert!(search_hints.get("candidate_multiplier").is_some());
     assert!(search_hints.get("quantization_hint").is_some());
     
-    println!("✅ gRPC optimization hints structure test passed");
+    debug!("✅ gRPC optimization hints structure test passed");
     Ok(())
 }
 
@@ -158,6 +159,6 @@ async fn test_quantization_type_variants() -> Result<()> {
         assert_eq!(config["num_subspaces"], subspaces);
     }
     
-    println!("✅ Quantization type variants test passed");
+    debug!("✅ Quantization type variants test passed");
     Ok(())
 }

@@ -21,6 +21,7 @@ use rand;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
+use tracing::{debug, error, info, warn};
 
 use super::{FileOptions, FileSystem, FilesystemError, FsResult};
 
@@ -320,14 +321,14 @@ impl AtomicWriteExecutor for SameMountTempExecutor {
         }
 
         // Write to temp file
-        println!("🔍 DEBUG ATOMIC: Writing to temp_path: {}", temp_path);
+        debug!("🔍 DEBUG ATOMIC: Writing to temp_path: {}", temp_path);
         filesystem.write(&temp_path, data, None).await?;
-        println!("🔍 DEBUG ATOMIC: Successfully wrote to temp_path: {}", temp_path);
+        debug!("🔍 DEBUG ATOMIC: Successfully wrote to temp_path: {}", temp_path);
 
         // Atomic move to final location (move is atomic, copy is not)
-        println!("🔍 DEBUG ATOMIC: Moving from temp_path: {} to final_path: {}", temp_path, final_path);
+        debug!("🔍 DEBUG ATOMIC: Moving from temp_path: {} to final_path: {}", temp_path, final_path);
         filesystem.move_file(&temp_path, final_path).await?;
-        println!("🔍 DEBUG ATOMIC: Successfully moved to final_path: {}", final_path);
+        debug!("🔍 DEBUG ATOMIC: Successfully moved to final_path: {}", final_path);
 
         Ok(())
     }

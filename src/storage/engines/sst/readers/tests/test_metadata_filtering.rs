@@ -22,7 +22,7 @@ fn create_test_config() -> SstConfig {
     }
 }
 use serde_json::json;
-use tracing::info;
+use tracing::{debug, error, info, warn};
 
 #[tokio::test]
 #[ignore = "Needs investigation - Bincode deserialization issue"]
@@ -130,6 +130,7 @@ async fn test_metadata_filtering_basic() {
         metadata_columns: vec!["category".to_string(), "score".to_string(), "type".to_string()],
         level: 0,
         creation_time: chrono::Utc::now(),
+            io_optimization_hints: None,
     };
     
     // Test 1: Filter by category = A
@@ -306,6 +307,7 @@ async fn test_metadata_bloom_filter_optimization() {
         metadata_columns: vec!["category".to_string(), "status".to_string()],
         level: 0,
         creation_time: chrono::Utc::now(),
+            io_optimization_hints: None,
     };
     
     // Test 1: Filter by category = even (10 records)

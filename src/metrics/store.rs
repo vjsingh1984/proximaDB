@@ -12,7 +12,7 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::{debug, info, warn};
 
-use crate::storage::persistence::filesystem::FilesystemFactory;
+use crate::storage::persistence::filesystem::{FilesystemFactory, FileOptions};
 use super::schema::{CollectionMetrics, GlobalMetrics};
 use super::updater::MetricsUpdate;
 use super::MetricsConfig;
@@ -128,8 +128,15 @@ impl MetricsPersistenceLayer {
             // Serialize to Bincode (3-5x faster than Avro, 20-30% smaller)
             let bincode_data = self.serialize_snapshot(snapshot)?;
             
+            // Use overwrite option (FileOptions already imported below)
+            let options = FileOptions {
+                overwrite: true,
+                create_dirs: true,
+                ..Default::default()
+            };
+            
             // Write to filesystem
-            self.filesystem_factory.write(&path, &bincode_data, None).await
+            self.filesystem_factory.write(&path, &bincode_data, Some(options.clone())).await
                 .context(format!("Failed to write snapshot for {}", collection_id))?;
             
             // Also update latest snapshot
@@ -137,7 +144,7 @@ impl MetricsPersistenceLayer {
                 "{}/snapshots/collections/{}/snapshot_latest.bincode",
                 self.base_path, collection_id
             );
-            self.filesystem_factory.write(&latest_path, &bincode_data, None).await?;
+            self.filesystem_factory.write(&latest_path, &bincode_data, Some(options)).await?;
             
             debug!("Created snapshot for collection {} ({} bytes)", 
                 collection_id, bincode_data.len());
@@ -258,22 +265,45 @@ impl MetricsPersistenceLayer {
             version: 1,
         };
         
-        // Persist to storage
+        // Ensure collection snapshot directory exists
+        let collection_dir = format!("{}/snapshots/collections/{}", 
+                                    self.base_path, metrics.collection_id);
+        self.filesystem_factory.create_dir_all(&collection_dir).await?;
+        
+        // Write to the same path that load_snapshot expects
+        let path = format!("{}/snapshots/collections/{}/snapshot_latest.bincode",
+                          self.base_path, metrics.collection_id);
+        
+        // Serialize using the same format as create_snapshots
+        let bincode_data = self.serialize_snapshot(&snapshot)?;
+        
+        // Use overwrite option to allow updating existing metrics
+        let options = FileOptions {
+            overwrite: true,
+            create_dirs: true,
+            ..Default::default()
+        };
+        
+        self.filesystem_factory.write(&path, &bincode_data, Some(options.clone())).await
+            .context(format!("Failed to write metrics snapshot for {}", metrics.collection_id))?;
+            
+        debug!("Stored collection metrics for {} to {}", metrics.collection_id, path);
+        
+        // Also write to partitioned path for backward compatibility if needed
         let partition = self.calculate_partition(&metrics.collection_id);
-        // Ensure partition directory exists
         let partition_dir = format!("{}/partition_{}", self.base_path, partition);
         self.filesystem_factory.create_dir_all(&partition_dir).await?;
         
-        let path = format!("{}/partition_{}/collection_{}.json", 
-                          self.base_path, partition, metrics.collection_id);
+        let partition_path = format!("{}/partition_{}/collection_{}.json", 
+                                    self.base_path, partition, metrics.collection_id);
         
         let snapshot_json = serde_json::to_string(&snapshot)
-            .context("Failed to serialize metrics snapshot")?;
-            
-        self.filesystem_factory.write(&path, snapshot_json.as_bytes(), None).await
-            .context("Failed to write metrics snapshot to storage")?;
-            
-        debug!("Stored collection metrics for {} to {}", metrics.collection_id, path);
+            .context("Failed to serialize metrics snapshot to JSON")?;
+        
+        // Also use overwrite for the JSON backup
+        self.filesystem_factory.write(&partition_path, snapshot_json.as_bytes(), Some(options)).await
+            .context("Failed to write metrics snapshot to partitioned storage")?;
+        
         Ok(())
     }
     
@@ -437,12 +467,26 @@ impl MetricsPersistenceLayer {
         // Remove from cache
         self.snapshot_cache.write().await.remove(collection_id);
         
-        // Remove from filesystem
+        // Remove snapshot file (this is what get_collection_metrics checks)
+        let snapshot_path = format!("{}/snapshots/collections/{}/snapshot_latest.bincode",
+                                   self.base_path, collection_id);
+        if self.filesystem_factory.exists(&snapshot_path).await? {
+            self.filesystem_factory.delete(&snapshot_path).await?;
+        }
+        
+        // Also remove the entire collection snapshot directory
+        let snapshot_dir = format!("{}/snapshots/collections/{}", 
+                                  self.base_path, collection_id);
+        if self.filesystem_factory.exists(&snapshot_dir).await? {
+            self.filesystem_factory.delete(&snapshot_dir).await?;
+        }
+        
+        // Remove from partition storage (backward compatibility)
         let partition = self.calculate_partition(collection_id);
-        let path = format!("{}/partition_{}/collection_{}.json", 
-                          self.base_path, partition, collection_id);
-        if self.filesystem_factory.exists(&path).await? {
-            self.filesystem_factory.delete(&path).await?;
+        let partition_path = format!("{}/partition_{}/collection_{}.json", 
+                                    self.base_path, partition, collection_id);
+        if self.filesystem_factory.exists(&partition_path).await? {
+            self.filesystem_factory.delete(&partition_path).await?;
         }
         
         Ok(())

@@ -157,6 +157,7 @@ pub struct StrategyComparison {
 #[cfg(test)]
 mod tests {
     use super::*;
+use tracing::{debug, error, info, warn};
 
     #[test]
     fn test_available_strategies() {

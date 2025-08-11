@@ -32,6 +32,8 @@ use std::sync::Arc;
 
 use crate::api_handlers::{UnifiedHandlers, conversions};
 use crate::core::search::SearchResult;
+use tracing::{debug, error, info, warn};
+
 use crate::proto::proximadb::{
     self, 
     OperationMetrics, IndexConfig, QuantizationConfig, QuantizationLevel,

@@ -678,6 +678,7 @@ impl FileSystem for HdfsFileSystem {
 #[cfg(test)]
 mod tests {
     use super::*;
+use tracing::{debug, error, info, warn};
 
     #[tokio::test]
     async fn test_hdfs_path_normalization() {

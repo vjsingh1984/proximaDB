@@ -4,6 +4,7 @@
 //! to ensure reliable testing without cross-test contamination.
 
 use anyhow::Result;
+use tracing::{debug, error, info, warn};
 use std::sync::Arc;
 
 use super::test_utils::IsolatedTestEnvironment;
@@ -44,7 +45,7 @@ async fn test_isolated_write_ahead_log_basic_operations() -> Result<()> {
     
     // Create test vectors
     let vectors = env.create_test_vectors(10);
-    println!("📝 Created {} test vectors for collection: {}", vectors.len(), env.collection_id());
+    debug!("📝 Created {} test vectors for collection: {}", vectors.len(), env.collection_id());
     
     // Write vectors to WriteBuffer
     let write_result = writer.write_vectors(&vectors).await?;
@@ -56,8 +57,8 @@ async fn test_isolated_write_ahead_log_basic_operations() -> Result<()> {
     assert!(flush_result.success, "WriteBuffer flush should succeed");
     assert!(flush_result.bytes_written > 0);
     
-    println!("✅ Basic WriteBuffer operations test passed for collection: {}", env.collection_id());
-    println!("   Wrote {} vectors, flushed {} bytes", write_result.vectors_written, flush_result.bytes_written);
+    debug!("✅ Basic WriteBuffer operations test passed for collection: {}", env.collection_id());
+    debug!("   Wrote {} vectors, flushed {} bytes", write_result.vectors_written, flush_result.bytes_written);
     Ok(())
 }
 
@@ -71,7 +72,7 @@ async fn test_isolated_write_ahead_log_serialization_strategies() -> Result<()> 
     let strategies = vec!["proto", "avro", "bincode"];
     
     for strategy in strategies {
-        println!("🧪 Testing serialization strategy: {}", strategy);
+        debug!("🧪 Testing serialization strategy: {}", strategy);
         
         let wb_config = WriteBufferConfig {
             buffer_size_mb: 1,
@@ -106,11 +107,11 @@ async fn test_isolated_write_ahead_log_serialization_strategies() -> Result<()> 
         assert!(flush_result.success, "Flush should succeed for {} strategy", strategy);
         assert!(flush_result.bytes_written > 0, "Should write some bytes for {} strategy", strategy);
         
-        println!("  ✅ {} strategy: {} vectors, {} bytes", 
+        debug!("  ✅ {} strategy: {} vectors, {} bytes", 
                 strategy, write_result.vectors_written, flush_result.bytes_written);
     }
     
-    println!("✅ Serialization strategies test passed for collection: {}", env.collection_id());
+    debug!("✅ Serialization strategies test passed for collection: {}", env.collection_id());
     Ok(())
 }
 
@@ -180,7 +181,7 @@ async fn test_isolated_write_ahead_log_batch_operations() -> Result<()> {
         assert!(write_result.success, "Batch {} write should succeed", batch);
         all_write_results.push(write_result);
         
-        println!("📦 Batch {}: wrote {} vectors", batch, batch_vectors.len());
+        debug!("📦 Batch {}: wrote {} vectors", batch, batch_vectors.len());
     }
     
     // Flush all batches
@@ -191,8 +192,8 @@ async fn test_isolated_write_ahead_log_batch_operations() -> Result<()> {
     let total_written: usize = all_write_results.iter().map(|r| r.vectors_written).sum();
     assert_eq!(total_written, total_vectors, "Should have written all {} vectors", total_vectors);
     
-    println!("✅ Batch operations test passed for collection: {}", env.collection_id());
-    println!("   Total vectors: {}, batches: {}, bytes flushed: {}", 
+    debug!("✅ Batch operations test passed for collection: {}", env.collection_id());
+    debug!("   Total vectors: {}, batches: {}, bytes flushed: {}", 
              total_written, all_write_results.len(), flush_result.bytes_written);
     Ok(())
 }
@@ -277,11 +278,11 @@ async fn test_isolated_write_ahead_log_concurrent_writes() -> Result<()> {
                 if result.success {
                     successful_writes += 1;
                     total_vectors_written += result.vectors_written;
-                    println!("📝 Writer {}: wrote {} vectors", writer_id, result.vectors_written);
+                    debug!("📝 Writer {}: wrote {} vectors", writer_id, result.vectors_written);
                 }
             }
             Err(e) => {
-                println!("⚠️ Writer {} failed: {}", writer_id, e);
+                debug!("⚠️ Writer {} failed: {}", writer_id, e);
             }
         }
     }
@@ -298,8 +299,8 @@ async fn test_isolated_write_ahead_log_concurrent_writes() -> Result<()> {
     assert!(flush_result.success, "Final flush should succeed");
     assert!(flush_result.bytes_written > 0, "Should have written some bytes");
     
-    println!("✅ Concurrent writes test passed for collection: {}", env.collection_id());
-    println!("   {} writers, {} total vectors, {} bytes flushed", 
+    debug!("✅ Concurrent writes test passed for collection: {}", env.collection_id());
+    debug!("   {} writers, {} total vectors, {} bytes flushed", 
              successful_writes, total_vectors_written, flush_result.bytes_written);
     Ok(())
 }
@@ -341,7 +342,7 @@ async fn test_isolated_write_ahead_log_recovery() -> Result<()> {
         let flush_result = writer.flush().await?;
         assert!(flush_result.success, "Initial flush should succeed");
         
-        println!("📝 Phase 1: Wrote {} vectors, flushed {} bytes", 
+        debug!("📝 Phase 1: Wrote {} vectors, flushed {} bytes", 
                 write_result.vectors_written, flush_result.bytes_written);
     } // Writer goes out of scope
     
@@ -362,11 +363,11 @@ async fn test_isolated_write_ahead_log_recovery() -> Result<()> {
         let new_flush_result = new_writer.flush().await?;
         assert!(new_flush_result.success, "Recovery flush should succeed");
         
-        println!("📝 Phase 2: Wrote {} additional vectors, flushed {} bytes", 
+        debug!("📝 Phase 2: Wrote {} additional vectors, flushed {} bytes", 
                 new_write_result.vectors_written, new_flush_result.bytes_written);
     }
     
-    println!("✅ WriteBuffer recovery test passed for collection: {}", env.collection_id());
+    debug!("✅ WriteBuffer recovery test passed for collection: {}", env.collection_id());
     Ok(())
 }
 
@@ -462,8 +463,8 @@ async fn test_isolated_write_ahead_log_compression() -> Result<()> {
     // Compressed should use less space (though this depends on data patterns)
     let compression_ratio = compressed_flush.bytes_written as f64 / uncompressed_flush.bytes_written as f64;
     
-    println!("✅ Compression test passed for collection: {}", env.collection_id());
-    println!("   Uncompressed: {} bytes, Compressed: {} bytes, Ratio: {:.2}",
+    debug!("✅ Compression test passed for collection: {}", env.collection_id());
+    debug!("   Uncompressed: {} bytes, Compressed: {} bytes, Ratio: {:.2}",
              uncompressed_flush.bytes_written, compressed_flush.bytes_written, compression_ratio);
     
     // Note: We don't assert compression ratio because it depends on the actual data patterns
@@ -521,8 +522,8 @@ async fn test_isolated_write_ahead_log_error_handling() -> Result<()> {
     assert!(flush2.bytes_written <= flush1.bytes_written, 
         "Second flush should not write more than first");
     
-    println!("✅ Error handling test passed for collection: {}", env.collection_id());
-    println!("   Empty: {} vectors, Normal: {} vectors, Flush1: {} bytes, Flush2: {} bytes",
+    debug!("✅ Error handling test passed for collection: {}", env.collection_id());
+    debug!("   Empty: {} vectors, Normal: {} vectors, Flush1: {} bytes, Flush2: {} bytes",
              empty_result.vectors_written, normal_result.vectors_written, 
              flush1.bytes_written, flush2.bytes_written);
     Ok(())

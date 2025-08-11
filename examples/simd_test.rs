@@ -4,15 +4,15 @@ use proximadb::compute::distance_computation::DistanceMetric;
 use proximadb::compute::distance_computation::engine::UnifiedDistanceCompute;
 use proximadb::core::hardware_capabilities::{initialize_hardware_capabilities_default, get_hardware_capabilities};
 use std::time::Instant;
+use tracing::{debug, info};
 
 fn main() {
-    println!("ProximaDB SIMD Performance Test");
-    println!("===============================");
+    debug!("ProximaDB SIMD Performance Test");
+    debug!("===============================");
     
     let _ = initialize_hardware_capabilities_default();
     let capability = get_hardware_capabilities();
-    println!("Detected platform: {:?}", capability);
-    println!();
+    debug!("Detected platform: {:?}", capability);
     
     let dim = 1024;
     let iterations = 10_000;
@@ -20,8 +20,7 @@ fn main() {
     let a: Vec<f32> = (0..dim).map(|i| (i as f32).sin()).collect();
     let b: Vec<f32> = (0..dim).map(|i| (i as f32).cos()).collect();
     
-    println!("Testing dimension {} with {} iterations", dim, iterations);
-    println!();
+    debug!("Testing dimension {} with {} iterations", dim, iterations);
     
     for metric in [
         DistanceMetric::Cosine,
@@ -45,12 +44,11 @@ fn main() {
         let ops_per_sec = iterations as f64 / elapsed.as_secs_f64();
         let ns_per_op = elapsed.as_nanos() as f64 / iterations as f64;
         
-        println!("{:?}:", metric);
-        println!("  {:.0} ops/sec", ops_per_sec);
-        println!("  {:.1} ns/op", ns_per_op);
-        println!("  {:.2} ms total", elapsed.as_millis());
-        println!();
+        debug!("{:?}:", metric);
+        debug!("  {:.0} ops/sec", ops_per_sec);
+        debug!("  {:.1} ns/op", ns_per_op);
+        debug!("  {:.2} ms total", elapsed.as_millis());
     }
     
-    println!("✅ SIMD acceleration is active!");
+    info!("✅ SIMD acceleration is active!");
 }

@@ -10,16 +10,17 @@
 
 use anyhow::Result;
 use proximadb::server::builder::ServerBuilder;
+use tracing::{debug, info, warn};
 
 #[tokio::main]
 async fn main() -> Result<()> {
     tracing_subscriber::fmt::init();
 
-    println!("🚀 ProximaDB Metadata Backend Configuration Examples");
-    println!("=====================================================");
+    debug!("🚀 ProximaDB Metadata Backend Configuration Examples");
+    debug!("=====================================================");
 
     // Example 1: Local filesystem metadata backend
-    println!("\n📁 Example 1: Local Filesystem Metadata Backend");
+    debug!("\n📁 Example 1: Local Filesystem Metadata Backend");
     let _server_local = ServerBuilder::new()
         .with_server_endpoint("127.0.0.1", 5678)
         .configure_storage(|storage| {
@@ -28,11 +29,11 @@ async fn main() -> Result<()> {
         .build()
         .await?;
 
-    println!("✅ Local filesystem metadata backend configured");
-    println!("   📂 Storage path: /data/proximadb/metadata");
+    info!("✅ Local filesystem metadata backend configured");
+    debug!("   📂 Storage path: /data/proximadb/metadata");
 
     // Example 2: AWS S3 metadata backend with IAM role
-    println!("\n☁️ Example 2: AWS S3 Metadata Backend (IAM Role)");
+    debug!("\n☁️ Example 2: AWS S3 Metadata Backend (IAM Role)");
     let _server_s3_iam = ServerBuilder::new()
         .with_server_endpoint("0.0.0.0", 5678)
         .configure_storage(|storage| {
@@ -45,13 +46,13 @@ async fn main() -> Result<()> {
         .build()
         .await?;
 
-    println!("✅ S3 metadata backend configured with IAM role");
-    println!("   🪣 Bucket: my-proximadb-bucket");
-    println!("   🌍 Region: us-west-2");
-    println!("   🔐 Auth: IAM Role");
+    info!("✅ S3 metadata backend configured with IAM role");
+    debug!("   🪣 Bucket: my-proximadb-bucket");
+    debug!("   🌍 Region: us-west-2");
+    debug!("   🔐 Auth: IAM Role");
 
     // Example 3: Azure Blob Storage metadata backend with Managed Identity
-    println!("\n🔵 Example 3: Azure Blob Storage Metadata Backend");
+    debug!("\n🔵 Example 3: Azure Blob Storage Metadata Backend");
     let _server_azure = ServerBuilder::new()
         .with_server_endpoint("0.0.0.0", 5678)
         .configure_storage(|storage| {
@@ -64,13 +65,13 @@ async fn main() -> Result<()> {
         .build()
         .await?;
 
-    println!("✅ Azure metadata backend configured with Managed Identity");
-    println!("   🏦 Account: myproximadbaccount");
-    println!("   📦 Container: metadata-container");
-    println!("   🔐 Auth: Managed Identity");
+    info!("✅ Azure metadata backend configured with Managed Identity");
+    debug!("   🏦 Account: myproximadbaccount");
+    debug!("   📦 Container: metadata-container");
+    debug!("   🔐 Auth: Managed Identity");
 
     // Example 4: Google Cloud Storage metadata backend with Workload Identity
-    println!("\n🟡 Example 4: Google Cloud Storage Metadata Backend");
+    debug!("\n🟡 Example 4: Google Cloud Storage Metadata Backend");
     let _server_gcs = ServerBuilder::new()
         .with_server_endpoint("0.0.0.0", 5678)
         .configure_storage(|storage| {
@@ -83,24 +84,24 @@ async fn main() -> Result<()> {
         .build()
         .await?;
 
-    println!("✅ GCS metadata backend configured with Workload Identity");
-    println!("   📊 Project: my-project-id");
-    println!("   🪣 Bucket: proximadb-metadata-bucket");
-    println!("   🔐 Auth: Workload Identity");
+    info!("✅ GCS metadata backend configured with Workload Identity");
+    info!("   📊 Project: my-project-id");
+    debug!("   🪣 Bucket: proximadb-metadata-bucket");
+    debug!("   🔐 Auth: Workload Identity");
 
     // Example 5: Memory metadata backend (for testing)
-    println!("\n🧠 Example 5: Memory Metadata Backend (Testing)");
+    debug!("\n🧠 Example 5: Memory Metadata Backend (Testing)");
     let _server_memory = ServerBuilder::new()
         .with_server_endpoint("127.0.0.1", 5678)
         .configure_storage(|storage| storage.with_memory_metadata_backend())
         .build()
         .await?;
 
-    println!("✅ Memory metadata backend configured");
-    println!("   ⚠️  Note: Data will not persist across restarts");
+    info!("✅ Memory metadata backend configured");
+    warn!("   ⚠️  Note: Data will not persist across restarts");
 
     // Example 6: Custom metadata backend configuration
-    println!("\n⚙️ Example 6: Custom Metadata Backend Configuration");
+    debug!("\n⚙️ Example 6: Custom Metadata Backend Configuration");
     let _server_custom = ServerBuilder::new()
         .with_server_endpoint("0.0.0.0", 5678)
         .configure_storage(|storage| {
@@ -132,16 +133,16 @@ async fn main() -> Result<()> {
         .build()
         .await?;
 
-    println!("✅ Custom metadata backend configured");
-    println!("   🪣 Custom S3 endpoint with access keys");
-    println!("   💾 Cache: 512MB, Flush: 90s");
+    info!("✅ Custom metadata backend configured");
+    debug!("   🪣 Custom S3 endpoint with access keys");
+    debug!("   💾 Cache: 512MB, Flush: 90s");
 
-    println!("\n🎉 All metadata backend examples configured successfully!");
-    println!("\n💡 Usage Notes:");
-    println!("   - Use local filesystem for development and single-node deployments");
-    println!("   - Use cloud storage (S3/Azure/GCS) for production and multi-region deployments");
-    println!("   - Use memory backend only for testing and ephemeral scenarios");
-    println!("   - Configure cloud authentication according to your security policies");
+    info!("\n🎉 All metadata backend examples configured successfully!");
+    debug!("\n💡 Usage Notes:");
+    debug!("   - Use local filesystem for development and single-node deployments");
+    debug!("   - Use cloud storage (S3/Azure/GCS) for production and multi-region deployments");
+    debug!("   - Use memory backend only for testing and ephemeral scenarios");
+    debug!("   - Configure cloud authentication according to your security policies");
 
     Ok(())
 }

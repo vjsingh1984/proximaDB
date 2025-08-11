@@ -85,9 +85,8 @@ pub struct WALFlushCoordinator {
     optimized_coordinator: Option<Arc<OptimizedFlushCoordinator>>,
     /// Collection service for fetching metadata
     collection_service: Option<Arc<crate::services::collection_service::CollectionService>>,
-    // 🔴 UNUSED FIELD - Metrics module is unused
-    // /// Metrics updater for tracking flush operations
-    // metrics_updater: Option<Arc<dyn InternalMetricsUpdater>>,
+    /// Metrics updater for tracking flush operations
+    metrics_updater: Option<Arc<dyn crate::metrics::InternalMetricsUpdater>>,
 }
 
 impl WALFlushCoordinator {
@@ -100,7 +99,7 @@ impl WALFlushCoordinator {
             axis_manager: None,
             optimized_coordinator: None,
             collection_service: None,
-            // metrics_updater: None,  // 🔴 UNUSED FIELD
+            metrics_updater: None,
         }
     }
     
@@ -109,12 +108,11 @@ impl WALFlushCoordinator {
         self.collection_service = Some(service);
     }
     
-    // 🔴 UNUSED METHOD - Metrics module is unused
-    // /// Set metrics updater for tracking flush operations
-    // pub fn set_metrics_updater(&mut self, updater: Arc<dyn InternalMetricsUpdater>) {
-    //     self.metrics_updater = Some(updater);
-    //     info!("🔗 FlushCoordinator: Metrics updater registered for flush operation tracking");
-    // }
+    /// Set metrics updater for tracking flush operations
+    pub fn set_metrics_updater(&mut self, updater: Arc<dyn crate::metrics::InternalMetricsUpdater>) {
+        self.metrics_updater = Some(updater);
+        info!("🔗 FlushCoordinator: Metrics updater registered for flush operation tracking");
+    }
     
     /// Enable optimized flush processing
     pub fn enable_optimized_flush(&mut self, batch_size: usize, worker_count: usize, dimension: usize) {
@@ -410,28 +408,27 @@ impl WALFlushCoordinator {
             collection_id
         );
         
-        // 🔴 UNUSED METRICS - Metrics module is unused
-        // // 📊 METRICS: Record flush operation metrics (non-blocking)
-        // if let Some(ref metrics) = self.metrics_updater {
-        //     let engine_type = if let Some(context) = flush_context {
-        //         context.engine_name().to_uppercase()
-        //     } else {
-        //         engine_type.to_uppercase()
-        //     };
-        //     
-        //     metrics.record_flush(
-        //         collection_id,
-        //         FlushMetricsUpdate {
-        //             vectors_flushed: storage_result.entries_flushed as i64,
-        //             bytes_written: storage_result.bytes_written as i64,
-        //             duration_ms: storage_result.duration_ms as i64,
-        //             files_created: storage_result.files_created as i32,
-        //             engine_type,
-        //             timestamp: chrono::Utc::now().timestamp_millis(),
-        //         },
-        //     ).await;
-        //     debug!("📊 Recorded flush metrics for collection {}", collection_id);
-        // }
+        // 📊 METRICS: Record flush operation metrics (non-blocking)
+        if let Some(ref metrics) = self.metrics_updater {
+            let engine_type_str = if let Some(context) = flush_context {
+                context.engine_name().to_uppercase()
+            } else {
+                engine_type.to_uppercase()
+            };
+            
+            let _ = metrics.record_flush(
+                collection_id,
+                crate::metrics::FlushMetricsUpdate {
+                    vectors_flushed: storage_result.entries_flushed as i64,
+                    bytes_written: storage_result.bytes_written as i64,
+                    duration_ms: storage_result.duration_ms as i64,
+                    files_created: storage_result.files_created as i32,
+                    engine_type: engine_type_str,
+                    timestamp: chrono::Utc::now().timestamp_millis(),
+                },
+            ).await;
+            debug!("📊 Recorded flush metrics for collection {}", collection_id);
+        }
         
         // Return enhanced result with vector data for AXIS indexing
         Ok(EnhancedFlushResult::new(storage_result, vector_records_for_axis))

@@ -60,7 +60,7 @@ _Technology leadership, market differentiators, and performance edge_
 | Best in class
 
 | **Test Coverage**
-| 1,460+ tests
+| 2,704 tests
 | 100% pass rate
 |===
 
@@ -88,9 +88,10 @@ _Technology leadership, market differentiators, and performance edge_
 
 === For Operations
 1. link:admin/multi_disk_guide.adoc[**Production Setup**] - Multi-disk and cloud deployment
-2. link:performance_reference.adoc[**Performance Guide**] - Benchmarks and tuning
-3. link:compression_guide.adoc[**Compression**] - Storage optimization
-4. link:enterprise_features.adoc[**Roadmap**] - Future features and versions
+2. link:admin/configuration_reference.adoc[**Configuration Reference**] - Complete TOML configuration guide
+3. link:performance_reference.adoc[**Performance & Benchmarking Guide**] - Complete testing methodology and performance tuning
+4. link:compression_guide.adoc[**Compression**] - Storage optimization
+5. link:enterprise_features.adoc[**Roadmap**] - Future features and versions
 
 === Key Diagrams
 * link:diagrams/index.adoc[**Diagrams Documentation**] - Complete visual guide

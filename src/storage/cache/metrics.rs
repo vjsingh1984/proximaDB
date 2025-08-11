@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
+use tracing::{debug, error, info, warn};
 
 /// Cache metrics collector
 #[derive(Debug, Clone)]
@@ -372,25 +373,25 @@ pub struct CacheMetricsSnapshot {
 
 impl CacheMetricsSnapshot {
     pub fn print_summary(&self) {
-        println!("=== Cache Metrics Summary ===");
-        println!("Hit Rate: {:.2}%", self.hit_rate * 100.0);
-        println!("L1 Hits: {} ({:.1}%)", self.l1_hits, 
+        debug!("=== Cache Metrics Summary ===");
+        debug!("Hit Rate: {:.2}%", self.hit_rate * 100.0);
+        debug!("L1 Hits: {} ({:.1}%)", self.l1_hits, 
                  (self.l1_hits as f64 / self.total_gets.max(1) as f64) * 100.0);
-        println!("L2 Hits: {} ({:.1}%)", self.l2_hits,
+        debug!("L2 Hits: {} ({:.1}%)", self.l2_hits,
                  (self.l2_hits as f64 / self.total_gets.max(1) as f64) * 100.0);
-        println!("L3 Hits: {} ({:.1}%)", self.l3_hits,
+        debug!("L3 Hits: {} ({:.1}%)", self.l3_hits,
                  (self.l3_hits as f64 / self.total_gets.max(1) as f64) * 100.0);
-        println!("Misses: {} ({:.1}%)", self.misses,
+        debug!("Misses: {} ({:.1}%)", self.misses,
                  (self.misses as f64 / self.total_gets.max(1) as f64) * 100.0);
-        println!("Total Gets: {}", self.total_gets);
-        println!("Total Puts: {}", self.total_puts);
-        println!("Evictions: {}", self.evictions);
-        println!("Invalidations: {}", self.invalidations);
-        println!("Entries: {}", self.total_entries);
-        println!("Size: {} MB", self.total_bytes / (1024 * 1024));
-        println!("Avg Get Latency: {} μs", self.avg_get_latency_us);
-        println!("Avg Put Latency: {} μs", self.avg_put_latency_us);
-        println!("Gets/sec: {:.1}", self.gets_per_sec);
-        println!("Uptime: {} seconds", self.uptime_secs);
+        debug!("Total Gets: {}", self.total_gets);
+        debug!("Total Puts: {}", self.total_puts);
+        debug!("Evictions: {}", self.evictions);
+        debug!("Invalidations: {}", self.invalidations);
+        debug!("Entries: {}", self.total_entries);
+        debug!("Size: {} MB", self.total_bytes / (1024 * 1024));
+        debug!("Avg Get Latency: {} μs", self.avg_get_latency_us);
+        debug!("Avg Put Latency: {} μs", self.avg_put_latency_us);
+        debug!("Gets/sec: {:.1}", self.gets_per_sec);
+        debug!("Uptime: {} seconds", self.uptime_secs);
     }
 }

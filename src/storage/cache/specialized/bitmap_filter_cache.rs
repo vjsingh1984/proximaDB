@@ -273,6 +273,75 @@ impl BitmapFilterCache {
     pub fn updater(&self) -> Arc<IncrementalUpdater> {
         self.updater.clone()
     }
+    
+    /// Combine multiple filters with an operation
+    pub async fn combine_filters(&self, filter_keys: &[&str], op: FilterOp) -> Option<CachedFilterResult> {
+        if filter_keys.is_empty() {
+            return None;
+        }
+        
+        let mut result_bitmap: Option<RoaringBitmap> = None;
+        
+        for key in filter_keys {
+            if let Some(filter_result) = self.get_with_hooks(&key.to_string()).await {
+                match &mut result_bitmap {
+                    None => result_bitmap = Some(filter_result.bitmap),
+                    Some(bitmap) => {
+                        match op {
+                            FilterOp::And => *bitmap &= &filter_result.bitmap,
+                            FilterOp::Or => *bitmap |= &filter_result.bitmap,
+                        }
+                    }
+                }
+            } else if matches!(op, FilterOp::And) {
+                // If any filter is missing in AND operation, result is empty
+                return Some(CachedFilterResult {
+                    bitmap: RoaringBitmap::new(),
+                    filter_expr: format!("{:?}({:?})", op, filter_keys),
+                    cached_at: chrono::Utc::now().timestamp_millis() as u64,
+                    dependencies: filter_keys.iter().map(|s| s.to_string()).collect(),
+                });
+            }
+        }
+        
+        result_bitmap.map(|bitmap| CachedFilterResult {
+            bitmap,
+            filter_expr: format!("{:?}({:?})", op, filter_keys),
+            cached_at: chrono::Utc::now().timestamp_millis() as u64,
+            dependencies: filter_keys.iter().map(|s| s.to_string()).collect(),
+        })
+    }
+    
+    /// Decompose a complex filter into sub-filters
+    pub async fn decompose_filter(&self, _filter: &str) -> Vec<String> {
+        // Simple placeholder implementation
+        vec!["sub_filter_1".to_string(), "sub_filter_2".to_string()]
+    }
+    
+    /// Update a filter incrementally
+    pub async fn update_incrementally(&self, key: &str, update: RoaringBitmap, op: FilterUpdateOp) {
+        if let Some(mut existing) = self.get_with_hooks(&key.to_string()).await {
+            match op {
+                FilterUpdateOp::Add => existing.bitmap |= &update,
+                FilterUpdateOp::Remove => existing.bitmap -= &update,
+            }
+            self.put_with_hooks(key.to_string(), existing).await;
+        }
+    }
+}
+
+/// Filter combination operation
+#[derive(Debug)]
+pub enum FilterOp {
+    And,
+    Or,
+}
+
+/// Filter update operation  
+#[derive(Debug)]
+pub enum FilterUpdateOp {
+    Add,
+    Remove,
 }
 
 #[cfg(test)]

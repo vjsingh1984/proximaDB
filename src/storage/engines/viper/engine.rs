@@ -225,11 +225,13 @@ impl ViperEngine {
         Ok(())
     }
     
-    /// Compact Parquet files
+    /// Compact Parquet files  
+    /// Note: This method requires collection config to be passed, use do_compact for automatic config lookup
     pub async fn compact_parquet_files(
         &self,
         collection_id: &str,
         input_files: Vec<String>,
+        collection_config: Option<&crate::proto::proximadb::Collection>,
     ) -> Result<Vec<String>> {
         info!(
             "🗜️ VIPER Engine: Compacting {} files for collection {}",
@@ -237,8 +239,8 @@ impl ViperEngine {
             collection_id
         );
         
-        // Delegate to the compaction manager
-        let result = self.compaction_manager.compact_parquet_files(collection_id, input_files).await?;
+        // Delegate to the compaction manager with collection config
+        let result = self.compaction_manager.compact_parquet_files(collection_id, input_files, collection_config).await?;
         Ok(result.output_files)
     }
     
@@ -548,21 +550,26 @@ impl ViperEngine {
     /// - ML-driven cluster optimization for large collections
     /// - Direct search for small collections 
     /// - Hybrid strategies combining clustering with metadata filtering
-    /// Public search method - delegates to unified search
+    /// Public search method - requires storage URL
     /// 
-    /// This is a convenience method that uses default parameters.
-    /// For full control, use search_vectors_unified directly via the UnifiedStorageEngine trait.
+    /// **Note**: This is a convenience method primarily intended for testing.
+    /// Production code should use `search_vectors_unified` via the UnifiedStorageEngine trait
+    /// for full control over search parameters including distance metrics and filters.
+    /// 
+    /// This method requires the storage URL to be passed explicitly.
     pub async fn search_vectors(
         &self,
         collection_id: &str,
+        storage_url: &str,
         query_vector: &[f32],
         k: usize,
     ) -> Result<Vec<crate::core::search::SearchResult>> {
-        info!("🔍 VIPER Engine: Delegating to unified search - collection={}, k={}", collection_id, k);
+        info!("🔍 VIPER Engine: search_vectors called - collection={}, storage_url={}, k={}", collection_id, storage_url, k);
         
         // Delegate to the unified search implementation with default parameters
         self.search_vectors_unified(
             collection_id,
+            storage_url,
             query_vector,
             k,
             &crate::compute::distance_computation::DistanceMetric::Cosine, // Default metric
@@ -575,7 +582,73 @@ impl ViperEngine {
     // REMOVED: search_vectors_in_cluster - Clustering is handled by AXIS indexing service
     // VIPER provides raw vector retrieval; AXIS determines which files to search
 
-    /// Get all Parquet files associated with a collection
+    /// Get all Parquet files using the provided storage URL
+    pub async fn get_parquet_files_with_storage_url(&self, collection_id: &str, storage_url: &str) -> Result<Vec<String>> {
+        debug!("📁 Getting Parquet files for collection: {} from URL: {}", collection_id, storage_url);
+        info!("🔍 VIPER get_parquet_files: collection_id={}, storage_url={}", collection_id, storage_url);
+        debug!("📁 [DEBUG] get_parquet_files_with_storage_url called:");
+        debug!("    collection_id: {}", collection_id);
+        debug!("    storage_url: {}", storage_url);
+        
+        // Handle different storage backends
+        let parquet_files = if storage_url.starts_with("file://") {
+            // The storage_url already contains the full path including collection_id and /data
+            // Don't append collection_id again
+            let full_path = storage_url.to_string();
+            
+            info!("📁 Listing local files at: {}", full_path);
+            debug!("📁 Listing local files at: {}", full_path);
+            debug!("📁 [DEBUG] Listing local files at: {}", full_path);
+            
+            // Use filesystem API to list files
+            match self.filesystem.list(&full_path).await {
+                Ok(files) => {
+                    debug!("📁 [DEBUG] filesystem.list returned {} entries", files.len());
+                    for (i, file) in files.iter().enumerate() {
+                        debug!("    [{}] name={}, url={}", i, file.name, file.url);
+                    }
+                    let parquet_files: Vec<String> = files
+                        .into_iter()
+                        .filter(|f| f.name.ends_with(".parquet"))
+                        .map(|f| f.url)  // Use the full URL from DirEntry
+                        .collect();
+                    debug!("📁 Found {} Parquet files in {}", parquet_files.len(), full_path);
+                    debug!("📁 [DEBUG] Found {} Parquet files", parquet_files.len());
+                    for (i, file) in parquet_files.iter().enumerate() {
+                        debug!("    [{}] {}", i, file);
+                    }
+                    parquet_files
+                }
+                Err(e) => {
+                    debug!("📁 Error listing files in {}: {}", full_path, e);
+                    vec![]
+                }
+            }
+        } else {
+            // Cloud storage - use the storage URL pattern
+            debug!("📁 Listing cloud files for collection: {}", collection_id);
+            
+            match self.filesystem.list(storage_url).await {
+                Ok(files) => {
+                    let parquet_files: Vec<String> = files
+                        .into_iter()
+                        .filter(|f| f.name.ends_with(".parquet"))
+                        .map(|f| f.url)  // Use the full URL from DirEntry
+                        .collect();
+                    debug!("📁 Found {} Parquet files in cloud storage", parquet_files.len());
+                    parquet_files
+                }
+                Err(e) => {
+                    debug!("📁 Error listing cloud files: {}", e);
+                    vec![]
+                }
+            }
+        };
+        
+        Ok(parquet_files)
+    }
+    
+    /// Get all Parquet files associated with a collection (legacy - uses collection service)
     pub async fn get_parquet_files_for_collection(&self, collection_id: &str) -> Result<Vec<String>> {
         debug!("📁 Getting Parquet files for collection: {}", collection_id);
         
@@ -771,8 +844,9 @@ impl UnifiedStorageEngine for ViperEngine {
         
         // Use the modular compaction manager to compact Parquet files
         // If no input files specified, the compaction manager will discover them
+        // Pass the collection config from parameters to avoid collection service lookups
         let compaction_result = self.compaction_manager
-            .compact_parquet_files(collection_id, input_files.clone())
+            .compact_parquet_files(collection_id, input_files.clone(), params.collection_config.as_ref())
             .await?;
         
         let duration_ms = start_time.elapsed().as_millis() as u64;
@@ -829,6 +903,7 @@ impl UnifiedStorageEngine for ViperEngine {
     async fn search_vectors_unified(
         &self,
         collection_id: &str,
+        storage_url: &str,  // Storage URL provided by VectorOperationsService
         query_vector: &[f32],
         k: usize,
         distance_metric: &crate::compute::distance_computation::DistanceMetric,
@@ -836,9 +911,9 @@ impl UnifiedStorageEngine for ViperEngine {
         include_vectors: bool,
         include_metadata: bool,
     ) -> Result<Vec<crate::core::search::SearchResult>> {
-        debug!("search_vectors_unified called for collection: {}", collection_id);
+        debug!("search_vectors_unified called for collection: {} with storage_url: {}", collection_id, storage_url);
         // VIPER ENGINE OPTIMIZATION: Use unified search engine
-        info!("🔍 VIPER: Searching collection {} with unified search engine", collection_id);
+        info!("🔍 VIPER: Searching collection {} with unified search engine at {}", collection_id, storage_url);
         
         // Build search params from parameters
         if let Some(filter_expr) = filter_expression {
@@ -867,8 +942,8 @@ impl UnifiedStorageEngine for ViperEngine {
             debug!("Collection config not found, continuing with defaults");
         }
         
-        // Get parquet files for the collection
-        let parquet_files = self.get_parquet_files_for_collection(collection_id).await?;
+        // Get parquet files for the collection using the provided storage URL
+        let parquet_files = self.get_parquet_files_with_storage_url(collection_id, storage_url).await?;
         debug!("Found {} parquet files for collection {}", parquet_files.len(), collection_id);
         for (i, file) in parquet_files.iter().enumerate() {
             trace!("  Parquet file {}: {}", i, file);
@@ -898,6 +973,7 @@ impl UnifiedStorageEngine for ViperEngine {
                 estimated_size_mb: self.stats.read().await.total_size_bytes as f64 / (1024.0 * 1024.0),
                 file_count: parquet_files.len(),
                 supports_range_requests: true,
+                file_paths: Some(parquet_files.clone()),
             },
             filterable_columns: collection_opt.as_ref()
                 .and_then(|c| c.config.as_ref())
@@ -923,7 +999,9 @@ impl UnifiedStorageEngine for ViperEngine {
                 &crate::compute::distance_computation::engine::UnifiedDistanceCompute::default(),
                 None, // TODO: Add quantization engine when needed
             ).await {
-            Ok(rs) => rs,
+            Ok(rs) => {
+                rs
+            },
             Err(e) => {
                 error!("Search engine error: {}", e);
                 return Err(e);

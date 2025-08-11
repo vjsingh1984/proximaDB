@@ -170,22 +170,21 @@ impl BackgroundMaintenanceManager {
                         result.duration_ms
                     );
                     
-                    // 🔴 UNUSED METRICS - Metrics module is unused
-                    // // 📊 METRICS: Record compaction operation metrics (non-blocking)
-                    // if let Some(metrics) = metrics_updater {
-                    //     metrics.record_compaction(
-                    //         &context.collection_id,
-                    //         CompactionMetricsUpdate {
-                    //             files_before: result.input_files as i32,
-                    //             files_after: result.output_files as i32,
-                    //             bytes_before: result.bytes_read as i64,  // Use bytes_read instead
-                    //             bytes_after: result.bytes_written as i64,  // Use bytes_written instead
-                    //             duration_ms: result.duration_ms as i64,
-                    //             timestamp: chrono::Utc::now().timestamp_millis(),
-                    //         },
-                    //     ).await;
-                    //     info!("📊 Recorded compaction metrics for collection {}", context.collection_id);
-                    // }
+                    // 📊 METRICS: Record compaction operation metrics (non-blocking)
+                    if let Some(metrics) = metrics_updater {
+                        let _ = metrics.record_compaction(
+                            &context.collection_id,
+                            crate::metrics::CompactionMetricsUpdate {
+                                files_before: result.input_files as i32,
+                                files_after: result.output_files as i32,
+                                bytes_before: result.bytes_read as i64,  // Use bytes_read instead
+                                bytes_after: result.bytes_written as i64,  // Use bytes_written instead
+                                duration_ms: result.duration_ms as i64,
+                                timestamp: chrono::Utc::now().timestamp_millis(),
+                            },
+                        ).await;
+                        info!("📊 Recorded compaction metrics for collection {}", context.collection_id);
+                    }
                     
                     // Return file list for compatibility - for VIPER this would be the compacted files
                     // Since the UnifiedStorageEngine doesn't return file paths, we'll return a placeholder

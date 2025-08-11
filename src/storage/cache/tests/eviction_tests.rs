@@ -2,6 +2,9 @@ use crate::storage::cache::eviction::{ARCStrategy, CacheState, EvictionStrategy,
 
 #[test]
 fn test_lru_eviction() {
+        // Initialize hardware capabilities for testing
+        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+
     let mut strategy = LRUStrategy::<String>::new();
     
     // Insert some keys
@@ -26,6 +29,9 @@ fn test_lru_eviction() {
 
 #[test]
 fn test_lfu_eviction() {
+        // Initialize hardware capabilities for testing
+        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+
     let mut strategy = LFUStrategy::<String>::new();
     
     // Insert keys
@@ -53,6 +59,9 @@ fn test_lfu_eviction() {
 
 #[test]
 fn test_arc_eviction() {
+        // Initialize hardware capabilities for testing
+        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+
     let mut strategy = ARCStrategy::<String>::new(4);
     
     // Insert keys
@@ -82,6 +91,9 @@ fn test_arc_eviction() {
 
 #[test]
 fn test_eviction_stats() {
+        // Initialize hardware capabilities for testing
+        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+
     let mut strategy = LRUStrategy::<u64>::new();
     
     // Perform operations

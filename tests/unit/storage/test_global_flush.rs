@@ -4,6 +4,7 @@
 //! for global flush scenarios, and shrink factor behavior.
 
 use anyhow::Result;
+use tracing::{debug, error, info, warn};
 use std::sync::Arc;
 use std::time::SystemTime;
 
@@ -11,7 +12,7 @@ use proximadb::core::VectorRecord;
 use proximadb::storage::memtable::implementations::global_partitioned::GlobalPartitionedMemtable;
 use proximadb::storage::memtable::specialized::write_ahead_log_behavior::WriteBufferVectorBatch;
 use proximadb::storage::persistence::write_ahead_log::background_manager::BackgroundMaintenanceManager;
-use proximadb::storage::persistence::write_ahead_log::config::WriteBufferConfig;
+use proximadb::storage::persistence::write_ahead_log::config::WALConfig;
 use proximadb::storage::BatchId;
 
 /// Helper function to create test vector records with specific size
@@ -100,8 +101,8 @@ async fn test_global_memory_threshold_calculation() -> Result<()> {
     assert!(total_memory_usage > global_threshold_10mb); // Should exceed 10MB
     assert!(total_memory_usage < global_threshold_50mb); // Should be under 50MB
     
-    println!("✅ Global memory threshold calculation test passed");
-    println!("   Total memory usage: {} bytes ({} MB)", total_memory_usage, total_memory_usage / 1024 / 1024);
+    debug!("✅ Global memory threshold calculation test passed");
+    debug!("   Total memory usage: {} bytes ({} MB)", total_memory_usage, total_memory_usage / 1024 / 1024);
     Ok(())
 }
 
@@ -140,7 +141,7 @@ async fn test_global_flush_collection_selection() -> Result<()> {
     assert!(low_threshold_collections.contains(&"large_collection".to_string()));
     assert!(low_threshold_collections.contains(&"huge_collection".to_string()));
     
-    println!("✅ Global flush collection selection test passed");
+    debug!("✅ Global flush collection selection test passed");
     Ok(())
 }
 
@@ -167,7 +168,7 @@ async fn test_global_shrink_factor_behavior() -> Result<()> {
         let target_size = (total_memory_usage as f64 * shrink_factor) as usize;
         let reduction_needed = total_memory_usage - target_size;
         
-        println!("Shrink factor {}: target_size={} bytes, reduction_needed={} bytes", 
+        debug!("Shrink factor {}: target_size={} bytes, reduction_needed={} bytes", 
                  shrink_factor, target_size, reduction_needed);
         
         assert!(target_size < total_memory_usage);
@@ -178,7 +179,7 @@ async fn test_global_shrink_factor_behavior() -> Result<()> {
         assert!(shrink_factor < 1.0);
     }
     
-    println!("✅ Global shrink factor behavior test passed");
+    debug!("✅ Global shrink factor behavior test passed");
     Ok(())
 }
 
@@ -217,7 +218,7 @@ async fn test_global_flush_many_small_collections() -> Result<()> {
     let high_threshold_collections = memtable.collections_needing_flush(1024 * 1024).await?; // 1MB
     assert_eq!(high_threshold_collections.len(), 0); // No collections should be selected
     
-    println!("✅ Global flush many small collections test passed");
+    debug!("✅ Global flush many small collections test passed");
     Ok(())
 }
 
@@ -246,11 +247,11 @@ async fn test_global_flush_config_integration() -> Result<()> {
         let effective_config = config.effective_config_for_collection("test_collection");
         assert_eq!(effective_config.memory_flush_size_bytes, collection_threshold);
         
-        println!("Config test passed: collection_threshold={} bytes, global_threshold={} bytes, shrink_factor={}", 
+        debug!("Config test passed: collection_threshold={} bytes, global_threshold={} bytes, shrink_factor={}", 
                  collection_threshold, global_threshold, shrink_factor);
     }
     
-    println!("✅ Global flush config integration test passed");
+    debug!("✅ Global flush config integration test passed");
     Ok(())
 }
 
@@ -281,7 +282,7 @@ async fn test_global_flush_background_manager_integration() -> Result<()> {
         tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
     }
     
-    println!("✅ Global flush background manager integration test passed");
+    debug!("✅ Global flush background manager integration test passed");
     Ok(())
 }
 
@@ -327,9 +328,9 @@ async fn test_global_flush_performance_metrics() -> Result<()> {
     assert!(flush_selection_duration.as_micros() < 10000, "Flush selection took too long: {}μs", flush_selection_duration.as_micros());
     assert!(memory_calc_duration.as_micros() < 1000, "Memory calculation took too long: {}μs", memory_calc_duration.as_micros());
     
-    println!("✅ Global flush performance metrics test passed");
-    println!("   Population time: {:?}", populate_duration);
-    println!("   Flush selection time: {:?}", flush_selection_duration);
-    println!("   Memory calculation time: {:?}", memory_calc_duration);
+    debug!("✅ Global flush performance metrics test passed");
+    debug!("   Population time: {:?}", populate_duration);
+    debug!("   Flush selection time: {:?}", flush_selection_duration);
+    debug!("   Memory calculation time: {:?}", memory_calc_duration);
     Ok(())
 }

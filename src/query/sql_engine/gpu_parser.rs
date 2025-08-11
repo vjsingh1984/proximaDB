@@ -480,7 +480,7 @@ mod tests {
     fn test_gpu_backend_detection() {
         setup_hardware_capabilities();
         let backend = GpuSqlParser::get_gpu_backend();
-        println!("Detected GPU backend: {}", backend);
+        debug!("Detected GPU backend: {}", backend);
         // Should always return some backend (None if no GPU)
         assert!(true);
     }
@@ -509,7 +509,7 @@ mod tests {
         assert!(parser.is_ok());
         
         let parser = parser.unwrap();
-        println!("GPU Parser backend: {}", parser.backend());
+        debug!("GPU Parser backend: {}", parser.backend());
     }
     
     #[test]
@@ -549,7 +549,7 @@ mod tests {
         let result = parser.parse(sql);
         
         if let Err(ref e) = result {
-            eprintln!("Parse error: {:?}", e);
+            debug!("Parse error: {:?}", e);
         }
         assert!(result.is_ok());
         let parsed = result.unwrap();

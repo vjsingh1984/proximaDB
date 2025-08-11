@@ -11,7 +11,7 @@ use std::sync::Arc;
 use anyhow::Result;
 use tempfile::TempDir;
 use tokio::time::{sleep, Duration};
-use tracing::{debug, warn};
+use tracing::{debug, error, warn};
 
 use crate::core::VectorRecord;
 use crate::proto::proximadb::MetadataItem;
@@ -51,6 +51,40 @@ async fn setup_test_assignment(collection_id: &str, base_path: &str) {
         .expect("Failed to create WAL directory");
 }
 
+/// Create test collection with storage assignment
+fn create_test_collection(collection_id: &str, base_path: &str) -> crate::proto::proximadb::Collection {
+    use crate::proto::proximadb::{Collection, CollectionConfig, StorageAssignment};
+    
+    Collection {
+        id: collection_id.to_string(),
+        config: Some(CollectionConfig {
+            name: collection_id.to_string(),
+            dimension: 128,
+            distance_metric: 0, // Cosine
+            storage_engine: 0, // VIPER
+            primary_indexing_algorithm: 0, // HNSW
+            filterable_columns: vec![],
+            index_configs: vec![],
+            quantization_config: None,
+            primary_index_name: String::new(),
+            enable_automatic_index_selection: false,
+            description: None,
+            tags: vec![],
+            owner: None,
+            compression: None,
+            storage_location: None,
+            optimization_hints: None,
+        }),
+        stats: None,
+        created_at: chrono::Utc::now().timestamp(),
+        updated_at: chrono::Utc::now().timestamp(),
+        storage_assignment: Some(StorageAssignment {
+            base_location: format!("file://{}", base_path),
+            assigned_at: chrono::Utc::now().timestamp(),
+        }),
+    }
+}
+
 /// Create test vector
 fn create_test_vector(id: &str, dimension: usize) -> VectorRecord {
     VectorRecord {
@@ -74,6 +108,9 @@ fn create_test_vector(id: &str, dimension: usize) -> VectorRecord {
 
 #[tokio::test]
 async fn test_insert_flush_compact_flow() {
+    // Initialize hardware capabilities for testing
+    let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+    
     // Test complete flow: insert -> flush -> compact
     let temp_dir = TempDir::new().unwrap();
     let config = create_compaction_config(temp_dir.path().to_str().unwrap());
@@ -87,20 +124,20 @@ async fn test_insert_flush_compact_flow() {
     // Set up storage assignment
     setup_test_assignment(collection_id, temp_dir.path().to_str().unwrap()).await;
     
-    println!("\n🚀 Starting Insert-Flush-Compact test\n");
+    debug!("\n🚀 Starting Insert-Flush-Compact test\n");
     
     // Step 1: Create vectors for batch insert
-    println!("📝 Step 1: Creating vectors for batch insert...");
+    debug!("📝 Step 1: Creating vectors for batch insert...");
     let mut all_vectors = Vec::new();
     for batch in 0..4 {
         for i in 0..10 {
             all_vectors.push(create_test_vector(&format!("vec_{}_{}", batch, i), 128));
         }
     }
-    println!("  📦 Created {} vectors", all_vectors.len());
+    debug!("  📦 Created {} vectors", all_vectors.len());
     
     // Step 2: Flush vectors to disk (VIPER batch insert)
-    println!("\n💾 Step 2: Flushing vectors to disk (batch insert)...");
+    debug!("\n💾 Step 2: Flushing vectors to disk (batch insert)...");
     let flush_params = FlushParameters {
         collection_id: Some(collection_id.to_string()),
         force: true,
@@ -111,11 +148,11 @@ async fn test_insert_flush_compact_flow() {
         timeout_ms: None,
         trigger_compaction: false,
     
-        collection_config: None,};
+        collection_config: Some(create_test_collection(collection_id, temp_dir.path().to_str().unwrap())),};
     
     let flush_result = engine.do_flush(&flush_params).await
         .expect("Failed to flush");
-    println!("  ✅ Flush complete: {} files created, {} entries flushed", 
+    debug!("  ✅ Flush complete: {} files created, {} entries flushed", 
              flush_result.files_created, flush_result.entries_flushed);
     
     // List files after flush
@@ -123,17 +160,17 @@ async fn test_insert_flush_compact_flow() {
     let data_url = format!("file://{}/{}/data", base_path, collection_id);
     let fs = engine.get_filesystem_factory().get_filesystem(&data_url).unwrap();
     
-    println!("\n📂 Files after flush:");
+    debug!("\n📂 Files after flush:");
     if let Ok(entries) = fs.list(&data_url).await {
         for entry in &entries {
             if entry.name.ends_with(".parquet") && !entry.metadata.is_directory {
-                println!("  - {}", entry.name);
+                debug!("  - {}", entry.name);
             }
         }
     }
     
     // Step 3: Run compaction
-    println!("\n🔨 Step 3: Running compaction...");
+    debug!("\n🔨 Step 3: Running compaction...");
     let compact_params = CompactionParameters {
         collection_id: Some(collection_id.to_string()),
         force: true,
@@ -142,20 +179,20 @@ async fn test_insert_flush_compact_flow() {
         timeout_ms: None,
         priority: crate::storage::traits::OperationPriority::Medium,
     
-        collection_config: None,};
+        collection_config: Some(create_test_collection(collection_id, temp_dir.path().to_str().unwrap())),};
     
     let compact_result = engine.do_compact(&compact_params).await
         .expect("Compaction failed");
-    println!("  ✅ Compaction complete: {} entries processed, {} input files -> {} output files",
+    debug!("  ✅ Compaction complete: {} entries processed, {} input files -> {} output files",
              compact_result.entries_processed, compact_result.input_files, compact_result.output_files);
     
     // List files after compaction
-    println!("\n📂 Files after compaction:");
+    debug!("\n📂 Files after compaction:");
     let mut compacted_file_url = None;
     if let Ok(entries) = fs.list(&data_url).await {
         for entry in &entries {
             if entry.name.ends_with(".parquet") && !entry.metadata.is_directory {
-                println!("  - {}", entry.name);
+                debug!("  - {}", entry.name);
                 if entry.name.starts_with("compacted_") {
                     compacted_file_url = Some(format!("{}/{}", data_url, entry.name));
                 }
@@ -164,10 +201,10 @@ async fn test_insert_flush_compact_flow() {
     }
     
     // Step 4: Verify compacted file contents
-    println!("\n🔍 Step 4: Verifying compacted file...");
+    debug!("\n🔍 Step 4: Verifying compacted file...");
     if let Some(file_url) = compacted_file_url {
         if let Ok(data) = fs.read(&file_url).await {
-            println!("  📊 File size: {} bytes", data.len());
+            debug!("  📊 File size: {} bytes", data.len());
             
             use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
             if let Ok(builder) = ParquetRecordBatchReaderBuilder::try_new(bytes::Bytes::from(data)) {
@@ -175,30 +212,35 @@ async fn test_insert_flush_compact_flow() {
                 let mut total_rows = 0;
                 for (i, batch) in reader.enumerate() {
                     if let Ok(batch) = batch {
-                        println!("  📊 Batch {}: {} rows", i, batch.num_rows());
+                        debug!("  📊 Batch {}: {} rows", i, batch.num_rows());
                         total_rows += batch.num_rows();
                     }
                 }
-                println!("  📊 Total rows in compacted file: {}", total_rows);
+                debug!("  📊 Total rows in compacted file: {}", total_rows);
                 assert_eq!(total_rows, 40, "Expected 40 rows in compacted file, got {}", total_rows);
             }
         }
     }
     
     // Step 5: Verify data is still searchable
-    println!("\n🔍 Step 5: Verifying search after compaction...");
+    debug!("\n🔍 Step 5: Verifying search after compaction...");
+    let storage_url = format!("file://{}/{}/data", temp_dir.path().to_str().unwrap(), collection_id);
     let search_results = engine.search_vectors(
         collection_id,
+        &storage_url,
         &vec![0.5; 128],
         100,
     ).await.unwrap();
     
-    println!("  ✅ Found {} results", search_results.len());
+    debug!("  ✅ Found {} results", search_results.len());
     assert_eq!(search_results.len(), 40, "Expected 40 search results, got {}", search_results.len());
 }
 
 #[tokio::test]
 async fn test_basic_compaction() {
+    // Initialize hardware capabilities for testing
+    let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+    
     let temp_dir = TempDir::new().unwrap();
     let config = create_compaction_config(temp_dir.path().to_str().unwrap());
     
@@ -214,12 +256,12 @@ async fn test_basic_compaction() {
     // Debug: check data directory
     let base_path = temp_dir.path().to_str().unwrap();
     let data_url = format!("file://{}/{}/data", base_path, collection_id);
-    println!("📍 Data directory: {}", data_url);
+    debug!("📍 Data directory: {}", data_url);
     
     // Extract the actual filesystem path for debugging
     if data_url.starts_with("file://") {
         let fs_path = data_url.strip_prefix("file://").unwrap_or(&data_url);
-        println!("📍 Filesystem path: {}", fs_path);
+        debug!("📍 Filesystem path: {}", fs_path);
     }
     
     // Create multiple small files
@@ -241,14 +283,14 @@ async fn test_basic_compaction() {
             timeout_ms: None,
             trigger_compaction: false,
         
-        collection_config: None,};
+        collection_config: Some(create_test_collection(collection_id, temp_dir.path().to_str().unwrap())),};
         let flush_result = engine.do_flush(&flush_params).await.unwrap();
-        println!("📄 Batch {} flush result: {} files created, {} entries flushed", 
+        debug!("📄 Batch {} flush result: {} files created, {} entries flushed", 
                  batch, flush_result.files_created, flush_result.entries_flushed);
         
         // Debug: Check if the flush actually created files
         if flush_result.files_created == 0 {
-            println!("  ⚠️ WARNING: No files created during flush!");
+            debug!("  ⚠️ WARNING: No files created during flush!");
         }
     }
     
@@ -258,24 +300,24 @@ async fn test_basic_compaction() {
     
     if fs.exists(&data_url).await.unwrap() {
         let entries = fs.list(&data_url).await.unwrap();
-        println!("📂 Files in data directory ({}):", data_url);
+        debug!("📂 Files in data directory ({}):", data_url);
         for entry in &entries {
-            println!("  - {} (is_dir: {})", entry.name, entry.metadata.is_directory);
+            debug!("  - {} (is_dir: {})", entry.name, entry.metadata.is_directory);
             
             // Check inside ___temp directory
             if entry.name == "___temp" {
                 let temp_url = format!("{}/___temp", data_url);
                 if fs.exists(&temp_url).await.unwrap() {
                     let temp_entries = fs.list(&temp_url).await.unwrap();
-                    println!("    📁 Files in temp directory:");
+                    debug!("    📁 Files in temp directory:");
                     for temp_entry in &temp_entries {
-                        println!("      - {} (is_dir: {})", temp_entry.name, temp_entry.metadata.is_directory);
+                        debug!("      - {} (is_dir: {})", temp_entry.name, temp_entry.metadata.is_directory);
                     }
                 }
             }
         }
     } else {
-        println!("❌ Data directory does not exist: {}", data_url);
+        error!("❌ Data directory does not exist: {}", data_url);
     }
     
     // Run compaction
@@ -287,12 +329,12 @@ async fn test_basic_compaction() {
         timeout_ms: None,
         priority: crate::storage::traits::OperationPriority::Medium,
     
-        collection_config: None,};
+        collection_config: Some(create_test_collection(collection_id, temp_dir.path().to_str().unwrap())),};
     
     let result = engine.do_compact(&compact_params).await
         .expect("Compaction failed");
     
-    println!("📊 Compaction result: success={}, entries_processed={}, input_files={}, output_files={}", 
+    debug!("📊 Compaction result: success={}, entries_processed={}, input_files={}, output_files={}", 
              result.success, result.entries_processed, result.input_files, result.output_files);
     
     assert!(result.success);
@@ -303,21 +345,21 @@ async fn test_basic_compaction() {
     tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
     
     // List files after compaction
-    println!("📂 Files after compaction:");
+    debug!("📂 Files after compaction:");
     if fs.exists(&data_url).await.unwrap() {
         let entries = fs.list(&data_url).await.unwrap();
-        println!("Files in data directory ({}):", data_url);
+        debug!("Files in data directory ({}):", data_url);
         for entry in &entries {
-            println!("  - {} (is_dir: {})", entry.name, entry.metadata.is_directory);
+            debug!("  - {} (is_dir: {})", entry.name, entry.metadata.is_directory);
             
             // Check inside ___temp directory
             if entry.name == "___temp" {
                 let temp_url = format!("{}/___temp", data_url);
                 if fs.exists(&temp_url).await.unwrap() {
                     let temp_entries = fs.list(&temp_url).await.unwrap();
-                    println!("    📁 Files in temp directory:");
+                    debug!("    📁 Files in temp directory:");
                     for temp_entry in &temp_entries {
-                        println!("      - {} (is_dir: {})", temp_entry.name, temp_entry.metadata.is_directory);
+                        debug!("      - {} (is_dir: {})", temp_entry.name, temp_entry.metadata.is_directory);
                     }
                 }
             }
@@ -331,27 +373,27 @@ async fn test_basic_compaction() {
     let data_url = format!("file://{}/{}/data", base_path, collection_id);
     let fs = engine.get_filesystem_factory().get_filesystem(&data_url).unwrap();
     
-    println!("🔍 Looking for parquet files in: {}", data_url);
+    debug!("🔍 Looking for parquet files in: {}", data_url);
     let mut all_parquet_files = Vec::new();
     if let Ok(entries) = fs.list(&data_url).await {
         for entry in entries {
             if entry.name.ends_with(".parquet") && !entry.metadata.is_directory {
-                println!("  ✅ Found parquet file: {}", entry.name);
+                debug!("  ✅ Found parquet file: {}", entry.name);
                 all_parquet_files.push(entry.name.clone());
             }
         }
     }
     
     if all_parquet_files.is_empty() {
-        println!("  ❌ No parquet files found in data directory!");
+        debug!("  ❌ No parquet files found in data directory!");
         
         // Check ___temp directory
         let temp_url = format!("{}/___temp", data_url);
         if let Ok(temp_entries) = fs.list(&temp_url).await {
-            println!("  📁 Checking ___temp directory:");
+            debug!("  📁 Checking ___temp directory:");
             for entry in temp_entries {
                 if entry.name.ends_with(".parquet") && !entry.metadata.is_directory {
-                    println!("    ⚠️ Found parquet in temp: {}", entry.name);
+                    debug!("    ⚠️ Found parquet in temp: {}", entry.name);
                 }
             }
         }
@@ -359,10 +401,10 @@ async fn test_basic_compaction() {
         // Debug: Read the compacted file directly to see what's in it
         let compacted_file = &all_parquet_files[0];
         let file_url = format!("{}/{}", data_url, compacted_file);
-        println!("🔍 Debug: Reading compacted file directly: {}", file_url);
+        debug!("🔍 Debug: Reading compacted file directly: {}", file_url);
         
         if let Ok(data) = fs.read(&file_url).await {
-            println!("  📊 File size: {} bytes", data.len());
+            debug!("  📊 File size: {} bytes", data.len());
             
             // Parse with arrow reader
             use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
@@ -371,7 +413,7 @@ async fn test_basic_compaction() {
                 let mut total_rows = 0;
                 for (i, batch) in reader.enumerate() {
                     if let Ok(batch) = batch {
-                        println!("  📊 Batch {}: {} rows", i, batch.num_rows());
+                        debug!("  📊 Batch {}: {} rows", i, batch.num_rows());
                         total_rows += batch.num_rows();
                         
                         // Print first few IDs
@@ -379,26 +421,37 @@ async fn test_basic_compaction() {
                             use arrow_array::Array;
                             let id_array = id_column.as_any().downcast_ref::<arrow_array::StringArray>().unwrap();
                             for j in 0..std::cmp::min(3, id_array.len()) {
-                                println!("    - ID[{}]: {:?}", j, id_array.value(j));
+                                debug!("    - ID[{}]: {:?}", j, id_array.value(j));
                             }
                         }
                     }
                 }
-                println!("  📊 Total rows in file: {}", total_rows);
+                debug!("  📊 Total rows in file: {}", total_rows);
             }
         }
     }
     
     // Verify all data still accessible
+    let storage_url = format!("file://{}/{}/data", temp_dir.path().to_str().unwrap(), collection_id);
+    
+    // First, let's check what parquet files exist
+    debug!("🔍 DEBUG: Checking for parquet files at: {}", storage_url);
+    let parquet_files = engine.get_parquet_files_with_storage_url(collection_id, &storage_url).await.unwrap();
+    debug!("🔍 DEBUG: Found {} parquet files", parquet_files.len());
+    for (i, file) in parquet_files.iter().enumerate() {
+        debug!("  [{}] {}", i, file);
+    }
+    
     let search_results = engine.search_vectors(
         collection_id,
+        &storage_url,
         &vec![0.5; 128],
         100,
     ).await.unwrap();
     
-    println!("🔍 Search results after compaction: {} results", search_results.len());
+    debug!("🔍 Search results after compaction: {} results", search_results.len());
     for result in &search_results {
-        println!("  - ID: {}, Score: {:?}", result.id, result.score);
+        debug!("  - ID: {}, Score: {:?}", result.id, result.score);
     }
     
     // Check if all vectors are present
@@ -409,7 +462,7 @@ async fn test_basic_compaction() {
                 .iter()
                 .any(|r| r.id == id);
             if !found {
-                println!("❌ Missing vector: {}", id);
+                error!("❌ Missing vector: {}", id);
             }
             assert!(found, "Vector {} missing after compaction", id);
         }
@@ -418,6 +471,9 @@ async fn test_basic_compaction() {
 
 #[tokio::test]
 async fn test_concurrent_compaction_and_reads() {
+    // Initialize hardware capabilities for testing
+    let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+    
     let temp_dir = TempDir::new().unwrap();
     let config = create_compaction_config(temp_dir.path().to_str().unwrap());
     
@@ -451,7 +507,7 @@ async fn test_concurrent_compaction_and_reads() {
         timeout_ms: None,
         trigger_compaction: false,
     
-        collection_config: None,};
+        collection_config: Some(create_test_collection(collection_id, temp_dir.path().to_str().unwrap())),};
     engine.do_flush(&flush_params).await.unwrap();
     
     // Create multiple files
@@ -472,12 +528,13 @@ async fn test_concurrent_compaction_and_reads() {
             timeout_ms: None,
             trigger_compaction: false,
         
-        collection_config: None,};
+        collection_config: Some(create_test_collection(collection_id, temp_dir.path().to_str().unwrap())),};
         engine.do_flush(&flush_params).await.unwrap();
     }
     
     // Start compaction in background
     let compact_engine = engine.clone();
+    let temp_dir_path_for_compact = temp_dir.path().to_str().unwrap().to_string();
     let compact_handle = tokio::spawn(async move {
         let compact_params = CompactionParameters {
             collection_id: Some(collection_id.to_string()),
@@ -487,15 +544,17 @@ async fn test_concurrent_compaction_and_reads() {
             timeout_ms: None,
             priority: crate::storage::traits::OperationPriority::Medium,
         
-        collection_config: None,};
+        collection_config: Some(create_test_collection(collection_id, &temp_dir_path_for_compact)),};
         compact_engine.do_compact(&compact_params).await
     });
     
     // Concurrent reads during compaction
     let mut read_handles = vec![];
+    let temp_dir_path = temp_dir.path().to_str().unwrap().to_string();
     for task_id in 0..3 {
         let read_engine = engine.clone();
         let collection_id_owned = collection_id.to_string();
+        let storage_url = format!("file://{}/{}/data", temp_dir_path, collection_id);
         let handle = tokio::spawn(async move {
             let mut successful_reads = 0;
             let mut failed_reads = 0;
@@ -503,6 +562,7 @@ async fn test_concurrent_compaction_and_reads() {
             for attempt in 0..20 {
                 let results = read_engine.search_vectors(
                     &collection_id_owned,
+                    &storage_url,
                     &vec![0.5; 128],
                     10,
                 ).await;
@@ -543,7 +603,7 @@ async fn test_concurrent_compaction_and_reads() {
             assert!(successful_reads > 0, 
                     "Task {} had no successful reads during compaction", task_id);
             
-            println!("Read task {} completed: {} successful, {} failed (expected during compaction)",
+            debug!("Read task {} completed: {} successful, {} failed (expected during compaction)",
                      task_id, successful_reads, failed_reads);
         });
         read_handles.push(handle);
@@ -558,6 +618,9 @@ async fn test_concurrent_compaction_and_reads() {
 
 #[tokio::test]
 async fn test_concurrent_compaction_across_collections() {
+    // Initialize hardware capabilities for testing
+    let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+    
     // Test that we can compact different collections concurrently
     let temp_dir = TempDir::new().unwrap();
     let config = create_compaction_config(temp_dir.path().to_str().unwrap());
@@ -571,6 +634,9 @@ async fn test_concurrent_compaction_across_collections() {
     // Set up storage assignments and create data for each collection
     for collection_id in &collections {
         setup_test_assignment(collection_id, temp_dir.path().to_str().unwrap()).await;
+        
+        // Create collection with storage assignment
+        let collection = create_test_collection(collection_id, temp_dir.path().to_str().unwrap());
         
         // Create initial data
         let mut vectors = vec![];
@@ -587,7 +653,7 @@ async fn test_concurrent_compaction_across_collections() {
             hints: std::collections::HashMap::new(),
             timeout_ms: None,
             trigger_compaction: false,
-            collection_config: None,
+            collection_config: Some(collection.clone()),
         };
         engine.do_flush(&flush_params).await.unwrap();
         
@@ -607,7 +673,7 @@ async fn test_concurrent_compaction_across_collections() {
                 hints: std::collections::HashMap::new(),
                 timeout_ms: None,
                 trigger_compaction: false,
-                collection_config: None,
+                collection_config: Some(collection.clone()),
             };
             engine.do_flush(&flush_params).await.unwrap();
         }
@@ -618,8 +684,12 @@ async fn test_concurrent_compaction_across_collections() {
     for collection_id in collections {
         let engine_clone = engine.clone();
         let collection_id_owned = collection_id.to_string();
+        let temp_path = temp_dir.path().to_str().unwrap().to_string();
         
         let handle = tokio::spawn(async move {
+            // Create collection config for this specific collection
+            let collection = create_test_collection(&collection_id_owned, &temp_path);
+            
             let compact_params = CompactionParameters {
                 collection_id: Some(collection_id_owned.clone()),
                 force: true,
@@ -627,7 +697,7 @@ async fn test_concurrent_compaction_across_collections() {
                 hints: std::collections::HashMap::new(),
                 timeout_ms: None,
                 priority: crate::storage::traits::OperationPriority::Medium,
-                collection_config: None,
+                collection_config: Some(collection),
             };
             
             let result = engine_clone.do_compact(&compact_params).await;
@@ -647,11 +717,14 @@ async fn test_concurrent_compaction_across_collections() {
     
     // Verify all collections were compacted
     assert_eq!(completed_collections.len(), 3);
-    println!("Successfully compacted collections: {:?}", completed_collections);
+    debug!("Successfully compacted collections: {:?}", completed_collections);
 }
 
 #[tokio::test]
 async fn test_atomic_coordinator_prevents_concurrent_same_collection_compaction() {
+    // Initialize hardware capabilities for testing
+    let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+    
     // Test that atomic coordinator prevents concurrent compactions on same collection
     let temp_dir = TempDir::new().unwrap();
     let config = create_compaction_config(temp_dir.path().to_str().unwrap());
@@ -669,6 +742,7 @@ async fn test_atomic_coordinator_prevents_concurrent_same_collection_compaction(
         vectors.push(create_test_vector(&format!("atomic_{}", i), 128));
     }
     
+    let collection = create_test_collection(collection_id, temp_dir.path().to_str().unwrap());
     let flush_params = FlushParameters {
         collection_id: Some(collection_id.to_string()),
         force: true,
@@ -678,13 +752,15 @@ async fn test_atomic_coordinator_prevents_concurrent_same_collection_compaction(
         hints: std::collections::HashMap::new(),
         timeout_ms: None,
         trigger_compaction: false,
-        collection_config: None,
+        collection_config: Some(collection.clone()),
     };
     engine.do_flush(&flush_params).await.unwrap();
     
     // Try to start two concurrent compactions on the same collection
     let engine1 = engine.clone();
     let engine2 = engine.clone();
+    let collection1 = collection.clone();
+    let collection2 = collection.clone();
     
     let (tx1, rx1) = tokio::sync::oneshot::channel();
     let (tx2, rx2) = tokio::sync::oneshot::channel();
@@ -700,7 +776,7 @@ async fn test_atomic_coordinator_prevents_concurrent_same_collection_compaction(
             hints: std::collections::HashMap::new(),
             timeout_ms: Some(5000), // 5 second timeout
             priority: crate::storage::traits::OperationPriority::Medium,
-            collection_config: None,
+            collection_config: Some(collection1),
         };
         
         engine1.do_compact(&compact_params).await
@@ -721,7 +797,7 @@ async fn test_atomic_coordinator_prevents_concurrent_same_collection_compaction(
             hints: std::collections::HashMap::new(),
             timeout_ms: Some(1000), // 1 second timeout - should fail
             priority: crate::storage::traits::OperationPriority::Medium,
-            collection_config: None,
+            collection_config: Some(collection2),
         };
         
         engine2.do_compact(&compact_params).await
@@ -740,9 +816,9 @@ async fn test_atomic_coordinator_prevents_concurrent_same_collection_compaction(
     // Second should either fail with a lock error or succeed after first completes
     // (depends on timing and timeout settings)
     match result2 {
-        Ok(_) => println!("Second compaction succeeded (after first completed)"),
+        Ok(_) => debug!("Second compaction succeeded (after first completed)"),
         Err(e) => {
-            println!("Second compaction failed as expected: {}", e);
+            debug!("Second compaction failed as expected: {}", e);
             // Should be a lock/coordination error
             assert!(e.to_string().contains("lock") || e.to_string().contains("timeout") || 
                     e.to_string().contains("operation") || e.to_string().contains("in progress") ||
@@ -754,6 +830,9 @@ async fn test_atomic_coordinator_prevents_concurrent_same_collection_compaction(
 
 #[tokio::test]
 async fn test_size_tiered_compaction_strategy() {
+    // Initialize hardware capabilities for testing
+    let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+    
     let temp_dir = TempDir::new().unwrap();
     let config = create_compaction_config(temp_dir.path().to_str().unwrap());
     
@@ -787,7 +866,7 @@ async fn test_size_tiered_compaction_strategy() {
             timeout_ms: None,
             trigger_compaction: false,
         
-        collection_config: None,};
+        collection_config: Some(create_test_collection(collection_id, temp_dir.path().to_str().unwrap())),};
         engine.do_flush(&flush_params).await.unwrap();
     }
     
@@ -800,7 +879,7 @@ async fn test_size_tiered_compaction_strategy() {
         timeout_ms: None,
         priority: crate::storage::traits::OperationPriority::Medium,
     
-        collection_config: None,};
+        collection_config: Some(create_test_collection(collection_id, temp_dir.path().to_str().unwrap())),};
     
     let result = engine.do_compact(&compact_params).await
         .expect("Compaction failed");
@@ -809,8 +888,10 @@ async fn test_size_tiered_compaction_strategy() {
     
     // Verify all data accessible
     let total_vectors: usize = file_sizes.iter().sum();
+    let storage_url = format!("file://{}/{}/data", temp_dir.path().to_str().unwrap(), collection_id);
     let search_results = engine.search_vectors(
         collection_id,
+        &storage_url,
         &vec![0.5; 64],
         total_vectors + 10,
     ).await.unwrap();
@@ -820,6 +901,9 @@ async fn test_size_tiered_compaction_strategy() {
 
 #[tokio::test]
 async fn test_compaction_with_metadata_filtering() {
+    // Initialize hardware capabilities for testing
+    let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+    
     let temp_dir = TempDir::new().unwrap();
     let config = create_compaction_config(temp_dir.path().to_str().unwrap());
     
@@ -855,7 +939,7 @@ async fn test_compaction_with_metadata_filtering() {
             timeout_ms: None,
             trigger_compaction: false,
         
-        collection_config: None,};
+        collection_config: Some(create_test_collection(collection_id, temp_dir.path().to_str().unwrap())),};
         engine.do_flush(&flush_params).await.unwrap();
     }
     
@@ -868,15 +952,17 @@ async fn test_compaction_with_metadata_filtering() {
         timeout_ms: None,
         priority: crate::storage::traits::OperationPriority::Medium,
     
-        collection_config: None,};
+        collection_config: Some(create_test_collection(collection_id, temp_dir.path().to_str().unwrap())),};
     
     engine.do_compact(&compact_params).await
         .expect("Compaction failed");
     
     // Verify metadata preserved after compaction
+    let storage_url = format!("file://{}/{}/data", temp_dir.path().to_str().unwrap(), collection_id);
     for category in &["A", "B", "C"] {
         let search_results = engine.search_vectors(
             collection_id,
+            &storage_url,
             &vec![0.5; 128],
             100,
         ).await.unwrap();
@@ -893,6 +979,9 @@ async fn test_compaction_with_metadata_filtering() {
 
 #[tokio::test]
 async fn test_incremental_compaction() {
+    // Initialize hardware capabilities for testing
+    let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+    
     let temp_dir = TempDir::new().unwrap();
     let config = create_compaction_config(temp_dir.path().to_str().unwrap());
     // Incremental compaction is handled by CompactionParameters
@@ -925,7 +1014,7 @@ async fn test_incremental_compaction() {
             timeout_ms: None,
             trigger_compaction: false,
         
-        collection_config: None,};
+        collection_config: Some(create_test_collection(collection_id, temp_dir.path().to_str().unwrap())),};
         engine.do_flush(&flush_params).await.unwrap();
     }
     
@@ -939,15 +1028,17 @@ async fn test_incremental_compaction() {
             timeout_ms: None,
             priority: crate::storage::traits::OperationPriority::Medium,
         
-        collection_config: None,};
+        collection_config: Some(create_test_collection(collection_id, temp_dir.path().to_str().unwrap())),};
         
         engine.do_compact(&compact_params).await
             .expect("Incremental compaction failed");
     }
     
     // Verify all vectors preserved
+    let storage_url = format!("file://{}/{}/data", temp_dir.path().to_str().unwrap(), collection_id);
     let search_results = engine.search_vectors(
         collection_id,
+        &storage_url,
         &vec![0.5; 64],
         100,
     ).await.unwrap();

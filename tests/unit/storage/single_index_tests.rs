@@ -17,6 +17,7 @@
 //! Unit tests for single collection index functionality
 
 use proximadb::storage::metadata::single_index::SingleCollectionIndex;
+use tracing::{debug, error, info, warn};
 use proximadb::proto::proximadb::{Collection, CollectionConfig, CollectionStats, DistanceMetric, StorageEngine, IndexingAlgorithm};
 
 fn create_test_collection(id: &str, name: &str) -> Collection {
@@ -181,8 +182,8 @@ fn test_performance_characteristics() {
     }
     let name_duration = start.elapsed();
     
-    println!("UUID lookup (100 ops): {:?}", uuid_duration);
-    println!("Name lookup (100 ops): {:?}", name_duration);
+    debug!("UUID lookup (100 ops): {:?}", uuid_duration);
+    debug!("Name lookup (100 ops): {:?}", name_duration);
     
     // UUID lookups should typically be faster than name lookups
     // But in test environments with small datasets, timing can be unreliable

@@ -4,6 +4,7 @@
 //! and intelligent collection selection for flush operations.
 
 use anyhow::Result;
+use tracing::{debug, error, info, warn};
 use std::sync::Arc;
 use std::time::SystemTime;
 use tempfile::TempDir;
@@ -12,7 +13,7 @@ use proximadb::core::VectorRecord;
 use proximadb::storage::memtable::implementations::global_partitioned::GlobalPartitionedMemtable;
 use proximadb::storage::memtable::specialized::write_ahead_log_behavior::WriteBufferVectorBatch;
 use proximadb::storage::persistence::write_ahead_log::background_manager::{BackgroundMaintenanceManager, BackgroundTaskStatus};
-use proximadb::storage::persistence::write_ahead_log::config::WriteBufferConfig;
+use proximadb::storage::persistence::write_ahead_log::config::WALConfig;
 use proximadb::storage::BatchId;
 
 /// Helper function to create test vector records
@@ -88,7 +89,7 @@ async fn test_collection_flush_threshold_trigger() -> Result<()> {
     let collections_to_flush = memtable.collections_needing_flush(10 * 1024 * 1024).await?;
     assert!(collections_to_flush.contains(&collection_id.to_string()));
     
-    println!("✅ Collection flush threshold trigger test passed");
+    debug!("✅ Collection flush threshold trigger test passed");
     Ok(())
 }
 
@@ -127,7 +128,7 @@ async fn test_multiple_collections_flush_selection() -> Result<()> {
     let collections_to_flush = memtable.collections_needing_flush(100 * 1024).await?;
     assert_eq!(collections_to_flush.len(), 4);
     
-    println!("✅ Multiple collections flush selection test passed");
+    debug!("✅ Multiple collections flush selection test passed");
     Ok(())
 }
 
@@ -163,10 +164,10 @@ async fn test_global_memory_threshold_calculation() -> Result<()> {
     for (collection_id, (count, size)) in all_collection_stats {
         assert_eq!(count, 1000);
         assert!(size > 1024 * 1024); // Each collection > 1MB
-        println!("Collection {}: {} vectors, {} bytes", collection_id, count, size);
+        debug!("Collection {}: {} vectors, {} bytes", collection_id, count, size);
     }
     
-    println!("✅ Global memory threshold calculation test passed");
+    debug!("✅ Global memory threshold calculation test passed");
     Ok(())
 }
 
@@ -200,7 +201,7 @@ async fn test_background_manager_flush_trigger() -> Result<()> {
     let status = manager.get_collection_status(&collection_id).await;
     assert_eq!(status, BackgroundTaskStatus::Flushing);
     
-    println!("✅ Background manager flush trigger test passed");
+    debug!("✅ Background manager flush trigger test passed");
     Ok(())
 }
 
@@ -230,7 +231,7 @@ async fn test_flush_coordination_prevents_concurrent_flushes() -> Result<()> {
     let stats = manager.get_stats().await;
     assert_eq!(stats.flush_operations_skipped, 1);
     
-    println!("✅ Flush coordination prevents concurrent flushes test passed");
+    debug!("✅ Flush coordination prevents concurrent flushes test passed");
     Ok(())
 }
 
@@ -266,7 +267,7 @@ async fn test_collection_isolation_in_flush_decisions() -> Result<()> {
     assert_eq!(status_1, BackgroundTaskStatus::Flushing);
     assert_eq!(status_2, BackgroundTaskStatus::Flushing);
     
-    println!("✅ Collection isolation in flush decisions test passed");
+    debug!("✅ Collection isolation in flush decisions test passed");
     Ok(())
 }
 
@@ -300,7 +301,7 @@ async fn test_memtable_clear_functionality() -> Result<()> {
     assert_eq!(vector_count, 0);
     assert_eq!(total_size, 0);
     
-    println!("✅ Memtable clear functionality test passed");
+    debug!("✅ Memtable clear functionality test passed");
     Ok(())
 }
 
@@ -325,6 +326,6 @@ async fn test_flush_threshold_edge_cases() -> Result<()> {
     let high_threshold_collections = memtable.collections_needing_flush(1024 * 1024 * 1024).await?; // 1GB
     assert!(high_threshold_collections.is_empty());
     
-    println!("✅ Flush threshold edge cases test passed");
+    debug!("✅ Flush threshold edge cases test passed");
     Ok(())
 }

@@ -4,6 +4,7 @@
 //! with the server implementation and quantization features.
 
 use anyhow::Result;
+use tracing::{debug, error, info, warn};
 use serde_json::json;
 
 #[tokio::test]
@@ -37,7 +38,7 @@ async fn test_quantization_config_fields() -> Result<()> {
     assert_eq!(basic_config.name, "basic_collection");
     assert!(basic_config.quantization_config.is_none());
     
-    println!("✅ Quantization config field exists in CollectionConfig");
+    debug!("✅ Quantization config field exists in CollectionConfig");
     Ok(())
 }
 
@@ -68,7 +69,7 @@ async fn test_index_config_field() -> Result<()> {
     assert_eq!(config_with_index.name, "indexed_collection");
     assert!(config_with_index.index_configs.is_empty());
     
-    println!("✅ Index config field exists in CollectionConfig");
+    debug!("✅ Index config field exists in CollectionConfig");
     Ok(())
 }
 
@@ -100,7 +101,7 @@ async fn test_search_optimization_hints_field() -> Result<()> {
     assert_eq!(search_request.top_k, 10);
     assert!(search_request.search_optimization.is_none());
     
-    println!("✅ Search optimization hints field exists in VectorSearchRequest");
+    debug!("✅ Search optimization hints field exists in VectorSearchRequest");
     Ok(())
 }
 
@@ -117,8 +118,8 @@ async fn test_quantization_message_types_exist() -> Result<()> {
     let _ = std::any::type_name::<SearchParams>();
     
     // If these types don't exist, the compilation will fail
-    println!("✅ Quantization message types exist: {:?}", std::any::type_name::<QuantizationConfig>());
-    println!("✅ Search params type exists: {:?}", std::any::type_name::<SearchParams>());
+    debug!("✅ Quantization message types exist: {:?}", std::any::type_name::<QuantizationConfig>());
+    debug!("✅ Search params type exists: {:?}", std::any::type_name::<SearchParams>());
     
     Ok(())
 }
@@ -168,6 +169,6 @@ async fn test_handler_hint_processing() -> Result<()> {
     assert_eq!(processed_hints["candidate_multiplier"], 2.0);
     assert_eq!(processed_hints["quantization_hint"], "PQ8");
     
-    println!("✅ Handler hint processing test passed");
+    debug!("✅ Handler hint processing test passed");
     Ok(())
 }

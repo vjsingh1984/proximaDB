@@ -1056,9 +1056,7 @@ impl UnifiedIvfIndex {
                 access_count: 0,
             };
             
-            tokio::runtime::Handle::current().block_on(async {
-                self.posting_lists.insert(key, posting_list).await
-            })?;
+            self.posting_lists.insert(key, posting_list).await?;
         }
         
         Ok(())
@@ -1365,9 +1363,12 @@ mod tests {
     
     #[tokio::test]
     async fn test_unified_ivf_basic() {
+        // Initialize hardware capabilities for testing
+        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        
         let config = UnifiedIvfConfig {
-            n_clusters: 10,
-            n_probe: 2,
+            n_clusters: 2,  // Reduce clusters to match small dataset
+            n_probe: 2,     // Search all clusters
             dimension: 4,
             distance_metric: DistanceMetric::Euclidean,
             quantization_bits: 0,

@@ -6,6 +6,7 @@ use crate::core::config::SstConfig;
 use std::sync::Arc;
 use std::collections::BTreeMap;
 use tempfile::TempDir;
+use tracing::{debug, error, info, warn};
 
 fn create_test_config() -> SstConfig {
     SstConfig {
@@ -49,13 +50,13 @@ async fn test_simple_sstable_write_read() {
     
     // Write records
     writer.write_records(records).await.unwrap();
-    println!("✓ SSTable written successfully");
+    debug!("✓ SSTable written successfully");
     
     // Read the file directly
     let file_url = format!("file://{}", sstable_path.display());
     let fs = filesystem.get_filesystem(&file_url).unwrap();
     let data = fs.read(&file_url).await.unwrap();
-    println!("✓ Read {} bytes from SSTable", data.len());
+    debug!("✓ Read {} bytes from SSTable", data.len());
     
     // Parse the SSTable manually
     let mut offset = 0;
@@ -63,25 +64,25 @@ async fn test_simple_sstable_write_read() {
     // Check SST1 magic bytes
     assert_eq!(&data[0..4], b"SST1", "Missing SST1 magic bytes");
     offset += 4;
-    println!("  ✓ SST1 magic bytes verified");
+    debug!("  ✓ SST1 magic bytes verified");
     
     // Read header length
     let header_len = u32::from_le_bytes([data[offset], data[offset+1], data[offset+2], data[offset+3]]) as usize;
     offset += 4;
-    println!("  Header length: {} bytes", header_len);
+    debug!("  Header length: {} bytes", header_len);
     
     // Read header
     let header_data = &data[offset..offset + header_len];
     let header: SstableHeader = bincode::deserialize(header_data).unwrap();
     offset += header_len;
-    println!("  Header: {} entries, min={}, max={}", header.entry_count, header.min_key, header.max_key);
+    debug!("  Header: {} entries, min={}, max={}", header.entry_count, header.min_key, header.max_key);
     
     // Read bloom filter length
     let bloom_len = u32::from_le_bytes([
         data[offset], data[offset + 1], data[offset + 2], data[offset + 3]
     ]) as usize;
     offset += 4;
-    println!("  Bloom filter length: {} bytes", bloom_len);
+    debug!("  Bloom filter length: {} bytes", bloom_len);
     offset += bloom_len; // Skip bloom data
     
     // Read index length
@@ -89,7 +90,7 @@ async fn test_simple_sstable_write_read() {
         data[offset], data[offset + 1], data[offset + 2], data[offset + 3]
     ]) as usize;
     offset += 4;
-    println!("  Index length: {} bytes", index_len);
+    debug!("  Index length: {} bytes", index_len);
     
     // Read index
     let index_data = &data[offset..offset + index_len];
@@ -99,6 +100,7 @@ async fn test_simple_sstable_write_read() {
     
     while (cursor.position() as usize) < index_data.len() {
         use std::io::Read;
+use tracing::{debug, error, info, warn};
         
         // Read entry length
         let mut len_bytes = [0u8; 4];
@@ -125,18 +127,18 @@ async fn test_simple_sstable_write_read() {
         }
     }
     offset += index_len;
-    println!("  Index: {} entries", index_entries.len());
+    debug!("  Index: {} entries", index_entries.len());
     
     // Read first data block
     let block_len = u32::from_le_bytes([
         data[offset], data[offset + 1], data[offset + 2], data[offset + 3]
     ]) as usize;
     offset += 4;
-    println!("  First block length: {} bytes", block_len);
+    debug!("  First block length: {} bytes", block_len);
     
     let block_data = &data[offset..offset + block_len];
     let block: DataBlock = DataBlock::deserialize(block_data).unwrap();
-    println!("  Block {} has {} records", block.block_id, block.records.len());
+    debug!("  Block {} has {} records", block.block_id, block.records.len());
     
     // Verify the record
     assert_eq!(block.records.len(), 1);
@@ -144,5 +146,5 @@ async fn test_simple_sstable_write_read() {
     assert_eq!(record.id, "test_id");
     assert_eq!(record.vector, vec![1.0, 2.0, 3.0]);
     
-    println!("\n✓ Successfully read and verified SSTable format!");
+    debug!("\n✓ Successfully read and verified SSTable format!");
 }

@@ -4,6 +4,7 @@ mod tests {
     use flate2::write::GzEncoder;
     use flate2::Compression;
     use std::io::{Read, Write};
+    use tracing::{debug, error, info, warn};
 
     #[test]
     fn test_gzip_compression() {
@@ -104,6 +105,7 @@ mod tests {
             }),
             ("deflate", {
                 use flate2::write::DeflateEncoder;
+use tracing::{debug, error, info, warn};
                 let mut encoder = DeflateEncoder::new(Vec::new(), Compression::default());
                 encoder.write_all(&vector_data).unwrap();
                 encoder.finish().unwrap()
@@ -111,12 +113,12 @@ mod tests {
             ("zstd", zstd::encode_all(&vector_data[..], 3).unwrap()),
         ];
         
-        println!("Vector data compression results:");
-        println!("Original size: {} bytes", vector_data.len());
+        debug!("Vector data compression results:");
+        debug!("Original size: {} bytes", vector_data.len());
         
         for (name, compressed) in algorithms {
             let ratio = (1.0 - compressed.len() as f64 / vector_data.len() as f64) * 100.0;
-            println!("{}: {} bytes ({:.1}% reduction)", name, compressed.len(), ratio);
+            debug!("{}: {} bytes ({:.1}% reduction)", name, compressed.len(), ratio);
             
             // Vector data should compress moderately (30-60%)
             assert!(ratio > 30.0 && ratio < 70.0);
@@ -149,7 +151,7 @@ mod tests {
         let compressed = encoder.finish().unwrap();
         let ratio = (1.0 - compressed.len() as f64 / json_bytes.len() as f64) * 100.0;
         
-        println!("JSON compression: {} -> {} bytes ({:.1}% reduction)", 
+        debug!("JSON compression: {} -> {} bytes ({:.1}% reduction)", 
                  json_bytes.len(), compressed.len(), ratio);
         
         assert!(ratio > 70.0); // JSON should compress > 70%

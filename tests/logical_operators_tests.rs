@@ -4,6 +4,7 @@
 
 use std::collections::HashMap;
 use serde_json::json;
+use tracing::{info};
 
 #[cfg(test)]
 mod tests {
@@ -517,6 +518,6 @@ mod tests {
         assert!(result);
         assert!(duration.as_millis() < 50); // Should be fast even with large metadata
         
-        println!("Query on 1000 fields completed in {:?}", duration);
+        info!("Query on 1000 fields completed in {:?}", duration);
     }
 }

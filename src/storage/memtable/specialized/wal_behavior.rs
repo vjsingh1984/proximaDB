@@ -12,6 +12,7 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use tokio::sync::RwLock;
+use tracing::{debug, error, info, warn};
 
 use crate::compute::distance_computation::DistanceMetric as CoreDistanceMetric;
 use crate::core::VectorRecord;
@@ -459,7 +460,7 @@ impl WALBehaviorWrapper {
             .search_vectors(query_vector, top_k, collection_id, core_metric)
             .await?;
 
-        eprintln!("🔍 WAL_SEARCH: Found {} unflushed results", raw_results.len());
+        debug!("🔍 WAL_SEARCH: Found {} unflushed results", raw_results.len());
         tracing::info!("🔍 WAL_SEARCH: Found {} unflushed results", raw_results.len());
         
         // Convert (SimilarityResult, VectorRecord) to SearchResult objects

@@ -44,6 +44,7 @@ mod tests {
             metadata_columns: vec!["category".to_string(), "status".to_string()],
             level: 0,
             creation_time: chrono::Utc::now(),
+            io_optimization_hints: None,
         }
     }
 

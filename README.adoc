@@ -3,7 +3,7 @@
 :toclevels: 2
 :imagesdir: docs/diagrams/images
 
-image:https://img.shields.io/badge/tests-1460%2B%20passing-brightgreen[Tests] image:https://img.shields.io/badge/performance-17K%20vec%2Fs-blue[Performance] image:https://img.shields.io/badge/compression-50--80%25-orange[License] image:https://img.shields.io/badge/license-Apache%202.0-blue[License]
+image:https://img.shields.io/badge/tests-2704%20passing-brightgreen[Tests] image:https://img.shields.io/badge/performance-17K%20vec%2Fs-blue[Performance] image:https://img.shields.io/badge/compression-50--80%25-orange[Compression] image:https://img.shields.io/badge/license-Apache%202.0-blue[License]
 
 [.lead]
 **Stop choosing between speed and cost. Get both.**
@@ -70,11 +70,17 @@ image::technical-overview.svg[Technical Overview, align=center, width=900]
 | **Hardware Acceleration**
 | Automatic GPU/SIMD detection → 10x distance computation speedup
 
-| **Intelligent Compression**
-| Adaptive quantization → 50-80% storage reduction with 99%+ accuracy
+| **Two-Tier Compression**
+| Protocol (disabled) + Collection-level (SDK) → 50-80% storage reduction
 
 | **Two-Stage Search**
 | Coarse quantized search + fine reranking → Sub-millisecond queries
+
+| **Unified Cache Architecture**
+| Centralized caching eliminates duplication → 95% cache hit rate
+
+| **I/O Optimization**
+| Smart bloom filters & compression-aware caching → 60% fewer disk reads
 |===
 
 === Use Cases & Industries
@@ -141,6 +147,25 @@ results = client.search_vectors(
 )
 ----
 
+=== 3. Benchmark Your Setup
+
+[source,bash]
+----
+# Rust performance benchmarks
+cargo bench distance_benchmark    # Distance computation
+cargo bench simd_distance_bench   # Hardware acceleration
+
+# Python SDK benchmarks
+cd demo/benchmarks
+python performance_suite.py --suite quick --vectors 1000
+
+# Expected Results:
+# gRPC Insert: 17,000+ vectors/sec
+# gRPC Search: <1ms p99 latency  
+# Storage: 50-80% compression ratio (collection-level)
+# Protocol: Compression disabled for pure performance
+----
+
 === 3. Production Configuration
 
 For detailed setup, performance tuning, and enterprise features, see our link:docs/user/getting_started.adoc[Getting Started Guide].
@@ -195,6 +220,9 @@ image::business-capabilities.svg[Capabilities Overview, align=center, width=900]
 * **Multi-Cloud Storage**: S3, GCS, Azure Blob, MinIO
 * **Enterprise Security**: TLS/mTLS, API keys, audit logging (roadmap)
 * **Production Ready**: Prometheus metrics, health checks, hot reload
+* **Unified Cache System**: VectorStore, IndexNodeCache, BitmapFilterCache, MetadataStore
+* **Smart I/O Optimization**: Bloom filter skipping for cached data, compression-aware caching
+* **Zero Filesystem Queries**: Direct URL-based data access from VectorOperationsService
 
 For deep technical details, see our link:docs/developer/architecture.adoc[Architecture Documentation].
 

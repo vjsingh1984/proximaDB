@@ -27,7 +27,7 @@ pub mod collectors;
 mod tests;
 
 pub use store::{MetricsPersistenceLayer};
-pub use updater::{InternalMetricsUpdater, MetricsUpdate};
+pub use updater::{InternalMetricsUpdater, MetricsUpdate, FlushMetricsUpdate, CompactionMetricsUpdate};
 pub use query_service::{MetricsQueryService, MetricsQueryOptions};
 pub use schema::{CollectionMetrics, GlobalMetrics, QueryOptimizationHints};
 pub use aggregator::{MetricsAggregationEngine, AggregationWindow};
@@ -42,6 +42,7 @@ pub use self::schema::Alert;
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
+use tracing::{debug, error, info, warn};
 
 /// Configuration for the metrics system
 #[derive(Debug, Clone, Serialize, Deserialize)]

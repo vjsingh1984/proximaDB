@@ -13,11 +13,12 @@ mod tests {
     use crate::compute::distance_computation::engine::{UnifiedDistanceCompute, HardwareBackend, GpuAccelerator};
     use crate::compute::distance_computation::DistanceMetric;
     use crate::compute::PlatformCapability;
+use tracing::{debug, error, info, warn};
     
     /// Test GPU backend detection and selection
     #[tokio::test]
     async fn test_gpu_backend_detection() {
-        println!("🔍 Testing GPU backend detection...");
+        debug!("🔍 Testing GPU backend detection...");
         
         // Test GPU detection
         let gpu_result = GpuDistanceCompute::new();
@@ -25,7 +26,7 @@ mod tests {
         match gpu_result {
             Ok(gpu_compute) => {
                 let backend = gpu_compute.backend();
-                println!("✅ GPU backend detected: {}", backend);
+                info!("✅ GPU backend detected: {}", backend);
                 
                 // Verify backend is one of the expected types
                 assert!(matches!(
@@ -35,67 +36,67 @@ mod tests {
                 
                 // Test availability
                 let is_available = gpu_compute.is_available();
-                println!("📊 GPU available: {}", is_available);
+                debug!("📊 GPU available: {}", is_available);
                 
                 if is_available {
                     // Test backend specific properties
                     match backend {
                         GpuBackend::Cuda => {
-                            println!("🟢 CUDA GPU detected");
+                            debug!("🟢 CUDA GPU detected");
                             #[cfg(feature = "cuda")]
                             {
                                 assert!(gpu_compute.devices.len() > 0);
                                 for device in &gpu_compute.devices {
                                     assert_eq!(device.backend, GpuBackend::Cuda);
                                     assert!(device.total_memory > 0);
-                                    println!("  CUDA Device: {} ({}MB)", device.name, device.total_memory / (1024 * 1024));
+                                    debug!("  CUDA Device: {} ({}MB)", device.name, device.total_memory / (1024 * 1024));
                                 }
                             }
                         }
                         GpuBackend::Rocm => {
-                            println!("🔴 ROCm GPU detected");
+                            debug!("🔴 ROCm GPU detected");
                             #[cfg(feature = "rocm")]
                             {
                                 assert!(gpu_compute.devices.len() > 0);
                                 for device in &gpu_compute.devices {
                                     assert_eq!(device.backend, GpuBackend::Rocm);
-                                    println!("  ROCm Device: {} ({}MB)", device.name, device.total_memory / (1024 * 1024));
+                                    debug!("  ROCm Device: {} ({}MB)", device.name, device.total_memory / (1024 * 1024));
                                 }
                             }
                         }
                         GpuBackend::Mps => {
-                            println!("🍎 Metal Performance Shaders detected");
+                            debug!("🍎 Metal Performance Shaders detected");
                             #[cfg(all(target_os = "macos", feature = "metal"))]
                             {
                                 assert!(gpu_compute.devices.len() > 0);
                                 for device in &gpu_compute.devices {
                                     assert_eq!(device.backend, GpuBackend::Mps);
-                                    println!("  Metal Device: {} ({}MB)", device.name, device.total_memory / (1024 * 1024));
+                                    debug!("  Metal Device: {} ({}MB)", device.name, device.total_memory / (1024 * 1024));
                                 }
                             }
                         }
                         GpuBackend::OpenCL => {
-                            println!("⚡ OpenCL GPU detected");
+                            debug!("⚡ OpenCL GPU detected");
                             #[cfg(feature = "opencl")]
                             {
                                 assert!(gpu_compute.devices.len() > 0);
                                 for device in &gpu_compute.devices {
                                     assert_eq!(device.backend, GpuBackend::OpenCL);
-                                    println!("  OpenCL Device: {} ({}MB)", device.name, device.total_memory / (1024 * 1024));
+                                    debug!("  OpenCL Device: {} ({}MB)", device.name, device.total_memory / (1024 * 1024));
                                 }
                             }
                         }
                         GpuBackend::None => {
-                            println!("❌ No GPU backend available");
+                            error!("❌ No GPU backend available");
                             assert_eq!(gpu_compute.devices.len(), 0);
                         }
                     }
                 } else {
-                    println!("❌ GPU not available or no devices found");
+                    error!("❌ GPU not available or no devices found");
                 }
             }
             Err(e) => {
-                println!("❌ GPU detection failed: {}", e);
+                error!("❌ GPU detection failed: {}", e);
                 // This is acceptable - not all systems have GPUs
             }
         }
@@ -104,12 +105,12 @@ mod tests {
     /// Test UnifiedDistanceCompute GPU integration
     #[tokio::test]
     async fn test_unified_distance_gpu_selection() {
-        println!("🔍 Testing UnifiedDistanceCompute GPU selection...");
+        debug!("🔍 Testing UnifiedDistanceCompute GPU selection...");
         
         let compute = UnifiedDistanceCompute::default();
         
-        println!("🖥️ Preferred backend: {}", compute.preferred_backend());
-        println!("📋 Available backends: {:?}", compute.available_backends());
+        debug!("🖥️ Preferred backend: {}", compute.preferred_backend());
+        debug!("📋 Available backends: {:?}", compute.available_backends());
         
         // Test that preferred backend is sensible
         let preferred = compute.preferred_backend();
@@ -137,7 +138,7 @@ mod tests {
     /// Test GPU accelerator trait implementation
     #[tokio::test]
     async fn test_gpu_accelerator_trait() {
-        println!("🔍 Testing GpuAccelerator trait implementation...");
+        debug!("🔍 Testing GpuAccelerator trait implementation...");
         
         #[cfg(feature = "gpu")]
         {
@@ -145,22 +146,22 @@ mod tests {
             
             match gpu_result {
                 Ok(gpu_accelerator) => {
-                    println!("✅ GPU accelerator created successfully");
+                    info!("✅ GPU accelerator created successfully");
                     
                     let backend = gpu_accelerator.backend();
                     let is_available = gpu_accelerator.is_available();
                     
-                    println!("🎯 Accelerator backend: {}", backend);
-                    println!("📊 Accelerator available: {}", is_available);
+                    info!("🎯 Accelerator backend: {}", backend);
+                    debug!("📊 Accelerator available: {}", is_available);
                     
                     // Test backend mapping
                     match backend {
-                        HardwareBackend::Cuda => println!("🟢 CUDA accelerator"),
-                        HardwareBackend::Rocm => println!("🔴 ROCm accelerator"),
-                        HardwareBackend::Mps => println!("🍎 Metal accelerator"),
-                        HardwareBackend::OpenCL => println!("⚡ OpenCL accelerator"),
-                        HardwareBackend::Scalar => println!("💻 Scalar fallback"),
-                        HardwareBackend::CpuSimd(_) => println!("🚀 CPU SIMD (unexpected for GPU)"),
+                        HardwareBackend::Cuda => debug!("🟢 CUDA accelerator"),
+                        HardwareBackend::Rocm => debug!("🔴 ROCm accelerator"),
+                        HardwareBackend::Mps => debug!("🍎 Metal accelerator"),
+                        HardwareBackend::OpenCL => debug!("⚡ OpenCL accelerator"),
+                        HardwareBackend::Scalar => debug!("💻 Scalar fallback"),
+                        HardwareBackend::CpuSimd(_) => debug!("🚀 CPU SIMD (unexpected for GPU)"),
                     }
                     
                     if is_available {
@@ -174,12 +175,12 @@ mod tests {
                         
                         match result {
                             Ok(distance) => {
-                                println!("✅ GPU cosine distance calculated: {}", distance);
+                                info!("✅ GPU cosine distance calculated: {}", distance);
                                 // Orthogonal vectors should have cosine distance ~1.0
                                 assert!((distance - 1.0).abs() < 0.1, "GPU cosine distance should be ~1.0 for orthogonal vectors");
                             }
                             Err(e) => {
-                                println!("❌ GPU distance calculation failed: {}", e);
+                                error!("❌ GPU distance calculation failed: {}", e);
                                 // This might be acceptable if GPU implementation is not complete
                             }
                         }
@@ -198,7 +199,7 @@ mod tests {
                         
                         match batch_result {
                             Ok(distances) => {
-                                println!("✅ GPU batch distances calculated: {:?}", distances);
+                                info!("✅ GPU batch distances calculated: {:?}", distances);
                                 assert_eq!(distances.len(), 3);
                                 
                                 // Verify distance relationships
@@ -206,14 +207,14 @@ mod tests {
                                 assert!(distances[1] < distances[2], "Orthogonal should be closer than opposite");
                             }
                             Err(e) => {
-                                println!("❌ GPU batch calculation failed: {}", e);
+                                error!("❌ GPU batch calculation failed: {}", e);
                                 // This might be acceptable if GPU implementation is not complete
                             }
                         }
                     }
                 }
                 Err(e) => {
-                    println!("❌ GPU accelerator creation failed: {}", e);
+                    error!("❌ GPU accelerator creation failed: {}", e);
                     // This is acceptable - not all systems have GPUs
                 }
             }
@@ -221,14 +222,14 @@ mod tests {
         
         #[cfg(not(feature = "gpu"))]
         {
-            println!("⚠️ GPU features not compiled in, skipping GPU accelerator tests");
+            warn!("⚠️ GPU features not compiled in, skipping GPU accelerator tests");
         }
     }
 
     /// Test hardware backend selection logic
     #[test]
     fn test_hardware_backend_selection_logic() {
-        println!("🔍 Testing hardware backend selection logic...");
+        debug!("🔍 Testing hardware backend selection logic...");
         
         // Test that GPU backends are preferred over CPU when available
         let gpu_backends = vec![
@@ -249,13 +250,13 @@ mod tests {
         for gpu_backend in &gpu_backends {
             for cpu_backend in &cpu_backends {
                 // In a real selection algorithm, GPU should be preferred for large workloads
-                println!("GPU {} vs CPU {}", gpu_backend, cpu_backend);
+                debug!("GPU {} vs CPU {}", gpu_backend, cpu_backend);
             }
         }
         
         // Test backend display
         for backend in gpu_backends.iter().chain(cpu_backends.iter()) {
-            println!("Backend: {}", backend);
+            debug!("Backend: {}", backend);
             assert!(!backend.to_string().is_empty());
         }
     }
@@ -263,20 +264,20 @@ mod tests {
     /// Test GPU device selection
     #[tokio::test]
     async fn test_gpu_device_selection() {
-        println!("🔍 Testing GPU device selection...");
+        debug!("🔍 Testing GPU device selection...");
         
         let gpu_result = GpuDistanceCompute::new();
         
         if let Ok(mut gpu_compute) = gpu_result {
             if gpu_compute.is_available() && !gpu_compute.devices.is_empty() {
-                println!("✅ GPU devices available for testing");
+                info!("✅ GPU devices available for testing");
                 
                 // Test device selection
                 let device_count = gpu_compute.devices.len();
-                println!("📊 Available GPU devices: {}", device_count);
+                debug!("📊 Available GPU devices: {}", device_count);
                 
                 for (idx, device) in gpu_compute.devices.iter().enumerate() {
-                    println!("  Device {}: {} ({}MB, Backend: {})", 
+                    debug!("  Device {}: {} ({}MB, Backend: {})", 
                         idx, 
                         device.name, 
                         device.total_memory / (1024 * 1024),
@@ -292,75 +293,75 @@ mod tests {
                 let invalid_selection = gpu_compute.select_device(device_count + 10);
                 assert!(invalid_selection.is_err(), "Should fail to select invalid device index");
                 
-                println!("✅ Device selection tests passed");
+                info!("✅ Device selection tests passed");
             } else {
-                println!("⚠️ No GPU devices available for testing");
+                warn!("⚠️ No GPU devices available for testing");
             }
         } else {
-            println!("⚠️ GPU not available for device selection testing");
+            warn!("⚠️ GPU not available for device selection testing");
         }
     }
 
     /// Test feature flag conditional compilation
     #[test]
     fn test_feature_flag_compilation() {
-        println!("🔍 Testing feature flag conditional compilation...");
+        debug!("🔍 Testing feature flag conditional compilation...");
         
         // Test CUDA feature flag
         #[cfg(feature = "cuda")]
         {
-            println!("✅ CUDA feature enabled");
+            info!("✅ CUDA feature enabled");
         }
         #[cfg(not(feature = "cuda"))]
         {
-            println!("❌ CUDA feature disabled");
+            error!("❌ CUDA feature disabled");
         }
         
         // Test ROCm feature flag
         #[cfg(feature = "rocm")]
         {
-            println!("✅ ROCm feature enabled");
+            info!("✅ ROCm feature enabled");
         }
         #[cfg(not(feature = "rocm"))]
         {
-            println!("❌ ROCm feature disabled");
+            error!("❌ ROCm feature disabled");
         }
         
         // Test Metal feature flag
         #[cfg(all(target_os = "macos", feature = "metal"))]
         {
-            println!("✅ Metal feature enabled (macOS)");
+            info!("✅ Metal feature enabled (macOS)");
         }
         #[cfg(not(all(target_os = "macos", feature = "metal")))]
         {
-            println!("❌ Metal feature disabled or not on macOS");
+            error!("❌ Metal feature disabled or not on macOS");
         }
         
         // Test OpenCL feature flag
         #[cfg(feature = "opencl")]
         {
-            println!("✅ OpenCL feature enabled");
+            info!("✅ OpenCL feature enabled");
         }
         #[cfg(not(feature = "opencl"))]
         {
-            println!("❌ OpenCL feature disabled");
+            error!("❌ OpenCL feature disabled");
         }
         
         // Test GPU umbrella feature flag
         #[cfg(feature = "gpu")]
         {
-            println!("✅ GPU umbrella feature enabled");
+            info!("✅ GPU umbrella feature enabled");
         }
         #[cfg(not(feature = "gpu"))]
         {
-            println!("❌ GPU umbrella feature disabled");
+            error!("❌ GPU umbrella feature disabled");
         }
     }
 
     /// Benchmark GPU vs CPU performance
     #[tokio::test]
     async fn test_gpu_vs_cpu_performance() {
-        println!("🔍 Testing GPU vs CPU performance comparison...");
+        debug!("🔍 Testing GPU vs CPU performance comparison...");
         
         let compute = UnifiedDistanceCompute::default();
         
@@ -379,14 +380,14 @@ mod tests {
         
         let vector_refs: Vec<&[f32]> = vectors.iter().map(|v| v.as_slice()).collect();
         
-        println!("📊 Testing with {} vectors of {} dimensions", batch_size, dimension);
+        debug!("📊 Testing with {} vectors of {} dimensions", batch_size, dimension);
         
         // Test CPU computation
         let start_cpu = std::time::Instant::now();
         let cpu_results = compute.calculate_distance_batch(&query, &vector_refs, &DistanceMetric::Cosine);
         let cpu_duration = start_cpu.elapsed();
         
-        println!("💻 CPU computation: {} results in {:?}", cpu_results.len(), cpu_duration);
+        debug!("💻 CPU computation: {} results in {:?}", cpu_results.len(), cpu_duration);
         
         // Test GPU computation if available
         if let Some(ref gpu) = compute.gpu_accelerator {
@@ -397,7 +398,7 @@ mod tests {
                 
                 match gpu_result {
                     Ok(gpu_distances) => {
-                        println!("🎮 GPU computation: {} results in {:?}", gpu_distances.len(), gpu_duration);
+                        debug!("🎮 GPU computation: {} results in {:?}", gpu_distances.len(), gpu_duration);
                         
                         // Compare results for correctness
                         assert_eq!(cpu_results.len(), gpu_distances.len());
@@ -408,27 +409,27 @@ mod tests {
                             max_diff = max_diff.max(diff);
                         }
                         
-                        println!("📊 Maximum difference between CPU and GPU: {}", max_diff);
+                        debug!("📊 Maximum difference between CPU and GPU: {}", max_diff);
                         assert!(max_diff < 0.01, "CPU and GPU results should be very similar");
                         
                         // Report performance comparison
                         if gpu_duration < cpu_duration {
                             let speedup = cpu_duration.as_nanos() as f64 / gpu_duration.as_nanos() as f64;
-                            println!("🚀 GPU is {:.2}x faster than CPU", speedup);
+                            debug!("🚀 GPU is {:.2}x faster than CPU", speedup);
                         } else {
                             let slowdown = gpu_duration.as_nanos() as f64 / cpu_duration.as_nanos() as f64;
-                            println!("🐌 GPU is {:.2}x slower than CPU (overhead for small batches)", slowdown);
+                            debug!("🐌 GPU is {:.2}x slower than CPU (overhead for small batches)", slowdown);
                         }
                     }
                     Err(e) => {
-                        println!("❌ GPU computation failed: {}", e);
+                        error!("❌ GPU computation failed: {}", e);
                     }
                 }
             } else {
-                println!("⚠️ GPU accelerator not available for performance testing");
+                warn!("⚠️ GPU accelerator not available for performance testing");
             }
         } else {
-            println!("⚠️ No GPU accelerator for performance testing");
+            warn!("⚠️ No GPU accelerator for performance testing");
         }
     }
 }

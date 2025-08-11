@@ -2,6 +2,7 @@
 //! Tests bytemuck vector serialization and ZSTD DataBlock compression
 
 use anyhow::Result;
+use tracing::{debug, error, info, warn};
 use proximadb::core::serialization::{VectorSerializationConfig, CompressionAlgorithm};
 use proximadb::storage::engines::sst::{SstRecord, DataBlock, DataBlockCompressionConfig};
 use proximadb::proto::proximadb::MetadataItem;
@@ -80,7 +81,7 @@ fn test_vector_serialization_roundtrip() {
                 i, dimension, original, recovered);
         }
         
-        println!("✅ Vector serialization roundtrip passed: {} dimensions, {:.1}% sparsity, {} bytes", 
+        debug!("✅ Vector serialization roundtrip passed: {} dimensions, {:.1}% sparsity, {} bytes", 
             dimension, sparsity * 100.0, serialized.len());
     }
 }
@@ -99,7 +100,7 @@ fn test_vector_compression_effectiveness() {
     let sparse_ratio = config.compression_ratio(&sparse_vector).unwrap();
     let dense_ratio = config.compression_ratio(&dense_vector).unwrap();
     
-    println!("📊 Compression ratios - Sparse: {:.3}, Dense: {:.3}", sparse_ratio, dense_ratio);
+    debug!("📊 Compression ratios - Sparse: {:.3}, Dense: {:.3}", sparse_ratio, dense_ratio);
     
     // Sparse vectors should compress significantly better
     assert!(sparse_ratio < dense_ratio, 
@@ -150,7 +151,7 @@ fn test_sst_record_optimized_serialization() {
                 i, test_name, original, recovered);  
         }
         
-        println!("✅ SstRecord optimized serialization passed: {} ({} bytes)", 
+        debug!("✅ SstRecord optimized serialization passed: {} ({} bytes)", 
             test_name, serialized.len());
     }
 }
@@ -198,11 +199,11 @@ fn test_data_block_zstd_compression() {
     let (is_compressed, compression_ratio, uncompressed_size) = deserialized.compression_stats();
     
     if is_compressed {
-        println!("📦 DataBlock ZSTD compression - Ratio: {:.3}, Original: {} bytes, Compressed: {} bytes", 
+        debug!("📦 DataBlock ZSTD compression - Ratio: {:.3}, Original: {} bytes, Compressed: {} bytes", 
             compression_ratio, uncompressed_size, serialized.len());
         assert!(compression_ratio < 0.95, "Compression should be beneficial");
     } else {
-        println!("📦 DataBlock stored uncompressed - {} bytes", serialized.len());
+        debug!("📦 DataBlock stored uncompressed - {} bytes", serialized.len());
     }
 }
 
@@ -239,11 +240,11 @@ fn test_compression_performance_benchmark() {
     let compression_ratio = compressed.len() as f32 / uncompressed.len() as f32;
     let speed_ratio = compressed_time.as_micros() as f32 / uncompressed_time.as_micros() as f32;
     
-    println!("⚡ Performance Benchmark Results:");
-    println!("   Uncompressed: {} bytes in {:?}", uncompressed.len(), uncompressed_time);
-    println!("   Compressed: {} bytes in {:?}", compressed.len(), compressed_time);
-    println!("   Compression ratio: {:.3}", compression_ratio);
-    println!("   Speed overhead: {:.2}x", speed_ratio);
+    debug!("⚡ Performance Benchmark Results:");
+    debug!("   Uncompressed: {} bytes in {:?}", uncompressed.len(), uncompressed_time);
+    debug!("   Compressed: {} bytes in {:?}", compressed.len(), compressed_time);
+    debug!("   Compression ratio: {:.3}", compression_ratio);
+    debug!("   Speed overhead: {:.2}x", speed_ratio);
     
     // Compression should be beneficial
     assert!(compression_ratio < 0.8, "Should achieve at least 20% compression");
@@ -267,7 +268,7 @@ fn test_adaptive_vector_optimization() {
     for (name, vector) in test_vectors {
         let analysis = config.analyze_vector(&vector);
         
-        println!("📈 Vector Analysis for {}: dim={}, sparsity={:.3}, variance={:.6}", 
+        debug!("📈 Vector Analysis for {}: dim={}, sparsity={:.3}, variance={:.6}", 
             name, analysis.dimension, analysis.sparsity, analysis.variance);
         
         // Test adaptive optimization
@@ -314,7 +315,7 @@ fn test_backward_compatibility() {
     assert_eq!(record.vector, deserialized.vector);
     assert_eq!(record.timestamp, deserialized.timestamp);
     
-    println!("✅ Backward compatibility test passed - legacy format works");
+    debug!("✅ Backward compatibility test passed - legacy format works");
 }
 
 #[test]
@@ -336,11 +337,11 @@ fn test_memory_efficiency() {
         }
         
         if i % 5 == 0 {
-            println!("🔄 Memory efficiency test round {} passed", i + 1);
+            debug!("🔄 Memory efficiency test round {} passed", i + 1);
         }
     }
     
-    println!("✅ Memory efficiency test completed - no leaks detected");
+    debug!("✅ Memory efficiency test completed - no leaks detected");
 }
 
 #[test]
@@ -364,5 +365,5 @@ fn test_error_handling() {
     let result = SstRecord::deserialize(truncated);
     assert!(result.is_err(), "Should fail on truncated data");
     
-    println!("✅ Error handling tests passed");
+    debug!("✅ Error handling tests passed");
 }

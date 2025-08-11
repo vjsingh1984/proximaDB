@@ -13,6 +13,7 @@ mod tests {
     };
     use crate::compute::distance_computation::DistanceMetric;
     use std::collections::HashMap;
+use tracing::{debug, error, info, warn};
 
     /// Mock collection service that tracks how many times it's called
     struct MockCollectionService {
@@ -41,39 +42,39 @@ mod tests {
     async fn test_service_call_elimination_validation() {
         let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
 
-        println!("🧪 VALIDATION: Service call elimination through context optimization");
+        debug!("🧪 VALIDATION: Service call elimination through context optimization");
 
         // Create mock service
         let mock_service = Arc::new(MockCollectionService::new());
 
         // OLD APPROACH (simulated): Multiple service calls
-        println!("📊 Simulating OLD approach - multiple service calls:");
+        debug!("📊 Simulating OLD approach - multiple service calls:");
         
         // Simulate VectorOperationsService call
         let _result1 = mock_service.get_collection("test_collection").await;
-        println!("   VectorOperationsService → Collection Service Call #1");
+        debug!("   VectorOperationsService → Collection Service Call #1");
         
         // Simulate BackgroundManager call
         let _result2 = mock_service.get_collection("test_collection").await;
-        println!("   BackgroundManager → Collection Service Call #2");
+        debug!("   BackgroundManager → Collection Service Call #2");
         
         // Simulate FlushCoordinator call
         let _result3 = mock_service.get_collection("test_collection").await;
-        println!("   FlushCoordinator → Collection Service Call #3");
+        debug!("   FlushCoordinator → Collection Service Call #3");
 
         let old_call_count = mock_service.get_call_count();
-        println!("   Total calls in OLD approach: {}", old_call_count);
+        debug!("   Total calls in OLD approach: {}", old_call_count);
         assert_eq!(old_call_count, 3, "OLD approach should make 3 service calls");
 
         // Reset counter for new approach
         mock_service.call_count.store(0, Ordering::SeqCst);
 
         // NEW APPROACH: Context-based optimization
-        println!("🚀 Testing NEW approach - context-based optimization:");
+        debug!("🚀 Testing NEW approach - context-based optimization:");
 
         // Single service call to create context (simulates VectorOperationsService)
         let _result = mock_service.get_collection("test_collection").await;
-        println!("   VectorOperationsService → Collection Service Call #1 (creates context)");
+        debug!("   VectorOperationsService → Collection Service Call #1 (creates context)");
 
         // Create context with pre-computed metadata
         let context = BackgroundFlushContext {
@@ -92,8 +93,8 @@ mod tests {
         };
 
         // Background operations now use context - NO ADDITIONAL SERVICE CALLS
-        println!("   BackgroundManager → Uses pre-computed context (NO service call)");
-        println!("   FlushCoordinator → Uses pre-computed context (NO service call)");
+        debug!("   BackgroundManager → Uses pre-computed context (NO service call)");
+        debug!("   FlushCoordinator → Uses pre-computed context (NO service call)");
 
         // Simulate background operations using context
         let engine_name = context.engine_name();
@@ -106,24 +107,24 @@ mod tests {
         assert!(batch_hint.is_some());
 
         let new_call_count = mock_service.get_call_count();
-        println!("   Total calls in NEW approach: {}", new_call_count);
+        debug!("   Total calls in NEW approach: {}", new_call_count);
         assert_eq!(new_call_count, 1, "NEW approach should make only 1 service call");
 
         // Calculate optimization
         let reduction_percentage = ((old_call_count - new_call_count) as f64 / old_call_count as f64) * 100.0;
-        println!("✅ OPTIMIZATION VALIDATED:");
-        println!("   Service calls reduced from {} to {}", old_call_count, new_call_count);
-        println!("   Reduction: {:.1}% ({}x fewer calls)", reduction_percentage, old_call_count / new_call_count);
+        info!("✅ OPTIMIZATION VALIDATED:");
+        debug!("   Service calls reduced from {} to {}", old_call_count, new_call_count);
+        debug!("   Reduction: {:.1}% ({}x fewer calls)", reduction_percentage, old_call_count / new_call_count);
         
         assert!(reduction_percentage > 60.0, "Should achieve at least 60% reduction");
-        println!("🎉 Background flush optimization successfully validated!");
+        debug!("🎉 Background flush optimization successfully validated!");
     }
 
     #[tokio::test]
     async fn test_context_metadata_completeness() {
         let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
 
-        println!("🧪 VALIDATION: Context contains all metadata needed for background operations");
+        debug!("🧪 VALIDATION: Context contains all metadata needed for background operations");
 
         let context = BackgroundFlushContext {
             collection_id: "completeness_test".to_string(),
@@ -176,14 +177,14 @@ mod tests {
         // Verify extra metadata
         assert_eq!(context.extra_metadata.get("test_key"), Some(&"test_value".to_string()));
         
-        println!("✅ Context metadata completeness validated");
-        println!("   Engine: {} ({})", context.engine_name(), context.storage_engine.clone() as u8);
-        println!("   Dimension: {}", context.dimension);
-        println!("   Distance metric: {:?}", context.distance_metric);
-        println!("   Row group size: {}", row_group_size);
-        println!("   Flush threshold: {}", flush_threshold);
-        println!("   Batch hint: {:?}", context.batch_size_hint);
-        println!("   Priority: {:?}", context.priority);
-        println!("🎉 Context contains all required metadata for background operations!");
+        info!("✅ Context metadata completeness validated");
+        debug!("   Engine: {} ({})", context.engine_name(), context.storage_engine.clone() as u8);
+        debug!("   Dimension: {}", context.dimension);
+        debug!("   Distance metric: {:?}", context.distance_metric);
+        debug!("   Row group size: {}", row_group_size);
+        debug!("   Flush threshold: {}", flush_threshold);
+        debug!("   Batch hint: {:?}", context.batch_size_hint);
+        debug!("   Priority: {:?}", context.priority);
+        debug!("🎉 Context contains all required metadata for background operations!");
     }
 }

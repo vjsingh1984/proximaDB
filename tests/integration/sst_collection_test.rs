@@ -4,21 +4,23 @@
 //! and verifies that flush operations route to LSM correctly.
 
 use proximadb::services::collection_service::{CollectionService, CollectionServiceResponse};
+use tracing::{debug, error, info, warn};
 use proximadb::proto::proximadb::{CollectionConfig, StorageEngine, DistanceMetric, IndexingAlgorithm};
 use proximadb::storage::metadata::backends::filestore_backend::{FilestoreMetadataBackend, FilestoreMetadataConfig};
 use proximadb::core::config::{StorageConfig, StorageLocation, AssignmentConfig};
 use proximadb::storage::persistence::filesystem::{FilesystemFactory, FilesystemConfig};
-use proximadb::compute::distance_computation::{UnifiedDistanceCompute, HardwareBackend};
+use proximadb::compute::distance_computation::UnifiedDistanceCompute;
+use proximadb::core::hardware_capabilities::HardwareBackend;
 use proximadb::services::VectorOperationsService;
 use proximadb::core::VectorRecord;
 use proximadb::proto::proximadb::MetadataItem;
 use proximadb::core::config::SstConfig;
-use proximadb::storage::persistence::write_ahead_log::WriteBufferConfig;
+use proximadb::storage::persistence::write_ahead_log::WALConfig;
 use proximadb::storage::engines::sst::SstStorage;
 use proximadb::storage::engines::viper::ViperEngine;
 use proximadb::storage::traits::UnifiedStorageEngine;
 // 🔴 OBSOLETE - Assignment service removed
-use proximadb::storage::persistence::write_ahead_log::WriteBufferFlushCoordinator;
+use proximadb::storage::persistence::write_ahead_log::WALFlushCoordinator;
 use proximadb::storage::traits::CollectionMetadataProvider;
 use std::sync::Arc;
 use tempfile::TempDir;
@@ -108,7 +110,7 @@ async fn test_lsm_collection_with_proper_routing() {
     let create_response = collection_service.create_collection(&collection_config).await.unwrap();
     assert!(create_response.success, "Collection creation should succeed");
     let collection_id = create_response.collection.expect("Should have collection").id;
-    println!("Created collection {} with ID {}", collection_name, collection_id);
+    debug!("Created collection {} with ID {}", collection_name, collection_id);
     
     // Setup storage engines (reuse filesystem_factory)
     let filesystem = filesystem_factory;
@@ -129,7 +131,7 @@ async fn test_lsm_collection_with_proper_routing() {
     });
     
     // Create distance compute for SST storage
-    let distance_compute = Arc::new(UnifiedDistanceCompute::new(proximadb::compute::distance::DistanceMetric::Cosine));
+    let distance_compute = Arc::new(UnifiedDistanceCompute::new(proximadb::compute::distance_computation::DistanceMetric::Cosine));
     
     let lsm_engine = Arc::new(
         SstStorage::new(lsm_config, filesystem.clone(), distance_compute.clone())
@@ -138,12 +140,12 @@ async fn test_lsm_collection_with_proper_routing() {
     );
     
     // Create flush coordinator and register engines
-    let flush_coordinator = Arc::new(WriteBufferFlushCoordinator::new());
+    let flush_coordinator = Arc::new(WALFlushCoordinator::new());
     flush_coordinator.register_storage_engine("VIPER", viper_engine.clone()).await;
     flush_coordinator.register_storage_engine("LSM", lsm_engine.clone()).await;
     
     // Create WAL config
-    let mut wal_config = WriteBufferConfig::default();
+    let mut wal_config = WALConfig::default();
     wal_config.multi_disk.data_directories = vec![format!("file://{}/wal", base_path)];
     
     // Assignment service removed - collections now embed storage_assignment
@@ -154,7 +156,7 @@ async fn test_lsm_collection_with_proper_routing() {
     }];
     
     // Storage assignment happens through collection creation now
-    println!("Setting up storage for collection {}", collection_id);
+    debug!("Setting up storage for collection {}", collection_id);
     
     // Create VectorOperationsService with collection service for proper engine routing
     let direct_service = Arc::new(
@@ -171,7 +173,7 @@ async fn test_lsm_collection_with_proper_routing() {
     // No need to register flush coordinator - VectorOperationsService already has one internally
     
     // Test 1: Insert vectors
-    println!("\n=== Test 1: Insert vectors ===");
+    debug!("\n=== Test 1: Insert vectors ===");
     let vectors = vec![
         VectorRecord {
             id: Some("vec1".to_string()),
@@ -235,10 +237,10 @@ async fn test_lsm_collection_with_proper_routing() {
         .unwrap();
     
     assert!(insert_result.entries_written > 0, "Should have written entries");
-    println!("Inserted {} vectors", insert_result.entries_written);
+    debug!("Inserted {} vectors", insert_result.entries_written);
     
     // Test 2: Trigger flush with collection config lookup
-    println!("\n=== Test 2: Trigger flush with proper engine routing ===");
+    debug!("\n=== Test 2: Trigger flush with proper engine routing ===");
     
     // Get collection config to determine engine using trait method
     let collection = collection_service
@@ -255,7 +257,7 @@ async fn test_lsm_collection_with_proper_routing() {
         })
         .unwrap_or("VIPER");
     
-    println!("Collection {} uses {} storage engine", collection_id, storage_engine);
+    debug!("Collection {} uses {} storage engine", collection_id, storage_engine);
     
     // Add a small delay to ensure vectors are in memtable
     tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
@@ -263,19 +265,19 @@ async fn test_lsm_collection_with_proper_routing() {
     // Manually trigger flush to the correct engine
     // In production, this would be done by VectorOperationsService with collection service integration
     // First, we need to flush from WAL since VectorOperationsService writes to WAL
-    println!("Triggering force flush for collection {}", collection_id);
+    debug!("Triggering force flush for collection {}", collection_id);
     let flush_result = direct_service
         .force_flush_collection(&collection_id)
         .await
         .unwrap();
     
-    println!("Flush result: {:?}", flush_result);
+    debug!("Flush result: {:?}", flush_result);
     assert!(flush_result["success"].as_bool().unwrap(), "Flush should succeed");
-    println!("Flushed collection to {} engine", storage_engine);
+    debug!("Flushed collection to {} engine", storage_engine);
     
     // Verify SSTable was created in LSM
     let storage_url = lsm_engine.get_collection_storage_url(&collection_id).await.unwrap();
-    println!("LSM storage URL: {}", storage_url);
+    debug!("LSM storage URL: {}", storage_url);
     
     // Check the storage location
     let urls_to_check = vec![storage_url.clone()];
@@ -283,7 +285,7 @@ async fn test_lsm_collection_with_proper_routing() {
     
     for url in &urls_to_check {
         let storage_path = url.strip_prefix("file://").unwrap_or(url);
-        println!("Checking directory: {}", storage_path);
+        debug!("Checking directory: {}", storage_path);
         
         if std::path::Path::new(storage_path).exists() {
             let entries = std::fs::read_dir(storage_path).unwrap();
@@ -292,22 +294,22 @@ async fn test_lsm_collection_with_proper_routing() {
                 .filter(|entry| entry.path().extension().map_or(false, |ext| ext == "sst"))
                 .collect();
             
-            println!("  Found {} SSTable files", sst_files.len());
+            debug!("  Found {} SSTable files", sst_files.len());
             for file in &sst_files {
-                println!("    - {}", file.file_name().to_string_lossy());
+                debug!("    - {}", file.file_name().to_string_lossy());
             }
             total_sst_files += sst_files.len();
         } else {
-            println!("  Directory does not exist");
+            debug!("  Directory does not exist");
         }
     }
     
-    println!("Total SSTable files found: {}", total_sst_files);
+    debug!("Total SSTable files found: {}", total_sst_files);
     assert!(total_sst_files > 0, "Should have created SSTable files");
     
     // Test 3: Search vectors from LSM
-    println!("\n=== Test 3: Search vectors from LSM ===");
-    use proximadb::compute::distance::DistanceMetric;
+    debug!("\n=== Test 3: Search vectors from LSM ===");
+    use proximadb::compute::distance_computation::DistanceMetric;
     use proximadb::core::search::SearchParams;
     
     let search_params = SearchParams {
@@ -332,11 +334,11 @@ async fn test_lsm_collection_with_proper_routing() {
     assert!(!search_results.is_empty(), "Should find results");
     
     let closest_result = &search_results[0];
-    println!("Found closest vector: {} with score {}", 
+    debug!("Found closest vector: {} with score {}", 
              closest_result.id,
              closest_result.score);
     
     assert_eq!(closest_result.id, "vec1", "Closest should be vec1");
     
-    println!("\n=== Test completed successfully ===");
+    debug!("\n=== Test completed successfully ===");
 }

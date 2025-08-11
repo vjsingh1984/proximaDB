@@ -7,9 +7,10 @@ use proximadb::query::sql_engine::{
     planner::{ExecutionPlan, MetadataFilter},
 };
 use proximadb::core::search::{FilterExpression, ComparisonOperator};
+use tracing::{debug, error, info};
 
 fn main() {
-    println!("Testing SQL operator parsing and planning...\n");
+    debug!("Testing SQL operator parsing and planning...\n");
     
     // Test 1: Simple equality
     test_sql_parsing("SELECT * FROM products WHERE metadata->>'category' = 'electronics'", "simple equality");
@@ -32,45 +33,45 @@ fn main() {
     // Test 7: Comparison operators
     test_sql_parsing("SELECT * FROM products WHERE metadata->>'rating' >= 4.5", "comparison operator");
     
-    println!("\n✅ All SQL operator tests completed successfully!");
+    info!("\n✅ All SQL operator tests completed successfully!");
 }
 
 fn test_sql_parsing(sql: &str, test_name: &str) {
-    println!("🧪 Testing {}: {}", test_name, sql);
+    debug!("🧪 Testing {}: {}", test_name, sql);
     
     match parse_and_plan_sql(sql) {
         Ok((parsed, plan)) => {
-            println!("✅ Parse successful");
+            info!("✅ Parse successful");
             
             if let Some(filter) = &plan.metadata_filter {
-                println!("🔍 Filter expression: {:?}", filter.expression);
+                debug!("🔍 Filter expression: {:?}", filter.expression);
                 
                 // Verify the filter expression is properly structured
                 match &filter.expression {
                     FilterExpression::Comparison { field, operator, value } => {
-                        println!("   → Simple comparison: {} {:?} {:?}", field, operator, value);
+                        debug!("   → Simple comparison: {} {:?} {:?}", field, operator, value);
                     }
                     FilterExpression::And(exprs) => {
-                        println!("   → AND with {} expressions", exprs.len());
+                        debug!("   → AND with {} expressions", exprs.len());
                     }
                     FilterExpression::Or(exprs) => {
-                        println!("   → OR with {} expressions", exprs.len());
+                        debug!("   → OR with {} expressions", exprs.len());
                     }
                     FilterExpression::Not(expr) => {
-                        println!("   → NOT expression");
+                        debug!("   → NOT expression");
                     }
                 }
             } else {
-                println!("   → No metadata filter");
+                debug!("   → No metadata filter");
             }
             
-            println!("   Collection: {}", plan.collection);
-            println!("   Select fields: {:?}", plan.select_fields);
-            println!();
+            debug!("   Collection: {}", plan.collection);
+            debug!("   Select fields: {:?}", plan.select_fields);
+            debug!();
         }
         Err(e) => {
-            println!("❌ Failed: {}", e);
-            println!();
+            error!("❌ Failed: {}", e);
+            debug!();
         }
     }
 }

@@ -16,7 +16,7 @@ use proximadb::core::serialization::{VectorSerializationConfig, CompressionAlgor
 use proximadb::core::search::{SearchParams, FilterExpression};
 use proximadb::proto::proximadb::{MetadataItem, Collection};
 use proximadb::storage::traits::UnifiedStorageEngine;
-use proximadb::storage::transaction_coordinator::UnifiedAtomicCoordinator;
+use proximadb::storage::transaction_coordinator::TransactionCoordinator;
 use proximadb::storage::persistence::filesystem::FilesystemFactory;
 use proximadb::storage::metadata::store::{MetadataStore, MetadataStoreConfig};
 use proximadb::compute::distance_computation::UnifiedDistanceCompute;
@@ -188,7 +188,7 @@ async fn test_optimization_end_to_end() -> anyhow::Result<()> {
     let filesystem = Arc::new(FilesystemFactory::new(Default::default()).await?);
     let metadata_url = format!("file://{}/metadata", temp_dir.path().display());
     
-    let coordinator = Arc::new(UnifiedAtomicCoordinator::new(
+    let coordinator = Arc::new(TransactionCoordinator::new(
         filesystem.clone(),
         None
     ).await.unwrap());
@@ -208,7 +208,7 @@ async fn test_optimization_end_to_end() -> anyhow::Result<()> {
     ).await.unwrap());
     
     // Create SST engine
-    let distance_compute = Arc::new(UnifiedDistanceCompute::new(proximadb::compute::distance::DistanceMetric::Cosine));
+    let distance_compute = Arc::new(UnifiedDistanceCompute::new(proximadb::compute::distance_computation::DistanceMetric::Cosine));
     let sst_engine = SstStorage::new(
         (*sst_config).clone(),
         filesystem.clone(),
@@ -222,6 +222,8 @@ async fn test_optimization_end_to_end() -> anyhow::Result<()> {
     ).await?;
     
     // Register collection for VIPER with proper storage assignment
+    // IMPORTANT: Use standard path format: {baseurl}/{collectionid}/data
+    let collection_storage_path = format!("{}/optimization_test", temp_dir.path().display());
     let collection = Collection {
         id: "optimization_test".to_string(),
         config: Some(proximadb::proto::proximadb::CollectionConfig {
@@ -247,7 +249,7 @@ async fn test_optimization_end_to_end() -> anyhow::Result<()> {
             ..Default::default()
         }),
         storage_assignment: Some(proximadb::proto::proximadb::StorageAssignment {
-            base_location: format!("{}/optimization_test", temp_dir.path().display()),
+            base_location: collection_storage_path.clone(),
             assigned_at: chrono::Utc::now().timestamp(),
         }),
         ..Default::default()
@@ -340,11 +342,13 @@ async fn test_optimization_end_to_end() -> anyhow::Result<()> {
     
     info!("Searching SST with filter: pattern='sparse'");
     let start = Instant::now();
+    // Use standard path: {baseurl}/{collectionid}/data
     let sst_results = sst_engine.search_vectors_unified(
         "optimization_test",
+        &format!("file://{}/optimization_test/data", collection_storage_path), // Standard SST path
         &sst_search_params.query_vectors.as_ref().unwrap()[0],
         sst_search_params.top_k.unwrap_or(20),
-        &proximadb::compute::distance::DistanceMetric::Cosine,
+        &proximadb::compute::distance_computation::DistanceMetric::Cosine,
         sst_search_params.filter_expression.as_ref(),
         false,
         true
@@ -358,9 +362,10 @@ async fn test_optimization_end_to_end() -> anyhow::Result<()> {
         info!("No results with filter, trying without filter...");
         let no_filter_results = sst_engine.search_vectors_unified(
             "optimization_test",
+            &format!("file://{}/optimization_test/data", collection_storage_path), // Standard SST path
             &sst_search_params.query_vectors.as_ref().unwrap()[0],
             sst_search_params.top_k.unwrap_or(20),
-            &proximadb::compute::distance::DistanceMetric::Cosine,
+            &proximadb::compute::distance_computation::DistanceMetric::Cosine,
             None,
             false,
             true
@@ -387,9 +392,10 @@ async fn test_optimization_end_to_end() -> anyhow::Result<()> {
     let start = Instant::now();
     let viper_results = viper_engine.search_vectors_unified(
         "optimization_test",
+        &format!("file://{}/optimization_test/data", collection_storage_path), // Standard path
         &viper_search_params.query_vectors.as_ref().unwrap()[0],
         viper_search_params.top_k.unwrap_or(20),
-        &proximadb::compute::distance::DistanceMetric::Cosine,
+        &proximadb::compute::distance_computation::DistanceMetric::Cosine,
         viper_search_params.filter_expression.as_ref(),
         false,
         true
@@ -451,6 +457,7 @@ async fn test_optimization_end_to_end() -> anyhow::Result<()> {
 // Helper function to calculate directory size
 fn calculate_directory_size(path: &str) -> u64 {
     use std::fs;
+use tracing::{debug, error, info, warn};
     
     fn dir_size(path: &std::path::Path) -> u64 {
         let mut size = 0;

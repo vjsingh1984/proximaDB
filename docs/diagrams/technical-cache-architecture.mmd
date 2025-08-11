@@ -5,13 +5,22 @@ graph TB
     end
     
     subgraph "Specialized Caches"
-        VectorCache[<b>VectorStore</b><br/>━━━━━━━━━━<br/>Vector data<br/>40% memory<br/>LRU eviction]
+        VectorCache[<b>VectorStore</b><br/>━━━━━━━━━━<br/>Vector data<br/>SSTable blocks<br/>Compressed blocks<br/>40% memory<br/>LRU eviction]
         
         QueryCache[<b>QueryCache</b><br/>━━━━━━━━━━<br/>Search results<br/>30% memory<br/>TTL-based]
         
-        FilterCache[<b>FilterCache</b><br/>━━━━━━━━━━<br/>Bitmap filters<br/>20% memory<br/>Incremental updates]
+        FilterCache[<b>BitmapFilterCache</b><br/>━━━━━━━━━━<br/>Bitmap filters<br/>Bloom filters<br/>20% memory<br/>Incremental updates]
         
-        IndexCache[<b>IndexCache</b><br/>━━━━━━━━━━<br/>Index nodes<br/>10% memory<br/>Hot path optimization]
+        IndexCache[<b>IndexNodeCache</b><br/>━━━━━━━━━━<br/>Index nodes<br/>SSTable indices<br/>10% memory<br/>Hot path optimization]
+        
+        MetadataCache[<b>MetadataStore</b><br/>━━━━━━━━━━<br/>Parquet schemas<br/>Column metadata<br/>Statistics<br/>5% memory]
+    end
+    
+    subgraph "Engine Integration"
+        SSTEngine[<b>SST Engine</b><br/>━━━━━━━━━━<br/>DecompressionCache<br/>Configurable limits<br/>No cfg! branching]
+        
+        VIPEREngine[<b>VIPER Engine</b><br/>━━━━━━━━━━<br/>Uses MetadataStore<br/>Column projection<br/>Predicate pushdown]
+        
     end
     
     subgraph "Cache Features"
@@ -20,22 +29,36 @@ graph TB
         Memory[<b>Memory Management</b><br/>Dynamic allocation<br/>Pressure handling]
         
         Invalidation[<b>Invalidation</b><br/>Cascade updates<br/>Consistency]
+        
+        Optimization[<b>I/O Optimization</b><br/>Skip bloom for cached<br/>Direct cache access<br/>Compression-aware]
     end
     
     Orchestrator --> VectorCache
     Orchestrator --> QueryCache
     Orchestrator --> FilterCache
     Orchestrator --> IndexCache
+    Orchestrator --> MetadataCache
+    
+    SSTEngine --> VectorCache
+    SSTEngine --> IndexCache
+    SSTEngine --> FilterCache
+    
+    VIPEREngine --> MetadataCache
     
     Orchestrator --> Pattern
     Orchestrator --> Memory
     Orchestrator --> Invalidation
+    Orchestrator --> Optimization
     
     style Orchestrator fill:#2E86AB,color:#fff
     style VectorCache fill:#e6f4ea
     style QueryCache fill:#fef7e0
     style FilterCache fill:#e8f0fe
     style IndexCache fill:#f3e5f5
+    style MetadataCache fill:#fff3cd
     style Pattern fill:#fce4ec
     style Memory fill:#e0f2fe
     style Invalidation fill:#e6f4ea
+    style Optimization fill:#f0f9ff
+    style SSTEngine fill:#dbeafe
+    style VIPEREngine fill:#dcfce7

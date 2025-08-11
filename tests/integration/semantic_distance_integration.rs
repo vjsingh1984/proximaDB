@@ -23,12 +23,13 @@
 //! - Normalized scores provide intuitive [0,1] similarity scores
 //! - Search results are properly ordered regardless of metric type
 
-use proximadb::compute::distance::DistanceMetric;
+use proximadb::compute::distance_computation::DistanceMetric;
+use tracing::{debug, error, info, warn};
 use proximadb::compute::distance_computation::{
     UnifiedDistanceCompute, MetricProperties,
 };
 use proximadb::storage::memtable::implementations::global_partitioned::GlobalPartitionedMemtable;
-use proximadb::storage::memtable::specialized::write_ahead_log_behavior::WriteBufferVectorBatch;
+use proximadb::storage::memtable::specialized::wal_behavior::WALVectorBatch;
 use proximadb::storage::persistence::write_ahead_log::BatchId;
 use proximadb::core::VectorRecord;
 use std::sync::Arc;
@@ -54,7 +55,7 @@ async fn test_semantic_consistency_across_metrics() {
     ];
     
     for metric in metrics {
-        println!("Testing metric: {:?}", metric);
+        debug!("Testing metric: {:?}", metric);
         
         // Calculate distances
         let identical_result = compute.calculate_distance(&identical_a, &identical_b, &metric);
@@ -79,15 +80,15 @@ async fn test_semantic_consistency_across_metrics() {
         let properties = metric.behavior_description();
         assert!(!properties.is_empty(), "Metric {:?} should have behavior description", metric);
         
-        println!(
+        debug!(
             "  Identical: raw={:.3}, norm={:.3}, rank={:.3}",
             identical_result.raw_value, identical_result.normalized_score, identical_result.rank_value
         );
-        println!(
+        debug!(
             "  Orthogonal: raw={:.3}, norm={:.3}, rank={:.3}",
             orthogonal_result.raw_value, orthogonal_result.normalized_score, orthogonal_result.rank_value
         );
-        println!(
+        debug!(
             "  Opposite: raw={:.3}, norm={:.3}, rank={:.3}",
             opposite_result.raw_value, opposite_result.normalized_score, opposite_result.rank_value
         );
@@ -124,12 +125,12 @@ async fn test_dot_product_semantic_inversion() {
     assert!(same_direction.normalized_score > orthogonal.normalized_score);
     assert!(orthogonal.normalized_score > opposite.normalized_score);
     
-    println!("Dot Product Results:");
-    println!("  Same direction: raw={:.3}, norm={:.3}, rank={:.3}", 
+    debug!("Dot Product Results:");
+    debug!("  Same direction: raw={:.3}, norm={:.3}, rank={:.3}", 
              same_direction.raw_value, same_direction.normalized_score, same_direction.rank_value);
-    println!("  Orthogonal: raw={:.3}, norm={:.3}, rank={:.3}", 
+    debug!("  Orthogonal: raw={:.3}, norm={:.3}, rank={:.3}", 
              orthogonal.raw_value, orthogonal.normalized_score, orthogonal.rank_value);
-    println!("  Opposite: raw={:.3}, norm={:.3}, rank={:.3}", 
+    debug!("  Opposite: raw={:.3}, norm={:.3}, rank={:.3}", 
              opposite.raw_value, opposite.normalized_score, opposite.rank_value);
 }
 
@@ -154,9 +155,9 @@ async fn test_batch_semantic_distance() {
     for metric in [DistanceMetric::Cosine, DistanceMetric::DotProduct] {
         let results = compute.calculate_distance_batch(&query, &vector_refs, &metric);
         
-        println!("Batch results for {:?}:", metric);
+        debug!("Batch results for {:?}:", metric);
         for (i, result) in results.iter().enumerate() {
-            println!("  Vector {}: raw={:.3}, norm={:.3}, rank={:.3}", 
+            debug!("  Vector {}: raw={:.3}, norm={:.3}, rank={:.3}", 
                      i, result.raw_value, result.normalized_score, result.rank_value);
         }
         
@@ -228,7 +229,7 @@ async fn test_memtable_semantic_search() {
     ];
     
     // Create WAL batch
-    let batch = WriteBufferVectorBatch {
+    let batch = WALVectorBatch {
         batch_id: BatchId::new(),
         vector_records: Arc::new(test_vectors),
         created_at: std::time::SystemTime::now(),
@@ -246,9 +247,9 @@ async fn test_memtable_semantic_search() {
     for metric in [DistanceMetric::Cosine, DistanceMetric::DotProduct] {
         let results = memtable.search_vectors(&query, 3, collection_id, metric.clone()).await.unwrap();
         
-        println!("Memtable search results for {:?}:", metric);
+        debug!("Memtable search results for {:?}:", metric);
         for (i, (similarity_result, record)) in results.iter().enumerate() {
-            println!("  {}: id={:?}, raw={:.3}, norm={:.3}, rank={:.3}", 
+            debug!("  {}: id={:?}, raw={:.3}, norm={:.3}, rank={:.3}", 
                      i, record.id, similarity_result.raw_value, 
                      similarity_result.normalized_score, similarity_result.rank_value);
         }
@@ -351,13 +352,13 @@ async fn test_quantization_semantic_distance() -> anyhow::Result<()> {
         quantized_vectors.push(quantized);
     }
     
-    println!("Testing semantic distance with quantized vectors:");
+    debug!("Testing semantic distance with quantized vectors:");
     
     // Test distance calculation between quantized vectors
     let query = &vectors[0];  // Use raw vector as query (asymmetric search)
     
     for metric in [DistanceMetric::Euclidean, DistanceMetric::Cosine, DistanceMetric::DotProduct] {
-        println!("  Testing metric: {:?}", metric);
+        debug!("  Testing metric: {:?}", metric);
         
         let mut results = Vec::new();
         for (i, q_vec) in quantized_vectors.iter().enumerate() {
@@ -368,7 +369,7 @@ async fn test_quantization_semantic_distance() -> anyhow::Result<()> {
             ).await?;
             results.push((i, distance_result));
             
-            println!("    Vector {}: raw={:.3}, norm={:.3}, rank={:.3}", 
+            debug!("    Vector {}: raw={:.3}, norm={:.3}, rank={:.3}", 
                      i, distance_result.raw_value, distance_result.normalized_score, distance_result.rank_value);
         }
         
@@ -399,7 +400,7 @@ async fn test_quantization_semantic_distance() -> anyhow::Result<()> {
     }
     
     // Test semantic properties are preserved in quantized space
-    println!("  Verifying semantic properties preservation:");
+    debug!("  Verifying semantic properties preservation:");
     
     // Test with scalar quantization for comparison
     let scalar_level = proximadb::compute::UnifiedQuantizationLevel::int8();
@@ -483,9 +484,9 @@ async fn test_comparative_metric_ordering() {
         let mut indexed_results: Vec<_> = results.iter().enumerate().collect();
         indexed_results.sort_by(|a, b| a.1.rank_value.partial_cmp(&b.1.rank_value).unwrap_or(std::cmp::Ordering::Equal));
         
-        println!("Ordering for {:?}:", metric);
+        debug!("Ordering for {:?}:", metric);
         for (rank, (original_index, result)) in indexed_results.iter().enumerate() {
-            println!("  Rank {}: Vector {} with distance {:.3}", 
+            debug!("  Rank {}: Vector {} with distance {:.3}", 
                      rank + 1, original_index, result.rank_value);
         }
         

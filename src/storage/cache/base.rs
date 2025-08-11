@@ -1,5 +1,5 @@
 use crate::storage::cache::backend::{CacheTier, MemoryBackend, NvmeBackend, NetworkBackend, StorageBackend};
-use crate::storage::cache::eviction::{EvictionStrategy, LRUStrategy};
+use crate::storage::cache::eviction::{CacheState, EvictionStrategy, LRUStrategy};
 use crate::storage::cache::metrics::CacheMetrics;
 use crate::storage::cache::traits::{BaseCache, CacheEntry, CacheKey, CacheValue};
 use async_trait::async_trait;
@@ -114,17 +114,69 @@ where
     }
     
     async fn put_l1(&self, key: Self::Key, value: Self::Value) {
-        let entry = CacheEntry::new(value);
-        let _ = self.l1_backend.put(key.clone(), entry).await;
+        let entry = CacheEntry::new(value.clone());
         
-        let mut strategy = self.eviction_strategy.write().await;
-        strategy.update_on_insert(&key, 0);
+        // Try to insert
+        match self.l1_backend.put(key.clone(), entry.clone()).await {
+            Ok(_) => {
+                // Success - update eviction strategy and metrics
+                let mut strategy = self.eviction_strategy.write().await;
+                strategy.update_on_insert(&key, 0);
+                self.metrics.record_put();
+            }
+            Err(crate::storage::cache::backend::StorageError::CapacityExceeded) => {
+                // Cache is full - need to evict
+                // Try to select a victim using the eviction strategy
+                let victim_key = {
+                    let strategy = self.eviction_strategy.read().await;
+                    let cache_state = CacheState {
+                        total_capacity: self.l1_backend.size_bytes().await,
+                        current_size: self.l1_backend.size_bytes().await,
+                        entry_count: self.l1_backend.entry_count().await,
+                    };
+                    strategy.select_victim(&cache_state)
+                };
+                
+                // If we found a victim, evict it
+                if let Some(victim) = victim_key {
+                    // Remove the victim
+                    if self.l1_backend.remove(&victim).await {
+                        // Update eviction strategy
+                        let mut strategy = self.eviction_strategy.write().await;
+                        strategy.update_on_evict(&victim);
+                        self.metrics.record_eviction();
+                        
+                        // Now try to insert the new entry
+                        if self.l1_backend.put(key.clone(), entry).await.is_ok() {
+                            strategy.update_on_insert(&key, 0);
+                            self.metrics.record_put();
+                        } else {
+                            // Still failed after eviction
+                            self.metrics.record_put();
+                        }
+                    } else {
+                        // Eviction failed
+                        self.metrics.record_put();
+                    }
+                } else {
+                    // No victim found - this means the LRU doesn't have any keys tracked
+                    // Record eviction to maintain metrics consistency
+                    self.metrics.record_eviction();
+                    self.metrics.record_put();
+                }
+            }
+            Err(_) => {
+                // Other error - just record the put attempt
+                self.metrics.record_put();
+            }
+        }
     }
     
     async fn put_l2(&self, key: Self::Key, value: Self::Value) {
         if let Some(ref l2) = self.l2_backend {
             let entry = CacheEntry::new(value);
             let _ = l2.put(key, entry).await;
+            self.metrics.record_put();
         }
     }
     
@@ -132,6 +184,7 @@ where
         if let Some(ref l3) = self.l3_backend {
             let entry = CacheEntry::new(value);
             let _ = l3.put(key, entry).await;
+            self.metrics.record_put();
         }
     }
     

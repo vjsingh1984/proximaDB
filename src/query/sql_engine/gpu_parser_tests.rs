@@ -8,28 +8,28 @@ mod tests {
     #[test]
     fn test_gpu_backend_detection_and_info() {
         let backend = GpuSqlParser::detect_gpu_backend();
-        println!("\n=== GPU Backend Detection ===");
-        println!("Detected backend: {}", backend);
+        debug!("\n=== GPU Backend Detection ===");
+        debug!("Detected backend: {}", backend);
         
         match backend {
             GpuBackend::Cuda => {
-                println!("✅ NVIDIA CUDA GPU detected");
-                println!("   Optimal for large-scale vector operations");
+                info!("✅ NVIDIA CUDA GPU detected");
+                debug!("   Optimal for large-scale vector operations");
             }
             GpuBackend::Rocm => {
-                println!("✅ AMD ROCm GPU detected");
-                println!("   Good performance for parallel parsing");
+                info!("✅ AMD ROCm GPU detected");
+                debug!("   Good performance for parallel parsing");
             }
             GpuBackend::Mps => {
-                println!("✅ Apple Metal Performance Shaders detected");
-                println!("   Optimized for Apple Silicon");
+                info!("✅ Apple Metal Performance Shaders detected");
+                debug!("   Optimized for Apple Silicon");
             }
             GpuBackend::OpenCL => {
-                println!("✅ OpenCL GPU detected");
-                println!("   Cross-platform GPU acceleration");
+                info!("✅ OpenCL GPU detected");
+                debug!("   Cross-platform GPU acceleration");
             }
             GpuBackend::None => {
-                println!("ℹ️  No GPU detected - CPU fallback will be used");
+                debug!("ℹ️  No GPU detected - CPU fallback will be used");
             }
         }
     }
@@ -200,17 +200,17 @@ mod tests {
             stats.cpu_fallback_count == queries.len() as u64
         );
         
-        println!("\n=== Parser Performance Stats ===");
-        println!("Total queries parsed: {}", stats.total_queries_parsed);
-        println!("GPU accelerated: {}", stats.gpu_accelerated_count);
-        println!("CPU fallback: {}", stats.cpu_fallback_count);
-        println!("Total parse time: {:.2}ms", stats.total_parse_time_ms);
+        debug!("\n=== Parser Performance Stats ===");
+        debug!("Total queries parsed: {}", stats.total_queries_parsed);
+        debug!("GPU accelerated: {}", stats.gpu_accelerated_count);
+        debug!("CPU fallback: {}", stats.cpu_fallback_count);
+        debug!("Total parse time: {:.2}ms", stats.total_parse_time_ms);
         if stats.gpu_accelerated_count > 0 {
-            println!("Avg GPU parse time: {:.2}ms", 
+            debug!("Avg GPU parse time: {:.2}ms", 
                 stats.gpu_parse_time_ms / stats.gpu_accelerated_count as f64);
         }
         if stats.cpu_fallback_count > 0 {
-            println!("Avg CPU parse time: {:.2}ms", 
+            debug!("Avg CPU parse time: {:.2}ms", 
                 stats.cpu_parse_time_ms / stats.cpu_fallback_count as f64);
         }
     }
@@ -219,6 +219,7 @@ mod tests {
     fn test_concurrent_gpu_parser_access() {
         use std::sync::Arc;
         use std::thread;
+use tracing::{debug, error, info, warn};
         
         let parser_mutex = get_global_gpu_parser();
         let handles: Vec<_> = (0..5).map(|i| {
@@ -290,17 +291,17 @@ mod tests {
         }
         let cpu_elapsed = cpu_start.elapsed();
         
-        println!("\n=== Parsing Benchmark Results ===");
-        println!("Queries parsed: {}", queries.len());
-        println!("GPU total time: {:.2}ms", gpu_elapsed.as_secs_f64() * 1000.0);
-        println!("CPU total time: {:.2}ms", cpu_elapsed.as_secs_f64() * 1000.0);
+        debug!("\n=== Parsing Benchmark Results ===");
+        debug!("Queries parsed: {}", queries.len());
+        debug!("GPU total time: {:.2}ms", gpu_elapsed.as_secs_f64() * 1000.0);
+        debug!("CPU total time: {:.2}ms", cpu_elapsed.as_secs_f64() * 1000.0);
         
         let gpu_stats = gpu_parser.get_stats();
         if gpu_stats.gpu_accelerated_count > 0 {
             let speedup = cpu_elapsed.as_secs_f64() / gpu_elapsed.as_secs_f64();
-            println!("GPU speedup: {:.2}x", speedup);
+            debug!("GPU speedup: {:.2}x", speedup);
         } else {
-            println!("GPU acceleration not available - both used CPU");
+            debug!("GPU acceleration not available - both used CPU");
         }
     }
 }

@@ -12,6 +12,7 @@ use crate::metrics::{
 };
 use crate::storage::cache::metrics::CacheMetrics as BaseCacheMetrics;
 use crate::storage::cache::backend::CacheTier;
+use tracing::{debug, error, info, warn};
 
 /// Cache metrics snapshot that work with the broader metrics framework
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -278,7 +279,15 @@ impl CacheMetricsCollector {
         // Simple heuristic: if hit rate is low and we're using most memory, recommend more
         let current_mb = metrics.memory_usage.used_bytes / (1024 * 1024);
         
-        if metrics.overall_hit_rate < 0.6 && 
+        // If no memory is allocated/used yet, recommend a default amount
+        if current_mb == 0 {
+            // Default recommendation based on hit rate
+            if metrics.overall_hit_rate < 0.5 {
+                256 // Start with 256MB if hit rate is low
+            } else {
+                128 // Start with 128MB for reasonable hit rate
+            }
+        } else if metrics.overall_hit_rate < 0.6 && 
            metrics.memory_usage.used_bytes > metrics.memory_usage.total_allocated_bytes * 9 / 10 {
             // Recommend 50% more memory
             current_mb * 3 / 2
@@ -287,7 +296,7 @@ impl CacheMetricsCollector {
             // Can reduce memory by 25%
             current_mb * 3 / 4
         } else {
-            current_mb
+            current_mb.max(1) // At least 1MB
         }
     }
 }

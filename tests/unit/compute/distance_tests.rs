@@ -16,9 +16,8 @@
 
 //! Unit tests for distance calculation functionality
 
-use proximadb::compute::distance_computation::{
-    DistanceMetric
-};
+use proximadb::compute::distance_computation::DistanceMetric;
+use tracing::{debug, error, info, warn};
 use proximadb::compute::distance_computation::engine::UnifiedDistanceCompute;
 
 #[test]
@@ -26,7 +25,7 @@ fn test_platform_detection() {
     // Initialize hardware capabilities
     let _ = proximadb::core::hardware_capabilities::initialize_hardware_capabilities_default();
     let capability = proximadb::core::hardware_capabilities::get_hardware_capabilities();
-    println!("Detected platform capability: {:?}", capability);
+    debug!("Detected platform capability: {:?}", capability);
     
     // Test that we can create calculators for all metrics
     let cosine_calc = UnifiedDistanceCompute::new(DistanceMetric::Cosine);
@@ -40,9 +39,9 @@ fn test_platform_detection() {
     let euclidean = euclidean_calc.calculate_distance(&a, &b, &DistanceMetric::Euclidean);
     let dot = dot_calc.calculate_distance(&a, &b, &DistanceMetric::DotProduct);
     
-    println!("Cosine distance: {}", cosine.raw_value);
-    println!("Euclidean distance: {}", euclidean.raw_value);
-    println!("Dot product: {}", dot.raw_value);
+    debug!("Cosine distance: {}", cosine.raw_value);
+    debug!("Euclidean distance: {}", euclidean.raw_value);
+    debug!("Dot product: {}", dot.raw_value);
     
     // Verify results are reasonable
     assert!(cosine.raw_value >= 0.0 && cosine.raw_value <= 2.0);

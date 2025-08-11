@@ -608,6 +608,7 @@ impl Default for PrefetchConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
+use tracing::{debug, error, info, warn};
     
     #[tokio::test]
     #[ignore = "Test hangs - needs investigation"]
@@ -728,7 +729,7 @@ mod tests {
             let pattern = prefetcher.access_patterns.sequential_patterns.get("predict.sst").unwrap();
             // Pattern should have detected stride of 2
             assert_eq!(pattern.stride, 2);
-            println!("Pattern confidence: {}", pattern.confidence);
+            debug!("Pattern confidence: {}", pattern.confidence);
             
             // If confidence is high enough for predictions
             if pattern.confidence > 0.7 {
@@ -738,7 +739,7 @@ mod tests {
             }
         } else {
             // Pattern might not be established yet with only 5 accesses
-            println!("No sequential pattern detected yet");
+            debug!("No sequential pattern detected yet");
         }
     }
 }

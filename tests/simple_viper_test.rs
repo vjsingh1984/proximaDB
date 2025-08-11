@@ -3,11 +3,12 @@
 use proximadb::proto::proximadb::proxima_db_client::ProximaDbClient;
 use proximadb::proto::proximadb::*;
 use proximadb::proto::proximadb::vector_operation_response::ResultPayload;
+use tracing::{debug, error, info, warn};
 
 #[tokio::test]
 #[ignore] // Requires server to be running
 async fn test_viper_metadata_filtering() -> anyhow::Result<()> {
-    println!("🔍 Starting VIPER metadata filter test");
+    info!("🔍 Starting VIPER metadata filter test");
     
     // Connect to running server
     let mut client = ProximaDbClient::connect("http://localhost:5679").await?;
@@ -69,7 +70,7 @@ async fn test_viper_metadata_filtering() -> anyhow::Result<()> {
         migration_config: Default::default(),
     })).await?;
     
-    println!("✅ Created collection");
+    info!("✅ Created collection");
     
     // Insert test data - 3 electronics, 2 books
     let mut vectors = Vec::new();
@@ -194,13 +195,13 @@ async fn test_viper_metadata_filtering() -> anyhow::Result<()> {
     };
     
     let response = client.vector_batch(tonic::Request::new(insert_request)).await?;
-    println!("✅ Inserted {} vectors", response.get_ref().vector_ids.len());
+    info!("✅ Inserted {} vectors", response.get_ref().vector_ids.len());
     
     // Wait for indexing and flush
     tokio::time::sleep(tokio::time::Duration::from_secs(3)).await;
     
     // Test 1: Filter by category = 'electronics' (should return 3)
-    println!("\n🧪 Test 1: Filter by category = 'electronics'");
+    debug!("\n🧪 Test 1: Filter by category = 'electronics'");
     
     let search_request = VectorSearchRequest {
         collection_id: collection_name.to_string(),
@@ -234,11 +235,11 @@ async fn test_viper_metadata_filtering() -> anyhow::Result<()> {
     let search_results = if let Some(ResultPayload::CompactResults(ref compact)) = search_response.get_ref().result_payload {
         &compact.results
     } else {
-        println!("⚠️  No compact results found");
+        warn!("⚠️  No compact results found");
         return Ok(());
     };
     
-    println!("📊 Found {} results (expected: 3)", search_results.len());
+    info!("📊 Found {} results (expected: 3)", search_results.len());
     
     let mut electronics_count = 0;
     let mut wrong_category_results = Vec::new();
@@ -258,7 +259,7 @@ async fn test_viper_metadata_filtering() -> anyhow::Result<()> {
         
         let id = result.id.as_ref().map(|s| s.as_str()).unwrap_or("?");
         
-        println!("  - ID: {}, Category: {}, Score: {}", id, category_value, result.score);
+        debug!("  - ID: {}, Category: {}, Score: {}", id, category_value, result.score);
         
         if category_value == "electronics" {
             electronics_count += 1;
@@ -267,19 +268,19 @@ async fn test_viper_metadata_filtering() -> anyhow::Result<()> {
         }
     }
     
-    println!("\n📈 Results Summary:");
-    println!("  - Correct (electronics): {}", electronics_count);
-    println!("  - Wrong category: {}", wrong_category_results.len());
+    debug!("\n📈 Results Summary:");
+    debug!("  - Correct (electronics): {}", electronics_count);
+    debug!("  - Wrong category: {}", wrong_category_results.len());
     
     if !wrong_category_results.is_empty() {
-        println!("❌ Wrong results found:");
+        error!("❌ Wrong results found:");
         for wrong in &wrong_category_results {
-            println!("    - {}", wrong);
+            debug!("    - {}", wrong);
         }
     }
     
     // Test 2: Filter by brand = 'Apple' (should return 1)
-    println!("\n🧪 Test 2: Filter by brand = 'Apple'");
+    debug!("\n🧪 Test 2: Filter by brand = 'Apple'");
     
     let search_request = VectorSearchRequest {
         collection_id: collection_name.to_string(),
@@ -313,11 +314,11 @@ async fn test_viper_metadata_filtering() -> anyhow::Result<()> {
     let search_results = if let Some(ResultPayload::CompactResults(ref compact)) = search_response.get_ref().result_payload {
         &compact.results
     } else {
-        println!("⚠️  No compact results found");
+        warn!("⚠️  No compact results found");
         return Ok(());
     };
     
-    println!("📊 Found {} results (expected: 1)", search_results.len());
+    info!("📊 Found {} results (expected: 1)", search_results.len());
     
     let mut apple_count = 0;
     let mut wrong_brand_results = Vec::new();
@@ -337,7 +338,7 @@ async fn test_viper_metadata_filtering() -> anyhow::Result<()> {
         
         let id = result.id.as_ref().map(|s| s.as_str()).unwrap_or("?");
         
-        println!("  - ID: {}, Brand: {}", id, brand_value);
+        debug!("  - ID: {}, Brand: {}", id, brand_value);
         
         if brand_value == "Apple" {
             apple_count += 1;
@@ -346,14 +347,14 @@ async fn test_viper_metadata_filtering() -> anyhow::Result<()> {
         }
     }
     
-    println!("\n📈 Results Summary:");
-    println!("  - Correct (Apple): {}", apple_count);
-    println!("  - Wrong brand: {}", wrong_brand_results.len());
+    debug!("\n📈 Results Summary:");
+    debug!("  - Correct (Apple): {}", apple_count);
+    debug!("  - Wrong brand: {}", wrong_brand_results.len());
     
     if !wrong_brand_results.is_empty() {
-        println!("❌ Wrong results found:");
+        error!("❌ Wrong results found:");
         for wrong in &wrong_brand_results {
-            println!("    - {}", wrong);
+            debug!("    - {}", wrong);
         }
     }
     
@@ -368,15 +369,15 @@ async fn test_viper_metadata_filtering() -> anyhow::Result<()> {
     })).await?;
     
     // Report results
-    println!("\n🔍 DIAGNOSIS COMPLETE:");
-    println!("Electronics filter: {} correct, {} wrong", electronics_count, wrong_category_results.len());
-    println!("Apple filter: {} correct, {} wrong", apple_count, wrong_brand_results.len());
+    info!("\n🔍 DIAGNOSIS COMPLETE:");
+    debug!("Electronics filter: {} correct, {} wrong", electronics_count, wrong_category_results.len());
+    debug!("Apple filter: {} correct, {} wrong", apple_count, wrong_brand_results.len());
     
     if wrong_category_results.is_empty() && wrong_brand_results.is_empty() {
-        println!("✅ VIPER metadata filtering is working correctly!");
+        info!("✅ VIPER metadata filtering is working correctly!");
     } else {
-        println!("❌ VIPER metadata filtering has issues - returning incorrect results");
-        println!("This confirms the P0 issue: VIPER metadata filters return incorrect results");
+        error!("❌ VIPER metadata filtering has issues - returning incorrect results");
+        debug!("This confirms the P0 issue: VIPER metadata filters return incorrect results");
     }
     
     Ok(())

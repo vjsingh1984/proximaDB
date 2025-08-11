@@ -1,7 +1,7 @@
 //! Real distance computation benchmarks
 
 use criterion::{black_box, criterion_group, criterion_main, Criterion, BenchmarkId};
-use proximadb::compute::distance::{create_distance_calculator, DistanceMetric};
+use proximadb::compute::distance_computation::{UnifiedDistanceCompute, DistanceMetric, DistanceMode};
 
 fn benchmark_distance_computation(c: &mut Criterion) {
     let dimensions = vec![128, 256, 512, 1024, 2048];
@@ -19,14 +19,17 @@ fn benchmark_distance_computation(c: &mut Criterion) {
             DistanceMetric::Euclidean,
             DistanceMetric::DotProduct,
         ] {
-            let calc = create_distance_calculator(metric);
+            let compute = UnifiedDistanceCompute::new(metric);
             
             group.bench_with_input(
                 BenchmarkId::new(format!("{:?}", metric), dim),
                 &(&a, &b),
                 |bencher, (a, b)| {
                     bencher.iter(|| {
-                        black_box(calc.distance(a, b))
+                        let result = compute.calculate_distance_with_mode(
+                            a, b, &metric, DistanceMode::Raw
+                        );
+                        black_box(result.raw_value)
                     });
                 },
             );
@@ -48,14 +51,19 @@ fn benchmark_batch_operations(c: &mut Criterion) {
             .collect();
         let vector_refs: Vec<&[f32]> = vectors.iter().map(|v| v.as_slice()).collect();
         
-        let calc = create_distance_calculator(DistanceMetric::Cosine);
+        let compute = UnifiedDistanceCompute::new(DistanceMetric::Cosine);
         
         group.bench_with_input(
             BenchmarkId::new("cosine_batch", batch_size),
             &(&query, &vector_refs),
             |bencher, (query, vectors)| {
                 bencher.iter(|| {
-                    black_box(calc.distance_batch(query, vectors))
+                    let results: Vec<f32> = vectors.iter().map(|v| {
+                        compute.calculate_distance_with_mode(
+                            query, v, &DistanceMetric::Cosine, DistanceMode::Raw
+                        ).raw_value
+                    }).collect();
+                    black_box(results)
                 });
             },
         );

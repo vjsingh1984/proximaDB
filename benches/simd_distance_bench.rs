@@ -8,9 +8,9 @@
 //! Benchmarks for SIMD-accelerated distance computation
 
 use criterion::{black_box, criterion_group, criterion_main, Criterion, BenchmarkId, Throughput};
-use proximadb::compute::distance::DistanceMetric;
-use proximadb::compute::unified_distance::UnifiedDistanceCompute;
+use proximadb::compute::distance_computation::{DistanceMetric, UnifiedDistanceCompute, DistanceMode};
 use rand::prelude::*;
+use tracing::{debug};
 
 /// Generate random vectors for benchmarking
 fn generate_random_vectors(count: usize, dimension: usize) -> Vec<Vec<f32>> {
@@ -127,8 +127,8 @@ fn benchmark_batch_processing(c: &mut Criterion) {
 fn benchmark_hardware_backends(c: &mut Criterion) {
     // Get hardware info
     let calculator = UnifiedDistanceCompute::default();
-    println!("\nHardware Backend:");
-    println!("  Using: {}", calculator.preferred_backend());
+    debug!("\nHardware Backend:");
+    debug!("  Using: {}", calculator.preferred_backend());
     
     let mut group = c.benchmark_group("hardware_backends");
     

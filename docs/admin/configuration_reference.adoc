@@ -1,0 +1,955 @@
+= ProximaDB Configuration Reference
+:toc: left
+:toclevels: 3
+:imagesdir: ../diagrams/images
+
+**Complete TOML configuration reference with all supported sections and parameters.**
+
+[NOTE]
+====
+This reference documents all configuration options supported by ProximaDB v0.1.2. Invalid or unsupported configuration sections will be ignored during server startup.
+====
+
+== Configuration Architecture
+
+ProximaDB uses a **hierarchical configuration system** that merges:
+
+1. **Default values** (hardcoded in Config::default())
+2. **TOML configuration file** (user-specified)
+3. **Environment variables** (overrides)
+4. **CLI arguments** (highest priority)
+
+=== Configuration Loading Process
+
+```
+TOML File → Merge with Defaults → Environment Override → CLI Override → Final Config
+```
+
+== Core Configuration Sections
+
+=== [server] - Server Configuration
+
+Basic server settings and identity configuration.
+
+```toml
+[server]
+# Node identifier for clustering (default: "proximadb-node-1")
+node_id = "proximadb-node-1"
+
+# Server bind address (default: "0.0.0.0") 
+bind_address = "0.0.0.0"
+
+# Primary server port (default: 5678)
+port = 5678
+
+# Base data directory path (default: "/data/proximadb/1")
+data_dir = "./data"
+```
+
+**Parameters**:
+
+[cols="2,1,1,3", options="header"]
+|===
+| Parameter | Type | Default | Description
+
+| `node_id`
+| String
+| `"proximadb-node-1"`
+| Unique identifier for this database instance
+
+| `bind_address` 
+| String
+| `"0.0.0.0"`
+| IP address to bind server (0.0.0.0 = all interfaces)
+
+| `port`
+| u16
+| 5678
+| Primary server port (used by network layer)
+
+| `data_dir`
+| Path
+| `"/data/proximadb/1"`
+| Base directory for all database files
+|===
+
+=== [api] - API Server Configuration
+
+REST and gRPC API server settings including ports and timeouts.
+
+```toml
+[api]
+# Standard port configuration
+rest_port = 5678                # REST API server port (default: 5678)
+grpc_port = 5679                # gRPC server port (default: 5679)
+
+# Request configuration
+max_request_size_mb = 64        # Maximum request size in MB
+timeout_seconds = 30            # Request timeout in seconds
+enable_tls = false              # Enable TLS encryption
+
+# Protocol compression (all defaults false)
+rest_compression = false        # REST API compression  
+grpc_compression = false        # gRPC compression
+compression_algorithm = "gzip"  # Compression algorithm
+compression_level = 6           # Compression level
+```
+
+**Parameters**:
+
+[cols="2,1,1,3", options="header"]
+|===
+| Parameter | Type | Default | Description
+
+| `grpc_port`
+| u16
+| 5679
+| Port for gRPC API server
+
+| `rest_port`
+| u16  
+| 5678
+| Port for REST API server
+
+| `max_request_size_mb`
+| u64
+| 64
+| Maximum request payload size (bulk operations)
+
+| `timeout_seconds`
+| u64
+| 30
+| API request timeout
+
+| `enable_tls`
+| bool
+| false
+| Enable TLS encryption for APIs
+
+| `rest_compression`
+| bool
+| false
+| Enable compression for REST API responses
+
+| `grpc_compression`
+| bool
+| false
+| Enable compression for gRPC responses
+
+| `compression_algorithm`
+| String
+| `"gzip"`
+| Compression algorithm: gzip, deflate, br (brotli)
+
+| `compression_level`
+| i32
+| 6
+| Compression level (1-9 for gzip, 1-11 for brotli)
+|===
+
+[NOTE]
+====
+**Protocol Compression**: Fully configurable via TOML with clear, intuitive naming:
+
+```toml
+[api]
+rest_compression = false        # REST API compression (default: false)
+grpc_compression = false        # gRPC compression (default: false) 
+compression_algorithm = "gzip"  # Algorithm: gzip, deflate, br (default: gzip)
+compression_level = 6           # Compression level 1-9 for gzip (default: 6)
+```
+
+**All Defaults False**: As requested, all compression defaults are set to false for optimal performance testing and troubleshooting.
+====
+
+=== [storage] - Storage System Configuration
+
+Core storage engine configuration including locations, caching, and engine-specific settings.
+
+```toml
+[storage]
+# Metadata storage URL
+metadata_url = "file://./metadata"
+
+# Enable memory-mapped I/O (default: true)
+mmap_enabled = true
+
+# Global cache size in MB (default: 2048)
+cache_size_mb = 1024
+
+# Storage locations for data distribution
+[[storage.storage_locations]]
+url = "file://./data"
+weight = 1
+tags = ["local", "demo"]
+
+# Assignment strategy configuration
+[storage.assignment_config]
+strategy = "hash"        # "hash", "round-robin", "weighted"
+affinity = true          # Keep collection data together
+
+# Write-ahead log configuration  
+[storage.wal_config]
+write_buffer_size_mb = 8192
+memory_flush_size_bytes = 16777216
+vector_count_threshold = 100000
+memtable_type = "BTree"
+sync_mode = "PerBatch"
+write_buffer_directory = "./data/write_buffer"
+enable_wal = true
+
+# Bloom filter optimization
+[storage.bloom_filter_config]
+bits_per_key = 12
+hash_functions = 4
+enable_caching = true
+
+# Filesystem optimization
+[storage.filesystem_config]
+enable_write_strategy_cache = true
+temp_strategy = "SameDirectory"
+
+[storage.filesystem_config.atomic_config]
+enable_local_atomic = true
+enable_object_store_atomic = true
+cleanup_temp_on_startup = true
+```
+
+**Key Parameters**:
+
+[cols="2,1,1,3", options="header"]
+|===
+| Parameter | Type | Default | Description
+
+| `metadata_url`
+| String
+| `"file:///data/metadata"`
+| URL for metadata storage (supports file://, s3://, etc.)
+
+| `mmap_enabled`
+| bool
+| true
+| Enable memory-mapped file I/O
+
+| `cache_size_mb`
+| u64
+| 2048
+| Global cache size across all engines
+
+| `storage_locations[].url`
+| String
+| Required
+| Storage URL (file://, s3://, gcs://, adls://)
+
+| `storage_locations[].weight`
+| u32
+| 1
+| Weight for load balancing
+
+| `assignment_config.strategy`
+| String
+| `"hash"`
+| Distribution strategy: hash, round-robin, weighted
+
+| `assignment_config.affinity`
+| bool
+| true
+| Keep collection data on same storage location
+|===
+
+=== [storage.sst_config] - SST Engine Configuration
+
+Row-based storage engine optimized for OLTP workloads.
+
+```toml
+[storage.sst_config]
+# SST tree levels (default: 7)
+level_count = 7
+
+# Files before compaction triggers (default: 5)
+compaction_threshold = 5
+
+# Block size in KB - BACKWARD COMPATIBLE (default: 8192KB = 8MB)
+block_size_kb = 8192
+
+# Compaction strategy (default: "leveled")
+compaction_strategy = "leveled"
+
+# Compression algorithm (default: "zstd")
+compression = "zstd"
+
+# Compression level 1-22 for ZSTD (default: 3)
+compression_level = 3
+
+# Cache size for SST blocks in MB (default: 128)
+cache_size_mb = 128
+
+# Maximum files per level (default: 10)
+max_files_per_level = 10
+
+# Size multiplier between levels (default: 10.0)
+level_size_multiplier = 10.0
+
+# Maximum number of levels (default: 7)
+max_levels = 7
+
+# Background compaction threads (default: 4)  
+background_thread_count = 4
+
+# Data directory for SST files (default: "./sst_data")
+data_directory = "./sst_data"
+
+# Enable memory-mapped I/O (default: true)
+mmap_enabled = true
+
+# Enable prefetching (default: true)
+prefetch_enabled = true
+
+# Prefetch size in KB (default: 64)
+prefetch_size_kb = 64
+
+# Bloom filter configuration for SST files
+[storage.sst_config.bloom_filter_config] 
+bits_per_key = 12
+hash_functions = 4
+enable_caching = true
+
+# Decompression cache configuration
+[storage.sst_config.decompression_cache]
+max_size_mb = 512
+min_size_mb = 64
+max_cap_mb = 4096
+enable_prefetch = true
+prefetch_threshold = 3
+ttl_seconds = 0
+invalidation_check_interval_seconds = 60
+```
+
+[TIP]
+====
+**Block Size Performance Guidelines**:
+
+- **256-512KB**: Memory-constrained environments
+- **1MB**: Optimal for EC2 GP2/GP3 (default for most workloads)
+- **4-8MB**: High-throughput workloads with ample memory
+- **8MB**: Optimal for ZSTD compression (current default)
+
+Block size changes are **backward compatible** due to per-block length prefixes.
+====
+
+=== [storage.viper_config] - VIPER Engine Configuration
+
+Columnar storage engine optimized for analytics workloads.
+
+```toml
+[storage.viper_config]
+# Parquet row group size (default: 100000)
+row_group_size = 100000
+
+# Compression for Parquet files (default: "zstd")
+compression = "zstd"
+
+# Compression level 1-22 for ZSTD (default: 3)  
+compression_level = 3
+
+# Enable Parquet statistics (default: true)
+enable_statistics = true
+
+# Data directory for VIPER files (default: "./data/viper_data")
+data_directory = "./viper_data"
+
+# Cache size for columnar data in MB (default: 512)
+cache_size_mb = 512
+```
+
+**Performance Notes**:
+
+[cols="2,1,3", options="header"]
+|===
+| Parameter | Recommended | Use Case
+
+| `row_group_size`
+| 50,000
+| Demo/small datasets
+
+| `row_group_size` 
+| 100,000+
+| Production analytics
+
+| `compression`
+| `"zstd"`
+| Balanced performance
+
+| `compression`
+| `"snappy"`
+| Low-latency workloads
+|===
+
+=== [hardware] - Hardware Acceleration
+
+Hardware detection and acceleration configuration.
+
+```toml
+[hardware]
+# Enable automatic hardware detection (default: true)
+enable_detection = true
+
+# Enable GPU acceleration if detected (default: true)
+enable_gpu_acceleration = true
+
+# Enable SIMD acceleration if detected (default: true)
+enable_simd = true
+
+# Enable AVX-512 if available (default: true)
+enable_avx512 = true
+
+# Enable GPU for SQL parsing (default: true)
+enable_gpu_parsing = true
+
+# Enable GPU for distance calculations (default: true)
+enable_gpu_distance = true
+
+# Minimum vector size to use GPU (default: 64)
+gpu_min_vector_size = 64
+
+# Minimum batch size to use GPU (default: 100)
+gpu_min_batch_size = 100
+```
+
+[WARNING]
+====
+**Container Deployments**: Consider disabling GPU acceleration in containerized environments:
+
+```toml
+[hardware]
+enable_gpu_acceleration = false
+enable_gpu_parsing = false  
+enable_gpu_distance = false
+```
+====
+
+=== [network] - Network Layer Configuration
+
+Advanced network layer configuration for protocols and middleware.
+
+```toml
+[network]
+# Server bind address (default: "0.0.0.0")
+bind_address = "0.0.0.0"
+
+# Primary network port (default: 5678)
+port = 5678
+
+# Enable gRPC server (default: true)
+enable_grpc = true
+
+# Enable REST server (default: true)  
+enable_rest = true
+
+# Enable web dashboard (default: true)
+enable_dashboard = true
+
+# Request timeout in seconds (default: 30)
+request_timeout_secs = 30
+
+# Maximum request size in bytes (default: 67108864 = 64MB)
+max_request_size = 67108864
+
+# Keep-alive timeout in seconds (default: 60)
+keep_alive_timeout_secs = 60
+
+# TCP nodelay setting (default: true)
+tcp_nodelay = true
+
+# Authentication configuration
+[network.auth]
+enabled = false
+jwt_secret = null
+jwt_expiration_secs = 3600
+api_keys = []
+
+# Rate limiting configuration
+[network.rate_limit]
+enabled = false
+```
+
+=== [tls] - TLS/SSL Configuration
+
+TLS encryption configuration for secure connections.
+
+```toml
+[tls]
+# TLS certificate file path
+cert_file = "certs/proximadb-cert.pem"
+
+# TLS private key file path
+key_file = "certs/proximadb-key.pem" 
+
+# Enable TLS (auto-detected from cert/key availability)
+enabled = true
+
+# Interface to bind TLS (default: "0.0.0.0")
+bind_interface = "0.0.0.0"
+```
+
+=== [consensus] - Clustering Configuration
+
+Clustering and consensus configuration (for future multi-node deployments).
+
+```toml
+[consensus]
+# Node ID for clustering (default: 1)
+node_id = 1
+
+# List of cluster peer addresses
+cluster_peers = []
+
+# Election timeout in milliseconds (default: 5000)
+election_timeout_ms = 5000
+
+# Heartbeat interval in milliseconds (default: 1000)
+heartbeat_interval_ms = 1000
+
+# Snapshot threshold (default: 1000)
+snapshot_threshold = 1000
+```
+
+[NOTE]
+====
+**Clustering Status**: Multi-node clustering is planned for future releases. Currently, ProximaDB operates in single-node mode.
+====
+
+=== [monitoring] - Metrics and Monitoring
+
+Comprehensive monitoring, metrics, and observability configuration.
+
+```toml
+[monitoring]
+# Enable metrics collection (default: true)
+metrics_enabled = true
+
+# Log level: error, warn, info, debug, trace (default: "info")
+log_level = "info"
+```
+
+==== Log Level Configuration
+
+ProximaDB provides **flexible log level control** with multiple override mechanisms:
+
+**Configuration Priority** (highest to lowest):
+1. **Environment Variable**: `RUST_LOG=debug`
+2. **CLI Argument**: `--log-level debug`  
+3. **TOML Configuration**: `log_level = "info"`
+4. **Default**: `info` (production-ready)
+
+**Available Log Levels**:
+[cols="1,1,3", options="header"]
+|===
+| Level | Performance | Use Case
+
+| `error`
+| Fastest
+| Production critical errors only
+
+| `warn`
+| Very Fast
+| Production warnings + errors
+
+| `info`
+| **Default**
+| **Production standard** - startup, key events
+
+| `debug`
+| Slower
+| Development, troubleshooting
+
+| `trace`
+| Slowest
+| Deep debugging, fine-grained tracing
+|===
+
+==== Runtime vs Compile-time Optimization
+
+**Runtime Configuration** (TOML + Environment):
+```bash
+# Environment variable (highest priority)
+RUST_LOG=debug ./target/release/proximadb-server
+
+# CLI argument
+./target/release/proximadb-server --log-level debug
+
+# TOML configuration
+[monitoring]
+log_level = "debug"
+```
+
+**Granular Logging Control**:
+```bash
+# Module-specific levels
+RUST_LOG="proximadb=debug,tower=warn,hyper=error"
+
+# Component-specific debugging  
+RUST_LOG="proximadb::storage=trace,proximadb::network=debug"
+
+# Production with selective debugging
+RUST_LOG="info,proximadb::storage::engines::sst=debug"
+```
+
+[IMPORTANT]
+====
+**Production Performance**: 
+- Use `info` level for production (default)
+- `debug` and `trace` levels significantly impact performance
+- Log filtering happens at **runtime** - zero overhead when disabled
+- All debug!/trace! statements are compiled in but efficiently filtered
+====
+
+==== Log Output Configuration
+
+**File Logging**:
+```toml  
+[logging]  
+level = "info"                          # Overrides monitoring.log_level
+file_path = "./log/proximadb.log"       # Log file location
+max_files = 5                           # Rotation count
+max_file_size_mb = 100                  # Size before rotation
+```
+
+**Console + File Output**:
+- Console: Colored, with source locations
+- File: Plain text, timestamped, rotated daily
+- Both respect the same log level configuration
+
+**Metrics Endpoint**: When enabled, metrics are available at `http://server:port/metrics` in Prometheus format.
+
+== Environment Variables
+
+ProximaDB supports environment variable overrides for sensitive configuration:
+
+=== Cloud Authentication
+
+**AWS**:
+- `AWS_ACCESS_KEY_ID` - AWS Access Key
+- `AWS_SECRET_ACCESS_KEY` - AWS Secret Key  
+- `AWS_PROFILE` - AWS Profile name
+
+**Azure**:
+- `AZURE_STORAGE_ACCOUNT` - Storage account name
+- `AZURE_STORAGE_ACCESS_KEY` - Storage access key
+- `AZURE_CLIENT_ID` - Service principal client ID
+
+**Google Cloud**:
+- `GOOGLE_APPLICATION_CREDENTIALS` - Service account JSON file path
+
+=== Logging and Debug Configuration
+
+**Log Level Control** (highest priority):
+- `RUST_LOG` - Override all log levels (e.g., `RUST_LOG=debug`)
+- `RUST_LOG` - Granular control (e.g., `RUST_LOG=proximadb=debug,tower=warn`)
+
+**Debugging Examples**:
+```bash
+# Production with storage debugging
+export RUST_LOG="info,proximadb::storage=debug"
+
+# Development debugging
+export RUST_LOG="debug"
+
+# Trace specific component
+export RUST_LOG="proximadb::storage::engines::sst=trace"
+
+# Network troubleshooting
+export RUST_LOG="proximadb::network=debug,tower_http=debug"
+```
+
+=== Configuration Overrides
+
+**Server Configuration**:
+- `PROXIMADB_NODE_ID` - Override server.node_id
+- `PROXIMADB_DATA_DIR` - Override server.data_dir
+- `PROXIMADB_PORT` - Override server.port
+
+**API Configuration**:
+- `PROXIMADB_GRPC_PORT` - Override api.grpc_port
+- `PROXIMADB_REST_PORT` - Override api.rest_port
+
+== Configuration Validation
+
+ProximaDB performs extensive configuration validation during startup:
+
+=== Validation Checks
+
+1. **Path Resolution**: Relative paths converted to absolute
+2. **Directory Creation**: Required directories created automatically  
+3. **TLS Certificate Validation**: Certificate files verified if TLS enabled
+4. **Storage URL Validation**: Storage URLs checked for accessibility
+5. **Hardware Compatibility**: Hardware features detected and validated
+6. **Memory Allocation**: Cache sizes validated against available memory
+
+=== Error Handling
+
+**Configuration Errors**:
+- Invalid TOML syntax → Server fails to start with parsing error
+- Missing required files → Server creates defaults where possible
+- Invalid parameters → Server uses defaults and logs warnings
+- Resource constraints → Server adjusts parameters and warns
+
+== Performance Tuning Guidelines
+
+=== High-Performance Configuration
+
+```toml
+# Optimized for high-throughput workloads
+[storage]
+cache_size_mb = 4096
+
+[storage.sst_config] 
+block_size_kb = 8192
+background_thread_count = 8
+cache_size_mb = 1024
+
+[storage.sst_config.decompression_cache]
+max_size_mb = 2048
+enable_prefetch = true
+
+[storage.viper_config]
+row_group_size = 100000
+cache_size_mb = 1024
+
+[hardware]
+enable_gpu_acceleration = true
+enable_simd = true
+```
+
+=== Memory-Constrained Configuration
+
+```toml  
+# Optimized for limited memory environments
+[storage]
+cache_size_mb = 512
+
+[storage.sst_config]
+block_size_kb = 256
+cache_size_mb = 128
+
+[storage.sst_config.decompression_cache] 
+max_size_mb = 256
+min_size_mb = 32
+
+[storage.viper_config]
+row_group_size = 25000
+cache_size_mb = 128
+```
+
+=== Development Configuration
+
+```toml
+# Optimized for development and debugging
+[api]
+timeout_seconds = 300  # Longer timeouts for debugging
+
+[monitoring]
+log_level = "debug"
+
+[hardware] 
+enable_gpu_acceleration = false  # Avoid GPU issues in dev
+```
+
+== Non-Configurable Parameters
+
+Some performance-critical parameters are **hardcoded** in the source code and **cannot** be configured via TOML. These may be exposed in future releases:
+
+=== Protocol Compression (Fully Configurable)
+
+**Clean Configuration**: Protocol compression is fully configurable via TOML with intuitive naming:
+
+```toml
+[api]
+rest_compression = false        # REST API compression
+grpc_compression = false        # gRPC compression  
+compression_algorithm = "gzip"  # Compression algorithm
+compression_level = 6           # Compression level
+```
+
+**Configuration Benefits**:
+1. **Performance Testing**: All defaults false for pure performance measurement
+2. **Bandwidth Optimization**: Enable compression for high-latency networks
+3. **CPU Trade-offs**: User can choose compression vs CPU usage based on workload
+4. **Debugging**: Disabled by default for easier troubleshooting
+5. **Algorithm Choice**: Support for gzip, deflate, and brotli compression
+6. **Level Control**: Fine-grained compression level control
+
+**Port Standards**:
+- **REST**: Port 5678 (default, configurable via `rest_port`)
+- **gRPC**: Port 5679 (default, configurable via `grpc_port`)
+- **TLS**: Same ports 5678/5679 (TLS replaces non-TLS when enabled)
+
+=== Cache Distribution (Hardcoded)
+
+**Location**: Various cache modules
+
+```rust
+// Specialized cache memory allocation percentages
+VectorStore: 40%      // Vector data cache
+QueryCache: 30%       // Query result cache  
+BitmapFilterCache: 20% // Bloom filter cache
+IndexNodeCache: 10%   // Index structure cache
+```
+
+**Future Consideration**: Expose via `[storage.cache_config]` section:
+```toml
+[storage.cache_config]
+vector_cache_percent = 40
+query_cache_percent = 30
+bloom_filter_cache_percent = 20
+index_cache_percent = 10
+```
+
+=== Hardware Detection Thresholds (Hardcoded)
+
+**Location**: `/src/core/hardware_capabilities.rs`
+
+```rust
+// SIMD feature detection and thresholds
+AVX2_MIN_VECTOR_SIZE = 128
+AVX512_MIN_VECTOR_SIZE = 256
+GPU_BATCH_THRESHOLD = 1000
+```
+
+**Future Consideration**: Expose via `[hardware.thresholds]` section.
+
+=== Write Buffer Flush Thresholds (Hardcoded)
+
+**Location**: Various storage modules
+
+```rust
+// Collection-level flush triggers
+MAX_MEMORY_PERCENT = 0.8      // 80% memory usage
+FLUSH_CHECK_INTERVAL = 60     // 60 seconds
+BACKGROUND_COMPACTION_DELAY = 300  // 5 minutes
+```
+
+**Future Consideration**: Expose via `[storage.flush_policy]` section.
+
+== Configuration Examples
+
+=== Production Deployment
+
+```toml
+# production-config.toml
+[server]
+node_id = "proximadb-prod-1"
+bind_address = "0.0.0.0"  
+data_dir = "/data/proximadb"
+
+[api]
+grpc_port = 5679
+rest_port = 5678
+max_request_size_mb = 100
+timeout_seconds = 60
+enable_tls = true
+
+[storage]
+metadata_url = "s3://prod-bucket/metadata"
+mmap_enabled = true
+cache_size_mb = 8192
+
+[[storage.storage_locations]]
+url = "s3://prod-bucket/data/ssd1"
+weight = 2
+tags = ["ssd", "primary"]
+
+[[storage.storage_locations]]  
+url = "s3://archive-bucket/data/hdd1"
+weight = 1
+tags = ["hdd", "archive"]
+
+[storage.sst_config]
+block_size_kb = 8192
+compression = "zstd"
+compression_level = 3
+background_thread_count = 16
+
+[storage.viper_config]
+row_group_size = 100000
+compression = "zstd"
+cache_size_mb = 2048
+
+[hardware]
+enable_gpu_acceleration = true
+enable_simd = true
+gpu_min_batch_size = 500
+
+[tls]
+cert_file = "/etc/ssl/certs/proximadb.crt"
+key_file = "/etc/ssl/private/proximadb.key"
+enabled = true
+
+[monitoring]
+metrics_enabled = true
+log_level = "info"
+```
+
+=== Development Environment
+
+```toml
+# dev-config.toml
+[server]
+node_id = "proximadb-dev"
+data_dir = "./dev-data"
+
+[api] 
+grpc_port = 5679
+rest_port = 5678
+timeout_seconds = 300
+
+[storage]
+metadata_url = "file://./dev-metadata"
+cache_size_mb = 1024
+
+[[storage.storage_locations]]
+url = "file://./dev-data"
+weight = 1
+tags = ["local", "dev"]
+
+[storage.sst_config]
+block_size_kb = 1024
+compression = "lz4"  # Faster for development
+
+[hardware]
+enable_gpu_acceleration = false  # Avoid GPU issues in dev
+
+[monitoring]
+log_level = "debug"
+```
+
+== Migration Guide
+
+=== Upgrading Configuration Files
+
+When upgrading ProximaDB versions:
+
+1. **Backup** existing configuration
+2. **Validate** against new schema  
+3. **Test** with new defaults
+4. **Monitor** for deprecation warnings
+
+=== Deprecated Parameters
+
+**v0.1.1 → v0.1.2**:
+- `storage.bloom_filter_bits` → `storage.bloom_filter_config.bits_per_key`
+- `[rest]` and `[grpc]` sections → Removed (hardcoded in server builder)
+- `[performance]` and `[cache]` sections → Removed (invalid)
+
+== Related Documentation
+
+* link:../performance_reference.adoc[Performance & Benchmarking Guide] - Optimization strategies
+* link:../developer/architecture.adoc[Architecture Guide] - System design details
+* link:multi_disk_guide.adoc[Multi-Disk Setup] - Storage configuration for production
+* link:../enterprise_features.adoc[Enterprise Features] - Advanced configuration options
+
+---
+
+**Configuration Version**: v0.1.2  
+**Last Updated**: 2025-08-11  
+**Valid for ProximaDB**: v0.1.2+

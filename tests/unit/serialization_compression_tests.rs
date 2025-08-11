@@ -12,6 +12,7 @@ use proximadb::core::serialization::{
     VectorSerializationConfig, CompressionAlgorithm, VectorAnalysis,
     SerializationFormat, VectorHeader,
 };
+use tracing::{debug, error, info, warn};
 use proximadb::core::memory::{VectorMemoryPool, PoolConfig};
 use rand::{Rng, SeedableRng};
 use rand_chacha::ChaCha8Rng;
@@ -103,7 +104,7 @@ fn test_zstd_compression_effectiveness() {
         let serialized = config.serialize_vector(&vector).unwrap();
         let compression_ratio = config.compression_ratio(&vector).unwrap();
         
-        println!("{}: Original size: {} bytes, Compressed size: {} bytes, Ratio: {:.2}",
+        debug!("{}: Original size: {} bytes, Compressed size: {} bytes, Ratio: {:.2}",
             name, 
             vector.len() * 4, 
             serialized.len(),
@@ -242,7 +243,7 @@ fn test_compression_algorithm_comparison() {
         let _deserialized = config.deserialize_vector(&serialized).unwrap();
         let deserialize_time = start.elapsed();
         
-        println!("{}: Size: {} bytes, Serialize: {:?}, Deserialize: {:?}",
+        debug!("{}: Size: {} bytes, Serialize: {:?}, Deserialize: {:?}",
             name, serialized.len(), serialize_time, deserialize_time);
     }
 }
@@ -292,13 +293,13 @@ fn test_edge_cases() {
                     assert_eq!(empty, deserialized);
                 }
                 Err(e) => {
-                    println!("Empty vector deserialization failed (acceptable): {}", e);
+                    debug!("Empty vector deserialization failed (acceptable): {}", e);
                 }
             }
         }
         Err(e) => {
             // Empty vectors might not be supported by bytemuck - this is acceptable
-            println!("Empty vector serialization not supported, skipping: {}", e);
+            debug!("Empty vector serialization not supported, skipping: {}", e);
         }
     }
     
@@ -337,7 +338,7 @@ fn test_dimension_optimized_configs() {
         let serialized = config.serialize_vector(&vector).unwrap();
         let compression_ratio = serialized.len() as f32 / (vector.len() * 4) as f32;
         
-        println!("Dimension {}: Compression: {:?}, Threshold: {}, Ratio: {:.3}",
+        debug!("Dimension {}: Compression: {:?}, Threshold: {}, Ratio: {:.3}",
             dim, config.compression_algorithm, config.compression_threshold, compression_ratio);
         
         // Verify optimization choices
@@ -516,7 +517,7 @@ mod fixed_length_tests {
             "Size difference too large: fixed={}, dynamic={}, ratio={:.2}", 
             fixed_serialized.len(), dynamic_serialized.len(), size_ratio);
         
-        println!("Dynamic size: {} bytes, Fixed size: {} bytes",
+        debug!("Dynamic size: {} bytes, Fixed size: {} bytes",
             dynamic_serialized.len(), fixed_serialized.len());
     }
 }

@@ -37,6 +37,9 @@ struct Args {
 
     #[arg(long)]
     node_id: Option<String>,
+
+    #[arg(short, long, help = "Set log level (error, warn, info, debug, trace)")]
+    log_level: Option<String>,
 }
 
 /// Ensure all required directories exist based on configuration
@@ -119,18 +122,25 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         .with_ansi(false) // No ANSI colors in file
         .with_writer(non_blocking);
 
-    // Initialize subscriber with both console and file output - INFO level for production
+    // Parse arguments first to get config path
+    let args = Args::parse();
+
+    // Load configuration first to get log level from TOML
+    let mut config = ConfigLoader::load_with_defaults(args.config.to_string_lossy().as_ref())?;
+
+    // Initialize subscriber with both console and file output - fully configurable
+    // Priority: Environment variable > CLI args > TOML config > Default (INFO)
+    let log_level = std::env::var("RUST_LOG")
+        .or_else(|_| args.log_level.clone().ok_or(()))
+        .unwrap_or_else(|_| config.monitoring.log_level.clone());
+    
     tracing_subscriber::registry()
-        .with(EnvFilter::from_default_env().add_directive(tracing::Level::INFO.into()))
+        .with(EnvFilter::try_new(&log_level).unwrap_or_else(|_| EnvFilter::new("info")))
         .with(console_layer)
         .with(file_layer)
         .init();
-
-    // Parse arguments first
-    let args = Args::parse();
-
-    // Load configuration with default merging and cloud support
-    let mut config = ConfigLoader::load_with_defaults(args.config.to_string_lossy().as_ref())?;
+        
+    info!("🔧 ProximaDB starting with log level: {}", log_level);
 
     // Override with CLI arguments
     if let Some(data_dir) = args.data_dir {

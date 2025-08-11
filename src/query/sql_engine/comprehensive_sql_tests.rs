@@ -40,6 +40,7 @@ mod tests {
     };
     use crate::services::vector_operations_service::VectorOperationsService;
     use crate::proto::proximadb::{VectorRecord, MetadataItem};
+use tracing::{debug, error, info, warn};
 
     /// Test vector data structure for SQL testing
     #[derive(Debug, Clone)]
@@ -263,14 +264,14 @@ mod tests {
     /// Test hardware backend selection for SQL queries
     #[tokio::test]
     async fn test_sql_hardware_backend_selection() -> Result<()> {
-        println!("🚀 Testing SQL engine hardware backend selection...");
+        debug!("🚀 Testing SQL engine hardware backend selection...");
         
         let distance_compute = UnifiedDistanceCompute::default();
         let backend = distance_compute.preferred_backend();
         let available = distance_compute.available_backends();
         
-        println!("🎯 SQL queries will use backend: {}", backend);
-        println!("📋 Available backends: {:?}", available);
+        info!("🎯 SQL queries will use backend: {}", backend);
+        debug!("📋 Available backends: {:?}", available);
         
         // Test that SQL parser can handle vector similarity queries
         let test_query = "SELECT id FROM vectors ORDER BY VECTOR_SIMILARITY(vector, [0.5, 0.5], 'cosine') DESC LIMIT 5";
@@ -283,7 +284,7 @@ mod tests {
             match order_by.order_type {
                 OrderType::VectorSimilarity { metric, .. } => {
                     assert_eq!(metric.to_lowercase(), "cosine", "Should use cosine metric");
-                    println!("✅ SQL parser correctly extracted vector similarity function");
+                    info!("✅ SQL parser correctly extracted vector similarity function");
                 }
                 _ => panic!("Expected VectorSimilarity order type"),
             }
@@ -292,14 +293,14 @@ mod tests {
         
         assert_eq!(parsed_query.limit, Some(5), "Should have LIMIT 5");
         
-        println!("✅ SQL hardware backend selection test passed");
+        info!("✅ SQL hardware backend selection test passed");
         Ok(())
     }
 
     /// Test SQL query parsing for all distance metrics
     #[tokio::test]
     async fn test_sql_distance_metric_parsing() -> Result<()> {
-        println!("🧪 Testing SQL distance metric parsing...");
+        debug!("🧪 Testing SQL distance metric parsing...");
         
         let query_vector = "[0.1, 0.2, 0.3]";
         
@@ -318,7 +319,7 @@ mod tests {
                 query_vector, metric_name
             );
             
-            println!("🔍 Testing metric: {}", metric_name);
+            debug!("🔍 Testing metric: {}", metric_name);
             
             let mut parser = SqlParser::new(&sql_query);
             let parsed_query = parser.parse()?;
@@ -339,44 +340,44 @@ mod tests {
                         };
                         
                         assert_eq!(parsed_metric, expected_metric, "Metric should match");
-                        println!("  ✅ {} parsed correctly", metric_name);
+                        debug!("  ✅ {} parsed correctly", metric_name);
                     }
                     _ => panic!("Expected VectorSimilarity order type"),
                 }
             }
         }
         
-        println!("✅ SQL distance metric parsing test completed");
+        info!("✅ SQL distance metric parsing test completed");
         Ok(())
     }
 
     /// Comprehensive test for SQL queries with all operators and distance metrics
     #[tokio::test]
     async fn test_sql_comprehensive_operators_and_metrics() -> Result<()> {
-        println!("🎯 Testing SQL queries with ALL operators, metrics, and hardware acceleration...");
+        info!("🎯 Testing SQL queries with ALL operators, metrics, and hardware acceleration...");
         
         let distance_compute = UnifiedDistanceCompute::default();
         let backend = distance_compute.preferred_backend();
-        println!("🚀 SQL tests using backend: {}", backend);
+        debug!("🚀 SQL tests using backend: {}", backend);
         
         let test_cases = create_sql_test_cases();
         let test_vectors = create_sql_test_vectors();
         
-        println!("📊 Testing {} SQL cases with {} vectors", test_cases.len(), test_vectors.len());
+        debug!("📊 Testing {} SQL cases with {} vectors", test_cases.len(), test_vectors.len());
         
         let mut successful_tests = 0;
         let mut total_tests = 0;
         
         for test_case in test_cases.iter().take(12) { // Test subset for efficiency
             total_tests += 1;
-            println!("🧪 Testing SQL case: {}", test_case.name);
+            debug!("🧪 Testing SQL case: {}", test_case.name);
             
             // Parse the SQL query
             let mut parser = SqlParser::new(&test_case.sql_query);
             let parsed_query = match parser.parse() {
                 Ok(query) => query,
                 Err(e) => {
-                    println!("  ❌ Failed to parse query: {}", e);
+                    debug!("  ❌ Failed to parse query: {}", e);
                     continue;
                 }
             };
@@ -387,7 +388,7 @@ mod tests {
                 .unwrap_or(false);
             
             if !has_vector_similarity {
-                println!("  ⚠️ No vector similarity function found");
+                debug!("  ⚠️ No vector similarity function found");
                 continue;
             }
             
@@ -402,7 +403,7 @@ mod tests {
                         "hamming" => DistanceMetric::Hamming,
                         "jaccard" => DistanceMetric::Jaccard,
                         _ => {
-                            println!("  ❌ Unknown metric: {}", metric);
+                            debug!("  ❌ Unknown metric: {}", metric);
                             continue;
                         }
                     };
@@ -427,7 +428,7 @@ mod tests {
                         "Normalized score should be in [0, 1]");
                     assert_eq!(distance_result.metric, parsed_metric, "Metric should match");
                     
-                    println!("  🎯 Backend: {}, Metric: {:?}, Distance: {:.4}", 
+                    debug!("  🎯 Backend: {}, Metric: {:?}, Distance: {:.4}", 
                         backend, parsed_metric, distance_result.raw_value);
                 }
             }
@@ -437,26 +438,26 @@ mod tests {
                 .map(|where_clause| count_sql_operations(&where_clause.condition))
                 .unwrap_or(0);
             
-            println!("  📊 WHERE clause complexity: {} operations", where_complexity);
+            debug!("  📊 WHERE clause complexity: {} operations", where_complexity);
             
             successful_tests += 1;
-            println!("  ✅ {} passed", test_case.name);
+            debug!("  ✅ {} passed", test_case.name);
         }
         
         let success_rate = (successful_tests as f64) / (total_tests as f64) * 100.0;
-        println!("📊 SQL comprehensive test results: {}/{} passed ({:.1}%)", 
+        debug!("📊 SQL comprehensive test results: {}/{} passed ({:.1}%)", 
             successful_tests, total_tests, success_rate);
         
         assert!(success_rate >= 80.0, "SQL test success rate should be at least 80%");
         
-        println!("✅ SQL comprehensive operators and metrics test completed");
+        info!("✅ SQL comprehensive operators and metrics test completed");
         Ok(())
     }
 
     /// Test SQL queries with WAL unflushed vectors
     #[tokio::test]
     async fn test_sql_wal_unflushed_vectors() -> Result<()> {
-        println!("📝 Testing SQL queries with WAL unflushed vectors and hardware acceleration...");
+        debug!("📝 Testing SQL queries with WAL unflushed vectors and hardware acceleration...");
         
         let distance_compute = UnifiedDistanceCompute::default();
         let backend = distance_compute.preferred_backend();
@@ -466,8 +467,8 @@ mod tests {
         let wal_vectors: Vec<_> = test_vectors.iter().filter(|v| v.in_wal).collect();
         let flushed_vectors: Vec<_> = test_vectors.iter().filter(|v| !v.in_wal).collect();
         
-        println!("📊 WAL vectors: {}, Flushed vectors: {}", wal_vectors.len(), flushed_vectors.len());
-        println!("🎯 Using backend: {}", backend);
+        debug!("📊 WAL vectors: {}, Flushed vectors: {}", wal_vectors.len(), flushed_vectors.len());
+        info!("🎯 Using backend: {}", backend);
         
         // Test SQL queries that should include WAL vectors
         let wal_sql_tests = vec![
@@ -494,7 +495,7 @@ mod tests {
         ];
         
         for (test_name, sql_query, expected_metric) in wal_sql_tests {
-            println!("🧪 Testing WAL SQL case: {}", test_name);
+            debug!("🧪 Testing WAL SQL case: {}", test_name);
             
             // Parse the SQL query
             let mut parser = SqlParser::new(sql_query);
@@ -522,7 +523,7 @@ mod tests {
                             "WAL vector normalized score should be in [0, 1] for {}", test_name);
                         assert_eq!(distance_result.metric, expected_metric, "Metric should match");
                         
-                        println!("    WAL vector {}: distance={:.4}, normalized={:.4}",
+                        debug!("    WAL vector {}: distance={:.4}, normalized={:.4}",
                             wal_vec.id, distance_result.raw_value, distance_result.normalized_score);
                     }
                     
@@ -549,7 +550,7 @@ mod tests {
                             "Mixed batch normalized score {} should be in [0, 1] for {}", i, test_name);
                     }
                     
-                    println!("    ✅ Hardware acceleration verified for mixed WAL/flushed vectors");
+                    debug!("    ✅ Hardware acceleration verified for mixed WAL/flushed vectors");
                     
                     // Convert expected metric to string
                     let expected_metric_str = match expected_metric {
@@ -574,22 +575,22 @@ mod tests {
                 }
             }
             
-            println!("  ✅ {} passed", test_name);
+            debug!("  ✅ {} passed", test_name);
         }
         
-        println!("✅ SQL WAL unflushed vectors test completed");
+        info!("✅ SQL WAL unflushed vectors test completed");
         Ok(())
     }
 
     /// Test SQL query execution with different storage engines
     #[tokio::test]
     async fn test_sql_storage_engine_integration() -> Result<()> {
-        println!("🏗️ Testing SQL queries with different storage engines...");
+        debug!("🏗️ Testing SQL queries with different storage engines...");
         
         let distance_compute = UnifiedDistanceCompute::default();
         let backend = distance_compute.preferred_backend();
         
-        println!("🎯 Testing with hardware backend: {}", backend);
+        info!("🎯 Testing with hardware backend: {}", backend);
         
         // Test engines
         let test_engines = vec![
@@ -607,7 +608,7 @@ mod tests {
         for (engine_name, engine_type) in test_engines {
             for (metric_name, metric_enum) in &engine_test_metrics {
                 let test_name = format!("{}_{}", engine_name, metric_name);
-                println!("🧪 Testing {}", test_name);
+                debug!("🧪 Testing {}", test_name);
                 
                 // Create SQL query for this engine/metric combination
                 let sql_query = format!(
@@ -643,7 +644,7 @@ mod tests {
                 // For testing, we can show the hardware backend used
                 let backend = format!("{:?}", distance_compute.preferred_backend());
                 
-                println!("  🎯 {} engine: metric={:?}, distance={:.4}, backend={}", 
+                debug!("  🎯 {} engine: metric={:?}, distance={:.4}, backend={}", 
                     engine_name, metric_enum, distance_result.raw_value, backend);
                 
                 // Test query execution plan generation
@@ -674,28 +675,28 @@ mod tests {
                     assert_eq!(execution_plan.limit, 8, "Plan should use correct limit");
                     assert!(execution_plan.metadata_filter.is_some(), "Plan should include filters");
                     
-                    println!("    ✅ Execution plan generated successfully");
+                    debug!("    ✅ Execution plan generated successfully");
                 } else {
                     panic!("Expected plan to have vector search params");
                 }
                 
-                println!("  ✅ {} passed", test_name);
+                debug!("  ✅ {} passed", test_name);
             }
         }
         
-        println!("✅ SQL storage engine integration test completed");
+        info!("✅ SQL storage engine integration test completed");
         Ok(())
     }
 
     /// Test SQL performance with hardware acceleration
     #[tokio::test]
     async fn test_sql_performance_hardware_acceleration() -> Result<()> {
-        println!("⚡ Testing SQL performance with hardware acceleration...");
+        debug!("⚡ Testing SQL performance with hardware acceleration...");
         
         let distance_compute = UnifiedDistanceCompute::default();
         let backend = distance_compute.preferred_backend();
         
-        println!("🚀 Performance testing with backend: {}", backend);
+        debug!("🚀 Performance testing with backend: {}", backend);
         
         // Performance test cases with varying complexity
         let performance_tests = vec![
@@ -721,7 +722,7 @@ mod tests {
         ];
         
         for (test_name, sql_query, metric, expected_limit) in performance_tests {
-            println!("🧪 Performance test: {}", test_name);
+            debug!("🧪 Performance test: {}", test_name);
             
             // Parse query
             let parse_start = std::time::Instant::now();
@@ -760,18 +761,18 @@ mod tests {
             
             let vectors_per_sec = (expected_limit as f64) / compute_time.as_secs_f64();
             
-            println!("    📊 Parse: {:?}, Plan: {:?}, Compute: {:?}", 
+            debug!("    📊 Parse: {:?}, Plan: {:?}, Compute: {:?}", 
                 parse_time, plan_time, compute_time);
-            println!("    📈 Performance: {:.0} vectors/sec with {}", vectors_per_sec, backend);
+            debug!("    📈 Performance: {:.0} vectors/sec with {}", vectors_per_sec, backend);
             
             // Performance should be reasonable with hardware acceleration
             assert!(vectors_per_sec > 100.0, 
                 "Should achieve at least 100 vectors/sec with hardware acceleration");
             
-            println!("  ✅ {} passed: {:.0} vec/sec", test_name, vectors_per_sec);
+            debug!("  ✅ {} passed: {:.0} vec/sec", test_name, vectors_per_sec);
         }
         
-        println!("✅ SQL performance hardware acceleration test completed");
+        info!("✅ SQL performance hardware acceleration test completed");
         Ok(())
     }
 
@@ -797,12 +798,12 @@ mod tests {
     #[tokio::test]
     #[ignore = "SQL full integration test requires AND/OR/NOT operators which are not yet implemented"]
     async fn test_sql_full_integration() -> Result<()> {
-        println!("🎯 Running SQL full integration test...");
+        info!("🎯 Running SQL full integration test...");
         
         let distance_compute = UnifiedDistanceCompute::default();
         let backend = distance_compute.preferred_backend();
         
-        println!("🚀 Integration test using backend: {}", backend);
+        debug!("🚀 Integration test using backend: {}", backend);
         
         // Integration test matrix: 2 engines × 3 metrics × 3 operators = 18 combinations
         let engines = vec!["LSM", "VIPER"];
@@ -822,7 +823,7 @@ mod tests {
                     total_tests += 1;
                     let test_name = format!("SQL_{}_{:?}_{}", engine, metric_enum, operator);
                     
-                    println!("🧪 Testing combination: {}", test_name);
+                    debug!("🧪 Testing combination: {}", test_name);
                     
                     // Create SQL query for this combination
                     let sql_query = match *operator {
@@ -879,22 +880,22 @@ mod tests {
                     
                     if test_success {
                         passed_tests += 1;
-                        println!("  ✅ {} passed", test_name);
+                        debug!("  ✅ {} passed", test_name);
                     } else {
-                        println!("  ❌ {} failed", test_name);
+                        debug!("  ❌ {} failed", test_name);
                     }
                 }
             }
         }
         
         let success_rate = (passed_tests as f64) / (total_tests as f64) * 100.0;
-        println!("📊 SQL integration test results: {}/{} passed ({:.1}%)", 
+        debug!("📊 SQL integration test results: {}/{} passed ({:.1}%)", 
             passed_tests, total_tests, success_rate);
         
         // Require at least 85% success rate for SQL integration
         assert!(success_rate >= 85.0, "SQL integration test success rate should be at least 85%");
         
-        println!("✅ SQL full integration test completed successfully");
+        info!("✅ SQL full integration test completed successfully");
         Ok(())
     }
 }

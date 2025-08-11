@@ -4,6 +4,8 @@ use crate::storage::cache::traits::{BaseCache, CacheKey, CacheValue};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
+use anyhow::Result;
+use tracing::{debug, error, info, warn};
 
 /// Partitioned key for collection-aware storage
 #[derive(Debug, Clone, Hash, PartialEq, Eq, Serialize, Deserialize)]
@@ -23,8 +25,19 @@ impl CacheKey for PartitionedVectorKey {}
 
 impl CacheValue for VectorRecord {
     fn size_bytes(&self) -> usize {
-        // Estimate size: vector data + metadata
-        self.vector.len() * 4 + 256 // 4 bytes per f32 + metadata overhead
+        // Calculate actual size based on vector dimensions
+        // Each f32 is 4 bytes
+        let vector_size = self.vector.len() * 4;
+        
+        // Estimate metadata size (can't access private fields)
+        // Assume each metadata item is ~50 bytes on average
+        let metadata_size = self.metadata.len() * 50;
+        
+        // Add size of id string if present
+        let id_size = self.id.as_ref().map_or(0, |s| s.len());
+        
+        // Total: vector data + metadata + id + struct overhead
+        vector_size + metadata_size + id_size + 64
     }
 }
 
@@ -205,5 +218,176 @@ impl VectorStore {
             // Use regular cache
             BaseCache::invalidate(&self.base, &key.to_string()).await
         }
+    }
+}
+
+// ========================================================================================
+// SSTable Block Cache Operations - Extending VectorStore for SST Engine Integration
+// ========================================================================================
+
+/// Key for SSTable block caching
+#[derive(Debug, Clone, Hash, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SstBlockKey {
+    pub file_path: String,
+    pub block_offset: u64,
+    pub block_size: usize,
+}
+
+impl SstBlockKey {
+    pub fn new(file_path: String, block_offset: u64, block_size: usize) -> Self {
+        Self { file_path, block_offset, block_size }
+    }
+    
+    /// Convert to cache key string
+    pub fn to_cache_key(&self) -> String {
+        format!("sst_block_{}_{}", self.file_path, self.block_offset)
+    }
+}
+
+/// Compressed block data wrapper
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CompressedBlock {
+    pub data: Vec<u8>,
+    pub compression: CompressionType,
+    pub uncompressed_size: usize,
+    pub vector_count: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum CompressionType {
+    None,
+    Zstd,
+    Lz4,
+    Snappy,
+}
+
+impl VectorStore {
+    /// Cache an SSTable block as compressed data
+    pub async fn cache_compressed_block(
+        &self,
+        key: &SstBlockKey,
+        compressed_data: Vec<u8>,
+        compression: CompressionType,
+        uncompressed_size: usize,
+    ) -> Result<()> {
+        // For now, store as a special vector record with compressed data in metadata
+        // In production, would have a separate compressed block cache
+        let cache_key = key.to_cache_key();
+        
+        // Create a placeholder vector record that holds the compressed block
+        let block_record = VectorRecord {
+            id: Some(cache_key.clone()),
+            vector: vec![], // No vector data, just using as container
+            metadata: vec![
+                crate::proto::proximadb::MetadataItem {
+                    key: "compressed_block".to_string(),
+                    value: Some(crate::proto::proximadb::metadata_item::Value::StringValue(
+                        base64::encode(&compressed_data)
+                    )),
+                },
+                crate::proto::proximadb::MetadataItem {
+                    key: "compression_type".to_string(),
+                    value: Some(crate::proto::proximadb::metadata_item::Value::StringValue(
+                        format!("{:?}", compression)
+                    )),
+                },
+                crate::proto::proximadb::MetadataItem {
+                    key: "uncompressed_size".to_string(),
+                    value: Some(crate::proto::proximadb::metadata_item::Value::NumberValue(
+                        uncompressed_size as f64
+                    )),
+                },
+            ],
+            version: None,
+            timestamp: chrono::Utc::now().timestamp() as u32,
+            updated_at: None,
+            expires_at: None,
+            rank: None,
+            score: None,
+            distance: None,
+        };
+        
+        self.put(cache_key, block_record).await;
+        Ok(())
+    }
+    
+    /// Retrieve a compressed block from cache
+    pub async fn get_compressed_block(&self, key: &SstBlockKey) -> Option<CompressedBlock> {
+        let cache_key = key.to_cache_key();
+        let record = self.get(&cache_key).await?;
+        
+        // Extract compressed data from metadata
+        let mut compressed_data = None;
+        let mut compression_type = CompressionType::None;
+        let mut uncompressed_size = 0usize;
+        
+        for item in &record.metadata {
+            match item.key.as_str() {
+                "compressed_block" => {
+                    if let Some(crate::proto::proximadb::metadata_item::Value::StringValue(data)) = &item.value {
+                        compressed_data = base64::decode(data).ok();
+                    }
+                }
+                "compression_type" => {
+                    if let Some(crate::proto::proximadb::metadata_item::Value::StringValue(ctype)) = &item.value {
+                        compression_type = match ctype.as_str() {
+                            "Zstd" => CompressionType::Zstd,
+                            "Lz4" => CompressionType::Lz4,
+                            "Snappy" => CompressionType::Snappy,
+                            _ => CompressionType::None,
+                        };
+                    }
+                }
+                "uncompressed_size" => {
+                    if let Some(crate::proto::proximadb::metadata_item::Value::NumberValue(size)) = &item.value {
+                        uncompressed_size = *size as usize;
+                    }
+                }
+                _ => {}
+            }
+        }
+        
+        compressed_data.map(|data| CompressedBlock {
+            data,
+            compression: compression_type,
+            uncompressed_size,
+            vector_count: 0, // Would be extracted from block header
+        })
+    }
+    
+    /// Cache decoded vectors from an SSTable block
+    pub async fn cache_block_vectors(
+        &self,
+        key: &SstBlockKey,
+        vectors: Vec<VectorRecord>,
+    ) -> Result<()> {
+        // Store each vector with a composite key
+        for (idx, vector) in vectors.into_iter().enumerate() {
+            let vector_key = format!("{}_v{}", key.to_cache_key(), idx);
+            self.put(vector_key, vector).await;
+        }
+        Ok(())
+    }
+    
+    /// Get cached vectors from an SSTable block
+    pub async fn get_block_vectors(&self, key: &SstBlockKey, count: usize) -> Vec<VectorRecord> {
+        let mut vectors = Vec::with_capacity(count);
+        for idx in 0..count {
+            let vector_key = format!("{}_v{}", key.to_cache_key(), idx);
+            if let Some(vector) = self.get(&vector_key).await {
+                vectors.push(vector);
+            } else {
+                break; // Stop if we don't find a vector
+            }
+        }
+        vectors
+    }
+    
+    /// Invalidate all cached data for an SSTable file
+    pub async fn invalidate_sstable(&self, file_path: &str) -> Result<()> {
+        // In a real implementation, would track all keys for a file
+        // For now, this is a placeholder
+        tracing::debug!("Invalidating SSTable cache for: {}", file_path);
+        Ok(())
     }
 }

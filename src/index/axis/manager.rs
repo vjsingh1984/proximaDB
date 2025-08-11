@@ -10,6 +10,7 @@ use chrono::{DateTime, Utc};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
+use tracing::{debug, error, info, warn};
 
 use super::{
     AdaptiveIndexEngine, AxisClusteringEngine, AxisConfig, ClusteringConfig,
@@ -293,14 +294,14 @@ impl AxisManager {
                 estimated_improvement,
                 ..
             } => {
-                println!("AXIS: Initiating migration for collection {} from {} to {} indexes (estimated improvement: {:.2}%)",
+                debug!("AXIS: Initiating migration for collection {} from {} to {} indexes (estimated improvement: {:.2}%)",
                     collection_id, from.indexes.len(), to.indexes.len(), estimated_improvement * 100.0);
 
                 // Start migration
                 self.start_migration(collection_id, from, to).await?;
             }
             MigrationDecision::Stay { reason } => {
-                println!(
+                debug!(
                     "AXIS: Collection {} staying with current strategy: {}",
                     collection_id, reason
                 );
@@ -365,7 +366,7 @@ impl AxisManager {
                         + migration_result.duration_ms)
                         / metrics.total_migrations;
 
-                    println!(
+                    debug!(
                         "AXIS: Migration completed for collection {} in {}ms",
                         collection_id, migration_result.duration_ms
                     );
@@ -375,7 +376,7 @@ impl AxisManager {
                     metrics.total_migrations += 1;
                     metrics.failed_migrations += 1;
 
-                    eprintln!(
+                    error!(
                         "AXIS: Migration failed for collection {}: {}",
                         collection_id, e
                     );

@@ -1,6 +1,7 @@
 //! Test SSTable format compatibility between writer and reader
 
 use super::sst_test_config::{create_test_filesystem_config};
+use tracing::{debug, error, info, warn};
 
 use proximadb::storage::engines::sst::{
     sstable_writer::SstableWriter,
@@ -118,13 +119,13 @@ async fn test_sstable_format_inspection() {
     let fs = filesystem.get_filesystem("file:///").unwrap();
     let file_data = fs.read(sstable_path.to_str().unwrap()).await.unwrap();
     
-    println!("SSTable file size: {} bytes", file_data.len());
+    debug!("SSTable file size: {} bytes", file_data.len());
     
     // Parse header length
     let header_len = u32::from_le_bytes([
         file_data[0], file_data[1], file_data[2], file_data[3]
     ]);
-    println!("Header length: {} bytes", header_len);
+    debug!("Header length: {} bytes", header_len);
     
     // Check bloom filter offset and length
     let bloom_offset = 4 + header_len as usize;
@@ -135,7 +136,7 @@ async fn test_sstable_format_inspection() {
             file_data[bloom_offset + 2],
             file_data[bloom_offset + 3]
         ]);
-        println!("Bloom filter length: {} bytes at offset {}", bloom_len, bloom_offset);
+        debug!("Bloom filter length: {} bytes at offset {}", bloom_len, bloom_offset);
         
         let bloom_end = bloom_offset + 4 + bloom_len as usize;
         assert!(file_data.len() >= bloom_end, 
@@ -150,7 +151,7 @@ async fn test_sstable_format_inspection() {
                 file_data[bloom_end + 2],
                 file_data[bloom_end + 3]
             ]);
-            println!("Index length: {} bytes at offset {}", index_len, bloom_end);
+            debug!("Index length: {} bytes at offset {}", index_len, bloom_end);
         }
     }
     

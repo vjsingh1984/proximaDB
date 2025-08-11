@@ -154,3 +154,11 @@ impl<V: CacheValue> CacheEntry<V> {
             .unwrap_or_default()
     }
 }
+
+// Implement CacheValue for CacheEntry so it can be stored properly
+impl<V: CacheValue> CacheValue for CacheEntry<V> {
+    fn size_bytes(&self) -> usize {
+        // The size was already calculated when the entry was created
+        self.size_bytes + std::mem::size_of::<Self>()
+    }
+}

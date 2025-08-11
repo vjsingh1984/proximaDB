@@ -15,6 +15,7 @@ use url::Url;
 use super::builder::{DataStorageConfig, StorageLayoutStrategy, StorageSystemConfig};
 use super::persistence::filesystem::FilesystemConfig;
 use super::persistence::write_ahead_log::WALConfig;
+use tracing::{warn};
 //use super::wal::WalSystemConfig;
 
 /// Comprehensive configuration validator
@@ -309,7 +310,7 @@ impl ConfigValidator {
         let sys_info = sysinfo::System::new_all().total_memory();
         if sys_info < 1024 * 1024 * 1024 {
             // Less than 1GB
-            eprintln!("⚠️  Warning: System has less than 1GB RAM, performance may be impacted");
+            warn!("⚠️  Warning: System has less than 1GB RAM, performance may be impacted");
         }
 
         // Check available disk space for temp directories
@@ -323,10 +324,8 @@ impl ConfigValidator {
         // Check CPU count for thread configuration recommendations
         let cpu_count = num_cpus::get();
         if cpu_count < 2 {
-            eprintln!(
-                "⚠️  Warning: System has only {} CPU core, performance may be limited",
-                cpu_count
-            );
+            warn!("⚠️  Warning: System has only {} CPU core, performance may be limited",
+                cpu_count);
         }
 
         Ok(())

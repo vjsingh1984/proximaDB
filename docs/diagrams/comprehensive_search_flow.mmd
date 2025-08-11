@@ -17,13 +17,15 @@ sequenceDiagram
     Client->>VectorOpsService: search_vectors(collection_id, query, k, metric)
     
     rect rgb(240, 248, 255)
-        Note over VectorOpsService: Step 1: Query Planning & Optimization
+        Note over VectorOpsService: Step 1: Query Planning & Path Resolution
         VectorOpsService->>CollectionService: get_collection(collection_id)
-        CollectionService-->>VectorOpsService: Collection metadata & index config
+        CollectionService-->>VectorOpsService: Collection metadata & storage_assignment
+        
+        Note over VectorOpsService: Resolve data URLs from<br/>storage_assignment<br/>(No filesystem queries)
         
         VectorOpsService->>QueryPlanner: plan_search_query(params, collection_id)
         Note over QueryPlanner: Analyze query complexity<br/>Check index availability<br/>Determine search strategy
-        QueryPlanner-->>VectorOpsService: ExecutionPlan {<br/>  strategy: Index/Scan/Hybrid<br/>  two_stage: true/false<br/>  parallelism: level<br/>}
+        QueryPlanner-->>VectorOpsService: ExecutionPlan {<br/>  strategy: Index/Scan/Hybrid<br/>  two_stage: true/false<br/>  parallelism: level<br/>  data_urls: [paths]<br/>}
     end
     
     rect rgb(255, 248, 240)
@@ -45,7 +47,7 @@ sequenceDiagram
         Note over VectorOpsService: Step 3: Persistent Storage Search
         
         alt Collection Has Indexes (HNSW/IVF/PQ)
-            VectorOpsService->>AxisIndex: query(vector, k, filters)
+            VectorOpsService->>AxisIndex: query(vector, k, filters, data_urls)
             
             alt Product Quantization (PQ) Enabled
                 Note over AxisIndex: Stage 1: Search PQ codes<br/>(compressed representations)
@@ -62,7 +64,7 @@ sequenceDiagram
             AxisIndex-->>VectorOpsService: Indexed search results
         else No Indexes - Raw Storage Scan
             par Parallel Storage Search
-                VectorOpsService->>ViperEngine: search(query, k, filters)
+                VectorOpsService->>ViperEngine: search(query, k, filters, file_paths)
                 
                 alt Two-Stage Search Enabled (VIPER)
                     Note over ViperEngine: Stage 1: Search INT8/PQ columns
@@ -76,7 +78,7 @@ sequenceDiagram
                 
                 ViperEngine-->>VectorOpsService: VIPER results
             and
-                VectorOpsService->>SSTEngine: search(query, k, filters)
+                VectorOpsService->>SSTEngine: search(query, k, filters, file_paths)
                 
                 Note over SSTEngine: Three-stage filtering:<br/>1. Bloom filter (metadata)<br/>2. Zone map (ranges)<br/>3. Block scan
                 

@@ -560,7 +560,7 @@ mod tests {
         let dense_ratio = serializer.compression_ratio(&dense_vector).unwrap();
         let sparse_ratio = serializer.compression_ratio(&sparse_vector).unwrap();
         
-        println!("Dense ratio: {:.3}, Sparse ratio: {:.3}", dense_ratio, sparse_ratio);
+        debug!("Dense ratio: {:.3}, Sparse ratio: {:.3}", dense_ratio, sparse_ratio);
         
         assert!(sparse_ratio < dense_ratio, "Sparse should compress better");
     }

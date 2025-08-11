@@ -23,6 +23,7 @@ mod tests {
     use tokio::sync::{Mutex, RwLock};
     use tokio::time::{sleep, Duration};
     use anyhow::Result;
+use tracing::{debug, error, info, warn};
 
     /// Mock storage engine for integration testing
     #[derive(Debug, Clone)]
@@ -55,7 +56,7 @@ mod tests {
             
             self.operation_calls.lock().await.push(format!("flush:{}", collection_id));
             
-            println!("🧪 MockEngine: Flush called for collection {} with {} vectors", 
+            debug!("🧪 MockEngine: Flush called for collection {} with {} vectors", 
                      collection_id, params.vector_records.len());
             
             Ok(FlushResult {
@@ -77,7 +78,7 @@ mod tests {
             
             self.operation_calls.lock().await.push(format!("compact:{}", collection_id));
             
-            println!("🧪 MockEngine: Compaction called for collection {}", collection_id);
+            debug!("🧪 MockEngine: Compaction called for collection {}", collection_id);
             
             Ok(CompactionResult {
                 success: true,
@@ -114,6 +115,7 @@ mod tests {
         async fn search_vectors_unified(
             &self,
             _collection_id: &str,
+            _storage_url: &str,
             _query_vector: &[f32],
             _k: usize,
             _distance_metric: &crate::compute::distance_computation::DistanceMetric,
@@ -138,6 +140,13 @@ mod tests {
         Arc<MetricsUpdateService>,
         Arc<MetricsPersistenceLayer>
     )> {
+        create_test_metrics_components_with_cleanup(false).await
+    }
+    
+    async fn create_test_metrics_components_with_cleanup(cleanup: bool) -> Result<(
+        Arc<MetricsUpdateService>,
+        Arc<MetricsPersistenceLayer>
+    )> {
         let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
         
         let config = MetricsConfig {
@@ -153,8 +162,10 @@ mod tests {
             max_memory_mb: 512,
         };
         
-        // Clean up test directory
-        let _ = tokio::fs::remove_dir_all("/tmp/proximadb_integration_metrics_test").await;
+        // Clean up test directory only if requested
+        if cleanup {
+            let _ = tokio::fs::remove_dir_all("/tmp/proximadb_integration_metrics_test").await;
+        }
         
         let filesystem_config = Default::default();
         let filesystem_factory = Arc::new(FilesystemFactory::new(filesystem_config).await?);
@@ -201,7 +212,10 @@ mod tests {
     #[tokio::test]
     #[ignore]  // VectorOperationsService requires engines to be initialized
     async fn test_directvectorservice_metrics_integration() {
-        println!("🧪 TEST: VectorOperationsService metrics integration");
+        // Initialize hardware capabilities for testing
+        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+
+        debug!("🧪 TEST: VectorOperationsService metrics integration");
         
         let (metrics_updater, metrics_store) = create_test_metrics_components().await.unwrap();
         // VectorOperationsService constructor requires engines which are not available in this test
@@ -220,7 +234,7 @@ mod tests {
         
         // Create test vectors
         let test_vectors = create_test_vectors(100);
-        println!("📊 Simulating insert of {} vectors", test_vectors.len());
+        debug!("📊 Simulating insert of {} vectors", test_vectors.len());
         
         // Manually record insert metrics (simulating what VectorOperationsService would do)
         let insert_duration = insert_start.elapsed().as_micros() as f64;
@@ -260,23 +274,25 @@ mod tests {
         assert!(collection_metrics.avg_insert_latency_us > 0.0, "Insert latency should be recorded");
         assert!(collection_metrics.avg_search_latency_us > 0.0, "Search latency should be recorded");
         
-        println!("📊 VectorOperationsService metrics: {} inserts, {} searches", 
+        debug!("📊 VectorOperationsService metrics: {} inserts, {} searches", 
                collection_metrics.total_inserts, collection_metrics.total_searches);
         
-        println!("✅ VectorOperationsService metrics integration test passed");
+        info!("✅ VectorOperationsService metrics integration test passed");
         */
     }
 
     #[tokio::test]
     async fn test_flushcoordinator_metrics_integration() {
-        println!("🧪 TEST: FlushCoordinator metrics integration");
+        // Initialize hardware capabilities for testing
+        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+
+        debug!("🧪 TEST: FlushCoordinator metrics integration");
         
         let (metrics_updater, metrics_store) = create_test_metrics_components().await.unwrap();
         let mut flush_coordinator = WALFlushCoordinator::new();
         
         // Register metrics updater with FlushCoordinator
-        // TODO: Add set_metrics_updater to FlushCoordinator
-        // flush_coordinator.set_metrics_updater(metrics_updater.clone());
+        flush_coordinator.set_metrics_updater(metrics_updater.clone());
         
         // Create and register mock storage engine
         let mock_engine = Arc::new(MockStorageEngineWithMetrics::new("viper"));
@@ -316,15 +332,18 @@ mod tests {
         assert!(!engine_calls.is_empty(), "Storage engine should have been called");
         assert!(engine_calls.iter().any(|call| call.starts_with("flush:")));
         
-        println!("📊 FlushCoordinator metrics: {} flushes, last duration: {}ms", 
+        debug!("📊 FlushCoordinator metrics: {} flushes, last duration: {}ms", 
                collection_metrics.total_flushes, collection_metrics.last_flush_duration_ms);
         
-        println!("✅ FlushCoordinator metrics integration test passed");
+        info!("✅ FlushCoordinator metrics integration test passed");
     }
 
     #[tokio::test]
     async fn test_backgroundmanager_metrics_integration() {
-        println!("🧪 TEST: BackgroundManager metrics integration");
+        // Initialize hardware capabilities for testing
+        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+
+        debug!("🧪 TEST: BackgroundManager metrics integration");
         
         let (metrics_updater, metrics_store) = create_test_metrics_components().await.unwrap();
         
@@ -377,16 +396,19 @@ mod tests {
         assert!(!engine_calls.is_empty(), "Storage engine should have been called");
         assert!(engine_calls.iter().any(|call| call.starts_with("compact:")));
         
-        println!("📊 BackgroundManager metrics: {} compactions, last duration: {}ms", 
+        debug!("📊 BackgroundManager metrics: {} compactions, last duration: {}ms", 
                collection_metrics.total_compactions, collection_metrics.last_compaction_duration_ms);
         
-        println!("✅ BackgroundManager metrics integration test passed");
+        info!("✅ BackgroundManager metrics integration test passed");
     }
 
     #[tokio::test]
     #[ignore]  // VectorOperationsService requires engines to be initialized
     async fn test_end_to_end_metrics_collection() {
-        println!("🧪 TEST: End-to-end metrics collection across all components");
+        // Initialize hardware capabilities for testing
+        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+
+        debug!("🧪 TEST: End-to-end metrics collection across all components");
         
         let (metrics_updater, metrics_store) = create_test_metrics_components().await.unwrap();
         
@@ -491,22 +513,25 @@ mod tests {
         assert!(engine_calls.iter().any(|call| call.starts_with("flush:")), "Flush operation should have occurred");
         assert!(engine_calls.iter().any(|call| call.starts_with("compact:")), "Compaction operation should have occurred");
         
-        println!("📊 End-to-end metrics summary:");
-        println!("   📈 Inserts: {}, Searches: {}", collection_metrics.total_inserts, collection_metrics.total_searches);
-        println!("   💾 Flushes: {}, Compactions: {}", collection_metrics.total_flushes, collection_metrics.total_compactions);
-        println!("   ⏱️  Avg Insert: {:.1}µs, Avg Search: {:.1}µs", 
+        debug!("📊 End-to-end metrics summary:");
+        debug!("   📈 Inserts: {}, Searches: {}", collection_metrics.total_inserts, collection_metrics.total_searches);
+        debug!("   💾 Flushes: {}, Compactions: {}", collection_metrics.total_flushes, collection_metrics.total_compactions);
+        debug!("   ⏱️  Avg Insert: {:.1}µs, Avg Search: {:.1}µs", 
                collection_metrics.avg_insert_latency_us, collection_metrics.avg_search_latency_us);
-        println!("   🔧 Storage operations: {:?}", engine_calls);
+        debug!("   🔧 Storage operations: {:?}", engine_calls);
         
-        println!("✅ End-to-end metrics collection test passed");
+        info!("✅ End-to-end metrics collection test passed");
         */
     }
 
     #[tokio::test]
     async fn test_metrics_collection_with_multiple_collections() {
-        println!("🧪 TEST: Metrics collection with multiple collections");
+        // Initialize hardware capabilities for testing
+        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+
+        debug!("🧪 TEST: Metrics collection with multiple collections");
         
-        let (metrics_updater, metrics_store) = create_test_metrics_components().await.unwrap();
+        let (metrics_updater, metrics_store) = create_test_metrics_components_with_cleanup(true).await.unwrap();
         
         let collections = vec![
             "multi_collection_test_001",
@@ -516,8 +541,7 @@ mod tests {
         
         // Set up FlushCoordinator with metrics
         let mut flush_coordinator = WALFlushCoordinator::new();
-        // TODO: Add set_metrics_updater to FlushCoordinator
-        // flush_coordinator.set_metrics_updater(metrics_updater.clone());
+        flush_coordinator.set_metrics_updater(metrics_updater.clone());
         
         let mock_engine = Arc::new(MockStorageEngineWithMetrics::new("viper"));
         flush_coordinator.register_storage_engine("viper", mock_engine.clone()).await;
@@ -561,7 +585,7 @@ mod tests {
             assert!(collection_metrics.total_inserts > 0);
             assert!(collection_metrics.total_flushes > 0);
             
-            println!("📊 Collection '{}': {} inserts, {} flushes", 
+            debug!("📊 Collection '{}': {} inserts, {} flushes", 
                    collection_id, collection_metrics.total_inserts, collection_metrics.total_flushes);
         }
         
@@ -572,18 +596,21 @@ mod tests {
                    "Collection list should include {}", collection_id);
         }
         
-        println!("✅ Multiple collections metrics test passed");
+        info!("✅ Multiple collections metrics test passed");
     }
 
     #[tokio::test]
     async fn test_metrics_persistence_across_restarts() {
-        println!("🧪 TEST: Metrics persistence across component restarts");
+        // Initialize hardware capabilities for testing
+        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+
+        debug!("🧪 TEST: Metrics persistence across component restarts");
         
         let collection_id = "persistence_test_collection";
         
         // Phase 1: Create initial metrics store and record data
         {
-            let (metrics_updater, _) = create_test_metrics_components().await.unwrap();
+            let (metrics_updater, _) = create_test_metrics_components_with_cleanup(true).await.unwrap();
             
             let operation_update = OperationMetricsUpdate {
                 operation_type: "insert".to_string(),
@@ -609,10 +636,10 @@ mod tests {
             assert_eq!(collection_metrics.collection_id, collection_id);
             assert!(collection_metrics.total_inserts > 0, "Persisted insert count should be > 0");
             
-            println!("📊 Persisted metrics: {} inserts, updated at {}", 
+            debug!("📊 Persisted metrics: {} inserts, updated at {}", 
                    collection_metrics.total_inserts, collection_metrics.updated_at);
         }
         
-        println!("✅ Metrics persistence test passed");
+        info!("✅ Metrics persistence test passed");
     }
 }

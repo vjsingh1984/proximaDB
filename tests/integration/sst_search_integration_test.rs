@@ -9,11 +9,13 @@
 //! - No memtable (that's in VectorOperationsService)
 
 use proximadb::core::{VectorRecord, SstConfig};
+use tracing::{debug, error, info, warn};
 use proximadb::core::search::{FilterExpression, ComparisonOperator};
 use proximadb::proto::proximadb::MetadataItem;
-use proximadb::compute::distance::DistanceMetric;
-use proximadb::compute::distance_computation::{UnifiedDistanceCompute, HardwareBackend};
-use proximadb::storage::persistence::write_ahead_log::config::WriteBufferConfig;
+use proximadb::compute::distance_computation::DistanceMetric;
+use proximadb::compute::distance_computation::UnifiedDistanceCompute;
+use proximadb::core::hardware_capabilities::HardwareBackend;
+use proximadb::storage::persistence::write_ahead_log::config::WALConfig;
 use proximadb::services::VectorOperationsService;
 use proximadb::storage::engines::viper::ViperEngine;
 // ViperConfig no longer needed - using core config
@@ -33,8 +35,8 @@ mod common {
 use common::unique_collection_id;
 
 /// Helper to create test WAL configuration with small thresholds
-fn create_test_wal_config(base_path: &str) -> WriteBufferConfig {
-    let mut config = WriteBufferConfig::default();
+fn create_test_wal_config(base_path: &str) -> WALConfig {
+    let mut config = WALConfig::default();
     // Configure small flush threshold for testing
     config.performance.memory_flush_size_bytes = 1024 * 1024; // 1MB threshold
     config.performance.global_flush_threshold = 2 * 1024 * 1024; // 2MB global threshold
@@ -114,7 +116,7 @@ async fn test_lsm_search_with_flush() {
     ).await.unwrap();
     
     // Phase 1: Insert vectors (goes to WAL + memtable)
-    eprintln!("Phase 1: Inserting vectors to WAL + memtable");
+    debug!("Phase 1: Inserting vectors to WAL + memtable");
     
     let test_vectors = vec![
         ("vec1", vec![1.0, 0.0, 0.0], vec![("category", "A"), ("type", "primary")]),
@@ -154,14 +156,14 @@ async fn test_lsm_search_with_flush() {
         Arc::new(vectors_batch)
     ).await.unwrap();
     
-    eprintln!("Inserted {} vectors", result.entries_written);
+    debug!("Inserted {} vectors", result.entries_written);
     
     // Phase 2: Since VectorOperationsService defaults to VIPER, we'll directly flush to LSM
-    eprintln!("\nPhase 2: Directly flushing vectors to LSM SSTables");
+    debug!("\nPhase 2: Directly flushing vectors to LSM SSTables");
     
     // Get all vectors from debug method and convert to core VectorRecords
     let unflushed_proto_vectors = direct_service.debug_list_all_unflushed_vectors(collection_id).await.unwrap();
-    eprintln!("Found {} unflushed vectors", unflushed_proto_vectors.len());
+    debug!("Found {} unflushed vectors", unflushed_proto_vectors.len());
     
     // Convert proto VectorRecords to core VectorRecords for LSM
     let mut all_core_vectors = Vec::new();
@@ -182,7 +184,7 @@ async fn test_lsm_search_with_flush() {
         all_core_vectors.push(core_vec);
     }
     
-    eprintln!("Converted {} vectors to core format", all_core_vectors.len());
+    debug!("Converted {} vectors to core format", all_core_vectors.len());
     
     // Create flush parameters for LSM
     let flush_params = proximadb::storage::traits::FlushParameters {
@@ -197,11 +199,11 @@ async fn test_lsm_search_with_flush() {
     // Directly flush to LSM
     match lsm_engine.do_flush(&flush_params).await {
         Ok(result) => {
-            eprintln!("Direct LSM flush result: success={}, entries_flushed={}, files_created={}", 
+            debug!("Direct LSM flush result: success={}, entries_flushed={}, files_created={}", 
                 result.success, result.entries_flushed, result.files_created);
         }
         Err(e) => {
-            eprintln!("Direct LSM flush error: {:?}", e);
+            debug!("Direct LSM flush error: {:?}", e);
         }
     }
     
@@ -209,15 +211,15 @@ async fn test_lsm_search_with_flush() {
     tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
     
     // Phase 3: Search from LSM SSTables
-    eprintln!("\nPhase 3: Searching from LSM SSTables");
+    debug!("\nPhase 3: Searching from LSM SSTables");
     
     // Check where LSM engine expects to find SSTables
     let lsm_data_dir = &lsm_config.data_directory;
-    eprintln!("LSM data directory: {}", lsm_data_dir);
+    debug!("LSM data directory: {}", lsm_data_dir);
     
     // Get the actual storage URL from assignment service
     let storage_url = lsm_engine.get_collection_storage_url(collection_id).await.unwrap();
-    eprintln!("Collection storage URL from assignment: {}", storage_url);
+    debug!("Collection storage URL from assignment: {}", storage_url);
     
     // Check the actual storage location for SSTable files
     let actual_storage_path = storage_url.strip_prefix("file://").unwrap_or(&storage_url);
@@ -226,21 +228,23 @@ async fn test_lsm_search_with_flush() {
             .filter_map(|entry| entry.ok())
             .filter(|entry| entry.path().extension().map_or(false, |ext| ext == "sst"))
             .collect();
-        eprintln!("Found {} SSTable files in {}", sst_files.len(), actual_storage_path);
+        debug!("Found {} SSTable files in {}", sst_files.len(), actual_storage_path);
         for file in &sst_files {
-            eprintln!("  - {} (size: {} bytes)", 
+            debug!("  - {} (size: {} bytes)", 
                 file.file_name().to_string_lossy(),
                 file.metadata().map(|m| m.len()).unwrap_or(0)
             );
         }
     } else {
-        eprintln!("Could not read directory: {}", actual_storage_path);
+        debug!("Could not read directory: {}", actual_storage_path);
     }
     
     // Test 1: Basic search without filters
     let query = vec![1.0, 0.0, 0.0];
+    let storage_url = format!("file://{}/{}/data", base_path, collection_id);
     let results = lsm_engine.search_vectors_unified(
         collection_id,
+        &storage_url,
         &query,
         5,
         &DistanceMetric::Cosine,
@@ -249,7 +253,7 @@ async fn test_lsm_search_with_flush() {
         true,
     ).await.unwrap();
     
-    eprintln!("Search returned {} results", results.len());
+    debug!("Search returned {} results", results.len());
     assert!(!results.is_empty(), "Should find results from SSTables");
     
     // The closest vector should be vec1 [1.0, 0.0, 0.0]
@@ -265,6 +269,7 @@ async fn test_lsm_search_with_flush() {
     
     let filtered_results = lsm_engine.search_vectors_unified(
         collection_id,
+        &storage_url,
         &query,
         10,
         &DistanceMetric::Cosine,
@@ -273,7 +278,7 @@ async fn test_lsm_search_with_flush() {
         true,
     ).await.unwrap();
     
-    eprintln!("Filtered search returned {} results", filtered_results.len());
+    debug!("Filtered search returned {} results", filtered_results.len());
     
     // Should only return vectors with category=A
     for result in &filtered_results {
@@ -299,6 +304,7 @@ async fn test_lsm_search_with_flush() {
     
     let complex_results = lsm_engine.search_vectors_unified(
         collection_id,
+        &storage_url,
         &vec![0.5, 0.5, 0.0],
         10,
         &DistanceMetric::Euclidean,
@@ -313,7 +319,7 @@ async fn test_lsm_search_with_flush() {
         assert_eq!(result.metadata.get("type"), Some(&serde_json::Value::String("secondary".to_string())));
     }
     
-    eprintln!("✅ All LSM SSTable search tests passed!");
+    debug!("✅ All LSM SSTable search tests passed!");
 }
 
 #[tokio::test]
@@ -363,7 +369,7 @@ async fn test_lsm_compaction_and_search() {
     ).await.unwrap();
     
     // Insert multiple batches to create multiple SSTables
-    eprintln!("Creating multiple SSTables for compaction test");
+    debug!("Creating multiple SSTables for compaction test");
     
     for batch_num in 0..4 {
         let mut batch = Vec::new();
@@ -386,7 +392,7 @@ async fn test_lsm_compaction_and_search() {
             .await
             .unwrap();
         
-        eprintln!("Inserted batch {} with {} records", batch_num, batch.len());
+        debug!("Inserted batch {} with {} records", batch_num, batch.len());
         
         // Manually flush this batch to LSM to ensure SSTables are created
         let flush_params = proximadb::storage::traits::FlushParameters {
@@ -401,11 +407,11 @@ async fn test_lsm_compaction_and_search() {
         // Directly flush to LSM
         match lsm_engine.do_flush(&flush_params).await {
             Ok(result) => {
-                eprintln!("Batch {} LSM flush result: success={}, entries_flushed={}, files_created={}", 
+                debug!("Batch {} LSM flush result: success={}, entries_flushed={}, files_created={}", 
                     batch_num, result.success, result.entries_flushed, result.files_created);
             }
             Err(e) => {
-                eprintln!("Batch {} LSM flush error: {:?}", batch_num, e);
+                debug!("Batch {} LSM flush error: {:?}", batch_num, e);
             }
         }
         
@@ -416,16 +422,16 @@ async fn test_lsm_compaction_and_search() {
     // Check how many SSTable files were created
     let storage_url = lsm_engine.get_collection_storage_url(collection_id).await.unwrap();
     let storage_path = storage_url.strip_prefix("file://").unwrap_or(&storage_url);
-    eprintln!("Checking for SSTable files in: {}", storage_path);
+    debug!("Checking for SSTable files in: {}", storage_path);
     
     if let Ok(entries) = std::fs::read_dir(storage_path) {
         let sst_files: Vec<_> = entries
             .filter_map(|entry| entry.ok())
             .filter(|entry| entry.path().extension().map_or(false, |ext| ext == "sst"))
             .collect();
-        eprintln!("Found {} SSTable files before compaction:", sst_files.len());
+        debug!("Found {} SSTable files before compaction:", sst_files.len());
         for file in &sst_files {
-            eprintln!("  - {} (size: {} bytes)", 
+            debug!("  - {} (size: {} bytes)", 
                 file.file_name().to_string_lossy(),
                 file.metadata().map(|m| m.len()).unwrap_or(0)
             );
@@ -433,11 +439,11 @@ async fn test_lsm_compaction_and_search() {
     }
     
     // Wait for potential compaction
-    eprintln!("Waiting for potential automatic compaction...");
+    debug!("Waiting for potential automatic compaction...");
     tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
     
     // Verify search still works after compaction
-    eprintln!("\n=== Testing search after compaction ===");
+    debug!("\n=== Testing search after compaction ===");
     
     // First check the current SSTable situation
     if let Ok(entries) = std::fs::read_dir(&storage_path) {
@@ -445,12 +451,14 @@ async fn test_lsm_compaction_and_search() {
             .filter_map(|entry| entry.ok())
             .filter(|entry| entry.path().extension().map_or(false, |ext| ext == "sst"))
             .collect();
-        eprintln!("SSTable files after waiting: {}", sst_files.len());
+        debug!("SSTable files after waiting: {}", sst_files.len());
     }
     
     // Search for all vectors (we inserted 4 batches x 25 = 100 vectors)
+    let storage_url = format!("file://{}/{}/data", base_path, collection_id);
     let results = lsm_engine.search_vectors_unified(
         collection_id,
+        &storage_url,
         &vec![0.0, 0.0, 0.0],
         100,  // Try to get all vectors
         &DistanceMetric::Euclidean,
@@ -459,18 +467,18 @@ async fn test_lsm_compaction_and_search() {
         false,
     ).await.unwrap();
     
-    eprintln!("Found {} vectors after compaction", results.len());
+    debug!("Found {} vectors after compaction", results.len());
     
     // Debug: print some of the found vectors
     if results.is_empty() {
-        eprintln!("WARNING: No vectors found! Debugging...");
+        debug!("WARNING: No vectors found! Debugging...");
         
         // Check directory state (manifest removed - using directory discovery)
-        eprintln!("  Directory-based discovery now used instead of manifest");
+        debug!("  Directory-based discovery now used instead of manifest");
     } else {
-        eprintln!("First 5 results:");
+        debug!("First 5 results:");
         for (i, result) in results.iter().take(5).enumerate() {
-            eprintln!("  [{}] id: {}, distance: {:?}", i, result.id, result.distance);
+            debug!("  [{}] id: {}, distance: {:?}", i, result.id, result.distance);
         }
     }
     
@@ -480,7 +488,7 @@ async fn test_lsm_compaction_and_search() {
     let found_batch0_vec0 = results.iter().any(|r| r.id == "batch0_vec0");
     assert!(found_batch0_vec0, "Should find batch0_vec0 after compaction");
     
-    eprintln!("✅ LSM compaction test passed!");
+    debug!("✅ LSM compaction test passed!");
 }
 
 #[tokio::test] 
@@ -532,7 +540,7 @@ async fn test_lsm_bloom_filter_efficiency() {
     ).await.unwrap();
     
     // Insert vectors with specific metadata patterns
-    eprintln!("Testing bloom filter efficiency with metadata");
+    debug!("Testing bloom filter efficiency with metadata");
     
     let mut batch = Vec::new();
     
@@ -595,7 +603,7 @@ async fn test_lsm_bloom_filter_efficiency() {
     
     // Get all vectors from memtable and flush them directly to LSM
     let unflushed_proto_vectors = direct_service.debug_list_all_unflushed_vectors(collection_id).await.unwrap();
-    eprintln!("Found {} unflushed vectors in buffer", unflushed_proto_vectors.len());
+    debug!("Found {} unflushed vectors in buffer", unflushed_proto_vectors.len());
     
     // Convert proto VectorRecords to core VectorRecords for LSM
     let mut all_core_vectors = Vec::new();
@@ -616,7 +624,7 @@ async fn test_lsm_bloom_filter_efficiency() {
         all_core_vectors.push(core_vec);
     }
     
-    eprintln!("Converted {} vectors to core format for process", all_core_vectors.len());
+    debug!("Converted {} vectors to core format for process", all_core_vectors.len());
     
     // Create flush parameters for LSM
     let flush_params = proximadb::storage::traits::FlushParameters {
@@ -630,7 +638,7 @@ async fn test_lsm_bloom_filter_efficiency() {
     
     // Directly flush to LSM
     let flush_result = lsm_engine.do_flush(&flush_params).await.unwrap();
-    eprintln!("LSM flush result: success={}, entries_flushed={}, files_created={}", 
+    debug!("LSM flush result: success={}, entries_flushed={}, files_created={}", 
         flush_result.success, flush_result.entries_flushed, flush_result.files_created);
     
     // Give it time to complete
@@ -644,8 +652,10 @@ async fn test_lsm_bloom_filter_efficiency() {
     };
     
     let start = std::time::Instant::now();
+    let storage_url = format!("file://{}/{}/data", base_path, collection_id);
     let results = lsm_engine.search_vectors_unified(
         collection_id,
+        &storage_url,
         &vec![0.0, 0.0, 0.0],
         10,
         &DistanceMetric::Euclidean,
@@ -655,13 +665,14 @@ async fn test_lsm_bloom_filter_efficiency() {
     ).await.unwrap();
     let duration = start.elapsed();
     
-    eprintln!("Search for non-existent metadata took {:?}", duration);
+    debug!("Search for non-existent metadata took {:?}", duration);
     assert!(results.is_empty(), "Should not find results for non-existent type");
     
     // First test without filters to see if data is loaded
-    eprintln!("Testing search without filters");
+    debug!("Testing search without filters");
     let all_results = lsm_engine.search_vectors_unified(
         collection_id,
+        &storage_url,
         &vec![5.0, 0.0, 0.0],
         20,
         &DistanceMetric::Euclidean,
@@ -670,7 +681,7 @@ async fn test_lsm_bloom_filter_efficiency() {
         true,
     ).await.unwrap();
     
-    eprintln!("Search without filters returned {} entries", all_results.len());
+    debug!("Search without filters returned {} entries", all_results.len());
     
     // Search for rare metadata
     let rare_filter = FilterExpression::Comparison {
@@ -681,6 +692,7 @@ async fn test_lsm_bloom_filter_efficiency() {
     
     let results = lsm_engine.search_vectors_unified(
         collection_id,
+        &storage_url,
         &vec![5.0, 0.0, 0.0],
         20,
         &DistanceMetric::Euclidean,
@@ -689,7 +701,7 @@ async fn test_lsm_bloom_filter_efficiency() {
         true,
     ).await.unwrap();
     
-    eprintln!("Search with rare metadata filter returned {} entries", results.len());
+    debug!("Search with rare metadata filter returned {} entries", results.len());
     
     if all_results.is_empty() {
         // Let's check if the SSTable file was properly written
@@ -701,7 +713,7 @@ async fn test_lsm_bloom_filter_efficiency() {
             for entry in entries.filter_map(|e| e.ok()) {
                 if entry.path().extension().map_or(false, |ext| ext == "sst") {
                     let file_size = entry.metadata().map(|m| m.len()).unwrap_or(0);
-                    eprintln!("SSTable file: {} ({} bytes)", entry.file_name().to_string_lossy(), file_size);
+                    debug!("SSTable file: {} ({} bytes)", entry.file_name().to_string_lossy(), file_size);
                 }
             }
         }
@@ -711,5 +723,5 @@ async fn test_lsm_bloom_filter_efficiency() {
     
     assert_eq!(results.len(), 10, "Should find all rare category vectors");
     
-    eprintln!("✅ LSM bloom filter test passed!");
+    debug!("✅ LSM bloom filter test passed!");
 }

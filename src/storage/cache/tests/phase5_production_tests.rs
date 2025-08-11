@@ -11,6 +11,9 @@ use std::time::Duration;
 /// Test cache configuration loading and validation
 #[tokio::test]
 async fn test_cache_config_validation() {
+        // Initialize hardware capabilities for testing
+        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+
     // Test default configuration
     let config = CacheConfig::default();
     assert!(config.validate().is_ok());
@@ -41,6 +44,9 @@ async fn test_cache_config_validation() {
 /// Test monitoring dashboard functionality
 #[tokio::test]
 async fn test_monitoring_dashboard() {
+        // Initialize hardware capabilities for testing
+        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+
     let coordinator = Arc::new(CrossCacheOrchestrator::new(1024 * 1024 * 100));
     let config = Arc::new(CacheConfig::default());
     
@@ -73,6 +79,9 @@ async fn test_monitoring_dashboard() {
 #[ignore = "Waiting for CacheOptimizer implementation"]
 #[tokio::test]
 async fn test_cache_optimizer() {
+        // Initialize hardware capabilities for testing
+        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+
     let coordinator = Arc::new(CrossCacheOrchestrator::new(1024 * 1024 * 100));
     let config = CacheConfig::default();
     
@@ -85,6 +94,9 @@ async fn test_cache_optimizer() {
 /// Test performance profiling
 #[tokio::test]
 async fn test_performance_profiling() {
+        // Initialize hardware capabilities for testing
+        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+
     // use super::super::monitoring::PerformanceProfiler;
     
     // let profiler = PerformanceProfiler::new(0.5, "/tmp/test_profiles".to_string()); // TODO: Add monitoring module
@@ -109,6 +121,9 @@ async fn test_performance_profiling() {
 /// Test alert management
 #[tokio::test]
 async fn test_alert_management() {
+        // Initialize hardware capabilities for testing
+        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+
     use crate::metrics::CacheMetricsSnapshot;
     
     let thresholds = super::super::config::AlertThresholds {
@@ -143,6 +158,9 @@ async fn test_alert_management() {
 /// Test configuration file operations
 #[tokio::test]
 async fn test_config_file_operations() {
+        // Initialize hardware capabilities for testing
+        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+
     use tempfile::NamedTempFile;
     
     // Create example configuration
@@ -172,6 +190,9 @@ async fn test_config_file_operations() {
 /// Test production-ready error handling
 #[tokio::test]
 async fn test_error_handling_and_recovery() {
+        // Initialize hardware capabilities for testing
+        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+
     let coordinator = CrossCacheOrchestrator::new(1024 * 1024 * 100);
     
     // Test handling of invalid keys
@@ -194,6 +215,9 @@ async fn test_error_handling_and_recovery() {
 /// Test cache system stress test
 #[tokio::test]
 async fn test_cache_system_stress() {
+        // Initialize hardware capabilities for testing
+        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+
     let coordinator = Arc::new(CrossCacheOrchestrator::new(1024 * 1024 * 10)); // 10MB
     
     // Spawn multiple concurrent operations
@@ -251,6 +275,9 @@ async fn test_cache_system_stress() {
 /// Test optimization recommendations
 #[tokio::test]
 async fn test_optimization_recommendations() {
+        // Initialize hardware capabilities for testing
+        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+
     use crate::metrics::CacheMetricsSnapshot;
     
     let coordinator = Arc::new(CrossCacheOrchestrator::new(1024 * 1024 * 100));

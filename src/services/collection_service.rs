@@ -26,7 +26,6 @@ use std::collections::HashMap;
 use tokio::sync::RwLock;
 use tracing::{debug, info, warn};
 
-
 // Using String directly instead of String alias for proto-first architecture
 use crate::proto::proximadb::{CollectionConfig, Collection};
 use crate::core::config::StorageConfig;
@@ -79,7 +78,7 @@ impl CollectionService {
         &self,
         config: &crate::proto::proximadb::CollectionConfig,
     ) -> Result<CollectionServiceResponse> {
-        println!("🆕 Creating collection: {} with distance_metric={}", config.name, config.distance_metric);
+        debug!("🆕 Creating collection: {} with distance_metric={}", config.name, config.distance_metric);
         let start_time = std::time::Instant::now();
         
         // Resolve compression configuration
@@ -235,8 +234,6 @@ impl CollectionService {
         })
     }
 
-    
-    
     /// Get the full proto collection with all metadata - direct access to deserialized object
     pub async fn get_proto_collection(&self, identifier: &str) -> Result<Option<Collection>> {
         self.get_native_proto(identifier).await
@@ -502,7 +499,6 @@ impl CollectionService {
             Ok(None)
         }
     }
-    
 
     /// List all collections - returns proto Collections directly (proto-first architecture)
     pub async fn list_collections(&self) -> Result<Vec<Collection>> {
@@ -1054,7 +1050,6 @@ impl CollectionService {
         Ok(cleaned_components)
     }
 
-    
     /// Generate unique collection ID using base62-encoded seconds with random padding
     /// Format: {base62(seconds)}{random_base62_char}
     async fn generate_unique_collection_id(&self) -> Result<String> {

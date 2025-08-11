@@ -17,6 +17,7 @@
 //! Integration tests for filestore path handling to prevent path duplication issues
 
 use anyhow::Result;
+use tracing::{debug, error, info, warn};
 use proximadb::proto::proximadb::{Collection, IndexingAlgorithm};
 use proximadb::storage::metadata::backends::filestore_backend::{
     FilestoreMetadataBackend, FilestoreMetadataConfig,
@@ -111,7 +112,7 @@ async fn test_relative_url_no_path_duplication() -> Result<()> {
     // Use relative URL
     let metadata_url = format!("file://./test_metadata");
     
-    println!("Testing with relative metadata URL: {}", metadata_url);
+    debug!("Testing with relative metadata URL: {}", metadata_url);
     
     // Create filesystem factory WITHOUT root_dir
     let fs_factory = Arc::new(FilesystemFactory::new(Default::default()).await?);
@@ -145,9 +146,9 @@ async fn test_relative_url_no_path_duplication() -> Result<()> {
     
     // List the contents of the metadata directory
     let entries = fs.list(&metadata_url).await?;
-    println!("Directory entries:");
+    debug!("Directory entries:");
     for entry in &entries {
-        println!("  - {}: {}", entry.name, entry.url);
+        debug!("  - {}: {}", entry.name, entry.url);
         
         // Verify URLs don't contain duplicated paths
         assert!(!entry.url.contains(&format!("{0}/{0}", metadata_dir.file_name().unwrap().to_str().unwrap())),
@@ -159,7 +160,7 @@ async fn test_relative_url_no_path_duplication() -> Result<()> {
     assert!(retrieved.is_some());
     assert_eq!(retrieved.unwrap().id, "test_id");
     
-    println!("✅ Test passed: No path duplication with relative URLs");
+    debug!("✅ Test passed: No path duplication with relative URLs");
     Ok(())
 }
 
@@ -173,7 +174,7 @@ async fn test_absolute_url_no_path_duplication() -> Result<()> {
     // Use absolute URL
     let metadata_url = format!("file://{}", metadata_path.display());
     
-    println!("Testing with absolute metadata URL: {}", metadata_url);
+    debug!("Testing with absolute metadata URL: {}", metadata_url);
     
     // Create filesystem factory WITHOUT root_dir
     let fs_factory = Arc::new(FilesystemFactory::new(Default::default()).await?);
@@ -202,7 +203,7 @@ async fn test_absolute_url_no_path_duplication() -> Result<()> {
     assert!(retrieved.is_some());
     assert_eq!(retrieved.unwrap().id, "test_abs_id");
     
-    println!("✅ Test passed: No path duplication with absolute URLs");
+    debug!("✅ Test passed: No path duplication with absolute URLs");
     Ok(())
 }
 
@@ -216,7 +217,7 @@ async fn test_atomic_operations_path_handling() -> Result<()> {
     // Use relative URL
     let metadata_url = format!("file://./{}", metadata_dir.file_name().unwrap().to_str().unwrap());
     
-    println!("Testing atomic operations with URL: {}", metadata_url);
+    debug!("Testing atomic operations with URL: {}", metadata_url);
     
     // Create filesystem factory
     let fs_factory = Arc::new(FilesystemFactory::new(Default::default()).await?);
@@ -249,9 +250,9 @@ async fn test_atomic_operations_path_handling() -> Result<()> {
     let staging_entries = fs.list(&format!("{}/current/__staging", metadata_url)).await?;
     
     // Staging should be empty or contain only active operations
-    println!("Staging directory entries: {}", staging_entries.len());
+    debug!("Staging directory entries: {}", staging_entries.len());
     
-    println!("✅ Test passed: Atomic operations work correctly");
+    debug!("✅ Test passed: Atomic operations work correctly");
     Ok(())
 }
 
@@ -265,7 +266,7 @@ async fn test_concurrent_operations_no_conflicts() -> Result<()> {
     // Use absolute URL for this test
     let metadata_url = format!("file://{}", metadata_path.display());
     
-    println!("Testing concurrent operations with URL: {}", metadata_url);
+    debug!("Testing concurrent operations with URL: {}", metadata_url);
     
     // Create filesystem factory
     let fs_factory = Arc::new(FilesystemFactory::new(Default::default()).await?);
@@ -308,7 +309,7 @@ async fn test_concurrent_operations_no_conflicts() -> Result<()> {
     assert!(!metadata_path.join(metadata_path.file_name().unwrap()).exists(),
         "Path duplication detected in concurrent test!");
     
-    println!("✅ Test passed: Concurrent operations without conflicts");
+    debug!("✅ Test passed: Concurrent operations without conflicts");
     Ok(())
 }
 
@@ -324,7 +325,7 @@ async fn test_metadata_url_formats() -> Result<()> {
     ];
     
     for (url, description) in test_cases {
-        println!("Testing URL format: {} ({})", url, description);
+        debug!("Testing URL format: {} ({})", url, description);
         
         // Create a temp directory for this test case
         let temp_dir = TempDir::new()?;
@@ -347,13 +348,13 @@ async fn test_metadata_url_formats() -> Result<()> {
                 // Try to store a collection
                 let collection = create_test_collection("url_test", "url_test_collection");
                 if let Ok(_) = backend.upsert_collection_proto(&collection).await {
-                    println!("  ✅ URL format works: {}", url);
+                    debug!("  ✅ URL format works: {}", url);
                 } else {
-                    println!("  ⚠️ URL format failed to store: {}", url);
+                    debug!("  ⚠️ URL format failed to store: {}", url);
                 }
             }
             Err(e) => {
-                println!("  ⚠️ URL format not supported: {} - {}", url, e);
+                debug!("  ⚠️ URL format not supported: {} - {}", url, e);
             }
         }
     }

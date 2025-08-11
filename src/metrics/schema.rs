@@ -216,9 +216,15 @@ impl CollectionMetrics {
         sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
         
         let len = sorted.len();
-        self.p50_search_latency_us = sorted[len * 50 / 100];
-        self.p95_search_latency_us = sorted[len * 95 / 100];
-        self.p99_search_latency_us = sorted[len * 99 / 100];
+        // Calculate percentile indices correctly
+        // For n items, p50 should be at index (n-1)*0.5
+        let p50_idx = ((len - 1) * 50 / 100).min(len.saturating_sub(1));
+        let p95_idx = ((len - 1) * 95 / 100).min(len.saturating_sub(1));
+        let p99_idx = ((len - 1) * 99 / 100).min(len.saturating_sub(1));
+        
+        self.p50_search_latency_us = sorted[p50_idx];
+        self.p95_search_latency_us = sorted[p95_idx];
+        self.p99_search_latency_us = sorted[p99_idx];
         
         let sum: f64 = sorted.iter().sum();
         self.avg_search_latency_us = sum / (len as f64);

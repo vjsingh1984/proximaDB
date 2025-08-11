@@ -2,10 +2,9 @@
 //!
 //! Tests core quantization functionality to ensure it works correctly.
 
-
 #[cfg(test)]
 mod tests {
-    
+    use tracing::debug;
     use std::sync::Arc;
     use proximadb::compute::{
         UnifiedQuantizationEngine, UnifiedQuantizationLevel, QuantizationLevelType,
@@ -164,7 +163,7 @@ mod tests {
             assert!(!quantized.data.is_empty());
             assert_eq!(quantized.quantization_level.level_type, level.level_type);
             
-            println!("Level type: {:?}", level.level_type);
+            debug!("Level type: {:?}", level.level_type);
         }
     }
 
@@ -204,7 +203,7 @@ mod tests {
         assert!(original_bytes > quantized_bytes);
         assert!(compression_ratio > 1.0);
         
-        println!("Storage savings: {:.2}x compression ({} -> {} bytes)", 
+        debug!("Storage savings: {:.2}x compression ({} -> {} bytes)", 
                  compression_ratio, original_bytes, quantized_bytes);
     }
 
@@ -279,11 +278,11 @@ mod tests {
         assert!(compression_ratio > 6.0); // Should be close to 8x for 4-bit
         assert!(original_bytes > quantized_bytes * 6);
         
-        println!("Memory efficiency test:");
-        println!("  Original: {} bytes", original_bytes);
-        println!("  Quantized: {} bytes", quantized_bytes);
-        println!("  Compression: {:.1}x", compression_ratio);
-        println!("  Savings: {:.1}%", (1.0 - quantized_bytes as f32 / original_bytes as f32) * 100.0);
+        debug!("Memory efficiency test:");
+        debug!("  Original: {} bytes", original_bytes);
+        debug!("  Quantized: {} bytes", quantized_bytes);
+        debug!("  Compression: {:.1}x", compression_ratio);
+        debug!("  Savings: {:.1}%", (1.0 - quantized_bytes as f32 / original_bytes as f32) * 100.0);
     }
 
     #[tokio::test]
@@ -308,9 +307,9 @@ mod tests {
         assert_eq!(model.dimension, deserialized_model.dimension);
         assert_eq!(model.level, deserialized_model.level);
         
-        println!("Model serialization test passed");
-        println!("  Model ID: {}", model.model_id);
-        println!("  Dimension: {}", model.dimension);
-        println!("  Level: {:?}", model.level);
+        debug!("Model serialization test passed");
+        debug!("  Model ID: {}", model.model_id);
+        debug!("  Dimension: {}", model.dimension);
+        debug!("  Level: {:?}", model.level);
     }
 }

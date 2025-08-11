@@ -2,6 +2,7 @@
 //! Tests BinaryArray vector storage, ZSTD Parquet compression, and bytemuck integration
 
 use anyhow::Result;
+use tracing::{debug, error, info, warn};
 use arrow_array::{Array, BinaryArray, Float32Array, ListArray, RecordBatch};
 use arrow_schema::{DataType, Field, Schema};
 use parquet::arrow::ArrowWriter;
@@ -86,7 +87,7 @@ fn test_optimized_schema_creation() {
     assert_eq!(schema.field(1).data_type(), &DataType::Int64);
     assert_eq!(schema.field(2).data_type(), &DataType::Binary);
     
-    println!("✅ Optimized schema created with {} fields", schema.fields().len());
+    debug!("✅ Optimized schema created with {} fields", schema.fields().len());
 }
 
 #[test]
@@ -138,7 +139,7 @@ fn test_binary_array_vector_serialization() {
     assert!(stats.uses_zstd_compression);
     assert_eq!(stats.record_count, 4);
     
-    println!("✅ BinaryArray serialization test passed with {:.3} compression ratio", 
+    debug!("✅ BinaryArray serialization test passed with {:.3} compression ratio", 
         stats.compression_ratio);
 }
 
@@ -182,7 +183,7 @@ fn test_list_array_fallback_mode() {
     let stats = writer.get_optimization_stats(&batch);
     assert!(!stats.uses_binary_array);
     
-    println!("✅ ListArray fallback mode test passed");
+    debug!("✅ ListArray fallback mode test passed");
 }
 
 #[test]
@@ -225,9 +226,9 @@ fn test_compression_effectiveness() {
     let dense_batch = dense_writer.records_to_optimized_batch(&dense_records, &schema).unwrap();
     let dense_stats = dense_writer.get_optimization_stats(&dense_batch);
     
-    println!("📊 Compression Comparison:");
-    println!("   Sparse vectors: {:.3} ratio", sparse_stats.compression_ratio);
-    println!("   Dense vectors: {:.3} ratio", dense_stats.compression_ratio);
+    debug!("📊 Compression Comparison:");
+    debug!("   Sparse vectors: {:.3} ratio", sparse_stats.compression_ratio);
+    debug!("   Dense vectors: {:.3} ratio", dense_stats.compression_ratio);
     
     // Sparse vectors should compress significantly better
     assert!(sparse_stats.compression_ratio < dense_stats.compression_ratio,
@@ -235,7 +236,7 @@ fn test_compression_effectiveness() {
     assert!(sparse_stats.compression_ratio < 0.7,
         "Sparse vectors should achieve at least 30% compression");
         
-    println!("✅ Compression effectiveness test passed");
+    debug!("✅ Compression effectiveness test passed");
 }
 
 #[test]
@@ -251,7 +252,7 @@ fn test_parquet_writer_properties() {
     
     // Properties should be created without error
     // We can't easily inspect the internal values, but creation validates the configuration
-    println!("✅ Parquet writer properties created successfully");
+    debug!("✅ Parquet writer properties created successfully");
 }
 
 #[test]
@@ -317,7 +318,7 @@ fn test_metadata_serialization() {
         panic!("Metadata should be a JSON object, got: {}", metadata_json);
     }
     
-    println!("✅ Metadata serialization test passed");
+    debug!("✅ Metadata serialization test passed");
 }
 
 #[test]
@@ -364,21 +365,21 @@ fn test_performance_benchmark() {
     
     let stats = writer.get_optimization_stats(&batch);
     
-    println!("⚡ Performance Benchmark Results:");
-    println!("   Records: {}", record_count);
-    println!("   Batch creation: {:?} ({:.1} records/sec)", 
+    debug!("⚡ Performance Benchmark Results:");
+    debug!("   Records: {}", record_count);
+    debug!("   Batch creation: {:?} ({:.1} records/sec)", 
         batch_time, record_count as f64 / batch_time.as_secs_f64());
-    println!("   Parquet write: {:?} ({:.1} records/sec)", 
+    debug!("   Parquet write: {:?} ({:.1} records/sec)", 
         write_time, record_count as f64 / write_time.as_secs_f64());
-    println!("   Parquet size: {} bytes", parquet_buffer.len());
-    println!("   Compression ratio: {:.3}", stats.compression_ratio);
+    debug!("   Parquet size: {} bytes", parquet_buffer.len());
+    debug!("   Compression ratio: {:.3}", stats.compression_ratio);
     
     // Performance expectations
     assert!(batch_time.as_millis() < 1000, "Batch creation should be < 1 second");
     assert!(write_time.as_millis() < 2000, "Parquet write should be < 2 seconds");
     assert!(!parquet_buffer.is_empty(), "Parquet data should be written");
     
-    println!("✅ Performance benchmark completed successfully");
+    debug!("✅ Performance benchmark completed successfully");
 }
 
 #[test]
@@ -418,7 +419,7 @@ fn test_empty_and_edge_cases() {
     let result = writer.records_to_optimized_batch(&empty_records, &schema);
     assert!(result.is_err(), "Empty record set should fail");
     
-    println!("✅ Edge cases test passed");
+    debug!("✅ Edge cases test passed");
 }
 
 #[test]
@@ -446,7 +447,7 @@ fn test_dimension_consistency() {
     assert!(error_msg.contains("dimension mismatch") || error_msg.contains("dimension"), 
         "Error should mention dimension mismatch, got: {}", error_msg);
     
-    println!("✅ ListArray mode correctly rejected mixed dimensions");
+    debug!("✅ ListArray mode correctly rejected mixed dimensions");
     
     // BinaryArray mode should also reject mixed dimensions (same validation logic)
     let mut binary_config = OptimizedVectorWriterConfig::default();
@@ -461,9 +462,9 @@ fn test_dimension_consistency() {
             error_msg.contains("RecordBatch") || error_msg.contains("schema"), 
         "BinaryArray error should be related to dimension/schema mismatch, got: {}", error_msg);
     
-    println!("✅ BinaryArray mode also correctly rejected mixed dimensions");
+    debug!("✅ BinaryArray mode also correctly rejected mixed dimensions");
     
-    println!("✅ Dimension consistency test passed");
+    debug!("✅ Dimension consistency test passed");
 }
 
 #[test]  
@@ -492,7 +493,7 @@ fn test_adaptive_vector_compression() {
         let batch = writer.records_to_optimized_batch(&[record], &schema).unwrap();
         let stats = writer.get_optimization_stats(&batch);
         
-        println!("📈 Adaptive compression for {}: dimension={}, sparsity={:.2}, ratio={:.3}",
+        debug!("📈 Adaptive compression for {}: dimension={}, sparsity={:.2}, ratio={:.3}",
             name, dimension, sparsity, stats.compression_ratio);
             
         // Verify reasonable compression for sparse vectors
@@ -502,5 +503,5 @@ fn test_adaptive_vector_compression() {
         }
     }
     
-    println!("✅ Adaptive compression test passed");
+    debug!("✅ Adaptive compression test passed");
 }

@@ -12,6 +12,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::{broadcast, RwLock};
 use tokio::time::interval;
+use tracing::{debug, error, info, warn};
 
 use super::{AlertThresholds, AxisConfig, MonitoringConfig};
 
@@ -412,7 +413,7 @@ impl PerformanceMonitor {
             loop {
                 interval.tick().await;
                 if let Err(e) = metrics_collector.collect_system_metrics().await {
-                    eprintln!("Error collecting system metrics: {}", e);
+                    error!("Error collecting system metrics: {}", e);
                 }
             }
         });
@@ -432,7 +433,7 @@ impl PerformanceMonitor {
             loop {
                 interval.tick().await;
                 if let Err(e) = health_checker.check_system_health().await {
-                    eprintln!("Error checking system health: {}", e);
+                    error!("Error checking system health: {}", e);
                 }
             }
         });
@@ -592,7 +593,7 @@ impl AlertManager {
         let subscribers = self.subscribers.read().await;
         for subscriber in subscribers.iter() {
             if let Err(e) = subscriber.on_alert(&alert).await {
-                eprintln!("Error notifying alert subscriber: {}", e);
+                error!("Error notifying alert subscriber: {}", e);
             }
         }
     }

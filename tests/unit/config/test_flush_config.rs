@@ -7,6 +7,7 @@
 //! - Effective configuration resolution
 
 use anyhow::Result;
+use tracing::{debug, error, info, warn};
 use proximadb::core::config::{Config, WalStorageConfig};
 use proximadb::storage::persistence::write_ahead_log::config::{WriteBufferConfig, CollectionWalConfig};
 use std::collections::HashMap;
@@ -27,7 +28,7 @@ fn test_default_flush_configuration() {
     // Test default memtable global limit (4GB)
     assert_eq!(config.memtable.global_memory_limit, 4 * 1024 * 1024 * 1024);
     
-    println!("✅ Default flush configuration test passed");
+    debug!("✅ Default flush configuration test passed");
 }
 
 #[test]
@@ -73,7 +74,7 @@ fn test_collection_specific_overrides() {
     assert_eq!(unknown_config.disk_segment_size, 512 * 1024 * 1024);
     assert_eq!(unknown_config.default_ttl_days, None);
     
-    println!("✅ Collection-specific overrides test passed");
+    debug!("✅ Collection-specific overrides test passed");
 }
 
 #[test]
@@ -117,7 +118,7 @@ fn test_core_config_to_wal_config_conversion() {
     assert_eq!(wal_config.performance.write_ahead_log_size, 16 * 1024 * 1024);
     assert_eq!(wal_config.performance.concurrent_flushes, 8);
     
-    println!("✅ Core config to WAL config conversion test passed");
+    debug!("✅ Core config to WAL config conversion test passed");
 }
 
 #[test]
@@ -155,7 +156,7 @@ concurrent_flushes = 6
             assert_eq!(wal_config.write_ahead_log_size_mb, Some(12));
             assert_eq!(wal_config.concurrent_flushes, Some(6));
             
-            println!("✅ TOML config parsing test passed");
+            debug!("✅ TOML config parsing test passed");
         }
         Err(e) => {
             panic!("Failed to parse TOML config: {}", e);
@@ -188,7 +189,7 @@ fn test_flush_threshold_edge_cases() {
     let effective_config = zero_config.effective_config_for_collection("test");
     assert_eq!(effective_config.memory_flush_size_bytes, 0);
     
-    println!("✅ Flush threshold edge cases test passed");
+    debug!("✅ Flush threshold edge cases test passed");
 }
 
 #[test]
@@ -211,7 +212,7 @@ fn test_global_shrink_factor_validation() {
     config.performance.global_shrink_factor = 0.99; // 99%
     assert!(config.performance.global_shrink_factor < 1.0);
     
-    println!("✅ Global shrink factor validation test passed");
+    debug!("✅ Global shrink factor validation test passed");
 }
 
 #[test]
@@ -239,5 +240,5 @@ fn test_performance_config_presets() {
     assert_eq!(storage_optimized.compression.min_compress_size, 64);
     assert_eq!(storage_optimized.performance.disk_segment_size, 512 * 1024 * 1024);
     
-    println!("✅ Performance config presets test passed");
+    debug!("✅ Performance config presets test passed");
 }

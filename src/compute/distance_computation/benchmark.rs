@@ -5,20 +5,21 @@ mod tests {
     use super::super::*;
     use std::time::Instant;
     use crate::core::hardware_capabilities::get_hardware_capabilities;
+use tracing::{debug, error, info, warn};
     
     #[test]
     fn benchmark_simd_performance() {
-        println!("\n=== SIMD Performance Benchmark ===");
+        debug!("\n=== SIMD Performance Benchmark ===");
         
         let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
         let capability = get_hardware_capabilities();
-        println!("Platform: {:?}", capability.preferred_backend());
+        debug!("Platform: {:?}", capability.preferred_backend());
         
         let dimensions = vec![128, 256, 512, 1024];
         let iterations = 10_000;
         
         for dim in dimensions {
-            println!("\nDimension: {}", dim);
+            debug!("\nDimension: {}", dim);
             
             let a: Vec<f32> = (0..dim).map(|i| (i as f32).sin()).collect();
             let b: Vec<f32> = (0..dim).map(|i| (i as f32).cos()).collect();
@@ -46,7 +47,7 @@ mod tests {
                 let ops_per_sec = iterations as f64 / elapsed.as_secs_f64();
                 let ns_per_op = elapsed.as_nanos() as f64 / iterations as f64;
                 
-                println!("  {:?}: {:.0} ops/sec ({:.1} ns/op)", 
+                debug!("  {:?}: {:.0} ops/sec ({:.1} ns/op)", 
                          metric, ops_per_sec, ns_per_op);
             }
         }

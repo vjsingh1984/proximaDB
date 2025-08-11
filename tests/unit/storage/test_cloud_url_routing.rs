@@ -8,6 +8,7 @@
 #![cfg(disabled_due_to_obsolete_apis)]
 
 use anyhow::Result;
+use tracing::{debug, error, info, warn};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::SystemTime;
@@ -17,7 +18,7 @@ use proximadb::storage::memtable::specialized::write_ahead_log_behavior::WriteBu
 use proximadb::storage::persistence::filesystem::{FilesystemFactory, FilesystemConfig};
 use proximadb::storage::persistence::write_ahead_log::batch_strategy::WriteBufferBatchStrategy;
 use proximadb::storage::persistence::write_ahead_log::bincode_batch::BincodeWalBatchStrategy;
-use proximadb::storage::persistence::write_ahead_log::config::WriteBufferConfig;
+use proximadb::storage::persistence::write_ahead_log::config::WALConfig;
 use proximadb::storage::BatchId;
 
 /// Helper function to create test vector records
@@ -91,7 +92,7 @@ async fn test_url_validation_for_different_providers() -> Result<()> {
     for url in valid_urls {
         let result = filesystem_factory.validate_url(url);
         assert!(result.is_ok(), "URL validation failed for valid URL: {}", url);
-        println!("✅ Valid URL: {}", url);
+        debug!("✅ Valid URL: {}", url);
     }
     
     // Test invalid URLs
@@ -108,10 +109,10 @@ async fn test_url_validation_for_different_providers() -> Result<()> {
     for url in invalid_urls {
         let result = filesystem_factory.validate_url(url);
         assert!(result.is_err(), "URL validation should have failed for invalid URL: {}", url);
-        println!("❌ Invalid URL: {} - {}", url, result.unwrap_err());
+        debug!("❌ Invalid URL: {} - {}", url, result.unwrap_err());
     }
     
-    println!("✅ URL validation test completed successfully");
+    debug!("✅ URL validation test completed successfully");
     Ok(())
 }
 
@@ -144,7 +145,7 @@ async fn test_bucket_extraction_from_urls() -> Result<()> {
     let bucket = filesystem_factory.extract_bucket_from_url(file_url)?;
     assert_eq!(bucket, None);
     
-    println!("✅ Bucket extraction test completed successfully");
+    debug!("✅ Bucket extraction test completed successfully");
     Ok(())
 }
 
@@ -167,7 +168,7 @@ async fn test_account_extraction_from_azure_urls() -> Result<()> {
     let account = filesystem_factory.extract_account_from_url(s3_url)?;
     assert_eq!(account, None);
     
-    println!("✅ Account extraction test completed successfully");
+    debug!("✅ Account extraction test completed successfully");
     Ok(())
 }
 
@@ -205,7 +206,7 @@ async fn test_path_extraction_from_urls() -> Result<()> {
     let path = filesystem_factory.extract_path_from_url(hdfs_url)?;
     assert_eq!(path, "/user/data/file.bin");
     
-    println!("✅ Path extraction test completed successfully");
+    debug!("✅ Path extraction test completed successfully");
     Ok(())
 }
 
@@ -245,10 +246,10 @@ async fn test_wal_batch_strategy_url_routing() -> Result<()> {
         // depending on whether the cloud provider is configured and accessible
         match health_result {
             Ok(is_healthy) => {
-                println!("✅ Health check for {}: {}", cloud_url, is_healthy);
+                debug!("✅ Health check for {}: {}", cloud_url, is_healthy);
             }
             Err(e) => {
-                println!("⚠️ Health check error for {}: {}", cloud_url, e);
+                debug!("⚠️ Health check error for {}: {}", cloud_url, e);
             }
         }
     }
@@ -265,15 +266,15 @@ async fn test_wal_batch_strategy_url_routing() -> Result<()> {
         match health_result {
             Ok(is_healthy) => {
                 assert!(!is_healthy, "Invalid URL should result in unhealthy status");
-                println!("✅ Invalid URL correctly marked as unhealthy: {}", cloud_url);
+                debug!("✅ Invalid URL correctly marked as unhealthy: {}", cloud_url);
             }
             Err(e) => {
-                println!("✅ Invalid URL correctly rejected: {} - {}", cloud_url, e);
+                debug!("✅ Invalid URL correctly rejected: {} - {}", cloud_url, e);
             }
         }
     }
     
-    println!("✅ WAL batch strategy URL routing test completed successfully");
+    debug!("✅ WAL batch strategy URL routing test completed successfully");
     Ok(())
 }
 
@@ -306,11 +307,11 @@ async fn test_cloud_url_construction() -> Result<()> {
         let bucket = filesystem_factory.extract_bucket_from_url(&full_url)?;
         let path = filesystem_factory.extract_path_from_url(&full_url)?;
         
-        println!("✅ Base URL: {} -> Full URL: {}", base_url, full_url);
-        println!("   Bucket: {:?}, Path: {}", bucket, path);
+        debug!("✅ Base URL: {} -> Full URL: {}", base_url, full_url);
+        debug!("   Bucket: {:?}, Path: {}", bucket, path);
     }
     
-    println!("✅ Cloud URL construction test completed successfully");
+    debug!("✅ Cloud URL construction test completed successfully");
     Ok(())
 }
 
@@ -331,12 +332,12 @@ async fn test_edge_cases_in_url_parsing() -> Result<()> {
         if let Ok(_) = filesystem_factory.validate_url(url) {
             let path = filesystem_factory.extract_path_from_url(url)?;
             assert_eq!(path, expected_path, "Path extraction failed for URL: {}", url);
-            println!("✅ Edge case URL: {} -> Path: '{}'", url, path);
+            debug!("✅ Edge case URL: {} -> Path: '{}'", url, path);
         } else {
-            println!("⚠️ Edge case URL validation failed: {}", url);
+            debug!("⚠️ Edge case URL validation failed: {}", url);
         }
     }
     
-    println!("✅ Edge cases in URL parsing test completed successfully");
+    debug!("✅ Edge cases in URL parsing test completed successfully");
     Ok(())
 }

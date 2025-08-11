@@ -3,11 +3,12 @@
 use proximadb::proto::proximadb::proxima_db_client::ProximaDbClient;
 use proximadb::proto::proximadb::*;
 use proximadb::proto::proximadb::vector_operation_response::ResultPayload;
+use tracing::{debug, error, info, warn};
 
 #[tokio::test]
 #[ignore] // Requires server to be running
 async fn test_metadata_filtering_simple() -> anyhow::Result<()> {
-    println!("🔍 Starting simple metadata filter test");
+    info!("🔍 Starting simple metadata filter test");
     
     // Connect to running server
     let mut client = ProximaDbClient::connect("http://localhost:5679").await?;
@@ -46,8 +47,7 @@ async fn test_metadata_filtering_simple() -> anyhow::Result<()> {
                     supports_range: false,
                     estimated_cardinality: None,
                     encoding_hint: None,
-                
-            
+
                     },
             ],
             index_configs: vec![],
@@ -63,7 +63,7 @@ async fn test_metadata_filtering_simple() -> anyhow::Result<()> {
         migration_config: Default::default(),
     })).await?;
     
-    println!("✅ Created collection");
+    info!("✅ Created collection");
     
     // Insert test data
     let vectors = vec![
@@ -111,13 +111,13 @@ async fn test_metadata_filtering_simple() -> anyhow::Result<()> {
     };
     
     let response = client.vector_batch(tonic::Request::new(insert_request)).await?;
-    println!("✅ Inserted {} vectors", response.get_ref().vector_ids.len());
+    info!("✅ Inserted {} vectors", response.get_ref().vector_ids.len());
     
     // Wait for indexing
     tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
     
     // Search with filter
-    println!("\n🧪 Testing filter: category = 'electronics'");
+    debug!("\n🧪 Testing filter: category = 'electronics'");
     
     let search_request = VectorSearchRequest {
         collection_id: collection_name.to_string(),
@@ -151,11 +151,11 @@ async fn test_metadata_filtering_simple() -> anyhow::Result<()> {
     let search_results = if let Some(ResultPayload::CompactResults(ref compact)) = search_response.get_ref().result_payload {
         &compact.results
     } else {
-        println!("⚠️  No compact results found");
+        warn!("⚠️  No compact results found");
         return Ok(());
     };
     
-    println!("📊 Found {} results", search_results.len());
+    info!("📊 Found {} results", search_results.len());
     
     for result in search_results {
         let mut category_value = "unknown";
@@ -169,10 +169,10 @@ async fn test_metadata_filtering_simple() -> anyhow::Result<()> {
         }
         
         let id = result.id.as_ref().map(|s| s.as_str()).unwrap_or("?");
-        println!("  - ID: {}, Category: {}", id, category_value);
+        debug!("  - ID: {}, Category: {}", id, category_value);
         
         if category_value != "electronics" {
-            println!("❌ ERROR: Expected 'electronics' but got '{}'", category_value);
+            error!("❌ ERROR: Expected 'electronics' but got '{}'", category_value);
         }
     }
     
@@ -186,6 +186,6 @@ async fn test_metadata_filtering_simple() -> anyhow::Result<()> {
         migration_config: Default::default(),
     })).await?;
     
-    println!("\n✅ Test completed");
+    info!("\n✅ Test completed");
     Ok(())
 }

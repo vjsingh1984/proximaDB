@@ -2,6 +2,7 @@
 
 // use super::common::*; // Removed - common module deleted
 use anyhow::Result;
+use tracing::{debug, error, info, warn};
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 use tonic::transport::Channel;
@@ -49,7 +50,7 @@ mod performance_tests {
             }
         }
 
-        println!("✅ Vector insertion performance test completed");
+        debug!("✅ Vector insertion performance test completed");
         Ok(())
     }
 
@@ -70,8 +71,8 @@ mod performance_tests {
                 {
                     let mut results = Vec::new();
                     for _ in 0..num_calculations {
-                        let calculator = proximadb::compute::distance::create_distance_calculator(
-                            proximadb::compute::distance::DistanceMetric::Cosine,
+                        let calculator = proximadb::compute::distance_computation::create_distance_calculator(
+                            proximadb::compute::distance_computation::DistanceMetric::Cosine,
                         );
                         let sim = calculator.distance(&vec1, &vec2);
                         results.push(sim);
@@ -96,7 +97,7 @@ mod performance_tests {
             }
         }
 
-        println!("✅ Distance calculation performance test completed");
+        debug!("✅ Distance calculation performance test completed");
         Ok(())
     }
 
@@ -207,7 +208,7 @@ mod performance_tests {
             }
         }
 
-        println!("✅ Metadata processing performance test completed");
+        debug!("✅ Metadata processing performance test completed");
         Ok(())
     }
 
@@ -228,7 +229,7 @@ mod performance_tests {
             {
                 Ok(ch) => break ch,
                 Err(e) if retries > 0 => {
-                    println!("⏳ Waiting for server to start... (retries left: {})", retries);
+                    debug!("⏳ Waiting for server to start... (retries left: {})", retries);
                     retries -= 1;
                     tokio::time::sleep(Duration::from_secs(2)).await;
                 }
@@ -276,13 +277,13 @@ mod performance_tests {
         
         let create_response = client.collection_operation(create_request).await?;
         assert!(create_response.into_inner().success);
-        println!("✅ Created collection: {}", collection_name);
+        debug!("✅ Created collection: {}", collection_name);
 
         // Test different dataset sizes
         let dataset_sizes = vec![1000, 5000, 10000];
         
         for dataset_size in dataset_sizes {
-            println!("\n📊 Testing with {} vectors...", dataset_size);
+            debug!("\n📊 Testing with {} vectors...", dataset_size);
             
             // Insert vectors in batches
             let batch_size = 1000;
@@ -326,7 +327,7 @@ mod performance_tests {
                 assert!(response.into_inner().success);
             }
             let insert_duration = insert_start.elapsed();
-            println!("  Inserted {} vectors in {:.2}s ({:.0} vectors/sec)", 
+            debug!("  Inserted {} vectors in {:.2}s ({:.0} vectors/sec)", 
                 dataset_size, 
                 insert_duration.as_secs_f64(),
                 dataset_size as f64 / insert_duration.as_secs_f64()
@@ -367,7 +368,7 @@ mod performance_tests {
             let full_scan_duration = search_start.elapsed();
             let full_scan_results = search_response.into_inner().results.len();
             
-            println!("  Full scan search: {:.2}ms for {} results", 
+            debug!("  Full scan search: {:.2}ms for {} results", 
                 full_scan_duration.as_secs_f64() * 1000.0,
                 full_scan_results
             );
@@ -410,14 +411,14 @@ mod performance_tests {
             let filtered_duration = filtered_search_start.elapsed();
             let filtered_results = filtered_response.into_inner().results.len();
             
-            println!("  Filtered search (10% selectivity): {:.2}ms for {} results", 
+            debug!("  Filtered search (10% selectivity): {:.2}ms for {} results", 
                 filtered_duration.as_secs_f64() * 1000.0,
                 filtered_results
             );
             
             // Calculate speedup
             let speedup = full_scan_duration.as_secs_f64() / filtered_duration.as_secs_f64();
-            println!("  Filtered search speedup: {:.1}x", speedup);
+            debug!("  Filtered search speedup: {:.1}x", speedup);
             
             // For datasets >= 10k vectors, filtered search should be significantly faster
             if dataset_size >= 10000 {
@@ -440,7 +441,7 @@ mod performance_tests {
         });
         client.collection_operation(delete_request).await?;
         
-        println!("\n✅ Search performance test with real data completed");
+        debug!("\n✅ Search performance test with real data completed");
         Ok(())
     }
 
@@ -483,16 +484,16 @@ mod performance_tests {
 
         assert_eq!(all_results.len(), total_operations);
 
-        println!("📊 Concurrent operations:");
-        println!("   Threads: {}", num_threads);
-        println!("   Total operations: {}", total_operations);
-        println!("   Duration: {:.2}ms", duration.as_secs_f64() * 1000.0);
-        println!("   Throughput: {:.1} ops/sec", throughput);
+        debug!("📊 Concurrent operations:");
+        debug!("   Threads: {}", num_threads);
+        debug!("   Total operations: {}", total_operations);
+        debug!("   Duration: {:.2}ms", duration.as_secs_f64() * 1000.0);
+        debug!("   Throughput: {:.1} ops/sec", throughput);
 
         // Should achieve reasonable concurrent throughput
         assert!(throughput > 1000.0);
 
-        println!("✅ Concurrent operations performance test completed");
+        debug!("✅ Concurrent operations performance test completed");
         Ok(())
     }
 
@@ -514,10 +515,10 @@ mod performance_tests {
             let record_size_estimate = vector_size_bytes + metadata_size_estimate;
             let total_size_mb = (count * record_size_estimate) as f64 / 1024.0 / 1024.0;
 
-            println!("📊 Memory estimation for {} vectors:", count);
-            println!("   Vector size: {} bytes", vector_size_bytes);
-            println!("   Estimated record size: {} bytes", record_size_estimate);
-            println!("   Total estimated size: {:.2} MB", total_size_mb);
+            debug!("📊 Memory estimation for {} vectors:", count);
+            debug!("   Vector size: {} bytes", vector_size_bytes);
+            debug!("   Estimated record size: {} bytes", record_size_estimate);
+            debug!("   Total estimated size: {:.2} MB", total_size_mb);
 
             // Verify reasonable memory usage
             assert!(total_size_mb < 1000.0); // Should be under 1GB for test data
@@ -529,7 +530,7 @@ mod performance_tests {
             }
         }
 
-        println!("✅ Memory usage estimation test completed");
+        debug!("✅ Memory usage estimation test completed");
         Ok(())
     }
 }

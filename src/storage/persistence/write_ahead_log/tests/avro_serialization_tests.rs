@@ -490,6 +490,7 @@ mod integration_tests {
         async fn search_vectors_unified(
             &self,
             _collection_id: &str,
+            _storage_url: &str,
             _query_vector: &[f32],
             _k: usize,
             _distance_metric: &crate::compute::distance_computation::DistanceMetric,

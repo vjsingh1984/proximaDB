@@ -1,6 +1,7 @@
 #[cfg(test)]
 mod write_ahead_log_corruption_recovery_tests {
     type Result<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>>;
+    use tracing::info;
     use std::path::PathBuf;
     use tempfile::TempDir;
     use tokio::fs;
@@ -44,6 +45,10 @@ mod write_ahead_log_corruption_recovery_tests {
                 max_request_size_mb: 100,
                 timeout_seconds: 30,
                 enable_tls: None,
+                rest_compression: false,
+                grpc_compression: false,
+                compression_algorithm: "gzip".to_string(),
+                compression_level: 6,
             },
             consensus: ConsensusConfig {
                 node_id: None,
@@ -101,7 +106,7 @@ mod write_ahead_log_corruption_recovery_tests {
             db.start().await?;
             
             // Server should start despite corruption
-            println!("Server started successfully after corruption recovery");
+            info!("Server started successfully after corruption recovery");
             
             db.stop().await?;
         }
@@ -147,7 +152,7 @@ mod write_ahead_log_corruption_recovery_tests {
             db.start().await?;
             
             // Server should recover from truncated files
-            println!("Server recovered successfully from truncated WriteBuffer");
+            info!("Server recovered successfully from truncated WriteBuffer");
             
             db.stop().await?;
         }
@@ -191,7 +196,7 @@ mod write_ahead_log_corruption_recovery_tests {
             db.start().await?;
             
             // Server should start despite corruption
-            println!("Server started successfully despite checksum mismatches");
+            info!("Server started successfully despite checksum mismatches");
             
             db.stop().await?;
         }
@@ -242,7 +247,7 @@ mod write_ahead_log_corruption_recovery_tests {
             db.start().await?;
             
             // Verify server recovered successfully
-            println!("Server recovered successfully from incomplete transactions");
+            info!("Server recovered successfully from incomplete transactions");
             
             db.stop().await?;
         }

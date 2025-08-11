@@ -147,6 +147,7 @@ async fn test_search_skips_invalid_files() {
         metadata_columns: vec![],
         level: 0,
         creation_time: chrono::Utc::now(),
+            io_optimization_hints: None,
     };
     
     // Create minimal search params

@@ -214,6 +214,7 @@ impl MetadataStore {
         // Create atomic metadata store if enabled
         let transaction_coordinator = if config.enable_atomic_operations {
             use crate::storage::transaction_coordinator::AtomicMetadataStore;
+use tracing::{debug, error, info, warn};
             Some(Arc::new(
                 AtomicMetadataStore::new(metadata_wal_config.clone(), filesystem.clone()).await?,
             ))

@@ -12,6 +12,7 @@ mod tests {
     use std::sync::Arc;
     use tokio::fs;
     use anyhow::Result;
+use tracing::{debug, error, info, warn};
 
     async fn create_test_store() -> Result<MetricsPersistenceLayer> {
         let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
@@ -39,7 +40,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_metrics_store_creation() {
-        println!("🧪 TEST: MetricsPersistenceLayer creation and initialization");
+        // Initialize hardware capabilities for testing
+        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+
+        debug!("🧪 TEST: MetricsPersistenceLayer creation and initialization");
         
         let store = create_test_store().await.unwrap();
         
@@ -52,12 +56,15 @@ mod tests {
         assert_eq!(config.storage_path, "file:///tmp/proximadb_metrics_test");
         assert!(config.enabled);
         
-        println!("✅ MetricsStore creation test passed");
+        info!("✅ MetricsStore creation test passed");
     }
 
     #[tokio::test]
     async fn test_collection_metrics_storage_and_retrieval() {
-        println!("🧪 TEST: CollectionMetrics storage and retrieval");
+        // Initialize hardware capabilities for testing
+        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+
+        debug!("🧪 TEST: CollectionMetrics storage and retrieval");
         
         let store = create_test_store().await.unwrap();
         
@@ -132,12 +139,15 @@ mod tests {
         assert_eq!(retrieved_metrics.filterable_column_stats.len(), 1);
         assert!(retrieved_metrics.filterable_column_stats.contains_key("category"));
         
-        println!("✅ CollectionMetrics storage and retrieval test passed");
+        info!("✅ CollectionMetrics storage and retrieval test passed");
     }
 
     #[tokio::test]
     async fn test_global_metrics_storage_and_retrieval() {
-        println!("🧪 TEST: GlobalMetrics storage and retrieval");
+        // Initialize hardware capabilities for testing
+        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+
+        debug!("🧪 TEST: GlobalMetrics storage and retrieval");
         
         let store = create_test_store().await.unwrap();
         
@@ -174,12 +184,15 @@ mod tests {
         assert_eq!(retrieved_metrics.operations_per_second, 1500.5);
         assert_eq!(retrieved_metrics.active_connections, 127);
         
-        println!("✅ GlobalMetrics storage and retrieval test passed");
+        info!("✅ GlobalMetrics storage and retrieval test passed");
     }
 
     #[tokio::test]
     async fn test_collection_partitioning() {
-        println!("🧪 TEST: Collection partitioning for metrics storage");
+        // Initialize hardware capabilities for testing
+        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+
+        debug!("🧪 TEST: Collection partitioning for metrics storage");
         
         let store = create_test_store().await.unwrap();
         
@@ -218,15 +231,18 @@ mod tests {
         for collection_id in &test_collections {
             let partition = store.calculate_partition(collection_id);
             assert!(partition < 4, "Partition {} out of range for collection {}", partition, collection_id);
-            println!("📊 Collection '{}' → Partition {}", collection_id, partition);
+            debug!("📊 Collection '{}' → Partition {}", collection_id, partition);
         }
         
-        println!("✅ Collection partitioning test passed");
+        info!("✅ Collection partitioning test passed");
     }
 
     #[tokio::test]
     async fn test_metrics_list_collections() {
-        println!("🧪 TEST: List collections functionality");
+        // Initialize hardware capabilities for testing
+        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+
+        debug!("🧪 TEST: List collections functionality");
         
         let store = create_test_store().await.unwrap();
         
@@ -259,13 +275,16 @@ mod tests {
             );
         }
         
-        println!("📋 Found {} collections: {:?}", collection_list.len(), collection_list);
-        println!("✅ List collections test passed");
+        debug!("📋 Found {} collections: {:?}", collection_list.len(), collection_list);
+        info!("✅ List collections test passed");
     }
 
     #[tokio::test]
     async fn test_metrics_cleanup_functionality() {
-        println!("🧪 TEST: Metrics cleanup functionality");
+        // Initialize hardware capabilities for testing
+        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+
+        debug!("🧪 TEST: Metrics cleanup functionality");
         
         let store = create_test_store().await.unwrap();
         
@@ -293,12 +312,15 @@ mod tests {
         let retrieved_after_cleanup = store.get_collection_metrics("cleanup_test_collection").await.unwrap();
         assert!(retrieved_after_cleanup.is_none(), "Metrics should be cleaned up");
         
-        println!("✅ Metrics cleanup test passed");
+        info!("✅ Metrics cleanup test passed");
     }
 
     #[tokio::test]
     async fn test_concurrent_metrics_operations() {
-        println!("🧪 TEST: Concurrent metrics operations");
+        // Initialize hardware capabilities for testing
+        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+
+        debug!("🧪 TEST: Concurrent metrics operations");
         
         let store = create_test_store().await.unwrap();
         let store = std::sync::Arc::new(store);
@@ -343,7 +365,7 @@ mod tests {
         }
         
         assert_eq!(completed_collections.len(), 10);
-        println!("📊 Completed concurrent operations for {} collections", completed_collections.len());
+        debug!("📊 Completed concurrent operations for {} collections", completed_collections.len());
         
         // Verify all collections exist
         let collection_list = store.list_collections().await.unwrap();
@@ -352,12 +374,15 @@ mod tests {
                    "Collection {} not found after concurrent operations", expected_collection);
         }
         
-        println!("✅ Concurrent metrics operations test passed");
+        info!("✅ Concurrent metrics operations test passed");
     }
 
     #[tokio::test] 
     async fn test_filesystem_factory_integration() {
-        println!("🧪 TEST: FilesystemFactory integration");
+        // Initialize hardware capabilities for testing
+        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+
+        debug!("🧪 TEST: FilesystemFactory integration");
         
         let store = create_test_store().await.unwrap();
         
@@ -387,6 +412,6 @@ mod tests {
         assert!(retrieve_result.is_ok(), "Failed to retrieve through filesystem: {:?}", retrieve_result);
         assert!(retrieve_result.unwrap().is_some());
         
-        println!("✅ FilesystemFactory integration test passed");
+        info!("✅ FilesystemFactory integration test passed");
     }
 }

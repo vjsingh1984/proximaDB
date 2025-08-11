@@ -25,6 +25,9 @@ impl CacheValue for TestValue {
 /// Test base cache trait implementation
 #[tokio::test]
 async fn test_base_cache_trait_template_method() {
+        // Initialize hardware capabilities for testing
+        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+
     struct TestCache {
         l1_store: Arc<RwLock<HashMap<TestKey, TestValue>>>,
         l2_store: Arc<RwLock<HashMap<TestKey, TestValue>>>,
@@ -119,6 +122,9 @@ async fn test_base_cache_trait_template_method() {
 /// Test eviction strategies
 #[tokio::test]
 async fn test_eviction_strategies() {
+        // Initialize hardware capabilities for testing
+        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+
     use crate::storage::cache::eviction::*;
     
     // Test LRU
@@ -161,6 +167,9 @@ async fn test_eviction_strategies() {
 /// Test storage backends
 #[tokio::test]
 async fn test_storage_backends() {
+        // Initialize hardware capabilities for testing
+        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+
     use crate::storage::cache::backend::*;
     
     // Test memory backend
@@ -182,6 +191,9 @@ async fn test_storage_backends() {
 /// Test metrics collection
 #[tokio::test]
 async fn test_metrics_collection() {
+        // Initialize hardware capabilities for testing
+        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+
     let metrics = CacheMetrics::new();
     
     // Record some operations
@@ -213,6 +225,9 @@ async fn test_metrics_collection() {
 /// Test cache entry metadata
 #[tokio::test]
 async fn test_cache_entry_metadata() {
+        // Initialize hardware capabilities for testing
+        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+
     let value = TestValue {
         data: vec![1, 2, 3],
         size: 100,

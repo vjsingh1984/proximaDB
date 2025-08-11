@@ -10,6 +10,7 @@
 #![cfg(disabled_due_to_obsolete_apis)]
 
 use anyhow::Result;
+use tracing::{debug, error, info, warn};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::SystemTime;
@@ -23,7 +24,7 @@ use proximadb::storage::persistence::write_ahead_log::bincode_batch::BincodeWalB
 use proximadb::storage::persistence::write_ahead_log::cloud_atomicity::{
     CloudAtomicityManager, CloudAtomicityConfig, CloudTransactionMetadata,
 };
-use proximadb::storage::persistence::write_ahead_log::config::WriteBufferConfig;
+use proximadb::storage::persistence::write_ahead_log::config::WALConfig;
 use proximadb::storage::BatchId;
 
 /// Helper function to create test vector records
@@ -131,7 +132,7 @@ async fn test_cloud_atomicity_manager_creation() -> Result<()> {
     assert_eq!(stats.total_transactions, 0);
     assert_eq!(stats.active_transactions, 0);
     
-    println!("✅ Cloud atomicity manager created successfully");
+    debug!("✅ Cloud atomicity manager created successfully");
     Ok(())
 }
 
@@ -169,7 +170,7 @@ async fn test_cloud_transaction_lifecycle() -> Result<()> {
     assert_eq!(stats.successful_transactions, 1);
     assert_eq!(stats.active_transactions, 0);
     
-    println!("✅ Cloud transaction lifecycle test passed");
+    debug!("✅ Cloud transaction lifecycle test passed");
     Ok(())
 }
 
@@ -202,7 +203,7 @@ async fn test_cloud_transaction_rollback() -> Result<()> {
     assert_eq!(stats.rolled_back_transactions, 1);
     assert_eq!(stats.active_transactions, 0);
     
-    println!("✅ Cloud transaction rollback test passed");
+    debug!("✅ Cloud transaction rollback test passed");
     Ok(())
 }
 
@@ -215,7 +216,7 @@ async fn test_bincode_strategy_with_cloud_atomicity() -> Result<()> {
     let stats = strategy.get_cloud_atomicity_stats().await?;
     assert_eq!(stats.total_transactions, 0);
     
-    println!("✅ BincodeWalBatchStrategy with cloud atomicity test passed");
+    debug!("✅ BincodeWalBatchStrategy with cloud atomicity test passed");
     Ok(())
 }
 
@@ -243,7 +244,7 @@ async fn test_atomic_cloud_write_integration() -> Result<()> {
     
     match result {
         Ok(cloud_batch_url) => {
-            println!("✅ Atomic cloud write successful: {}", cloud_batch_url);
+            debug!("✅ Atomic cloud write successful: {}", cloud_batch_url);
             
             // Verify the file exists
             assert!(cloud_batch_url.contains(&collection_id));
@@ -255,7 +256,7 @@ async fn test_atomic_cloud_write_integration() -> Result<()> {
             assert_eq!(stats.successful_transactions, 1);
         }
         Err(e) => {
-            println!("⚠️ Atomic cloud write failed (expected for test environment): {}", e);
+            debug!("⚠️ Atomic cloud write failed (expected for test environment): {}", e);
             // This is expected in test environment without full cloud setup
         }
     }
@@ -263,7 +264,7 @@ async fn test_atomic_cloud_write_integration() -> Result<()> {
     // Cleanup
     let _ = std::fs::remove_dir_all(&temp_dir);
     
-    println!("✅ Atomic cloud write integration test completed");
+    debug!("✅ Atomic cloud write integration test completed");
     Ok(())
 }
 
@@ -299,7 +300,7 @@ async fn test_cloud_transaction_cleanup() -> Result<()> {
     let cleaned_count = cloud_manager.cleanup_completed_transactions().await?;
     assert_eq!(cleaned_count, 3);
     
-    println!("✅ Cloud transaction cleanup test passed - cleaned {} transactions", cleaned_count);
+    debug!("✅ Cloud transaction cleanup test passed - cleaned {} transactions", cleaned_count);
     Ok(())
 }
 
@@ -319,7 +320,7 @@ async fn test_cloud_atomicity_error_handling() -> Result<()> {
     let result = cloud_manager.rollback_cloud_transaction(invalid_transaction_id, &strategy).await;
     assert!(result.is_err());
     
-    println!("✅ Cloud atomicity error handling test passed");
+    debug!("✅ Cloud atomicity error handling test passed");
     Ok(())
 }
 
@@ -381,7 +382,7 @@ async fn test_concurrent_cloud_transactions() -> Result<()> {
     assert_eq!(stats.successful_transactions, 5);
     assert_eq!(stats.active_transactions, 0);
     
-    println!("✅ Concurrent cloud transactions test passed");
+    debug!("✅ Concurrent cloud transactions test passed");
     Ok(())
 }
 
@@ -393,13 +394,13 @@ async fn test_cloud_atomicity_with_strategy_integration() -> Result<()> {
     // Test multiple cleanup operations
     for i in 0..3 {
         let cleaned = strategy.cleanup_cloud_transactions().await?;
-        println!("Cleanup round {}: {} transactions cleaned", i + 1, cleaned);
+        debug!("Cleanup round {}: {} transactions cleaned", i + 1, cleaned);
     }
     
     // Test stats retrieval
     let stats = strategy.get_cloud_atomicity_stats().await?;
     assert_eq!(stats.total_transactions, 0);
     
-    println!("✅ Cloud atomicity with strategy integration test passed");
+    debug!("✅ Cloud atomicity with strategy integration test passed");
     Ok(())
 }

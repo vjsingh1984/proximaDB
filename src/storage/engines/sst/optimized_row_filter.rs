@@ -391,7 +391,7 @@ mod tests {
         let indices = evaluator.filter_vector_records_fast(&records, &filter).unwrap();
         
         assert!(!indices.is_empty(), "Should find some matching records");
-        println!("SST Row Filter found {} matches out of {} records", indices.len(), records.len());
+        debug!("SST Row Filter found {} matches out of {} records", indices.len(), records.len());
     }
     
     #[tokio::test] 
@@ -423,7 +423,7 @@ mod tests {
         let indices = evaluator.evaluate_parallel_filters(&records, &filter).await.unwrap();
         
         assert!(!indices.is_empty(), "Should find some matching records");
-        println!("Parallel filter found {} matches", indices.len());
+        debug!("Parallel filter found {} matches", indices.len());
     }
     
     fn create_test_vector_records(count: usize) -> Vec<VectorRecord> {

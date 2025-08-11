@@ -8,10 +8,11 @@ use proximadb::core::VectorRecord;
 use std::sync::Arc;
 use std::time::Instant;
 use std::collections::HashMap;
+use tracing::{debug, error, info};
 
 fn benchmark_distance_metrics() -> HashMap<(usize, DistanceMetric), f64> {
-    println!("\n=== Distance Computation Benchmarks ===");
-    println!("Platform: UnifiedDistanceCompute with automatic hardware detection");
+    debug!("\n=== Distance Computation Benchmarks ===");
+    debug!("Platform: UnifiedDistanceCompute with automatic hardware detection");
     
     let dimensions = vec![128, 256, 512, 1024, 2048];
     let iterations = 100_000;
@@ -19,7 +20,7 @@ fn benchmark_distance_metrics() -> HashMap<(usize, DistanceMetric), f64> {
     let mut results = HashMap::new();
     
     for dim in dimensions {
-        println!("\nDimension: {}", dim);
+        debug!("\nDimension: {}", dim);
         
         let a: Vec<f32> = (0..dim).map(|i| (i as f32).sin()).collect();
         let b: Vec<f32> = (0..dim).map(|i| (i as f32).cos()).collect();
@@ -42,7 +43,7 @@ fn benchmark_distance_metrics() -> HashMap<(usize, DistanceMetric), f64> {
             let ops_per_sec = iterations as f64 / elapsed.as_secs_f64();
             results.insert((dim, metric), ops_per_sec);
             
-            println!("  {:?}: {:.0} ops/sec ({:.2} ns/op)", 
+            debug!("  {:?}: {:.0} ops/sec ({:.2} ns/op)", 
                      metric, ops_per_sec, 
                      elapsed.as_nanos() as f64 / iterations as f64);
         }
@@ -52,13 +53,13 @@ fn benchmark_distance_metrics() -> HashMap<(usize, DistanceMetric), f64> {
 }
 
 async fn benchmark_indexing() {
-    println!("\n=== Indexing Algorithm Benchmarks ===");
+    debug!("\n=== Indexing Algorithm Benchmarks ===");
     
     let dataset_sizes = vec![10_000, 50_000, 100_000];
     let dimension = 128;
     
     for size in dataset_sizes {
-        println!("\nDataset size: {}", size);
+        debug!("\nDataset size: {}", size);
         
         // Generate random data
         let vectors: Vec<Vec<f32>> = (0..size)
@@ -114,7 +115,7 @@ async fn benchmark_indexing() {
             let search_time = start.elapsed();
             let qps = search_iterations as f64 / search_time.as_secs_f64();
             
-            println!("  Unified IVF: build={:.2}s, QPS={:.0}, clusters={}", 
+            debug!("  Unified IVF: build={:.2}s, QPS={:.0}, clusters={}", 
                      build_time.as_secs_f64(), qps, num_clusters);
         }
         
@@ -147,7 +148,7 @@ async fn benchmark_indexing() {
                     distance: Some(0.0),
                 };
                 if let Err(e) = index.add(format!("vec_{}", i), Arc::new(record)).await {
-                    println!("  LSH add failed: {}", e);
+                    error!("  LSH add failed: {}", e);
                     break;
                 }
             }
@@ -163,13 +164,13 @@ async fn benchmark_indexing() {
             let search_time = start.elapsed();
             let qps = search_iterations as f64 / search_time.as_secs_f64();
             
-            println!("  LSH: build={:.2}s, QPS={:.0}", build_time.as_secs_f64(), qps);
+            debug!("  LSH: build={:.2}s, QPS={:.0}", build_time.as_secs_f64(), qps);
         }
     }
 }
 
 fn benchmark_concurrent_operations() {
-    println!("\n=== Concurrent Operation Benchmarks ===");
+    debug!("\n=== Concurrent Operation Benchmarks ===");
     
     use std::sync::Arc;
     use std::sync::atomic::{AtomicU64, Ordering};
@@ -208,18 +209,18 @@ fn benchmark_concurrent_operations() {
         let total_ops = counter.load(Ordering::Relaxed);
         let ops_per_sec = total_ops as f64 / elapsed.as_secs_f64();
         
-        println!("  {} threads: {:.0} ops/sec", num_threads, ops_per_sec);
+        debug!("  {} threads: {:.0} ops/sec", num_threads, ops_per_sec);
     }
 }
 
 #[tokio::main]
 async fn main() {
-    println!("ProximaDB Real Performance Benchmarks");
-    println!("=====================================");
+    debug!("ProximaDB Real Performance Benchmarks");
+    debug!("=====================================");
     
     benchmark_distance_metrics();
     benchmark_indexing().await;
     benchmark_concurrent_operations();
     
-    println!("\n✅ Benchmarks completed!");
+    info!("\n✅ Benchmarks completed!");
 }

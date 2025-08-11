@@ -4,6 +4,9 @@ use std::time::Duration;
 
 #[test]
 fn test_metrics_recording() {
+        // Initialize hardware capabilities for testing
+        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+
     let metrics = CacheMetrics::new();
     
     // Record some hits
@@ -52,6 +55,9 @@ fn test_metrics_recording() {
 
 #[test]
 fn test_metrics_reset() {
+        // Initialize hardware capabilities for testing
+        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+
     let metrics = CacheMetrics::new();
     
     // Record some operations
@@ -78,6 +84,9 @@ fn test_metrics_reset() {
 
 #[test]
 fn test_metrics_summary_print() {
+        // Initialize hardware capabilities for testing
+        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+
     let metrics = CacheMetrics::new();
     
     // Set up some metrics

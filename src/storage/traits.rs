@@ -11,6 +11,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use crate::proto::proximadb::Collection;
+use tracing::{debug, error, info, warn};
 // Core types imported as needed in implementations
 
 /// Strategy enum for selecting storage engine type
@@ -96,6 +97,7 @@ pub trait UnifiedStorageEngine: Send + Sync {
     async fn search_vectors_unified(
         &self,
         collection_id: &str,
+        storage_url: &str,  // Storage URL for collection data location
         query_vector: &[f32],
         k: usize,
         distance_metric: &crate::compute::distance_computation::DistanceMetric,
@@ -162,16 +164,20 @@ pub trait UnifiedStorageEngine: Send + Sync {
     async fn get_collection_storage_url(&self, collection_id: &str) -> Result<String> {
         // Storage location should be passed through FlushParameters/CompactionParameters
         // or retrieved from collection metadata when actually needed
-        // This is a fallback for legacy code
-        Ok(format!("file:///data/{}/data", collection_id))
+        tracing::error!("❌ get_collection_storage_url called without implementation for collection '{}'. Storage URL must be provided through parameters or collection metadata.", collection_id);
+        Err(anyhow::anyhow!(
+            "Collection '{}' storage location not found. Please ensure collection exists and has a storage assignment.", 
+            collection_id
+        ))
     }
 
     /// Get base storage URL for a collection (without collection subdirectory)
     /// Useful for creating collection directories
     async fn get_base_storage_url(&self, collection_id: &str) -> Result<String> {
         // Base storage should come from collection metadata
-        // This is a fallback for legacy code  
-        Ok("file:///data".to_string())
+        // Engines must override this or provide collection service
+        tracing::error!("❌ get_base_storage_url called without implementation for collection '{}'. Storage engines must provide storage URL.", collection_id);
+        Err(anyhow::anyhow!("Storage engine must implement get_base_storage_url or provide collection service"))
     }
 
     /// Check if collection has storage assignment

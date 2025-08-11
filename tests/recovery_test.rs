@@ -4,6 +4,7 @@ use proximadb::ProximaDB;
 use tempfile::TempDir;
 use std::time::Instant;
 use std::path::PathBuf;
+use tracing::{info};
 
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>>;
 
@@ -56,6 +57,10 @@ async fn test_recovery_with_multiple_collections() -> Result<()> {
             max_request_size_mb: 100,
             timeout_seconds: 30,
             enable_tls: None,
+            rest_compression: false,
+            grpc_compression: false,
+            compression_algorithm: "gzip".to_string(),
+            compression_level: 6,
         },
         consensus: ConsensusConfig {
             node_id: None,
@@ -80,7 +85,7 @@ async fn test_recovery_with_multiple_collections() -> Result<()> {
     db.start().await?;
     
     let startup_time = start.elapsed();
-    println!("Server started in {:?} with 10 collections", startup_time);
+    info!("Server started in {:?} with 10 collections", startup_time);
     
     // Verify startup was reasonable (should be under 60 seconds even with 10 collections)
     assert!(startup_time.as_secs() < 60, "Startup took too long: {:?}", startup_time);
@@ -132,6 +137,10 @@ async fn test_recovery_after_crash() -> Result<()> {
             max_request_size_mb: 100,
             timeout_seconds: 30,
             enable_tls: None,
+            rest_compression: false,
+            grpc_compression: false,
+            compression_algorithm: "gzip".to_string(),
+            compression_level: 6,
         },
         consensus: ConsensusConfig {
             node_id: None,
@@ -167,7 +176,7 @@ async fn test_recovery_after_crash() -> Result<()> {
         db.start().await?;
         
         let recovery_time = start.elapsed();
-        println!("Recovery completed in {:?}", recovery_time);
+        info!("Recovery completed in {:?}", recovery_time);
         
         // Recovery should be fast
         assert!(recovery_time.as_secs() < 2, "Recovery took too long: {:?}", recovery_time);

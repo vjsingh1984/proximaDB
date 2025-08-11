@@ -8,6 +8,8 @@
 //! Uses case-sensitive alphanumeric encoding (0-9, A-Z, a-z) to convert
 //! microsecond timestamps into compact strings.
 
+use tracing::{debug};
+
 const BASE62_CHARS: &[u8] = b"0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
 
 /// Encode a u64 value to base62 string
@@ -62,13 +64,13 @@ mod tests {
         let timestamp_ms = 1736634592000u64; // Example millisecond timestamp
         let encoded_ms = encode(timestamp_ms);
         assert!(encoded_ms.len() < 9); // Should be much shorter than UUID
-        println!("Millisecond timestamp {} -> base62: {} ({} chars)", timestamp_ms, encoded_ms, encoded_ms.len());
+        debug!("Millisecond timestamp {} -> base62: {} ({} chars)", timestamp_ms, encoded_ms, encoded_ms.len());
         
         // Test microsecond timestamp for comparison
         let timestamp_us = 1736634592000000u64; // Example microsecond timestamp
         let encoded_us = encode(timestamp_us);
         assert!(encoded_us.len() < 12); // Should be much shorter than UUID
-        println!("Microsecond timestamp {} -> base62: {} ({} chars)", timestamp_us, encoded_us, encoded_us.len());
+        debug!("Microsecond timestamp {} -> base62: {} ({} chars)", timestamp_us, encoded_us, encoded_us.len());
         
         // Test round trip
         assert_eq!(decode(&encoded_ms).unwrap(), timestamp_ms);

@@ -22,6 +22,41 @@ use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
 use crate::compute::quantization::unified::{UnifiedQuantizationEngine, UnifiedQuantizationLevel};
 use super::readers::unified_parquet_reader::{UnifiedParquetReader, CollectionContext};
 
+/// I/O optimization hints for efficient file access
+#[derive(Debug, Clone)]
+enum IoOptimizationHint {
+    /// Use HTTP range requests for cloud storage
+    UseRangeRequests {
+        enabled: bool,
+        chunk_size_mb: f32,
+        prefetch_next: bool,
+    },
+    /// Project only needed columns in Parquet
+    UseColumnProjection {
+        columns: Vec<&'static str>,
+    },
+    /// Filter at row group level in Parquet
+    UseRowGroupFiltering {
+        enabled: bool,
+        stats_filtering: bool,
+    },
+    /// Push predicates down to storage layer
+    UsePredicatePushdown {
+        enabled: bool,
+        early_termination: bool,
+    },
+    /// Enable page-level caching
+    EnableCaching {
+        cache_pages: bool,
+        cache_duration_sec: u32,
+    },
+    /// Use batch reading for efficiency
+    UseBatchReading {
+        batch_size: usize,
+        parallel_decode: bool,
+    },
+}
+
 
 /// VIPER Unified Search Engine - implements search logic using UnifiedParquetReader for data access
 #[derive(Debug)]
@@ -113,17 +148,33 @@ impl UnifiedSearchEngine for ViperUnifiedSearchEngine {
             info!("🔍 VIPER Search has filter expression");
         }
         
-        // 1. Build file paths using collection context and ML clustering
-        let file_paths = self.build_file_paths(context, params).await?;
-        debug!("📁 Selected {} files for search", file_paths.len());
+        // 1. Get file paths directly from context (no redundant discovery)
+        let file_paths = if let Some(ref paths) = context.storage_info.file_paths {
+            // Files already discovered by engine - use them directly (FAST PATH)
+            debug!("📁 Using {} pre-discovered files from context", paths.len());
+            paths.clone()
+        } else {
+            // Fallback: ML clustering or filesystem query (SLOW PATH - should be rare)
+            tracing::warn!("⚠️ No file paths provided in context, falling back to discovery");
+            self.build_file_paths(context, params).await?
+        };
+        
         for (i, path) in file_paths.iter().enumerate() {
             debug!("📁   File {}: {}", i, path);
         }
         
-        // 2. Build collection context for reader
-        let collection_context = self.build_collection_context(context, &file_paths);
+        // 2. Generate I/O optimization hints based on file paths and storage type
+        let io_hints = self.generate_io_optimization_hints(&file_paths, context, params);
+        
+        // 3. Build collection context for reader with I/O hints
+        let mut collection_context = self.build_collection_context(context, &file_paths);
+        
+        // Add I/O optimization hints to collection context
+        self.apply_io_hints_to_context(&mut collection_context, &io_hints, params);
+        
         debug!("📁 Collection context: {:?}", collection_context);
         debug!("📁 Filterable columns: {:?}", collection_context.filterable_columns);
+        debug!("⚡ I/O optimization hints: {:?}", io_hints);
         
         // 3. VIPER TWO-STAGE SEARCH (unique to VIPER's dual column storage)
         //
@@ -340,49 +391,132 @@ impl ViperUnifiedSearchEngine {
     }
     
     /// Build all file paths for collection
+    /// NOTE: This should only be called as a fallback when files aren't pre-discovered
     async fn build_all_file_paths(&self, context: &UnifiedSearchContext) -> Result<Vec<String>> {
-        debug!("📁 Building file paths for collection: {}", context.collection_id);
+        // This method should rarely be called in production as files should be passed from engine
+        tracing::error!("❌ build_all_file_paths called - this is inefficient! Files should be passed from engine.");
+        tracing::error!("    Collection: {}", context.collection_id);
         
-        // TODO: Pass storage_assignment through UnifiedSearchContext from the caller
-        // For now, use a fallback approach based on collection_id
-        // The actual storage location should come from collection.storage_assignment.data_location
-        let storage_url = format!("file:///data/{}/data", context.collection_id);
-        debug!("📁 Storage URL for collection {}: {}", context.collection_id, storage_url);
+        // We can't proceed without a proper storage URL
+        // The engine should have provided the files
+        Err(anyhow::anyhow!(
+            "File paths not provided for collection '{}'. The storage engine must provide file paths through context.",
+            context.collection_id
+        ))
+    }
+    
+    /// Generate I/O optimization hints based on file paths and storage type
+    fn generate_io_optimization_hints(
+        &self,
+        file_paths: &[String],
+        context: &UnifiedSearchContext,
+        params: &SearchParams,
+    ) -> Vec<IoOptimizationHint> {
+        let mut hints = Vec::new();
         
-        // Use the parquet reader's filesystem (which was injected)
-        let fs = self.parquet_reader.filesystem();
-        let filesystem = fs.get_filesystem(&storage_url)?;
+        // Analyze file characteristics
+        let total_files = file_paths.len();
+        let is_cloud = context.storage_info.is_cloud_storage;
+        let has_filters = params.filter_expression.is_some();
+        let vector_dim = context.collection_config.as_ref()
+            .map(|c| c.vector_dimension)
+            .unwrap_or(128);
         
-        // List files in the data directory (storage_url already includes collection_id)
-        let entries = match filesystem.list(&storage_url).await {
-            Ok(entries) => entries,
-            Err(e) => {
-                debug!("📁 Failed to list files in {}: {}", storage_url, e);
-                return Ok(vec![]);
-            }
-        };
+        // For cloud storage, use range requests to minimize data transfer
+        if is_cloud {
+            hints.push(IoOptimizationHint::UseRangeRequests {
+                enabled: true,
+                chunk_size_mb: if total_files > 10 { 1.0 } else { 2.0 },
+                prefetch_next: total_files <= 5,
+            });
+            
+            // Enable aggressive caching for cloud files
+            hints.push(IoOptimizationHint::EnableCaching {
+                cache_pages: true,
+                cache_duration_sec: 300,
+            });
+        }
         
-        // Find all .parquet files
-        let mut files = Vec::new();
-        for entry in entries {
-            // Skip staging directories (start with __) and hidden files (start with .)
-            if entry.name.starts_with("__") || entry.name.starts_with(".") {
-                debug!("📁 Skipping staging/hidden entry: {}", entry.name);
-                continue;
+        // For Parquet files, optimize column reads
+        if file_paths.iter().any(|p| p.ends_with(".parquet")) {
+            hints.push(IoOptimizationHint::UseColumnProjection {
+                columns: if has_filters {
+                    vec!["id", "vector", "metadata", "version"]
+                } else {
+                    vec!["id", "vector"]
+                },
+            });
+            
+            // For high-dimensional vectors, use batch reading
+            if vector_dim > 768 {
+                hints.push(IoOptimizationHint::UseBatchReading {
+                    batch_size: 1000,
+                    parallel_decode: true,
+                });
             }
             
-            if entry.name.ends_with(".parquet") && !entry.metadata.is_directory {
-                // In stateless design, DirEntry.url already contains full URL
-                debug!("📁 Found parquet file: {}", entry.url);
-                files.push(entry.url);
+            // Enable row group filtering for large files
+            if context.storage_info.estimated_size_mb > 100.0 {
+                hints.push(IoOptimizationHint::UseRowGroupFiltering {
+                    enabled: true,
+                    stats_filtering: has_filters,
+                });
             }
         }
         
-        // Sort files for consistent ordering
-        files.sort();
+        // For filtered queries, enable predicate pushdown
+        if has_filters {
+            hints.push(IoOptimizationHint::UsePredicatePushdown {
+                enabled: true,
+                early_termination: params.top_k.unwrap_or(10) < 100,
+            });
+        }
         
-        info!("📁 Found {} parquet files for collection {}", files.len(), context.collection_id);
-        Ok(files)
+        hints
+    }
+    
+    /// Apply I/O hints to collection context for reader consumption
+    fn apply_io_hints_to_context(
+        &self,
+        context: &mut CollectionContext,
+        hints: &[IoOptimizationHint],
+        params: &SearchParams,
+    ) {
+        // Convert hints to custom hints in params that the reader can use
+        let mut custom_hints = params.custom_hints.clone().unwrap_or_default();
+        
+        for hint in hints {
+            match hint {
+                IoOptimizationHint::UseRangeRequests { enabled, chunk_size_mb, prefetch_next } => {
+                    custom_hints.insert("use_range_requests".to_string(), json!(*enabled));
+                    custom_hints.insert("range_chunk_size_mb".to_string(), json!(*chunk_size_mb));
+                    custom_hints.insert("prefetch_next_chunk".to_string(), json!(*prefetch_next));
+                }
+                IoOptimizationHint::UseColumnProjection { columns } => {
+                    custom_hints.insert("projection_columns".to_string(), json!(columns));
+                }
+                IoOptimizationHint::UseRowGroupFiltering { enabled, stats_filtering } => {
+                    custom_hints.insert("row_group_filtering".to_string(), json!(*enabled));
+                    custom_hints.insert("use_stats_filtering".to_string(), json!(*stats_filtering));
+                }
+                IoOptimizationHint::UsePredicatePushdown { enabled, early_termination } => {
+                    custom_hints.insert("predicate_pushdown".to_string(), json!(*enabled));
+                    custom_hints.insert("early_termination".to_string(), json!(*early_termination));
+                }
+                IoOptimizationHint::EnableCaching { cache_pages, cache_duration_sec } => {
+                    custom_hints.insert("cache_pages".to_string(), json!(*cache_pages));
+                    custom_hints.insert("cache_ttl_sec".to_string(), json!(*cache_duration_sec));
+                }
+                IoOptimizationHint::UseBatchReading { batch_size, parallel_decode } => {
+                    custom_hints.insert("read_batch_size".to_string(), json!(*batch_size));
+                    custom_hints.insert("parallel_decode".to_string(), json!(*parallel_decode));
+                }
+            }
+        }
+        
+        // Store hints in context for reader to consume
+        // This would be passed through to the UnifiedParquetReader
+        context.io_optimization_hints = Some(custom_hints);
     }
     
     /// Build collection context for reader - NO ADAPTERS NEEDED
@@ -430,6 +564,7 @@ impl ViperUnifiedSearchEngine {
                 .map(|c| c.estimated_document_count)
                 .unwrap_or(1000),
             is_cloud_storage: context.storage_info.is_cloud_storage,
+            io_optimization_hints: None, // Will be set by apply_io_hints_to_context
         }
     }
 }

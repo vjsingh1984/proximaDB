@@ -6,7 +6,7 @@
 //! RocksDB-based metadata backend for high-performance persistent storage
 //! 
 //! This backend provides:
-//! - High-performance key-value storage with LSM tree architecture
+//! - High-performance key-value storage with SST tree architecture
 //! - ACID transactions with optimistic concurrency control
 //! - Column families for organized data storage
 //! - Built-in compression and bloom filters

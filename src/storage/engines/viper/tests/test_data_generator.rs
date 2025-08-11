@@ -418,6 +418,7 @@ impl TestDataGenerator {
 mod tests {
     use super::*;
     use tempfile::TempDir;
+use tracing::{debug, error, info, warn};
     
     #[test]
     fn test_data_generator_creation() {
@@ -566,7 +567,7 @@ mod tests {
         }
         
         // Test INT8 quantized distance approximation
-        println!("Testing INT8 quantized distances:");
+        debug!("Testing INT8 quantized distances:");
         for (idx, int8_vector) in int8_codes.iter().enumerate() {
             // Convert INT8 back to float for comparison
             let dequantized: Vec<f32> = int8_vector.iter()
@@ -585,7 +586,7 @@ mod tests {
         }
         
         // Test binary quantization
-        println!("Testing binary quantized distances:");
+        debug!("Testing binary quantized distances:");
         for (idx, binary_vector) in binary_codes.iter().enumerate() {
             // Convert binary back to float for comparison (1 bit per dimension)
             let mut dequantized = vec![0.0f32; dimension];
@@ -602,7 +603,7 @@ mod tests {
             assert!(quantized_distance >= 0.0, "Hamming distance should be non-negative");
         }
         
-        println!("Quantized distance tests passed!");
+        debug!("Quantized distance tests passed!");
     }
 
     #[test]
@@ -620,7 +621,7 @@ mod tests {
         let sparsity_levels = vec![0.9, 0.95, 0.99]; // 90%, 95%, 99% sparse
         
         for sparsity in sparsity_levels {
-            println!("Testing with {:.0}% sparsity", sparsity * 100.0);
+            debug!("Testing with {:.0}% sparsity", sparsity * 100.0);
             
             // Generate sparse vectors
             let sparse_vectors: Vec<Vec<f32>> = (0..50)
@@ -636,7 +637,7 @@ mod tests {
             
             // Count non-zero elements in query
             let query_nnz = sparse_query.iter().filter(|&&x| x != 0.0).count();
-            println!("Query has {} non-zero elements out of {}", query_nnz, dimension);
+            debug!("Query has {} non-zero elements out of {}", query_nnz, dimension);
             
             // Test INT8 sparse quantization efficiency
             for (idx, int8_vector) in int8_sparse.iter().enumerate() {
@@ -668,11 +669,11 @@ mod tests {
                 
                 // Verify sparsity preservation
                 let sparsity_preservation = preserved_nnz as f32 / query_nnz.max(1) as f32;
-                println!("Sparsity preservation for vector {}: {:.2}%", idx, sparsity_preservation * 100.0);
+                debug!("Sparsity preservation for vector {}: {:.2}%", idx, sparsity_preservation * 100.0);
             }
         }
         
-        println!("Sparse quantized distance tests passed!");
+        debug!("Sparse quantized distance tests passed!");
     }
 
     #[test]
@@ -701,10 +702,10 @@ mod tests {
         let sparse_query = generator.generate_sparse_vector(0.05);
         
         // Compare distances between sparse vectors using UnifiedDistanceCompute
-        println!("Testing UnifiedDistanceCompute with sparse vectors:");
+        debug!("Testing UnifiedDistanceCompute with sparse vectors:");
         for (idx, sparse_vec) in sparse_vectors.iter().enumerate() {
             let distance_result = distance_compute.calculate_distance(&sparse_query, sparse_vec, &DistanceMetric::Cosine);
-            println!("  Sparse vector {} - Cosine distance: {:.4}", idx, distance_result.raw_value);
+            debug!("  Sparse vector {} - Cosine distance: {:.4}", idx, distance_result.raw_value);
             
             // Verify distance is within expected range
             assert!(distance_result.raw_value >= 0.0 && distance_result.raw_value <= 2.0, 
@@ -719,7 +720,7 @@ mod tests {
         ];
         
         for metric in metrics {
-            println!("\nTesting {:?} metric with sparse vectors:", metric);
+            debug!("\nTesting {:?} metric with sparse vectors:", metric);
                 
             let mut distances = Vec::new();
             for sparse_vec in &sparse_vectors {
@@ -727,11 +728,17 @@ mod tests {
                 distances.push(distance_result.rank_value);
             }
             
-            // Verify all distances are non-negative (unified system normalizes)
+            // Verify all distances are valid (DotProduct can be negative)
             for (idx, dist) in distances.iter().enumerate() {
-                assert!(*dist >= 0.0, 
-                    "{:?} distance should be non-negative, got {} for vector {}", 
+                assert!(!dist.is_nan(), 
+                    "{:?} distance should not be NaN, got {} for vector {}", 
                     metric, dist, idx);
+                // For non-similarity metrics, distances should be non-negative
+                if !matches!(metric, DistanceMetric::DotProduct) {
+                    assert!(*dist >= 0.0, 
+                        "{:?} distance should be non-negative, got {} for vector {}", 
+                        metric, dist, idx);
+                }
             }
             
             // Find nearest neighbor
@@ -741,19 +748,19 @@ mod tests {
                 .map(|(idx, dist)| (*dist, idx))
                 .unwrap();
                 
-            println!("  Nearest sparse vector: {} with distance {:.4}", min_idx, min_dist);
+            debug!("  Nearest sparse vector: {} with distance {:.4}", min_idx, min_dist);
         }
         
         // Test mixed sparse/dense distance calculations
-        println!("\nTesting mixed sparse/dense vector distances:");
+        debug!("\nTesting mixed sparse/dense vector distances:");
         for (idx, dense_vec) in dense_vectors.iter().enumerate() {
             let sparse_to_dense = distance_compute.calculate_distance(&sparse_query, dense_vec, &DistanceMetric::Cosine);
-            println!("  Sparse query to dense vector {} - distance: {:.4}", idx, sparse_to_dense.raw_value);
+            debug!("  Sparse query to dense vector {} - distance: {:.4}", idx, sparse_to_dense.raw_value);
         }
         
         // Demonstrate that quantized vectors can be compared using UnifiedDistanceCompute
         // by simulating INT8 quantization
-        println!("\nTesting with simulated INT8 quantized vectors:");
+        debug!("\nTesting with simulated INT8 quantized vectors:");
         let int8_sparse_vectors: Vec<Vec<f32>> = sparse_vectors.iter()
             .map(|vec| {
                 // Simulate INT8 quantization/dequantization
@@ -771,14 +778,14 @@ mod tests {
             let quantized_distance = distance_compute.calculate_distance(&sparse_query, int8_vec, &DistanceMetric::Cosine);
             let error = (original_distance.rank_value - quantized_distance.rank_value).abs();
             
-            println!("  INT8 vector {} - error: {:.4} (original: {:.4}, quantized: {:.4})", 
+            debug!("  INT8 vector {} - error: {:.4} (original: {:.4}, quantized: {:.4})", 
                 idx, error, original_distance.rank_value, quantized_distance.rank_value);
                 
             // INT8 should maintain reasonable accuracy
             assert!(error < 0.2, "INT8 quantization error too large: {}", error);
         }
         
-        println!("\nUnified distance tests with sparse and quantized vectors passed!");
+        debug!("\nUnified distance tests with sparse and quantized vectors passed!");
     }
 
     #[test]
@@ -816,7 +823,7 @@ mod tests {
         ];
         
         for metric in metrics {
-            println!("Testing {:?} metric with sparse vectors", metric);
+            debug!("Testing {:?} metric with sparse vectors", metric);
             
             // Test dense query
             let mut results_dense = Vec::new();
@@ -838,7 +845,10 @@ mod tests {
             // Verify distance calculations are reasonable
             for (dist, _) in &results_dense {
                 assert!(!dist.rank_value.is_nan(), "Distance should not be NaN for {:?}", metric);
-                assert!(dist.rank_value >= 0.0, "Distance should be non-negative for {:?}", metric);
+                // For DotProduct, rank_value can be negative (negated similarity)
+                if !matches!(metric, DistanceMetric::DotProduct) {
+                    assert!(dist.rank_value >= 0.0, "Distance should be non-negative for {:?}", metric);
+                }
             }
         }
     }
@@ -909,12 +919,12 @@ mod tests {
                     // Compare sizes to verify compression is working
                     if name != "uncompressed" {
                         // Compressed files should generally be smaller
-                        println!("{} compression: {} bytes", name, metadata.len());
+                        debug!("{} compression: {} bytes", name, metadata.len());
                     }
                 }
                 Err(e) => {
                     // Some compressions might not be available
-                    println!("Compression {} not available: {}", name, e);
+                    debug!("Compression {} not available: {}", name, e);
                 }
             }
         }
@@ -959,24 +969,24 @@ mod tests {
             let uncompressed_size = uncompressed_path.metadata().unwrap().len();
             let gzip_size = gzip_path.metadata().unwrap().len();
             
-            println!("Sparse vector compression test:");
-            println!("  Uncompressed: {} bytes", uncompressed_size);
-            println!("  GZIP: {} bytes", gzip_size);
-            println!("  Compression ratio: {:.2}%", 
+            debug!("Sparse vector compression test:");
+            debug!("  Uncompressed: {} bytes", uncompressed_size);
+            debug!("  GZIP: {} bytes", gzip_size);
+            debug!("  Compression ratio: {:.2}%", 
                     (gzip_size as f64 / uncompressed_size as f64) * 100.0);
             
             // GZIP should provide some compression
             if gzip_size < uncompressed_size {
-                println!("GZIP successfully compressed the data");
+                debug!("GZIP successfully compressed the data");
             } else {
-                println!("GZIP did not compress the data (may depend on data patterns)");
+                debug!("GZIP did not compress the data (may depend on data patterns)");
             }
         }
         */
         
         // Just verify uncompressed file was created
         let uncompressed_size = uncompressed_path.metadata().unwrap().len();
-        println!("Sparse vector uncompressed size: {} bytes", uncompressed_size);
+        debug!("Sparse vector uncompressed size: {} bytes", uncompressed_size);
         assert!(uncompressed_size > 0, "File should have content");
     }
 
@@ -1017,7 +1027,7 @@ mod tests {
             
             assert!(file_path.exists());
             let size = file_path.metadata().unwrap().len();
-            println!("{} vectors ({:.0}% dense): {} bytes", name, density * 100.0, size);
+            debug!("{} vectors ({:.0}% dense): {} bytes", name, density * 100.0, size);
         }
     }
 
@@ -1060,10 +1070,10 @@ mod tests {
                 Ok(_) => {
                     let size = file_path.metadata().unwrap().len();
                     sizes.insert(name, size);
-                    println!("Parquet {} compression: {} bytes", name, size);
+                    debug!("Parquet {} compression: {} bytes", name, size);
                 }
                 Err(e) => {
-                    println!("Parquet {} compression not available: {}", name, e);
+                    debug!("Parquet {} compression not available: {}", name, e);
                 }
             }
         }
@@ -1071,7 +1081,7 @@ mod tests {
         // TODO: Compare compression ratios when compression features are enabled
         // For now just verify uncompressed file was created
         if let Some(&uncompressed_size) = sizes.get("parquet_uncompressed") {
-            println!("Uncompressed parquet size: {} bytes", uncompressed_size);
+            debug!("Uncompressed parquet size: {} bytes", uncompressed_size);
             assert!(uncompressed_size > 0, "File should have content");
         }
     }

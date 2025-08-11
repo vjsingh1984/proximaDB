@@ -532,6 +532,7 @@ impl VectorSearchRequestBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
+use tracing::{debug, error, info, warn};
     
     #[test]
     fn test_parse_operations() {

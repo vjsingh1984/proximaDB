@@ -669,6 +669,7 @@ impl AxisClusteringEngine {
 #[cfg(test)]
 mod tests {
     use super::*;
+use tracing::{debug, error, info, warn};
 
     #[tokio::test]
     async fn test_kmeans_clustering() {

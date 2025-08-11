@@ -3,14 +3,17 @@
 //! Provides isolated test environments with unique collections for reliable integration testing.
 
 use anyhow::Result;
+use tracing::{debug, error, info, warn};
 use std::sync::{Arc, Once};
 use tempfile::TempDir;
 use uuid::Uuid;
 
-use proximadb::core::{SstConfig, BloomFilterConfig, VectorRecord, WriteBufferUserConfig};
+use proximadb::core::{SstConfig, BloomFilterConfig, VectorRecord};
+use proximadb::core::config::WriteBufferUserConfig;
 use proximadb::core::config::StorageLocation;
 use proximadb::proto::proximadb::MetadataItem;
-use proximadb::compute::distance_computation::{UnifiedDistanceCompute, HardwareBackend};
+use proximadb::compute::distance_computation::UnifiedDistanceCompute;
+use proximadb::core::hardware_capabilities::HardwareBackend;
 // 🔴 OBSOLETE - Assignment service removed
 use proximadb::storage::engines::sst::SstStorage;
 use proximadb::storage::persistence::filesystem::{FilesystemFactory, FilesystemConfig};
@@ -85,10 +88,10 @@ impl IsolatedTestEnvironment {
         let data_path = self.temp_dir.path().join("data");
         tokio::fs::create_dir_all(&data_path).await?;
         
-        println!("🔧 Created isolated SST engine for collection: {}", self.collection_id);
+        debug!("🔧 Created isolated SST engine for collection: {}", self.collection_id);
         
         // Create distance compute for SST storage
-        let distance_compute = Arc::new(UnifiedDistanceCompute::new(proximadb::compute::distance::DistanceMetric::Cosine));
+        let distance_compute = Arc::new(UnifiedDistanceCompute::new(proximadb::compute::distance_computation::DistanceMetric::Cosine));
         
         // Create SST storage engine
         SstStorage::new(
@@ -240,7 +243,7 @@ impl MultiEnvironmentTest {
 // pub mod test_operations {
 //     use super::*;
 //     use proximadb::storage::traits::{FlushParameters, CompactionParameters};
-//     use proximadb::compute::distance::DistanceMetric;
+//     use proximadb::compute::distance_computation::DistanceMetric;
 //     
 //     /// Insert vectors and flush to storage
 //     pub async fn insert_and_flush(
@@ -262,7 +265,7 @@ impl MultiEnvironmentTest {
 //             return Err(anyhow::anyhow!("Flush failed for collection {}", environment.collection_id()));
 //         }
 //         
-//         println!("✅ Flushed {} vectors for collection {}", 
+//         debug!("✅ Flushed {} vectors for collection {}", 
 //                 result.entries_flushed, environment.collection_id());
 //         
 //         Ok(())
@@ -285,7 +288,7 @@ impl MultiEnvironmentTest {
 //             true
 //         ).await?;
 //         
-//         println!("🔍 Found {} results for collection {}", 
+//         debug!("🔍 Found {} results for collection {}", 
 //                 results.len(), environment.collection_id());
 //         
 //         Ok(results)
@@ -309,7 +312,7 @@ impl MultiEnvironmentTest {
 //             return Err(anyhow::anyhow!("Compaction failed for collection {}", environment.collection_id()));
 //         }
 //         
-//         println!("🗜️ Compacted {} entries for collection {}", 
+//         debug!("🗜️ Compacted {} entries for collection {}", 
 //                 result.entries_processed, environment.collection_id());
 //         
 //         Ok(())
@@ -332,7 +335,7 @@ mod tests {
         assert_eq!(env.storage_locations.len(), 1);
         assert!(env.storage_locations[0].url.starts_with("file://"));
         
-        println!("✅ Created isolated environment: {}", env.collection_id());
+        debug!("✅ Created isolated environment: {}", env.collection_id());
     }
     
     #[tokio::test]
@@ -347,9 +350,9 @@ mod tests {
             }
         }
         
-        println!("✅ Created {} isolated environments with unique IDs", collection_ids.len());
+        debug!("✅ Created {} isolated environments with unique IDs", collection_ids.len());
         for id in collection_ids {
-            println!("  - {}", id);
+            debug!("  - {}", id);
         }
     }
 }

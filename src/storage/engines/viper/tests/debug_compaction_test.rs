@@ -4,6 +4,7 @@
 use std::sync::Arc;
 use tempfile::TempDir;
 use anyhow::Result;
+use tracing::{debug, error, info, warn};
 
 use crate::core::VectorRecord;
 use crate::proto::proximadb::MetadataItem;
@@ -16,19 +17,19 @@ async fn debug_parquet_file(file_path: &str, label: &str) -> Result<()> {
     use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
     use arrow_array::Array;
     
-    println!("\n🔍 DEBUG: {} - Reading {}", label, file_path);
+    debug!("\n🔍 DEBUG: {} - Reading {}", label, file_path);
     
     let fs = FilesystemFactory::new(Default::default()).await?;
     let filesystem = fs.get_filesystem(file_path)?;
     
     match filesystem.read(file_path).await {
         Ok(data) => {
-            println!("  ✅ File exists, size: {} bytes", data.len());
+            debug!("  ✅ File exists, size: {} bytes", data.len());
             
             // Parse with arrow reader
             match ParquetRecordBatchReaderBuilder::try_new(bytes::Bytes::from(data)) {
                 Ok(builder) => {
-                    println!("  📋 Schema: {:?}", builder.schema());
+                    debug!("  📋 Schema: {:?}", builder.schema());
                     
                     let reader = builder.build()?;
                     let mut total_rows = 0;
@@ -41,52 +42,86 @@ async fn debug_parquet_file(file_path: &str, label: &str) -> Result<()> {
                                 let rows = batch.num_rows();
                                 total_rows += rows;
                                 
-                                println!("  📊 Batch {}: {} rows", batch_count, rows);
+                                debug!("  📊 Batch {}: {} rows", batch_count, rows);
                                 
                                 // Print column info
                                 for (i, field) in batch.schema().fields().iter().enumerate() {
                                     let column = batch.column(i);
-                                    println!("    - Column '{}': type={:?}, null_count={}", 
+                                    debug!("    - Column '{}': type={:?}, null_count={}", 
                                              field.name(), field.data_type(), column.null_count());
                                 }
                                 
                                 // Print first few IDs if available
                                 if let Some(id_column) = batch.column_by_name("id") {
                                     if let Some(id_array) = id_column.as_any().downcast_ref::<arrow_array::StringArray>() {
-                                        println!("    📝 First few IDs:");
+                                        debug!("    📝 First few IDs:");
                                         for i in 0..std::cmp::min(5, id_array.len()) {
                                             if id_array.is_valid(i) {
-                                                println!("      [{}]: {}", i, id_array.value(i));
+                                                debug!("      [{}]: {}", i, id_array.value(i));
                                             } else {
-                                                println!("      [{}]: NULL", i);
+                                                debug!("      [{}]: NULL", i);
                                             }
                                         }
                                     }
                                 }
                             }
                             Err(e) => {
-                                println!("  ❌ Error reading batch: {}", e);
+                                debug!("  ❌ Error reading batch: {}", e);
                             }
                         }
                     }
                     
-                    println!("  📊 Total: {} batches, {} rows", batch_count, total_rows);
+                    debug!("  📊 Total: {} batches, {} rows", batch_count, total_rows);
                     
                     if total_rows == 0 {
-                        println!("  ⚠️ WARNING: File contains NO DATA!");
+                        debug!("  ⚠️ WARNING: File contains NO DATA!");
                     }
                 }
                 Err(e) => {
-                    println!("  ❌ Failed to create parquet reader: {}", e);
+                    debug!("  ❌ Failed to create parquet reader: {}", e);
                 }
             }
         }
         Err(e) => {
-            println!("  ❌ Failed to read file: {}", e);
+            debug!("  ❌ Failed to read file: {}", e);
         }
     }
     
     Ok(())
+}
+
+/// Create test collection with storage assignment
+fn create_test_collection(collection_id: &str, base_path: &str) -> crate::proto::proximadb::Collection {
+    use crate::proto::proximadb::{Collection, CollectionConfig, StorageAssignment};
+    
+    Collection {
+        id: collection_id.to_string(),
+        config: Some(CollectionConfig {
+            name: collection_id.to_string(),
+            dimension: 128,
+            distance_metric: 0, // Cosine
+            storage_engine: 0, // VIPER
+            primary_indexing_algorithm: 0, // HNSW
+            filterable_columns: vec![],
+            index_configs: vec![],
+            quantization_config: None,
+            primary_index_name: String::new(),
+            enable_automatic_index_selection: false,
+            description: None,
+            tags: vec![],
+            owner: None,
+            compression: None,
+            storage_location: None,
+            optimization_hints: None,
+        }),
+        stats: None,
+        created_at: chrono::Utc::now().timestamp(),
+        updated_at: chrono::Utc::now().timestamp(),
+        storage_assignment: Some(StorageAssignment {
+            base_location: format!("file://{}", base_path),
+            assigned_at: chrono::Utc::now().timestamp(),
+        }),
+    }
 }
 
 /// Create test vector
@@ -112,12 +147,15 @@ fn create_test_vector(id: &str, dimension: usize) -> VectorRecord {
 
 #[tokio::test]
 async fn test_viper_flush_and_compaction_debug() -> Result<()> {
-    println!("\n🚀 Starting VIPER debug test");
+    // Initialize hardware capabilities for testing
+    let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+    
+    debug!("\n🚀 Starting VIPER debug test");
     
     let temp_dir = TempDir::new()?;
     let base_path = temp_dir.path().to_str().unwrap();
     
-    println!("📂 Test directory: {}", base_path);
+    debug!("📂 Test directory: {}", base_path);
     
     // Create config
     let mut config = ViperEngineConfig::default();
@@ -144,10 +182,10 @@ async fn test_viper_flush_and_compaction_debug() -> Result<()> {
     fs::create_dir_all(&wal_dir).await?;
     
     let data_url = format!("file://{}/{}/data", base_path, collection_id);
-    println!("📍 Data directory: {}", data_url);
+    debug!("📍 Data directory: {}", data_url);
     
     // Step 1: Create and flush vectors
-    println!("\n📝 Step 1: Creating and flushing vectors");
+    debug!("\n📝 Step 1: Creating and flushing vectors");
     
     let mut vectors = Vec::new();
     for i in 0..10 {
@@ -164,14 +202,14 @@ async fn test_viper_flush_and_compaction_debug() -> Result<()> {
         timeout_ms: None,
         trigger_compaction: false,
     
-        collection_config: None,};
+        collection_config: Some(create_test_collection(collection_id, base_path)),};
     
     let flush_result = engine.do_flush(&flush_params).await?;
-    println!("✅ Flush complete: {} files created, {} entries flushed", 
+    info!("✅ Flush complete: {} files created, {} entries flushed", 
              flush_result.files_created, flush_result.entries_flushed);
     
     // Step 2: List and inspect flushed files
-    println!("\n📋 Step 2: Listing flushed files");
+    debug!("\n📋 Step 2: Listing flushed files");
     
     let fs = engine.get_filesystem_factory().get_filesystem(&data_url)?;
     let entries = fs.list(&data_url).await?;
@@ -179,17 +217,17 @@ async fn test_viper_flush_and_compaction_debug() -> Result<()> {
     let mut parquet_files = Vec::new();
     for entry in entries {
         if entry.name.ends_with(".parquet") && !entry.metadata.is_directory {
-            println!("  📄 Found: {}", entry.name);
+            debug!("  📄 Found: {}", entry.name);
             parquet_files.push(entry.url.clone());
         } else if entry.metadata.is_directory {
-            println!("  📁 Directory: {}", entry.name);
+            debug!("  📁 Directory: {}", entry.name);
             
             // Check inside directories
             if !entry.name.starts_with("__") {
                 let sub_entries = fs.list(&entry.url).await?;
                 for sub_entry in sub_entries {
                     if sub_entry.name.ends_with(".parquet") {
-                        println!("    📄 Found in {}: {}", entry.name, sub_entry.name);
+                        debug!("    📄 Found in {}: {}", entry.name, sub_entry.name);
                         parquet_files.push(sub_entry.url.clone());
                     }
                 }
@@ -198,13 +236,13 @@ async fn test_viper_flush_and_compaction_debug() -> Result<()> {
     }
     
     // Step 3: Debug each parquet file
-    println!("\n📊 Step 3: Inspecting flushed parquet files");
+    debug!("\n📊 Step 3: Inspecting flushed parquet files");
     for (i, file) in parquet_files.iter().enumerate() {
         debug_parquet_file(file, &format!("Flushed file {}", i)).await?;
     }
     
     // Step 4: Run compaction
-    println!("\n🗜️ Step 4: Running compaction");
+    debug!("\n🗜️ Step 4: Running compaction");
     
     let compact_params = crate::storage::traits::CompactionParameters {
         collection_id: Some(collection_id.to_string()),
@@ -214,21 +252,21 @@ async fn test_viper_flush_and_compaction_debug() -> Result<()> {
         timeout_ms: None,
         priority: crate::storage::traits::OperationPriority::Medium,
     
-        collection_config: None,};
+        collection_config: Some(create_test_collection(collection_id, base_path)),};
     
     let compact_result = engine.do_compact(&compact_params).await?;
-    println!("✅ Compaction complete: {} input files, {} output files, {} entries processed", 
+    info!("✅ Compaction complete: {} input files, {} output files, {} entries processed", 
              compact_result.input_files, compact_result.output_files, compact_result.entries_processed);
     
     // Step 5: List files after compaction
-    println!("\n📋 Step 5: Listing files after compaction");
+    debug!("\n📋 Step 5: Listing files after compaction");
     
     let entries_after = fs.list(&data_url).await?;
     let mut compacted_files = Vec::new();
     
     for entry in entries_after {
         if entry.name.ends_with(".parquet") && !entry.metadata.is_directory {
-            println!("  📄 Found: {}", entry.name);
+            debug!("  📄 Found: {}", entry.name);
             if entry.name.contains("compacted") {
                 compacted_files.push(entry.url.clone());
             }
@@ -236,23 +274,25 @@ async fn test_viper_flush_and_compaction_debug() -> Result<()> {
     }
     
     // Step 6: Debug compacted files
-    println!("\n📊 Step 6: Inspecting compacted parquet files");
+    debug!("\n📊 Step 6: Inspecting compacted parquet files");
     for (i, file) in compacted_files.iter().enumerate() {
         debug_parquet_file(file, &format!("Compacted file {}", i)).await?;
     }
     
     // Step 7: Try to search
-    println!("\n🔍 Step 7: Testing search on compacted data");
+    debug!("\n🔍 Step 7: Testing search on compacted data");
     
+    let storage_url = format!("file://{}/{}/data", base_path, collection_id);
     let search_results = engine.search_vectors(
         collection_id,
+        &storage_url,
         &vec![0.5; 128],
         10,
     ).await?;
     
-    println!("🔍 Search returned {} results", search_results.len());
+    debug!("🔍 Search returned {} results", search_results.len());
     for (i, result) in search_results.iter().enumerate() {
-        println!("  [{}] ID: {}, Score: {:?}", i, result.id, result.score);
+        debug!("  [{}] ID: {}, Score: {:?}", i, result.id, result.score);
     }
     
     Ok(())

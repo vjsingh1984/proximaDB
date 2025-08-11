@@ -6,7 +6,7 @@ use proximadb::core::config::StorageConfig;
 use proximadb::storage::builder::{StorageBuilder, StorageBuilderError};
 use proximadb::storage::traits::{UnifiedStorageEngine, FlushResult, CompactionResult};
 use proximadb::core::{VectorRecord, Collection};
-use proximadb::compute::distance::DistanceMetric;
+use proximadb::compute::distance_computation::DistanceMetric;
 use std::sync::Arc;
 use tempfile::TempDir;
 use tokio::sync::RwLock;

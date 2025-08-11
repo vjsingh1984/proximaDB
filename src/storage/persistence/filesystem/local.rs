@@ -729,6 +729,7 @@ impl FilesystemFile for LocalFile {
 mod tests {
     use super::*;
     use tempfile::TempDir;
+use tracing::{debug, error, info, warn};
 
     #[tokio::test]
     async fn test_relative_path_url_handling() {
@@ -760,9 +761,9 @@ mod tests {
         
         // Debug: Check current directory and file existence
         let current_dir = std::env::current_dir().unwrap();
-        println!("🔍 Current directory: {}", current_dir.display());
-        println!("🔍 Checking if test_metadata/current exists: {}", std::path::Path::new("test_metadata/current").exists());
-        println!("🔍 Checking if test_metadata/current/test.txt exists: {}", std::path::Path::new("test_metadata/current/test.txt").exists());
+        debug!("🔍 Current directory: {}", current_dir.display());
+        debug!("🔍 Checking if test_metadata/current exists: {}", std::path::Path::new("test_metadata/current").exists());
+        debug!("🔍 Checking if test_metadata/current/test.txt exists: {}", std::path::Path::new("test_metadata/current/test.txt").exists());
         
         // Verify the directory exists before testing
         assert!(std::path::Path::new("test_metadata/current").exists(), "test_metadata/current directory should exist");
@@ -770,7 +771,7 @@ mod tests {
         
         // Test listing with relative path - this should work with the relative path as provided
         let relative_url = "file://test_metadata/current";
-        println!("🔍 About to list: {}", relative_url);
+        debug!("🔍 About to list: {}", relative_url);
         let entries = fs.list(relative_url).await.unwrap();
         
         // Restore original directory AFTER filesystem operations to avoid test pollution
@@ -782,7 +783,7 @@ mod tests {
         
         // The key test: verify the URL doesn't have duplicated paths
         let entry_url = &entries[0].url;
-        println!("Entry URL: {}", entry_url);
+        debug!("Entry URL: {}", entry_url);
         
         // The URL should be properly formatted without duplications
         assert!(entry_url.contains("test_metadata/current/test.txt"));
@@ -814,7 +815,7 @@ mod tests {
         
         // Verify the URL is properly formatted
         let entry_url = &entries[0].url;
-        println!("Entry URL: {}", entry_url);
+        debug!("Entry URL: {}", entry_url);
         assert!(entry_url.starts_with("file://"));
         assert!(entry_url.ends_with("/test.txt"));
     }
@@ -1023,10 +1024,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_exists_method_comprehensive() {
-        println!("🧪 Starting exists method comprehensive test");
+        debug!("🧪 Starting exists method comprehensive test");
         let temp_dir = TempDir::new().unwrap();
         let temp_path = temp_dir.path();
-        println!("📁 Created temp directory: {}", temp_path.display());
+        debug!("📁 Created temp directory: {}", temp_path.display());
         
         // Test with root_dir configuration
         let config = LocalConfig {
@@ -1035,42 +1036,42 @@ mod tests {
             default_permissions: None,
             sync_enabled: false,
         };
-        println!("⚙️ Created config: {:?}", config);
+        debug!("⚙️ Created config: {:?}", config);
         
-        println!("🔧 Creating LocalFileSystem...");
+        debug!("🔧 Creating LocalFileSystem...");
         let fs = match LocalFileSystem::new(config).await {
             Ok(fs) => {
-                println!("✅ LocalFileSystem created successfully");
+                info!("✅ LocalFileSystem created successfully");
                 fs
             },
             Err(e) => {
-                println!("❌ Failed to create LocalFileSystem: {:?}", e);
+                error!("❌ Failed to create LocalFileSystem: {:?}", e);
                 panic!("Failed to create filesystem: {:?}", e);
             }
         };
         
         // Test 1: Non-existent file should return false
         let non_existent_url = "file://./non_existent_file.txt";
-        println!("🔍 Testing non-existent file: {}", non_existent_url);
+        debug!("🔍 Testing non-existent file: {}", non_existent_url);
         let exists_result = fs.exists(non_existent_url).await.unwrap();
         assert!(!exists_result, "Non-existent file should return false");
-        println!("✅ Non-existent file test passed");
+        info!("✅ Non-existent file test passed");
         
         // Test 2: Create a file and test it exists
         let test_file_url = "file://./test_exists_file.txt";
-        println!("🔍 Testing file creation: {}", test_file_url);
+        debug!("🔍 Testing file creation: {}", test_file_url);
         
         // Clean up any existing file first
         if fs.exists(test_file_url).await.unwrap_or(false) {
-            println!("🧹 Cleaning up existing file: {}", test_file_url);
+            debug!("🧹 Cleaning up existing file: {}", test_file_url);
             let _ = fs.delete(test_file_url).await;
         }
         
-        println!("📝 Writing test file: {}", test_file_url);
+        debug!("📝 Writing test file: {}", test_file_url);
         match fs.write(test_file_url, b"test content", None).await {
-            Ok(_) => println!("✅ File written successfully"),
+            Ok(_) => info!("✅ File written successfully"),
             Err(e) => {
-                println!("❌ Failed to write file: {:?}", e);
+                error!("❌ Failed to write file: {:?}", e);
                 panic!("Failed to write test file: {:?}", e);
             }
         }
@@ -1087,7 +1088,7 @@ mod tests {
         
         // Clean up any existing directory first
         if fs.exists(test_dir_url).await.unwrap_or(false) {
-            println!("🧹 Cleaning up existing directory: {}", test_dir_url);
+            debug!("🧹 Cleaning up existing directory: {}", test_dir_url);
             let _ = fs.delete(test_dir_url).await;
         }
         
@@ -1106,7 +1107,7 @@ mod tests {
         let exists_result = fs.exists(test_file_url).await.unwrap();
         assert!(!exists_result, "Deleted file should not exist");
         
-        println!("✅ All exists() method tests passed!");
+        info!("✅ All exists() method tests passed!");
     }
 
     #[tokio::test]
@@ -1155,7 +1156,7 @@ mod tests {
         // Restore original directory
         std::env::set_current_dir(original_dir).unwrap();
         
-        println!("✅ All exists() relative path tests passed!");
+        info!("✅ All exists() relative path tests passed!");
     }
 }
 

@@ -11,6 +11,7 @@ mod tests {
     use crate::core::bloom::strategies::composite::CompositeBloomFilterBuilder;
     use crate::storage::engines::sst::bloom_filter::{SstableBloomFilter, BloomFilterStats};
     use std::collections::HashMap;
+use tracing::{debug, error, info, warn};
     
     #[test]
     fn test_bloom_filter_basic_operations() {
@@ -52,7 +53,7 @@ mod tests {
         let filter = BloomFilterFactory::create(&config);
         let calculated_rate = filter.false_positive_rate();
         
-        println!("Calculated false positive rate: {}", calculated_rate);
+        debug!("Calculated false positive rate: {}", calculated_rate);
         
         // With 10 bits per key, false positive rate should be approximately 0.0095
         // Note: An empty bloom filter should have 0.0 false positive rate

@@ -193,7 +193,7 @@ impl ProximaDb for ProximaDbGrpcService {
                 })?;
 
                 // Debug log the received config
-                println!("📊 gRPC CREATE received config: name={}, dimension={}, distance_metric={}, storage_engine={}, indexing_algorithm={}", 
+                debug!("📊 gRPC CREATE received config: name={}, dimension={}, distance_metric={}, storage_engine={}, indexing_algorithm={}", 
                     config.name, config.dimension, config.distance_metric, config.storage_engine, config.primary_indexing_algorithm);
 
                 // Parse proto types to native types - using proto enum directly

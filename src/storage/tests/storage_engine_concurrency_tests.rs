@@ -14,6 +14,7 @@ mod tests {
     use std::sync::Arc;
     use tokio::task::JoinSet;
     use std::time::SystemTime;
+use tracing::{debug, error, info, warn};
 
     async fn create_test_engine() -> (Arc<StorageEngine>, std::path::PathBuf) {
         
@@ -348,7 +349,7 @@ mod tests {
                     success_count += 1;
                 },
                 Err(e) => {
-                    eprintln!("Batch write failed: {:?}", e);
+                    debug!("Batch write failed: {:?}", e);
                     failure_count += 1;
                 }
             }

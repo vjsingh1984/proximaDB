@@ -440,6 +440,7 @@ pub mod json_value_serde;
 pub mod filter_extraction {
     use std::collections::{HashMap, HashSet};
     use crate::core::search::{FilterExpression, ComparisonOperator};
+use tracing::{debug, error, info, warn};
     
     /// Extract simple equality conditions from filter expressions
     /// 

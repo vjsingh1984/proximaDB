@@ -22,16 +22,31 @@ use crate::core::search::{SearchParams, SearchResult, FilterExpression};
 use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
 use crate::storage::persistence::filesystem::FilesystemFactory;
 use crate::storage::engines::sst::bloom_filter::SstableBloomFilter;
-use crate::storage::engines::sst::{SstableHeader, DataBlock, IndexEntry};
+use crate::storage::engines::sst::{SstableHeader, DataBlock, IndexEntry, SstRecord, CompressionAlgorithmSst};
 use crate::core::bloom::{BloomFilterConfig, BloomStrategy};
+use crate::storage::cache::specialized::{VectorStore, IndexNodeCache, BitmapFilterCache};
+use crate::storage::cache::specialized::vector_store::{SstBlockKey, CompressedBlock, CompressionType};
 
 /// Unified SSTable Reader with automatic optimization selection
-#[derive(Debug)]
 pub struct UnifiedSstableReader {
     filesystem: Arc<FilesystemFactory>,
-    block_cache: Arc<BlockCache>,
-    index_cache: Arc<IndexCache>,
+    // REPLACED: Using central cache module instead of custom BlockCache
+    vector_cache: Arc<VectorStore>,        // For data blocks
+    index_node_cache: Arc<IndexNodeCache>, // For SSTable indices
+    bloom_cache: Arc<BitmapFilterCache>,   // For bloom filters
     strategy_selector: Arc<ReadingStrategySelector>,
+}
+
+impl std::fmt::Debug for UnifiedSstableReader {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("UnifiedSstableReader")
+            .field("filesystem", &"FilesystemFactory")
+            .field("vector_cache", &"VectorStore")
+            .field("index_node_cache", &"IndexNodeCache")
+            .field("bloom_cache", &"BitmapFilterCache")
+            .field("strategy_selector", &self.strategy_selector)
+            .finish()
+    }
 }
 
 /// Block cache for frequently accessed data blocks
@@ -152,6 +167,8 @@ pub struct CollectionContext {
     pub metadata_columns: Vec<String>,
     pub level: usize,
     pub creation_time: chrono::DateTime<chrono::Utc>,
+    /// I/O optimization hints for efficient SSTable access
+    pub io_optimization_hints: Option<HashMap<String, serde_json::Value>>,
 }
 
 impl UnifiedSstableReader {
@@ -251,13 +268,31 @@ impl UnifiedSstableReader {
         Ok(())
     }
     
-    /// Create a new unified reader
+    /// Create a new unified reader with central cache integration
     pub fn new(filesystem: Arc<FilesystemFactory>) -> Self {
         let config = ReaderConfig::default();
+        Self::with_cache(
+            filesystem,
+            Arc::new(VectorStore::new(config.block_cache_size / (1024 * 1024))), // Convert to MB
+            Arc::new(IndexNodeCache::new(config.index_cache_size / (1024 * 1024))),
+            Arc::new(BitmapFilterCache::new(50)), // 50MB for bloom filters
+            config,
+        )
+    }
+    
+    /// Create with external cache instances for sharing
+    pub fn with_cache(
+        filesystem: Arc<FilesystemFactory>,
+        vector_cache: Arc<VectorStore>,
+        index_node_cache: Arc<IndexNodeCache>,
+        bloom_cache: Arc<BitmapFilterCache>,
+        config: ReaderConfig,
+    ) -> Self {
         Self {
             filesystem,
-            block_cache: Arc::new(BlockCache::new(config.block_cache_size)),
-            index_cache: Arc::new(IndexCache::new()),
+            vector_cache,
+            index_node_cache,
+            bloom_cache,
             strategy_selector: Arc::new(ReadingStrategySelector::new(config)),
         }
     }
@@ -268,7 +303,7 @@ impl UnifiedSstableReader {
         params: &SearchParams,
         collection_context: &CollectionContext,
     ) -> Result<Vec<SearchResult>> {
-        println!("🔍 SSTABLE READER: Starting search with {} files, k={}", 
+        debug!("🔍 SSTABLE READER: Starting search with {} files, k={}", 
               collection_context.sstable_files.len(),
               params.top_k.unwrap_or(10));
         
@@ -292,7 +327,7 @@ impl UnifiedSstableReader {
         
         // 2. Apply strategy to read relevant blocks
         let relevant_blocks = self.apply_strategy(&strategy, params, collection_context).await?;
-        println!("📦 SSTABLE READER: Loaded {} data blocks total from all files", relevant_blocks.len());
+        debug!("📦 SSTABLE READER: Loaded {} data blocks total from all files", relevant_blocks.len());
         
         // Debug: print some sample records from blocks
         for (i, block) in relevant_blocks.iter().take(2).enumerate() {
@@ -604,36 +639,135 @@ impl UnifiedSstableReader {
         for (file_idx, file_path) in context.sstable_files.iter().enumerate() {
             debug!("📂 Processing SSTable file {} of {}: {}", file_idx + 1, context.sstable_files.len(), file_path);
             
-            // Get bloom filter from cache
-            let bloom_filter = if !skip_bloom {
-                self.index_cache.bloom_filters.get(file_path).await
+            // Get bloom filter - either from cache or load from disk
+            let bloom_filter: Option<SstableBloomFilter> = if !skip_bloom {
+                // First check if we have a cached bloom filter
+                if let Some(_cached_result) = self.bloom_cache.get_with_hooks(&file_path.to_string()).await {
+                    // We have a cached version, but it's a simplified bitmap
+                    // For proper metadata filtering, we need the actual bloom filter
+                    // So we'll load it from disk if needed for metadata filtering
+                    None // Will be loaded on-demand below if metadata conditions exist
+                } else {
+                    None
+                }
             } else {
                 None
             };
 
-            // Get the index using the new cache API
-            let index = self.index_cache.get_or_load_index(file_path, || async {
-                self.load_index_optimized(file_path).await
-            }).await?;
-            debug!("  📊 Loaded index with {} entries", index.entries.len());
-
-            // First check bloom filter for quick rejection
-            if let Some(bloom_filter) = bloom_filter {
-                let mut any_match = false;
-                for (column, value) in &metadata_conditions {
-                    // Convert JSON value to MetadataItem for type-safe bloom filter check
-                    let metadata_item = crate::core::bloom::json_to_metadata_item(column, value);
-                    if bloom_filter.might_match_metadata(column, &metadata_item).unwrap_or(true) {
-                        any_match = true;
-                        break;
+            // Get the index from central index cache
+            let index = if let Some(cached_index) = self.index_node_cache.get_sstable_index(file_path).await {
+                // Convert cached SstIndexEntry back to IndexEntry
+                let entries: Vec<IndexEntry> = cached_index.entries.iter().map(|e| {
+                    IndexEntry {
+                        key: e.key.clone(),
+                        offset: e.block_offset,
+                        size: e.block_size as u32,
+                        block_id: 0, // Would need to be stored in cache
+                        block_offset: 0,
+                        compressed: false,
+                        metadata_min_values: HashMap::new(),
+                        metadata_max_values: HashMap::new(),
+                        metadata_null_counts: HashMap::new(),
                     }
+                }).collect();
+                
+                // Convert cached metadata stats to local type
+                let mut local_metadata_stats = HashMap::new();
+                for (key, stats) in cached_index.metadata_stats {
+                    local_metadata_stats.insert(key, MetadataStats {
+                        min_value: stats.min_value,
+                        max_value: stats.max_value,
+                        null_count: stats.null_count,
+                        distinct_count: stats.distinct_count,
+                        bloom_filter_offset: None,
+                    });
                 }
                 
-                if !any_match {
-                    debug!("  ❌ Bloom filter rejected file {} (no metadata matches)", file_path);
-                    continue; // Skip this file entirely
+                SstableIndex {
+                    entries,
+                    metadata_stats: local_metadata_stats,
+                    vector_count: cached_index.total_vectors,
+                    min_key: String::new(),
+                    max_key: String::new(),
                 }
-                debug!("  ✅ Bloom filter indicates potential matches");
+            } else {
+                // Load and cache the index
+                let loaded_index = self.load_index_optimized(file_path).await?;
+                // Convert IndexEntry to SstIndexEntry for cache storage
+                let cache_entries: Vec<crate::storage::cache::specialized::index_node_cache::SstIndexEntry> = 
+                    loaded_index.entries.iter().map(|e| {
+                        crate::storage::cache::specialized::index_node_cache::SstIndexEntry {
+                            key: e.key.clone(),
+                            block_offset: e.offset,
+                            block_size: e.size as usize,
+                            min_key: e.key.clone(), // Would need to track actual min/max
+                            max_key: e.key.clone(),
+                            vector_count: 1, // Approximation
+                            bloom_filter_offset: None,
+                        }
+                    }).collect();
+                
+                // Convert metadata stats for cache
+                let mut cache_metadata_stats = std::collections::HashMap::new();
+                for (key, stats) in loaded_index.metadata_stats.iter() {
+                    cache_metadata_stats.insert(key.clone(), crate::storage::cache::specialized::index_node_cache::MetadataStats {
+                        min_value: stats.min_value.clone(),
+                        max_value: stats.max_value.clone(),
+                        null_count: stats.null_count,
+                        distinct_count: stats.distinct_count,
+                    });
+                }
+                
+                let sstable_index = crate::storage::cache::specialized::index_node_cache::SstableIndex {
+                    file_path: file_path.clone(),
+                    entries: cache_entries,
+                    total_blocks: loaded_index.entries.len(),
+                    total_vectors: loaded_index.entries.len(), // Approximation: one vector per entry
+                    metadata_stats: cache_metadata_stats,
+                };
+                self.index_node_cache.cache_sstable_index(file_path, sstable_index.clone()).await?;
+                loaded_index
+            };
+            debug!("  📊 Loaded index with {} entries", index.entries.len());
+
+            // Check bloom filter for quick rejection when we have metadata conditions
+            if !metadata_conditions.is_empty() && !skip_bloom {
+                // For metadata filtering, we need the actual bloom filter from disk
+                // Check if it's worth loading based on whether we're reading from cache or disk
+                let is_cached_data = self.bloom_cache.get_with_hooks(&file_path.to_string()).await.is_some();
+                
+                if !is_cached_data {
+                    // Data is not cached, so we're reading from disk anyway
+                    // Load the bloom filter for proper metadata matching
+                    match self.load_bloom_filter(file_path).await {
+                        Ok(Some(bloom)) => {
+                            let mut any_match = false;
+                            for (column, value) in &metadata_conditions {
+                                // Convert JSON value to MetadataItem for type-safe bloom filter check
+                                let metadata_item = crate::core::bloom::json_to_metadata_item(column, value);
+                                if bloom.might_match_metadata(column, &metadata_item).unwrap_or(true) {
+                                    any_match = true;
+                                    break;
+                                }
+                            }
+                            
+                            if !any_match {
+                                debug!("  ❌ Bloom filter rejected file {} (no metadata matches)", file_path);
+                                continue; // Skip this file entirely
+                            }
+                            debug!("  ✅ Bloom filter indicates potential matches");
+                        }
+                        Ok(None) => {
+                            debug!("  ⚠️ No bloom filter available for {}", file_path);
+                        }
+                        Err(e) => {
+                            debug!("  ⚠️ Failed to load bloom filter for {}: {}", file_path, e);
+                        }
+                    }
+                } else {
+                    // Data is cached, bloom filter check less critical
+                    debug!("  ℹ️ Skipping bloom filter check for cached data");
+                }
             }
 
             // Use block-level metadata statistics to filter blocks
@@ -696,6 +830,7 @@ impl UnifiedSstableReader {
                     metadata_columns: context.metadata_columns.clone(),
                     level: context.level,
                     creation_time: context.creation_time,
+                    io_optimization_hints: context.io_optimization_hints.clone(),
                 };
                 
                 if let Some(block) = self.load_block_with_cache(&file_context, block_idx).await? {
@@ -733,29 +868,66 @@ impl UnifiedSstableReader {
             block_index: block_idx,
         };
 
-        // Check cache first
-        {
-            let mut cache = self.block_cache.cache.write().await;
-            if let Some(block) = cache.get(&cache_key) {
-                // Update cache stats
-                let mut stats = self.block_cache.hit_rate.write().await;
-                stats.hits += 1;
-                return Ok(Some((**block).clone()));
-            }
+        // Use central VectorStore for caching
+        let sst_cache_key = SstBlockKey::new(
+            context.file_path.clone(),
+            block_idx as u64 * 4096, // Assuming 4KB blocks
+            4096,
+        );
+
+        // Check if we have cached vectors for this block
+        let cached_vectors = self.vector_cache.get_block_vectors(&sst_cache_key, 100).await;
+        if !cached_vectors.is_empty() {
+            // Convert VectorRecord to SstRecord for DataBlock
+            let sst_records: Vec<SstRecord> = cached_vectors.into_iter().map(|v| {
+                SstRecord {
+                    id: v.id.unwrap_or_default(),
+                    vector: v.vector,
+                    metadata: v.metadata,
+                    timestamp: v.timestamp,
+                    updated_at: v.updated_at,
+                    expires_at: v.expires_at,
+                    version: v.version,
+                    // SST-specific fields (defaults for cached data)
+                    is_tombstone: false,
+                    sequence_number: 0,
+                    level: 0,
+                }
+            }).collect();
+            
+            // Reconstruct DataBlock from cached vectors
+            let block = DataBlock {
+                block_id: block_idx as u32,
+                records: sst_records,
+                uncompressed_size: 0, // Would need to calculate
+                compression_algorithm: CompressionAlgorithmSst::None,
+                compression_ratio: 1.0,
+            };
+            return Ok(Some(block));
         }
 
         // Cache miss - load from disk
         let block = self.load_block_from_disk(context, block_idx).await?;
         
         if let Some(block) = block.as_ref() {
-            // Cache the block
-            let mut cache = self.block_cache.cache.write().await;
-            cache.put(cache_key, Arc::new(block.clone()));
+            // Cache the block's vectors in central cache
+            // Convert SstRecord to VectorRecord for caching
+            let vector_records: Vec<VectorRecord> = block.records.iter().map(|r| {
+                VectorRecord {
+                    id: Some(r.id.clone()),
+                    vector: r.vector.clone(),
+                    metadata: r.metadata.clone(),
+                    timestamp: r.timestamp,
+                    updated_at: r.updated_at,
+                    expires_at: r.expires_at,
+                    version: r.version,
+                    rank: None,
+                    score: None,
+                    distance: None,
+                }
+            }).collect();
+            let _ = self.vector_cache.cache_block_vectors(&sst_cache_key, vector_records).await;
         }
-
-        // Update cache stats
-        let mut stats = self.block_cache.hit_rate.write().await;
-        stats.misses += 1;
 
         Ok(block)
     }
@@ -771,9 +943,73 @@ impl UnifiedSstableReader {
         let fs = self.filesystem.get_filesystem(&format!("{}:///", scheme))?;
         
         // Use optimized cache with proper async-safe loading
-        let index = self.index_cache.get_or_load_index(&context.file_path, || async {
-            self.load_index_optimized(&context.file_path).await
-        }).await?;
+        // Get the index from central cache
+        let index = if let Some(cached_index) = self.index_node_cache.get_sstable_index(&context.file_path).await {
+            // Convert from cache types to SST types
+            let entries: Vec<IndexEntry> = cached_index.entries.iter().map(|e| IndexEntry {
+                key: e.key.clone(),
+                offset: e.block_offset,
+                size: e.block_size as u32,
+                block_id: 0, // Will be set from block offset if needed
+                block_offset: e.block_offset as u32,
+                compressed: true, // Default to compressed
+                metadata_min_values: HashMap::new(),
+                metadata_max_values: HashMap::new(),
+                metadata_null_counts: HashMap::new(),
+            }).collect();
+            
+            let metadata_stats: HashMap<String, MetadataStats> = cached_index.metadata_stats.iter().map(|(k, v)| {
+                (k.clone(), MetadataStats {
+                    min_value: v.min_value.clone(),
+                    max_value: v.max_value.clone(),
+                    null_count: v.null_count,
+                    distinct_count: v.distinct_count,
+                    bloom_filter_offset: None,
+                })
+            }).collect();
+            
+            SstableIndex {
+                entries,
+                metadata_stats,
+                vector_count: cached_index.total_vectors,
+                min_key: cached_index.entries.first().map(|e| e.min_key.clone()).unwrap_or_default(),
+                max_key: cached_index.entries.last().map(|e| e.max_key.clone()).unwrap_or_default(),
+            }
+        } else {
+            let loaded_index = self.load_index_optimized(&context.file_path).await?;
+            
+            // Convert SST types to cache types for storage
+            let cache_entries: Vec<crate::storage::cache::specialized::index_node_cache::SstIndexEntry> = 
+                loaded_index.entries.iter().map(|e| crate::storage::cache::specialized::index_node_cache::SstIndexEntry {
+                    key: e.key.clone(),
+                    block_offset: e.offset,
+                    block_size: e.size as usize,
+                    min_key: e.key.clone(), // Use key as min for simplicity
+                    max_key: e.key.clone(), // Use key as max for simplicity
+                    vector_count: 1, // Approximate
+                    bloom_filter_offset: None,
+                }).collect();
+            
+            let cache_metadata_stats: HashMap<String, crate::storage::cache::specialized::index_node_cache::MetadataStats> = 
+                loaded_index.metadata_stats.iter().map(|(k, v)| {
+                    (k.clone(), crate::storage::cache::specialized::index_node_cache::MetadataStats {
+                        min_value: v.min_value.clone(),
+                        max_value: v.max_value.clone(),
+                        null_count: v.null_count,
+                        distinct_count: v.distinct_count,
+                    })
+                }).collect();
+            
+            let sstable_index = crate::storage::cache::specialized::index_node_cache::SstableIndex {
+                file_path: context.file_path.clone(),
+                entries: cache_entries,
+                total_blocks: loaded_index.entries.len(),
+                total_vectors: loaded_index.vector_count,
+                metadata_stats: cache_metadata_stats,
+            };
+            self.index_node_cache.cache_sstable_index(&context.file_path, sstable_index).await?;
+            loaded_index
+        };
         
         // Check if block exists
         if block_idx >= index.entries.len() {
@@ -997,12 +1233,16 @@ impl UnifiedSstableReader {
     /// Simple get operation for single vector retrieval
     /// This provides a lightweight interface for basic get operations
     pub async fn get_vector(&self, file_path: &str, vector_id: &str) -> Result<Option<VectorRecord>> {
-        // Check bloom filter first using new cache API
-        if let Some(bloom_filter) = self.index_cache.bloom_filters.get(file_path).await {
-            if !bloom_filter.might_contain_key(vector_id).unwrap_or(true) {
-                return Ok(None);
-            }
+        debug!("🔍 get_vector: Looking for vector '{}' in file '{}'", vector_id, file_path);
+        
+        // Check bloom filter for quick rejection using the proper bloom filter
+        // The bloom_cache bitmap is just a marker, not the actual bloom filter
+        // We need to use might_contain_key which loads and checks the actual bloom filter
+        if !self.might_contain_key(file_path, vector_id).await {
+            debug!("❌ Bloom filter says vector '{}' not in file", vector_id);
+            return Ok(None);
         }
+        debug!("✅ Bloom filter says vector '{}' might be in file", vector_id);
 
         // Create minimal context for the operation
         let context = CollectionContext {
@@ -1012,6 +1252,7 @@ impl UnifiedSstableReader {
             metadata_columns: vec![],
             level: 0,
             creation_time: chrono::Utc::now(),
+            io_optimization_hints: None,
         };
 
         // Use full scan strategy for single key lookup
@@ -1022,18 +1263,21 @@ impl UnifiedSstableReader {
 
         // Load blocks and search for the vector
         let blocks = self.apply_strategy(&strategy, &Default::default(), &context).await?;
+        debug!("📦 Loaded {} blocks from file", blocks.len());
         
         // Search through blocks for the vector
-        for block in blocks {
-            for record in block.records {
+        for (block_idx, block) in blocks.iter().enumerate() {
+            debug!("  Block {}: {} records", block_idx, block.records.len());
+            for record in &block.records {
+                debug!("    Checking record: id='{}' vs looking for '{}'", record.id, vector_id);
                 if record.id == vector_id {
                     // Convert HashMap metadata to Vec<MetadataItem>
                     // Already have metadata items, just clone them
                     let metadata_items = record.metadata.clone();
                     
                     return Ok(Some(VectorRecord {
-                        id: Some(record.id),
-                        vector: record.vector,
+                        id: Some(record.id.clone()),
+                        vector: record.vector.clone(),
                         metadata: metadata_items,
                         timestamp: record.timestamp,
                         updated_at: record.updated_at,
@@ -1053,13 +1297,77 @@ impl UnifiedSstableReader {
 
     /// Check if a key might be contained using bloom filter
     pub async fn might_contain_key(&self, file_path: &str, key: &str) -> bool {
-        if let Some(bloom_filter) = self.index_cache.bloom_filters.get(file_path).await {
-            bloom_filter.might_contain_key(key).unwrap_or(true)
-        } else {
-            true // No bloom filter, assume it might contain
+        // Try to load the bloom filter if not cached
+        match self.load_bloom_filter(file_path).await {
+            Ok(Some(bloom_filter)) => {
+                // Check if the key might be in the bloom filter
+                bloom_filter.might_contain_key(key).unwrap_or(true)
+            }
+            Ok(None) => {
+                // No bloom filter available
+                true // Assume it might contain
+            }
+            Err(_) => {
+                // Error loading bloom filter
+                true // Assume it might contain
+            }
         }
     }
 
+    /// Load just the bloom filter from an SSTable file
+    async fn load_bloom_filter(&self, file_path: &str) -> Result<Option<SstableBloomFilter>> {
+        // Extract scheme from file path for proper filesystem selection
+        let scheme = if file_path.contains("://") {
+            file_path.split("://").next().unwrap_or("file").to_string()
+        } else {
+            "file".to_string()
+        };
+        let fs = self.filesystem.get_filesystem(&scheme)?;
+        
+        // Read magic bytes and header length
+        let header_prefix = fs.read_range(file_path, 0, 8).await?;
+        if header_prefix.len() < 8 {
+            return Ok(None);
+        }
+        
+        // Check magic bytes "SST1"
+        let magic = &header_prefix[0..4];
+        if magic != b"SST1" {
+            return Ok(None);
+        }
+        
+        let header_len = u32::from_le_bytes([
+            header_prefix[4], header_prefix[5], header_prefix[6], header_prefix[7]
+        ]) as u64;
+        
+        // Read header (offset by 8 bytes for magic + header_len)
+        let header_data = fs.read_range(file_path, 8, header_len).await?;
+        let header: SstableHeader = bincode::deserialize(&header_data)
+            .map_err(|e| anyhow::anyhow!("Failed to deserialize header: {}", e))?;
+        
+        // Read bloom filter if present
+        if header.has_bloom_filter {
+            let bloom_offset = 8 + header_len; // 8 = magic (4) + header_len (4)
+            let bloom_len_data = fs.read_range(file_path, bloom_offset, 4).await?;
+            if bloom_len_data.len() < 4 {
+                return Ok(None);
+            }
+            
+            let bloom_len = u32::from_le_bytes([
+                bloom_len_data[0], bloom_len_data[1], bloom_len_data[2], bloom_len_data[3]
+            ]) as u64;
+            
+            let bloom_data = fs.read_range(file_path, bloom_offset + 4, bloom_len).await?;
+            
+            match SstableBloomFilter::deserialize(&bloom_data) {
+                Ok(bloom) => Ok(Some(bloom)),
+                Err(_) => Ok(None)
+            }
+        } else {
+            Ok(None)
+        }
+    }
+    
     /// Load metadata for an SSTable (header and bloom filter)
     pub async fn load_metadata(&self, file_path: &str) -> Result<()> {
         // Extract scheme from file path for proper filesystem selection
@@ -1070,19 +1378,26 @@ impl UnifiedSstableReader {
         };
         let fs = self.filesystem.get_filesystem(&format!("{}:///", scheme))?;
         
-        // First read just the header length (4 bytes)
-        let header_len_data = fs.read_range(file_path, 0, 4).await?;
-        if header_len_data.len() < 4 {
-            return Err(anyhow::anyhow!("SSTable file too small: {} bytes", header_len_data.len()));
+        // First read magic bytes (4 bytes) and header length (4 bytes)
+        let header_prefix = fs.read_range(file_path, 0, 8).await?;
+        if header_prefix.len() < 8 {
+            return Err(anyhow::anyhow!("SSTable file too small: {} bytes", header_prefix.len()));
         }
+        
+        // Verify magic bytes
+        let magic = &header_prefix[0..4];
+        if magic != b"SST1" {
+            return Err(anyhow::anyhow!("Invalid SSTable magic bytes: {:?}", magic));
+        }
+        
         let header_len = u32::from_le_bytes([
-            header_len_data[0], header_len_data[1], header_len_data[2], header_len_data[3]
+            header_prefix[4], header_prefix[5], header_prefix[6], header_prefix[7]
         ]) as u64;
         
         debug!("Header length: {} bytes", header_len);
         
-        // Read the header data
-        let header_data = fs.read_range(file_path, 4, header_len).await?;
+        // Read the header data (offset by 8 bytes for magic + header_len)
+        let header_data = fs.read_range(file_path, 8, header_len).await?;
         let header: SstableHeader = bincode::deserialize(&header_data)
             .map_err(|e| anyhow::anyhow!("Failed to deserialize header: {}", e))?;
         
@@ -1091,8 +1406,8 @@ impl UnifiedSstableReader {
         
         // Read bloom filter if present
         if header.has_bloom_filter {
-            // Calculate bloom filter offset (after header_len + header)
-            let bloom_offset = 4 + header_len;
+            // Calculate bloom filter offset (after magic + header_len + header)
+            let bloom_offset = 8 + header_len;
             
             // Read bloom filter length
             let bloom_len_data = fs.read_range(file_path, bloom_offset, 4).await?;
@@ -1158,8 +1473,28 @@ impl UnifiedSstableReader {
                 }
             };
             
-            // Cache the bloom filter using new API
-            self.index_cache.bloom_filters.insert(file_path.to_string(), Arc::new(bloom_filter)).await;
+            // Cache the bloom filter in central cache
+            // We need to store the bloom filter somewhere accessible
+            // For now, we'll use a simple in-memory cache (should be improved)
+            
+            // Store a marker in the bitmap cache that bloom filter exists
+            let mut bitmap = roaring::RoaringBitmap::new();
+            // We'll use a hash of the file path as the marker
+            let file_hash = file_path.as_bytes().iter().fold(0u32, |acc, &b| {
+                acc.wrapping_mul(31).wrapping_add(b as u32)
+            });
+            bitmap.insert(file_hash);
+            
+            let cached_filter = crate::storage::cache::specialized::bitmap_filter_cache::CachedFilterResult {
+                bitmap,
+                filter_expr: format!("sstable:bloom:{}", file_path),
+                cached_at: std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_secs(),
+                dependencies: vec![],
+            };
+            self.bloom_cache.put_with_hooks(file_path.to_string(), cached_filter).await;
             
             debug!("Loaded bloom filter for SSTable: {} ({} bytes)", file_path, bloom_len);
         }
@@ -1187,9 +1522,73 @@ impl UnifiedSstableReader {
     
     async fn read_file_with_cache(&self, path: &str) -> Result<Vec<DataBlock>> {
         // Use optimized cache with proper LRU eviction
-        let index = self.index_cache.get_or_load_index(path, || async {
-            self.load_index_optimized(path).await
-        }).await?;
+        // Get the index from central cache
+        let index = if let Some(cached_index) = self.index_node_cache.get_sstable_index(path).await {
+            // Convert from cache types to SST types
+            let entries: Vec<IndexEntry> = cached_index.entries.iter().map(|e| IndexEntry {
+                key: e.key.clone(),
+                offset: e.block_offset,
+                size: e.block_size as u32,
+                block_id: 0,
+                block_offset: e.block_offset as u32,
+                compressed: true,
+                metadata_min_values: HashMap::new(),
+                metadata_max_values: HashMap::new(),
+                metadata_null_counts: HashMap::new(),
+            }).collect();
+            
+            let metadata_stats: HashMap<String, MetadataStats> = cached_index.metadata_stats.iter().map(|(k, v)| {
+                (k.clone(), MetadataStats {
+                    min_value: v.min_value.clone(),
+                    max_value: v.max_value.clone(),
+                    null_count: v.null_count,
+                    distinct_count: v.distinct_count,
+                    bloom_filter_offset: None,
+                })
+            }).collect();
+            
+            SstableIndex {
+                entries,
+                metadata_stats,
+                vector_count: cached_index.total_vectors,
+                min_key: cached_index.entries.first().map(|e| e.min_key.clone()).unwrap_or_default(),
+                max_key: cached_index.entries.last().map(|e| e.max_key.clone()).unwrap_or_default(),
+            }
+        } else {
+            let loaded_index = self.load_index_optimized(path).await?;
+            
+            // Convert SST types to cache types for storage
+            let cache_entries: Vec<crate::storage::cache::specialized::index_node_cache::SstIndexEntry> = 
+                loaded_index.entries.iter().map(|e| crate::storage::cache::specialized::index_node_cache::SstIndexEntry {
+                    key: e.key.clone(),
+                    block_offset: e.offset,
+                    block_size: e.size as usize,
+                    min_key: e.key.clone(),
+                    max_key: e.key.clone(),
+                    vector_count: 1,
+                    bloom_filter_offset: None,
+                }).collect();
+            
+            let cache_metadata_stats: HashMap<String, crate::storage::cache::specialized::index_node_cache::MetadataStats> = 
+                loaded_index.metadata_stats.iter().map(|(k, v)| {
+                    (k.clone(), crate::storage::cache::specialized::index_node_cache::MetadataStats {
+                        min_value: v.min_value.clone(),
+                        max_value: v.max_value.clone(),
+                        null_count: v.null_count,
+                        distinct_count: v.distinct_count,
+                    })
+                }).collect();
+            
+            let sstable_index = crate::storage::cache::specialized::index_node_cache::SstableIndex {
+                file_path: path.to_string(),
+                entries: cache_entries,
+                total_blocks: loaded_index.entries.len(),
+                total_vectors: loaded_index.vector_count,
+                metadata_stats: cache_metadata_stats,
+            };
+            self.index_node_cache.cache_sstable_index(path, sstable_index).await?;
+            loaded_index
+        };
         
         let num_blocks = index.entries.len();
         
@@ -1202,6 +1601,7 @@ impl UnifiedSstableReader {
             metadata_columns: vec![],
             level: 0,
             creation_time: chrono::Utc::now(),
+            io_optimization_hints: None,
         };
         
         for block_idx in 0..num_blocks {
@@ -1266,8 +1666,8 @@ impl UnifiedSstableReader {
         debug!("Starting to read data blocks at offset {}", offset);
         debug!("Total file size: {}, remaining data: {}", data.len(), data.len() - offset);
         
-        // Decode header to get block count (accounting for magic bytes if present)
-        let header_start = if &data[0..4] == b"SST1" { 8 } else { 4 };
+        // Decode header to get block count (header always starts at offset 8 after magic + header_len)
+        let header_start = 8; // Always 8: magic (4) + header_len (4)
         let header: SstableHeader = bincode::deserialize(&data[header_start..header_start+header_len])
             .map_err(|e| anyhow::anyhow!("Failed to deserialize header for block count: {}", e))?;
         debug!("Header info: {} blocks expected, {} index entries", header.block_count, index.entries.len());
@@ -1303,12 +1703,13 @@ impl UnifiedSstableReader {
                        std::str::from_utf8(magic).unwrap_or("invalid"));
             }
             
+            debug!("🔍 Deserializing block data of {} bytes at offset {}", block_data.len(), offset - 4);
             match DataBlock::deserialize(block_data) {
                 Ok(block) => {
-                    debug!("Successfully deserialized block with {} records", block.records.len());
-                    // Debug: Print sample record info
-                    for (i, record) in block.records.iter().take(2).enumerate() {
-                        debug!("  Sample record {}: id={}, vector_len={}, metadata_keys={:?}", 
+                    debug!("✅ Successfully deserialized block with {} records", block.records.len());
+                    // Debug: Print all record IDs for debugging
+                    for (i, record) in block.records.iter().enumerate() {
+                        debug!("  Record {}: id='{}', vector_len={}, metadata_keys={:?}", 
                                i, record.id, record.vector.len(), 
                                record.metadata.iter().map(|item| &item.key).collect::<Vec<_>>());
                     }

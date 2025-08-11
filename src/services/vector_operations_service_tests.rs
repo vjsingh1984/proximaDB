@@ -9,6 +9,7 @@ mod tests {
     use std::sync::Arc;
     use tempfile::TempDir;
     use std::collections::HashMap;
+    use tracing::{debug, error, info, warn};
 
     use crate::core::{Config, VectorRecord};
     use crate::proto::proximadb::{VectorRecord as ProtoVectorRecord, MetadataItem, metadata_item};
@@ -305,14 +306,14 @@ mod tests {
         let result = service.initialize_collection_compaction("test_collection_2", "VIPER").await;
         if let Err(e) = &result {
             // This is expected if no storage assignment exists
-            println!("VIPER initialization failed as expected (no storage assignment): {:?}", e);
+            error!("VIPER initialization failed as expected (no storage assignment): {:?}", e);
             let error_msg = e.to_string();
             assert!(error_msg.contains("No storage assignment found") || 
                     error_msg.contains("Failed to initialize collection for compaction tracking"), 
                 "Error should be about missing storage assignment: {}", e);
         } else {
             // If it succeeds, that's also fine (empty collection)
-            println!("VIPER initialization succeeded for empty collection");
+            debug!("VIPER initialization succeeded for empty collection");
         }
     }
 

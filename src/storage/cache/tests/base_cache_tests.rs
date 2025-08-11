@@ -17,6 +17,9 @@ impl CacheValue for TestValue {
 
 #[tokio::test]
 async fn test_basic_get_put() {
+        // Initialize hardware capabilities for testing
+        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+
     let cache = BaseCacheImpl::<String, TestValue>::new(10);
     
     let key = "test_key".to_string();
@@ -35,6 +38,9 @@ async fn test_basic_get_put() {
 
 #[tokio::test]
 async fn test_cache_miss() {
+        // Initialize hardware capabilities for testing
+        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+
     let cache = BaseCacheImpl::<String, TestValue>::new(10);
     
     let key = "non_existent".to_string();
@@ -44,6 +50,9 @@ async fn test_cache_miss() {
 
 #[tokio::test]
 async fn test_invalidation() {
+        // Initialize hardware capabilities for testing
+        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+
     let cache = BaseCacheImpl::<String, TestValue>::new(10);
     
     let key = "test_key".to_string();
@@ -67,6 +76,9 @@ async fn test_invalidation() {
 
 #[tokio::test]
 async fn test_tier_selection() {
+        // Initialize hardware capabilities for testing
+        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+
     let cache = BaseCacheImpl::<String, TestValue>::new(10);
     
     let small_value = TestValue {
@@ -87,6 +99,9 @@ async fn test_tier_selection() {
 
 #[tokio::test]
 async fn test_metrics_recording() {
+        // Initialize hardware capabilities for testing
+        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+
     let cache = BaseCacheImpl::<String, TestValue>::new(10);
     
     let key1 = "key1".to_string();

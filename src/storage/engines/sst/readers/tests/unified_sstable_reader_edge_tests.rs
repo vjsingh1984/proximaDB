@@ -45,6 +45,7 @@ mod edge_tests {
             metadata_columns: vec!["category".to_string(), "price".to_string()],
             level: 0,
             creation_time: Utc::now(),
+            io_optimization_hints: None,
         }
     }
 
@@ -59,6 +60,7 @@ mod edge_tests {
             metadata_columns: vec![],
             level: 0,
             creation_time: Utc::now(),
+            io_optimization_hints: None,
         };
         
         let params = SearchParams {
@@ -595,6 +597,9 @@ mod edge_tests {
     // ===== Concurrent Access Scenarios =====
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     async fn test_concurrent_reader_access() {
+        // Initialize hardware capabilities for testing
+        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        
         use tempfile::TempDir;
         use crate::storage::engines::sst::SstableWriter;
         
@@ -638,6 +643,7 @@ mod edge_tests {
             metadata_columns: vec![],
             level: 0,
             creation_time: chrono::Utc::now(),
+            io_optimization_hints: None,
         });
         
         // Spawn multiple concurrent searches - reduced from 50 to 20 for stability
@@ -904,6 +910,7 @@ mod edge_tests {
                 metadata_columns: vec![],
                 level: 0,
                 creation_time: Utc::now(),
+            io_optimization_hints: None,
             };
             
             // Should handle gracefully without panicking

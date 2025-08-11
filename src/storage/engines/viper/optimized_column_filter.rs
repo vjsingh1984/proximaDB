@@ -421,7 +421,7 @@ mod tests {
         // Note: This test would need a real parquet file to work
         // For now it demonstrates the API
         
-        println!("VIPER predicate pushdown test - API demonstration");
+        debug!("VIPER predicate pushdown test - API demonstration");
     }
     
     #[tokio::test]
@@ -442,6 +442,6 @@ mod tests {
             },
         ]);
         
-        println!("VIPER parallel column evaluation test - API demonstration");
+        debug!("VIPER parallel column evaluation test - API demonstration");
     }
 }

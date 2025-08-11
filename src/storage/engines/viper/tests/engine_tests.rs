@@ -9,6 +9,7 @@
 
 use std::sync::Arc;
 use tempfile::TempDir;
+use tracing::{debug, error, info, warn};
 
 use crate::core::VectorRecord;
 use crate::proto::proximadb::MetadataItem;
@@ -123,6 +124,9 @@ async fn test_viper_engine_creation() {
 
 #[tokio::test]
 async fn test_single_vector_operations() {
+    // Initialize hardware capabilities for testing
+    let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+    
     let temp_dir = TempDir::new().unwrap();
     let config = create_test_config(temp_dir.path().to_str().unwrap());
     
@@ -140,6 +144,7 @@ async fn test_single_vector_operations() {
     let vector = create_test_vector("vec1", 128, 0.5);
     
     // Flush to make data searchable (VIPER searches parquet files, not memtable)
+    let collection = create_test_collection(collection_id, temp_dir.path().to_str().unwrap());
     let flush_params = FlushParameters {
         collection_id: Some(collection_id.to_string()),
         force: true,
@@ -150,31 +155,37 @@ async fn test_single_vector_operations() {
         timeout_ms: None,
         trigger_compaction: false,
     
-        collection_config: None,
+        collection_config: Some(collection),
     };
     engine.do_flush(&flush_params).await.expect("Failed to perform vector_flush");
     
     // Debug: Check if files were created
     use tokio::fs;
-    let data_dir = format!("{}/{}/viper_data", temp_dir.path().to_str().unwrap(), collection_id);
-    let mut entries = fs::read_dir(&data_dir).await.expect("Failed to read viper data_dir");
+    let data_dir = format!("{}/{}/data", temp_dir.path().to_str().unwrap(), collection_id);
+    let mut entries = fs::read_dir(&data_dir).await.expect("Failed to read data_dir");
     let mut file_count = 0;
     while let Some(entry) = entries.next_entry().await.expect("Failed to read entry") {
-        println!("Found file: {:?}", entry.path());
+        debug!("Found file: {:?}", entry.path());
         file_count += 1;
     }
     assert!(file_count > 0, "No files were created after flush");
     
     // Try to retrieve vector through search
-    let results = engine.search_vectors(
+    let storage_url = format!("file://{}/{}/data", temp_dir.path().to_str().unwrap(), collection_id);
+    let results = engine.search_vectors_unified(
         collection_id,
+        &storage_url,
         &vector.vector,
         1,
+        &crate::compute::distance_computation::DistanceMetric::Cosine,
+        None,  // No filters
+        true,  // Include vectors
+        true,  // Include metadata
     ).await.expect("Failed to search");
     
     // If still empty, it's because VIPER's search needs the actual file paths
     if results.is_empty() {
-        println!("VIPER search returned empty results - this is a known issue with test setup");
+        debug!("VIPER search returned empty results - this is a known issue with test setup");
         // For now, just verify the flush succeeded
         return;
     }
@@ -213,7 +224,7 @@ async fn test_batch_insertion_and_flush() {
         timeout_ms: None,
         trigger_compaction: false,
     
-        collection_config: None,};
+        collection_config: Some(create_test_collection(collection_id, temp_dir.path().to_str().unwrap())),};
     
     let flush_result = engine.do_flush(&flush_params).await
         .expect("Failed to flush");
@@ -226,6 +237,9 @@ async fn test_batch_insertion_and_flush() {
 
 #[tokio::test]
 async fn test_similarity_search() {
+    // Initialize hardware capabilities for testing
+    let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+    
     let temp_dir = TempDir::new().unwrap();
     let config = create_test_config(temp_dir.path().to_str().unwrap());
     
@@ -256,7 +270,7 @@ async fn test_similarity_search() {
         timeout_ms: None,
         trigger_compaction: false,
     
-        collection_config: None,};
+        collection_config: Some(create_test_collection(collection_id, temp_dir.path().to_str().unwrap())),};
     let flush_result = engine.do_flush(&flush_params).await.unwrap();
     assert!(flush_result.success, "Flush should succeed");
     assert!(flush_result.files_created > 0, "Should create at least one file");
@@ -268,16 +282,18 @@ async fn test_similarity_search() {
     use tokio::fs;
     let data_dir = format!("{}/{}/data", temp_dir.path().to_str().unwrap(), collection_id);
     if let Ok(mut entries) = fs::read_dir(&data_dir).await {
-        println!("Files in data directory:");
+        debug!("Files in data directory:");
         while let Some(entry) = entries.next_entry().await.unwrap() {
-            println!("  - {:?}", entry.path());
+            debug!("  - {:?}", entry.path());
         }
     }
     
     // Search for similar vectors
+    let storage_url = format!("file://{}/{}/data", temp_dir.path().to_str().unwrap(), collection_id);
     let query = vec![0.5; 128];
     let results = engine.search_vectors(
         collection_id,
+        &storage_url,
         &query,
         5,
     ).await.expect("Failed to search");
@@ -314,7 +330,7 @@ async fn test_collection_operations() {
         timeout_ms: None,
         trigger_compaction: false,
     
-        collection_config: None,};
+        collection_config: Some(create_test_collection(collection_id, temp_dir.path().to_str().unwrap())),};
     engine.do_flush(&flush_params).await.unwrap();
     
     // Get stats through engine metrics
@@ -326,6 +342,9 @@ async fn test_collection_operations() {
 
 #[tokio::test]
 async fn test_compaction() {
+    // Initialize hardware capabilities for testing
+    let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+    
     let temp_dir = TempDir::new().unwrap();
     let config = create_test_config(temp_dir.path().to_str().unwrap());
     // Compaction threshold is handled internally
@@ -363,7 +382,7 @@ async fn test_compaction() {
             timeout_ms: None,
             trigger_compaction: false,
         
-        collection_config: None,};
+        collection_config: Some(create_test_collection(collection_id, temp_dir.path().to_str().unwrap())),};
         engine.do_flush(&flush_params).await.unwrap();
     }
     
@@ -376,7 +395,7 @@ async fn test_compaction() {
         timeout_ms: None,
         priority: crate::storage::traits::OperationPriority::Medium,
     
-        collection_config: None,};
+        collection_config: Some(create_test_collection(collection_id, temp_dir.path().to_str().unwrap())),};
     
     let compacted = engine.do_compact(&compact_params).await
         .expect("Failed to compact");
@@ -386,6 +405,9 @@ async fn test_compaction() {
 
 #[tokio::test]
 async fn test_multi_collection_isolation() {
+    // Initialize hardware capabilities for testing
+    let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+    
     let temp_dir = TempDir::new().unwrap();
     let base_path = temp_dir.path().to_str().unwrap();
     let config = create_test_config(base_path);
@@ -427,15 +449,17 @@ async fn test_multi_collection_isolation() {
             timeout_ms: None,
             trigger_compaction: false,
         
-        collection_config: None,};
+        collection_config: Some(create_test_collection(&collection, base_path)),};
         engine.do_flush(&flush_params).await.unwrap();
     }
     
     // Verify isolation
     for collection in &collections {
         // Search should only return vectors from this collection
+        let storage_url = format!("file://{}/{}/data", temp_dir.path().to_str().unwrap(), collection);
         let results = engine.search_vectors(
             collection,
+            &storage_url,
             &vec![0.5; 64],
             20,
         ).await.unwrap();
@@ -449,6 +473,9 @@ async fn test_multi_collection_isolation() {
 
 #[tokio::test]
 async fn test_persistence_across_restarts() {
+    // Initialize hardware capabilities for testing
+    let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+    
     let temp_dir = TempDir::new().unwrap();
     let base_path = temp_dir.path().to_str().unwrap();
     let config = create_test_config(base_path);
@@ -482,7 +509,7 @@ async fn test_persistence_across_restarts() {
             timeout_ms: None,
             trigger_compaction: false,
         
-        collection_config: None,};
+        collection_config: Some(create_test_collection(collection_id, base_path)),};
         
         let flush_result = engine.do_flush(&flush_params).await.unwrap();
         assert!(flush_result.success, "Flush should succeed");
@@ -499,9 +526,12 @@ async fn test_persistence_across_restarts() {
         let filesystem_factory = Arc::new(FilesystemFactory::new(Default::default()).await.unwrap());
         let engine = ViperEngine::from_core_config(crate::core::config::ViperConfig::default(), filesystem_factory).await.unwrap();
         
-        // Search for persisted vectors
+        // Search for persisted vectors - use collection-specific path
+        // VIPER stores files in {base_path}/{collection_id}/data
+        let storage_url = format!("file://{}/{}/data", base_path, collection_id);
         let results = engine.search_vectors(
             collection_id,
+            &storage_url,
             &vec![0.1; 128],
             30,
         ).await.unwrap();
@@ -512,6 +542,9 @@ async fn test_persistence_across_restarts() {
 
 #[tokio::test]
 async fn test_search_vectors_unified() {
+    // Initialize hardware capabilities for testing
+    let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+    
     let temp_dir = TempDir::new().unwrap();
     let config = create_test_config(temp_dir.path().to_str().unwrap());
     let filesystem_factory = Arc::new(FilesystemFactory::new(Default::default()).await.unwrap());
@@ -554,7 +587,7 @@ async fn test_search_vectors_unified() {
         timeout_ms: None,
         trigger_compaction: false,
     
-        collection_config: None,};
+        collection_config: Some(create_test_collection(collection_id, temp_dir.path().to_str().unwrap())),};
     let flush_result = engine.do_flush(&flush_params).await.unwrap();
     assert!(flush_result.success, "Flush should succeed");
     assert!(flush_result.files_created > 0, "Should create at least one file");
@@ -566,9 +599,9 @@ async fn test_search_vectors_unified() {
     use tokio::fs;
     let data_dir = format!("{}/{}/data", temp_dir.path().to_str().unwrap(), collection_id);
     if let Ok(mut entries) = fs::read_dir(&data_dir).await {
-        println!("Files in data directory after flush:");
+        debug!("Files in data directory after flush:");
         while let Some(entry) = entries.next_entry().await.unwrap() {
-            println!("  - {:?}", entry.path());
+            debug!("  - {:?}", entry.path());
         }
     }
     
@@ -587,7 +620,7 @@ async fn test_search_vectors_unified() {
                 let path = entry.path();
                 if path.extension().and_then(|s| s.to_str()) == Some("parquet") && !path.to_str().unwrap().contains("__") {
                     parquet_file = format!("file://{}", path.display());
-                    println!("Found parquet file: {}", parquet_file);
+                    debug!("Found parquet file: {}", parquet_file);
                     break;
                 }
             }
@@ -609,17 +642,18 @@ async fn test_search_vectors_unified() {
                 estimated_size_mb: 1.0,
                 estimated_document_count: 5,
                 is_cloud_storage: false,
+                io_optimization_hints: None,
             };
             
             match reader.search_vectors(&search_params, &context).await {
                 Ok(reader_results) => {
-                    println!("Direct reader found {} results", reader_results.len());
+                    debug!("Direct reader found {} results", reader_results.len());
                     for (i, result) in reader_results.iter().take(3).enumerate() {
-                        println!("  Result {}: id={}, distance={:?}", i, result.id, result.semantic_distance);
+                        debug!("  Result {}: id={}, distance={:?}", i, result.id, result.semantic_distance);
                     }
                 },
                 Err(e) => {
-                    println!("Direct reader error: {}", e);
+                    debug!("Direct reader error: {}", e);
                 }
             }
         }
@@ -629,6 +663,7 @@ async fn test_search_vectors_unified() {
     {
         use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
         use arrow_array::Array;
+use tracing::{debug, error, info, warn};
         
         // Find the parquet file again
         let mut parquet_path = String::new();
@@ -637,7 +672,7 @@ async fn test_search_vectors_unified() {
                 let path = entry.path();
                 if path.extension().and_then(|s| s.to_str()) == Some("parquet") && !path.to_str().unwrap().contains("__") {
                     parquet_path = path.to_str().unwrap().to_string();
-                    println!("\nTesting with raw arrow reader: {}", parquet_path);
+                    debug!("\nTesting with raw arrow reader: {}", parquet_path);
                     break;
                 }
             }
@@ -648,7 +683,7 @@ async fn test_search_vectors_unified() {
                 Ok(data) => {
                     match ParquetRecordBatchReaderBuilder::try_new(bytes::Bytes::from(data)) {
                         Ok(builder) => {
-                            println!("Arrow reader schema: {:?}", builder.schema());
+                            debug!("Arrow reader schema: {:?}", builder.schema());
                             match builder.build() {
                                 Ok(mut reader) => {
                                     let mut total_rows = 0;
@@ -658,38 +693,38 @@ async fn test_search_vectors_unified() {
                                             Ok(batch) => {
                                                 batch_count += 1;
                                                 total_rows += batch.num_rows();
-                                                println!("  Batch {}: {} rows", batch_count, batch.num_rows());
+                                                debug!("  Batch {}: {} rows", batch_count, batch.num_rows());
                                                 
                                                 // Check for id column
                                                 if let Ok(idx) = batch.schema().index_of("id") {
                                                     if let Some(id_array) = batch.column(idx).as_any().downcast_ref::<arrow_array::StringArray>() {
                                                         for i in 0..std::cmp::min(3, id_array.len()) {
                                                             if id_array.is_valid(i) {
-                                                                println!("    ID {}: {}", i, id_array.value(i));
+                                                                debug!("    ID {}: {}", i, id_array.value(i));
                                                             }
                                                         }
                                                     }
                                                 }
                                             }
                                             Err(e) => {
-                                                println!("  Error reading batch: {}", e);
+                                                debug!("  Error reading batch: {}", e);
                                             }
                                         }
                                     }
-                                    println!("  Total rows read: {}", total_rows);
+                                    debug!("  Total rows read: {}", total_rows);
                                 }
                                 Err(e) => {
-                                    println!("Failed to build reader: {}", e);
+                                    debug!("Failed to build reader: {}", e);
                                 }
                             }
                         }
                         Err(e) => {
-                            println!("Failed to create parquet builder: {}", e);
+                            debug!("Failed to create parquet builder: {}", e);
                         }
                     }
                 }
                 Err(e) => {
-                    println!("Failed to read parquet file: {}", e);
+                    debug!("Failed to read parquet file: {}", e);
                 }
             }
         }
@@ -701,7 +736,7 @@ async fn test_search_vectors_unified() {
         let data_dir = format!("{}/{}/data", base_path, collection_id);
         let wal_dir = format!("{}/{}/write_buffer", base_path, collection_id);
         if tokio::fs::metadata(&data_dir).await.is_ok() {
-            println!("Data directory exists: {}", data_dir);
+            debug!("Data directory exists: {}", data_dir);
             
             // List what's in the data directory using filesystem
             let data_url = format!("file://{}", data_dir);
@@ -709,23 +744,25 @@ async fn test_search_vectors_unified() {
             let fs = fs_factory.get_filesystem(&data_url).unwrap();
             match fs.list(&data_url).await {
                 Ok(entries) => {
-                    println!("Files in data directory:");
+                    debug!("Files in data directory:");
                     for entry in &entries {
-                        println!("  - name: {}, url: {}", entry.name, entry.url);
+                        debug!("  - name: {}, url: {}", entry.name, entry.url);
                     }
                 }
                 Err(e) => {
-                    println!("Failed to list files in data directory: {}", e);
+                    debug!("Failed to list files in data directory: {}", e);
                 }
             }
         } else {
-            println!("Data directory not found!");
+            debug!("Data directory not found!");
         }
     }
     
     // Test 1: Basic search with cosine distance
+    let storage_url = format!("file://{}/{}/data", temp_dir.path().to_str().unwrap(), collection_id);
     let results = match engine.search_vectors_unified(
         collection_id,
+        &storage_url,
         &[1.0, 0.0, 0.0],
         3,
         &DistanceMetric::Cosine,
@@ -735,14 +772,14 @@ async fn test_search_vectors_unified() {
     ).await {
         Ok(r) => r,
         Err(e) => {
-            println!("ENGINE ERROR: {}", e);
+            debug!("ENGINE ERROR: {}", e);
             panic!("Search failed: {}", e);
         }
     };
     
     assert!(!results.is_empty(), "Search returned no results - check if parquet file is being discovered correctly");
     assert!(results.len() <= 3);
-    println!("First result: id={}, score={}, metadata={:?}", results[0].id, results[0].score, results[0].metadata);
+    debug!("First result: id={}, score={}, metadata={:?}", results[0].id, results[0].score, results[0].metadata);
     assert_eq!(results[0].id, "vec1"); // Should be the exact match
     
     // Test 2: Search with metadata filtering
@@ -765,6 +802,7 @@ async fn test_search_vectors_unified() {
     
     let filtered_results = engine.search_vectors_unified(
         collection_id,
+        &storage_url,
         &[0.5, 0.5, 0.5],
         10,
         &DistanceMetric::Euclidean,
@@ -774,13 +812,14 @@ async fn test_search_vectors_unified() {
     ).await.expect("Failed to search with filters");
     
     // Without collection config, filtering won't work properly, but search should still return results
-    println!("Filtered search returned {} results", filtered_results.len());
+    debug!("Filtered search returned {} results", filtered_results.len());
     
     // TODO: Add integration test with proper collection service setup for full metadata filtering test
     
     // Test 3: Search without vectors/metadata included
     let minimal_results = engine.search_vectors_unified(
         collection_id,
+        &storage_url,
         &[0.0, 1.0, 0.0],
         2,
         &DistanceMetric::DotProduct,
@@ -798,6 +837,9 @@ async fn test_search_vectors_unified() {
 
 #[tokio::test]
 async fn test_concurrent_operations() {
+    // Initialize hardware capabilities for testing
+    let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+    
     let temp_dir = TempDir::new().unwrap();
     let config = create_test_config(temp_dir.path().to_str().unwrap());
     
@@ -858,7 +900,7 @@ async fn test_concurrent_operations() {
         timeout_ms: None,
         trigger_compaction: false,
     
-        collection_config: None,};
+        collection_config: Some(create_test_collection(collection_id, temp_dir.path().to_str().unwrap())),};
     let flush_result = engine.do_flush(&flush_params).await.unwrap();
     assert!(flush_result.success, "Flush should succeed");
     assert!(flush_result.files_created > 0, "Should create at least one file");
@@ -866,8 +908,10 @@ async fn test_concurrent_operations() {
     // Small delay to ensure file system operations complete
     tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
     
+    let storage_url = format!("file://{}/{}/data", temp_dir.path().to_str().unwrap(), collection_id);
     let results = engine.search_vectors(
         collection_id,
+        &storage_url,
         &vec![0.5; 128],
         100,
     ).await.unwrap();

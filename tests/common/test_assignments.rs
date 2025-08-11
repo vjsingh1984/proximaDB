@@ -4,6 +4,7 @@
 //! to ensure consistent directory usage across all test types and concurrent tests.
 
 use anyhow::Result;
+use tracing::{debug, error, info, warn};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -130,7 +131,7 @@ impl PersistentTestAssignments {
             cache.insert(collection_id.to_string(), assignment.clone());
         }
 
-        println!("Created persistent test assignment for {}: {}", collection_id, data_url);
+        debug!("Created persistent test assignment for {}: {}", collection_id, data_url);
 
         Ok(assignment)
     }
@@ -219,8 +220,8 @@ impl PersistentTestAssignments {
         match serde_json::from_str::<HashMap<String, TestAssignmentData>>(&content) {
             Ok(assignments) => Ok(assignments),
             Err(e) => {
-                eprintln!("Warning: Assignment file corrupted, recreating: {}", e);
-                eprintln!("File content: {}", content);
+                debug!("Warning: Assignment file corrupted, recreating: {}", e);
+                debug!("File content: {}", content);
                 
                 // Remove corrupted file and start fresh
                 let _ = fs::remove_file(&self.assignment_file).await;
@@ -283,7 +284,7 @@ pub async fn setup_persistent_test_assignment(collection_id: &str) -> Result<Tes
     // let assignment_service = proximadb::storage::assignment_service::get_assignment_service();
     // ... service registration code removed ...
     
-    println!("Using persistent test assignment for {}: {}", collection_id, assignment.data_url);
+    debug!("Using persistent test assignment for {}: {}", collection_id, assignment.data_url);
     Ok(assignment)
 }
 

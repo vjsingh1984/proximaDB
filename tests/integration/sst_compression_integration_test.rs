@@ -14,7 +14,7 @@ use proximadb::storage::engines::sst::{
 use proximadb::proto::proximadb::MetadataItem;
 use proximadb::core::search::{SearchParams, FilterExpression};
 use proximadb::storage::traits::UnifiedStorageEngine;
-use proximadb::storage::transaction_coordinator::UnifiedAtomicCoordinator;
+use proximadb::storage::transaction_coordinator::TransactionCoordinator;
 use proximadb::storage::persistence::filesystem::FilesystemFactory;
 use proximadb::compute::distance_computation::UnifiedDistanceCompute;
 use std::sync::{Arc, Once};
@@ -118,6 +118,7 @@ async fn test_sst_datablock_compression() -> anyhow::Result<()> {
     assert_eq!(data_block.records.len(), recovered_block.records.len());
     
     // Check compression was applied
+    use proximadb::storage::engines::sst::CompressionAlgorithmSst;
     assert!(!matches!(recovered_block.compression_algorithm, CompressionAlgorithmSst::None));
     assert!(recovered_block.compression_ratio > 0.0 && recovered_block.compression_ratio < 1.0);
     
@@ -133,11 +134,11 @@ async fn test_sst_flush_with_compression() -> anyhow::Result<()> {
     
     // Setup storage engine
     let filesystem = Arc::new(FilesystemFactory::new(Default::default()).await?);
-    let distance_compute = Arc::new(UnifiedDistanceCompute::new(proximadb::compute::distance::DistanceMetric::Cosine));
+    let distance_compute = Arc::new(UnifiedDistanceCompute::new(proximadb::compute::distance_computation::DistanceMetric::Cosine));
     let metadata_url = format!("file://{}/metadata", temp_dir.path().display());
     let storage_url = format!("file://{}/storage", temp_dir.path().display());
     
-    let coordinator = Arc::new(UnifiedAtomicCoordinator::new(
+    let coordinator = Arc::new(TransactionCoordinator::new(
         filesystem.clone(),
         None
     ).await.unwrap());
@@ -174,9 +175,10 @@ async fn test_sst_flush_with_compression() -> anyhow::Result<()> {
     
     let results = engine.search_vectors_unified(
         "test_collection",
+        &storage_url,
         &search_params.query_vectors.as_ref().unwrap()[0],
         search_params.top_k.unwrap_or(10),
-        &proximadb::compute::distance::DistanceMetric::Cosine,
+        &proximadb::compute::distance_computation::DistanceMetric::Cosine,
         search_params.filter_expression.as_ref(),
         false,
         true
@@ -197,11 +199,11 @@ async fn test_sst_compaction_with_compression() -> anyhow::Result<()> {
     let config = Arc::new(test_config);
     
     let filesystem = Arc::new(FilesystemFactory::new(Default::default()).await?);
-    let distance_compute = Arc::new(UnifiedDistanceCompute::new(proximadb::compute::distance::DistanceMetric::Cosine));
+    let distance_compute = Arc::new(UnifiedDistanceCompute::new(proximadb::compute::distance_computation::DistanceMetric::Cosine));
     let metadata_url = format!("file://{}/metadata", temp_dir.path().display());
     let storage_url = format!("file://{}/storage", temp_dir.path().display());
     
-    let coordinator = Arc::new(UnifiedAtomicCoordinator::new(
+    let coordinator = Arc::new(TransactionCoordinator::new(
         filesystem.clone(),
         None
     ).await.unwrap());
@@ -232,7 +234,7 @@ async fn test_sst_compaction_with_compression() -> anyhow::Result<()> {
         ..Default::default()
     };
     let compaction_result = engine.compact(compact_params).await?;
-    println!("Compaction result: success={}, entries_processed={}", 
+    debug!("Compaction result: success={}, entries_processed={}", 
              compaction_result.success, compaction_result.entries_processed);
     
     // Skip assertion for now - focus on debugging
@@ -251,9 +253,10 @@ async fn test_sst_compaction_with_compression() -> anyhow::Result<()> {
     
     let results = engine.search_vectors_unified(
         "test_compaction",
+        &storage_url,
         &search_params.query_vectors.as_ref().unwrap()[0],
         search_params.top_k.unwrap_or(100),
-        &proximadb::compute::distance::DistanceMetric::Cosine,
+        &proximadb::compute::distance_computation::DistanceMetric::Cosine,
         search_params.filter_expression.as_ref(),
         false,
         true
@@ -269,11 +272,11 @@ async fn test_sst_search_compressed_blocks() -> anyhow::Result<()> {
     let config = Arc::new(create_test_config(&temp_dir, true));
     
     let filesystem = Arc::new(FilesystemFactory::new(Default::default()).await?);
-    let distance_compute = Arc::new(UnifiedDistanceCompute::new(proximadb::compute::distance::DistanceMetric::Cosine));
+    let distance_compute = Arc::new(UnifiedDistanceCompute::new(proximadb::compute::distance_computation::DistanceMetric::Cosine));
     let metadata_url = format!("file://{}/metadata", temp_dir.path().display());
     let storage_url = format!("file://{}/storage", temp_dir.path().display());
     
-    let coordinator = Arc::new(UnifiedAtomicCoordinator::new(
+    let coordinator = Arc::new(TransactionCoordinator::new(
         filesystem.clone(),
         None
     ).await.unwrap());
@@ -361,9 +364,10 @@ async fn test_sst_search_compressed_blocks() -> anyhow::Result<()> {
     
     let sparse_results = engine.search_vectors_unified(
         "test_search",
+        &storage_url,
         &search_params.query_vectors.as_ref().unwrap()[0],
         search_params.top_k.unwrap_or(10),
-        &proximadb::compute::distance::DistanceMetric::Cosine,
+        &proximadb::compute::distance_computation::DistanceMetric::Cosine,
         search_params.filter_expression.as_ref(),
         false,
         true
@@ -390,9 +394,10 @@ async fn test_sst_search_compressed_blocks() -> anyhow::Result<()> {
     
     let dense_results = engine.search_vectors_unified(
         "test_search",
+        &storage_url,
         &search_params.query_vectors.as_ref().unwrap()[0],
         search_params.top_k.unwrap_or(10),
-        &proximadb::compute::distance::DistanceMetric::Cosine,
+        &proximadb::compute::distance_computation::DistanceMetric::Cosine,
         search_params.filter_expression.as_ref(),
         false,
         true
@@ -415,7 +420,7 @@ async fn test_compression_algorithm_vs_disabled() -> anyhow::Result<()> {
     // Test with compression enabled
     let config_compressed = Arc::new(create_test_config(&temp_dir_compressed, true));
     let filesystem = Arc::new(FilesystemFactory::new(Default::default()).await?);
-    let distance_compute = Arc::new(UnifiedDistanceCompute::new(proximadb::compute::distance::DistanceMetric::Cosine));
+    let distance_compute = Arc::new(UnifiedDistanceCompute::new(proximadb::compute::distance_computation::DistanceMetric::Cosine));
     
     
     let compressed_engine = SstStorage::new(
@@ -457,16 +462,16 @@ async fn test_compression_algorithm_vs_disabled() -> anyhow::Result<()> {
     let compressed_size = get_sst_files_size(&compressed_data_path).await;
     let uncompressed_size = get_sst_files_size(&uncompressed_data_path).await;
     
-    println!("Compressed size: {} bytes, Uncompressed size: {} bytes, Ratio: {:.2}",
+    debug!("Compressed size: {} bytes, Uncompressed size: {} bytes, Ratio: {:.2}",
         compressed_size, uncompressed_size, 
         if uncompressed_size > 0 { compressed_size as f64 / uncompressed_size as f64 } else { 0.0 });
     
     // Debug: Check if files were found
     if compressed_size == 0 {
-        println!("WARNING: No compressed SST files found in: {}", compressed_data_path);
+        debug!("WARNING: No compressed SST files found in: {}", compressed_data_path);
     }
     if uncompressed_size == 0 {
-        println!("WARNING: No uncompressed SST files found in: {}", uncompressed_data_path);
+        debug!("WARNING: No uncompressed SST files found in: {}", uncompressed_data_path);
     }
     
     // Compressed should be significantly smaller (or at least not zero)
@@ -497,7 +502,7 @@ async fn test_compression_levels() -> anyhow::Result<()> {
         
         
         let filesystem = Arc::new(FilesystemFactory::new(Default::default()).await?);
-        let distance_compute = Arc::new(UnifiedDistanceCompute::new(proximadb::compute::distance::DistanceMetric::Cosine));
+        let distance_compute = Arc::new(UnifiedDistanceCompute::new(proximadb::compute::distance_computation::DistanceMetric::Cosine));
         let engine = SstStorage::new(
             config,
             filesystem.clone(),
@@ -521,9 +526,9 @@ async fn test_compression_levels() -> anyhow::Result<()> {
     }
     
     // Debug output for compression results
-    println!("Compression test results:");
+    debug!("Compression test results:");
     for (level, size, duration) in &results {
-        println!("  Level {}: {} bytes in {:?}", level, size, duration);
+        debug!("  Level {}: {} bytes in {:?}", level, size, duration);
     }
     
     // Skip assertions for now - focus on getting tests to pass

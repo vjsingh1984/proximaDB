@@ -4,15 +4,16 @@
 
 use anyhow::Result;
 use tokio;
+use tracing::{debug};
 
 #[tokio::test]
 async fn test_filesystem_concept() -> Result<()> {
-    println!("Filesystem integration test placeholder");
-    println!("In a full setup, this would test:");
-    println!("- MinIO for S3 emulation");
-    println!("- fake-gcs-server for GCS emulation");
-    println!("- Azurite for Azure Storage emulation");
-    println!("- Local filesystem for development");
+    debug!("Filesystem integration test placeholder");
+    debug!("In a full setup, this would test:");
+    debug!("- MinIO for S3 emulation");
+    debug!("- fake-gcs-server for GCS emulation");
+    debug!("- Azurite for Azure Storage emulation");
+    debug!("- Local filesystem for development");
     
     // For now, we've set up the infrastructure:
     // - MinIO is running on port 9000
