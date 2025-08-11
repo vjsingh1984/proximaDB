@@ -595,8 +595,7 @@ pub struct CompactionState {
 #[cfg(test)]
 mod tests {
     use super::*;
-    // 🔴 UNUSED IMPORT - SkipList memtable is unused
-// use crate::storage::memtable::implementations::skiplist::SkipListMemtable;
+    use crate::storage::memtable::implementations::skiplist::SkipListMemtable;
 
     #[tokio::test]
     async fn test_lsm_behavior_wrapper() {

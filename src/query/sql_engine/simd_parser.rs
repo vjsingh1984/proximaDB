@@ -488,6 +488,7 @@ pub fn parse_vector_simd(json_str: &str) -> Result<Vec<f32>> {
 mod tests {
     use super::*;
     use std::time::Instant;
+    use tracing::debug;
     
     #[test]
     fn test_simd_capabilities_detection() {

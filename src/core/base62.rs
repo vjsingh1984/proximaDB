@@ -51,6 +51,7 @@ pub fn decode(s: &str) -> Result<u64, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tracing::debug;
     
     #[test]
     fn test_base62_encoding() {

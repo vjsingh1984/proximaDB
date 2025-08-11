@@ -602,6 +602,7 @@ impl HardwareQuery {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tracing::debug;
     
     #[test]
     fn test_hardware_detection_legacy() {
