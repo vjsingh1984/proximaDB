@@ -1327,7 +1327,7 @@ impl UnifiedParquetReader {
     async fn build_reader_from_ranges(
         &self,
         range_data: Vec<Vec<u8>>,
-        _metadata: &parquet::file::_metadata::ParquetMetaData,
+        _metadata: &parquet::file::metadata::ParquetMetaData,
         row_groups: Vec<usize>,
         columns: Vec<&str>,
     ) -> Result<Vec<arrow_array::RecordBatch>> {

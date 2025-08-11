@@ -468,60 +468,60 @@ mod tests {
             DataBlock {
                 block_id: 0,
                 records: vec![
-                    SstRecord {
-                        id: "vec1".to_string(),
+                    VectorRecord {
+                        id: Some("vec1".to_string()),
                         vector: vec![0.1; 128],
                         metadata: vec![
-                            MetadataItem {
+                            crate::proto::proximadb::MetadataItem {
                                 key: "category".to_string(),
-                                value: Some(metadata_item::Value::StringValue("electronics".to_string())),
+                                value: Some(crate::proto::proximadb::metadata_item::Value::StringValue("electronics".to_string())),
                             },
                         ],
                         timestamp: 1000,
                         updated_at: None,
                         expires_at: None,
                         version: Some(1),
-                        is_tombstone: false,
-                        sequence_number: 1,
-                        level: 0,
+                        rank: None,
+                        score: None,
+                        distance: None,
                     },
-                    SstRecord {
-                        id: "vec2".to_string(),
+                    VectorRecord {
+                        id: Some("vec2".to_string()),
                         vector: vec![0.2; 128],
                         metadata: vec![
-                            MetadataItem {
+                            crate::proto::proximadb::MetadataItem {
                                 key: "category".to_string(),
-                                value: Some(metadata_item::Value::StringValue("books".to_string())),
+                                value: Some(crate::proto::proximadb::metadata_item::Value::StringValue("books".to_string())),
                             },
                         ],
                         timestamp: 1001,
                         updated_at: None,
                         expires_at: None,
                         version: Some(1),
-                        is_tombstone: false,
-                        sequence_number: 2,
-                        level: 0,
+                        rank: None,
+                        score: None,
+                        distance: None,
                     },
-                    SstRecord {
-                        id: "vec3".to_string(),
+                    VectorRecord {
+                        id: Some("vec3".to_string()),
                         vector: vec![0.3; 128],
                         metadata: vec![
-                            MetadataItem {
+                            crate::proto::proximadb::MetadataItem {
                                 key: "category".to_string(),
-                                value: Some(metadata_item::Value::StringValue("electronics".to_string())),
+                                value: Some(crate::proto::proximadb::metadata_item::Value::StringValue("electronics".to_string())),
                             },
                         ],
                         timestamp: 1002,
                         updated_at: None,
                         expires_at: None,
                         version: Some(1),
-                        is_tombstone: false,
-                        sequence_number: 3,
-                        level: 0,
+                        rank: None,
+                        score: None,
+                        distance: None,
                     },
                 ],
                 uncompressed_size: 1024,
-                compression_algorithm: CompressionAlgorithmSst::None,
+                compression_algorithm: crate::proto::proximadb::CompressionAlgorithm::None as i32,
                 compression_ratio: 1.0,
             },
         ]
