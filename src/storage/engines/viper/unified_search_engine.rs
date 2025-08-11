@@ -12,7 +12,7 @@ use async_trait::async_trait;
 use serde_json::json;
 use std::collections::HashMap;
 use std::sync::Arc;
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 
 use crate::core::search::{
     SearchParams, SearchResultSet, UnifiedSearchEngine, UnifiedSearchContext,

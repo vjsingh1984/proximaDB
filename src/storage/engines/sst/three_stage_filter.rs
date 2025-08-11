@@ -8,7 +8,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 use anyhow::Result;
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 
 use crate::core::VectorRecord;
 use crate::core::search::{FilterExpression, ComparisonOperator};

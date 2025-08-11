@@ -13,7 +13,7 @@ mod tests {
     use crate::compute::distance_computation::engine::{UnifiedDistanceCompute, HardwareBackend, GpuAccelerator};
     use crate::compute::distance_computation::DistanceMetric;
     use crate::compute::PlatformCapability;
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, warn};
     
     /// Test GPU backend detection and selection
     #[tokio::test]

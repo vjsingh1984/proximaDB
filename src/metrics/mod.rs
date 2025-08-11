@@ -42,7 +42,7 @@ pub use self::schema::Alert;
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, warn};
 
 /// Configuration for the metrics system
 #[derive(Debug, Clone, Serialize, Deserialize)]

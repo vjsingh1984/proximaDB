@@ -784,7 +784,7 @@ impl AzureCredentialProvider for ServicePrincipalProvider {
 #[cfg(test)]
 mod tests {
     use super::*;
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, warn};
 
     #[tokio::test]
     async fn test_azure_url_parsing() {

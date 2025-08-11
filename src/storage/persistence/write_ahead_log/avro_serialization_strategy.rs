@@ -7,7 +7,7 @@
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 use std::sync::Arc;
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 
 use super::batch_strategy::WALBatchStrategy;
 use super::{FlushResult, WALConfig, WALStats, BatchId};

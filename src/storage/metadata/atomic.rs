@@ -28,7 +28,7 @@ use super::{
 use crate::storage::persistence::filesystem::FilesystemFactory;
 // Strategy configuration is imported through metadata module
 use crate::storage::strategy::CollectionStrategyConfig;
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, warn};
 
 /// Transaction identifier
 pub type TransactionId = Uuid;

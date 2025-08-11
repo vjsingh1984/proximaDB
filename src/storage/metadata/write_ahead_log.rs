@@ -28,7 +28,7 @@ use std::sync::Arc;
 
 use crate::core::CompressionAlgorithm;
 use crate::storage::persistence::filesystem::FilesystemFactory;
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, warn};
 
 use crate::storage::persistence::write_ahead_log::{
     config::{MemTableType, WriteBufferStrategyType},

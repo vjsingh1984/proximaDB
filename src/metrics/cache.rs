@@ -12,7 +12,7 @@ use crate::metrics::{
 };
 use crate::storage::cache::metrics::CacheMetrics as BaseCacheMetrics;
 use crate::storage::cache::backend::CacheTier;
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, warn};
 
 /// Cache metrics snapshot that work with the broader metrics framework
 #[derive(Debug, Clone, Serialize, Deserialize)]

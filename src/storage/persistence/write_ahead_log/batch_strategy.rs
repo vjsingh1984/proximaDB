@@ -20,6 +20,7 @@ use crate::storage::traits::UnifiedStorageEngine;
 
 use super::{WALConfig, WALStats};
 use crate::storage::traits::FlushResult;
+use tracing::{debug, error, info, warn};
 
 /// Modern batch-oriented Write Buffer strategy trait
 /// 
@@ -774,7 +775,6 @@ pub trait WALBatchStrategy: Send + Sync + std::fmt::Debug {
 
         // Create single-vector batch for deletion
         use super::BatchId;
-use tracing::{debug, error, info};
         let batch_id = BatchId::new();
         let batch = WALVectorBatch {
             batch_id,

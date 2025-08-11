@@ -12,7 +12,7 @@ mod tests {
     use crate::compute::distance_computation::engine::{UnifiedDistanceCompute, HardwareBackend, DistanceMode};
     use crate::compute::distance_computation::{DistanceMetric, PlatformCapability};
     use std::time::Instant;
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, warn};
 
     /// Test that UnifiedDistanceCompute correctly selects GPU when available
     #[tokio::test]

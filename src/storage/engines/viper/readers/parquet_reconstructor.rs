@@ -10,7 +10,7 @@ use parquet::file::metadata::{ParquetMetaData, RowGroupMetaData};
 use std::collections::HashMap;
 use chrono;
 use std::sync::Arc;
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 
 use crate::core::VectorRecord;
 

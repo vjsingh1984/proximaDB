@@ -10,7 +10,7 @@ use anyhow::{Context, Result};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use std::collections::HashMap;
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 
 use crate::storage::transaction_coordinator::{
     TransactionCoordinator,
