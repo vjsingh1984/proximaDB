@@ -42,7 +42,6 @@ pub mod quantization;
 
 // Re-export main APIs from semantic modules
 pub use distance_computation::*;
-pub use gpu::*;
 pub use quantization::*;
 
 #[cfg(test)]

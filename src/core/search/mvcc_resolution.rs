@@ -9,7 +9,7 @@
 //! 6. For same version, earliest timestamp wins
 
 use crate::core::VectorRecord;
-use std::collections::{HashMap, BTreeMap};
+use std::collections::HashMap;
 use tracing::{debug};
 
 /// MVCC resolution result for a single record

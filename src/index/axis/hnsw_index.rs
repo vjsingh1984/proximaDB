@@ -20,7 +20,7 @@
 //! with the AXIS adaptive indexing system. HNSW is ideal for approximate nearest
 //! neighbor search with excellent recall and query performance.
 
-use anyhow::{anyhow, Result};
+use anyhow::Result;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::collections::{BinaryHeap, HashMap, HashSet};

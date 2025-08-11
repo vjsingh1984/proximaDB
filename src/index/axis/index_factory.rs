@@ -27,7 +27,7 @@ use crate::compute::distance_computation::DistanceMetric;
 use crate::core::VectorRecord;
 // use crate::index::axis::hnsw_integration::{AxisHnswConfig, PartitionedHnswIndex};
 use crate::index::axis::annoy_index::{AxisAnnoyConfig, AxisAnnoyIndex};
-use crate::index::axis::ivf_unified::{UnifiedIvfConfig, UnifiedIvfIndex, CentroidConfig, PostingListConfig};
+use crate::index::axis::ivf_unified::{UnifiedIvfConfig, UnifiedIvfIndex};
 use crate::index::axis::lsh_index::{AxisLshConfig, AxisLshIndex};
 use crate::index::axis::types::IndexAlgorithm;
 
