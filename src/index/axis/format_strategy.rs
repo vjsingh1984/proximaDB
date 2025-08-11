@@ -36,10 +36,17 @@ pub enum IndexSerializationFormat {
     Bincode,
     
     /// Apache Avro - Schema-aware format for long-term storage
+    /// NOTE: Should always be used with compression codec!
     Avro,
     
     /// Compressed Bincode - Bincode with zstd compression
     BincodeCompressed,
+    
+    /// Avro with Snappy compression - Fast compression for cloud
+    AvroSnappy,
+    
+    /// Avro with Zstandard compression - Best compression for cold storage
+    AvroZstd,
 }
 
 /// Format selection strategy for AXIS indexes
@@ -70,10 +77,10 @@ impl IndexFormatStrategy {
             // HDD uses compressed Bincode for space efficiency
             StorageTier::HDD => IndexSerializationFormat::BincodeCompressed,
             
-            // Cloud storage uses Avro for schema evolution and long-term storage
-            StorageTier::S3Express | 
-            StorageTier::S3Standard |
-            StorageTier::S3GlacierInstant => IndexSerializationFormat::Avro,
+            // Cloud storage uses Avro WITH compression for schema evolution
+            StorageTier::S3Express => IndexSerializationFormat::AvroSnappy, // Fast access
+            StorageTier::S3Standard => IndexSerializationFormat::AvroZstd,   // Balanced
+            StorageTier::S3GlacierInstant => IndexSerializationFormat::AvroZstd, // Max compression
             
             // Azure/GCP follow similar patterns
             StorageTier::AzurePremium | StorageTier::AzureStandard => {
@@ -84,9 +91,8 @@ impl IndexFormatStrategy {
                 }
             }
             
-            StorageTier::GcsSSD | StorageTier::GcsHDD => {
-                IndexSerializationFormat::Avro
-            }
+            StorageTier::GcsSSD => IndexSerializationFormat::AvroSnappy,
+            StorageTier::GcsHDD => IndexSerializationFormat::AvroZstd,
         }
     }
     
@@ -117,13 +123,32 @@ impl IndexFormatStrategy {
                 Ok(compressed)
             }
             
-            IndexSerializationFormat::Avro => {
-                debug!("Serializing with Avro");
-                // For Avro, we need to convert to Avro record format
-                // This is more complex and would need schema definition
-                // For now, fallback to compressed bincode
-                warn!("Avro serialization not fully implemented, using compressed bincode");
-                Self::serialize(data, IndexSerializationFormat::BincodeCompressed)
+            IndexSerializationFormat::Avro | 
+            IndexSerializationFormat::AvroSnappy |
+            IndexSerializationFormat::AvroZstd => {
+                debug!("Serializing with Avro + compression");
+                // For now, use Bincode + zstd as a placeholder
+                // Real implementation would use apache_avro with codec
+                warn!("Avro with compression not fully implemented, using bincode+zstd");
+                
+                // Simulate Avro + compression with bincode + higher compression
+                let bincode_data = bincode::serialize(data)
+                    .map_err(|e| SerializationError::Bincode(e))?;
+                
+                // Use higher compression level for Avro simulation
+                let compression_level = match format {
+                    IndexSerializationFormat::AvroSnappy => 1, // Fast
+                    IndexSerializationFormat::AvroZstd => 6,   // Balanced
+                    _ => 3, // Default
+                };
+                
+                let compressed = zstd::encode_all(&bincode_data[..], compression_level)
+                    .map_err(|e| SerializationError::Compression(e.to_string()))?;
+                
+                debug!("Compressed {} bytes to {} bytes (level {})", 
+                    bincode_data.len(), compressed.len(), compression_level);
+                
+                Ok(compressed)
             }
         }
     }
@@ -150,11 +175,19 @@ impl IndexFormatStrategy {
                     .map_err(|e| SerializationError::Bincode(e))
             }
             
-            IndexSerializationFormat::Avro => {
-                debug!("Deserializing with Avro");
-                // For now, try compressed bincode
-                warn!("Avro deserialization not fully implemented, trying compressed bincode");
-                Self::deserialize(data, IndexSerializationFormat::BincodeCompressed)
+            IndexSerializationFormat::Avro |
+            IndexSerializationFormat::AvroSnappy |
+            IndexSerializationFormat::AvroZstd => {
+                debug!("Deserializing with Avro + compression");
+                // For now, decompress as if it were compressed bincode
+                warn!("Avro deserialization not fully implemented, using compressed bincode");
+                
+                // Decompress
+                let decompressed = zstd::decode_all(data)
+                    .map_err(|e| SerializationError::Compression(e.to_string()))?;
+                
+                bincode::deserialize(&decompressed)
+                    .map_err(|e| SerializationError::Bincode(e))
             }
         }
     }
@@ -283,12 +316,17 @@ impl FormatRecommender {
         if data_size_bytes > self.large_size_threshold {
             match tier {
                 StorageTier::S3Standard | 
-                StorageTier::S3GlacierInstant |
+                StorageTier::S3GlacierInstant => {
+                    return (
+                        IndexSerializationFormat::AvroZstd,
+                        "Large index in cloud - using Avro+zstd for compression and schema evolution".to_string()
+                    );
+                }
                 StorageTier::AzureStandard |
                 StorageTier::GcsHDD => {
                     return (
-                        IndexSerializationFormat::Avro,
-                        "Large index in cloud - using Avro for schema evolution".to_string()
+                        IndexSerializationFormat::AvroZstd,
+                        "Large index in cloud - using Avro+zstd for maximum compression".to_string()
                     );
                 }
                 _ => {
@@ -411,7 +449,7 @@ mod tests {
             false,
             720.0, // 30 days
         );
-        assert_eq!(format, IndexSerializationFormat::Avro);
+        assert_eq!(format, IndexSerializationFormat::AvroZstd);
         
         // Ephemeral instance
         let (format, _reason) = recommender.recommend(

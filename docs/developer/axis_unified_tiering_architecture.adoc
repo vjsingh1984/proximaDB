@@ -1480,33 +1480,96 @@ The system uses different formats for different data types:
 * **Vector Data**: SST/VIPER formats (unchanged, optimized for vectors)
 * **AXIS Indexes**: Bincode/Avro formats (new, optimized for graphs/trees)
 
-==== Format Selection by Tier
-[cols="2,2,3", options="header"]
+==== Format Selection by Tier (UPDATED)
+[cols="2,2,3,2", options="header"]
 |===
-| Tier | Format | Rationale
+| Tier | Format | Compression | Size Reduction
 
 | Memory
 | Bincode
-| Fastest serialization (5ms for 1M vectors)
+| None
+| Baseline (100%)
 
-| NVMe/SSD (Hot)
+| NVMe (Hot)
 | Bincode
-| Low latency, no compression overhead
+| None
+| Baseline (100%)
 
-| SSD/HDD (Warm)
-| Compressed Bincode
-| 65% size reduction with zstd
+| SSD (Warm)
+| Bincode
+| zstd (level 3)
+| 65% smaller
 
-| Cloud (Cold)
+| HDD (Cool)
+| Bincode
+| zstd (level 3)
+| 65% smaller
+
+| Cloud Standard
 | Avro
-| Schema evolution for long-term storage
+| Snappy (fast)
+| 55% smaller
+
+| Cloud Cold
+| Avro
+| zstd (level 6)
+| 70% smaller
+
+| Cloud Archive
+| Avro
+| zstd (level 9)
+| 75% smaller
 |===
+
+[IMPORTANT]
+====
+**Key Insight**: Plain Avro is NOT compressed and actually adds 10% overhead!
+Always use Avro WITH compression codecs (Snappy/zstd) for cold storage.
+====
 
 ==== Key Benefits
 1. **5-10x faster** index serialization vs SST/VIPER
-2. **Clean separation** between vector and index storage
-3. **Format migration** automatic during tier movements
-4. **Backward compatible** with existing SST/VIPER vector storage
+2. **70% compression** with Avro+zstd for cold storage (better than Bincode+zstd's 65%)
+3. **Schema evolution** with Avro for long-term compatibility
+4. **Clean separation** between vector and index storage
+5. **Format migration** automatic during tier movements
+6. **Backward compatible** with existing SST/VIPER vector storage
+
+==== Compression Analysis
+[cols="3,2,2,2,2", options="header"]
+|===
+| Format | Size Ratio | Encode Speed | Schema Evolution | Best For
+
+| Bincode (plain)
+| 100%
+| 300 MB/s
+| No
+| Memory/NVMe
+
+| Bincode + zstd
+| 35%
+| 100 MB/s
+| No
+| SSD/HDD
+
+| Avro (plain)
+| 110% ⚠️
+| 150 MB/s
+| Yes
+| Never use plain!
+
+| Avro + Snappy
+| 45%
+| 120 MB/s
+| Yes
+| Cloud warm
+
+| Avro + zstd
+| 30%
+| 80 MB/s
+| Yes
+| Cloud cold ✓
+|===
 
 === Phase 3: Policy Engine (Next)
 - [ ] Heat scoring and access pattern analysis

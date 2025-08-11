@@ -27,6 +27,7 @@ pub mod collection_state; // Collection-level tier state management
 pub mod tiering_manager;  // Intelligent tiering orchestration
 pub mod serialization;    // Index serialization and delta management
 pub mod format_strategy;  // Bincode/Avro format selection for indexes
+pub mod avro_analysis;    // Avro compression analysis for cold tier
 pub mod recovery;         // Index recovery and restoration
 pub mod migration_engine;
 pub mod monitor;
