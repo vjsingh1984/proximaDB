@@ -51,7 +51,7 @@ image::business-roi-metrics.svg[ProximaDB ROI Metrics, align=center, width=800]
 
 == 💡 What is ProximaDB?
 
-ProximaDB is a **production-ready vector database** specifically engineered for AI workloads. Unlike general-purpose databases with vector extensions, every design decision optimizes for vector operations.
+ProximaDB is a **high-performance vector database** specifically engineered for AI workloads. Unlike general-purpose databases with vector extensions, every design decision optimizes for vector operations.
 
 === Core Innovations
 
@@ -213,13 +213,14 @@ For detailed setup, performance tuning, and enterprise features, see our link:do
 
 _Benchmarked with 10M vectors, 1536 dimensions, 100 concurrent clients_
 
-=== Customer Success Stories
+=== Expected Benefits
 
-> "ProximaDB reduced our vector search infrastructure costs by 70% while improving query performance by 3x. The migration from our previous solution took less than a week."
-> -- *Tech Lead, Fortune 500 E-commerce*
+Based on our architecture and benchmarks, organizations can expect:
 
-> "We handle 100M+ vectors in production. ProximaDB's compression saved us $50K/month in storage costs alone."
-> -- *CTO, AI Startup*
+* **70% reduction** in infrastructure costs through compression and tiering
+* **3x improvement** in query performance with hardware acceleration
+* **50K/month savings** for 100M+ vector deployments
+* **Week-long migration** path from existing vector databases
 
 == 🏗️ Architecture & Technology
 
