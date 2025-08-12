@@ -324,7 +324,8 @@ impl AxisTieringManager {
         info!("Handling memory pressure for AXIS indexes");
         
         // Check current memory pressure
-        let memory_pressure = self.memory_tracker.get_memory_pressure().await;
+        let memory_stats = self.memory_tracker.get_memory_stats().await;
+        let memory_pressure = memory_stats.memory_usage_percentage / 100.0;
         
         if memory_pressure < 0.7 {
             debug!("Memory pressure is acceptable at {:.1}%", memory_pressure * 100.0);
@@ -376,7 +377,8 @@ impl AxisTieringManager {
                     demoted_count += 1;
                     
                     // Check if pressure is now acceptable
-                    let new_pressure = self.memory_tracker.get_memory_pressure().await;
+                    let new_stats = self.memory_tracker.get_memory_stats().await;
+                    let new_pressure = new_stats.memory_usage_percentage / 100.0;
                     if new_pressure < target_pressure {
                         info!("Memory pressure relieved to {:.1}% after demoting {} collections", 
                               new_pressure * 100.0, demoted_count);
@@ -441,10 +443,12 @@ impl AxisTieringManager {
             // Get access patterns from AccessPatternTracker
             let access_patterns = self.get_collection_access_patterns(&collection_id).await?;
             
-            // Get current tier policy recommendation from GlobalTierManager
-            let policy_recommendation = self.global_tier_manager
-                .recommend_tier(&collection_id, &workload_metrics)
-                .await?;
+            // Get tier recommendation using existing RuleBasedTierPolicy
+            let rule_policy = self.global_tier_manager.rule_based_policy();
+            let access_freq = if access_patterns.hot_access_rate > 0.5 { 100.0 } else { 10.0 };
+            let age_days = 7; // Simplified for now
+            let tier_level = rule_policy.determine_tier(&workload_metrics.pattern, access_freq, age_days);
+            let policy_recommendation = self.tier_level_to_storage_tier(tier_level);
             
             // Apply AXIS-specific logic
             let axis_recommendation = self.apply_axis_specific_logic(
@@ -489,12 +493,11 @@ impl AxisTieringManager {
     
     /// Get access patterns for a collection from AccessPatternTracker
     async fn get_collection_access_patterns(&self, collection_id: &str) -> anyhow::Result<AccessPatternMetrics> {
-        // Record access tracking query
-        self.access_pattern_tracker.track_access_async(CacheAccessEvent {
-            key: collection_id.to_string(),
-            cache_type: self.config.integration_config.cache_type_for_tracking.clone(),
-            timestamp: SystemTime::now(),
-        }).await;
+        // Record access tracking query - NOTE: track_access_async is NOT async despite its name
+        self.access_pattern_tracker.track_access_async(
+            collection_id.to_string(),
+            CacheType::IndexStructure,
+        );
         
         // Get access frequency and pattern data
         // Note: This would need to be extended in AccessPatternTracker to provide this data
@@ -527,7 +530,7 @@ impl AxisTieringManager {
         // Check collection-specific constraints
         if let Some(constraints) = &self.config.collection_constraints {
             // Memory pinned collections
-            if constraints.memory_pinned_collections.contains(collection_id) {
+            if constraints.memory_pinned_collections.contains(&collection_id.to_string()) {
                 if !matches!(global_recommendation, StorageTier::Memory) {
                     debug!("Collection {} is memory-pinned, keeping in memory", collection_id);
                     return Ok(Some(StorageTier::Memory));
@@ -535,7 +538,7 @@ impl AxisTieringManager {
             }
             
             // No-cloud collections
-            if constraints.no_cloud_collections.contains(collection_id) {
+            if constraints.no_cloud_collections.contains(&collection_id.to_string()) {
                 if matches!(
                     global_recommendation, 
                     StorageTier::CloudStandard { .. } | 
@@ -646,7 +649,8 @@ impl AxisTieringManager {
             
             // Check memory pressure before promoting to memory
             if matches!(target_tier, StorageTier::Memory) {
-                let memory_pressure = self.memory_tracker.get_memory_pressure().await;
+                let memory_stats = self.memory_tracker.get_memory_stats().await;
+                let memory_pressure = memory_stats.memory_usage_percentage / 100.0;
                 if memory_pressure > 0.8 {
                     warn!("Memory pressure too high ({:.1}%), skipping promotion", memory_pressure * 100.0);
                     continue;
@@ -801,14 +805,14 @@ impl AxisTieringManager {
     async fn is_demotion_allowed(&self, collection_id: &str, target_tier: &StorageTier) -> anyhow::Result<bool> {
         if let Some(constraints) = &self.config.collection_constraints {
             // Memory pinned collections cannot be demoted from memory
-            if constraints.memory_pinned_collections.contains(collection_id) {
+            if constraints.memory_pinned_collections.contains(&collection_id.to_string()) {
                 if !matches!(target_tier, StorageTier::Memory) {
                     return Ok(false);
                 }
             }
             
             // No-cloud collections cannot be demoted to cloud
-            if constraints.no_cloud_collections.contains(collection_id) {
+            if constraints.no_cloud_collections.contains(&collection_id.to_string()) {
                 if matches!(target_tier, 
                     StorageTier::CloudStandard { .. } | 
                     StorageTier::CloudInfrequentAccess { .. } |
@@ -826,7 +830,7 @@ impl AxisTieringManager {
     async fn is_at_slowest_allowed_tier(&self, collection_id: &str, current_tier: &StorageTier) -> anyhow::Result<bool> {
         if let Some(constraints) = &self.config.collection_constraints {
             // No-cloud collections: HDD is slowest
-            if constraints.no_cloud_collections.contains(collection_id) {
+            if constraints.no_cloud_collections.contains(&collection_id.to_string()) {
                 return Ok(matches!(current_tier, StorageTier::HardDisk { .. }));
             }
         }
@@ -844,7 +848,8 @@ impl AxisTieringManager {
         collection_id: &str,
         target_tier: StorageTier,
     ) -> anyhow::Result<()> {
-        let current_state = self.collection_state_manager.get_state(collection_id).await?;
+        let current_state = self.collection_state_manager.get_state(collection_id)
+            .ok_or_else(|| anyhow::anyhow!("Collection {} not found", collection_id))?;
         let current_tier = self.extract_tier_from_state(&current_state)?;
         
         info!("Executing tier change for collection {}: {:?} -> {:?}", 
@@ -868,10 +873,9 @@ impl AxisTieringManager {
         // Choose format based on target tier
         let target_format = self.choose_format_for_tier(&target_tier);
         
-        // Execute the actual tier change using existing GlobalTierManager
-        let result = self.global_tier_manager
-            .execute_tier_change(collection_id, &current_tier, &target_tier)
-            .await;
+        // Execute the actual tier change
+        // Note: GlobalTierManager doesn't have execute_tier_change, so we handle it here
+        let result = self.perform_tier_transition(collection_id, &current_tier, &target_tier).await;
         
         // Handle format conversion if needed
         if result.is_ok() {
@@ -893,6 +897,45 @@ impl AxisTieringManager {
         self.active_operations.remove(collection_id);
         
         result.map_err(|e| anyhow::anyhow!("Tier change failed: {}", e))
+    }
+    
+    /// Perform the actual tier transition using existing infrastructure
+    async fn perform_tier_transition(
+        &self,
+        collection_id: &str,
+        _current_tier: &StorageTier,
+        target_tier: &StorageTier,
+    ) -> anyhow::Result<()> {
+        // Use GlobalTierManager's rebalance_collection_tiers (the actual existing method)
+        // Create a default SmartTierPolicy since ServerTierConfig doesn't have one
+        let tier_policy = SmartTierPolicy::default();
+        let rebalance_result = self.global_tier_manager
+            .rebalance_collection_tiers(collection_id, &tier_policy)
+            .await?;
+        
+        debug!("Rebalance result for {}: promoted={}, demoted={}, duration={:?}", 
+               collection_id, rebalance_result.promoted_count, 
+               rebalance_result.demoted_count, rebalance_result.duration);
+        
+        // Update collection state to reflect the tier change
+        match target_tier {
+            StorageTier::Memory => {
+                self.collection_state_manager
+                    .transition_to_memory(collection_id)
+                    .await?;
+            }
+            StorageTier::NvmeSsd { mount_path } | StorageTier::HardDisk { mount_path } => {
+                self.collection_state_manager
+                    .transition_to_disk(collection_id, mount_path.clone())
+                    .await?;
+            }
+            _ => {
+                // Other tier types not yet implemented
+                return Err(anyhow::anyhow!("Unsupported tier type"));
+            }
+        }
+        
+        Ok(())
     }
     
     /// Choose appropriate format for a storage tier
@@ -1003,6 +1046,22 @@ impl Clone for AxisTieringManager {
             serializer: Arc::clone(&self.serializer),
             stats: Arc::clone(&self.stats),
             active_operations: Arc::clone(&self.active_operations),
+        }
+    }
+}
+
+impl AxisTieringManager {
+    /// Convert tier level (1-4) to StorageTier enum
+    fn tier_level_to_storage_tier(&self, tier_level: u8) -> StorageTier {
+        match tier_level {
+            1 => StorageTier::Memory,
+            2 => StorageTier::NvmeSsd { mount_path: "/mnt/nvme".to_string() },
+            3 => StorageTier::HardDisk { mount_path: "/mnt/hdd".to_string() },
+            _ => StorageTier::CloudStandard {
+                provider: "aws".to_string(),
+                region: "us-west-2".to_string(),
+                bucket: "proximadb-indexes".to_string(),
+            },
         }
     }
 }

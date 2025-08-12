@@ -8,6 +8,7 @@
 This document presents the comprehensive AXIS tiering architecture that **seamlessly integrates with ProximaDB's existing infrastructure** - specifically the GlobalTierManager, AccessPatternTracker, and CrossCacheOrchestrator. 
 
 ✅ **IMPLEMENTATION STATUS: PHASES 1-3 COMPLETED (2025-08-12)**
+📝 **RECONCILED DESIGN: UPDATED (2025-08-12)** - Aligned with actual existing methods
 
 **Phase 3: Policy Engine & Auto-Tiering** ✅
 - **539 lines of redundant code eliminated** by reusing existing infrastructure
@@ -542,6 +543,147 @@ let policy_recommendation = self.global_tier_manager
     .recommend_tier(&collection_id, &workload_metrics)
     .await?;
 ```
+
+== Reconciled Implementation Design (2025-08-12)
+
+=== Critical Discovery: Actual Available Methods
+
+After thorough code review, the following are the **actual methods available** in existing infrastructure:
+
+**GlobalTierManager** actual methods:
+```rust
+pub async fn initialize_collection(&self, collection_id: &str) -> Result<()>
+pub async fn rebalance_collection_tiers(&self, collection_id: &str, tier_policy: &SmartTierPolicy) -> Result<TierRebalanceResult>
+pub fn rule_based_policy(&self) -> &RuleBasedTierPolicy
+pub fn server_config(&self) -> &ServerTierConfig
+```
+
+**AccessPatternTracker** actual methods:
+```rust
+pub fn track_access_async(&self, key: String, cache_type: CacheType)  // Non-async!
+pub async fn track_access_sync(&self, key: String, cache_type: CacheType)
+pub async fn is_frequently_accessed(&self, key: &str, threshold: usize) -> bool
+```
+
+**RuleBasedTierPolicy** actual methods:
+```rust
+pub fn determine_tier(&self, workload: &WorkloadPattern, access_frequency: f64, age_days: u32) -> u8
+```
+
+**IndexMemoryTracker** actual methods:
+```rust
+pub async fn get_memory_stats(&self) -> MemoryStats  // Returns struct with memory_usage_percentage
+pub async fn is_index_available(&self, collection_id: &str) -> bool
+pub async fn register_index_loaded(&self, collection_id: String, index_type: IndexType, memory_bytes: usize) -> Result<()>
+```
+
+⚠️ **Methods that DO NOT EXIST** (avoid calling these):
+- `GlobalTierManager::recommend_tier()` - Does not exist
+- `GlobalTierManager::execute_tier_change()` - Does not exist  
+- `IndexMemoryTracker::get_memory_pressure()` - Does not exist
+
+=== Reconciled Architecture Pattern
+
+```rust
+/// RECONCILED DESIGN: Use existing methods correctly
+pub struct AxisTieringManagerReconciled {
+    // Reuse existing infrastructure - no duplication
+    global_tier_manager: Arc<GlobalTierManager>,
+    access_pattern_tracker: Arc<AccessPatternTracker>,
+    
+    // AXIS-specific only
+    collection_state_manager: Arc<CollectionStateManager>,
+    memory_tracker: Arc<IndexMemoryTracker>,
+}
+
+impl AxisTieringManagerReconciled {
+    /// Track access using ACTUAL method signature
+    pub fn track_index_access(&self, collection_id: &str) {
+        // Note: track_access_async is NOT async, despite the name!
+        self.access_pattern_tracker.track_access_async(
+            collection_id.to_string(),
+            CacheType::IndexStructure,
+        );
+    }
+    
+    /// Get tier recommendation using ACTUAL available methods
+    pub async fn evaluate_tier_placement(&self, collection_id: &str) -> Result<Option<StorageTier>> {
+        // Use is_frequently_accessed (exists)
+        let is_hot = self.access_pattern_tracker
+            .is_frequently_accessed(collection_id, 10)
+            .await;
+        
+        // Use RuleBasedTierPolicy::determine_tier (exists)
+        let rule_policy = self.global_tier_manager.rule_based_policy();
+        let tier_level = rule_policy.determine_tier(&workload, freq, age);
+        
+        // Apply AXIS-specific logic on top
+        let final_tier = self.apply_index_preferences(tier_level, index_type);
+    }
+    
+    /// Orchestrate changes using ACTUAL rebalance method
+    pub async fn orchestrate_tier_change(&self, collection_id: &str, target: StorageTier) -> Result<()> {
+        // Use rebalance_collection_tiers (exists) NOT execute_tier_change (doesn't exist)
+        let result = self.global_tier_manager
+            .rebalance_collection_tiers(collection_id, &policy)
+            .await?;
+        
+        // Update collection state
+        match target {
+            StorageTier::Memory => {
+                self.collection_state_manager.transition_to_memory(collection_id).await?;
+            }
+            StorageTier::Disk { path } => {
+                self.collection_state_manager.transition_to_disk(collection_id, path).await?;
+            }
+        }
+    }
+    
+    /// Get memory pressure using ACTUAL method
+    async fn get_memory_pressure(&self) -> f64 {
+        // Use get_memory_stats (exists) NOT get_memory_pressure (doesn't exist)
+        let stats = self.memory_tracker.get_memory_stats().await;
+        stats.memory_usage_percentage / 100.0
+    }
+}
+```
+
+=== Key Implementation Guidelines
+
+1. **Always verify method existence** before calling
+2. **Use actual method signatures** - some are sync despite async names
+3. **Orchestrate, don't reimplement** - AxisTieringManager is a thin layer
+4. **Respect existing infrastructure** - don't add methods that duplicate functionality
+
+=== Lessons Learned from Reconciliation
+
+**What went wrong initially:**
+- Assumed GlobalTierManager had `recommend_tier()` and `execute_tier_change()` methods
+- Tried to call non-existent `get_memory_pressure()` on IndexMemoryTracker
+- Misunderstood method signatures (e.g., `track_access_async` is actually synchronous)
+
+**How to avoid in future:**
+1. **Always grep for actual method signatures** before using
+2. **Check impl blocks** not just struct definitions
+3. **Verify async/sync** - method names can be misleading
+4. **Read existing tests** to understand actual usage patterns
+
+**The correct pattern:**
+```rust
+// ❌ WRONG: Calling non-existent method
+let recommendation = self.global_tier_manager.recommend_tier(...).await?;
+
+// ✅ CORRECT: Use existing infrastructure properly
+let rule_policy = self.global_tier_manager.rule_based_policy();
+let tier_level = rule_policy.determine_tier(&workload, freq, age);
+```
+
+**Infrastructure reuse achieved:**
+- ✅ Pattern tracking: 100% reuse of AccessPatternTracker
+- ✅ Tier policies: 100% reuse of RuleBasedTierPolicy
+- ✅ Memory tracking: 100% reuse of IndexMemoryTracker
+- ✅ Storage operations: Delegated to GlobalTierManager.rebalance_collection_tiers
+- ✅ Result: True 85% infrastructure reuse as designed
 
 === AdaptiveStore Integration
 

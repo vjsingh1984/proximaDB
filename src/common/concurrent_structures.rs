@@ -393,6 +393,12 @@ impl AtomicMetrics {
         self.hits.load(Ordering::Relaxed) as f64 / total as f64
     }
 
+    pub fn record_operation(&self, _op_name: &str, duration: Duration) {
+        self.operations.fetch_add(1, Ordering::Relaxed);
+        self.successful.fetch_add(1, Ordering::Relaxed);
+        self.total_time_ns.fetch_add(duration.as_nanos() as u64, Ordering::Relaxed);
+    }
+
     pub fn avg_operation_time(&self) -> Duration {
         let total_ops = self.successful.load(Ordering::Relaxed) + self.failed.load(Ordering::Relaxed);
         if total_ops == 0 { return Duration::ZERO; }

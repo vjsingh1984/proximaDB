@@ -1,15 +1,17 @@
 %%{init: {'theme':'neutral', 'themeVariables': {'primaryColor':'#3b82f6','primaryTextColor':'#1f2937','primaryBorderColor':'#6b7280','lineColor':'#9ca3af','secondaryColor':'#10b981','tertiaryColor':'#f59e0b','background':'transparent','mainBkg':'#f3f4f6','secondBkg':'#e5e7eb','textColor':'#1f2937'}}}%%
 classDiagram
-    %% Core Services
+    %% Core Services (Updated 2025-08-12)
     class VectorOperationsService {
         -collection_service: Arc~CollectionService~
         -engine_factory: Arc~StorageEngineFactory~
         -hardware_caps: Arc~HardwareCapabilities~
+        -transaction_coordinator: Arc~TransactionCoordinator~
         +insert_vectors(collection_id, vectors) Result
         +search_vectors(collection_id, query) Result
         +update_vector(collection_id, vector_id, vector) Result
         +delete_vector(collection_id, vector_id) Result
         +get_vector(collection_id, vector_id) Result
+        +upsert_vectors(collection_id, vectors) Result
     }
 
     class CollectionService {
@@ -147,6 +149,45 @@ classDiagram
         +dequantize(quantized, type) Result~Vec~
     }
 
+    %% AXIS Tiering System (Added 2025-08-12)
+    class AxisTieringManager {
+        -global_tier_manager: Arc~GlobalTierManager~
+        -access_pattern_tracker: Arc~AccessPatternTracker~
+        -collection_state_manager: Arc~CollectionStateManager~
+        -memory_tracker: Arc~IndexMemoryTracker~
+        +evaluate_tier_placement(collection_id) Result~StorageTier~
+        +orchestrate_tier_change(collection_id, target) Result
+        +track_index_access(collection_id, index_type)
+    }
+
+    class GlobalTierManager {
+        -available_tiers: Vec~StorageTier~
+        -tier_configs: HashMap~StorageTier, TierConfig~
+        -rule_based_policy: RuleBasedTierPolicy
+        +initialize_collection(collection_id) Result
+        +rebalance_collection_tiers(collection_id, policy) Result
+        +rule_based_policy() RuleBasedTierPolicy
+    }
+
+    class CollectionStateManager {
+        -states: DashMap~String, CollectionTierState~
+        -access_history: DashMap~String, AccessHistory~
+        +get_state(collection_id) Option~CollectionTierState~
+        +transition_to_memory(collection_id) Result
+        +transition_to_disk(collection_id, path) Result
+        +calculate_heat_score(collection_id) f64
+    }
+
+    %% Transaction Support (Added 2025-08-12)
+    class TransactionCoordinator {
+        -active_transactions: DashMap~Uuid, Transaction~
+        -wal: Arc~WriteAheadLog~
+        +begin_transaction() Result~Uuid~
+        +commit(tx_id) Result
+        +rollback(tx_id) Result
+        +ensure_consistency(operations) Result
+    }
+
     %% Relationships
     VectorOperationsService --> CollectionService : uses
     VectorOperationsService --> StorageEngine : creates
@@ -172,6 +213,14 @@ classDiagram
     CrossCacheOrchestrator --> AccessPatternTracker : contains
     
     CollectionService --> CompressionConfig : manages
+    
+    VectorOperationsService --> TransactionCoordinator : uses
+    
+    AxisTieringManager --> GlobalTierManager : leverages
+    AxisTieringManager --> AccessPatternTracker : reuses
+    AxisTieringManager --> CollectionStateManager : manages
+    
+    GlobalTierManager --> AccessPatternTracker : queries
 
     style VectorOperationsService fill:#E8F4F8,stroke:#2E86AB,stroke-width:2px
     style CollectionService fill:#E8F4F8,stroke:#2E86AB,stroke-width:2px

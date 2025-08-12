@@ -153,7 +153,8 @@ impl IndexRecoveryManager {
         let start_time = Instant::now();
         
         // Get list of collections from state manager
-        let collections = self.collection_state.list_collections().await?;
+        let collections = self.collection_state.list_collections().await
+            .map_err(|_| SerializationError::InvalidMagic)?;
         
         info!("Found {} collections to recover", collections.len());
         
@@ -281,7 +282,8 @@ impl IndexRecoveryManager {
         debug!("Reading index from disk: {}", disk_location);
         
         // Read index data from disk
-        let index_data = self.filesystem.read(disk_location).await?;
+        let index_data = self.filesystem.read(disk_location).await
+            .map_err(|e| SerializationError::Io(std::io::Error::new(std::io::ErrorKind::Other, e)))?;
         
         debug!("Read {} bytes from disk", index_data.len());
         
@@ -333,7 +335,8 @@ impl IndexRecoveryManager {
         debug!("Reading index from cloud: {}", cloud_location);
         
         // Read index data from cloud
-        let index_data = self.filesystem.read(cloud_location).await?;
+        let index_data = self.filesystem.read(cloud_location).await
+            .map_err(|e| SerializationError::Io(std::io::Error::new(std::io::ErrorKind::Other, e)))?;
         
         debug!("Read {} bytes from cloud", index_data.len());
         
@@ -346,15 +349,16 @@ impl IndexRecoveryManager {
         } else {
             // Cache to disk first
             let disk_path = format!("axis/indexes/{}/index.bin", collection_id);
-            let disk_url = self.filesystem.get_tier_url(StorageTier::SSD, &disk_path)?;
+            let disk_url = self.filesystem.get_tier_url(StorageTier::SSD, &disk_path)
+                .map_err(|e| SerializationError::Io(std::io::Error::new(std::io::ErrorKind::Other, e)))?;
             
-            self.filesystem.write(&disk_url, &index_data, None).await?;
+            self.filesystem.write(&disk_url, &index_data, None).await
+                .map_err(|e| SerializationError::Io(std::io::Error::new(std::io::ErrorKind::Other, e)))?;
             
             // Update state to disk
             self.collection_state.transition_to_disk(
                 collection_id,
                 disk_url,
-                index_data.len() as u64,
             ).await?;
         }
         
@@ -388,7 +392,8 @@ impl IndexRecoveryManager {
         }
         
         // Read checkpoint
-        let checkpoint_data = self.filesystem.read(&checkpoint_path).await?;
+        let checkpoint_data = self.filesystem.read(&checkpoint_path).await
+            .map_err(|e| SerializationError::Io(std::io::Error::new(std::io::ErrorKind::Other, e)))?;
         let checkpoint: IndexCheckpoint = bincode::deserialize(&checkpoint_data)?;
         
         info!("Found checkpoint {} for collection {}", 
@@ -445,7 +450,8 @@ impl IndexRecoveryManager {
         
         for entry in entries {
             if entry.name.ends_with(".delta") {
-                let delta_data = self.filesystem.read(&entry.url).await?;
+                let delta_data = self.filesystem.read(&entry.url).await
+                    .map_err(|e| SerializationError::Io(std::io::Error::new(std::io::ErrorKind::Other, e)))?;
                 let delta: IndexDelta = bincode::deserialize(&delta_data)?;
                 deltas.push(delta);
             }

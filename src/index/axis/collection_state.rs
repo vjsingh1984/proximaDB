@@ -289,6 +289,50 @@ impl CollectionStateManager {
         history.access_count_7d = history.recent_accesses.len() as u64;
     }
     
+    /// Get all collection states
+    pub async fn get_all_states(&self) -> Result<Vec<(String, CollectionTierState)>> {
+        let states: Vec<(String, CollectionTierState)> = self.states
+            .iter()
+            .map(|entry| (entry.key().clone(), entry.value().clone()))
+            .collect();
+        Ok(states)
+    }
+    
+    /// List all collections
+    pub async fn list_collections(&self) -> Result<Vec<String>> {
+        let collections: Vec<String> = self.states
+            .iter()
+            .map(|entry| entry.key().clone())
+            .collect();
+        Ok(collections)
+    }
+    
+    /// Transition collection to memory
+    pub async fn transition_to_memory(&self, collection_id: &str) -> Result<()> {
+        let state = CollectionTierState::Memory {
+            loaded_at: Instant::now(),
+            memory_bytes: 0,
+            access_count: 0,
+            last_access: Instant::now(),
+            generation: 1,
+        };
+        self.set_state(collection_id, state);
+        Ok(())
+    }
+    
+    /// Transition collection to disk
+    pub async fn transition_to_disk(&self, collection_id: &str, path: String) -> Result<()> {
+        let state = CollectionTierState::Disk {
+            stored_at: Instant::now(),
+            disk_location: PathBuf::from(path),
+            disk_bytes: 0,
+            last_access: Some(Instant::now()),
+            promotion_eligible: true,
+        };
+        self.set_state(collection_id, state);
+        Ok(())
+    }
+    
     /// Calculate heat score for a collection
     pub fn calculate_heat_score(&self, collection_id: &str) -> f64 {
         if let Some(history) = self.access_history.get(collection_id) {
