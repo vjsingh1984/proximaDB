@@ -411,7 +411,7 @@ impl AutoTuner {
         Self {
             parameters: Arc::new(RwLock::new(TuningParameters {
                 enabled: false,
-                adjustment_interval: Duration::from_secs(300),
+                adjustment_interval: Duration::from_secs(900), // Optimized: 300s -> 900s (15 minutes)
                 improvement_threshold: 0.05,
                 stability_period: Duration::from_secs(600),
             })),

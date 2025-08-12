@@ -35,6 +35,6 @@ impl MetricsCollector for StorageMetricsCollector {
     }
     
     fn recommended_interval(&self) -> Duration {
-        Duration::from_secs(60)
+        Duration::from_secs(120) // Optimized: 60s -> 120s (2 minutes)
     }
 }

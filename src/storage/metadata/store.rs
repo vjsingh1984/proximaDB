@@ -308,7 +308,7 @@ impl MetadataStore {
         let _cache_config = self.config.cache_config.clone();
 
         let task = tokio::spawn(async move {
-            let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(60)); // Every minute
+            let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(300)); // Optimized: Every 5 minutes
 
             loop {
                 interval.tick().await;
@@ -327,7 +327,7 @@ impl MetadataStore {
         let system_metadata = self.system_metadata.clone();
 
         let task = tokio::spawn(async move {
-            let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(30)); // Every 30 seconds
+            let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(120)); // Optimized: Every 2 minutes
 
             loop {
                 interval.tick().await;

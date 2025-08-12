@@ -25,6 +25,7 @@ pub mod manager;
 pub mod memory_tracker;  // AXIS index memory residency tracking
 pub mod collection_state; // Collection-level tier state management
 pub mod tiering_manager;  // Intelligent tiering orchestration
+pub mod pattern_analyzer;  // AXIS-specific heat scoring and pattern analysis
 pub mod serialization;    // Index serialization and delta management
 pub mod format_strategy;  // Bincode/Avro format selection for indexes
 pub mod avro_analysis;    // Avro compression analysis for cold tier

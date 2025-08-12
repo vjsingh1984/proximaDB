@@ -35,6 +35,6 @@ impl MetricsCollector for QueryMetricsCollector {
     }
     
     fn recommended_interval(&self) -> Duration {
-        Duration::from_secs(10)
+        Duration::from_secs(30) // Optimized: 10s -> 30s
     }
 }

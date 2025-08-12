@@ -333,7 +333,7 @@ impl PerformanceMonitor {
             metrics_collector: Arc::new(MetricsCollector::new(Duration::from_secs(3600 * 24))),
             alert_manager: Arc::new(AlertManager::new(config.monitoring_config.alert_thresholds)),
             performance_tracker: Arc::new(PerformanceTracker::new()),
-            health_checker: Arc::new(HealthChecker::new(Duration::from_secs(60))),
+            health_checker: Arc::new(HealthChecker::new(Duration::from_secs(120))),
             event_broadcaster: event_tx,
         };
 
@@ -407,9 +407,9 @@ impl PerformanceMonitor {
         let health_checker = self.health_checker.clone();
         let interval_seconds = self.config.metrics_interval_seconds;
 
-        // Metrics collection task
+        // Metrics collection task - optimized from 30s to 180s (3 minutes)
         tokio::spawn(async move {
-            let mut interval = interval(Duration::from_secs(interval_seconds));
+            let mut interval = interval(Duration::from_secs(180)); // Optimized frequency
             loop {
                 interval.tick().await;
                 if let Err(e) = metrics_collector.collect_system_metrics().await {
@@ -427,9 +427,9 @@ impl PerformanceMonitor {
             }
         });
 
-        // Health check task
+        // Health check task - optimized from 60s to 120s (2 minutes)
         tokio::spawn(async move {
-            let mut interval = interval(Duration::from_secs(60));
+            let mut interval = interval(Duration::from_secs(120)); // Optimized frequency
             loop {
                 interval.tick().await;
                 if let Err(e) = health_checker.check_system_health().await {

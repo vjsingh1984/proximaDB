@@ -35,6 +35,6 @@ impl MetricsCollector for SystemMetricsCollector {
     }
     
     fn recommended_interval(&self) -> Duration {
-        Duration::from_secs(30)
+        Duration::from_secs(60) // Optimized: 30s -> 60s (1 minute)
     }
 }

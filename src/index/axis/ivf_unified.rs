@@ -888,13 +888,13 @@ impl UnifiedIvfIndex {
             },
             tier_config: TierConfig {
                 enable_tiering: true,
-                rebalance_interval: Duration::from_secs(60),
+                rebalance_interval: Duration::from_secs(600), // Optimized: 60s -> 600s (10 minutes)
                 memory_pressure_threshold: 0.8,
                 max_concurrent_operations: 4,
             },
             metrics_config: MetricsConfig {
                 enable_workload_metrics: true,
-                collection_interval: Duration::from_secs(10),
+                collection_interval: Duration::from_secs(60), // Optimized: 10s -> 60s (1 minute)
                 history_retention: Duration::from_secs(3600),
             },
         };

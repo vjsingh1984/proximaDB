@@ -932,7 +932,7 @@ impl TransactionCoordinator {
     fn start_cleanup_task(&self) {
         let transactions = self.transactions.clone();
         let handle = tokio::spawn(async move {
-            let mut interval = tokio::time::interval(Duration::from_secs(5));
+            let mut interval = tokio::time::interval(Duration::from_secs(30)); // Optimized: 5s -> 30s
             
             loop {
                 interval.tick().await;
