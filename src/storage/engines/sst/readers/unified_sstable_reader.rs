@@ -14,6 +14,7 @@ use std::marker::PhantomData;
 use std::io::Read;
 use tracing::{debug, warn, info};
 use futures::stream::{Stream, StreamExt};
+use futures::TryStreamExt;
 
 // Performance optimizations: import commonly used types and functions for zero-cost abstractions
 // use std::hint::likely; // Unstable feature - removed for compilation
@@ -114,7 +115,7 @@ pub struct CacheMetrics {
 }
 
 /// Enhanced SSTable index with metadata statistics
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct SstableIndex {
     pub entries: Vec<IndexEntry>,
     pub metadata_stats: HashMap<String, MetadataStats>,
@@ -124,7 +125,7 @@ pub struct SstableIndex {
 }
 
 /// Metadata statistics for predicate pushdown
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct MetadataStats {
     pub min_value: serde_json::Value,
     pub max_value: serde_json::Value,
@@ -284,7 +285,7 @@ pub struct CollectionContext {
 /// Uses filesystem API for abstracted range reading across cloud and local storage
 #[derive(Clone)]
 pub struct ModularBlockReader {
-    filesystem: Arc<dyn FileSystem>,
+    filesystem_factory: Arc<FilesystemFactory>,
     header: Option<SstableHeader>,
     file_path: String,
 }
@@ -307,7 +308,7 @@ impl ModularBlockReader {
         }
         
         Ok(Self {
-            filesystem: fs,
+            filesystem_factory,
             header: None,
             file_path: file_path.to_string(),
         })
@@ -316,11 +317,22 @@ impl ModularBlockReader {
     /// Read a specific range of bytes from the file
     /// Works efficiently across S3 (range requests), GCS, Azure, and local files
     async fn read_range(&self, offset: u64, length: usize) -> Result<Vec<u8>> {
-        self.filesystem.read_range(&self.file_path, offset, length).await
+        let fs = self.filesystem_factory.get_filesystem(&self.file_path)
+            .map_err(|e| anyhow::anyhow!("Failed to get filesystem: {}", e))?;
+        fs.read_range(&self.file_path, offset, length as u64).await
+            .map_err(|e| anyhow::anyhow!("Failed to read range: {}", e))
     }
 }
 
 impl ModularBlockReader {
+    pub fn new(filesystem_factory: Arc<FilesystemFactory>, file_path: String) -> Self {
+        Self {
+            filesystem_factory,
+            header: None,
+            file_path,
+        }
+    }
+    
     async fn read_header_async(&mut self) -> Result<SstableHeader> {
         if let Some(ref header) = self.header {
             return Ok(header.clone());
@@ -355,18 +367,21 @@ impl ModularBlockReader {
         }
         
         let header = self.read_header_async().await?;
-        if header.bloom_filter_offset == 0 {
+        if !header.has_bloom_filter {
             return Ok(None);
         }
         
+        // Calculate bloom filter offset (after header)
+        let bloom_filter_offset = 8 + header.header_size as u64;
+        
         // Read bloom filter size using filesystem range read
-        let size_bytes = self.read_range(header.bloom_filter_offset, 4).await?;
+        let size_bytes = self.read_range(bloom_filter_offset, 4).await?;
         let bloom_size = u32::from_le_bytes([
             size_bytes[0], size_bytes[1], size_bytes[2], size_bytes[3]
         ]) as usize;
         
         // Read bloom filter data using range read
-        let bloom_data = self.read_range(header.bloom_filter_offset + 4, bloom_size).await?;
+        let bloom_data = self.read_range(bloom_filter_offset + 4, bloom_size).await?;
         
         // Deserialize bloom filter
         let bloom_filter: SstableBloomFilter = bincode::deserialize(&bloom_data)?;
@@ -388,14 +403,18 @@ impl ModularBlockReader {
         
         let header = self.read_header_async().await?;
         
+        // Calculate index offset (after header and bloom filter if present)
+        let index_offset = 8 + header.header_size as u64 + 
+            if header.has_bloom_filter { 4 + header.index_size as u64 } else { 0 };
+        
         // Read index size using filesystem range read
-        let size_bytes = self.read_range(header.index_offset, 4).await?;
+        let size_bytes = self.read_range(index_offset, 4).await?;
         let index_size = u32::from_le_bytes([
             size_bytes[0], size_bytes[1], size_bytes[2], size_bytes[3]
         ]) as usize;
         
         // Read index data using range read
-        let index_data = self.read_range(header.index_offset + 4, index_size).await?;
+        let index_data = self.read_range(index_offset + 4, index_size).await?;
         
         // Deserialize index
         let index: SstableIndex = bincode::deserialize(&index_data)?;
@@ -404,16 +423,20 @@ impl ModularBlockReader {
     }
     
     async fn read_index(&self, header: &SstableHeader) -> Result<SstableIndex> {
-        debug!("Reading index at offset {} for file: {}", header.index_offset, self.file_path);
+        // Calculate index offset (after header and bloom filter if present)
+        let index_offset = 8 + header.header_size as u64 + 
+            if header.has_bloom_filter { 4 + header.index_size as u64 } else { 0 };
+        
+        debug!("Reading index at offset {} for file: {}", index_offset, self.file_path);
         
         // Read index size using filesystem range read
-        let size_bytes = self.read_range(header.index_offset, 4).await?;
+        let size_bytes = self.read_range(index_offset, 4).await?;
         let index_size = u32::from_le_bytes([
             size_bytes[0], size_bytes[1], size_bytes[2], size_bytes[3]
         ]) as usize;
         
         // Read index data using range read
-        let index_data = self.read_range(header.index_offset + 4, index_size).await?;
+        let index_data = self.read_range(index_offset + 4, index_size).await?;
         
         // Deserialize index
         let index: SstableIndex = bincode::deserialize(&index_data)?;
@@ -427,16 +450,19 @@ impl ModularBlockReader {
     }
     
     pub async fn read_bloom_filter(&self, header: &SstableHeader) -> Result<BloomFilter> {
-        debug!("Reading bloom filter at offset {} for file: {}", header.bloom_filter_offset, self.file_path);
+        // Calculate bloom filter offset (after header)
+        let bloom_filter_offset = 8 + header.header_size as u64;
+        
+        debug!("Reading bloom filter at offset {} for file: {}", bloom_filter_offset, self.file_path);
         
         // Read bloom filter size
-        let size_bytes = self.read_range(header.bloom_filter_offset, 4).await?;
+        let size_bytes = self.read_range(bloom_filter_offset, 4).await?;
         let bloom_size = u32::from_le_bytes([
             size_bytes[0], size_bytes[1], size_bytes[2], size_bytes[3]
         ]) as usize;
         
         // Read bloom filter data
-        let bloom_data = self.read_range(header.bloom_filter_offset + 4, bloom_size).await?;
+        let bloom_data = self.read_range(bloom_filter_offset + 4, bloom_size).await?;
         
         // Deserialize bloom filter
         let bloom_filter: BloomFilter = bincode::deserialize(&bloom_data)?;
@@ -459,8 +485,12 @@ impl ModularBlockReader {
     async fn read_data_block_async(&mut self, block_id: u64, mode: ReadMode) -> Result<DataBlock> {
         let header = self.read_header_async().await?;
         
+        // Calculate data offset (after header, bloom filter, and index)
+        let data_offset = 8 + header.header_size as u64 + header.index_size as u64 +
+            if header.has_bloom_filter { 4 + header.index_size as u64 } else { 0 };
+        
         // Calculate block offset
-        let block_offset = header.data_offset + (block_id * header.block_size as u64);
+        let block_offset = data_offset + (block_id * header.block_size as u64);
         
         // Read block size using filesystem range read (efficient for S3/GCS/Azure)
         let size_bytes = self.read_range(block_offset, 4).await?;
@@ -477,15 +507,15 @@ impl ModularBlockReader {
                 Ok(DataBlock {
                     records: vec![],
                     block_id: block_id as u32,
-                    compressed_size: block_size,
-                    uncompressed_size: block_size,
-                    checksum: 0,
+                    uncompressed_size: block_size as u32,
+                    compression_algorithm: CompressionAlgorithmSst::None,
+                    compression_ratio: 1.0,
                 })
             }
             ReadMode::Buffered | ReadMode::Streaming => {
                 // Decompress if needed
-                let decompressed = if header.compression != CompressionAlgorithmSst::None {
-                    self.decompress_block(&block_data, header.compression)?
+                let decompressed = if header.compression_algorithm != CompressionAlgorithmSst::None {
+                    self.decompress_block(&block_data, header.compression_algorithm)?
                 } else {
                     block_data
                 };
@@ -634,18 +664,22 @@ impl SstDirectReader {
         })
     }
     
-    pub fn new(filesystem_factory: Arc<FilesystemFactory>) -> Self {
-        let block_reader = ModularBlockReader::new(filesystem_factory.clone(), String::new());
-        Self {
+    pub fn new(filesystem_factory: Arc<FilesystemFactory>) -> Result<Self> {
+        // Create block reader with filesystem factory
+        let block_reader = ModularBlockReader::new(
+            filesystem_factory.clone(),
+            String::new()
+        );
+        Ok(Self {
             block_reader,
             filesystem_factory,
-        }
+        })
     }
     
     /// Stream SstRecords directly without conversion for compaction
     pub async fn stream_sst_records(&mut self, _file_path: String) -> Result<BlockIterator<SstRecord>> {
         let header = self.block_reader.read_header().await?;
-        let total_blocks = header.num_blocks as usize;
+        let total_blocks = header.block_count as usize;
         let block_size = header.block_size as usize;
         
         // Create raw reader for streaming
@@ -667,15 +701,15 @@ impl SstDirectReader {
     /// Uses efficient range reads for cloud storage (S3/GCS/Azure)
     pub async fn read_all_for_compaction(&mut self) -> Result<Vec<SstRecord>> {
         let header = self.block_reader.read_header().await?;
-        let mut all_records = Vec::with_capacity(header.total_vectors as usize);
+        let mut all_records = Vec::with_capacity(header.entry_count as usize);
         
         // Skip bloom filters and indexes for compaction
-        let _ = self.block_reader.read_bloom_filter(true).await?;
+        let _ = self.block_reader.read_bloom_filter(&header).await?;
         let _ = self.block_reader.read_index_block(&ReadStrategy::CompactionDirect).await?;
         
         // Read all data blocks directly using filesystem range reads
         // This is efficient for cloud storage as each block is a single range request
-        for block_id in 0..header.num_blocks {
+        for block_id in 0..header.block_count {
             let block = self.block_reader.read_data_block(block_id as u64, ReadMode::Buffered).await?;
             all_records.extend(block.records);
         }
@@ -689,7 +723,7 @@ impl SstDirectReader {
         let block_reader = std::sync::Arc::new(tokio::sync::Mutex::new(self.block_reader.clone()));
         
         // Create async stream of SstRecords
-        let stream = futures::stream::iter(0..header.num_blocks)
+        let stream = futures::stream::iter(0..header.block_count)
             .then(move |block_id| {
                 let reader = block_reader.clone();
                 async move {
@@ -2506,7 +2540,7 @@ impl UnifiedSstableReader {
         let mut all_blocks = Vec::new();
         
         for file_path in &context.sstable_files {
-            let block_reader = ModularBlockReader::new(
+            let mut block_reader = ModularBlockReader::new(
                 self.filesystem.clone(),
                 file_path.clone(),
             );
@@ -2517,19 +2551,71 @@ impl UnifiedSstableReader {
             // For full scan, skip bloom filters but read index for navigation
             let index_blocks = if use_cache {
                 // Check cache first
-                if let Some(cached) = self.index_node_cache.get(file_path).await {
-                    cached
+                if let Some(cached) = self.index_node_cache.get_sstable_index(file_path).await {
+                    // Convert from cache's SstableIndex to our local type
+                    SstableIndex {
+                        entries: cached.entries.iter().enumerate().map(|(idx, e)| IndexEntry {
+                            key: e.key.clone(),
+                            offset: e.block_offset,
+                            size: e.block_size as u32,
+                            block_id: idx as u32,
+                            block_offset: 0,
+                            compressed: false,
+                            metadata_min_values: HashMap::new(),
+                            metadata_max_values: HashMap::new(),
+                            metadata_null_counts: HashMap::new(),
+                        }).collect(),
+                        metadata_stats: HashMap::new(), // Convert metadata stats if needed
+                        vector_count: cached.total_vectors,
+                        min_key: String::new(),
+                        max_key: String::new(),
+                    }
                 } else {
-                    let blocks = block_reader.read_index_blocks(&header).await?;
-                    self.index_node_cache.put(file_path.clone(), blocks.clone()).await;
-                    blocks
+                    let entries = block_reader.read_index_blocks(&header).await?;
+                    
+                    // Convert to cache's SstableIndex type
+                    let cache_index = crate::storage::cache::specialized::index_node_cache::SstableIndex {
+                        file_path: file_path.to_string(),
+                        entries: entries.iter().map(|e| crate::storage::cache::specialized::index_node_cache::SstIndexEntry {
+                            key: e.key.clone(),
+                            block_offset: e.offset,
+                            block_size: e.size as usize,
+                            min_key: e.metadata_min_values.get("min_key").and_then(|v| v.as_str()).unwrap_or(&e.key).to_string(),
+                            max_key: e.metadata_max_values.get("max_key").and_then(|v| v.as_str()).unwrap_or(&e.key).to_string(),
+                            vector_count: 1,
+                            bloom_filter_offset: None,
+                        }).collect(),
+                        total_blocks: header.block_count as usize,
+                        total_vectors: header.entry_count as usize,
+                        metadata_stats: HashMap::new(),
+                    };
+                    
+                    self.index_node_cache.cache_sstable_index(file_path, cache_index).await.unwrap_or_else(|e| {
+                        warn!("Failed to cache sstable index: {}", e);
+                    });
+                    
+                    // Return our local SstableIndex type
+                    SstableIndex {
+                        entries: entries.clone(),
+                        metadata_stats: HashMap::new(),
+                        vector_count: entries.len(),
+                        min_key: entries.first().map(|e| e.key.clone()).unwrap_or_default(),
+                        max_key: entries.last().map(|e| e.key.clone()).unwrap_or_default(),
+                    }
                 }
             } else {
-                block_reader.read_index_blocks(&header).await?
+                let entries = block_reader.read_index_blocks(&header).await?;
+                SstableIndex {
+                    entries: entries.clone(),
+                    metadata_stats: HashMap::new(),
+                    vector_count: entries.len(),
+                    min_key: entries.first().map(|e| e.key.clone()).unwrap_or_default(),
+                    max_key: entries.last().map(|e| e.key.clone()).unwrap_or_default(),
+                }
             };
             
             // Read all data blocks
-            for index_entry in &index_blocks {
+            for index_entry in &index_blocks.entries {
                 let data_block = block_reader.read_data_block_at_offset(
                     index_entry.offset,
                     index_entry.size as usize,
@@ -2551,7 +2637,7 @@ impl UnifiedSstableReader {
         let mut all_blocks = Vec::new();
         
         for file_path in &context.sstable_files {
-            let block_reader = ModularBlockReader::new(
+            let mut block_reader = ModularBlockReader::new(
                 self.filesystem.clone(),
                 file_path.clone(),
             );
@@ -2559,7 +2645,7 @@ impl UnifiedSstableReader {
             let header = block_reader.read_header().await?;
             
             // Check bloom filter first if available
-            if header.bloom_filter_offset > 0 {
+            if header.has_bloom_filter {
                 let bloom_filter = block_reader.read_bloom_filter(&header).await?;
                 if !self.check_bloom_filter_match(&bloom_filter, filter) {
                     debug!("⏭️ Skipping file {} - bloom filter indicates no matches", file_path);
@@ -2594,14 +2680,14 @@ impl UnifiedSstableReader {
         
         let direct_reader = SstDirectReader::new(
             self.filesystem.clone(),
-        );
+        )?;
         
         let mut all_sst_records = Vec::new();
         
         for file_path in &context.sstable_files {
             // For now, use a simpler approach without streaming
             // TODO: Implement proper async streaming
-            let mut direct_reader_clone = direct_reader.clone();
+            let mut direct_reader_clone = SstDirectReader::new(self.filesystem.clone())?;
             let sst_stream = direct_reader_clone.stream_sst_records(file_path.clone()).await?;
             
             // Collect all records from the iterator
@@ -2627,19 +2713,10 @@ impl UnifiedSstableReader {
         let mut relevant_blocks = Vec::new();
         
         for file_path in &context.sstable_files {
-            // Check vector cache first for frequently accessed data
-            if let Some(cached_vectors) = self.vector_cache.get(file_path).await {
-                relevant_blocks.push(DataBlock {
-                    block_id: 0,
-                    records: cached_vectors,
-                    uncompressed_size: 0,
-                    compression_algorithm: CompressionAlgorithmSst::None,
-                    compression_ratio: 1.0,
-                });
-                continue;
-            }
+            // Skip vector cache for now - would need conversion from VectorRecord to SstRecord
+            // TODO: Consider adding a method to convert cached VectorRecords to SstRecords
             
-            let block_reader = ModularBlockReader::new(
+            let mut block_reader = ModularBlockReader::new(
                 self.filesystem.clone(),
                 file_path.clone(),
             );

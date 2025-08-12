@@ -491,7 +491,7 @@ impl Default for CompressionAlgorithmSst {
 }
 
 /// Index entry for fast key lookups in SSTable with block organization and metadata statistics
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct IndexEntry {
     pub key: String,
     pub offset: u64,
