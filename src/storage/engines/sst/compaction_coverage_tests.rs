@@ -128,11 +128,11 @@ mod tests {
         let config = create_test_sst_config();
         
         // Test basic constructor
-        let manager1 = CompactionManager::new(config.clone());
+        let manager1 = CompactionManager::new(config.clone()).await.unwrap();
         
         // Test manager creation (creation success indicates correct setup)
         // Note: with_atomic_coordinator method may not be available in current implementation
-        let manager2 = CompactionManager::new(config.clone());
+        let manager2 = CompactionManager::new(config.clone()).await.unwrap();
         
         // Both should be successfully created (can't access private fields, but creation success indicates correct setup)
         drop(manager1);
@@ -142,7 +142,7 @@ mod tests {
     #[tokio::test]
     async fn test_compaction_manager_worker_lifecycle() {
         let config = create_test_sst_config();
-        let mut manager = CompactionManager::new(config);
+        let mut manager = CompactionManager::new(config).await.unwrap();
         
         // Test starting workers with different counts
         assert!(manager.start_workers(0).await.is_ok()); // Zero workers should be OK
@@ -158,7 +158,7 @@ mod tests {
     #[tokio::test]
     async fn test_compaction_task_scheduling_with_priorities() {
         let config = create_test_sst_config();
-        let manager = CompactionManager::new(config);
+        let manager = CompactionManager::new(config).await.unwrap();
         
         // Schedule tasks with different priorities
         let tasks = vec![
@@ -176,7 +176,7 @@ mod tests {
     #[tokio::test]
     async fn test_compaction_manager_statistics() {
         let config = create_test_sst_config();
-        let manager = CompactionManager::new(config);
+        let manager = CompactionManager::new(config).await.unwrap();
         
         // Get initial stats
         let initial_stats = manager.get_stats().await;
@@ -192,7 +192,7 @@ mod tests {
     #[tokio::test]
     async fn test_compaction_task_with_empty_input_files() {
         let config = create_test_sst_config();
-        let manager = CompactionManager::new(config);
+        let manager = CompactionManager::new(config).await.unwrap();
         
         // Test scheduling task with empty input files
         let task = CompactionTask {
@@ -208,7 +208,7 @@ mod tests {
     #[tokio::test]
     async fn test_compaction_task_with_multiple_input_files() {
         let config = create_test_sst_config();
-        let manager = CompactionManager::new(config);
+        let manager = CompactionManager::new(config).await.unwrap();
         
         // Test scheduling task with many input files
         let many_files: Vec<PathBuf> = (0..10)
@@ -245,7 +245,7 @@ mod tests {
     #[tokio::test]
     async fn test_compaction_manager_concurrent_operations() {
         let config = create_test_sst_config();
-        let manager = Arc::new(CompactionManager::new(config));
+        let manager = Arc::new(CompactionManager::new(config).await.unwrap());
         
         // Test concurrent task scheduling
         let mut handles = vec![];
@@ -273,7 +273,7 @@ mod tests {
     #[tokio::test]
     async fn test_compaction_stats_tracking_fields() {
         let config = create_test_sst_config();
-        let manager = CompactionManager::new(config);
+        let manager = CompactionManager::new(config).await.unwrap();
         
         let stats = manager.get_stats().await;
         

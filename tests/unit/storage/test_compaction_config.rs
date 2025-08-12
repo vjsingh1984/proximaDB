@@ -104,7 +104,7 @@ async fn test_compaction_trigger_conditions() -> Result<()> {
     create_test_sst_file(&sst_file3, &records_file3).await?;
     
     // Test compaction with threshold reached
-    let compaction_manager = CompactionManager::new(config.clone());
+    let compaction_manager = CompactionManager::new(config.clone()).await.unwrap();
     let output_file = collection_dir.join("compacted_output.sst");
     
     let task = CompactionTask {

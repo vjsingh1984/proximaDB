@@ -94,7 +94,7 @@ async fn test_lsm_expired_record_full_pipeline() -> Result<()> {
     }
     
     // Step 2: Trigger compaction
-    let compaction_manager = CompactionManager::new(config.clone());
+    let compaction_manager = CompactionManager::new(config.clone()).await.unwrap();
     let output_file = collection_dir.join("compacted_output.sst");
     
     let task = CompactionTask {

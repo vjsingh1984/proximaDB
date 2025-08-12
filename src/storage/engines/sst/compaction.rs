@@ -1286,7 +1286,7 @@ mod tests {
         config.compaction_threshold = 2;
         config.block_size_kb = 4;
 
-        let mut manager = CompactionManager::new(config);
+        let mut manager = CompactionManager::new(config).await.unwrap();
         assert!(manager.start_workers(1).await.is_ok());
         assert!(manager.stop().await.is_ok());
     }
@@ -1298,7 +1298,7 @@ mod tests {
         config.compaction_threshold = 2;
         config.block_size_kb = 4;
 
-        let manager = CompactionManager::new(config);
+        let manager = CompactionManager::new(config).await.unwrap();
 
         let task = CompactionTask {
             level: 0,

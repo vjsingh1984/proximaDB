@@ -20,7 +20,7 @@ async fn test_lsm_expired_record_deletion() -> Result<()> {
     config.data_directory = data_dir.join("lsm").to_string_lossy().to_string();
     
     // Create compaction manager
-    let mut compaction_manager = CompactionManager::new(config.clone());
+    let mut compaction_manager = CompactionManager::new(config.clone()).await.unwrap();
     
     // Create test data with expired records
     let current_time = Utc::now().timestamp_millis();

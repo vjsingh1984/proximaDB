@@ -20,6 +20,8 @@ pub mod three_stage_filter;
 pub mod bloom_filter_tests;
 #[cfg(test)]
 pub mod compaction_coverage_tests;
+#[cfg(test)]
+pub mod sst_compactor_tests;
 
 // Re-export main types
 pub use bloom_filter::{

@@ -29,12 +29,12 @@ mod tests {
             vector: vec![1.0, 2.0, 3.0],
             metadata: vec![],
             timestamp,
+            updated_at: None,
             expires_at,
             version,
             is_tombstone,
             level: 0,
             sequence_number: timestamp as u64,
-            collection_id: "test_collection".to_string(),
         }
     }
 
