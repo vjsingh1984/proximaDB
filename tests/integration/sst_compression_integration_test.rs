@@ -32,13 +32,13 @@ fn setup_hardware_capabilities() {
 }
 
 /// Create test SST configuration with compression
-fn create_test_config(temp_dir: &TempDir, compression_algorithm: bool) -> SstConfig {
+fn create_test_config(temp_dir: &TempDir, enable_compression: bool) -> SstConfig {
     SstConfig {
         level_count: 3,
         compaction_threshold: 3,
         block_size_kb: 4096, // 4MB for optimal ZSTD compression
         compaction_strategy: "leveled".to_string(),
-        compression: compression_algorithm.to_string(),
+        compression: if enable_compression { "zstd".to_string() } else { "none".to_string() },
         compression_level: 3,
         bloom_filter_config: None, // Disable for these tests
         cache_size_mb: 64,
@@ -51,6 +51,39 @@ fn create_test_config(temp_dir: &TempDir, compression_algorithm: bool) -> SstCon
         prefetch_enabled: false,
         prefetch_size_kb: 64,
         decompression_cache_config: None,
+    }
+}
+
+/// Create test collection with storage assignment
+fn create_test_collection_with_storage(collection_id: &str, base_path: &str) -> proximadb::proto::proximadb::Collection {
+    use proximadb::proto::proximadb::{Collection, CollectionConfig, StorageAssignment, CollectionStats, DistanceMetric, StorageEngine};
+    
+    let storage_assignment = StorageAssignment {
+        base_location: format!("file://{}", base_path),
+        assigned_at: chrono::Utc::now().timestamp_millis(),
+    };
+    
+    let config = CollectionConfig {
+        name: collection_id.to_string(),
+        dimension: 512,
+        distance_metric: DistanceMetric::Cosine as i32,
+        storage_engine: StorageEngine::Sst as i32,
+        ..Default::default()
+    };
+    
+    let stats = CollectionStats {
+        vector_count: 0,
+        index_size_bytes: 0,
+        data_size_bytes: 0,
+    };
+    
+    Collection {
+        id: collection_id.to_string(),
+        config: Some(config),
+        stats: Some(stats),
+        created_at: chrono::Utc::now().timestamp_millis(),
+        updated_at: chrono::Utc::now().timestamp_millis(),
+        storage_assignment: Some(storage_assignment),
     }
 }
 
@@ -151,10 +184,13 @@ async fn test_sst_flush_with_compression() -> anyhow::Result<()> {
     
     // Flush vectors
     let vectors = create_test_vectors(1000, 256, "flush_test");
+    let base_path = temp_dir.path().to_str().unwrap();
+    let collection_config = create_test_collection_with_storage("test_collection", base_path);
     let flush_params = proximadb::storage::traits::FlushParameters {
         collection_id: Some("test_collection".to_string()),
         vector_records: vectors,
         force: true,
+        collection_config: Some(collection_config),
         ..Default::default()
     };
     let flush_result = engine.do_flush(&flush_params).await?;
@@ -216,12 +252,15 @@ async fn test_sst_compaction_with_compression() -> anyhow::Result<()> {
     ).await?;
     
     // Create multiple SST files to trigger compaction
+    let base_path = temp_dir.path().to_str().unwrap();
     for batch in 0..3 {
         let vectors = create_test_vectors(500, 128, &format!("batch_{}", batch));
+        let collection_config = create_test_collection_with_storage("test_compaction", base_path);
         let flush_params = proximadb::storage::traits::FlushParameters {
             collection_id: Some("test_compaction".to_string()),
             vector_records: vectors,
             force: true,
+            collection_config: Some(collection_config),
             ..Default::default()
         };
         engine.do_flush(&flush_params).await?;
@@ -336,10 +375,13 @@ async fn test_sst_search_compressed_blocks() -> anyhow::Result<()> {
     }
     
     // Flush all vectors
+    let base_path = temp_dir.path().to_str().unwrap();
+    let collection_config = create_test_collection_with_storage("test_search", base_path);
     let flush_params = proximadb::storage::traits::FlushParameters {
         collection_id: Some("test_search".to_string()),
         vector_records: all_vectors,
         force: true,
+        collection_config: Some(collection_config),
         ..Default::default()
     };
     engine.do_flush(&flush_params).await?;
@@ -429,10 +471,13 @@ async fn test_compression_algorithm_vs_disabled() -> anyhow::Result<()> {
         distance_compute.clone()
     ).await?;
     
+    let base_path = temp_dir_compressed.path().to_str().unwrap();
+    let collection_config = create_test_collection_with_storage("compressed_test", base_path);
     let flush_params = proximadb::storage::traits::FlushParameters {
         collection_id: Some("compressed_test".to_string()),
         vector_records: vectors.clone(),
         force: true,
+        collection_config: Some(collection_config),
         ..Default::default()
     };
     let compressed_result = compressed_engine.do_flush(&flush_params).await?;
@@ -447,10 +492,13 @@ async fn test_compression_algorithm_vs_disabled() -> anyhow::Result<()> {
         distance_compute
     ).await?;
     
+    let base_path_uncompressed = temp_dir_uncompressed.path().to_str().unwrap();
+    let collection_config = create_test_collection_with_storage("uncompressed_test", base_path_uncompressed);
     let flush_params = proximadb::storage::traits::FlushParameters {
         collection_id: Some("uncompressed_test".to_string()),
         vector_records: vectors,
         force: true,
+        collection_config: Some(collection_config),
         ..Default::default()
     };
     let uncompressed_result = uncompressed_engine.do_flush(&flush_params).await?;
@@ -510,10 +558,13 @@ async fn test_compression_levels() -> anyhow::Result<()> {
         ).await?;
         
         let start = std::time::Instant::now();
+        let base_path = sub_dir.to_str().unwrap();
+        let collection_config = create_test_collection_with_storage(&format!("test_level_{}", level), base_path);
         let flush_params = proximadb::storage::traits::FlushParameters {
             collection_id: Some(format!("test_level_{}", level)),
             vector_records: vectors.clone(),
             force: true,
+            collection_config: Some(collection_config),
             ..Default::default()
         };
         engine.do_flush(&flush_params).await?;

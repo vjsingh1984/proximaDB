@@ -173,7 +173,7 @@ async fn health_check(State(state): State<DashboardState>) -> Json<HealthRespons
     Json(HealthResponse {
         status: "healthy".to_string(),
         timestamp: chrono::Utc::now(),
-        version: "0.1.0".to_string(),
+        version: crate::version::PROXIMADB_VERSION.to_string(),
         uptime_seconds: metrics.server.uptime_seconds,
     })
 }

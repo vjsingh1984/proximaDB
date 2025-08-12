@@ -5,6 +5,7 @@
 use anyhow::Result;
 use tracing::{debug, error, info, warn};
 use std::sync::{Arc, Once};
+use std::path::PathBuf;
 use tempfile::TempDir;
 use uuid::Uuid;
 
@@ -32,6 +33,7 @@ fn setup_hardware_capabilities() {
 pub struct IsolatedTestEnvironment {
     pub collection_id: String,
     pub temp_dir: TempDir,
+    pub persistent_dir: PathBuf,  // NEW: Pre-assigned persistent directory
     // Assignment service removed - collections now embed storage_assignment
     pub filesystem: Arc<FilesystemFactory>,
     pub sst_config: SstConfig,
@@ -47,19 +49,37 @@ impl IsolatedTestEnvironment {
         let collection_id = format!("test_collection_{}", Uuid::new_v4().simple());
         let temp_dir = TempDir::new()?;
         
+        // Create persistent directory that won't be garbage collected
+        let persistent_base = std::env::temp_dir().join("proximadb_integration_tests");
+        tokio::fs::create_dir_all(&persistent_base).await?;
+        let persistent_dir = persistent_base.join(&collection_id);
+        tokio::fs::create_dir_all(&persistent_dir).await?;
+        
+        info!("🏗️ Created persistent test directory: {}", persistent_dir.display());
+        info!("🏗️ Collection ID: {}", collection_id);
+        
         // Create isolated assignment service (no global singleton)
         let filesystem_factory = Arc::new(FilesystemFactory::new(FilesystemConfig::default()).await?);
         
         // Create isolated filesystem
         let filesystem = Arc::new(FilesystemFactory::new(FilesystemConfig::default()).await?);
         
-        // Create base directories
-        let base_path = temp_dir.path().to_str().unwrap();
+        // Create base directories in BOTH temp and persistent locations
+        let temp_base_path = temp_dir.path().to_str().unwrap();
+        let persistent_base_path = persistent_dir.to_str().unwrap();
+        
+        // Use persistent directory for actual storage
+        let base_path = persistent_base_path;
         tokio::fs::create_dir_all(format!("{}/data", base_path)).await?;
         tokio::fs::create_dir_all(format!("{}/write_ahead_log", base_path)).await?;
         tokio::fs::create_dir_all(format!("{}/index", base_path)).await?;
         
-        // Create storage locations
+        info!("📁 Created storage directories:");
+        info!("   - Data: {}/data", base_path);
+        info!("   - WAL: {}/write_ahead_log", base_path);
+        info!("   - Index: {}/index", base_path);
+        
+        // Create storage locations pointing to persistent directory
         let storage_locations = vec![
             StorageLocation {
                 url: format!("file://{}", base_path),
@@ -68,12 +88,15 @@ impl IsolatedTestEnvironment {
             }
         ];
         
+        info!("🔗 Storage location URL: file://{}", base_path);
+        
         // Create optimized SST config for testing
         let sst_config = Self::create_test_sst_config();
         
         Ok(Self {
             collection_id,
             temp_dir,
+            persistent_dir,
             filesystem,
             sst_config,
             storage_locations,
@@ -85,7 +108,9 @@ impl IsolatedTestEnvironment {
         
         // Assignment service removed - create directories directly
         // Collections now embed storage_assignment
-        let data_path = self.temp_dir.path().join("data");
+        let data_path = self.persistent_dir.join("data");
+        
+        info!("🏭 Creating SST engine with data path: {}", data_path.display());
         tokio::fs::create_dir_all(&data_path).await?;
         
         debug!("🔧 Created isolated SST engine for collection: {}", self.collection_id);
@@ -99,6 +124,41 @@ impl IsolatedTestEnvironment {
             self.filesystem.clone(),
             distance_compute
         ).await
+    }
+    
+    /// Create a test collection with embedded storage assignment
+    pub fn create_test_collection(&self) -> proximadb::proto::proximadb::Collection {
+        use proximadb::proto::proximadb::{Collection, CollectionConfig, StorageAssignment, CollectionStats, DistanceMetric, StorageEngine};
+        
+        // FIXED: Use persistent_dir instead of temp_dir for storage assignment
+        let base_path = self.persistent_dir.to_str().unwrap();
+        let storage_assignment = StorageAssignment {
+            base_location: format!("file://{}", base_path),
+            assigned_at: chrono::Utc::now().timestamp_millis(),
+        };
+        
+        let config = CollectionConfig {
+            name: self.collection_id.clone(),
+            dimension: 3,
+            distance_metric: DistanceMetric::Cosine as i32,
+            storage_engine: StorageEngine::Sst as i32,
+            ..Default::default()
+        };
+        
+        let stats = CollectionStats {
+            vector_count: 0,
+            index_size_bytes: 0,
+            data_size_bytes: 0,
+        };
+        
+        Collection {
+            id: self.collection_id.clone(),
+            config: Some(config),
+            stats: Some(stats),
+            created_at: chrono::Utc::now().timestamp_millis(),
+            updated_at: chrono::Utc::now().timestamp_millis(),
+            storage_assignment: Some(storage_assignment),
+        }
     }
     
     /// Create test vectors with metadata

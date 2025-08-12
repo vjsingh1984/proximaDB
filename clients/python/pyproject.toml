@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "proximadb-python"
-version = "0.1.0"
+version = "0.1.4"
 description = "Python client SDK for ProximaDB - Cloud-native vector database engineered for AI-first applications"
 authors = [
     {name = "Vijaykumar Singh", email = "singhvjd@gmail.com"}

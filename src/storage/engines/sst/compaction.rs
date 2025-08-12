@@ -25,6 +25,7 @@ use crate::core::search::mvcc_resolution::MvccResolver;
 use crate::storage::optimization::{MetadataSorter, SortingStats};
 use crate::storage::Result;
 use crate::storage::transaction_coordinator::{TransactionCoordinator, StagingConfig, TransactionStageType};
+use crate::storage::engines::sst::readers::unified_sstable_reader::{UnifiedSstableReader, CollectionContext};
 use chrono::Utc;
 use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::path::{Path, PathBuf};
@@ -91,6 +92,7 @@ pub struct CompactionManager {
     stats: Arc<RwLock<CompactionStats>>,
     active_compactions: Arc<RwLock<HashMap<String, CompactionTask>>>,
     atomic_coordinator: Option<Arc<TransactionCoordinator>>,
+    unified_reader: Arc<UnifiedSstableReader>,
     // manifest: Option<Arc<super::SstManifest>>, // Removed - using directory discovery
 }
 
@@ -118,16 +120,24 @@ impl CompactionManager {
     }
 
     /// Create a new compaction manager
-    pub fn new(config: SstConfig) -> Self {
-        Self::with_atomic_coordinator(config, None)
+    pub async fn new(config: SstConfig) -> Result<Self> {
+        Self::with_atomic_coordinator(config, None).await
     }
     
     /// Create a new compaction manager with atomic coordinator
-    pub fn with_atomic_coordinator(
+    pub async fn with_atomic_coordinator(
         config: SstConfig,
         atomic_coordinator: Option<Arc<TransactionCoordinator>>,
-    ) -> Self {
-        Self {
+    ) -> Result<Self> {
+        // Create unified reader with filesystem factory
+        let filesystem_factory = Arc::new(
+            crate::storage::persistence::filesystem::FilesystemFactory::new(
+                crate::storage::persistence::filesystem::FilesystemConfig::default()
+            ).await.map_err(|e| crate::core::StorageError::SstStorage(e.to_string()))?
+        );
+        let unified_reader = Arc::new(UnifiedSstableReader::new(filesystem_factory));
+        
+        Ok(Self {
             config,
             task_queue: Arc::new(Mutex::new(VecDeque::new())),
             worker_handles: Vec::new(),
@@ -135,7 +145,8 @@ impl CompactionManager {
             stats: Arc::new(RwLock::new(CompactionStats::default())),
             active_compactions: Arc::new(RwLock::new(HashMap::new())),
             atomic_coordinator,
-        }
+            unified_reader,
+        })
     }
 
     /// Start background compaction workers
@@ -326,7 +337,13 @@ impl CompactionManager {
                 let start_time = std::time::Instant::now();
 
                 // Perform compaction - create a temporary manager for SSTable parsing
-                let temp_manager = CompactionManager::with_atomic_coordinator(config.clone(), atomic_coordinator.clone());
+                let temp_manager = match CompactionManager::with_atomic_coordinator(config.clone(), atomic_coordinator.clone()).await {
+                    Ok(manager) => manager,
+                    Err(e) => {
+                        error!("Failed to create compaction manager: {}", e);
+                        continue;
+                    }
+                };
                 match temp_manager.perform_compaction(&task, &config, atomic_coordinator.clone()).await {
                     Ok(compaction_stats) => {
                         info!(
@@ -401,6 +418,7 @@ impl CompactionManager {
         let mut all_records: Vec<(String, SstRecord)> = Vec::new();
         let mut bytes_read = 0u64;
 
+
         debug!(
             "Merging {} input files for level {}",
             task.input_files.len(),
@@ -418,45 +436,36 @@ impl CompactionManager {
         
         for input_file in &task.input_files {
             let input_path = input_file.to_string_lossy();
-            info!("🔍 COMPACTION DEBUG: Reading file: {}", input_path);
+            debug!("Reading SST file using unified reader: {}", input_path);
             
-            let file_data = fs.read(&input_path)
-                .await
-                .map_err(|e| crate::core::StorageError::DiskIO(std::io::Error::new(std::io::ErrorKind::Other, e.to_string())))?;
-
-            info!("🔍 COMPACTION DEBUG: File size: {} bytes", file_data.len());
-            bytes_read += file_data.len() as u64;
-
-            if file_data.len() < 16 {
-                warn!("🔍 COMPACTION DEBUG: File too small ({} bytes), skipping", file_data.len());
-                continue;
-            }
-
-            // DEBUG: Check first few bytes of the file
-            let hex_preview = file_data.iter().take(20).map(|b| format!("{:02x}", b)).collect::<Vec<_>>().join(" ");
-            info!("🔍 COMPACTION DEBUG: File hex preview: {}", hex_preview);
-
-            // Smart SSTable parsing: Skip header/bloom/index, read data blocks directly
-            // This is optimal for compaction since we need ALL records anyway
-            match self.read_data_blocks_from_sstable(&file_data, &input_path).await {
+            // 🚀 UNIFIED READER: Use optimized compaction reader
+            match self.read_all_records_from_file_unified(&input_path).await {
                 Ok(records) => {
-                    info!("🔍 COMPACTION: Extracted {} records from {}", records.len(), input_path);
-                    if records.is_empty() {
-                        warn!("🔍 COMPACTION: No records extracted from {} - this could be the problem!", input_path);
+                    info!("Extracted {} records from {} using unified reader", records.len(), input_path);
+                    // Estimate file size for statistics
+                    if let Ok(metadata) = fs.metadata(&input_path).await {
+                        bytes_read += metadata.size;
                     }
-                    // Just collect all records - we'll merge-sort later
-                    for (id, record) in records {
-                        all_records.push((id, record));
+                    
+                    if records.is_empty() {
+                        warn!("No records extracted from SST file: {}", input_path);
+                    }
+                    
+                    // Convert VectorRecord to (String, SstRecord) for compatibility
+                    for vector_record in records {
+                        let id = vector_record.id.clone().unwrap_or_default();
+                        let sst_record = SstRecord::from_vector_record(vector_record);
+                        all_records.push((id, sst_record));
                     }
                 }
                 Err(e) => {
-                    warn!("🔍 COMPACTION: Failed to read data blocks from {}: {}", input_path, e);
+                    warn!("Failed to read records from {} using unified reader: {}", input_path, e);
                     continue;
                 }
             }
         }
 
-        info!("🔍 COMPACTION: Collected {} total records from input files", all_records.len());
+        info!("Collected {} total records from {} input files", all_records.len(), task.input_files.len());
         
         // Sort all records by (id, version, sequence_number) for merge deduplication
         all_records.sort_by(|a, b| {
@@ -617,9 +626,24 @@ impl CompactionManager {
         info!("🔍 COMPACTION: Converted {} sorted vectors to {} LSM records", 
               sort_stats.records_sorted, sorted_sst_records.len());
               
-        // DEBUG: Final record count check
+        // Handle empty records case - return early without writing SSTable
         if sorted_sst_records.is_empty() {
-            error!("🔍 DEBUG COMPACTION: No records! This will cause SSTable write to fail.");
+            info!("📋 SST COMPACTION: No records to compact after merging. Returning without writing SSTable.");
+            return Ok(EnhancedCompactionStats {
+                base_stats: CompactionStats {
+                    total_compactions: 1,
+                    bytes_written: 0,
+                    bytes_read,
+                    files_merged: task.input_files.len() as u64,
+                    avg_compaction_time_ms: start_time.elapsed().as_millis() as u64,
+                    last_compaction_time: Some(chrono::Utc::now()),
+                    expired_records_deleted: 0,
+                    tombstones_removed: 0,
+                },
+                merged_vectors: Vec::new(),
+                deleted_vector_ids: Vec::new(),
+                recommend_full_rebuild: false,
+            });
         }
         
         // Convert to BTreeMap for SSTable writer (temporary, until we update writer)
@@ -855,14 +879,16 @@ impl CompactionManager {
         Ok(files_by_level)
     }
 
-    /// Read data blocks directly from SSTable, skipping header/bloom/index
-    /// This is optimal for compaction since we need all records anyway
+    /// 🚫 DEPRECATED: Read data blocks directly from SSTable
+    /// REPLACED BY: unified_reader.read_all_records_for_compaction() for better performance and consistency
+    /// This method is kept for compatibility but should not be used for new code
+    #[deprecated(note = "Use unified_reader.read_all_records_for_compaction() instead")]
     async fn read_data_blocks_from_sstable(
         &self,
         file_data: &[u8],
         file_path: &str,
     ) -> std::result::Result<BTreeMap<String, super::SstRecord>, crate::core::StorageError> {
-        info!("🔍 COMPACTION: Parsing SSTable format for {}", file_path);
+        debug!("Parsing SSTable format for {} ({} bytes)", file_path, file_data.len());
         
         if file_data.len() < 16 {
             return Err(crate::core::StorageError::SstStorage(
@@ -870,9 +896,19 @@ impl CompactionManager {
             ));
         }
 
-        // SSTable format: [header_len:4][header][bloom_len:4][bloom][index_len:4][index][data_blocks...]
-        // Skip header, bloom, and index to reach data blocks
+        // SSTable format: [magic:4][header_len:4][header][bloom_len:4][bloom][index_len:4][index][data_blocks...]
+        // Skip magic, header, bloom, and index to reach data blocks
         let mut offset = 0;
+        
+        // Skip magic header (SST1)
+        if offset + 4 > file_data.len() {
+            return Err(crate::core::StorageError::SstStorage("File too small for magic header".into()));
+        }
+        let magic = &file_data[offset..offset + 4];
+        if magic != b"SST1" {
+            return Err(crate::core::StorageError::SstStorage("Invalid SSTable magic header".into()));
+        }
+        offset += 4;
         
         // Skip header: [header_len:4][header_data]
         if offset + 4 > file_data.len() {
@@ -901,18 +937,17 @@ impl CompactionManager {
         ]) as usize;
         offset += 4 + index_len;
         
-        info!("🔍 COMPACTION: Skipped header ({} bytes), bloom ({} bytes), index ({} bytes) - data blocks start at offset {}", 
+        debug!("Skipped header ({} bytes), bloom ({} bytes), index ({} bytes) - data blocks start at offset {}", 
               header_len, bloom_len, index_len, offset);
         
         // Now we're at the data blocks section
         let data_blocks_bytes = &file_data[offset..];
-        info!("🔍 COMPACTION: Reading {} bytes of data blocks", data_blocks_bytes.len());
+        debug!("Reading {} bytes of data blocks from {}", data_blocks_bytes.len(), file_path);
         
         if data_blocks_bytes.is_empty() {
-            warn!("🔍 COMPACTION: No data blocks found after skipping headers!");
+            warn!("No data blocks found in SST file: {}", file_path);
             return Ok(BTreeMap::new());
         }
-        debug!("Reading {} bytes of data blocks from file {}", data_blocks_bytes.len(), file_path);
         
         // OPTIMIZED: Fast bulk record extraction for compaction
         // Since compaction needs ALL records, we use a streaming approach
@@ -924,6 +959,7 @@ impl CompactionManager {
         while block_offset < data_blocks_bytes.len() {
             // Read block size
             if block_offset + 4 > data_blocks_bytes.len() {
+                debug!("Not enough bytes for block size header at offset {}", block_offset);
                 break;
             }
             
@@ -939,7 +975,7 @@ impl CompactionManager {
             block_offset += 4;
             
             if block_offset + block_size > data_blocks_bytes.len() {
-                warn!("🔍 COMPACTION: Block extends beyond data: {} + {} > {}", 
+                warn!("Block extends beyond data: {} + {} > {}", 
                       block_offset, block_size, data_blocks_bytes.len());
                 break;
             }
@@ -947,7 +983,6 @@ impl CompactionManager {
             let block_data = &data_blocks_bytes[block_offset..block_offset + block_size];
             
             // Use standard DataBlock deserialization (bincode-based)
-            debug!("About to parse block {} with {} bytes using bincode", blocks_processed, block_data.len());
             match super::DataBlock::deserialize(block_data) {
                 Ok(data_block) => {
                     let record_count = data_block.records.len();
@@ -960,16 +995,9 @@ impl CompactionManager {
                         let vector_id = sst_record.id.clone();
                         all_records.insert(vector_id, sst_record);
                     }
-                    
-                    if blocks_processed % 10 == 0 || record_count > 0 {
-                        info!("🔍 COMPACTION: Block {} - {} records (total: {})", 
-                              blocks_processed, record_count, total_records);
-                    }
                 }
                 Err(e) => {
                     warn!("Failed to parse block {} at offset {}: {}", blocks_processed, block_offset, e);
-                    warn!("🔍 COMPACTION: Failed to deserialize block {} with bincode at offset {}: {}", 
-                          blocks_processed, block_offset, e);
                 }
             }
             
@@ -977,7 +1005,8 @@ impl CompactionManager {
             blocks_processed += 1;
         }
         
-        info!("🔍 COMPACTION: Extracted {} total records from {} blocks", all_records.len(), blocks_processed);
+        info!("Extracted {} total records from {} blocks in {}", all_records.len(), blocks_processed, file_path);
+        
         Ok(all_records)
     }
 
@@ -1070,6 +1099,32 @@ impl CompactionManager {
         collection_dir.join(filename)
     }
 
+    /// 🚀 NEW: Read all records from SSTable using unified reader with compaction optimizations
+    async fn read_all_records_from_file_unified(&self, file_path: &str) -> Result<Vec<VectorRecord>> {
+        info!("🔥 COMPACTION UNIFIED: Reading {} with optimized strategy", file_path);
+        
+        // Use compaction-optimized reading strategy
+        match self.unified_reader.read_all_records_for_compaction(&[file_path.to_string()]).await {
+            Ok(records) => {
+                info!("✅ COMPACTION UNIFIED: Successfully read {} records from {}", records.len(), file_path);
+                
+                // Debug: print sample records
+                for (i, record) in records.iter().take(3).enumerate() {
+                    debug!("  UNIFIED Record {}: id={:?}, vector_len={}, metadata_len={}", 
+                           i, record.id, record.vector.len(), record.metadata.len());
+                }
+                
+                Ok(records)
+            }
+            Err(e) => {
+                warn!("❌ COMPACTION UNIFIED: Failed to read {}: {}", file_path, e);
+                Err(crate::core::StorageError::SstStorage(
+                    format!("Unified reader failed for {}: {}", file_path, e)
+                ))
+            }
+        }
+    }
+    
     /// Sort vector records by metadata for optimal compaction encoding
     /// Uses same sorting strategy as flush operations to maintain consistency
     async fn sort_vectors_for_compaction(

@@ -4,7 +4,7 @@
 set -e
 
 echo "🐳 Building ProximaDB MVP Demo Container"
-echo "   Version: 0.1.0-mvp"
+echo "   Version: 0.1.4"
 echo ""
 
 # Configuration

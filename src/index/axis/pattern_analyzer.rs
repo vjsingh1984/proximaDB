@@ -239,7 +239,7 @@ impl AxisTieringIntegration {
 
     /// Helper methods for tier mapping and utilities
     
-    fn map_tier_level_to_axis(&self, tier_level: u8) -> TierLevel {
+    pub fn map_tier_level_to_axis(&self, tier_level: u8) -> TierLevel {
         match tier_level {
             1 => TierLevel::Memory,
             2 => TierLevel::Disk,
@@ -247,7 +247,7 @@ impl AxisTieringIntegration {
         }
     }
     
-    fn map_axis_tier_to_storage(&self, axis_tier: &TierLevel) -> StorageTier {
+    pub fn map_axis_tier_to_storage(&self, axis_tier: &TierLevel) -> StorageTier {
         match axis_tier {
             TierLevel::Memory => StorageTier::Memory,
             TierLevel::Disk => StorageTier::NvmeSsd { 
@@ -325,8 +325,8 @@ mod tests {
         }
     }
     
-    #[test]
-    fn test_tier_mapping() {
+    #[tokio::test]
+    async fn test_tier_mapping() {
         let access_tracker = Arc::new(AccessPatternTracker::new(1000));
         let global_manager = Arc::new(GlobalTierManager::new());
         let integration = AxisTieringIntegration::new(access_tracker, global_manager);

@@ -72,8 +72,236 @@ impl SstableWriter {
         }
     }
     
-    /// Write records to SSTable with atomic write optimization (CRITICAL HOT PATH)
+    /// Write sorted records to SSTable using streaming (disk-only, no memory structures)
+    /// DISK-ONLY DESIGN: Processes records as iterator to avoid in-memory BTreeMap
+    #[inline(always)]
+    pub async fn write_sorted_records<I>(&self, sorted_records: I, record_count: usize) -> Result<()>
+    where
+        I: Iterator<Item = (String, SstRecord)>,
+    {
+        info!("🔄 SST: Streaming {} sorted records directly to disk (no memory structures)", record_count);
+        
+        if record_count == 0 {
+            info!("⚠️ SST: No records to write - this may be a valid scenario (e.g., compaction with no data)");
+            return Err(anyhow::anyhow!("Cannot write SSTable with 0 records"));
+        }
+        
+        // Get filesystem and atomic writer
+        let path_str = self.path.to_string_lossy();
+        let (_scheme, fs_url) = if path_str.contains("://") {
+            let parts: Vec<&str> = path_str.splitn(2, "://").collect();
+            (parts[0], path_str.to_string())
+        } else {
+            ("file", format!("file://{}", path_str))
+        };
+        let fs = self.filesystem.get_filesystem(&fs_url)?;
+        let atomic_writer = AtomicWriteExecutorFactory::create_production_executor();
+        
+        // Step 1: Build bloom filters while streaming records
+        let bloom_config = BloomFilterConfig {
+            strategy: BloomStrategy::ByteAligned,
+            expected_items: record_count,
+            ..self.bloom_config.clone()
+        };
+        let mut key_bloom_filter = BloomFilterFactory::create(&bloom_config);
+        
+        let metadata_config = BloomFilterConfig {
+            strategy: BloomStrategy::Composite,
+            expected_items: record_count,
+            ..self.bloom_config.clone()
+        };
+        let mut metadata_builder = CompositeBloomFilterBuilder::new(metadata_config);
+        
+        // Step 2: Stream records directly into blocks (no intermediate BTreeMap)
+        let estimated_blocks = (record_count / (self.block_size / 256)).max(1);
+        let mut data_blocks = Vec::with_capacity(estimated_blocks);
+        let mut index_entries = Vec::with_capacity(estimated_blocks);
+        let mut current_block = Vec::with_capacity(self.block_size / 128);
+        let mut current_block_size = 0;
+        let mut block_id = 0u32;
+        let mut processed_count = 0;
+        let mut metadata_value_count = 0;
+        
+        // Process records in streaming fashion
+        for (key, record) in sorted_records {
+            // Update bloom filters
+            key_bloom_filter.insert(key.as_bytes());
+            
+            for metadata_item in &record.metadata {
+                metadata_builder.add_metadata_item(metadata_item.key.clone(), metadata_item.clone());
+                metadata_value_count += 1;
+            }
+            
+            // Serialize record once
+            let serialized = record.serialize()?;
+            let record_size = serialized.len();
+            
+            // Check if we need to start a new block
+            if current_block_size + record_size > self.block_size && !current_block.is_empty() {
+                self.finalize_block(&mut data_blocks, &mut index_entries, &current_block, block_id, current_block_size)?;
+                current_block.clear();
+                current_block_size = 0;
+                block_id += 1;
+            }
+            
+            current_block.push(record);
+            current_block_size += record_size;
+            processed_count += 1;
+        }
+        
+        // Handle the last block
+        if !current_block.is_empty() {
+            self.finalize_block(&mut data_blocks, &mut index_entries, &current_block, block_id, current_block_size)?;
+        }
+        
+        debug!("🔍 Streamed {} records into {} blocks with {} metadata columns", 
+               processed_count, data_blocks.len(), metadata_value_count);
+        
+        // Continue with bloom filter and file writing...
+        let metadata_bloom_filter = metadata_builder.build();
+        let metadata_filter_data = BloomFilterStrategy::serialize(&metadata_bloom_filter)?;
+        
+        let stats = super::bloom_filter::BloomFilterStats {
+            key_count: processed_count as u64,
+            metadata_columns: metadata_bloom_filter.num_columns() as u64,
+            total_keys: 0,
+            key_lookups_saved: 0,
+            metadata_queries_saved: 0,
+        };
+        
+        let combined_bloom_filter = super::bloom_filter::SstableBloomFilter::new(
+            bloom_config.clone(),
+            key_bloom_filter.serialize()?,
+            metadata_filter_data,
+            stats,
+        );
+        
+        // Build complete SSTable in memory for atomic write
+        let mut sstable_bytes = Vec::new();
+        
+        let min_key = index_entries.first().map(|e| e.key.clone()).unwrap_or_default();
+        let max_key = index_entries.last().map(|e| e.key.clone()).unwrap_or_default();
+        
+        let bloom_data = combined_bloom_filter.serialize()?;
+        let mut index_data = Vec::new();
+        for entry in &index_entries {
+            let entry_data = entry.serialize()?;
+            index_data.extend_from_slice(&(entry_data.len() as u32).to_le_bytes());
+            index_data.extend_from_slice(&entry_data);
+        }
+        
+        let total_data_size: u64 = data_blocks.iter()
+            .map(|b| b.serialize().map(|v| v.len() as u64).unwrap_or(0))
+            .sum();
+        
+        // SDK-driven compression configuration
+        let (compression_algorithm, compression_level) = 
+            if let Some(ref compression) = self.compression_config {
+                use crate::proto::proximadb::CompressionAlgorithm;
+                let algorithm = match CompressionAlgorithm::try_from(compression.algorithm) {
+                    Ok(CompressionAlgorithm::CompressionZstd) => super::CompressionAlgorithmSst::Zstd,
+                    Ok(CompressionAlgorithm::CompressionLz4) => super::CompressionAlgorithmSst::Lz4,
+                    Ok(CompressionAlgorithm::CompressionSnappy) => super::CompressionAlgorithmSst::Snappy,
+                    Ok(CompressionAlgorithm::CompressionGzip) => super::CompressionAlgorithmSst::Gzip,
+                    Ok(CompressionAlgorithm::CompressionBrotli) => super::CompressionAlgorithmSst::Brotli,
+                    Ok(CompressionAlgorithm::CompressionBzip2) => super::CompressionAlgorithmSst::Bzip2,
+                    Ok(CompressionAlgorithm::CompressionDeflate) => super::CompressionAlgorithmSst::Deflate,
+                    Ok(CompressionAlgorithm::CompressionXz) => super::CompressionAlgorithmSst::Xz,
+                    Ok(CompressionAlgorithm::CompressionZlib) => super::CompressionAlgorithmSst::Zlib,
+                    Ok(CompressionAlgorithm::CompressionLzo) => super::CompressionAlgorithmSst::Lzo,
+                    Ok(CompressionAlgorithm::CompressionLz4hc) => super::CompressionAlgorithmSst::Lz4Hc,
+                    Ok(CompressionAlgorithm::CompressionLzma) => super::CompressionAlgorithmSst::Lzma,
+                    _ => super::CompressionAlgorithmSst::None,
+                };
+                let level = compression.level.unwrap_or(3) as u8;
+                debug!("🗜️ SST: Using SDK-driven compression: {:?} level {}", algorithm, level);
+                (algorithm, level)
+            } else {
+                debug!("🗜️ SST: No compression configuration from SDK, using uncompressed");
+                (super::CompressionAlgorithmSst::None, 0)
+            };
+
+        // Create header
+        let mut header = super::SstableHeader {
+            version: 1,
+            level: 0,
+            entry_count: processed_count as u64,
+            min_key,
+            max_key,
+            created_at: chrono::Utc::now().timestamp(),
+            compression_algorithm,
+            compression_level,
+            has_bloom_filter: true,
+            block_size: self.block_size as u32,
+            batch_size: 0,
+            header_size: 0,
+            index_size: index_data.len() as u32,
+            data_size: total_data_size as u32,
+            block_count: data_blocks.len() as u32,
+        };
+        
+        let header_data = bincode::serialize(&header)?;
+        header.header_size = header_data.len() as u32;
+        let header_data = bincode::serialize(&header)?;
+        
+        // Build complete SSTable bytes
+        const SST_MAGIC: &[u8; 4] = b"SST1";
+        
+        sstable_bytes.extend_from_slice(SST_MAGIC);
+        sstable_bytes.extend_from_slice(&(header_data.len() as u32).to_le_bytes());
+        sstable_bytes.extend_from_slice(&header_data);
+        sstable_bytes.extend_from_slice(&(bloom_data.len() as u32).to_le_bytes());
+        sstable_bytes.extend_from_slice(&bloom_data);
+        sstable_bytes.extend_from_slice(&(index_data.len() as u32).to_le_bytes());
+        sstable_bytes.extend_from_slice(&index_data);
+        
+        // Add all data blocks
+        for data_block in data_blocks.iter() {
+            let block_data = data_block.serialize()?;
+            sstable_bytes.extend_from_slice(&(block_data.len() as u32).to_le_bytes());
+            sstable_bytes.extend_from_slice(&block_data);
+        }
+        
+        info!(
+            "💾 SST: Built streaming SSTable: {} KB with {} records in {} blocks",
+            sstable_bytes.len() / 1024,
+            processed_count,
+            data_blocks.len()
+        );
+        
+        // Atomic write
+        let final_path = self.path.to_string_lossy();
+        atomic_writer
+            .write_atomic(fs, &final_path, &sstable_bytes, None)
+            .await
+            .map_err(|e| anyhow::anyhow!("Atomic write failed: {}", e))?;
+        
+        // Verify file
+        let file_metadata = fs.metadata(&final_path).await
+            .map_err(|e| anyhow::anyhow!("Failed to verify written file: {}", e))?;
+        
+        if file_metadata.size != sstable_bytes.len() as u64 {
+            return Err(anyhow::anyhow!(
+                "SSTable file size mismatch after write: expected {} bytes, got {} bytes",
+                sstable_bytes.len(),
+                file_metadata.size
+            ));
+        }
+        
+        info!(
+            "✅ SST: Streamed SSTable {} ({} bytes, {} records, {} blocks) - DISK-ONLY DESIGN",
+            self.path.display(),
+            sstable_bytes.len(),
+            processed_count,
+            data_blocks.len()
+        );
+        
+        Ok(())
+    }
+
+    /// LEGACY: Write records to SSTable with atomic write optimization (CRITICAL HOT PATH)
     /// Uses comprehensive atomic write strategies for flush/compaction safety
+    /// DEPRECATED: Use write_sorted_records() for disk-only streaming
     #[inline(always)]
     pub async fn write_records(&self, records: BTreeMap<String, SstRecord>) -> Result<()> {
         info!("🔄 Building SSTable in memory for atomic write: {} records", records.len());

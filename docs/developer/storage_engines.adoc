@@ -31,16 +31,130 @@ The SST engine automatically adjusts precision based on:
 * Query patterns
 * Available memory
 
-=== Sorting Architecture
+=== Multi-Batch Sorting Architecture
 
 image::sst-sorting-architecture.svg[SST Sorting Architecture, width=900]
-_Multi-phase sorting pipeline for optimal write performance_
+_Adaptive multi-batch sorting pipeline optimized for global partitioned memtable_
 
-Sorting pipeline:
-1. **In-memory sorting**: Quick sort for small batches
-2. **External merge sort**: For data exceeding memory
-3. **Compaction**: Background merge of sorted runs
-4. **Bloom filter generation**: During flush operations
+==== Adaptive Sorting Strategy
+
+The SST engine implements **adaptive sorting** that automatically selects the optimal algorithm based on data characteristics:
+
+....
+┌─────────────────────────────────────────────────────────────────────────────────┐
+│               GLOBAL PARTITIONED MEMTABLE (Batch Storage)                      │
+│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐            │
+│  │   Batch 1   │  │   Batch 2   │  │   Batch 3   │  │   Batch N   │            │
+│  │ • Vector A  │  │ • Vector D  │  │ • Vector G  │  │ • Vector X  │            │
+│  │ • Vector B  │  │ • Vector E  │  │ • Vector H  │  │ • Vector Y  │            │
+│  │ • Vector C  │  │ • Vector F  │  │ • Vector I  │  │ • Vector Z  │            │
+│  └─────────────┘  └─────────────┘  └─────────────┘  └─────────────┘            │
+└──────────────────────────────┬──────────────────────────────────────────────────┘
+                               │ Extract all vectors from all batches
+                               ▼
+                    ┌─────────────────────┐
+                    │  Vector Extraction  │
+                    │  • Total vectors    │
+                    │  • Source batches   │
+                    │  • Size analysis    │
+                    └──────────┬──────────┘
+                               │
+                               ▼
+              ┌─────────────────────────────────────┐
+              │         DECISION LOGIC              │
+              │                                     │
+              │  IF record_count < 10K OR           │
+              │     batch_count <= 1                │
+              │  THEN: Simple Vec + Sort            │
+              │  ELSE: K-Way Merge Sort             │
+              └─────────────┬───────────────────────┘
+                            │
+           ┌────────────────┴─────────────────┐
+           ▼                                  ▼
+  ┌─────────────────┐                ┌─────────────────┐
+  │ SIMPLE STRATEGY │                │ K-WAY STRATEGY  │
+  │ (Small/Single)  │                │ (Large/Multi)   │
+  └─────────────────┘                └─────────────────┘
+           │                                  │
+           ▼                                  ▼
+  ┌─────────────────┐                ┌─────────────────┐
+  │ 1. Collect all  │                │ 1. Split into   │
+  │    vectors      │                │    batch chunks │
+  │ 2. Single sort  │                │ 2. Sort each    │
+  │    O(n log n)   │                │    batch sep.   │
+  │ 3. Create iter  │                │ 3. K-way merge  │
+  └─────────────────┘                └─────────────────┘
+           │                                  │
+           └──────────────┬───────────────────┘
+                          ▼
+              ┌─────────────────────┐
+              │  STREAMING WRITER   │
+              │  • Process records  │
+              │  • Build blocks     │
+              │  • Generate blooms  │
+              │  • Atomic write     │
+              └─────────────────────┘
+....
+
+==== Algorithm Complexity Analysis
+
+[cols="3,2,2,3", options="header"]
+|===
+| Strategy | Insertion | Sorting | Total Complexity
+
+| **BTreeMap (Old)**
+| O(log n) per insert
+| Pre-sorted
+| **O(n log n)** - _High constant factor_
+
+| **Vec + Sort (Small)**
+| O(1) per insert
+| O(n log n)
+| **O(n log n)** - _Low constant factor_
+
+| **K-Way Merge (Large)**
+| O(1) per insert
+| O(m log m) + O(n log k)
+| **O(n log m + n log k)** - _where k << n_
+|===
+
+==== Performance Optimizations
+
+**Memory Efficiency:**
+* **Immediate Deallocation**: All transient structures are scoped
+* **Cache Locality**: Smaller batch sorts improve CPU cache utilization
+* **Zero-Copy**: Iterator-based streaming to disk
+
+**Algorithmic Benefits:**
+* **Better Complexity**: K-way merge is more efficient when k << n
+* **Adaptive Selection**: Automatically chooses optimal strategy
+* **Batch Awareness**: Leverages natural batch boundaries from memtable
+
+**Production Characteristics:**
+* **10K Record Threshold**: Empirically determined crossover point
+* **Heap-Based Merge**: Min-heap for efficient k-way merge
+* **Database Optimized**: Designed for multiple collections and frequent flushes
+
+==== Multi-Batch Flush Pipeline
+
+1. **Batch Extraction**: Extract individual vectors from multiple batch entries in global partitioned memtable
+   - Each batch entry contains multiple vectors
+   - Vectors arrive unsorted across batches (different write times)
+   - Flatten all vectors into single stream for processing
+
+2. **Strategy Selection**: Choose Vec+Sort or K-Way Merge based on total vector count and batch count
+   - Small datasets (< 10K vectors): Use simple Vec + sort
+   - Large multi-batch datasets: Use k-way merge for better cache locality
+
+3. **Efficient Sorting**: Minimize memory allocation and CPU cache misses
+   - Group vectors by original batch boundaries when beneficial
+   - Sort smaller groups separately for better cache performance
+
+4. **Streaming Write**: Process sorted records directly to SSTable blocks
+   - No intermediate BTreeMap storage
+   - Immediate deallocation of transient structures
+
+5. **Atomic Flush**: Ensure ACID compliance during write operations
 
 == VIPER Engine Architecture
 

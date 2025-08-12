@@ -508,7 +508,7 @@ impl VectorQuantizationEngine {
 
         let model = QuantizationModel {
             model_id: format!("quant_{:?}_{}", quantization_level, Utc::now().timestamp()),
-            version: "1.0.0".to_string(),
+            version: crate::version::PROXIMADB_VERSION.to_string(),
             level: quantization_level,
             dimension,
             training_params: TrainingParams {

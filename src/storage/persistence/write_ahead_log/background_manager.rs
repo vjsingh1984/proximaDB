@@ -135,6 +135,9 @@ impl BackgroundMaintenanceManager {
         drop(engines); // Release the read lock
         
         // 🚀 OPTIMIZATION: Create compaction parameters with context metadata (no service calls!)
+        // Use centralized helper method for consistent collection proto creation
+        let collection_config = Some(context.to_collection_proto());
+        
         let compaction_params = crate::storage::traits::CompactionParameters {
             collection_id: Some(context.collection_id.clone()),
             force: false, // Background compaction is not forced
@@ -147,7 +150,7 @@ impl BackgroundMaintenanceManager {
                 crate::storage::background_flush_context::OperationPriority::High => crate::storage::traits::OperationPriority::High,
                 crate::storage::background_flush_context::OperationPriority::Critical => crate::storage::traits::OperationPriority::High, // Map to High since Critical may not exist
             },
-            collection_config: None, // No service calls needed - all metadata available in context
+            collection_config, // Provide collection config with storage assignment
         };
         
         info!(

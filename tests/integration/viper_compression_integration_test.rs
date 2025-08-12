@@ -89,14 +89,47 @@ fn ensure_test_directories() {
 }
 
 /// Create test VIPER configuration with compression
-fn create_test_config(temp_dir: &TempDir, compression_algorithm: bool) -> proximadb::core::config::ViperConfig {
+fn create_test_config(temp_dir: &TempDir, enable_compression: bool) -> proximadb::core::config::ViperConfig {
     proximadb::core::config::ViperConfig {
         row_group_size: 50_000,
-        compression: compression_algorithm.to_string(),
+        compression: if enable_compression { "zstd".to_string() } else { "none".to_string() },
         compression_level: 3,
         enable_statistics: true,
         data_directory: temp_dir.path().to_str().unwrap().to_string(),
         cache_size_mb: 256,
+    }
+}
+
+/// Helper to create test collection with storage assignment
+fn create_test_collection_with_storage(collection_id: &str, base_path: &str) -> proximadb::proto::proximadb::Collection {
+    use proximadb::proto::proximadb::{Collection, CollectionConfig, StorageAssignment, CollectionStats, DistanceMetric, StorageEngine};
+    
+    let storage_assignment = StorageAssignment {
+        base_location: format!("file://{}", base_path),
+        assigned_at: chrono::Utc::now().timestamp_millis(),
+    };
+    
+    let config = CollectionConfig {
+        name: collection_id.to_string(),
+        dimension: 512,
+        distance_metric: DistanceMetric::Cosine as i32,
+        storage_engine: StorageEngine::Viper as i32,
+        ..Default::default()
+    };
+    
+    let stats = CollectionStats {
+        vector_count: 0,
+        index_size_bytes: 0,
+        data_size_bytes: 0,
+    };
+    
+    Collection {
+        id: collection_id.to_string(),
+        config: Some(config),
+        stats: Some(stats),
+        created_at: chrono::Utc::now().timestamp_millis(),
+        updated_at: chrono::Utc::now().timestamp_millis(),
+        storage_assignment: Some(storage_assignment),
     }
 }
 
@@ -313,10 +346,13 @@ async fn test_viper_flush_with_compression() -> anyhow::Result<()> {
     
     // Flush vectors
     let vectors = create_test_vectors(1000, 256, "flush_test");
+    let base_path = temp_dir.path().to_str().unwrap();
+    let collection_config = create_test_collection_with_storage("test_collection", base_path);
     let flush_params = proximadb::storage::traits::FlushParameters {
         collection_id: Some("test_collection".to_string()),
         vector_records: vectors,
         force: true,
+        collection_config: Some(collection_config),
         ..Default::default()
     };
     let flush_result = engine.do_flush(&flush_params).await?;
@@ -410,10 +446,13 @@ async fn test_viper_search_compressed_data() -> anyhow::Result<()> {
     
     // Create and flush diverse test data
     let vectors = create_test_vectors(2000, 512, "search");
+    let base_path = temp_dir.path().to_str().unwrap();
+    let collection_config = create_test_collection_with_storage("search_test", base_path);
     let flush_params = proximadb::storage::traits::FlushParameters {
         collection_id: Some("search_test".to_string()),
         vector_records: vectors,
         force: true,
+        collection_config: Some(collection_config),
         ..Default::default()
     };
     engine.do_flush(&flush_params).await?;
@@ -481,10 +520,13 @@ async fn test_viper_compaction_with_compression() -> anyhow::Result<()> {
     // Create multiple small batches to trigger compaction
     for batch in 0..5 {
         let vectors = create_test_vectors(200, 128, &format!("batch_{}", batch));
+        let base_path = temp_dir.path().to_str().unwrap();
+        let collection_config = create_test_collection_with_storage("compaction_test", base_path);
         let flush_params = proximadb::storage::traits::FlushParameters {
             collection_id: Some("compaction_test".to_string()),
             vector_records: vectors,
             force: true,
+            collection_config: Some(collection_config),
             ..Default::default()
         };
         engine.do_flush(&flush_params).await?;
@@ -578,10 +620,13 @@ async fn test_compression_algorithms_comparison() -> anyhow::Result<()> {
         // Flush test data
         let vectors = create_test_vectors(500, 512, "algo");
         
+        let base_path = temp_dir.path().to_str().unwrap();
+        let collection_config = create_test_collection_with_storage("algo_test", base_path);
         let flush_params = proximadb::storage::traits::FlushParameters {
             collection_id: Some("algo_test".to_string()),
             vector_records: vectors,
             force: true,
+            collection_config: Some(collection_config),
             ..Default::default()
         };
         let start = std::time::Instant::now();
@@ -672,10 +717,13 @@ async fn test_compression_algorithm_vs_disabled() -> anyhow::Result<()> {
         let sparsity_percent = (zero_count as f64 / total_elements as f64) * 100.0;
         info!("🔍 Vector sparsity: {:.1}% zeros ({} out of {} elements)", 
               sparsity_percent, zero_count, total_elements);
+        let base_path = temp_dir.path().to_str().unwrap();
+        let collection_config = create_test_collection_with_storage("compression_test", base_path);
         let flush_params = proximadb::storage::traits::FlushParameters {
             collection_id: Some("compression_test".to_string()),
             vector_records: vectors,
             force: true,
+            collection_config: Some(collection_config),
             ..Default::default()
         };
         engine.do_flush(&flush_params).await?;

@@ -103,6 +103,11 @@ impl DistanceCompute for CosineAvx512 {
             let total_norm_a = norm_a + norm_a_remainder;
             let total_norm_b = norm_b + norm_b_remainder;
             
+            // Handle zero vectors - return infinity as penalty distance
+            if total_norm_a == 0.0 || total_norm_b == 0.0 {
+                return f32::INFINITY; // Maximum possible distance for zero vectors
+            }
+            
             1.0 - (total_dot / (total_norm_a.sqrt() * total_norm_b.sqrt()))
         }
     }

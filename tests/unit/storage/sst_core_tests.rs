@@ -23,7 +23,8 @@ use super::sst_test_config::{setup_storage_assignment, cleanup_assignment};
 use super::sst_test_config::{
     create_test_sst_config, 
     create_test_filesystem_config,
-    setup_test_directories
+    setup_test_directories,
+    create_test_collection_with_assignment
 };
 
 /// Test basic SST operations: insert, flush, search
@@ -143,12 +144,16 @@ async fn test_lsm_basic_operations() {
         },
     ];
     
+    // Create test collection with embedded storage assignment
+    let collection_config = create_test_collection_with_assignment(&collection_id, &test_assignment);
+    
     // Flush vectors
     let flush_params = FlushParameters {
         collection_id: Some(collection_id.clone()),
         vector_records: vectors,
         force: true,
         synchronous: true,
+        collection_config: Some(collection_config),
         ..Default::default()
     };
     
@@ -216,8 +221,10 @@ async fn test_lsm_basic_operations() {
     
     assert!(sst_files_found, "SSTable files should exist after flush operation");
     
-    // Search without filters
-    let storage_url = format!("file://{}/{}/data", base_path.to_str().unwrap(), collection_id);
+    // Search without filters - use collection-specific data URL
+    // Storage format: {base_directory}/{collection_id}/data
+    let storage_url = format!("file://{}/{}/data", test_assignment.base_directory, collection_id);
+    debug!("DEBUG: Using storage URL for search: {}", storage_url);
     let results = engine.search_vectors_unified(
         &collection_id,
         &storage_url,

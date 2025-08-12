@@ -1923,7 +1923,7 @@ impl VectorOperationsService {
     pub async fn health_check(&self) -> Result<Vec<u8>> {
         let health_response = crate::core::HealthResponse {
             status: "HEALTHY".to_string(),
-            version: "1.0.0".to_string(),
+            version: crate::version::PROXIMADB_VERSION.to_string(),
             uptime_seconds: 0, // TODO: Track actual uptime
             total_operations: self.total_operations.load(Ordering::Relaxed) as i64,
             successful_operations: self.successful_operations.load(Ordering::Relaxed) as i64,

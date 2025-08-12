@@ -774,7 +774,7 @@ impl UnifiedStorageEngine for ViperEngine {
     }
     
     fn engine_version(&self) -> &'static str {
-        "1.0.0"
+        crate::version::PROXIMADB_VERSION
     }
     
     fn strategy(&self) -> crate::storage::traits::StorageEngineStrategy {
@@ -817,7 +817,7 @@ impl UnifiedStorageEngine for ViperEngine {
         // Add engine-specific metrics
         flush_result.engine_metrics.insert(
             "engine_version".to_string(),
-            serde_json::Value::String("1.0.0".to_string())
+            serde_json::Value::String(crate::version::PROXIMADB_VERSION.to_string())
         );
         flush_result.engine_metrics.insert(
             "engine_name".to_string(),
@@ -1055,7 +1055,7 @@ impl UnifiedStorageEngine for ViperEngine {
         ));
         
         // VIPER-specific metrics
-        metrics.insert("engine_version".to_string(), serde_json::Value::String("1.0.0".to_string()));
+        metrics.insert("engine_version".to_string(), serde_json::Value::String(crate::version::PROXIMADB_VERSION.to_string()));
         metrics.insert("ml_clustering_enabled".to_string(), serde_json::Value::Bool(false)); // Moved to AXIS
         metrics.insert("simd_processing_enabled".to_string(), serde_json::Value::Bool(true));
         metrics.insert("utilities_enabled".to_string(), serde_json::Value::Bool(true));

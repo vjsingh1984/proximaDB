@@ -53,6 +53,7 @@ pub mod server;
 pub mod services;
 pub mod storage;
 pub mod utils;
+pub mod version;
 
 // NOTE: Compiled Avro schemas disabled - using hardcoded schema_types.rs instead
 // pub mod compiled_schemas {

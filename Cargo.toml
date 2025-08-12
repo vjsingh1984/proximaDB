@@ -1,6 +1,6 @@
 [package]
 name = "proximadb"
-version = "0.1.0"
+version = "0.1.4"
 edition = "2021"
 authors = ["Vijaykumar Singh <singhvjd@gmail.com>"]
 description = "ProximaDB - Cloud-native vector database engineered for AI-first applications"

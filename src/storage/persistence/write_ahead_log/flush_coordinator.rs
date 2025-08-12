@@ -226,29 +226,8 @@ impl WALFlushCoordinator {
         // This includes: storage engine type, compression settings, storage assignment, etc.
         let collection_metadata = if let Some(context) = flush_context {
             info!("✅ CONTEXT_OPTIMIZED: Using pre-computed metadata for collection {}", collection_id);
-            // Create synthetic collection metadata from context (no service calls needed!)
-            Some(crate::proto::proximadb::Collection {
-                id: context.collection_id.clone(),
-                config: Some(crate::proto::proximadb::CollectionConfig {
-                    dimension: context.dimension as i32,
-                    distance_metric: context.distance_metric as i32,
-                    storage_engine: match context.storage_engine {
-                        crate::storage::background_flush_context::StorageEngineType::Viper => crate::proto::proximadb::StorageEngine::Viper as i32,
-                        crate::storage::background_flush_context::StorageEngineType::Sst => crate::proto::proximadb::StorageEngine::Sst as i32,
-                    },
-                    compression: None,
-                    optimization_hints: None,
-                    filterable_columns: context.filterable_columns.clone(),
-                    quantization_config: None, // Can be enhanced later if needed
-                    // Add other fields as needed...
-                    ..Default::default()
-                }),
-                storage_assignment: Some(crate::proto::proximadb::StorageAssignment {
-                    base_location: context.base_location.clone(),
-                    assigned_at: chrono::Utc::now().timestamp(),
-                }),
-                ..Default::default()
-            })
+            // Use centralized helper method for consistent collection proto creation
+            Some(context.to_collection_proto())
         } else if let Some(ref collection_service) = self.collection_service {
             // Fallback: Use collection service (legacy path)
             warn!("⚠️ FALLBACK: Using collection service - context not provided");

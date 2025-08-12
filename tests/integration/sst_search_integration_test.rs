@@ -60,6 +60,39 @@ fn create_test_lsm_config(base_path: &str) -> SstConfig {
     }
 }
 
+/// Helper to create test collection with storage assignment
+fn create_test_collection_with_assignment(collection_id: &str, base_path: &str) -> proximadb::proto::proximadb::Collection {
+    use proximadb::proto::proximadb::{Collection, CollectionConfig, StorageAssignment, CollectionStats, DistanceMetric, StorageEngine};
+    
+    let storage_assignment = StorageAssignment {
+        base_location: format!("file://{}", base_path),
+        assigned_at: chrono::Utc::now().timestamp_millis(),
+    };
+    
+    let config = CollectionConfig {
+        name: collection_id.to_string(),
+        dimension: 128,
+        distance_metric: DistanceMetric::Cosine as i32,
+        storage_engine: StorageEngine::Sst as i32,
+        ..Default::default()
+    };
+    
+    let stats = CollectionStats {
+        vector_count: 0,
+        index_size_bytes: 0,
+        data_size_bytes: 0,
+    };
+    
+    Collection {
+        id: collection_id.to_string(),
+        config: Some(config),
+        stats: Some(stats),
+        created_at: chrono::Utc::now().timestamp_millis(),
+        updated_at: chrono::Utc::now().timestamp_millis(),
+        storage_assignment: Some(storage_assignment),
+    }
+}
+
 #[tokio::test]
 async fn test_lsm_search_with_flush() {
     common::setup_hardware_capabilities();
@@ -187,12 +220,14 @@ async fn test_lsm_search_with_flush() {
     debug!("Converted {} vectors to core format", all_core_vectors.len());
     
     // Create flush parameters for LSM
+    let collection_config = create_test_collection_with_assignment(collection_id, base_path);
     let flush_params = proximadb::storage::traits::FlushParameters {
         collection_id: Some(collection_id.to_string()),
         force: true,
         synchronous: true,
         vector_records: all_core_vectors,
         batch_ids: vec![],
+        collection_config: Some(collection_config),
         ..Default::default()
     };
     
@@ -395,12 +430,14 @@ async fn test_lsm_compaction_and_search() {
         debug!("Inserted batch {} with {} records", batch_num, batch.len());
         
         // Manually flush this batch to LSM to ensure SSTables are created
+        let collection_config = create_test_collection_with_assignment(collection_id, base_path);
         let flush_params = proximadb::storage::traits::FlushParameters {
             collection_id: Some(collection_id.to_string()),
             force: true,
             synchronous: true,
             vector_records: batch,
             batch_ids: vec![],
+            collection_config: Some(collection_config),
             ..Default::default()
         };
         
@@ -627,12 +664,14 @@ async fn test_lsm_bloom_filter_efficiency() {
     debug!("Converted {} vectors to core format for process", all_core_vectors.len());
     
     // Create flush parameters for LSM
+    let collection_config = create_test_collection_with_assignment(collection_id, base_path);
     let flush_params = proximadb::storage::traits::FlushParameters {
         collection_id: Some(collection_id.to_string()),
         force: true,
         synchronous: true,
         vector_records: all_core_vectors,
         batch_ids: vec![],
+        collection_config: Some(collection_config),
         ..Default::default()
     };
     

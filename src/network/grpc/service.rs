@@ -1341,7 +1341,7 @@ impl ProximaDb for ProximaDbGrpcService {
 
         Ok(Response::new(HealthResponse {
             status: "healthy".to_string(),
-            version: "0.1.0".to_string(),
+            version: crate::version::PROXIMADB_VERSION.to_string(),
             uptime_seconds: 3600,
             active_connections: 1,
             memory_usage_bytes: 104_857_600,    // 100MB

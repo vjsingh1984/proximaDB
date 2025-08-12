@@ -206,7 +206,7 @@ impl MetricProperties for DistanceMetric {
     
     fn theoretical_range(&self) -> (f32, f32) {
         match self {
-            DistanceMetric::Cosine => (0.0, 2.0),
+            DistanceMetric::Cosine => (0.0, f32::INFINITY), // Infinity for zero vectors
             DistanceMetric::Hamming => (0.0, f32::INFINITY), // Depends on dimension
             DistanceMetric::Jaccard => (0.0, 1.0),
             DistanceMetric::DotProduct => (f32::NEG_INFINITY, f32::INFINITY),
@@ -520,8 +520,12 @@ impl UnifiedDistanceCompute {
         // Use fast approximate normalization for hot paths
         let normalized_score = match metric {
             DistanceMetric::Cosine => {
-                // Cosine distance is already in [0, 2], normalize to [0, 1]
-                1.0 - (raw_value.max(0.0).min(2.0) / 2.0)
+                // Cosine distance is in [0, 2] normally, but zero vectors return infinity
+                if raw_value.is_infinite() {
+                    0.0  // Zero vectors get worst similarity score
+                } else {
+                    1.0 - (raw_value.max(0.0).min(2.0) / 2.0)  // Normal range [0, 2]
+                }
             }
             DistanceMetric::Euclidean => {
                 // Use fast approximation instead of expensive norm calculation
@@ -604,8 +608,12 @@ impl UnifiedDistanceCompute {
     fn normalize_for_scoring(&self, raw_value: &f32, metric: &DistanceMetric, context: &NormalizationContext) -> f32 {
         match metric {
             DistanceMetric::Cosine => {
-                // Cosine distance is in [0, 2], convert to similarity [0, 1]
-                1.0 - (raw_value / 2.0)
+                // Cosine distance is in [0, 100], convert to similarity [0, 1]
+                if *raw_value >= 99.0 {
+                    0.0  // Zero vectors get worst similarity score
+                } else {
+                    1.0 - (raw_value.min(2.0) / 2.0)  // Normal range [0, 2]
+                }
             }
             DistanceMetric::DotProduct => {
                 // Normalize by product of norms to get cosine similarity

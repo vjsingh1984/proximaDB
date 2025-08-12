@@ -67,7 +67,7 @@ async fn create_test_wal_files(
         let serialized = serializer.serialize_batch(&vectors)?;
         
         let filename = format!(
-            "wal_20250717_120000_{:010}_{:010}_test_{}_data",
+            "wal_20250717_120000_{:010}_{:010}_test_{}.data",
             idx * 100,
             (idx + 1) * 100 - 1,
             idx
@@ -193,7 +193,7 @@ use tracing::{debug, error, info, warn};
             let serialized = serializer.serialize_batch(&vectors)?;
             
             let filename = format!(
-                "wal_20250717_120000_{:010}_{:010}_batch_{}_data",
+                "wal_20250717_120000_{:010}_{:010}_batch_{}.data",
                 batch_idx * batch_size,
                 (batch_idx + 1) * batch_size - 1,
                 batch_idx

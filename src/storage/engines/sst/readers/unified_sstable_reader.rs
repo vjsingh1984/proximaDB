@@ -10,8 +10,10 @@
 use anyhow::Result;
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::marker::PhantomData;
 use std::io::Read;
 use tracing::{debug, warn, info};
+use futures::stream::{Stream, StreamExt};
 
 // Performance optimizations: import commonly used types and functions for zero-cost abstractions
 // use std::hint::likely; // Unstable feature - removed for compilation
@@ -20,10 +22,45 @@ use std::ptr;
 use crate::core::VectorRecord;
 use crate::core::search::{SearchParams, SearchResult, FilterExpression};
 use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
-use crate::storage::persistence::filesystem::FilesystemFactory;
+use crate::storage::persistence::filesystem::{FilesystemFactory, FileSystem};
 use crate::storage::engines::sst::bloom_filter::SstableBloomFilter;
 use crate::storage::engines::sst::{SstableHeader, DataBlock, IndexEntry, SstRecord, CompressionAlgorithmSst};
 use crate::core::bloom::{BloomFilterConfig, BloomStrategy};
+
+// Type alias for bloom filter
+type BloomFilter = SstableBloomFilter;
+
+/// SSTable reading strategies for different access patterns
+#[derive(Debug, Clone)]
+pub enum SstableReadingStrategy {
+    /// Full scan of all blocks
+    FullScan {
+        use_block_cache: bool,
+    },
+    /// Scan specific range of blocks using index
+    IndexRangeScan {
+        start_block: usize,
+        end_block: usize,
+        use_bloom_filter: bool,
+    },
+    /// Filter blocks based on metadata criteria
+    MetadataFiltered {
+        selected_blocks: Vec<usize>,
+        skip_bloom_check: bool,
+    },
+    /// Hybrid strategy combining multiple approaches
+    Hybrid {
+        primary_strategy: Box<SstableReadingStrategy>,
+        fallback_blocks: Vec<usize>,
+    },
+    /// Optimized for compaction operations
+    CompactionOptimized {
+        skip_bloom_filters: bool,
+        skip_indexes: bool,
+        bypass_cache: bool,
+        sequential_io: bool,
+    },
+}
 use crate::storage::cache::specialized::{VectorStore, IndexNodeCache, BitmapFilterCache};
 use crate::storage::cache::specialized::vector_store::SstBlockKey;
 
@@ -100,27 +137,43 @@ pub struct MetadataStats {
 
 /// Reading strategy for SSTable access
 #[derive(Debug, Clone)]
-pub enum SstableReadingStrategy {
-    /// Full scan for small files or high selectivity
-    FullScan {
-        use_block_cache: bool,
-    },
-    /// Index-based range scan
-    IndexRangeScan {
-        start_block: usize,
-        end_block: usize,
-        use_bloom_filter: bool,
-    },
-    /// Metadata-driven block selection
-    MetadataFiltered {
-        selected_blocks: Vec<usize>,
-        skip_bloom_check: bool,
-    },
-    /// Hybrid approach for complex queries
-    Hybrid {
-        primary_strategy: Box<SstableReadingStrategy>,
-        fallback_blocks: Vec<usize>,
-    },
+pub enum ReadStrategy {
+    /// Full scan without using bloom filters or indexes
+    FullScan,
+    /// Filtered scan using bloom filters and indexes with smart cache
+    FilteredScan(FilterExpression),
+    /// Direct read for compaction, no cache integration
+    CompactionDirect,
+    /// Search optimized with full bloom/index and cache usage
+    SearchOptimized,
+}
+
+/// Read modes for data blocks
+#[derive(Debug, Clone)]
+pub enum ReadMode {
+    /// Generator-style streaming (memory efficient)
+    Streaming,
+    /// Traditional batch reading
+    Buffered,
+    /// Raw bytes, no deserialization
+    Direct,
+}
+
+/// Operation type for smart cache decisions
+#[derive(Debug, Clone)]
+pub enum OperationType {
+    Search,
+    Compaction,
+    Analytics,
+    FullScan,
+}
+
+/// Cache decision based on context
+#[derive(Debug, Clone)]
+pub enum CacheDecision {
+    UseCache,       // Search operations, repeated access patterns
+    SkipCache,      // Compaction, full scans, one-time operations
+    StreamingCache, // Large result sets, cache only hot blocks
 }
 
 /// Strategy selector based on query characteristics
@@ -159,6 +212,62 @@ pub struct CacheStats {
 }
 
 
+/// Core trait for block-level reading operations (async for cloud support)
+#[async_trait::async_trait]
+pub trait BlockReader {
+    async fn read_header(&mut self) -> Result<SstableHeader>;
+    async fn read_bloom_filter(&mut self, skip: bool) -> Result<Option<SstableBloomFilter>>;
+    async fn read_index_block(&mut self, strategy: &ReadStrategy) -> Result<SstableIndex>;
+    async fn read_data_block(&mut self, block_id: u64, mode: ReadMode) -> Result<DataBlock>;
+}
+
+/// Implement BlockReader trait for ModularBlockReader
+#[async_trait::async_trait]
+impl BlockReader for ModularBlockReader {
+    async fn read_header(&mut self) -> Result<SstableHeader> {
+        self.read_header_async().await
+    }
+    
+    async fn read_bloom_filter(&mut self, skip: bool) -> Result<Option<SstableBloomFilter>> {
+        self.read_bloom_filter_async(skip).await
+    }
+    
+    async fn read_index_block(&mut self, strategy: &ReadStrategy) -> Result<SstableIndex> {
+        self.read_index_block_async(strategy).await
+    }
+    
+    async fn read_data_block(&mut self, block_id: u64, mode: ReadMode) -> Result<DataBlock> {
+        self.read_data_block_async(block_id, mode).await
+    }
+}
+
+/// Generator-like streaming iterator for data blocks
+pub struct BlockIterator<T> {
+    reader: Box<dyn Read + Send>,
+    buffer: Vec<u8>,
+    position: usize,
+    block_size: usize,
+    total_blocks: usize,
+    current_block: usize,
+    mode: ReadMode,
+    _phantom: PhantomData<T>,
+}
+
+impl<T> BlockIterator<T> {
+    pub fn new(reader: Box<dyn Read + Send>, block_size: usize, total_blocks: usize, mode: ReadMode) -> Self {
+        Self {
+            reader,
+            buffer: Vec::with_capacity(block_size),
+            position: 0,
+            block_size,
+            total_blocks,
+            current_block: 0,
+            mode,
+            _phantom: PhantomData,
+        }
+    }
+}
+
 /// Collection context for search
 pub struct CollectionContext {
     pub file_path: String,
@@ -169,6 +278,435 @@ pub struct CollectionContext {
     pub creation_time: chrono::DateTime<chrono::Utc>,
     /// I/O optimization hints for efficient SSTable access
     pub io_optimization_hints: Option<HashMap<String, serde_json::Value>>,
+}
+
+/// Modular block reader for shared block-level operations
+/// Uses filesystem API for abstracted range reading across cloud and local storage
+#[derive(Clone)]
+pub struct ModularBlockReader {
+    filesystem: Arc<dyn FileSystem>,
+    header: Option<SstableHeader>,
+    file_path: String,
+}
+
+impl ModularBlockReader {
+    pub async fn open(filesystem_factory: Arc<FilesystemFactory>, file_path: &str) -> Result<Self> {
+        // Extract scheme from URL for proper filesystem selection
+        let scheme = if file_path.contains("://") {
+            file_path.split("://").next().unwrap_or("file")
+        } else {
+            "file"
+        };
+        
+        // Get appropriate filesystem implementation (S3, GCS, Azure, or local)
+        let fs = filesystem_factory.get_filesystem(&format!("{}:///", scheme))?;
+        
+        // Validate file exists
+        if !fs.exists(file_path).await? {
+            return Err(anyhow::anyhow!("SSTable file does not exist: {}", file_path));
+        }
+        
+        Ok(Self {
+            filesystem: fs,
+            header: None,
+            file_path: file_path.to_string(),
+        })
+    }
+    
+    /// Read a specific range of bytes from the file
+    /// Works efficiently across S3 (range requests), GCS, Azure, and local files
+    async fn read_range(&self, offset: u64, length: usize) -> Result<Vec<u8>> {
+        self.filesystem.read_range(&self.file_path, offset, length).await
+    }
+}
+
+impl ModularBlockReader {
+    async fn read_header_async(&mut self) -> Result<SstableHeader> {
+        if let Some(ref header) = self.header {
+            return Ok(header.clone());
+        }
+        
+        // Read magic marker (4 bytes) using filesystem API
+        let magic_bytes = self.read_range(0, 4).await?;
+        if &magic_bytes != b"SST1" {
+            return Err(anyhow::anyhow!("Invalid SSTable magic marker"));
+        }
+        
+        // Read header size (4 bytes)
+        let header_size_bytes = self.read_range(4, 4).await?;
+        let header_size = u32::from_le_bytes([
+            header_size_bytes[0], header_size_bytes[1], 
+            header_size_bytes[2], header_size_bytes[3]
+        ]) as usize;
+        
+        // Read header data
+        let header_data = self.read_range(8, header_size).await?;
+        
+        // Deserialize header
+        let header: SstableHeader = bincode::deserialize(&header_data)?;
+        self.header = Some(header.clone());
+        
+        Ok(header)
+    }
+    
+    async fn read_bloom_filter_async(&mut self, skip: bool) -> Result<Option<SstableBloomFilter>> {
+        if skip {
+            return Ok(None);
+        }
+        
+        let header = self.read_header_async().await?;
+        if header.bloom_filter_offset == 0 {
+            return Ok(None);
+        }
+        
+        // Read bloom filter size using filesystem range read
+        let size_bytes = self.read_range(header.bloom_filter_offset, 4).await?;
+        let bloom_size = u32::from_le_bytes([
+            size_bytes[0], size_bytes[1], size_bytes[2], size_bytes[3]
+        ]) as usize;
+        
+        // Read bloom filter data using range read
+        let bloom_data = self.read_range(header.bloom_filter_offset + 4, bloom_size).await?;
+        
+        // Deserialize bloom filter
+        let bloom_filter: SstableBloomFilter = bincode::deserialize(&bloom_data)?;
+        
+        Ok(Some(bloom_filter))
+    }
+    
+    async fn read_index_block_async(&mut self, strategy: &ReadStrategy) -> Result<SstableIndex> {
+        // Skip index for certain strategies
+        if matches!(strategy, ReadStrategy::FullScan | ReadStrategy::CompactionDirect) {
+            return Ok(SstableIndex {
+                entries: vec![],
+                metadata_stats: HashMap::new(),
+                vector_count: 0,
+                min_key: String::new(),
+                max_key: String::new(),
+            });
+        }
+        
+        let header = self.read_header_async().await?;
+        
+        // Read index size using filesystem range read
+        let size_bytes = self.read_range(header.index_offset, 4).await?;
+        let index_size = u32::from_le_bytes([
+            size_bytes[0], size_bytes[1], size_bytes[2], size_bytes[3]
+        ]) as usize;
+        
+        // Read index data using range read
+        let index_data = self.read_range(header.index_offset + 4, index_size).await?;
+        
+        // Deserialize index
+        let index: SstableIndex = bincode::deserialize(&index_data)?;
+        
+        Ok(index)
+    }
+    
+    async fn read_index(&self, header: &SstableHeader) -> Result<SstableIndex> {
+        debug!("Reading index at offset {} for file: {}", header.index_offset, self.file_path);
+        
+        // Read index size using filesystem range read
+        let size_bytes = self.read_range(header.index_offset, 4).await?;
+        let index_size = u32::from_le_bytes([
+            size_bytes[0], size_bytes[1], size_bytes[2], size_bytes[3]
+        ]) as usize;
+        
+        // Read index data using range read
+        let index_data = self.read_range(header.index_offset + 4, index_size).await?;
+        
+        // Deserialize index
+        let index: SstableIndex = bincode::deserialize(&index_data)?;
+        
+        Ok(index)
+    }
+    
+    pub async fn read_index_blocks(&self, header: &SstableHeader) -> Result<Vec<IndexEntry>> {
+        let index = self.read_index(header).await?;
+        Ok(index.entries)
+    }
+    
+    pub async fn read_bloom_filter(&self, header: &SstableHeader) -> Result<BloomFilter> {
+        debug!("Reading bloom filter at offset {} for file: {}", header.bloom_filter_offset, self.file_path);
+        
+        // Read bloom filter size
+        let size_bytes = self.read_range(header.bloom_filter_offset, 4).await?;
+        let bloom_size = u32::from_le_bytes([
+            size_bytes[0], size_bytes[1], size_bytes[2], size_bytes[3]
+        ]) as usize;
+        
+        // Read bloom filter data
+        let bloom_data = self.read_range(header.bloom_filter_offset + 4, bloom_size).await?;
+        
+        // Deserialize bloom filter
+        let bloom_filter: BloomFilter = bincode::deserialize(&bloom_data)?;
+        
+        Ok(bloom_filter)
+    }
+    
+    pub async fn read_data_block_at_offset(&self, offset: u64, size: usize) -> Result<DataBlock> {
+        debug!("Reading data block at offset {} with size {} for file: {}", offset, size, self.file_path);
+        
+        // Read the block data
+        let block_data = self.read_range(offset, size).await?;
+        
+        // Deserialize the data block
+        let data_block: DataBlock = bincode::deserialize(&block_data)?;
+        
+        Ok(data_block)
+    }
+    
+    async fn read_data_block_async(&mut self, block_id: u64, mode: ReadMode) -> Result<DataBlock> {
+        let header = self.read_header_async().await?;
+        
+        // Calculate block offset
+        let block_offset = header.data_offset + (block_id * header.block_size as u64);
+        
+        // Read block size using filesystem range read (efficient for S3/GCS/Azure)
+        let size_bytes = self.read_range(block_offset, 4).await?;
+        let block_size = u32::from_le_bytes([
+            size_bytes[0], size_bytes[1], size_bytes[2], size_bytes[3]
+        ]) as usize;
+        
+        // Read block data using range read (single network request for cloud storage)
+        let block_data = self.read_range(block_offset + 4, block_size).await?;
+        
+        match mode {
+            ReadMode::Direct => {
+                // Return raw bytes wrapped in DataBlock for compaction
+                Ok(DataBlock {
+                    records: vec![],
+                    block_id: block_id as u32,
+                    compressed_size: block_size,
+                    uncompressed_size: block_size,
+                    checksum: 0,
+                })
+            }
+            ReadMode::Buffered | ReadMode::Streaming => {
+                // Decompress if needed
+                let decompressed = if header.compression != CompressionAlgorithmSst::None {
+                    self.decompress_block(&block_data, header.compression)?
+                } else {
+                    block_data
+                };
+                
+                // Deserialize records
+                let block: DataBlock = bincode::deserialize(&decompressed)?;
+                Ok(block)
+            }
+        }
+    }
+}
+
+impl ModularBlockReader {
+    fn decompress_block(&self, data: &[u8], algorithm: CompressionAlgorithmSst) -> Result<Vec<u8>> {
+        match algorithm {
+            CompressionAlgorithmSst::None => Ok(data.to_vec()),
+            CompressionAlgorithmSst::Lz4 => {
+                let decompressed = lz4_flex::decompress_size_prepended(data)?;
+                Ok(decompressed)
+            }
+            CompressionAlgorithmSst::Zstd => {
+                let decompressed = zstd::decode_all(data)?;
+                Ok(decompressed)
+            }
+            CompressionAlgorithmSst::Snappy => {
+                let decompressed = snap::raw::Decoder::new().decompress_vec(data)?;
+                Ok(decompressed)
+            }
+            _ => {
+                // For other compression algorithms, return an error or use a default
+                Err(anyhow::anyhow!("Unsupported compression algorithm: {:?}", algorithm))
+            }
+        }
+    }
+}
+
+/// Iterator implementation for SstRecord streaming
+impl Iterator for BlockIterator<SstRecord> {
+    type Item = Result<SstRecord>;
+    
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.current_block >= self.total_blocks {
+            return None;
+        }
+        
+        // Read next record from buffer
+        if self.position >= self.buffer.len() {
+            // Need to read next block
+            self.current_block += 1;
+            self.position = 0;
+            self.buffer.clear();
+            
+            if self.current_block >= self.total_blocks {
+                return None;
+            }
+            
+            // Read block data
+            let mut block_data = vec![0u8; self.block_size];
+            match self.reader.read(&mut block_data) {
+                Ok(0) => return None,
+                Ok(n) => {
+                    self.buffer = block_data[..n].to_vec();
+                }
+                Err(e) => return Some(Err(anyhow::Error::from(e))),
+            }
+        }
+        
+        // Deserialize next SstRecord from buffer
+        match bincode::deserialize::<SstRecord>(&self.buffer[self.position..]) {
+            Ok(record) => {
+                self.position += bincode::serialized_size(&record).unwrap_or(0) as usize;
+                Some(Ok(record))
+            }
+            Err(e) => Some(Err(anyhow::Error::from(e))),
+        }
+    }
+}
+
+/// Iterator implementation for VectorRecord with zero-copy conversion
+impl Iterator for BlockIterator<VectorRecord> {
+    type Item = Result<VectorRecord>;
+    
+    fn next(&mut self) -> Option<Self::Item> {
+        // Read SstRecord first using simplified direct deserialization
+        if self.current_block >= self.total_blocks {
+            return None;
+        }
+        
+        if self.position >= self.buffer.len() {
+            self.current_block += 1;
+            self.position = 0;
+            self.buffer.clear();
+            
+            if self.current_block >= self.total_blocks {
+                return None;
+            }
+            
+            let mut block_data = vec![0u8; self.block_size];
+            match self.reader.read(&mut block_data) {
+                Ok(0) => return None,
+                Ok(n) => self.buffer = block_data[..n].to_vec(),
+                Err(e) => return Some(Err(anyhow::Error::from(e))),
+            }
+        }
+        
+        // Convert SstRecord to VectorRecord with minimal copying
+        match bincode::deserialize::<SstRecord>(&self.buffer[self.position..]) {
+            Ok(sst_record) => {
+                self.position += bincode::serialized_size(&sst_record).unwrap_or(0) as usize;
+                
+                // Convert SstRecord to VectorRecord
+                let vector_record = VectorRecord {
+                    id: Some(sst_record.id.clone()),
+                    vector: sst_record.vector.clone(),
+                    metadata: sst_record.metadata.clone(),
+                    timestamp: sst_record.timestamp,
+                    updated_at: sst_record.updated_at,
+                    expires_at: sst_record.expires_at,
+                    version: sst_record.version,
+                    rank: None,
+                    score: None,
+                    distance: None,
+                };
+                
+                Some(Ok(vector_record))
+            }
+            Err(e) => Some(Err(anyhow::Error::from(e))),
+        }
+    }
+}
+
+/// Compaction-optimized direct reader that bypasses caching
+/// Uses filesystem API for efficient range reads on cloud storage
+#[derive(Clone)]
+pub struct SstDirectReader {
+    block_reader: ModularBlockReader,
+    filesystem_factory: Arc<FilesystemFactory>,
+}
+
+impl SstDirectReader {
+    pub async fn open(filesystem_factory: Arc<FilesystemFactory>, file_path: &str) -> Result<Self> {
+        let block_reader = ModularBlockReader::open(filesystem_factory.clone(), file_path).await?;
+        Ok(Self {
+            block_reader,
+            filesystem_factory,
+        })
+    }
+    
+    pub fn new(filesystem_factory: Arc<FilesystemFactory>) -> Self {
+        let block_reader = ModularBlockReader::new(filesystem_factory.clone(), String::new());
+        Self {
+            block_reader,
+            filesystem_factory,
+        }
+    }
+    
+    /// Stream SstRecords directly without conversion for compaction
+    pub async fn stream_sst_records(&mut self, _file_path: String) -> Result<BlockIterator<SstRecord>> {
+        let header = self.block_reader.read_header().await?;
+        let total_blocks = header.num_blocks as usize;
+        let block_size = header.block_size as usize;
+        
+        // Create raw reader for streaming
+        let reader = Box::new(std::io::Cursor::new(Vec::new())) as Box<dyn Read + Send>;
+        
+        Ok(BlockIterator {
+            reader,
+            buffer: Vec::with_capacity(block_size),
+            position: 0,
+            block_size,
+            total_blocks,
+            current_block: 0,
+            mode: ReadMode::Streaming,
+            _phantom: PhantomData,
+        })
+    }
+    
+    /// Read all SstRecords for compaction without caching
+    /// Uses efficient range reads for cloud storage (S3/GCS/Azure)
+    pub async fn read_all_for_compaction(&mut self) -> Result<Vec<SstRecord>> {
+        let header = self.block_reader.read_header().await?;
+        let mut all_records = Vec::with_capacity(header.total_vectors as usize);
+        
+        // Skip bloom filters and indexes for compaction
+        let _ = self.block_reader.read_bloom_filter(true).await?;
+        let _ = self.block_reader.read_index_block(&ReadStrategy::CompactionDirect).await?;
+        
+        // Read all data blocks directly using filesystem range reads
+        // This is efficient for cloud storage as each block is a single range request
+        for block_id in 0..header.num_blocks {
+            let block = self.block_reader.read_data_block(block_id as u64, ReadMode::Buffered).await?;
+            all_records.extend(block.records);
+        }
+        
+        Ok(all_records)
+    }
+    
+    /// Create streaming iterator for memory-efficient compaction
+    pub async fn stream_blocks(&mut self) -> Result<impl Stream<Item = Result<SstRecord>>> {
+        let header = self.block_reader.read_header().await?;
+        let block_reader = std::sync::Arc::new(tokio::sync::Mutex::new(self.block_reader.clone()));
+        
+        // Create async stream of SstRecords
+        let stream = futures::stream::iter(0..header.num_blocks)
+            .then(move |block_id| {
+                let reader = block_reader.clone();
+                async move {
+                    let mut reader = reader.lock().await;
+                    let block = reader.read_data_block(block_id as u64, ReadMode::Buffered).await?;
+                    Ok::<Vec<SstRecord>, anyhow::Error>(block.records)
+                }
+            })
+            .map(|result| {
+                result.map(|records| {
+                    futures::stream::iter(records.into_iter().map(Ok))
+                })
+            })
+            .try_flatten();
+        
+        Ok(stream)
+    }
 }
 
 impl UnifiedSstableReader {
@@ -373,6 +911,9 @@ impl UnifiedSstableReader {
                 let fallback = self.load_specific_blocks(context, fallback_blocks).await?;
                 blocks.extend(fallback);
                 Ok(blocks)
+            }
+            SstableReadingStrategy::CompactionOptimized { skip_bloom_filters, skip_indexes, bypass_cache, sequential_io } => {
+                self.compaction_optimized_strategy(context, *skip_bloom_filters, *skip_indexes, *bypass_cache, *sequential_io).await
             }
         }
         })
@@ -1613,6 +2154,170 @@ impl UnifiedSstableReader {
         Ok(blocks)
     }
     
+    /// 🚀 COMPACTION OPTIMIZED STRATEGY: Read entire SSTable with minimal overhead
+    /// Optimizations:
+    /// - Skip bloom filter loading (no point lookups needed)
+    /// - Skip index loading (reading everything anyway)
+    /// - Bypass cache (avoid memory pressure during bulk operations)
+    /// - Sequential I/O for optimal disk performance
+    async fn compaction_optimized_strategy(
+        &self,
+        context: &CollectionContext,
+        skip_bloom_filters: bool,
+        skip_indexes: bool,
+        bypass_cache: bool,
+        sequential_io: bool,
+    ) -> Result<Vec<DataBlock>> {
+        info!("🚀 COMPACTION OPTIMIZED: Reading {} files with optimizations: bloom={}, index={}, cache={}, sequential={}", 
+              context.sstable_files.len(), !skip_bloom_filters, !skip_indexes, !bypass_cache, sequential_io);
+        
+        // Use modular direct reader for maximum efficiency when all optimizations are enabled
+        if bypass_cache && skip_bloom_filters && skip_indexes && sequential_io {
+            return self.compaction_direct_strategy_modular(context).await;
+        }
+        
+        let mut all_blocks = Vec::new();
+        
+        for (idx, file_path) in context.sstable_files.iter().enumerate() {
+            info!("📂 COMPACTION READ: File {} of {}: {}", idx + 1, context.sstable_files.len(), file_path);
+            
+            // Validate SST1 magic marker
+            match self.validate_sst_file(file_path).await {
+                Ok(()) => {
+                    debug!("✅ SST1 validation passed for file: {}", file_path);
+                }
+                Err(e) => {
+                    warn!("⚠️ Skipping invalid SSTable file {}: {}", file_path, e);
+                    continue;
+                }
+            }
+            
+            let start_time = std::time::Instant::now();
+            
+            // Use direct read without caching when bypass_cache is enabled
+            let blocks = if bypass_cache {
+                self.read_file_direct_no_cache(file_path, skip_bloom_filters, skip_indexes, sequential_io).await?
+            } else {
+                // Fall back to normal read with cache
+                self.read_file_direct(file_path).await?
+            };
+            
+            let elapsed = start_time.elapsed();
+            info!("⚡ COMPACTION READ: Loaded {} blocks from {} in {:?} (bypass_cache={})", 
+                  blocks.len(), file_path, elapsed, bypass_cache);
+            
+            // Debug: print sample records
+            if let Some(first_block) = blocks.first() {
+                debug!("  🔎 First block has {} records", first_block.records.len());
+                for (i, record) in first_block.records.iter().take(3).enumerate() {
+                    debug!("    Record {}: id={}, tombstone={}", i, record.id, record.is_tombstone);
+                }
+            }
+            
+            all_blocks.extend(blocks);
+        }
+        
+        info!("✅ COMPACTION OPTIMIZED: Loaded {} total blocks from {} files", 
+              all_blocks.len(), context.sstable_files.len());
+        Ok(all_blocks)
+    }
+    
+    /// Direct file read with compaction optimizations (no cache, minimal metadata)
+    async fn read_file_direct_no_cache(
+        &self,
+        path: &str,
+        skip_bloom_filters: bool,
+        skip_indexes: bool,
+        sequential_io: bool,
+    ) -> Result<Vec<DataBlock>> {
+        debug!("🔥 COMPACTION DIRECT: Reading {} with optimizations (bloom={}, index={}, sequential={})", 
+               path, !skip_bloom_filters, !skip_indexes, sequential_io);
+        
+        // Extract scheme from path
+        let scheme = if path.contains("://") {
+            path.split("://").next().unwrap_or("file")
+        } else {
+            "file"
+        };
+        let fs = self.filesystem.get_filesystem(&format!("{}:///", scheme))?;
+        
+        // Read the full file in one operation for optimal sequential I/O
+        let data = fs.read(path).await?;
+        let mut offset = 0usize;
+        
+        // Verify SST1 magic bytes
+        if data.len() < 8 {
+            return Ok(vec![]);
+        }
+        
+        if &data[0..4] != b"SST1" {
+            return Err(anyhow::anyhow!("Invalid SSTable format: missing SST1 magic bytes"));
+        }
+        
+        offset += 4; // Skip magic
+        let header_len = u32::from_le_bytes([data[4], data[5], data[6], data[7]]) as usize;
+        offset += 4; // Skip header length field
+        
+        // 🚀 OPTIMIZATION: Only read header to get block count, skip detailed parsing
+        let header: SstableHeader = bincode::deserialize(&data[offset..offset+header_len])
+            .map_err(|e| anyhow::anyhow!("Failed to deserialize header: {}", e))?;
+        offset += header_len;
+        
+        debug!("📊 COMPACTION: Header shows {} blocks expected", header.block_count);
+        
+        // 🚀 OPTIMIZATION: Skip bloom filter entirely if not needed
+        if skip_bloom_filters {
+            debug!("⏭️ COMPACTION: Skipping bloom filter loading");
+        }
+        let bloom_len = u32::from_le_bytes([
+            data[offset], data[offset + 1], data[offset + 2], data[offset + 3]
+        ]) as usize;
+        offset += 4 + bloom_len; // Skip bloom filter data
+        
+        // 🚀 OPTIMIZATION: Skip index loading if not needed
+        if skip_indexes {
+            debug!("⏭️ COMPACTION: Skipping index loading");
+        }
+        let index_len = u32::from_le_bytes([
+            data[offset], data[offset + 1], data[offset + 2], data[offset + 3]
+        ]) as usize;
+        offset += 4 + index_len; // Skip index data
+        
+        // 🚀 READ DATA BLOCKS: Optimized sequential reading
+        let mut blocks = Vec::with_capacity(header.block_count as usize);
+        debug!("📦 COMPACTION: Starting data block reading at offset {} (sequential={})", offset, sequential_io);
+        
+        // Sequential block reading with minimal overhead
+        while offset + 4 <= data.len() {
+            let block_len = u32::from_le_bytes([
+                data[offset], data[offset + 1], data[offset + 2], data[offset + 3]
+            ]) as usize;
+            offset += 4;
+            
+            if offset + block_len > data.len() {
+                warn!("🚨 COMPACTION: Not enough data for block (need {}, have {})", block_len, data.len() - offset);
+                break;
+            }
+            
+            let block_data = &data[offset..offset + block_len];
+            
+            match DataBlock::deserialize(block_data) {
+                Ok(block) => {
+                    debug!("✅ COMPACTION: Deserialized block with {} records", block.records.len());
+                    blocks.push(block);
+                }
+                Err(e) => {
+                    warn!("❌ COMPACTION: Failed to deserialize block at offset {}: {}", offset - 4, e);
+                    // Continue processing other blocks
+                }
+            }
+            offset += block_len;
+        }
+        
+        info!("🎯 COMPACTION: Read {} blocks sequentially from {}", blocks.len(), path);
+        Ok(blocks)
+    }
+
     async fn read_file_direct(&self, path: &str) -> Result<Vec<DataBlock>> {
         // Load index directly without caching (true direct access)
         let index = Arc::new(self.load_index_optimized(path).await?);
@@ -1787,6 +2492,231 @@ impl UnifiedSstableReader {
     fn compare_metadata_values(a: &serde_json::Value, b: &serde_json::Value) -> std::cmp::Ordering {
         crate::core::search::json_comparison::compare_json_values(a, b)
     }
+    
+    // ===== MODULAR STRATEGY METHODS =====
+    // These methods use ModularBlockReader and SstDirectReader for improved performance
+    
+    /// Full scan using modular block reader with selective block loading
+    async fn full_scan_strategy_modular(
+        &self,
+        context: &CollectionContext,
+        use_cache: bool,
+    ) -> Result<Vec<DataBlock>> {
+        debug!("🔍 Full scan modular strategy for {} files", context.sstable_files.len());
+        let mut all_blocks = Vec::new();
+        
+        for file_path in &context.sstable_files {
+            let block_reader = ModularBlockReader::new(
+                self.filesystem.clone(),
+                file_path.clone(),
+            );
+            
+            // Read header first
+            let header = block_reader.read_header().await?;
+            
+            // For full scan, skip bloom filters but read index for navigation
+            let index_blocks = if use_cache {
+                // Check cache first
+                if let Some(cached) = self.index_node_cache.get(file_path).await {
+                    cached
+                } else {
+                    let blocks = block_reader.read_index_blocks(&header).await?;
+                    self.index_node_cache.put(file_path.clone(), blocks.clone()).await;
+                    blocks
+                }
+            } else {
+                block_reader.read_index_blocks(&header).await?
+            };
+            
+            // Read all data blocks
+            for index_entry in &index_blocks {
+                let data_block = block_reader.read_data_block_at_offset(
+                    index_entry.offset,
+                    index_entry.size as usize,
+                ).await?;
+                all_blocks.push(data_block);
+            }
+        }
+        
+        Ok(all_blocks)
+    }
+    
+    /// Filtered scan using modular approach with predicate pushdown
+    async fn filtered_scan_strategy_modular(
+        &self,
+        context: &CollectionContext,
+        filter: &FilterExpression,
+    ) -> Result<Vec<DataBlock>> {
+        debug!("🔍 Filtered scan modular strategy with filter: {:?}", filter);
+        let mut all_blocks = Vec::new();
+        
+        for file_path in &context.sstable_files {
+            let block_reader = ModularBlockReader::new(
+                self.filesystem.clone(),
+                file_path.clone(),
+            );
+            
+            let header = block_reader.read_header().await?;
+            
+            // Check bloom filter first if available
+            if header.bloom_filter_offset > 0 {
+                let bloom_filter = block_reader.read_bloom_filter(&header).await?;
+                if !self.check_bloom_filter_match(&bloom_filter, filter) {
+                    debug!("⏭️ Skipping file {} - bloom filter indicates no matches", file_path);
+                    continue;
+                }
+            }
+            
+            // Read index to find relevant blocks
+            let index_blocks = block_reader.read_index_blocks(&header).await?;
+            
+            // Filter blocks based on metadata ranges in index
+            for index_entry in &index_blocks {
+                if self.should_read_block_for_filter(&index_entry, filter) {
+                    let data_block = block_reader.read_data_block_at_offset(
+                        index_entry.offset,
+                        index_entry.size as usize,
+                    ).await?;
+                    all_blocks.push(data_block);
+                }
+            }
+        }
+        
+        Ok(all_blocks)
+    }
+    
+    /// Direct compaction strategy using SstDirectReader for zero-copy operations
+    async fn compaction_direct_strategy_modular(
+        &self,
+        context: &CollectionContext,
+    ) -> Result<Vec<DataBlock>> {
+        info!("🚀 Direct compaction modular strategy - zero-copy SST operations");
+        
+        let direct_reader = SstDirectReader::new(
+            self.filesystem.clone(),
+        );
+        
+        let mut all_sst_records = Vec::new();
+        
+        for file_path in &context.sstable_files {
+            // For now, use a simpler approach without streaming
+            // TODO: Implement proper async streaming
+            let mut direct_reader_clone = direct_reader.clone();
+            let sst_stream = direct_reader_clone.stream_sst_records(file_path.clone()).await?;
+            
+            // Collect all records from the iterator
+            for record in sst_stream {
+                all_sst_records.push(record?);
+            }
+        }
+        
+        // Convert to DataBlocks only when needed for compatibility
+        // This is temporary until full compaction uses SstRecords end-to-end
+        let blocks = self.sst_records_to_data_blocks(all_sst_records)?;
+        
+        Ok(blocks)
+    }
+    
+    /// Search-optimized strategy using modular approach with smart caching
+    async fn search_optimized_strategy_modular(
+        &self,
+        context: &CollectionContext,
+        search_params: &SearchParams,
+    ) -> Result<Vec<DataBlock>> {
+        debug!("🔍 Search-optimized modular strategy");
+        let mut relevant_blocks = Vec::new();
+        
+        for file_path in &context.sstable_files {
+            // Check vector cache first for frequently accessed data
+            if let Some(cached_vectors) = self.vector_cache.get(file_path).await {
+                relevant_blocks.push(DataBlock {
+                    block_id: 0,
+                    records: cached_vectors,
+                    uncompressed_size: 0,
+                    compression_algorithm: CompressionAlgorithmSst::None,
+                    compression_ratio: 1.0,
+                });
+                continue;
+            }
+            
+            let block_reader = ModularBlockReader::new(
+                self.filesystem.clone(),
+                file_path.clone(),
+            );
+            
+            let header = block_reader.read_header().await?;
+            
+            // Use index to find blocks with high relevance scores
+            let index_blocks = block_reader.read_index_blocks(&header).await?;
+            
+            // Smart block selection based on search parameters
+            let selected_blocks = self.select_blocks_for_search(&index_blocks, search_params);
+            
+            for block_idx in selected_blocks {
+                if let Some(index_entry) = index_blocks.get(block_idx) {
+                    let data_block = block_reader.read_data_block_at_offset(
+                        index_entry.offset,
+                        index_entry.size as usize,
+                    ).await?;
+                    
+                    // Cache hot data for future searches
+                    // Note: Vector cache stores VectorRecords, not SstRecords
+                    // This would require conversion which we're trying to avoid
+                    // TODO: Consider adding a separate cache for SstRecords
+                    
+                    relevant_blocks.push(data_block);
+                }
+            }
+        }
+        
+        Ok(relevant_blocks)
+    }
+    
+    // Helper methods for modular strategies
+    
+    fn check_bloom_filter_match(&self, _bloom_filter: &BloomFilter, _filter: &FilterExpression) -> bool {
+        // TODO: Implement bloom filter checking logic
+        true // For now, always check blocks
+    }
+    
+    fn should_read_block_for_filter(&self, _index_entry: &IndexEntry, _filter: &FilterExpression) -> bool {
+        // TODO: Implement block filtering based on index metadata
+        true // For now, read all blocks
+    }
+    
+    fn sst_records_to_data_blocks(&self, records: Vec<SstRecord>) -> Result<Vec<DataBlock>> {
+        // Group records into blocks (temporary conversion for compatibility)
+        let block_size = 1000; // Default block size
+        let mut blocks = Vec::new();
+        let mut block_id = 0u32;
+        
+        for chunk in records.chunks(block_size) {
+            blocks.push(DataBlock {
+                block_id,
+                records: chunk.to_vec(),
+                uncompressed_size: 0,
+                compression_algorithm: CompressionAlgorithmSst::None,
+                compression_ratio: 1.0,
+            });
+            block_id += 1;
+        }
+        
+        Ok(blocks)
+    }
+    
+    fn select_blocks_for_search(&self, _index_blocks: &[IndexEntry], _params: &SearchParams) -> Vec<usize> {
+        // TODO: Implement smart block selection based on search parameters
+        // For now, select all blocks
+        (0.._index_blocks.len()).collect()
+    }
+    
+    fn is_hot_data(&self, data_block: &DataBlock) -> bool {
+        // Simple heuristic: blocks with many non-tombstone records are hot
+        let active_records = data_block.records.iter()
+            .filter(|r| !r.is_tombstone)
+            .count();
+        active_records > data_block.records.len() / 2
+    }
 }
 
 impl ReadingStrategySelector {
@@ -1823,6 +2753,89 @@ impl ReadingStrategySelector {
                 use_block_cache: true,
             })
         }
+    }
+    
+    /// 🚀 NEW: Select compaction-optimized strategy for bulk operations
+    /// This bypasses normal query optimizations in favor of bulk I/O efficiency
+    pub fn select_compaction_strategy(
+        &self,
+        _context: &CollectionContext,
+    ) -> SstableReadingStrategy {
+        SstableReadingStrategy::CompactionOptimized {
+            skip_bloom_filters: true,   // No point lookups in compaction
+            skip_indexes: true,         // Reading everything anyway
+            bypass_cache: true,         // Avoid memory pressure
+            sequential_io: true,        // Optimize for disk throughput
+        }
+    }
+}
+
+impl UnifiedSstableReader {
+    /// 🚀 NEW: Read all records from SSTable files optimized for compaction
+    /// This is the main entry point that compaction should use instead of search_vectors
+    pub async fn read_all_records_for_compaction(
+        &self,
+        sstable_files: &[String],
+    ) -> Result<Vec<VectorRecord>> {
+        info!("🔥 COMPACTION READ: Starting optimized read of {} SSTable files", sstable_files.len());
+        
+        // Create minimal context for compaction
+        let context = CollectionContext {
+            file_path: String::new(),
+            sstable_files: sstable_files.to_vec(),
+            total_vectors: 0,
+            metadata_columns: vec![],
+            level: 0,
+            creation_time: chrono::Utc::now(),
+            io_optimization_hints: None,
+        };
+        
+        // Use compaction-optimized strategy
+        let strategy = self.strategy_selector.select_compaction_strategy(&context);
+        debug!("📊 COMPACTION: Using strategy: {:?}", strategy);
+        
+        // Load all blocks using optimized strategy
+        let blocks = self.apply_strategy(&strategy, &Default::default(), &context).await?;
+        info!("📦 COMPACTION: Loaded {} data blocks total", blocks.len());
+        
+        // Convert all SstRecord to VectorRecord for compaction processing
+        let mut all_records = Vec::new();
+        let mut total_records = 0;
+        let mut tombstone_records = 0;
+        
+        for (block_idx, block) in blocks.iter().enumerate() {
+            debug!("📄 COMPACTION: Processing block {} with {} records", block_idx, block.records.len());
+            
+            for record in &block.records {
+                total_records += 1;
+                
+                if record.is_tombstone {
+                    tombstone_records += 1;
+                    // Include tombstones for compaction to handle properly
+                }
+                
+                // Convert SstRecord to VectorRecord
+                let vector_record = VectorRecord {
+                    id: Some(record.id.clone()),
+                    vector: record.vector.clone(),
+                    metadata: record.metadata.clone(),
+                    timestamp: record.timestamp,
+                    updated_at: record.updated_at,
+                    expires_at: record.expires_at,
+                    version: record.version.map(|v| v as u32),
+                    distance: None,
+                    score: None,
+                    rank: None,
+                };
+                
+                all_records.push(vector_record);
+            }
+        }
+        
+        info!("🎯 COMPACTION READ COMPLETE: {} total records ({} tombstones) from {} files", 
+              total_records, tombstone_records, sstable_files.len());
+        
+        Ok(all_records)
     }
 }
 

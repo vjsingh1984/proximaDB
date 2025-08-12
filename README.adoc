@@ -105,7 +105,7 @@ cd proximadb && docker compose up -d
 
 # Verify deployment
 curl http://localhost:5678/health
-# {"status": "healthy", "version": "1.0.0"}
+# {"status": "healthy", "version": "0.1.4"}
 ----
 
 === 2. Your First Vector Collection

@@ -15,9 +15,6 @@ pub mod tests;
 
 pub use unified_sstable_reader::{
     UnifiedSstableReader,
-    SstableReadingStrategy,
-    BlockCache,
-    IndexCache,
     CollectionContext,
 };
 

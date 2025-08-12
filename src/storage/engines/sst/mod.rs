@@ -697,18 +697,20 @@ impl Default for DataBlockCompressionConfig {
 impl DataBlockCompressionConfig {
     /// Create from SstConfig settings
     pub fn from_sst_config(config: &SstConfig) -> Self {
+        let compression_algorithm = match config.compression.as_str() {
+            "zstd" => CompressionAlgorithm::Zstd,
+            "lz4" => CompressionAlgorithm::Lz4,
+            _ => CompressionAlgorithm::None,
+        };
+        
         Self {
-            enable_compression: false, // Will be determined by algorithm (None = disabled)
-            compression_threshold: 8192, // 8KB threshold
+            enable_compression: compression_algorithm != CompressionAlgorithm::None,
+            compression_threshold: 1024, // 1KB threshold for testing
             compression_level: config.compression_level,
             vector_config: VectorSerializationConfig {
                 use_bytemuck: true,
                 compression_threshold: 256,
-                compression_algorithm: match config.compression.as_str() {
-                    "zstd" => CompressionAlgorithm::Zstd,
-                    "lz4" => CompressionAlgorithm::Lz4,
-                    _ => CompressionAlgorithm::None,
-                },
+                compression_algorithm,
                 compression_level: config.compression_level,
                 adaptive_compression: true,
             },
@@ -1284,7 +1286,7 @@ impl SstStorage {
         // Initialize compaction manager (always enabled)
         let compaction_manager = Some(Arc::new(CompactionManager::new(
             config.clone(),
-        )));
+        ).await?));
 
         Ok(Self {
             config,
@@ -1326,7 +1328,7 @@ impl SstStorage {
             let mut compaction_manager = CompactionManager::with_atomic_coordinator(
                 self.config.clone(),
                 Some(self.atomic_coordinator.clone()),
-            );
+            ).await?;
             
             // Start background workers
             compaction_manager.start_workers(worker_count).await?;
@@ -1408,33 +1410,141 @@ impl SstStorage {
         let sst_filename = SstFilenameGenerator::generate_flush_filename();
         debug!("🔧 SST: Creating SSTable file: {} for collection: {}", sst_filename, collection_id);
         
-        // Convert sorted vectors to SstRecord format with sequence numbers
-        // Handle both ID-based and append-only vectors
-        let mut entries: BTreeMap<String, SstRecord> = BTreeMap::new();
-        let mut sequence_number = 0u64;
+        // MULTI-BATCH OPTIMIZED SORTING FOR GLOBAL PARTITIONED MEMTABLE
+        // vector_records contains individual vectors from MULTIPLE batches (params.batch_ids)
+        // Each batch may have been written at different times, so vectors are NOT pre-sorted
+        // 
+        // Optimal strategy for multi-batch flush:
+        // - Group vectors by batch_id (if available in metadata)
+        // - Sort each batch's vectors separately (smaller sorts are faster)
+        // - Use k-way merge to combine sorted batches efficiently
+        // - Fallback to single Vec + sort for simplicity when batch grouping isn't beneficial
         
-        for vector in sorted_vectors {
-            let vector_id = vector.id.as_deref().unwrap_or("").to_string();
-            
-            // Handle append-only vectors (empty/null IDs) specially
-            if vector_id.is_empty() {
-                // For append-only vectors, use sequence number as unique key
-                let append_only_key = format!("__append_only_seq_{}", sequence_number);
-                info!("🔍 DEBUG SST FLUSH: Append-only vector detected, using key='{}'", append_only_key);
-                let mut sst_record = SstRecord::from_vector_record(vector);
-                sst_record.sequence_number = sequence_number;
-                sst_record.level = 0; // New SSTables start at level 0
-                entries.insert(append_only_key, sst_record);
+        let record_count = vector_records.len();
+        let batch_count = params.batch_ids.len();
+        
+        info!("🔄 SST FLUSH: Processing {} vectors from {} batches", record_count, batch_count);
+        
+        // Scope the sorting to ensure immediate deallocation
+        let sorted_records_iter = {
+            // For small datasets or single batch, use simple Vec + sort
+            if record_count < 10000 || batch_count <= 1 {
+                info!("🔄 SST FLUSH: Using single-sort strategy (small dataset or single batch)");
+                
+                let mut unsorted_records = Vec::with_capacity(record_count);
+                
+                // Collect all records into Vec (O(1) per insertion)
+                for (sequence_number, vector) in vector_records.iter().enumerate() {
+                    let vector_id = vector.id.as_deref().unwrap_or("").to_string();
+                    
+                    // Handle append-only vectors (empty/null IDs) specially
+                    let key = if vector_id.is_empty() {
+                        format!("__append_only_seq_{}", sequence_number)
+                    } else {
+                        vector_id
+                    };
+                    
+                    let mut sst_record = SstRecord::from_vector_record(vector);
+                    sst_record.sequence_number = sequence_number as u64;
+                    sst_record.level = 0;
+                    
+                    unsorted_records.push((key, sst_record));
+                }
+                
+                // Single efficient sort: O(n log n)
+                unsorted_records.sort_by(|a, b| a.0.cmp(&b.0));
+                unsorted_records.into_iter()
+                
             } else {
-                // Normal ID-based vector
-                info!("🔍 DEBUG SST FLUSH: Inserting vector with id='{}' into BTreeMap", vector_id);
-                let mut sst_record = SstRecord::from_vector_record(vector);
-                sst_record.sequence_number = sequence_number;
-                sst_record.level = 0; // New SSTables start at level 0
-                entries.insert(vector_id, sst_record);
+                // For larger multi-batch datasets, use batch-aware sorting
+                info!("🔄 SST FLUSH: Using multi-batch sort strategy ({} batches)", batch_count);
+                
+                // Group vectors by their order (simulating batch grouping)
+                // Since we don't have direct batch_id in VectorRecord, group by chunks
+                let batch_size = (record_count / batch_count).max(1);
+                let mut sorted_batches = Vec::with_capacity(batch_count);
+                
+                for (batch_idx, batch_chunk) in vector_records.chunks(batch_size).enumerate() {
+                    let mut batch_records = Vec::with_capacity(batch_chunk.len());
+                    
+                    for (local_idx, vector) in batch_chunk.iter().enumerate() {
+                        let sequence_number = batch_idx * batch_size + local_idx;
+                        let vector_id = vector.id.as_deref().unwrap_or("").to_string();
+                        
+                        let key = if vector_id.is_empty() {
+                            format!("__append_only_seq_{}", sequence_number)
+                        } else {
+                            vector_id
+                        };
+                        
+                        let mut sst_record = SstRecord::from_vector_record(vector);
+                        sst_record.sequence_number = sequence_number as u64;
+                        sst_record.level = 0;
+                        
+                        batch_records.push((key, sst_record));
+                    }
+                    
+                    // Sort this batch: O(m log m) where m = batch_size
+                    batch_records.sort_by(|a, b| a.0.cmp(&b.0));
+                    sorted_batches.push(batch_records.into_iter());
+                }
+                
+                // K-way merge of sorted batches: O(n log k) where k = number of batches
+                // This is more efficient than single O(n log n) when k << n
+                use std::cmp::Reverse;
+                use std::collections::BinaryHeap;
+                
+                #[derive(Eq, PartialEq)]
+                struct HeapItem {
+                    key: String,
+                    record: SstRecord,
+                    batch_idx: usize,
+                }
+                
+                impl Ord for HeapItem {
+                    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+                        // Reverse for min-heap behavior
+                        other.key.cmp(&self.key)
+                    }
+                }
+                
+                impl PartialOrd for HeapItem {
+                    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+                        Some(self.cmp(other))
+                    }
+                }
+                
+                let mut heap = BinaryHeap::new();
+                let mut iterators = sorted_batches;
+                
+                // Initialize heap with first item from each batch
+                for (batch_idx, iter) in iterators.iter_mut().enumerate() {
+                    if let Some((key, record)) = iter.next() {
+                        heap.push(HeapItem { key, record, batch_idx });
+                    }
+                }
+                
+                // Create iterator that performs k-way merge
+                let merged_iter = std::iter::from_fn(move || {
+                    if let Some(HeapItem { key, record, batch_idx }) = heap.pop() {
+                        // Add next item from same batch to heap
+                        if let Some((next_key, next_record)) = iterators[batch_idx].next() {
+                            heap.push(HeapItem { 
+                                key: next_key, 
+                                record: next_record, 
+                                batch_idx 
+                            });
+                        }
+                        Some((key, record))
+                    } else {
+                        None
+                    }
+                });
+                
+                // Collect iterator to avoid lifetime issues
+                merged_iter.collect::<Vec<_>>().into_iter()
             }
-            sequence_number += 1;
-        }
+        };
 
         // Write SSTable using atomic operations (always available now)
         let atomic_coordinator = &self.atomic_coordinator;
@@ -1469,7 +1579,7 @@ impl SstStorage {
         } else {
             writer
         };
-        writer.write_records(entries.clone()).await
+        writer.write_sorted_records(sorted_records_iter, record_count).await
             .map_err(|e| anyhow::anyhow!("Failed to write SSTable to staging: {}", e))?;
         
         // Get file size from staging
@@ -1555,7 +1665,7 @@ impl UnifiedStorageEngine for SstStorage {
     }
 
     fn engine_version(&self) -> &'static str {
-        "1.0.0"
+        crate::version::PROXIMADB_VERSION
     }
 
     fn strategy(&self) -> StorageEngineStrategy {
@@ -1774,7 +1884,7 @@ impl UnifiedStorageEngine for SstStorage {
                 let compaction_manager = compaction::CompactionManager::with_atomic_coordinator(
                     self.config.clone(),
                     Some(self.atomic_coordinator.clone()),
-                );
+                ).await?;
                 let enhanced_stats = compaction_manager.perform_compaction_enhanced(
                     &task,
                     &self.config,

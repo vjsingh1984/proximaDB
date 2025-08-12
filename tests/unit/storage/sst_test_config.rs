@@ -4,6 +4,7 @@ use proximadb::core::{SstConfig, BloomFilterConfig, WriteBufferUserConfig};
 use tracing::{debug, error, info, warn};
 use proximadb::storage::persistence::filesystem::FilesystemConfig;
 use std::path::Path;
+use proximadb::proto::proximadb::{Collection, CollectionConfig, StorageAssignment, CollectionStats, DistanceMetric, StorageEngine};
 
 // Inline persistent test assignments module
 use anyhow::Result;
@@ -403,4 +404,41 @@ pub async fn cleanup_all_assignments() -> anyhow::Result<()> {
     test_assignments.clear_all_assignments().await?;
     
     Ok(())
+}
+
+/// Create a test collection proto message with embedded storage assignment
+/// This solves the "No storage assignment found for collection" error
+pub fn create_test_collection_with_assignment(collection_id: &str, assignment: &TestAssignmentData) -> Collection {
+    Collection {
+        id: collection_id.to_string(),
+        config: Some(CollectionConfig {
+            name: collection_id.to_string(),
+            dimension: 3,
+            distance_metric: DistanceMetric::Cosine as i32,
+            storage_engine: StorageEngine::Sst as i32,
+            primary_indexing_algorithm: 0, // Flat
+            filterable_columns: vec![],
+            index_configs: vec![],
+            quantization_config: None,
+            primary_index_name: "".to_string(),
+            enable_automatic_index_selection: false,
+            description: None,
+            tags: vec![],
+            owner: None,
+            compression: None,
+            storage_location: Some(assignment.data_url.clone()),
+            optimization_hints: None,
+        }),
+        stats: Some(CollectionStats {
+            vector_count: 0,
+            index_size_bytes: 0,
+            data_size_bytes: 0,
+        }),
+        created_at: chrono::Utc::now().timestamp_millis(),
+        updated_at: chrono::Utc::now().timestamp_millis(),
+        storage_assignment: Some(StorageAssignment {
+            base_location: format!("file://{}", assignment.base_directory),
+            assigned_at: chrono::Utc::now().timestamp_millis(),
+        }),
+    }
 }

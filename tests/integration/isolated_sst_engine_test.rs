@@ -25,12 +25,13 @@ async fn test_isolated_sst_basic_operations() -> Result<()> {
     debug!("📝 Created {} test vectors for collection: {}", vectors.len(), env.collection_id());
     
     // Insert and flush vectors
+    let collection_config = env.create_test_collection();
     let flush_params = FlushParameters {
         collection_id: Some(env.collection_id().to_string()),
         vector_records: vectors,
         force: true,
         synchronous: true,
-        collection_config: None,
+        collection_config: Some(collection_config),
         ..Default::default()
     };
     
@@ -39,7 +40,8 @@ async fn test_isolated_sst_basic_operations() -> Result<()> {
     
     // Search without filters
     let query_vector = env.create_query_vector();
-    let storage_url = format!("file://{}/{}/data", env.temp_dir.path().to_str().unwrap(), env.collection_id());
+    let storage_url = format!("file://{}/data", env.persistent_dir.to_str().unwrap());
+    info!("🔍 Using storage URL for search: {}", storage_url);
     let results = engine.search_vectors_unified(
         env.collection_id(),
         &storage_url,
@@ -82,12 +84,13 @@ async fn test_isolated_sst_metadata_filtering() -> Result<()> {
     
     // Create test vectors with diverse metadata
     let vectors = env.create_test_vectors(15);
+    let collection_config = env.create_test_collection();
     let flush_params = FlushParameters {
         collection_id: Some(env.collection_id().to_string()),
         vector_records: vectors,
         force: true,
         synchronous: true,
-        collection_config: None,
+        collection_config: Some(collection_config),
         ..Default::default()
     };
     let result = engine.do_flush(&flush_params).await?;
@@ -100,7 +103,8 @@ async fn test_isolated_sst_metadata_filtering() -> Result<()> {
         value: serde_json::Value::String("A".to_string()),
     };
     
-    let storage_url = format!("file://{}/{}/data", env.temp_dir.path().to_str().unwrap(), env.collection_id());
+    let storage_url = format!("file://{}/data", env.persistent_dir.to_str().unwrap());
+    info!("🔍 Using storage URL for filtered search: {}", storage_url);
     let filtered_results = engine.search_vectors_unified(
         env.collection_id(),
         &storage_url,
@@ -152,11 +156,26 @@ async fn test_isolated_sst_flush_and_compaction() -> Result<()> {
     let env = IsolatedTestEnvironment::new().await?;
     let mut engine = env.create_sst_engine().await?;
     
-    debug!("🔍 DEBUG TEST: Created SST engine for collection: {}", env.collection_id());
+    println!("🚀 STARTING SST FLUSH AND COMPACTION TEST");
+    println!("🏗️ Test environment:");
+    println!("   - Collection ID: {}", env.collection_id());
+    println!("   - Persistent directory: {}", env.persistent_dir.display());
+    println!("   - Data directory: {}/data", env.persistent_dir.display());
+    
+    // Verify data directory exists
+    let data_dir = env.persistent_dir.join("data");
+    if !data_dir.exists() {
+        println!("❌ Data directory does not exist, creating: {}", data_dir.display());
+        tokio::fs::create_dir_all(&data_dir).await?;
+    }
+    println!("✅ Data directory confirmed: {}", data_dir.display());
     
     // Insert multiple batches to trigger compaction
     let batch_size = 5;
     let num_batches = 4;
+    
+    info!("📝 Test plan: {} batches × {} vectors = {} total vectors", 
+          num_batches, batch_size, num_batches * batch_size);
     
     for batch in 0..num_batches {
         let vectors: Vec<VectorRecord> = (0..batch_size).map(|i| {
@@ -172,35 +191,148 @@ async fn test_isolated_sst_flush_and_compaction() -> Result<()> {
             debug!("🔍 DEBUG TEST:   Vector {}: id={:?}", i, v.id);
         }
         
+        let collection_config = env.create_test_collection();
         let flush_params = FlushParameters {
             collection_id: Some(env.collection_id().to_string()),
             vector_records: vectors,
             force: true,
             synchronous: true,
-            collection_config: None,
+            collection_config: Some(collection_config),
             ..Default::default()
         };
         
+        println!("🔄 EXECUTING FLUSH for batch {}/{}...", batch + 1, num_batches);
         let result = engine.do_flush(&flush_params).await?;
-        assert!(result.success, "Flush should succeed");
-        debug!("📦 Flushed batch {} of {} - entries_flushed={}, bytes_written={}", 
-            batch + 1, num_batches, result.entries_flushed, result.bytes_written);
+        
+        println!("✅ FLUSH COMPLETED for batch {}/{}:", batch + 1, num_batches);
+        println!("   - Success: {}", result.success);
+        println!("   - Entries flushed: {}", result.entries_flushed);
+        println!("   - Bytes written: {}", result.bytes_written);
+        println!("   - Files created: {}", result.files_created);
+        println!("   - Duration: {}ms", result.duration_ms);
+        
+        assert!(result.success, "Flush should succeed for batch {}", batch + 1);
+        assert_eq!(result.entries_flushed, batch_size as u64, 
+                  "Should flush exactly {} vectors in batch {}", batch_size, batch + 1);
+        
+        // Check if files were actually created
+        let data_files = tokio::fs::read_dir(&data_dir).await;
+        match data_files {
+            Ok(mut entries) => {
+                let mut file_count = 0;
+                while let Some(_entry) = entries.next_entry().await? {
+                    file_count += 1;
+                }
+                info!("📁 Files in data directory after batch {}: {} files", batch + 1, file_count);
+            }
+            Err(e) => {
+                warn!("❌ Failed to read data directory: {}", e);
+            }
+        }
+    }
+    
+    println!("🔧 PREPARING FOR COMPACTION...");
+    
+    // Final file count before compaction - check the actual SST file location
+    // Files are written to: {persistent_dir}/{collection_id}/data/ 
+    let actual_sst_dir = env.persistent_dir.join(&env.collection_id).join("data");
+    println!("🔍 Checking actual SST directory: {}", actual_sst_dir.display());
+    
+    let final_data_files = tokio::fs::read_dir(&actual_sst_dir).await;
+    match final_data_files {
+        Ok(mut entries) => {
+            let mut file_count = 0;
+            let mut total_size = 0;
+            while let Some(entry) = entries.next_entry().await? {
+                if let Ok(metadata) = entry.metadata().await {
+                    file_count += 1;
+                    total_size += metadata.len();
+                    println!("📄 Found file: {} ({} bytes)", 
+                          entry.file_name().to_string_lossy(), metadata.len());
+                }
+            }
+            println!("📊 PRE-COMPACTION STATE:");
+            println!("   - Total files in data dir: {}", file_count);
+            println!("   - Total size: {} bytes", total_size);
+            
+        }
+        Err(e) => {
+            println!("❌ Failed to read data directory before compaction: {}", e);
+        }
     }
     
     // Enable compaction and trigger it
+    info!("⚙️ Enabling compaction with level 1...");
     engine.enable_compaction(1).await?;
+    
+    let collection_config = env.create_test_collection();
+    info!("🔄 EXECUTING COMPACTION...");
+    info!("📋 Compaction parameters:");
+    info!("   - Collection ID: {:?}", env.collection_id());
+    info!("   - Force: true");
+    info!("   - Synchronous: true");
+    info!("   - Has collection config: {}", collection_config.config.is_some());
+    info!("   - Has storage assignment: {}", collection_config.storage_assignment.is_some());
+    
     let compact_params = CompactionParameters {
         collection_id: Some(env.collection_id().to_string()),
         force: true,
         synchronous: true,
-        collection_config: None,
+        collection_config: Some(collection_config),
         ..Default::default()
     };
+    
     let result = engine.compact(compact_params).await?;
+    
+    println!("✅ COMPACTION COMPLETED:");
+    println!("   - Success: {}", result.success);
+    println!("   - Entries processed: {}", result.entries_processed);
+    println!("   - Files merged (input): {}", result.input_files);
+    println!("   - Files created (output): {}", result.output_files);
+    println!("   - Bytes read: {}", result.bytes_read);
+    println!("   - Bytes written: {}", result.bytes_written);
+    println!("   - Duration: {}ms", result.duration_ms);
+    
     assert!(result.success, "Compaction should succeed");
     
+    // Verify that compaction actually processed the expected number of records
+    // This ensures we're not just silently passing because flush data is still readable
+    info!("🧮 VERIFYING COMPACTION RESULTS...");
+    
+    // Each batch had 5 vectors, with 4 batches = 20 total vectors that should be compacted
+    let expected_total_vectors = batch_size * num_batches; // 5 * 4 = 20
+    info!("   - Expected vectors to process: {}", expected_total_vectors);
+    info!("   - Actually processed: {}", result.entries_processed);
+    
+    if result.entries_processed == 0 {
+        error!("❌ COMPACTION ISSUE: No records were processed!");
+        error!("   This suggests compaction found no files to compact.");
+        error!("   Check if flush operations actually created persistent files.");
+        
+        // List directory contents again for debugging
+        let debug_files = tokio::fs::read_dir(&data_dir).await;
+        match debug_files {
+            Ok(mut entries) => {
+                error!("📁 Current data directory contents:");
+                while let Some(entry) = entries.next_entry().await? {
+                    if let Ok(metadata) = entry.metadata().await {
+                        error!("   - {}: {} bytes", 
+                              entry.file_name().to_string_lossy(), metadata.len());
+                    }
+                }
+            }
+            Err(e) => {
+                error!("   Failed to list directory: {}", e);
+            }
+        }
+    }
+    
+    assert_eq!(result.entries_processed, expected_total_vectors as u64,
+        "Compaction should process all {} vectors that were flushed", expected_total_vectors);
+    
     // Verify all vectors are still searchable after compaction
-    let storage_url = format!("file://{}/{}/data", env.temp_dir.path().to_str().unwrap(), env.collection_id());
+    let storage_url = format!("file://{}/data", env.persistent_dir.to_str().unwrap());
+    info!("🔍 Using storage URL for filtered search: {}", storage_url);
     let all_results = engine.search_vectors_unified(
         env.collection_id(),
         &storage_url,
@@ -244,6 +376,7 @@ async fn test_isolated_sst_concurrent_operations() -> Result<()> {
     for batch_id in 0..concurrent_batches {
         let engine_clone = engine.clone();
         let env_collection_id = env.collection_id().to_string();
+        let collection_config = env.create_test_collection();
         
         let handle = tokio::spawn(async move {
             // Create unique vectors for this batch
@@ -273,7 +406,7 @@ async fn test_isolated_sst_concurrent_operations() -> Result<()> {
                 vector_records: vectors,
                 force: true,
                 synchronous: true,
-                collection_config: None,
+                collection_config: Some(collection_config),
                 ..Default::default()
             };
             
@@ -309,7 +442,8 @@ async fn test_isolated_sst_concurrent_operations() -> Result<()> {
         "Should have flushed expected total");
     
     // Verify all vectors are searchable
-    let storage_url = format!("file://{}/{}/data", env.temp_dir.path().to_str().unwrap(), env.collection_id());
+    let storage_url = format!("file://{}/data", env.persistent_dir.to_str().unwrap());
+    info!("🔍 Using storage URL for filtered search: {}", storage_url);
     let search_results = engine.search_vectors_unified(
         env.collection_id(),
         &storage_url,
@@ -339,11 +473,13 @@ async fn test_isolated_sst_recovery_persistence() -> Result<()> {
     // Phase 1: Create engine, insert data, and flush
     {
         let engine = env.create_sst_engine().await?;
+        let collection_config = env.create_test_collection();
         let flush_params = FlushParameters {
             collection_id: Some(env.collection_id().to_string()),
             vector_records: original_vectors.clone(),
             force: true,
             synchronous: true,
+            collection_config: Some(collection_config),
             ..Default::default()
         };
         let result = engine.do_flush(&flush_params).await?;
@@ -355,7 +491,8 @@ async fn test_isolated_sst_recovery_persistence() -> Result<()> {
         let engine = env.create_sst_engine().await?;
         
         // Search for persisted data
-        let storage_url = format!("file://{}/{}/data", env.temp_dir.path().to_str().unwrap(), env.collection_id());
+        let storage_url = format!("file://{}/data", env.persistent_dir.to_str().unwrap());
+    info!("🔍 Using storage URL for filtered search: {}", storage_url);
         let results = engine.search_vectors_unified(
             env.collection_id(),
             &storage_url,
@@ -405,12 +542,13 @@ async fn test_isolated_multi_collection_isolation() -> Result<()> {
     // Insert different data in each collection
     for (i, (env, engine)) in multi_env.environments.iter().zip(engines.iter()).enumerate() {
         let vectors = env.create_test_vectors(5);
+        let collection_config = env.create_test_collection();
         let flush_params = FlushParameters {
             collection_id: Some(env.collection_id().to_string()),
             vector_records: vectors,
             force: true,
             synchronous: true,
-            collection_config: None,
+            collection_config: Some(collection_config),
             ..Default::default()
         };
         let result = engine.do_flush(&flush_params).await?;
@@ -420,7 +558,8 @@ async fn test_isolated_multi_collection_isolation() -> Result<()> {
     
     // Verify complete isolation - each collection should only see its own data
     for (i, (env, engine)) in multi_env.environments.iter().zip(engines.iter()).enumerate() {
-        let storage_url = format!("file://{}/{}/data", env.temp_dir.path().to_str().unwrap(), env.collection_id());
+        let storage_url = format!("file://{}/data", env.persistent_dir.to_str().unwrap());
+    info!("🔍 Using storage URL for filtered search: {}", storage_url);
         let results = engine.search_vectors_unified(
             env.collection_id(),
             &storage_url,
@@ -509,12 +648,13 @@ async fn test_isolated_sst_distance_metrics() -> Result<()> {
         },
     ];
     
+    let collection_config = env.create_test_collection();
     let flush_params = FlushParameters {
         collection_id: Some(env.collection_id().to_string()),
         vector_records: vectors,
         force: true,
         synchronous: true,
-        collection_config: None,
+        collection_config: Some(collection_config),
         ..Default::default()
     };
     let result = engine.do_flush(&flush_params).await?;
@@ -529,7 +669,8 @@ async fn test_isolated_sst_distance_metrics() -> Result<()> {
         DistanceMetric::DotProduct,
     ];
     
-    let storage_url = format!("file://{}/{}/data", env.temp_dir.path().to_str().unwrap(), env.collection_id());
+    let storage_url = format!("file://{}/data", env.persistent_dir.to_str().unwrap());
+    info!("🔍 Using storage URL for filtered search: {}", storage_url);
     for metric in metrics {
         let results = engine.search_vectors_unified(
             env.collection_id(),
@@ -608,12 +749,13 @@ async fn test_isolated_sst_large_dataset() -> Result<()> {
             }
         }).collect();
         
+        let collection_config = env.create_test_collection();
         let flush_params = FlushParameters {
             collection_id: Some(env.collection_id().to_string()),
             vector_records: vectors,
             force: true,
             synchronous: true,
-            collection_config: None,
+            collection_config: Some(collection_config),
             ..Default::default()
         };
         let result = engine.do_flush(&flush_params).await?;
@@ -630,7 +772,8 @@ async fn test_isolated_sst_large_dataset() -> Result<()> {
     // Test various search scenarios
     
     // 1. Search for top-k results
-    let storage_url = format!("file://{}/{}/data", env.temp_dir.path().to_str().unwrap(), env.collection_id());
+    let storage_url = format!("file://{}/data", env.persistent_dir.to_str().unwrap());
+    info!("🔍 Using storage URL for filtered search: {}", storage_url);
     let top_k_results = engine.search_vectors_unified(
         env.collection_id(),
         &storage_url,

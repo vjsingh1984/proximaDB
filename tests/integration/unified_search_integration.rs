@@ -218,13 +218,21 @@ async fn test_distance_metrics() {
         let result2 = distance_compute.calculate_distance(&vector1, &identical, &metric);
         
         // Verify the result structure
-        assert!(result1.raw_value >= 0.0);
-        assert!(result1.normalized_score >= 0.0 && result1.normalized_score <= 1.0);
-        assert!(result1.rank_value >= 0.0);
-        
-        assert!(result2.raw_value >= 0.0);
-        assert!(result2.normalized_score >= 0.0 && result2.normalized_score <= 1.0);
-        assert!(result2.rank_value >= 0.0);
+        // For DotProduct, raw_value can be negative and rank_value is -raw_value
+        if metric == DistanceMetric::DotProduct {
+            // DotProduct can have any value
+            assert!(result1.normalized_score >= 0.0 && result1.normalized_score <= 1.0);
+            assert!(result2.normalized_score >= 0.0 && result2.normalized_score <= 1.0);
+        } else {
+            // Distance metrics should have non-negative raw values
+            assert!(result1.raw_value >= 0.0);
+            assert!(result1.normalized_score >= 0.0 && result1.normalized_score <= 1.0);
+            assert!(result1.rank_value >= 0.0);
+            
+            assert!(result2.raw_value >= 0.0);
+            assert!(result2.normalized_score >= 0.0 && result2.normalized_score <= 1.0);
+            assert!(result2.rank_value >= 0.0);
+        }
         
         // Identical vectors should have higher similarity (lower rank_value)
         // This tests the semantic consistency of the unified distance system

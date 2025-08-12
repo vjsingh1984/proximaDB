@@ -69,7 +69,7 @@ async fn test_viper_unified_storage_engine_traits() -> Result<()> {
 
     // Test engine identification
     assert_eq!(viper_engine.engine_name(), "VIPER");
-    assert_eq!(viper_engine.engine_version(), "1.0.0");
+    assert_eq!(viper_engine.engine_version(), crate::version::PROXIMADB_VERSION);
     assert_eq!(viper_engine.strategy(), StorageEngineStrategy::Viper);
 
     // Test engine capabilities

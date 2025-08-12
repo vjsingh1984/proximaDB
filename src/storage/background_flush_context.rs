@@ -125,6 +125,87 @@ pub struct BackgroundFlushContext {
 }
 
 impl BackgroundFlushContext {
+    /// Convert internal DistanceMetric to proto DistanceMetric
+    /// Centralizes distance metric conversion to ensure all 13 supported metrics are handled
+    pub fn distance_metric_to_proto(metric: &DistanceMetric) -> i32 {
+        use crate::proto::proximadb::DistanceMetric as ProtoDistanceMetric;
+        
+        match metric {
+            // Core metrics
+            DistanceMetric::Cosine => ProtoDistanceMetric::Cosine as i32,
+            DistanceMetric::Euclidean => ProtoDistanceMetric::Euclidean as i32,
+            DistanceMetric::DotProduct => ProtoDistanceMetric::DotProduct as i32,
+            
+            // Extended metrics
+            DistanceMetric::Manhattan => ProtoDistanceMetric::Manhattan as i32,
+            DistanceMetric::Hamming => ProtoDistanceMetric::Hamming as i32,
+            DistanceMetric::Jaccard => ProtoDistanceMetric::Jaccard as i32,
+            DistanceMetric::Chebyshev => ProtoDistanceMetric::Chebyshev as i32,
+            DistanceMetric::Canberra => ProtoDistanceMetric::Canberra as i32,
+            DistanceMetric::Minkowski => ProtoDistanceMetric::Minkowski as i32,
+            DistanceMetric::Angular => ProtoDistanceMetric::Angular as i32,
+            DistanceMetric::BrayCurtis => ProtoDistanceMetric::BrayCurtis as i32,
+            DistanceMetric::Hellinger => ProtoDistanceMetric::Hellinger as i32,
+            DistanceMetric::Custom => ProtoDistanceMetric::Custom as i32,
+            
+            // Handle unspecified - default to Cosine as the most common metric
+            DistanceMetric::Unspecified => ProtoDistanceMetric::Cosine as i32,
+        }
+    }
+    
+    /// Convert internal StorageEngineType to proto StorageEngine
+    /// Centralizes storage engine conversion for code reuse
+    pub fn storage_engine_to_proto(engine: &StorageEngineType) -> i32 {
+        use crate::proto::proximadb::StorageEngine as ProtoStorageEngine;
+        
+        match engine {
+            StorageEngineType::Viper => ProtoStorageEngine::Viper as i32,
+            StorageEngineType::Sst => ProtoStorageEngine::Sst as i32,
+        }
+    }
+    
+    /// Create a complete Collection proto from the background context
+    /// This provides all necessary information for flush and compaction operations
+    /// without requiring additional service calls
+    pub fn to_collection_proto(&self) -> crate::proto::proximadb::Collection {
+        use crate::proto::proximadb::{Collection, CollectionConfig, StorageAssignment, CollectionStats};
+        
+        let storage_assignment = StorageAssignment {
+            base_location: self.base_location.clone(),
+            assigned_at: chrono::Utc::now().timestamp_millis(),
+        };
+        
+        let config = CollectionConfig {
+            name: self.collection_id.clone(),
+            dimension: self.dimension as i32,
+            distance_metric: Self::distance_metric_to_proto(&self.distance_metric),
+            storage_engine: Self::storage_engine_to_proto(&self.storage_engine),
+            filterable_columns: self.filterable_columns.clone(),
+            quantization_config: self.quantization_config.as_ref().map(|qc| {
+                crate::proto::proximadb::QuantizationConfig {
+                    enabled: qc.enabled,
+                    ..Default::default()
+                }
+            }),
+            ..Default::default()
+        };
+        
+        let stats = CollectionStats {
+            vector_count: 0, // Unknown from context
+            index_size_bytes: 0, // Unknown from context
+            data_size_bytes: 0, // Unknown from context
+        };
+        
+        Collection {
+            id: self.collection_id.clone(),
+            config: Some(config),
+            stats: Some(stats),
+            created_at: chrono::Utc::now().timestamp_millis(),
+            updated_at: chrono::Utc::now().timestamp_millis(),
+            storage_assignment: Some(storage_assignment),
+        }
+    }
+    
     /// Create context from collection service (eliminates future service calls)
     pub async fn from_collection_service(
         service: &CollectionService,
