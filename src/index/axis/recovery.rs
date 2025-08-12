@@ -223,7 +223,12 @@ impl IndexRecoveryManager {
         let start_time = Instant::now();
         
         // Get collection state
-        let state = self.collection_state.get_state(collection_id).await?;
+        let state = self.collection_state.get_state(collection_id).ok_or_else(|| {
+            SerializationError::Io(std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                format!("Collection {} not found", collection_id)
+            ))
+        })?;
         
         match state {
             CollectionTierState::Memory { .. } => {
@@ -298,6 +303,7 @@ impl IndexRecoveryManager {
         
         // Determine index type from data
         let index_type = self.detect_index_type(&index_data)?;
+        let data_len = index_data.len();
         
         // Load based on preferred recovery tier
         match self.config.preferred_recovery_tier {
@@ -312,7 +318,7 @@ impl IndexRecoveryManager {
             }
             
             _ => {
-                warn!("Unsupported recovery tier, defaulting to memory");
+                info!("Unsupported recovery tier, defaulting to memory");
                 self.load_index_to_memory(collection_id, index_data, index_type).await?;
             }
         }
@@ -320,7 +326,7 @@ impl IndexRecoveryManager {
         // Update stats
         {
             let mut stats = self.stats.write().await;
-            stats.total_bytes_loaded += index_data.len() as u64;
+            stats.total_bytes_loaded += data_len as u64;
         }
         
         Ok(())
@@ -359,7 +365,8 @@ impl IndexRecoveryManager {
             self.collection_state.transition_to_disk(
                 collection_id,
                 disk_url,
-            ).await?;
+            ).await
+                .map_err(|_| SerializationError::Io(std::io::Error::new(std::io::ErrorKind::Other, "Failed to transition to disk")))?;
         }
         
         Ok(())
@@ -381,7 +388,8 @@ impl IndexRecoveryManager {
         debug!("Looking for checkpoint at: {}", checkpoint_path);
         
         // Check if checkpoint exists
-        if !self.filesystem.exists(&checkpoint_path).await? {
+        if !self.filesystem.exists(&checkpoint_path).await
+            .map_err(|e| SerializationError::Io(std::io::Error::new(std::io::ErrorKind::Other, e)))? {
             warn!("No checkpoint found for collection {}", collection_id);
             return Err(SerializationError::Io(
                 std::io::Error::new(
@@ -403,7 +411,8 @@ impl IndexRecoveryManager {
         if self.config.enable_delta_reconstruction {
             let delta_path = format!("axis/checkpoints/{}/deltas/", collection_id);
             
-            if self.filesystem.exists(&delta_path).await? {
+            if self.filesystem.exists(&delta_path).await
+                .map_err(|e| SerializationError::Io(std::io::Error::new(std::io::ErrorKind::Other, e)))? {
                 let deltas = self.load_deltas(&delta_path).await?;
                 
                 if !deltas.is_empty() {
@@ -446,7 +455,8 @@ impl IndexRecoveryManager {
         let mut deltas = Vec::new();
         
         // List all delta files
-        let entries = self.filesystem.list(delta_path).await?;
+        let entries = self.filesystem.list(delta_path).await
+            .map_err(|e| SerializationError::Io(std::io::Error::new(std::io::ErrorKind::Other, e)))?;
         
         for entry in entries {
             if entry.name.ends_with(".delta") {
@@ -507,8 +517,8 @@ impl IndexRecoveryManager {
         // Update collection state to memory
         self.collection_state.transition_to_memory(
             collection_id,
-            index_data.len() as u64,
-        ).await?;
+        ).await
+            .map_err(|_| SerializationError::Io(std::io::Error::new(std::io::ErrorKind::Other, "Failed to transition to memory")))?;
         
         // Update stats
         {
@@ -577,11 +587,13 @@ impl IndexRecoveryManager {
             collection_id, checkpoint.checkpoint_id);
         
         let checkpoint_data = bincode::serialize(&checkpoint)?;
-        self.filesystem.write(&checkpoint_path, &checkpoint_data, None).await?;
+        self.filesystem.write(&checkpoint_path, &checkpoint_data, None).await
+            .map_err(|e| SerializationError::Io(std::io::Error::new(std::io::ErrorKind::Other, e)))?;
         
         // Update latest link
         let latest_path = format!("axis/checkpoints/{}/latest.checkpoint", collection_id);
-        self.filesystem.write(&latest_path, &checkpoint_data, None).await?;
+        self.filesystem.write(&latest_path, &checkpoint_data, None).await
+            .map_err(|e| SerializationError::Io(std::io::Error::new(std::io::ErrorKind::Other, e)))?;
         
         // Store checkpoint location
         self.checkpoint_locations.insert(

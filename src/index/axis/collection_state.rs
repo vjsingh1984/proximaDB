@@ -15,25 +15,29 @@ use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use tracing::{debug, info, warn};
+use tracing::{debug, info};
 
 /// Collection-level tier state
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum CollectionTierState {
     /// Fully loaded in memory, ready for queries
     Memory {
+        #[serde(skip, default = "Instant::now")]
         loaded_at: Instant,
         memory_bytes: usize,
         access_count: u64,
+        #[serde(skip, default = "Instant::now")]
         last_access: Instant,
         generation: u64,  // Tracks index version
     },
     
     /// On disk (local or persistent volume)
     Disk {
+        #[serde(skip, default = "Instant::now")]
         stored_at: Instant,
         disk_location: PathBuf,
         disk_bytes: usize,
+        #[serde(skip, default)]
         last_access: Option<Instant>,
         promotion_eligible: bool,
     },
@@ -52,6 +56,7 @@ pub enum CollectionTierState {
     Transitioning {
         from: Box<CollectionTierState>,
         to: TierLevel,
+        #[serde(skip, default = "Instant::now")]
         started_at: Instant,
         progress: f32,
     },

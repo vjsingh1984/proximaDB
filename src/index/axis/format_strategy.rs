@@ -30,7 +30,7 @@ use std::io::{Read, Write as IoWrite};
 use tracing::{debug, info, warn};
 
 /// Serialization format for AXIS indexes
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum IndexSerializationFormat {
     /// Bincode - Fast binary format for in-memory and hot data
     Bincode,
@@ -154,8 +154,8 @@ impl IndexFormatStrategy {
     }
     
     /// Deserialize AXIS index using selected format
-    pub fn deserialize<'a, T: Deserialize<'a>>(
-        data: &'a [u8],
+    pub fn deserialize<T: for<'a> Deserialize<'a>>(
+        data: &[u8],
         format: IndexSerializationFormat,
     ) -> Result<T, SerializationError> {
         match format {

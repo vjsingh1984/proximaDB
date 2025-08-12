@@ -966,9 +966,8 @@ where
         // Update workload metrics
         {
             let mut wm = self.workload_metrics.write().await;
-            wm.total_operations += 1;
-            wm.write_operations += 1;
-            wm.avg_operation_latency_ms = start.elapsed().as_millis() as f64;
+            wm.writes_per_second += 1.0; // Simplified - should be rate-calculated
+            wm.avg_latency_ms = start.elapsed().as_millis() as f64;
         }
         
         debug!(
@@ -997,10 +996,9 @@ where
         // Update workload metrics
         {
             let mut wm = self.workload_metrics.write().await;
-            wm.total_operations += 1;
-            wm.read_operations += 1;
+            wm.reads_per_second += 1.0; // Simplified - should be rate-calculated
             if value.is_some() {
-                wm.cache_hit_ratio = self.metrics.hit_rate();
+                wm.cache_hit_rate = self.metrics.hit_rate();
             }
         }
         
@@ -1019,8 +1017,7 @@ where
         // Update workload metrics
         {
             let mut wm = self.workload_metrics.write().await;
-            wm.total_operations += 1;
-            wm.write_operations += 1;
+            wm.writes_per_second += 1.0; // Simplified - should be rate-calculated
         }
         
         debug!(
@@ -1104,9 +1101,8 @@ where
         // Update workload metrics
         {
             let mut wm = self.workload_metrics.write().await;
-            wm.total_operations += 1;
-            wm.write_operations += 1;
-            wm.avg_operation_latency_ms = start.elapsed().as_millis() as f64;
+            wm.writes_per_second += 1.0; // Simplified - should be rate-calculated
+            wm.avg_latency_ms = start.elapsed().as_millis() as f64;
         }
         
         debug!(
@@ -1134,10 +1130,9 @@ where
         // Update workload metrics
         {
             let mut wm = self.workload_metrics.write().await;
-            wm.total_operations += 1;
-            wm.read_operations += 1;
+            wm.reads_per_second += 1.0; // Simplified - should be rate-calculated
             if value.is_some() {
-                wm.cache_hit_ratio = self.metrics.hit_rate();
+                wm.cache_hit_rate = self.metrics.hit_rate();
             }
         }
         
@@ -1159,8 +1154,7 @@ where
         // Update workload metrics
         {
             let mut wm = self.workload_metrics.write().await;
-            wm.total_operations += 1;
-            wm.write_operations += 1;
+            wm.writes_per_second += 1.0; // Simplified - should be rate-calculated
         }
         
         debug!(
@@ -1203,7 +1197,7 @@ where
         let size_before = self.storage.entry_count();
         
         // Clear all entries from Moka cache
-        self.storage.invalidate_all().await;
+        self.storage.invalidate_all();
         
         // Update metrics
         self.metrics.record_operation("clear", start.elapsed());

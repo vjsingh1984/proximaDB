@@ -508,8 +508,9 @@ impl AxisHnswIndex {
         // - Entry points
         // - Vector data
         
-        // For now, return placeholder
-        Ok(AxisHnswIndex::new(config.clone()))
+        // For now, return placeholder with dimension from config
+        let dimension = config.dimensions.unwrap_or(128); // Default dimension
+        AxisHnswIndex::new(config.clone(), dimension)
     }
 }
 
@@ -555,8 +556,9 @@ impl UnifiedIvfIndex {
         // - Posting lists
         // - Vector assignments
         
-        // For now, return placeholder
-        Ok(UnifiedIvfIndex::new(config.clone()))
+        // For now, return placeholder with collection_id
+        let collection_id = "default_collection".to_string(); // Placeholder collection ID
+        UnifiedIvfIndex::new(collection_id, config.clone())
     }
 }
 

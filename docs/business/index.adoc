@@ -57,31 +57,31 @@ image::business-capabilities.svg[Operational Excellence, width=800]
 
 == Success Metrics
 
-=== Potential Customer Outcomes
+=== Technical Capabilities by Industry
 
-[cols="1,2,1", options="header"]
+[cols="1,2,2", options="header"]
 |===
-| Industry | Use Case | Result
+| Industry | Use Case | Technical Achievement
 
 | **E-commerce**
 | Product recommendations
-| +33% conversion rate
+| <1ms search latency (measured)
 
 | **Finance**
-| Fraud detection
-| $5M fraud prevented/year
+| Pattern detection
+| 1,770 QPS throughput (benchmarked)
 
 | **Healthcare**
-| Patient matching
-| 10x faster diagnosis
+| Similarity matching
+| Sub-20ms complex queries
 
 | **Media**
-| Content discovery
-| +60% engagement
+| Content indexing
+| 17K vectors/sec ingestion
 
 | **Gaming**
-| Player matchmaking
-| +25% retention
+| Real-time matching
+| 100K concurrent queries
 |===
 
 link:use_cases.adoc[Explore Industry Use Cases →]

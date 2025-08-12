@@ -162,7 +162,7 @@ impl Default for AxisTieringConfig {
             collection_constraints: None,
             format_preferences: TierFormatPreferences {
                 hot_tier_format: IndexSerializationFormat::Bincode,
-                warm_tier_format: IndexSerializationFormat::BincodeZstd,
+                warm_tier_format: IndexSerializationFormat::BincodeCompressed,
                 cold_tier_format: IndexSerializationFormat::AvroZstd,
             },
             index_type_settings: IndexTypeSettings {
@@ -179,7 +179,11 @@ impl Default for AxisTieringConfig {
                 lsh_preferences: IndexTierPreference {
                     preferred_tier: StorageTier::HardDisk { mount_path: "/data".to_string() },
                     minimum_tier: StorageTier::CloudStandard { 
-                        provider: crate::common::tier_policy_engine::CloudProvider::AWS,
+                        provider: crate::common::tier_policy_engine::CloudProvider::AwsS3 {
+                            bucket: "proximadb-indexes".to_string(),
+                            storage_class: crate::common::tier_policy_engine::AwsStorageClass::Standard,
+                            lifecycle_enabled: true,
+                        },
                         region: "us-west-2".to_string() 
                     },
                     access_pattern_boost: 1.0,
@@ -270,8 +274,8 @@ impl AxisTieringManager {
         collection_state_manager: Arc<CollectionStateManager>,
         memory_tracker: Arc<IndexMemoryTracker>,
     ) -> Self {
-        let format_strategy = Arc::new(IndexFormatStrategy::new());
-        let serializer = Arc::new(IndexSerializer::new());
+        let format_strategy = Arc::new(IndexFormatStrategy);
+        let serializer = Arc::new(IndexSerializer);
         
         Self {
             config,
@@ -907,8 +911,8 @@ impl AxisTieringManager {
         target_tier: &StorageTier,
     ) -> anyhow::Result<()> {
         // Use GlobalTierManager's rebalance_collection_tiers (the actual existing method)
-        // Create a default SmartTierPolicy since ServerTierConfig doesn't have one
-        let tier_policy = SmartTierPolicy::default();
+        // Create a SmartTierPolicy for index workload
+        let tier_policy = SmartTierPolicy::for_hybrid_workload();
         let rebalance_result = self.global_tier_manager
             .rebalance_collection_tiers(collection_id, &tier_policy)
             .await?;
@@ -988,15 +992,27 @@ impl AxisTieringManager {
                 use crate::index::axis::collection_state::CloudStorageType;
                 match storage_type {
                     CloudStorageType::S3Standard => Ok(StorageTier::CloudStandard { 
-                        provider: crate::common::tier_policy_engine::CloudProvider::AWS,
+                        provider: crate::common::tier_policy_engine::CloudProvider::AwsS3 {
+                            bucket: "proximadb-indexes".to_string(),
+                            storage_class: crate::common::tier_policy_engine::AwsStorageClass::Standard,
+                            lifecycle_enabled: true,
+                        },
                         region: "us-west-2".to_string()
                     }),
                     CloudStorageType::S3InfrequentAccess => Ok(StorageTier::CloudInfrequentAccess { 
-                        provider: crate::common::tier_policy_engine::CloudProvider::AWS,
+                        provider: crate::common::tier_policy_engine::CloudProvider::AwsS3 {
+                            bucket: "proximadb-indexes".to_string(),
+                            storage_class: crate::common::tier_policy_engine::AwsStorageClass::Standard,
+                            lifecycle_enabled: true,
+                        },
                         region: "us-west-2".to_string()
                     }),
                     CloudStorageType::S3Glacier => Ok(StorageTier::CloudArchive { 
-                        provider: crate::common::tier_policy_engine::CloudProvider::AWS,
+                        provider: crate::common::tier_policy_engine::CloudProvider::AwsS3 {
+                            bucket: "proximadb-indexes".to_string(),
+                            storage_class: crate::common::tier_policy_engine::AwsStorageClass::Standard,
+                            lifecycle_enabled: true,
+                        },
                         region: "us-west-2".to_string()
                     }),
                 }
@@ -1058,9 +1074,12 @@ impl AxisTieringManager {
             2 => StorageTier::NvmeSsd { mount_path: "/mnt/nvme".to_string() },
             3 => StorageTier::HardDisk { mount_path: "/mnt/hdd".to_string() },
             _ => StorageTier::CloudStandard {
-                provider: "aws".to_string(),
+                provider: crate::common::tier_policy_engine::CloudProvider::AwsS3 {
+                    bucket: "proximadb-indexes".to_string(),
+                    storage_class: crate::common::tier_policy_engine::AwsStorageClass::Standard,
+                    lifecycle_enabled: true,
+                },
                 region: "us-west-2".to_string(),
-                bucket: "proximadb-indexes".to_string(),
             },
         }
     }
@@ -1097,7 +1116,11 @@ mod tests {
         let memory = StorageTier::Memory;
         let nvme = StorageTier::NvmeSsd { mount_path: "/fast".to_string() };
         let cloud = StorageTier::CloudStandard { 
-            provider: crate::common::tier_policy_engine::CloudProvider::AWS,
+            provider: crate::common::tier_policy_engine::CloudProvider::AwsS3 {
+                bucket: "proximadb-indexes".to_string(),
+                storage_class: crate::common::tier_policy_engine::AwsStorageClass::Standard,
+                lifecycle_enabled: true,
+            },
             region: "us-west-2".to_string()
         };
         
