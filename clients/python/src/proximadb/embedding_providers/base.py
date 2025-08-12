@@ -1,11 +1,14 @@
 """
-Base classes for embedding providers
+Base classes for embedding providers in ProximaDB SDK
+
+This module defines the abstract base classes for embedding providers
+that can be plugged into the ProximaDB SDK.
 """
 
 from abc import ABC, abstractmethod
-from dataclasses import dataclass, field
-from typing import List, Optional, Dict, Any, Union
+from typing import List, Dict, Any, Optional, Union
 import numpy as np
+from dataclasses import dataclass
 
 
 @dataclass
@@ -15,32 +18,30 @@ class EmbeddingConfig:
     dimension: int
     batch_size: int = 32
     normalize: bool = True
-    cache_embeddings: bool = True
-    timeout_seconds: float = 30.0
-    device: Optional[str] = None  # 'cpu', 'cuda', 'mps'
-    extra_params: Optional[Dict[str, Any]] = None
+    device: Optional[str] = None
+    cache_dir: Optional[str] = None
+    max_length: int = 512
 
 
 class EmbeddingProvider(ABC):
     """
     Abstract base class for embedding providers
     
-    All providers must implement this interface for compatibility
+    All embedding providers must implement this interface to be
+    compatible with the ProximaDB SDK.
     """
     
-    def __init__(self, config: Optional[EmbeddingConfig] = None):
-        self.config = config or self._get_default_config()
-        self._available = None
-        self._initialize()
-    
     @abstractmethod
-    def _get_default_config(self) -> EmbeddingConfig:
-        """Get default configuration for this provider"""
-        pass
-    
-    @abstractmethod
-    def _initialize(self) -> None:
-        """Initialize the embedding model"""
+    def embed_text(self, text: str) -> np.ndarray:
+        """
+        Generate embedding for a single text
+        
+        Args:
+            text: Input text to embed
+            
+        Returns:
+            Embedding vector as numpy array
+        """
         pass
     
     @abstractmethod
@@ -52,68 +53,50 @@ class EmbeddingProvider(ABC):
             texts: List of texts to embed
             
         Returns:
-            Array of embeddings with shape (len(texts), dimension)
+            Array of embedding vectors
         """
         pass
     
-    def embed_text(self, text: str) -> np.ndarray:
+    @abstractmethod
+    def embed_documents(
+        self,
+        documents: List[Dict[str, Any]],
+        text_field: str = 'text'
+    ) -> np.ndarray:
         """
-        Generate embedding for a single text
+        Generate embeddings for documents
         
         Args:
-            text: Text to embed
+            documents: List of document dictionaries
+            text_field: Field in document containing text
             
         Returns:
-            Embedding vector
+            Array of embedding vectors
         """
-        embeddings = self.embed_texts([text])
-        return embeddings[0]
+        pass
     
-    @property
     @abstractmethod
-    def dimension(self) -> int:
+    def get_dimension(self) -> int:
         """Get embedding dimension"""
         pass
     
-    @property
     @abstractmethod
-    def model_name(self) -> str:
-        """Get model name"""
+    def get_model_info(self) -> Dict[str, Any]:
+        """Get model information"""
         pass
     
-    @abstractmethod
-    def is_available(self) -> bool:
-        """Check if provider is available"""
-        pass
-    
-    def batch_embed_texts(
-        self,
-        texts: List[str],
-        batch_size: Optional[int] = None
-    ) -> np.ndarray:
+    def preprocess_text(self, text: str) -> str:
         """
-        Embed texts in batches for memory efficiency
+        Preprocess text before embedding (optional)
         
         Args:
-            texts: List of texts to embed
-            batch_size: Batch size (uses config default if not specified)
+            text: Raw text
             
         Returns:
-            Array of embeddings
+            Preprocessed text
         """
-        batch_size = batch_size or self.config.batch_size
-        
-        if len(texts) <= batch_size:
-            return self.embed_texts(texts)
-        
-        # Process in batches
-        embeddings = []
-        for i in range(0, len(texts), batch_size):
-            batch = texts[i:i + batch_size]
-            batch_embeddings = self.embed_texts(batch)
-            embeddings.append(batch_embeddings)
-        
-        return np.vstack(embeddings)
+        return text
     
-    def __repr__(self) -> str:
-        return f"{self.__class__.__name__}(model={self.model_name}, dim={self.dimension})"
+    def clear_cache(self):
+        """Clear any internal caches (optional)"""
+        pass
