@@ -199,7 +199,7 @@ impl CollectionStateManager {
         progress: f32,
     ) -> Result<()> {
         if let Some(mut state) = self.states.get_mut(collection_id) {
-            if let CollectionTierState::Transitioning { ref mut progress as p, .. } = *state {
+            if let CollectionTierState::Transitioning { progress: ref mut p, .. } = *state {
                 *p = progress;
                 debug!("📊 Transition progress for {}: {:.1}%", collection_id, progress * 100.0);
             }

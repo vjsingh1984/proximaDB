@@ -735,6 +735,8 @@ impl AdaptiveStoreFactory {
 pub struct IndexBackend<K, V> {
     collection_id: String,
     storage: DashMap<K, V>,
+    write_buffer: Arc<RwLock<Vec<(K, V)>>>,
+    write_buffer_size: usize,
     tier_policy: UnifiedTierPolicy,
     config: AdaptiveStoreConfig,
     tier_manager: Arc<UniversalTierManager>,
@@ -784,6 +786,8 @@ where
         Ok(Self {
             collection_id,
             storage: DashMap::with_capacity(initial_capacity),
+            write_buffer: Arc::new(RwLock::new(Vec::with_capacity(1000))),
+            write_buffer_size: 1000, // Default batch size
             tier_policy,
             config,
             tier_manager,
@@ -802,12 +806,59 @@ where
         Ok(Self {
             collection_id,
             storage: DashMap::with_capacity(initial_capacity),
+            write_buffer: Arc::new(RwLock::new(Vec::with_capacity(500))),
+            write_buffer_size: 500, // Smaller batch for RwLock variant
             tier_policy,
             config,
             tier_manager,
             metrics: AtomicMetrics::new(),
             workload_metrics: RwLock::new(WorkloadMetrics::new(WorkloadPattern::WriteHeavy)),
         })
+    }
+    
+    /// Flush write buffer to storage for bulk operations
+    pub async fn flush_write_buffer(&self) -> Result<usize> {
+        let mut buffer = self.write_buffer.write().await;
+        
+        if buffer.is_empty() {
+            return Ok(0);
+        }
+        
+        let count = buffer.len();
+        let start = Instant::now();
+        
+        // Bulk insert into DashMap
+        for (key, value) in buffer.drain(..) {
+            self.storage.insert(key, value);
+        }
+        
+        // Update metrics
+        self.metrics.record_operation("bulk_flush", start.elapsed());
+        
+        info!(
+            "IndexBackend: Flushed {} items to storage for collection {} in {:?}",
+            count,
+            self.collection_id,
+            start.elapsed()
+        );
+        
+        Ok(count)
+    }
+    
+    /// Add to write buffer for batching
+    pub async fn buffer_write(&self, key: K, value: V) -> Result<bool> {
+        let mut buffer = self.write_buffer.write().await;
+        
+        buffer.push((key, value));
+        
+        // Auto-flush if buffer is full
+        if buffer.len() >= self.write_buffer_size {
+            drop(buffer); // Release lock before flushing
+            self.flush_write_buffer().await?;
+            return Ok(true); // Flushed
+        }
+        
+        Ok(false) // Buffered
     }
 }
 
@@ -903,36 +954,120 @@ where
     K: Hash + Eq + Clone + Send + Sync + 'static,
     V: Clone + Send + Sync + 'static,
 {
-    async fn insert(&self, _key: K, _value: V) -> Result<Option<V>> {
-        unimplemented!("IndexBackend implementation pending")
+    async fn insert(&self, key: K, value: V) -> Result<Option<V>> {
+        let start = Instant::now();
+        
+        // Insert into DashMap storage
+        let old_value = self.storage.insert(key.clone(), value.clone());
+        
+        // Update metrics
+        self.metrics.record_operation("insert", start.elapsed());
+        
+        // Update workload metrics
+        {
+            let mut wm = self.workload_metrics.write().await;
+            wm.total_operations += 1;
+            wm.write_operations += 1;
+            wm.avg_operation_latency_ms = start.elapsed().as_millis() as f64;
+        }
+        
+        debug!(
+            "IndexBackend: Inserted key into collection {}, storage size: {}",
+            self.collection_id,
+            self.storage.len()
+        );
+        
+        Ok(old_value)
     }
 
-    async fn get(&self, _key: &K) -> Option<V> {
-        unimplemented!("IndexBackend implementation pending")
+    async fn get(&self, key: &K) -> Option<V> {
+        let start = Instant::now();
+        
+        // Get from DashMap storage
+        let value = self.storage.get(key).map(|entry| entry.value().clone());
+        
+        // Update metrics
+        self.metrics.record_operation("get", start.elapsed());
+        if value.is_some() {
+            self.metrics.record_hit();
+        } else {
+            self.metrics.record_miss();
+        }
+        
+        // Update workload metrics
+        {
+            let mut wm = self.workload_metrics.write().await;
+            wm.total_operations += 1;
+            wm.read_operations += 1;
+            if value.is_some() {
+                wm.cache_hit_ratio = self.metrics.hit_rate();
+            }
+        }
+        
+        value
     }
 
-    async fn remove(&self, _key: &K) -> Option<V> {
-        unimplemented!("IndexBackend implementation pending")
+    async fn remove(&self, key: &K) -> Option<V> {
+        let start = Instant::now();
+        
+        // Remove from DashMap storage
+        let removed = self.storage.remove(key).map(|(_, v)| v);
+        
+        // Update metrics
+        self.metrics.record_operation("remove", start.elapsed());
+        
+        // Update workload metrics
+        {
+            let mut wm = self.workload_metrics.write().await;
+            wm.total_operations += 1;
+            wm.write_operations += 1;
+        }
+        
+        debug!(
+            "IndexBackend: Removed key from collection {}, storage size: {}",
+            self.collection_id,
+            self.storage.len()
+        );
+        
+        removed
     }
 
-    async fn contains(&self, _key: &K) -> bool {
-        unimplemented!("IndexBackend implementation pending")
+    async fn contains(&self, key: &K) -> bool {
+        let start = Instant::now();
+        
+        let exists = self.storage.contains_key(key);
+        
+        // Update metrics
+        self.metrics.record_operation("contains", start.elapsed());
+        
+        exists
     }
 
     async fn len(&self) -> usize {
-        unimplemented!("IndexBackend implementation pending")
+        self.storage.len()
     }
 
     async fn is_empty(&self) -> bool {
-        unimplemented!("IndexBackend implementation pending")
+        self.storage.is_empty()
     }
 
     async fn keys(&self) -> Vec<K> {
-        unimplemented!("IndexBackend implementation pending")
+        self.storage.iter().map(|entry| entry.key().clone()).collect()
     }
 
     async fn clear(&self) {
-        unimplemented!("IndexBackend implementation pending")
+        let start = Instant::now();
+        let size_before = self.storage.len();
+        
+        self.storage.clear();
+        
+        // Update metrics
+        self.metrics.record_operation("clear", start.elapsed());
+        
+        info!(
+            "IndexBackend: Cleared {} entries from collection {}",
+            size_before, self.collection_id
+        );
     }
 
     async fn metrics(&self) -> MetricsSnapshot {
@@ -954,36 +1089,129 @@ where
     K: Hash + Eq + Clone + Send + Sync + 'static,
     V: Clone + Send + Sync + 'static,
 {
-    async fn insert(&self, _key: K, _value: V) -> Result<Option<V>> {
-        unimplemented!("CacheBackend implementation pending")
+    async fn insert(&self, key: K, value: V) -> Result<Option<V>> {
+        let start = Instant::now();
+        
+        // Get existing value before insertion
+        let old_value = self.storage.get(&key).await;
+        
+        // Insert into Moka cache
+        self.storage.insert(key.clone(), value.clone()).await;
+        
+        // Update metrics
+        self.metrics.record_operation("insert", start.elapsed());
+        
+        // Update workload metrics
+        {
+            let mut wm = self.workload_metrics.write().await;
+            wm.total_operations += 1;
+            wm.write_operations += 1;
+            wm.avg_operation_latency_ms = start.elapsed().as_millis() as f64;
+        }
+        
+        debug!(
+            "CacheBackend: Inserted key into collection {} cache",
+            self.collection_id
+        );
+        
+        Ok(old_value)
     }
 
-    async fn get(&self, _key: &K) -> Option<V> {
-        unimplemented!("CacheBackend implementation pending")
+    async fn get(&self, key: &K) -> Option<V> {
+        let start = Instant::now();
+        
+        // Get from Moka cache
+        let value = self.storage.get(key).await;
+        
+        // Update metrics
+        self.metrics.record_operation("get", start.elapsed());
+        if value.is_some() {
+            self.metrics.record_hit();
+        } else {
+            self.metrics.record_miss();
+        }
+        
+        // Update workload metrics
+        {
+            let mut wm = self.workload_metrics.write().await;
+            wm.total_operations += 1;
+            wm.read_operations += 1;
+            if value.is_some() {
+                wm.cache_hit_ratio = self.metrics.hit_rate();
+            }
+        }
+        
+        value
     }
 
-    async fn remove(&self, _key: &K) -> Option<V> {
-        unimplemented!("CacheBackend implementation pending")
+    async fn remove(&self, key: &K) -> Option<V> {
+        let start = Instant::now();
+        
+        // Get value before removal
+        let removed = self.storage.get(key).await;
+        
+        // Remove from Moka cache
+        self.storage.remove(key).await;
+        
+        // Update metrics
+        self.metrics.record_operation("remove", start.elapsed());
+        
+        // Update workload metrics
+        {
+            let mut wm = self.workload_metrics.write().await;
+            wm.total_operations += 1;
+            wm.write_operations += 1;
+        }
+        
+        debug!(
+            "CacheBackend: Removed key from collection {} cache",
+            self.collection_id
+        );
+        
+        removed
     }
 
-    async fn contains(&self, _key: &K) -> bool {
-        unimplemented!("CacheBackend implementation pending")
+    async fn contains(&self, key: &K) -> bool {
+        let start = Instant::now();
+        
+        let exists = self.storage.contains_key(key);
+        
+        // Update metrics
+        self.metrics.record_operation("contains", start.elapsed());
+        
+        exists
     }
 
     async fn len(&self) -> usize {
-        unimplemented!("CacheBackend implementation pending")
+        self.storage.entry_count() as usize
     }
 
     async fn is_empty(&self) -> bool {
-        unimplemented!("CacheBackend implementation pending")
+        self.storage.entry_count() == 0
     }
 
     async fn keys(&self) -> Vec<K> {
-        unimplemented!("CacheBackend implementation pending")
+        // Note: Moka doesn't provide direct key iteration
+        // This is a limitation we may need to address
+        // For now, return empty vec with a warning
+        debug!("CacheBackend: keys() operation not fully supported by Moka cache");
+        Vec::new()
     }
 
     async fn clear(&self) {
-        unimplemented!("CacheBackend implementation pending")
+        let start = Instant::now();
+        let size_before = self.storage.entry_count();
+        
+        // Clear all entries from Moka cache
+        self.storage.invalidate_all().await;
+        
+        // Update metrics
+        self.metrics.record_operation("clear", start.elapsed());
+        
+        info!(
+            "CacheBackend: Cleared {} entries from collection {} cache",
+            size_before, self.collection_id
+        );
     }
 
     async fn metrics(&self) -> MetricsSnapshot {
@@ -1055,9 +1283,203 @@ mod tests {
     use super::*;
 
     #[tokio::test]
+    async fn test_index_backend_crud_operations() {
+        let backend = IndexBackend::<String, String>::new_dashmap(
+            "test_collection".to_string(),
+            100,
+            None,
+            UnifiedTierPolicy::Unified,
+            AdaptiveStoreConfig::default(),
+            Arc::new(UniversalTierManager::new()),
+        ).await.unwrap();
+        
+        // CREATE: Insert new key-value pairs
+        assert_eq!(backend.insert("key1".to_string(), "value1".to_string()).await.unwrap(), None);
+        assert_eq!(backend.insert("key2".to_string(), "value2".to_string()).await.unwrap(), None);
+        
+        // READ: Get values by key
+        assert_eq!(backend.get(&"key1".to_string()).await, Some("value1".to_string()));
+        assert_eq!(backend.get(&"key2".to_string()).await, Some("value2".to_string()));
+        assert_eq!(backend.get(&"key3".to_string()).await, None);
+        
+        // UPDATE: Replace existing value
+        assert_eq!(backend.insert("key1".to_string(), "updated".to_string()).await.unwrap(), 
+                   Some("value1".to_string()));
+        assert_eq!(backend.get(&"key1".to_string()).await, Some("updated".to_string()));
+        
+        // DELETE: Remove key-value pairs
+        assert_eq!(backend.remove(&"key1".to_string()).await, Some("updated".to_string()));
+        assert_eq!(backend.get(&"key1".to_string()).await, None);
+        
+        // Utility methods
+        assert!(backend.contains(&"key2".to_string()).await);
+        assert!(!backend.contains(&"key1".to_string()).await);
+        assert_eq!(backend.len().await, 1);
+        assert!(!backend.is_empty().await);
+        
+        backend.clear().await;
+        assert!(backend.is_empty().await);
+    }
+    
+    #[tokio::test]
+    async fn test_index_backend_write_buffering() {
+        let backend = IndexBackend::<String, i32>::new_dashmap(
+            "test_buffer".to_string(),
+            100,
+            None,
+            UnifiedTierPolicy::Unified,
+            AdaptiveStoreConfig::default(),
+            Arc::new(UniversalTierManager::new()),
+        ).await.unwrap();
+        
+        // Buffer writes without immediate insertion
+        for i in 0..500 {
+            let flushed = backend.buffer_write(format!("key{}", i), i).await.unwrap();
+            assert!(!flushed, "Should buffer, not flush at {}", i);
+        }
+        
+        // Verify buffered writes are not in storage yet
+        assert_eq!(backend.len().await, 0, "Storage should be empty before flush");
+        
+        // Manually flush buffer
+        let flushed_count = backend.flush_write_buffer().await.unwrap();
+        assert_eq!(flushed_count, 500);
+        assert_eq!(backend.len().await, 500);
+        
+        // Verify data integrity after flush
+        for i in 0..500 {
+            assert_eq!(backend.get(&format!("key{}", i)).await, Some(i));
+        }
+        
+        // Test auto-flush at buffer size limit (1000)
+        for i in 500..1500 {
+            let flushed = backend.buffer_write(format!("key{}", i), i).await.unwrap();
+            if i == 1499 {
+                assert!(flushed, "Should auto-flush at buffer limit");
+            }
+        }
+        
+        assert_eq!(backend.len().await, 1500);
+    }
+    
+    #[tokio::test]
+    async fn test_cache_backend_operations() {
+        let backend = CacheBackend::<String, String>::new_moka(
+            "test_cache".to_string(),
+            100,
+            UnifiedTierPolicy::Unified,
+            AdaptiveStoreConfig::default(),
+            Arc::new(UniversalTierManager::new()),
+        ).await.unwrap();
+        
+        // Test basic operations
+        backend.insert("key1".to_string(), "value1".to_string()).await.unwrap();
+        assert_eq!(backend.get(&"key1".to_string()).await, Some("value1".to_string()));
+        
+        // Test update
+        backend.insert("key1".to_string(), "updated".to_string()).await.unwrap();
+        assert_eq!(backend.get(&"key1".to_string()).await, Some("updated".to_string()));
+        
+        // Test remove
+        let removed = backend.remove(&"key1".to_string()).await;
+        assert_eq!(removed, Some("updated".to_string()));
+        assert_eq!(backend.get(&"key1".to_string()).await, None);
+        
+        // Test clear
+        for i in 0..10 {
+            backend.insert(format!("key{}", i), format!("value{}", i)).await.unwrap();
+        }
+        assert!(backend.len().await > 0);
+        backend.clear().await;
+        assert_eq!(backend.len().await, 0);
+    }
+    
+    #[tokio::test]
+    async fn test_metrics_and_workload_tracking() {
+        let backend = IndexBackend::<String, String>::new_dashmap(
+            "test_metrics".to_string(),
+            100,
+            None,
+            UnifiedTierPolicy::Unified,
+            AdaptiveStoreConfig::default(),
+            Arc::new(UniversalTierManager::new()),
+        ).await.unwrap();
+        
+        // Perform mixed operations
+        backend.insert("key1".to_string(), "value1".to_string()).await.unwrap();
+        backend.insert("key2".to_string(), "value2".to_string()).await.unwrap();
+        backend.get(&"key1".to_string()).await; // Hit
+        backend.get(&"key3".to_string()).await; // Miss
+        backend.remove(&"key2".to_string()).await;
+        
+        // Check operation metrics
+        let metrics = backend.metrics().await;
+        assert_eq!(metrics.hit_count, 1);
+        assert_eq!(metrics.miss_count, 1);
+        assert_eq!(metrics.operation_count, 5); // 2 inserts + 2 gets + 1 remove
+        
+        // Check workload metrics
+        let workload = backend.workload_metrics().await;
+        assert_eq!(workload.total_operations, 5);
+        assert_eq!(workload.write_operations, 3); // 2 inserts + 1 remove
+        assert_eq!(workload.read_operations, 2); // 2 gets
+        assert!(workload.cache_hit_ratio > 0.0);
+    }
+    
+    #[tokio::test]
+    async fn test_concurrent_index_backend_access() {
+        let backend = Arc::new(IndexBackend::<i32, i32>::new_dashmap(
+            "test_concurrent".to_string(),
+            1000,
+            None,
+            UnifiedTierPolicy::Unified,
+            AdaptiveStoreConfig::default(),
+            Arc::new(UniversalTierManager::new()),
+        ).await.unwrap());
+        
+        // Spawn multiple concurrent tasks
+        let mut handles = vec![];
+        
+        // Writers
+        for thread_id in 0..5 {
+            let backend_clone = backend.clone();
+            handles.push(tokio::spawn(async move {
+                for i in 0..100 {
+                    let key = thread_id * 100 + i;
+                    backend_clone.insert(key, key * 2).await.unwrap();
+                }
+            }));
+        }
+        
+        // Readers
+        for thread_id in 5..10 {
+            let backend_clone = backend.clone();
+            handles.push(tokio::spawn(async move {
+                for i in 0..100 {
+                    let key = (thread_id - 5) * 100 + i;
+                    // May or may not find the key depending on timing
+                    let _ = backend_clone.get(&key).await;
+                }
+            }));
+        }
+        
+        // Wait for all tasks
+        for handle in handles {
+            handle.await.unwrap();
+        }
+        
+        // Verify all writes succeeded
+        assert_eq!(backend.len().await, 500);
+        
+        // Verify data integrity
+        for i in 0..500 {
+            assert_eq!(backend.get(&i).await, Some(i * 2));
+        }
+    }
+    
+    #[tokio::test]
     async fn test_adaptive_store_factory_creation() {
-        // This test will be implemented when the GlobalTierManager is available
-        // For now, just test that the structures can be created
+        // Test configuration serialization/deserialization
         
         let config = AdaptiveStoreConfig {
             collection_id: "test".to_string(),

@@ -353,3 +353,4 @@ mod tests {
         let storage_tier = integration.map_axis_tier_to_storage(&TierLevel::Memory);
         assert_eq!(storage_tier, StorageTier::Memory);
     }
+}
