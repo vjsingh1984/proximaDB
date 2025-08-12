@@ -168,8 +168,8 @@ Core storage engine configuration including locations, caching, and engine-speci
 
 ```toml
 [storage]
-# Metadata storage URL
-metadata_url = "file://./metadata"
+# Metadata storage URL (single location for consistency)
+metadata_url = "file:///data/proximadb/metadata"
 
 # Enable memory-mapped I/O (default: true)
 mmap_enabled = true
@@ -177,42 +177,55 @@ mmap_enabled = true
 # Global cache size in MB (default: 2048)
 cache_size_mb = 1024
 
-# Storage locations for data distribution
+# Bloom filter bits per key (default: 10)
+bloom_filter_bits = 10
+
+# Storage locations for collection assignment
+# Each collection is assigned to one location at creation
 [[storage.storage_locations]]
-url = "file://./data"
+url = "file:///data/disk1/proximadb"  # Primary storage
+weight = 3                             # Higher weight = higher probability
+tags = ["fast", "nvme", "primary"]     # Tags for filtering
+
+[[storage.storage_locations]]
+url = "file:///data/disk2/proximadb"  # Secondary storage
+weight = 2
+tags = ["ssd", "secondary"]
+
+[[storage.storage_locations]]
+url = "s3://proximadb-cold/collections"  # Cloud storage
 weight = 1
-tags = ["local", "demo"]
+tags = ["cloud", "cold", "archive"]
 
 # Assignment strategy configuration
 [storage.assignment_config]
-strategy = "hash"        # "hash", "round-robin", "weighted"
-affinity = true          # Keep collection data together
+strategy = "weighted"    # Options: "random", "weighted", "hash", "roundrobin"
+affinity = true          # Keep WAL/data/indexes together per collection
 
-# Write-ahead log configuration  
+# Write-ahead log configuration (global settings)
 [storage.wal_config]
-write_buffer_size_mb = 8192
-memory_flush_size_bytes = 16777216
-vector_count_threshold = 100000
-memtable_type = "BTree"
-sync_mode = "PerBatch"
-write_buffer_directory = "./data/write_buffer"
-enable_wal = true
+write_buffer_size_mb = 8192         # Global write buffer size
+memory_flush_size_bytes = 16777216  # Flush threshold per collection (16MB)
+global_flush_threshold = 536870912  # Global flush threshold (512MB)
+vector_count_threshold = 100000     # Flush after N vectors
+memtable_type = "BTree"             # Options: "BTree", "SkipList"
+sync_mode = "sync"                  # Options: "sync", "async", "none"
+enable_wal = true                   # Enable write-ahead logging
 
 # Bloom filter optimization
 [storage.bloom_filter_config]
-bits_per_key = 12
-hash_functions = 4
-enable_caching = true
+bits_per_key = 10                   # Bits per key (10-14 recommended)
+enabled = true                      # Enable bloom filters
 
 # Filesystem optimization
 [storage.filesystem_config]
-enable_write_strategy_cache = true
-temp_strategy = "SameDirectory"
+enable_write_strategy_cache = true  # Cache write strategies
+temp_strategy = "SameDirectory"     # Temp file location strategy
 
 [storage.filesystem_config.atomic_config]
-enable_local_atomic = true
-enable_object_store_atomic = true
-cleanup_temp_on_startup = true
+enable_local_atomic = true          # Atomic operations for local FS
+enable_object_store_atomic = true   # Atomic operations for cloud storage
+cleanup_temp_on_startup = true      # Clean temporary files on startup
 ```
 
 **Key Parameters**:

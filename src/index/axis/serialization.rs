@@ -511,7 +511,12 @@ impl AxisHnswIndex {
         // For now, return placeholder with default dimension
         // In real implementation, dimension would be in the serialized data
         let dimension = 128; // Default dimension
-        Ok(AxisHnswIndex::new(config.clone(), dimension)?)
+        match AxisHnswIndex::new(config.clone(), dimension) {
+            Ok(index) => Ok(index),
+            Err(e) => Err(SerializationError::Io(
+                std::io::Error::new(std::io::ErrorKind::Other, e.to_string())
+            ))
+        }
     }
 }
 
@@ -559,7 +564,12 @@ impl UnifiedIvfIndex {
         
         // For now, return placeholder with collection_id
         let collection_id = "default_collection".to_string(); // Placeholder collection ID
-        Ok(UnifiedIvfIndex::new(collection_id, config.clone())?)
+        match UnifiedIvfIndex::new(collection_id, config.clone()) {
+            Ok(index) => Ok(index),
+            Err(e) => Err(SerializationError::Io(
+                std::io::Error::new(std::io::ErrorKind::Other, e.to_string())
+            ))
+        }
     }
 }
 

@@ -286,18 +286,23 @@ LIMIT 10;
 [source,toml]
 ----
 [server]
+node_id = "proximadb-node-1"
+port = 5678
+
+[api]
 rest_port = 5678
 grpc_port = 5679
+rest_compression = false  # Default for debugging
+grpc_compression = true   # Default for performance
 
 [storage]
-data_directory = "/data"
-write_buffer_mb = 512
+metadata_url = "file:///data/proximadb/metadata"
 
-[rest]
-enable_compression = false  # Default
+[[storage.storage_locations]]
+url = "file:///data/proximadb/storage"
 
-[grpc]
-enable_compression = true   # Default
+[storage.wal_config]
+write_buffer_size_mb = 512
 ----
 
 === Compression

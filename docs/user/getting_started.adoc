@@ -378,26 +378,40 @@ def rag_query(question):
 [source,toml]
 ----
 [server]
+node_id = "proximadb-node-1"
+bind_address = "0.0.0.0"
+port = 5678
+data_dir = "/data/proximadb"
+
+[api]
 rest_port = 5678
 grpc_port = 5679
-max_connections = 1000
-request_timeout_ms = 30000
+max_request_size_mb = 64
+timeout_seconds = 30
 
 [storage]
-data_directory = "/data/proximadb"
-default_engine = "viper"  # or "sst"
-wal_enabled = true
-wal_sync_interval_ms = 100
+# Metadata storage location
+metadata_url = "file:///data/proximadb/metadata"
 
-[performance]
-enable_gpu = true
-enable_simd = true
+# Storage location for collections
+[[storage.storage_locations]]
+url = "file:///data/proximadb/storage"
+weight = 1
+tags = ["local", "primary"]
+
+# Storage configuration
+mmap_enabled = true
 cache_size_mb = 1024
-thread_pool_size = 16
+bloom_filter_bits = 10
+
+[storage.wal_config]
+write_buffer_size_mb = 2048
+memory_flush_size_bytes = 16777216  # 16MB
+sync_mode = "sync"
+enable_wal = true
 
 [monitoring]
 metrics_enabled = true
-metrics_port = 9090
 log_level = "info"
 ----
 
