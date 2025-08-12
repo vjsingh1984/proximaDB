@@ -28,6 +28,8 @@ use crate::storage::persistence::filesystem::{FilesystemFactory, StorageTier};
 use dashmap::DashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::pin::Pin;
+use std::future::Future;
 use tokio::sync::RwLock;
 use tracing::{debug, info, warn, error};
 
@@ -209,7 +211,17 @@ impl IndexRecoveryManager {
     
     /// Recover a single collection
     pub async fn recover_collection(&self, collection_id: &str) -> Result<(), SerializationError> {
-        info!("Recovering collection: {}", collection_id);
+        self.recover_collection_with_retries(collection_id, 3).await
+    }
+    
+    /// Internal method with retry counter to prevent infinite recursion
+    fn recover_collection_with_retries<'a>(
+        &'a self, 
+        collection_id: &'a str, 
+        max_retries: u32
+    ) -> Pin<Box<dyn Future<Output = Result<(), SerializationError>> + Send + 'a>> {
+        Box::pin(async move {
+        info!("Recovering collection: {} (retries remaining: {})", collection_id, max_retries);
         
         // Update status
         self.update_recovery_status(
@@ -252,10 +264,18 @@ impl IndexRecoveryManager {
             }
             
             CollectionTierState::Transitioning { .. } => {
-                warn!("Collection {} is transitioning, waiting", collection_id);
-                // Wait for transition to complete
-                tokio::time::sleep(Duration::from_secs(1)).await;
-                return self.recover_collection(collection_id).await;
+                if max_retries == 0 {
+                    return Err(SerializationError::Io(std::io::Error::new(
+                        std::io::ErrorKind::TimedOut,
+                        format!("Collection {} stuck in transitioning state", collection_id)
+                    )));
+                }
+                
+                info!("Collection {} is transitioning, waiting before retry", collection_id);
+                tokio::time::sleep(Duration::from_secs(2)).await;
+                
+                // Retry with decremented counter
+                return self.recover_collection_with_retries(collection_id, max_retries - 1).await;
             }
         }
         
@@ -276,6 +296,7 @@ impl IndexRecoveryManager {
         
         info!("Collection {} recovered in {:?}", collection_id, start_time.elapsed());
         Ok(())
+        })
     }
     
     /// Recover index from disk storage
