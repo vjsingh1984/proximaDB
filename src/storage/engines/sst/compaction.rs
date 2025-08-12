@@ -20,12 +20,14 @@
 //! of SST files. Uses background workers to merge files when thresholds are exceeded.
 
 use super::{SstRecord, SstableWriter};
+use super::sst_compactor::{SstCompactor, ZeroCopyCompactionStats, CompactionSortStrategy};
 use crate::core::{String, SstConfig, VectorId, VectorRecord};
 use crate::core::search::mvcc_resolution::MvccResolver;
 use crate::storage::optimization::{MetadataSorter, SortingStats};
 use crate::storage::Result;
 use crate::storage::transaction_coordinator::{TransactionCoordinator, StagingConfig, TransactionStageType};
 use crate::storage::engines::sst::readers::unified_sstable_reader::{UnifiedSstableReader, CollectionContext};
+use crate::storage::persistence::filesystem::FilesystemFactory;
 use chrono::Utc;
 use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::path::{Path, PathBuf};
@@ -83,7 +85,6 @@ pub struct EnhancedCompactionStats {
 }
 
 /// Manages background compaction of SST files
-#[derive(Debug)]
 pub struct CompactionManager {
     config: SstConfig,
     task_queue: Arc<Mutex<VecDeque<CompactionTask>>>,
@@ -93,7 +94,26 @@ pub struct CompactionManager {
     active_compactions: Arc<RwLock<HashMap<String, CompactionTask>>>,
     atomic_coordinator: Option<Arc<TransactionCoordinator>>,
     unified_reader: Arc<UnifiedSstableReader>,
+    sst_compactor: Option<Arc<SstCompactor>>,
+    filesystem_factory: Arc<FilesystemFactory>,
     // manifest: Option<Arc<super::SstManifest>>, // Removed - using directory discovery
+}
+
+impl std::fmt::Debug for CompactionManager {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CompactionManager")
+            .field("config", &self.config)
+            .field("task_queue", &"<task_queue>")
+            .field("worker_handles", &self.worker_handles.len())
+            .field("shutdown_signal", &self.shutdown_signal)
+            .field("stats", &"<stats>")
+            .field("active_compactions", &"<active_compactions>")
+            .field("atomic_coordinator", &self.atomic_coordinator.is_some())
+            .field("unified_reader", &"<unified_reader>")
+            .field("sst_compactor", &self.sst_compactor.is_some())
+            .field("filesystem_factory", &"<filesystem_factory>")
+            .finish()
+    }
 }
 
 impl CompactionManager {
@@ -135,7 +155,23 @@ impl CompactionManager {
                 crate::storage::persistence::filesystem::FilesystemConfig::default()
             ).await.map_err(|e| crate::core::StorageError::SstStorage(e.to_string()))?
         );
-        let unified_reader = Arc::new(UnifiedSstableReader::new(filesystem_factory));
+        let unified_reader = Arc::new(UnifiedSstableReader::new(filesystem_factory.clone()));
+        
+        // Initialize zero-copy compactor
+        let sst_compactor = if let Some(ref coord) = atomic_coordinator {
+            // Create MVCC resolver for the compactor
+            let mvcc_resolver = Arc::new(MvccResolver::new());
+            Some(Arc::new(SstCompactor::new(
+                filesystem_factory.clone(),
+                Some(mvcc_resolver),
+            )))
+        } else {
+            // No atomic coordinator, create compactor without MVCC resolver
+            Some(Arc::new(SstCompactor::new(
+                filesystem_factory.clone(),
+                None,
+            )))
+        };
         
         Ok(Self {
             config,
@@ -146,6 +182,8 @@ impl CompactionManager {
             active_compactions: Arc::new(RwLock::new(HashMap::new())),
             atomic_coordinator,
             unified_reader,
+            sst_compactor,
+            filesystem_factory,
         })
     }
 
@@ -407,7 +445,73 @@ impl CompactionManager {
     }
     
     /// Enhanced compaction that tracks vector changes for AXIS integration
+    /// This now uses zero-copy compaction as primary with fallback to regular compaction
     pub async fn perform_compaction_enhanced(
+        &self,
+        task: &CompactionTask,
+        _config: &SstConfig,
+        atomic_coordinator: Option<Arc<TransactionCoordinator>>,
+    ) -> Result<EnhancedCompactionStats> {
+        // Try zero-copy compaction first
+        if let Some(ref sst_compactor) = self.sst_compactor {
+            info!("🚀 Attempting zero-copy compaction for {} files at level {}", 
+                  task.input_files.len(), task.level);
+            
+            // Convert PathBuf to String for the compactor
+            let input_files: Vec<String> = task.input_files.iter()
+                .map(|p| p.to_string_lossy().to_string())
+                .collect();
+            
+            let output_file = task.output_file.to_string_lossy().to_string();
+            
+            match sst_compactor.compact_files(
+                input_files.clone(),
+                output_file.clone(),
+                task.level + 1,  // Target level is current level + 1
+            ).await {
+                Ok(zero_copy_stats) => {
+                    info!("✅ Zero-copy compaction succeeded: {} records written, {} deleted, {} updated",
+                          zero_copy_stats.records_written,
+                          zero_copy_stats.deleted_vector_ids.len(),
+                          zero_copy_stats.updated_vector_ids.len());
+                    
+                    // Convert ZeroCopyCompactionStats to EnhancedCompactionStats
+                    return Ok(self.convert_zero_copy_stats_to_enhanced(zero_copy_stats));
+                }
+                Err(e) => {
+                    warn!("⚠️ Zero-copy compaction failed: {}. Falling back to regular compaction", e);
+                    // Continue with regular compaction below
+                }
+            }
+        }
+        
+        // Fallback to regular compaction
+        info!("📦 Using regular compaction for {} files at level {}", 
+              task.input_files.len(), task.level);
+        self.perform_regular_compaction_enhanced(task, _config, atomic_coordinator).await
+    }
+    
+    /// Convert zero-copy stats to enhanced stats format
+    fn convert_zero_copy_stats_to_enhanced(&self, stats: ZeroCopyCompactionStats) -> EnhancedCompactionStats {
+        EnhancedCompactionStats {
+            base_stats: CompactionStats {
+                total_compactions: 1,
+                bytes_written: stats.bytes_written,
+                bytes_read: stats.bytes_read,
+                files_merged: stats.files_compacted as u64,
+                avg_compaction_time_ms: stats.compaction_time_ms,
+                last_compaction_time: Some(chrono::Utc::now()),
+                expired_records_deleted: stats.records_deleted,
+                tombstones_removed: stats.tombstoned_ids.len() as u64,
+            },
+            deleted_vector_ids: stats.deleted_vector_ids,
+            merged_vectors: Vec::new(), // Zero-copy doesn't return VectorRecords
+            recommend_full_rebuild: stats.recommend_index_rebuild,
+        }
+    }
+    
+    /// Original enhanced compaction implementation (now used as fallback)
+    async fn perform_regular_compaction_enhanced(
         &self,
         task: &CompactionTask,
         _config: &SstConfig,
