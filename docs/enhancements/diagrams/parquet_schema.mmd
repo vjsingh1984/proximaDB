@@ -1,0 +1,32 @@
+erDiagram
+    PARQUET_FILE {
+        string id "nullable - can be null for append-only"
+        list_float32 vector "CRITICAL - List not Binary"
+        int8 version "MVCC support"
+        int64 updated_at "Audit timestamp"
+        int64 expires_at "TTL support"
+    }
+    
+    QUANTIZATION {
+        binary vector_pq "Product Quantization"
+        list_int8 vector_sq "Scalar Quantization"
+        float32 sq_scale "SQ scale factor"
+        float32 sq_offset "SQ offset"
+        binary vector_binary "Binary Quantization"
+    }
+    
+    FILTERABLE_METADATA {
+        string category "Example filterable"
+        int64 price "Example filterable"
+        float64 score "Example filterable"
+        boolean in_stock "Example filterable"
+        timestamp created_at "Example filterable"
+    }
+    
+    EXTRA_METADATA {
+        list_struct extra_meta "Non-filterable KV pairs"
+    }
+    
+    PARQUET_FILE ||--o| QUANTIZATION : "optional"
+    PARQUET_FILE ||--o{ FILTERABLE_METADATA : "dynamic columns"
+    PARQUET_FILE ||--|| EXTRA_METADATA : "always present"

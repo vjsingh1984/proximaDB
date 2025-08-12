@@ -1,0 +1,15 @@
+graph LR
+    subgraph "Memory Usage"
+        M1[Current: 8GB] --> M2[Arrow: 500MB]
+        style M2 fill:#99ff99
+    end
+    
+    subgraph "Throughput"
+        T1[Current: 17K/s] --> T2[Arrow: 80K/s]
+        style T2 fill:#99ff99
+    end
+    
+    subgraph "Latency - 1M vectors"
+        L1[Current: 60s] --> L2[Arrow: 12s]
+        style L2 fill:#99ff99
+    end
