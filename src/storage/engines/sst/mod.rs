@@ -9,6 +9,7 @@ pub mod decompression_cache;
 pub mod mmap;
 pub mod readers;
 pub mod sstable_writer;
+pub mod sst_compactor;
 pub mod unified_search_engine;
 pub mod index_based_reader;
 pub mod optimized_row_filter;
@@ -27,6 +28,7 @@ pub use bloom_filter::{
 };
 pub use compaction::{CompactionManager, CompactionPriority, CompactionStats, CompactionTask};
 pub use readers::UnifiedSstableReader;
+pub use sst_compactor::{SstCompactor, ZeroCopyCompactionStats, CompactionSortStrategy};
 
 // Additional exports for unified reader (SstableHeader is already defined below)
 pub use sstable_writer::SstableWriter;
