@@ -991,15 +991,7 @@ impl AxisTieringManager {
                 // Map cloud storage type to tier
                 use crate::index::axis::collection_state::CloudStorageType;
                 match storage_type {
-                    CloudStorageType::S3Standard => Ok(StorageTier::CloudStandard { 
-                        provider: crate::common::tier_policy_engine::CloudProvider::AwsS3 {
-                            bucket: "proximadb-indexes".to_string(),
-                            storage_class: crate::common::tier_policy_engine::AwsStorageClass::Standard,
-                            lifecycle_enabled: true,
-                        },
-                        region: "us-west-2".to_string()
-                    }),
-                    CloudStorageType::S3InfrequentAccess => Ok(StorageTier::CloudInfrequentAccess { 
+                    CloudStorageType::S3Standard | CloudStorageType::S3Express => Ok(StorageTier::CloudStandard { 
                         provider: crate::common::tier_policy_engine::CloudProvider::AwsS3 {
                             bucket: "proximadb-indexes".to_string(),
                             storage_class: crate::common::tier_policy_engine::AwsStorageClass::Standard,
@@ -1015,6 +1007,26 @@ impl AxisTieringManager {
                         },
                         region: "us-west-2".to_string()
                     }),
+                    CloudStorageType::GCSStandard | CloudStorageType::GCSNearline | CloudStorageType::GCSArchive => {
+                        Ok(StorageTier::CloudStandard { 
+                            provider: crate::common::tier_policy_engine::CloudProvider::GoogleCloud {
+                                bucket: "proximadb-indexes".to_string(),
+                                storage_class: crate::common::tier_policy_engine::GcsStorageClass::Standard,
+                                auto_class: false,
+                            },
+                            region: "us-central1".to_string()
+                        })
+                    },
+                    CloudStorageType::AzureHot | CloudStorageType::AzureCool | CloudStorageType::AzureArchive => {
+                        Ok(StorageTier::CloudStandard { 
+                            provider: crate::common::tier_policy_engine::CloudProvider::AzureBlob {
+                                account: "proximadb".to_string(),
+                                container: "indexes".to_string(),
+                                access_tier: crate::common::tier_policy_engine::AzureAccessTier::Hot,
+                            },
+                            region: "eastus".to_string()
+                        })
+                    },
                 }
             },
             _ => Err(anyhow::anyhow!("Cannot extract tier from state: {:?}", state))

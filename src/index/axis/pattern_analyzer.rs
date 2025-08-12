@@ -242,31 +242,18 @@ impl AxisTieringIntegration {
     fn map_tier_level_to_axis(&self, tier_level: u8) -> TierLevel {
         match tier_level {
             1 => TierLevel::Memory,
-            2 => TierLevel::L1_NVMe,
-            3 => TierLevel::L2_NetworkDisk,
-            4 => TierLevel::L3_CloudHot,
-            _ => TierLevel::L4_CloudCool,
+            2 => TierLevel::Disk,
+            _ => TierLevel::Cloud,
         }
     }
     
     fn map_axis_tier_to_storage(&self, axis_tier: &TierLevel) -> StorageTier {
         match axis_tier {
             TierLevel::Memory => StorageTier::Memory,
-            TierLevel::L1_NVMe => StorageTier::NvmeSsd { 
+            TierLevel::Disk => StorageTier::NvmeSsd { 
                 mount_path: "/mnt/nvme".to_string() 
             },
-            TierLevel::L2_NetworkDisk => StorageTier::HardDisk { 
-                mount_path: "/mnt/disk".to_string() 
-            },
-            TierLevel::L3_CloudHot => StorageTier::CloudExpressOneZone { 
-                provider: crate::common::tier_policy_engine::CloudProvider::AwsS3 {
-                    bucket: "proximadb-axis-hot".to_string(),
-                    storage_class: crate::common::tier_policy_engine::AwsStorageClass::ExpressOneZone,
-                    lifecycle_enabled: true,
-                },
-                region: "us-east-1".to_string(),
-            },
-            TierLevel::L4_CloudCool => StorageTier::CloudStandard { 
+            TierLevel::Cloud => StorageTier::CloudStandard { 
                 provider: crate::common::tier_policy_engine::CloudProvider::AwsS3 {
                     bucket: "proximadb-axis-standard".to_string(),
                     storage_class: crate::common::tier_policy_engine::AwsStorageClass::Standard,
@@ -327,7 +314,7 @@ mod tests {
         // Test tier recommendation
         let recommendation = integration.recommend_tier(
             "test_collection",
-            &TierLevel::L2_NetworkDisk,
+            &TierLevel::Disk,
             AxisIndexType::HNSW,
         ).await.unwrap();
         
@@ -346,8 +333,8 @@ mod tests {
         
         // Test tier level mapping
         assert_eq!(integration.map_tier_level_to_axis(1), TierLevel::Memory);
-        assert_eq!(integration.map_tier_level_to_axis(2), TierLevel::L1_NVMe);
-        assert_eq!(integration.map_tier_level_to_axis(3), TierLevel::L2_NetworkDisk);
+        assert_eq!(integration.map_tier_level_to_axis(2), TierLevel::Disk);
+        assert_eq!(integration.map_tier_level_to_axis(3), TierLevel::Cloud);
         
         // Test storage tier mapping
         let storage_tier = integration.map_axis_tier_to_storage(&TierLevel::Memory);

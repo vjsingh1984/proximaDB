@@ -508,9 +508,10 @@ impl AxisHnswIndex {
         // - Entry points
         // - Vector data
         
-        // For now, return placeholder with dimension from config
-        let dimension = config.dimensions.unwrap_or(128); // Default dimension
-        AxisHnswIndex::new(config.clone(), dimension)
+        // For now, return placeholder with default dimension
+        // In real implementation, dimension would be in the serialized data
+        let dimension = 128; // Default dimension
+        Ok(AxisHnswIndex::new(config.clone(), dimension)?)
     }
 }
 
@@ -558,7 +559,7 @@ impl UnifiedIvfIndex {
         
         // For now, return placeholder with collection_id
         let collection_id = "default_collection".to_string(); // Placeholder collection ID
-        UnifiedIvfIndex::new(collection_id, config.clone())
+        Ok(UnifiedIvfIndex::new(collection_id, config.clone())?)
     }
 }
 

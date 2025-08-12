@@ -9,10 +9,44 @@ image::multi_disk_architecture.svg[Multi-Disk Architecture,800,600]
 == Architecture Benefits
 
 * **Parallel I/O Operations**: Concurrent read/write across multiple disks
-* **Load Distribution**: Round-robin collection assignment  
+* **Load Distribution**: Weighted collection assignment across storage locations
 * **Fault Tolerance**: Disk failure isolation with automatic recovery
 * **Multi-Cloud Support**: AWS S3, Azure Blob, Google Cloud Storage
 * **Hybrid Deployments**: Local high-performance with cloud backup
+
+== Storage Assignment Model
+
+=== Collection-Level Assignment
+Each collection is assigned to a single storage location at creation time:
+
+1. **Automatic Assignment**: System selects location based on configured strategy
+2. **User-Specified**: Collection can request specific location via `storage_location` parameter
+3. **Unified Storage**: All collection data (WAL, data, indexes) stored together
+
+=== Directory Structure
+Once assigned, a collection's data is organized as:
+```
+{base_url}/{collection_id}/
+├── wal/          # Write-ahead logs
+├── data/         # SSTable or Parquet files
+└── indexes/      # Index structures
+```
+
+Example for collection `abc123` on disk1:
+```
+file:///data/disk1/proximadb/abc123/
+├── wal/
+├── data/
+└── indexes/
+```
+
+=== Assignment Strategies
+
+* **Random**: Equal probability selection
+* **Weighted**: Selection based on configured weights
+* **Hash**: Consistent hashing of collection ID
+* **RoundRobin**: Sequential assignment
+* **Tagged**: Match collection requirements to storage tags
 
 == Core Configuration
 
@@ -20,39 +54,44 @@ image::multi_disk_architecture.svg[Multi-Disk Architecture,800,600]
 
 [source,toml]
 ----
-# Multi-disk WriteBuffer configuration
+[storage]
+# Single metadata URL for consistency (on fastest disk)
+metadata_url = "file:///data/disk1/metadata"
+
+# Multiple storage locations for collections
+# Each collection gets assigned one location at creation time
+# The location hosts: {base_url}/{collection_id}/{wal,data,indexes}/
+[[storage.storage_locations]]
+url = "file:///data/disk1/proximadb"  # Fast NVMe disk
+weight = 3  # Higher weight = higher probability of selection
+tags = ["fast", "nvme", "primary"]
+
+[[storage.storage_locations]]
+url = "file:///data/disk2/proximadb"  # Secondary SSD
+weight = 2  # Medium weight
+tags = ["ssd", "secondary"]
+
+[[storage.storage_locations]]
+url = "file:///data/disk3/proximadb"  # Capacity HDD
+weight = 1  # Lower weight
+tags = ["hdd", "capacity", "archive"]
+
+# Assignment configuration
+[storage.assignment_config]
+strategy = "weighted"  # Options: "random", "weighted", "hash", "roundrobin"
+affinity = true       # Keep WAL/data/indexes together per collection
+
+# WAL configuration (applies to all collections)
 [storage.wal_config]
-wal_urls = [
-"file:///data/disk1/wal",
-"file:///data/disk2/wal",
-"file:///data/disk3/wal"
-]
-distribution_strategy = "LoadBalanced"
-collection_affinity = true
-memory_flush_size_bytes = 1048576 # 1MB
-global_flush_threshold = 536870912 # 512MB
+memory_flush_size_bytes = 16777216  # 16MB
+global_flush_threshold = 536870912  # 512MB
+write_buffer_size_mb = 8192         # 8GB global write buffer
+sync_mode = "sync"                  # Options: "sync", "async", "none"
 
-# Storage layout per disk
-[[storage.storage_layout.base_paths]]
-base_dir = "/data/disk1/storage"
-instance_id = 1
-mount_point = "/mnt/disk1"
-disk_type = { NvmeSsd = { max_iops = 100000 } }
-capacity_config = { max_wal_size_mb = 2048, metadata_reserved_mb = 512, warning_threshold_percent = 85.0 }
-
-[[storage.storage_layout.base_paths]]
-base_dir = "/data/disk2/storage"
-instance_id = 2
-mount_point = "/mnt/disk2"
-disk_type = { NvmeSsd = { max_iops = 100000 } }
-capacity_config = { max_wal_size_mb = 2048, metadata_reserved_mb = 512, warning_threshold_percent = 85.0 }
-
-# Metadata backend (on fastest disk)
-[storage.metadata_backend]
-backend_type = "filestore"
-storage_url = "file:///data/disk1/metadata"
-cache_size_mb = 128
-flush_interval_secs = 30
+# Storage engine settings
+mmap_enabled = true
+cache_size_mb = 512
+bloom_filter_bits = 10
 ----
 
 === Configuration Options
@@ -86,29 +125,55 @@ _link:../diagrams/deployment-architecture.mmd[View source diagram]_
 
 === Development Environment
 ```toml
-[storage.storage_layout]
-base_paths = [
-    { base_dir = "/tmp/proximadb/disk1/storage", instance_id = 1, disk_type = { NvmeSsd = { max_iops = 10000 } }}
-]
+[storage]
+metadata_url = "file:///tmp/proximadb/metadata"
+
+[[storage.storage_locations]]
+url = "file:///tmp/proximadb/storage"
+weight = 1
+tags = ["dev", "local"]
 ```
 
 === Production On-Premises
 ```toml
-[storage.storage_layout]
-base_paths = [
-    { base_dir = "/mnt/nvme1/proximadb/storage", instance_id = 1, disk_type = { NvmeSsd = { max_iops = 500000 } }},
-    { base_dir = "/mnt/nvme2/proximadb/storage", instance_id = 2, disk_type = { NvmeSsd = { max_iops = 500000 } }},
-    { base_dir = "/mnt/nvme3/proximadb/storage", instance_id = 3, disk_type = { NvmeSsd = { max_iops = 500000 } }}
-]
+[storage]
+metadata_url = "file:///mnt/nvme1/proximadb/metadata"
+
+[[storage.storage_locations]]
+url = "file:///mnt/nvme1/proximadb"
+weight = 3
+tags = ["nvme", "fast", "primary"]
+
+[[storage.storage_locations]]
+url = "file:///mnt/nvme2/proximadb"
+weight = 3
+tags = ["nvme", "fast", "secondary"]
+
+[[storage.storage_locations]]
+url = "file:///mnt/sata1/proximadb"
+weight = 1
+tags = ["sata", "capacity", "archive"]
 ```
 
 === Hybrid Cloud Deployment  
 ```toml
-[storage.storage_layout]
-base_paths = [
-    { base_dir = "/mnt/nvme1/storage", instance_id = 1, disk_type = { NvmeSsd = { max_iops = 200000 } }},
-    { base_dir = "s3://cold-storage/cluster1", instance_id = 2, disk_type = { NetworkStorage = { latency_ms = 50.0 } }}
-]
+[storage]
+metadata_url = "file:///mnt/nvme1/metadata"
+
+[[storage.storage_locations]]
+url = "file:///mnt/nvme1/proximadb"
+weight = 5  # Prefer local for hot data
+tags = ["local", "nvme", "hot"]
+
+[[storage.storage_locations]]
+url = "s3://proximadb-storage/collections"
+weight = 1  # Use cloud for cold data
+tags = ["cloud", "s3", "cold"]
+
+# Cloud authentication
+[storage.cloud_auth]
+aws_use_iam_role = true
+aws_region = "us-west-2"
 ```
 
 == Performance Tuning
