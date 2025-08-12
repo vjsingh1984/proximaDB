@@ -230,7 +230,7 @@ mod tests {
         let mut config = create_test_sst_config();
         config.level_count = 1; // Minimum level count
         
-        let manager = CompactionManager::new(config.clone());
+        let manager = CompactionManager::new(config.clone()).await.unwrap();
         
         // Test with level 0 (minimum)
         let task_level_0 = create_test_compaction_task("collection_level0", 0, CompactionPriority::Medium);
