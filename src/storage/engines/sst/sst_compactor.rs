@@ -24,7 +24,7 @@ use tracing::{debug, info, warn, error};
 use futures::stream::{Stream, StreamExt};
 use async_trait::async_trait;
 
-/// Statistics for zero-copy compaction
+/// Statistics for zero-copy compaction with AXIS integration
 #[derive(Debug, Clone, Default)]
 pub struct ZeroCopyCompactionStats {
     pub records_read: u64,
@@ -35,6 +35,12 @@ pub struct ZeroCopyCompactionStats {
     pub bytes_written: u64,
     pub files_compacted: usize,
     pub compaction_time_ms: u64,
+    
+    // AXIS integration: track changes for index updates
+    pub deleted_vector_ids: Vec<String>,  // IDs of deleted/expired vectors
+    pub updated_vector_ids: Vec<String>,  // IDs of vectors that were updated (version change)
+    pub tombstoned_ids: Vec<String>,      // IDs marked as tombstones
+    pub recommend_index_rebuild: bool,    // True if significant changes warrant index rebuild
 }
 
 /// Entry in the k-way merge heap
@@ -112,6 +118,39 @@ pub struct SstCompactor {
 }
 
 impl SstCompactor {
+    /// Notify AXIS indexes of changes during compaction
+    async fn notify_axis_of_changes(&self, stats: &ZeroCopyCompactionStats) {
+        // This would integrate with AXIS similar to how EnhancedCompactionStats does it
+        // For now, just log the notification
+        if stats.recommend_index_rebuild {
+            warn!("🔄 AXIS notification: Index rebuild recommended due to significant changes");
+        } else if !stats.deleted_vector_ids.is_empty() {
+            info!("📢 AXIS notification: {} vectors deleted", stats.deleted_vector_ids.len());
+        }
+        
+        if !stats.updated_vector_ids.is_empty() {
+            info!("📢 AXIS notification: {} vectors updated", stats.updated_vector_ids.len());
+        }
+        
+        // TODO: Actual AXIS integration would go here
+        // This would call into the AXIS index manager to update indexes
+    }
+    
+    /// Check if a record is append-only (no meaningful ID)
+    #[inline]
+    fn is_append_only(id: &str) -> bool {
+        id.is_empty() || id == "null" || id == "none" || id.trim().is_empty()
+    }
+    
+    /// Normalize version: None or 0 becomes 1
+    #[inline]
+    fn normalize_version(version: Option<u32>) -> u32 {
+        match version {
+            None | Some(0) => 1,
+            Some(v) => v,
+        }
+    }
+    
     pub fn new(
         filesystem_factory: Arc<FilesystemFactory>,
         mvcc_resolver: Option<Arc<MvccResolver>>,
@@ -159,7 +198,16 @@ impl SstCompactor {
         }
 
         // Perform k-way merge
-        let merged_records = self.k_way_merge(iterators).await?;
+        let (merged_records, merge_stats) = self.k_way_merge(iterators).await?;
+        
+        // Merge the stats from k-way merge
+        stats.records_read = merge_stats.records_read;
+        stats.records_deleted = merge_stats.records_deleted;
+        stats.records_merged = merge_stats.records_merged;
+        stats.deleted_vector_ids = merge_stats.deleted_vector_ids;
+        stats.updated_vector_ids = merge_stats.updated_vector_ids;
+        stats.tombstoned_ids = merge_stats.tombstoned_ids;
+        stats.recommend_index_rebuild = merge_stats.recommend_index_rebuild;
         
         // Write merged records to output file
         let writer_stats = self.write_merged_records(
@@ -173,9 +221,15 @@ impl SstCompactor {
         stats.compaction_time_ms = start.elapsed().as_millis() as u64;
 
         info!(
-            "✅ Zero-copy compaction completed in {}ms: {} records written, {} bytes",
-            stats.compaction_time_ms, stats.records_written, stats.bytes_written
+            "✅ Zero-copy compaction completed in {}ms: {} records written, {} bytes, {} deleted, {} updated",
+            stats.compaction_time_ms, stats.records_written, stats.bytes_written,
+            stats.deleted_vector_ids.len(), stats.updated_vector_ids.len()
         );
+        
+        // Send AXIS update notifications if there are changes
+        if !stats.deleted_vector_ids.is_empty() || !stats.updated_vector_ids.is_empty() {
+            self.notify_axis_of_changes(&stats).await;
+        }
 
         Ok(stats)
     }
@@ -185,9 +239,10 @@ impl SstCompactor {
     async fn k_way_merge(
         &self,
         mut iterators: Vec<(usize, BlockIterator<SstRecord>)>,
-    ) -> Result<Vec<SstRecord>> {
+    ) -> Result<(Vec<SstRecord>, ZeroCopyCompactionStats)> {
         let mut heap = BinaryHeap::new();
         let mut merged_records = Vec::new();
+        let mut stats = ZeroCopyCompactionStats::default();
         // Track all versions for each ID to apply MVCC rules
         let mut id_versions: HashMap<String, Vec<SstRecord>> = HashMap::new();
         let mut active_iterators: Vec<(usize, BlockIterator<SstRecord>)> = Vec::new();
@@ -208,6 +263,7 @@ impl SstCompactor {
         // Collect all records grouped by ID
         while let Some(Reverse(entry)) = heap.pop() {
             let record_id = entry.record.id.clone();
+            stats.records_read += 1;
             
             // Collect all versions of each ID
             id_versions.entry(record_id.clone())
@@ -227,28 +283,46 @@ impl SstCompactor {
             }
         }
 
+        // Separate append-only records (no ID) from versioned records
+        let mut append_only_records = Vec::new();
+        if let Some(no_id_records) = id_versions.remove("") {
+            append_only_records.extend(no_id_records);
+        }
+        
         // Now apply MVCC resolution rules for each ID
         let now = chrono::Utc::now().timestamp() as u32;
         
         for (id, mut versions) in id_versions {
-            // Skip if any version is a tombstone (deletion marker)
-            if versions.iter().any(|r| r.is_tombstone) {
-                debug!("Skipping tombstoned record: {}", id);
+            // Skip append-only IDs
+            if Self::is_append_only(&id) {
+                append_only_records.extend(versions);
                 continue;
             }
             
-            // Skip if any version is expired
-            if versions.iter().any(|r| {
+            // Track if this ID has any tombstones
+            let has_tombstone = versions.iter().any(|r| r.is_tombstone);
+            if has_tombstone {
+                debug!("Skipping tombstoned record: {}", id);
+                stats.tombstoned_ids.push(id.clone());
+                stats.records_deleted += versions.len() as u64;
+                continue;
+            }
+            
+            // Track if this ID has expired versions
+            let has_expired = versions.iter().any(|r| {
                 r.expires_at.map_or(false, |exp| exp < now)
-            }) {
+            });
+            if has_expired {
                 debug!("Skipping expired record: {}", id);
+                stats.deleted_vector_ids.push(id.clone());
+                stats.records_deleted += versions.len() as u64;
                 continue;
             }
             
             // Sort by version (ascending), then by timestamp (ascending for same version)
             versions.sort_by(|a, b| {
-                let ver_a = a.version.unwrap_or(1);
-                let ver_b = b.version.unwrap_or(1);
+                let ver_a = Self::normalize_version(a.version);
+                let ver_b = Self::normalize_version(b.version);
                 
                 ver_a.cmp(&ver_b)
                     .then_with(|| a.timestamp.cmp(&b.timestamp))
@@ -259,7 +333,7 @@ impl SstCompactor {
             let mut last_valid: Option<SstRecord> = None;
             
             for record in versions {
-                let version = record.version.unwrap_or(1);
+                let version = Self::normalize_version(record.version);
                 
                 if version == expected_version {
                     // This version is continuous
@@ -276,17 +350,50 @@ impl SstCompactor {
             
             // Add the highest continuous version to output
             if let Some(mut record) = last_valid {
+                let selected_version = Self::normalize_version(record.version);
+                
+                // Track if this was an update (version > 1)
+                if selected_version > 1 {
+                    stats.updated_vector_ids.push(id.clone());
+                    stats.records_merged += 1;
+                }
+                
                 // Update the level to match the target compaction level
                 record.level = self.block_size as u8; // Will be set properly by caller
                 
-                debug!("Selected version {} for ID '{}'", 
-                       record.version.unwrap_or(1), id);
+                debug!("Selected version {} for ID '{}'", selected_version, id);
                 merged_records.push(record);
             }
         }
 
-        info!("K-way merge completed: {} records after MVCC resolution", merged_records.len());
-        Ok(merged_records)
+        // Add all append-only records (they don't participate in deduplication)
+        merged_records.extend(append_only_records);
+        
+        // Determine if index rebuild is recommended
+        let total_changes = stats.deleted_vector_ids.len() + 
+                           stats.updated_vector_ids.len() + 
+                           stats.tombstoned_ids.len();
+        let change_ratio = if stats.records_read > 0 {
+            total_changes as f64 / stats.records_read as f64
+        } else {
+            0.0
+        };
+        
+        // Recommend rebuild if more than 30% of records changed
+        stats.recommend_index_rebuild = change_ratio > 0.3;
+        
+        if stats.recommend_index_rebuild {
+            warn!("🔄 Index rebuild recommended: {:.1}% of records changed during compaction", 
+                  change_ratio * 100.0);
+        }
+        
+        info!("K-way merge completed: {} records after MVCC resolution (deleted: {}, updated: {}, tombstoned: {})", 
+              merged_records.len(), 
+              stats.deleted_vector_ids.len(),
+              stats.updated_vector_ids.len(),
+              stats.tombstoned_ids.len());
+        
+        Ok((merged_records, stats))
     }
 
     /// Write merged records to a new SST file
@@ -300,9 +407,24 @@ impl SstCompactor {
         
         // CRITICAL: Sort records based on configured strategy
         // SSTable requires records to be sorted for efficient binary search
+        // Handle append-only records (no ID) specially
         match &self.sort_strategy {
             CompactionSortStrategy::ById => {
-                records.sort_by(|a, b| a.id.cmp(&b.id));
+                records.sort_by(|a, b| {
+                    // Check if either record is append-only
+                    let a_is_append = Self::is_append_only(&a.id);
+                    let b_is_append = Self::is_append_only(&b.id);
+                    
+                    match (a_is_append, b_is_append) {
+                        (true, true) => {
+                            // Both are append-only: sort by timestamp, then by metadata
+                            a.timestamp.cmp(&b.timestamp)
+                        }
+                        (true, false) => Ordering::Greater, // Append-only records go to the end
+                        (false, true) => Ordering::Less,
+                        (false, false) => a.id.cmp(&b.id), // Normal ID comparison
+                    }
+                });
             }
             CompactionSortStrategy::ByTimestamp => {
                 records.sort_by(|a, b| b.timestamp.cmp(&a.timestamp)); // Newest first
