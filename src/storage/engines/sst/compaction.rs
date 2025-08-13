@@ -44,6 +44,10 @@ pub struct CompactionTask {
     pub input_files: Vec<PathBuf>,
     pub output_file: PathBuf,
     pub priority: CompactionPriority,
+    /// Block size in MB for compacted output (uses server default if None)
+    pub block_size_mb: Option<u32>,
+    /// Compression configuration (uses server default if None)
+    pub compression_config: Option<crate::proto::proximadb::CompressionConfig>,
 }
 
 /// Priority levels for compaction tasks
@@ -324,6 +328,8 @@ impl CompactionManager {
                     input_files,
                     output_file,
                     priority,
+                    block_size_mb: None, // Use server default
+                    compression_config: None, // Use server default
                 }));
             }
         }
@@ -756,8 +762,10 @@ impl CompactionManager {
             btree_records.insert(key, record);
         }
 
-        // Use optimized SSTable writer for compacted output with atomic writes
-        let block_size = (_config.block_size_kb * 1024) as usize;
+        // Use task-specific block size if provided, otherwise fall back to server config
+        let block_size_mb = task.block_size_mb.unwrap_or(_config.block_size_mb);
+        let block_size = (block_size_mb * 1024 * 1024) as usize;
+        debug!("📊 COMPACTION: Using block size: {}MB", block_size_mb);
         
         // TODO: Pass filesystem from compaction manager - for now create a new factory
         let filesystem_factory = Arc::new(
@@ -1284,7 +1292,7 @@ mod tests {
         let mut config = SstConfig::default();
         config.level_count = 3;
         config.compaction_threshold = 2;
-        config.block_size_kb = 4;
+        config.block_size_mb = 1;
 
         let mut manager = CompactionManager::new(config).await.unwrap();
         assert!(manager.start_workers(1).await.is_ok());
@@ -1296,7 +1304,7 @@ mod tests {
         let mut config = SstConfig::default();
         config.level_count = 3;
         config.compaction_threshold = 2;
-        config.block_size_kb = 4;
+        config.block_size_mb = 1;
 
         let manager = CompactionManager::new(config).await.unwrap();
 
@@ -1305,6 +1313,8 @@ mod tests {
             input_files: vec![],
             output_file: PathBuf::from("/tmp/output.db"),
             priority: CompactionPriority::Medium,
+            block_size_mb: None,
+            compression_config: None,
         };
 
         assert!(manager.schedule_compaction(task).await.is_ok());

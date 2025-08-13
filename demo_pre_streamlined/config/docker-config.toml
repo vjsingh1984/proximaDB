@@ -1,0 +1,106 @@
+# ProximaDB Configuration for Docker Demo Environment
+
+[server]
+host = "0.0.0.0"
+port = 5678
+
+# ✅ Protocol compression now configurable via [api] section
+
+[storage]
+# Single metadata URL
+metadata_url = "file:///data/metadata"
+
+# Storage locations in container
+[[storage.storage_locations]]
+url = "file:///data/collections"
+weight = 1
+tags = ["docker", "local"]
+
+# Assignment configuration
+[storage.assignment_config]
+strategy = "hash"
+affinity = true
+
+# Memory and performance settings optimized for containers
+mmap_enabled = true
+cache_size_mb = 512  # Increased for better performance
+bloom_filter_bits = 12  # Optimized for 95% scan reduction
+
+[storage.sst_config]
+memtable_size_mb = 1024  # 1GB to reduce small file creation
+memory_flush_size_bytes = 16777216  # 16MB to reduce small file creation
+compression = "zstd"  # ZSTD for better compression ratio
+compression_enabled = true  # Enable compression by default
+compression_level = 3  # Balanced speed/compression (1-22)
+compaction_threshold = 5  # Minimum 5 files before compaction
+write_buffer_size_mb = 8192  # 8GB for global write buffer
+block_size_kb = 4096  # 4MB blocks for optimal ZSTD compression
+
+# Decompression cache configuration for optimal performance
+[storage.sst_config.decompression_cache]
+max_size_mb = 512  # 512MB cache for compressed blocks
+min_size_mb = 64   # Minimum 64MB for production safety
+max_cap_mb = 2048  # Maximum 2GB cap for containers
+enable_prefetch = true  # Background prefetching
+prefetch_threshold = 3  # Prefetch after 3 accesses
+ttl_seconds = 0  # No expiration for maximum performance
+invalidation_check_interval_seconds = 60
+
+[storage.viper_config]
+row_group_size = 100000  # Optimized for analytics workloads
+compression = "zstd"  # ZSTD for columnar data
+compression_enabled = true  # Enable compression by default  
+compression_level = 3  # Balanced speed/compression
+enable_statistics = true
+data_directory = "/data/viper_data"
+cache_size_mb = 512  # Increased for better columnar performance
+enable_quantization = true  # Two-stage search optimization
+quantization_type = "int8"  # INT8 quantization for memory efficiency
+
+[storage.filesystem_config]
+enable_write_strategy_cache = true
+temp_strategy = "SameDirectory"
+
+[storage.filesystem_config.atomic_config]
+enable_local_atomic = true
+enable_object_store_atomic = false
+cleanup_temp_on_startup = true
+
+[logging]
+level = "info"
+file_path = "/data/logs/proximadb.log"
+max_files = 5
+max_file_size_mb = 100
+
+[metrics]
+enabled = true
+port = 9090
+path = "/metrics"
+
+[security]
+enable_tls = false  # Disabled for demo simplicity
+
+# Hardware acceleration configuration for optimal performance
+[hardware]
+enable_detection = true           # Auto hardware detection
+enable_gpu_acceleration = false   # Disabled for container compatibility  
+enable_simd = true               # Enable SIMD acceleration
+enable_avx512 = true             # Enable AVX-512 if available
+enable_gpu_parsing = false       # Disabled for containers
+enable_gpu_distance = false      # Disabled for containers
+gpu_min_vector_size = 64         # Minimum vector size for GPU
+gpu_min_batch_size = 100         # Minimum batch size for GPU
+
+# API configuration for REST and gRPC servers
+[api]
+grpc_port = 5679
+rest_port = 5678
+max_request_size_mb = 64
+timeout_seconds = 30
+enable_tls = false
+
+# ✅ Protocol compression now configurable (all defaults false)
+rest_compression = false        # REST API compression
+grpc_compression = false        # gRPC compression  
+compression_algorithm = "gzip"  # Compression algorithm
+compression_level = 6           # Compression level

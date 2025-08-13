@@ -16,7 +16,7 @@ mod tests {
 
     fn create_test_config() -> SstConfig {
         SstConfig {
-            block_size_kb: 64, // Use 64KB blocks for tests
+            block_size_mb: 64, // Use 64KB blocks for tests
             decompression_cache_config: None,
             ..SstConfig::default()
         }

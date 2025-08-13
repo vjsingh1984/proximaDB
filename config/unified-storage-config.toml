@@ -46,7 +46,7 @@ bloom_filter_bits = 12
 memtable_size_mb = 1024  # 1GB to reduce small file creation
 level_count = 7
 compaction_threshold = 5  # Minimum 5 files before compaction
-block_size_kb = 64
+block_size_mb = 3
 compression = "snappy"
 
 [storage.filesystem_config]

@@ -421,11 +421,16 @@ pub struct SstConfig {
     /// - **1MB**: Optimal for EC2 GP2/GP3 and modern SSDs (default)
     /// - **2-4MB**: Best for high-throughput workloads with ample memory
     /// 
+    /// **Cloud-Optimized Block Size (MB):**
+    /// - 3MB: Universal optimization for AWS EBS gp3/st1, Azure Premium SSD, GCS Standard
+    /// - 2MB: Memory-constrained environments
+    /// - 4MB: Very large sparse vector deployments
+    /// 
     /// **Backward Compatibility:** 
     /// Changing this value during restarts is safe. Each SSTable block stores its own
     /// length prefix [block_len:4][block_data], so existing files continue to work.
     /// Mixed block sizes within the same system are fully supported.
-    pub block_size_kb: u32,
+    pub block_size_mb: u32,
     /// Compaction strategy (leveled, tiered, unified)
     pub compaction_strategy: String,
     /// Compression algorithm (snappy, lz4, zstd, none)
@@ -503,7 +508,7 @@ impl Default for SstConfig {
         Self {
             level_count: 7,
             compaction_threshold: 5,
-            block_size_kb: 8192, // 8MB default - optimal for 768D vectors (~2350 vectors/block)
+            block_size_mb: 3, // 3MB default - optimal for all cloud IOPS patterns and vector dimensions
             compaction_strategy: "leveled".to_string(),
             compression: "zstd".to_string(),  // ZSTD for better compression
             compression_level: 3,  // Balanced speed/compression
@@ -537,36 +542,34 @@ impl SstConfig {
         }
         
         // Validate block size for optimal performance and storage compatibility
-        if self.block_size_kb < 4 {
-            return Err("block_size_kb must be at least 4KB for reasonable I/O performance".to_string());
+        if self.block_size_mb < 1 {
+            return Err("block_size_mb must be at least 1MB for reasonable I/O performance".to_string());
         }
-        if self.block_size_kb > 16 * 1024 {
-            return Err("block_size_kb should not exceed 16MB to avoid excessive memory usage per block".to_string());
+        if self.block_size_mb > 8 {
+            return Err("block_size_mb should not exceed 8MB to avoid excessive memory usage per block".to_string());
         }
         
         // Performance recommendations for common deployment scenarios
-        match self.block_size_kb {
-            1024 => {
-                // 1MB - Optimal for EC2 GP2/GP3 and modern SSDs
-                info!("block_size_kb=1MB - Optimized for EC2 GP2/GP3 and modern storage IOPS");
+        match self.block_size_mb {
+            1 => {
+                // 1MB - Good for memory-constrained environments
+                info!("block_size_mb=1MB - Good for memory-constrained deployments");
             }
-            256 | 512 => {
-                // Good for memory-constrained environments
-                info!("block_size_kb={}KB - Good for memory-constrained deployments", self.block_size_kb);
+            2 => {
+                // 2MB - Good for standard deployments
+                info!("block_size_mb=2MB - Good for standard deployments with moderate memory");
             }
-            2048 | 4096 => {
-                // Good for high-throughput scenarios
-                info!("block_size_kb={}KB - Optimized for high-throughput workloads", self.block_size_kb);
+            3 => {
+                // 3MB - Optimal for all cloud providers (AWS EBS gp3/st1, Azure Premium SSD, GCS Standard)
+                info!("block_size_mb=3MB - Optimal for all cloud storage IOPS patterns (AWS/Azure/GCS)");
             }
-            8192 => {
-                // Optimal for ZSTD compression and high-throughput workloads
-                info!("block_size_kb=8MB - Optimized for ZSTD compression and high-throughput workloads");
+            4 => {
+                // 4MB - Good for high-throughput scenarios
+                info!("block_size_mb=4MB - Optimized for high-throughput workloads");
             }
-            _ if self.block_size_kb < 256 => {
-                warn!("block_size_kb={}KB - Consider 256KB+ for better I/O efficiency", self.block_size_kb);
-            }
-            _ if self.block_size_kb > 8192 => {
-                warn!("block_size_kb={}KB - Very large blocks may increase memory pressure", self.block_size_kb);
+            5..=8 => {
+                // Large blocks for very high-throughput workloads
+                info!("block_size_mb={}MB - Large blocks for high-throughput workloads", self.block_size_mb);
             }
             _ => {
                 // Any other size is fine
@@ -578,7 +581,7 @@ impl SstConfig {
     
     /// Get block size in bytes for internal use
     pub fn block_size_bytes(&self) -> usize {
-        (self.block_size_kb as usize) * 1024
+        (self.block_size_mb as usize) * 1024 * 1024
     }
 }
 

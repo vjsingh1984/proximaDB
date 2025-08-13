@@ -282,8 +282,8 @@ level_count = 7
 # Files before compaction triggers (default: 5)
 compaction_threshold = 5
 
-# Block size in KB - BACKWARD COMPATIBLE (default: 8192KB = 8MB)
-block_size_kb = 8192
+# Block size in MB - Optimal for cloud storage (default: 3MB)
+block_size_mb = 3
 
 # Compaction strategy (default: "leveled")
 compaction_strategy = "leveled"
@@ -717,7 +717,7 @@ ProximaDB performs extensive configuration validation during startup:
 cache_size_mb = 4096
 
 [storage.sst_config] 
-block_size_kb = 8192
+block_size_mb = 3
 background_thread_count = 8
 cache_size_mb = 1024
 
@@ -742,7 +742,7 @@ enable_simd = true
 cache_size_mb = 512
 
 [storage.sst_config]
-block_size_kb = 256
+block_size_mb = 1
 cache_size_mb = 128
 
 [storage.sst_config.decompression_cache] 
@@ -878,7 +878,7 @@ weight = 1
 tags = ["hdd", "archive"]
 
 [storage.sst_config]
-block_size_kb = 8192
+block_size_mb = 3
 compression = "zstd"
 compression_level = 3
 background_thread_count = 16
@@ -926,7 +926,7 @@ weight = 1
 tags = ["local", "dev"]
 
 [storage.sst_config]
-block_size_kb = 1024
+block_size_mb = 1
 compression = "lz4"  # Faster for development
 
 [hardware]

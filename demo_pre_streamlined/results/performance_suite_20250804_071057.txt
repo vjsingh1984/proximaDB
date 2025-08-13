@@ -1,0 +1,34 @@
+ℹ️ Configuration: 2 engines, 2 protocols
+ℹ️ Comparing REST vs gRPC protocol performance for each storage engine
+ℹ️ Testing REST protocol with 1,000 vectors
+📊 SST REST: 6016 vec/s insert, 50.1ms search
+ℹ️ Testing GRPC protocol with 1,000 vectors
+📊 SST GRPC: 18909 vec/s insert, 1.9ms search
+ℹ️ Testing REST protocol with 1,000 vectors
+📊 VIPER REST: 6460 vec/s insert, 49.6ms search
+ℹ️ Testing GRPC protocol with 1,000 vectors
+📊 VIPER GRPC: 19360 vec/s insert, 1.7ms search
+ℹ️ Testing identical workloads on both protocols
+📊 REST 100 vectors: 1480 vec/s insert, 50.00ms search
+📊 REST 500 vectors: 6355 vec/s insert, 50.03ms search
+📊 REST 1000 vectors: 6391 vec/s insert, 49.81ms search
+📊 REST 5000 vectors: 5897 vec/s insert, 50.03ms search
+📊 GRPC 100 vectors: 11106 vec/s insert, 0.48ms search
+📊 GRPC 500 vectors: 17299 vec/s insert, 0.92ms search
+📊 GRPC 1000 vectors: 20603 vec/s insert, 1.60ms search
+📊 GRPC 5000 vectors: 19226 vec/s insert, 7.56ms search
+📊 100 vectors comparison: gRPC is 7.50x faster for insert, 103.85x faster for search
+📊 500 vectors comparison: gRPC is 2.72x faster for insert, 54.62x faster for search
+📊 1000 vectors comparison: gRPC is 3.22x faster for insert, 31.21x faster for search
+📊 5000 vectors comparison: gRPC is 3.26x faster for insert, 6.61x faster for search
+ℹ️ Testing: All Optimizations
+📊 All Optimizations: 1.2ms avg latency
+ℹ️ Testing: Bloom Filter Only
+📊 Bloom Filter Only: 1.2ms avg latency
+ℹ️ Testing: Parallel SST Only
+📊 Parallel SST Only: 1.2ms avg latency
+ℹ️ Testing: No Optimizations
+📊 No Optimizations: 1.2ms avg latency
+ℹ️ Total tests run: 8
+ℹ️ Duration: 9.6 seconds
+ℹ️ Results saved to: demo_results/performance_benchmark_20250804_071107.json

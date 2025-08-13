@@ -1,0 +1,7 @@
+❌ Setup failed - ValidationError: 2 validation errors for CollectionConfig
+distance_metric
+  Input should be 'cosine', 'euclidean', 'dot_product', 'hamming', 'manhattan', 'jaccard' or 'custom' [type=enum, input_value=1, input_type=int]
+    For further information visit https://errors.pydantic.dev/2.8/v/enum
+storage_engine
+  Input should be 'viper', 'sst', 'mmap' or 'hybrid' [type=enum, input_value=1, input_type=int]
+    For further information visit https://errors.pydantic.dev/2.8/v/enum

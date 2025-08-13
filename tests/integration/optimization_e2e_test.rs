@@ -158,7 +158,7 @@ async fn test_optimization_end_to_end() -> anyhow::Result<()> {
     let sst_config = Arc::new(SstConfig {
         level_count: 3,
         compaction_threshold: 3,
-        block_size_kb: 8192, // 8MB optimized for ZSTD
+        block_size_mb: 3, // 8MB optimized for ZSTD
         compaction_strategy: "leveled".to_string(),
         compression: "zstd".to_string(),
         compression_level: 3,

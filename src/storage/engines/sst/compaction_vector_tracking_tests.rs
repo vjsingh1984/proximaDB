@@ -21,7 +21,7 @@ mod tests {
         SstConfig {
             level_count: 3,
             compaction_threshold: 2,
-            block_size_kb: 4,
+            block_size_mb: 4,
             compaction_strategy: "leveled".to_string(),
             compression: "snappy".to_string(),
             compression_level: 3,
@@ -69,6 +69,8 @@ mod tests {
             ],
             output_file: temp_dir.path().join("output.sst"),
             priority: CompactionPriority::Medium,
+            block_size_mb: None, // Use server default for tests
+            compression_config: None, // Use server default for tests
         };
         
         // Create test data with expired and tombstoned records

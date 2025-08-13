@@ -1,0 +1,19 @@
+✅ Created collection: hybrid_demo_879c4fae
+ℹ️ Loading corpus data...
+ℹ️ Generating sample corpus...
+✅ Generated 100 documents with embeddings
+ℹ️ Inserting 100 vectors in batches of 100
+✅ Inserted 100 vectors
+📊 Insert throughput: 2489.8661363568904vec/s
+📊 Total insert time: 0.04016280174255371s
+ℹ️ Query: 'artificial intelligence machine learning algorithms'
+ℹ️ Target IDs: ['doc_1', 'doc_5', 'doc_10']
+ℹ️ Metadata filter: {'category': 'AI', 'doc_type': 'research_paper'}
+ℹ️ 
+1️⃣ Search by ID only
+📊 ID search time: 145.94054222106934ms
+ℹ️    Found 3 results
+ℹ️ 
+2️⃣ Metadata filtering only
+❌ Demo failed - TypeError: string indices must be integers, not 'str'
+✅ Cleaned up test collection

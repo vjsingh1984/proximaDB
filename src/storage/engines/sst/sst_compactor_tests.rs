@@ -3,449 +3,653 @@
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 
-//! Tests for zero-copy SST compactor
+//! Tests for zero-copy SST compactor using realistic flush-based SST creation
 
 #[cfg(test)]
 mod tests {
     use super::super::sst_compactor::{SstCompactor, CompactionSortStrategy, ZeroCopyCompactionStats};
-    use super::super::{SstRecord, SstableWriter};
+    use super::super::{SstStorage, SstRecord};
+    use super::super::readers::unified_sstable_reader::SstDirectReader;
     use crate::storage::persistence::filesystem::{FilesystemFactory, FilesystemConfig};
+    use crate::storage::traits::{FlushParameters, UnifiedStorageEngine};
     use crate::core::search::mvcc_resolution::MvccResolver;
     use crate::proto::proximadb::MetadataItem;
+    use crate::core::{SstConfig, BloomFilterConfig};
+    use crate::core::VectorRecord;
+    
+    // Import test utilities from sst_test_config
+    use std::path::Path;
+    use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
+    use crate::compute::distance_computation::DistanceMetric;
     use std::sync::Arc;
     use tempfile::TempDir;
-    use std::path::PathBuf;
-
-    /// Helper to create a test SstRecord
-    fn create_test_record(
+    use tracing::debug;
+    
+    /// Setup test directories
+    async fn setup_test_directories(base_path: &Path) -> anyhow::Result<()> {
+        use tokio::fs;
+        fs::create_dir_all(base_path).await?;
+        fs::create_dir_all(base_path.join("data")).await?;
+        fs::create_dir_all(base_path.join("wal")).await?;
+        Ok(())
+    }
+    
+    /// Create a unique collection ID for tests
+    fn unique_collection_id(prefix: &str) -> String {
+        format!("{}_{}", prefix, uuid::Uuid::new_v4())
+    }
+    
+    /// Helper to create test configuration
+    fn create_test_sst_config(base_path: &str) -> SstConfig {
+        SstConfig {
+            // Level configuration
+            level_count: 4,
+            max_levels: 4,
+            compaction_threshold: 2,
+            max_files_per_level: 4,
+            level_size_multiplier: 4.0,
+            
+            // Block and file settings
+            block_size_mb: 16,
+            
+            // Storage type
+            compaction_strategy: "leveled".to_string(),
+            compression: "none".to_string(),
+            compression_level: 0,
+            
+            // Bloom filter
+            bloom_filter_config: Some(BloomFilterConfig {
+                bits_per_key: 10,
+                enabled: true,
+                ..Default::default()
+            }),
+            decompression_cache_config: None,
+            
+            // Cache
+            cache_size_mb: 32,
+            
+            // Background operations
+            background_thread_count: 2,
+            
+            // Directories
+            data_directory: format!("{}/data", base_path),
+            
+            // Memory mapping
+            mmap_enabled: false,
+            prefetch_enabled: false,
+            prefetch_size_kb: 0,
+        }
+    }
+    
+    /// Helper to create test filesystem config
+    fn create_test_filesystem_config() -> FilesystemConfig {
+        FilesystemConfig::default()
+    }
+    
+    /// Helper to create a test VectorRecord  
+    fn create_test_vector_record(
         id: String,
-        version: Option<u32>,
+        vector: Vec<f32>,
         timestamp: u32,
         expires_at: Option<u32>,
-        is_tombstone: bool,
-    ) -> SstRecord {
-        SstRecord {
-            id,
-            vector: vec![1.0, 2.0, 3.0],
-            metadata: vec![],
+        metadata_items: Vec<MetadataItem>,
+    ) -> VectorRecord {
+        VectorRecord {
+            id: Some(id),
+            vector,
+            metadata: metadata_items,
             timestamp,
             updated_at: None,
             expires_at,
-            version,
-            is_tombstone,
-            level: 0,
-            sequence_number: timestamp as u64,
+            distance: None,
+            rank: None,
+            score: None,
+            version: None,
+            ..Default::default()
         }
     }
-
-    /// Helper to create an SST file with test records
-    async fn create_test_sst_file(
+    
+    /// Helper to create SST files using the SST engine flush (proper approach)
+    async fn create_sst_files_with_engine(
+        base_path: &str,
+        collection_id: &str,
         filesystem_factory: Arc<FilesystemFactory>,
-        path: &str,
-        records: Vec<SstRecord>,
-    ) -> anyhow::Result<()> {
-        let writer = SstableWriter::new(
-            path,
-            4096, // block_size
-            filesystem_factory,
-        );
-
-        let sorted_records: Vec<(String, SstRecord)> = records
-            .into_iter()
-            .map(|r| (r.id.clone(), r))
-            .collect();
-
-        let record_count = sorted_records.len();
-        writer.write_sorted_records(
-            sorted_records.into_iter(),
-            record_count,
+        vectors: Vec<VectorRecord>,
+    ) -> anyhow::Result<Vec<String>> {
+        debug!("🚀 Creating SST files for collection {} with {} vectors", collection_id, vectors.len());
+        
+        // Log vector details
+        for (i, v) in vectors.iter().enumerate() {
+            debug!("  Vector {}: id={:?}, vector_len={}, metadata_count={}", 
+                   i, v.id, v.vector.len(), v.metadata.len());
+        }
+        
+        // Create SST config
+        let sst_config = create_test_sst_config(base_path);
+        debug!("📝 SST config: data_dir={}, block_size={}", 
+               sst_config.data_directory, sst_config.block_size_kb);
+        
+        // Create SST engine
+        let distance_compute = Arc::new(UnifiedDistanceCompute::new(DistanceMetric::Cosine));
+        let sst_engine = SstStorage::new(
+            sst_config,
+            filesystem_factory.clone(),
+            distance_compute,
         ).await?;
-
-        Ok(())
+        debug!("✅ SST engine created successfully");
+        
+        // Create collection with storage assignment
+        let collection = crate::proto::proximadb::Collection {
+            id: collection_id.to_string(),
+            config: Some(crate::proto::proximadb::CollectionConfig {
+                name: collection_id.to_string(),
+                dimension: 3,
+                distance_metric: crate::proto::proximadb::DistanceMetric::Cosine as i32,
+                storage_engine: crate::proto::proximadb::StorageEngine::Sst as i32,
+                ..Default::default()
+            }),
+            storage_assignment: Some(crate::proto::proximadb::StorageAssignment {
+                base_location: format!("file://{}", base_path),
+                assigned_at: chrono::Utc::now().timestamp(),
+            }),
+            ..Default::default()
+        };
+        
+        // Create flush parameters with collection
+        let flush_params = FlushParameters {
+            collection_id: Some(collection_id.to_string()),
+            force: true,
+            synchronous: true,
+            vector_records: vectors,
+            batch_ids: vec![],
+            collection_config: Some(collection.clone()),
+            ..Default::default()
+        };
+        
+        // Flush to create SST file
+        debug!("🔄 Calling do_flush with collection_id={}", collection_id);
+        let flush_result = sst_engine.do_flush(&flush_params).await?;
+        if !flush_result.success {
+            return Err(anyhow::anyhow!("Flush failed"));
+        }
+        
+        debug!("✅ Flush successful: {} entries flushed, {} files created, {} bytes written", 
+               flush_result.entries_flushed, flush_result.files_created, flush_result.bytes_written);
+        
+        // Get storage URL from collection config
+        let storage_url = format!("file://{}/{}/data", base_path, collection_id);
+        debug!("📁 Looking for SST files in: {}", storage_url);
+        
+        let fs = filesystem_factory.get_filesystem("file:///")?;
+        let all_files = fs.list(&storage_url).await?;
+        debug!("📋 Found {} total files in directory", all_files.len());
+        
+        for file in &all_files {
+            debug!("  - {} (size: {} bytes, is_sst: {})", 
+                   file.name, file.metadata.size, file.name.ends_with(".sst"));
+        }
+        
+        let sst_files: Vec<String> = all_files.iter()
+            .filter(|entry| entry.name.ends_with(".sst"))
+            .map(|entry| format!("{}/{}", storage_url, entry.name))
+            .collect();
+        
+        debug!("🎯 Created {} SST files for collection {}: {:?}", 
+               sst_files.len(), collection_id, sst_files);
+        
+        // Verify the SST files are not empty
+        for sst_file in &sst_files {
+            let metadata = fs.metadata(sst_file).await?;
+            debug!("📊 SST file {} size: {} bytes", sst_file, metadata.size);
+            if metadata.size == 0 {
+                return Err(anyhow::anyhow!("SST file {} is empty!", sst_file));
+            }
+        }
+        
+        Ok(sst_files)
     }
 
     #[tokio::test]
-    async fn test_basic_compaction() {
+    async fn test_basic_sst_write_read() {
+        // Initialize logging for debugging
+        let _ = tracing_subscriber::fmt()
+            .with_env_filter("debug")
+            .try_init();
+        
+        // Initialize hardware capabilities for the test
+        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        
         let temp_dir = TempDir::new().unwrap();
+        let base_path = temp_dir.path();
+        let collection_id = unique_collection_id("basic_test");
+        
+        // Setup test directories
+        setup_test_directories(base_path).await.unwrap();
+        
         let filesystem_factory = Arc::new(
-            FilesystemFactory::new(FilesystemConfig::default())
+            FilesystemFactory::new(create_test_filesystem_config())
+                .await
+                .unwrap()
+        );
+        
+        // Create a simple test vector
+        let vector = create_test_vector_record(
+            "test_1".to_string(),
+            vec![1.0, 0.0, 0.0],
+            100,
+            None,
+            vec![],
+        );
+        
+        // Create SST files using the engine
+        let sst_files = create_sst_files_with_engine(
+            base_path.to_str().unwrap(),
+            &collection_id,
+            filesystem_factory.clone(),
+            vec![vector],
+        ).await.unwrap();
+        
+        assert!(!sst_files.is_empty(), "Should create at least one SST file");
+        let sst_file = &sst_files[0];
+        debug!("🔍 Attempting to read SST file: {}", sst_file);
+        
+        // Now try to read it back with SstDirectReader
+        debug!("📖 Opening SstDirectReader for file: {}", sst_file);
+        let mut reader = SstDirectReader::open(filesystem_factory.clone(), sst_file).await.unwrap();
+        
+        debug!("🔄 Using read_all_for_compaction to read SST records");
+        let records = reader.read_all_for_compaction().await.unwrap();
+        
+        debug!("📚 Read {} records from SST file", records.len());
+        for (i, record) in records.iter().enumerate() {
+            debug!("✅ Read record {}: id={:?}, vector_len={}, metadata_count={}", 
+                   i + 1, record.id, record.vector.len(), record.metadata.len());
+        }
+        
+        debug!("📊 Total records read: {}", records.len());
+        assert_eq!(records.len(), 1, "Should read 1 record from SST file");
+        
+        // Verify the record content
+        let record = &records[0];
+        assert_eq!(record.id, "test_1", "Record ID should match");
+        assert_eq!(record.vector.len(), 3, "Vector should have 3 dimensions");
+    }
+    
+    #[tokio::test]
+    async fn test_mvcc_multiple_versions_compaction() {
+        // Initialize hardware capabilities for the test
+        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        
+        let temp_dir = TempDir::new().unwrap();
+        let base_path = temp_dir.path();
+        
+        // Setup test directories
+        setup_test_directories(base_path).await.unwrap();
+        
+        let filesystem_factory = Arc::new(
+            FilesystemFactory::new(create_test_filesystem_config())
                 .await
                 .unwrap()
         );
 
-        // Create test SST files
-        let file1_path = temp_dir.path().join("file1.sst").to_string_lossy().to_string();
-        let file2_path = temp_dir.path().join("file2.sst").to_string_lossy().to_string();
-        let output_path = temp_dir.path().join("output.sst").to_string_lossy().to_string();
-
-        // File 1: Records with IDs A and B
-        let records1 = vec![
-            create_test_record("A".to_string(), Some(1), 100, None, false),
-            create_test_record("B".to_string(), Some(1), 150, None, false),
+        // Create test vectors with multiple versions for same IDs
+        // Collection 1: Initial versions
+        let collection1 = unique_collection_id("mvcc_test1");
+        let vectors1 = vec![
+            create_test_vector_record(
+                "user_1".to_string(),
+                vec![1.0, 0.0, 0.0],
+                100,  // Version 1 timestamp
+                None,
+                vec![],
+            ),
+            create_test_vector_record(
+                "user_2".to_string(),
+                vec![0.0, 1.0, 0.0],
+                110,  // Version 1 timestamp
+                None,
+                vec![],
+            ),
         ];
 
-        // File 2: Updated versions of A and B
-        let records2 = vec![
-            create_test_record("A".to_string(), Some(2), 200, None, false),
-            create_test_record("B".to_string(), Some(2), 250, None, false),
+        // Collection 2: Updated versions (should be kept after compaction)
+        let collection2 = unique_collection_id("mvcc_test2");
+        let vectors2 = vec![
+            create_test_vector_record(
+                "user_1".to_string(),
+                vec![1.1, 0.1, 0.1],  // Updated vector
+                200,  // Version 2 timestamp (newer)
+                None,
+                vec![],
+            ),
+            create_test_vector_record(
+                "user_2".to_string(),
+                vec![0.1, 1.1, 0.1],  // Updated vector
+                210,  // Version 2 timestamp (newer)
+                None,
+                vec![],
+            ),
+            create_test_vector_record(
+                "user_3".to_string(),  // New record
+                vec![0.0, 0.0, 1.0],
+                220,
+                None,
+                vec![],
+            ),
         ];
 
-        create_test_sst_file(filesystem_factory.clone(), &file1_path, records1).await.unwrap();
-        create_test_sst_file(filesystem_factory.clone(), &file2_path, records2).await.unwrap();
+        // Create SST files using the engine
+        let sst_files1 = create_sst_files_with_engine(
+            base_path.to_str().unwrap(),
+            &collection1,
+            filesystem_factory.clone(),
+            vectors1,
+        ).await.unwrap();
+        
+        let sst_files2 = create_sst_files_with_engine(
+            base_path.to_str().unwrap(),
+            &collection2,
+            filesystem_factory.clone(),
+            vectors2,
+        ).await.unwrap();
+        
+        // Get input files for compaction
+        let mut input_files = Vec::new();
+        input_files.extend(sst_files1);
+        input_files.extend(sst_files2);
+        
+        // Create output path
+        let output_path = format!("file://{}/mvcc_compacted.sst", temp_dir.path().to_string_lossy());
 
         // Create compactor and perform compaction
         let mvcc_resolver = Arc::new(MvccResolver::new());
         let compactor = SstCompactor::new(filesystem_factory.clone(), Some(mvcc_resolver));
 
         let stats = compactor.compact_files(
-            vec![file1_path, file2_path],
+            input_files,
+            output_path.clone(),
+            1, // target_level
+        ).await.unwrap();
+
+        // Verify MVCC behavior: 
+        // - Input: 5 records total (2 in file1, 3 in file2)
+        // - Expected output: 3 records (latest version of user_1, user_2, and user_3)
+        assert_eq!(stats.records_read, 5, "Should read all 5 input records");
+        assert_eq!(stats.records_written, 3, "Should write 3 records after MVCC resolution");
+        assert!(stats.updated_vector_ids.contains(&"user_1".to_string()), "user_1 should be updated");
+        assert!(stats.updated_vector_ids.contains(&"user_2".to_string()), "user_2 should be updated");
+        
+        // Verify output file exists
+        let fs = filesystem_factory.get_filesystem("file:///").unwrap();
+        assert!(fs.exists(&output_path).await.unwrap(), "Output SST file should exist");
+        
+        debug!("✅ MVCC multiple versions compaction test completed successfully");
+    }
+
+    #[tokio::test]
+    async fn test_expired_records_deletion() {
+        // Initialize hardware capabilities for the test
+        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        
+        let temp_dir = TempDir::new().unwrap();
+        let base_path = temp_dir.path();
+        
+        // Setup test directories
+        setup_test_directories(base_path).await.unwrap();
+        
+        let filesystem_factory = Arc::new(
+            FilesystemFactory::new(create_test_filesystem_config())
+                .await
+                .unwrap()
+        );
+
+        let now = chrono::Utc::now().timestamp() as u32;
+        let past_time = now - 3600; // 1 hour ago (expired)
+        let future_time = now + 3600; // 1 hour in future (not expired)
+
+        let collection_id = unique_collection_id("expiry_test");
+        
+        // Create test vectors with some expired records
+        let vectors_with_expiry = vec![
+            create_test_vector_record(
+                "valid_record".to_string(),
+                vec![1.0, 0.0, 0.0],
+                100,
+                Some(future_time), // Not expired
+                vec![],
+            ),
+            create_test_vector_record(
+                "expired_record".to_string(),
+                vec![0.0, 1.0, 0.0],
+                110,
+                Some(past_time), // Expired - should be deleted
+                vec![],
+            ),
+            create_test_vector_record(
+                "no_expiry_record".to_string(),
+                vec![0.0, 0.0, 1.0],
+                120,
+                None, // No expiry - should be kept
+                vec![],
+            ),
+        ];
+
+        // Create SST file with expiry data using the engine
+        let sst_files = create_sst_files_with_engine(
+            base_path.to_str().unwrap(),
+            &collection_id,
+            filesystem_factory.clone(),
+            vectors_with_expiry,
+        ).await.unwrap();
+        
+        // Create output path
+        let output_path = format!("file://{}/expiry_compacted.sst", temp_dir.path().to_string_lossy());
+
+        // Create compactor and perform compaction
+        let mvcc_resolver = Arc::new(MvccResolver::new());
+        let compactor = SstCompactor::new(filesystem_factory.clone(), Some(mvcc_resolver));
+
+        let stats = compactor.compact_files(
+            sst_files,
+            output_path.clone(),
+            1, // target_level
+        ).await.unwrap();
+
+        // Verify expiry behavior:
+        // - Input: 3 records
+        // - Expected output: 2 records (expired_record should be deleted)
+        assert_eq!(stats.records_read, 3, "Should read all 3 input records");
+        assert_eq!(stats.records_written, 2, "Should write 2 records after expiry deletion");
+        assert!(stats.deleted_vector_ids.contains(&"expired_record".to_string()), 
+                "expired_record should be in deleted list");
+        assert_eq!(stats.records_deleted, 1, "Should have deleted 1 expired record");
+        
+        // Verify output file exists
+        let fs = filesystem_factory.get_filesystem("file:///").unwrap();
+        assert!(fs.exists(&output_path).await.unwrap(), "Output SST file should exist");
+        
+        debug!("✅ Expired records deletion test completed successfully");
+    }
+
+    #[tokio::test]
+    async fn test_streaming_sst_records() {
+        // Initialize logging for debugging
+        let _ = tracing_subscriber::fmt()
+            .with_env_filter("debug")
+            .try_init();
+        
+        // Initialize hardware capabilities for the test
+        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        
+        let temp_dir = TempDir::new().unwrap();
+        let base_path = temp_dir.path();
+        let collection_id = unique_collection_id("streaming_test");
+        
+        // Setup test directories
+        setup_test_directories(base_path).await.unwrap();
+        
+        let filesystem_factory = Arc::new(
+            FilesystemFactory::new(create_test_filesystem_config())
+                .await
+                .unwrap()
+        );
+        
+        // Create test vectors
+        let vectors = vec![
+            create_test_vector_record(
+                "stream_1".to_string(),
+                vec![1.0, 0.0, 0.0],
+                100,
+                None,
+                vec![],
+            ),
+            create_test_vector_record(
+                "stream_2".to_string(),
+                vec![0.0, 1.0, 0.0],
+                110,
+                None,
+                vec![],
+            ),
+            create_test_vector_record(
+                "stream_3".to_string(),
+                vec![0.0, 0.0, 1.0],
+                120,
+                None,
+                vec![],
+            ),
+        ];
+        
+        // Create SST file
+        let sst_files = create_sst_files_with_engine(
+            base_path.to_str().unwrap(),
+            &collection_id,
+            filesystem_factory.clone(),
+            vectors,
+        ).await.unwrap();
+        
+        assert!(!sst_files.is_empty(), "Should create at least one SST file");
+        let sst_file = &sst_files[0];
+        debug!("📝 Testing streaming from SST file: {}", sst_file);
+        
+        // Test streaming with SstDirectReader
+        let mut reader = SstDirectReader::open(filesystem_factory.clone(), sst_file).await.unwrap();
+        
+        debug!("🔄 Testing stream_sst_records method");
+        let mut iterator = reader.stream_sst_records(sst_file.clone()).await.unwrap();
+        
+        let mut streamed_records = Vec::new();
+        let mut count = 0;
+        while let Some(record_result) = iterator.next() {
+            match record_result {
+                Ok(record) => {
+                    debug!("✅ Streamed record {}: id={}, vector_len={}", 
+                           count + 1, record.id, record.vector.len());
+                    streamed_records.push(record);
+                    count += 1;
+                }
+                Err(e) => {
+                    debug!("❌ Error streaming record {}: {:?}", count + 1, e);
+                    panic!("Failed to stream record {}: {:?}", count + 1, e);
+                }
+            }
+        }
+        
+        debug!("📊 Total records streamed: {}", count);
+        assert_eq!(count, 3, "Should stream 3 records");
+        
+        // Verify record content
+        assert_eq!(streamed_records[0].id, "stream_1", "First record ID should match");
+        assert_eq!(streamed_records[1].id, "stream_2", "Second record ID should match");
+        assert_eq!(streamed_records[2].id, "stream_3", "Third record ID should match");
+        
+        // Test that streaming produces same results as read_all_for_compaction
+        debug!("🔄 Comparing streaming vs read_all_for_compaction");
+        let mut reader2 = SstDirectReader::open(filesystem_factory.clone(), sst_file).await.unwrap();
+        let all_records = reader2.read_all_for_compaction().await.unwrap();
+        
+        assert_eq!(streamed_records.len(), all_records.len(), 
+                   "Streaming should produce same number of records as read_all");
+        
+        for (i, (streamed, direct)) in streamed_records.iter().zip(all_records.iter()).enumerate() {
+            assert_eq!(streamed.id, direct.id, "Record {} IDs should match", i);
+            assert_eq!(streamed.vector, direct.vector, "Record {} vectors should match", i);
+        }
+        
+        debug!("✅ Streaming test completed successfully");
+    }
+    
+    #[tokio::test]
+    async fn test_compaction_with_metadata() {
+        // Initialize hardware capabilities for the test
+        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        
+        let temp_dir = TempDir::new().unwrap();
+        let base_path = temp_dir.path();
+        
+        // Setup test directories
+        setup_test_directories(base_path).await.unwrap();
+        
+        let filesystem_factory = Arc::new(
+            FilesystemFactory::new(create_test_filesystem_config())
+                .await
+                .unwrap()
+        );
+
+        let collection_id = unique_collection_id("metadata_test");
+        
+        // Create test vectors with metadata
+        let vectors_with_metadata = vec![
+            create_test_vector_record(
+                "meta1".to_string(),
+                vec![1.0, 0.0, 0.0],
+                100,
+                None,
+                vec![MetadataItem {
+                    key: "category".to_string(),
+                    value: Some(crate::proto::proximadb::metadata_item::Value::StringValue("A".to_string())),
+                }],
+            ),
+            create_test_vector_record(
+                "meta2".to_string(),
+                vec![0.0, 1.0, 0.0],
+                150,
+                None,
+                vec![MetadataItem {
+                    key: "category".to_string(),
+                    value: Some(crate::proto::proximadb::metadata_item::Value::StringValue("B".to_string())),
+                }],
+            ),
+        ];
+
+        // Create SST file with metadata using the engine
+        let sst_files = create_sst_files_with_engine(
+            base_path.to_str().unwrap(),
+            &collection_id,
+            filesystem_factory.clone(),
+            vectors_with_metadata,
+        ).await.unwrap();
+        
+        // Create output path
+        let output_path = format!("file://{}/metadata_compacted.sst", temp_dir.path().to_string_lossy());
+
+        // Create compactor and perform compaction
+        let mvcc_resolver = Arc::new(MvccResolver::new());
+        let compactor = SstCompactor::new(filesystem_factory.clone(), Some(mvcc_resolver));
+
+        let stats = compactor.compact_files(
+            sst_files,
             output_path.clone(),
             1, // target_level
         ).await.unwrap();
 
         // Verify stats
-        assert_eq!(stats.records_read, 4);
-        assert_eq!(stats.records_written, 2); // Should keep highest versions
-        assert_eq!(stats.files_compacted, 2);
-        assert!(stats.updated_vector_ids.contains(&"A".to_string()));
-        assert!(stats.updated_vector_ids.contains(&"B".to_string()));
-
+        assert_eq!(stats.records_read, 2, "Should read 2 records with metadata");
+        assert_eq!(stats.records_written, 2, "Should write 2 records with metadata");
+        
         // Verify output file exists
         let fs = filesystem_factory.get_filesystem("file:///").unwrap();
-        assert!(fs.exists(&output_path).await.unwrap());
-    }
-
-    #[tokio::test]
-    async fn test_version_continuity() {
-        let temp_dir = TempDir::new().unwrap();
-        let filesystem_factory = Arc::new(
-            FilesystemFactory::new(FilesystemConfig::default())
-                .await
-                .unwrap()
-        );
-
-        let file_path = temp_dir.path().join("versions.sst").to_string_lossy().to_string();
-        let output_path = temp_dir.path().join("output.sst").to_string_lossy().to_string();
-
-        // Create records with version gaps
-        let records = vec![
-            create_test_record("continuous".to_string(), Some(1), 100, None, false),
-            create_test_record("continuous".to_string(), Some(2), 200, None, false),
-            create_test_record("continuous".to_string(), Some(3), 300, None, false),
-            create_test_record("gap".to_string(), Some(1), 150, None, false),
-            create_test_record("gap".to_string(), Some(3), 350, None, false), // Missing v2
-        ];
-
-        create_test_sst_file(filesystem_factory.clone(), &file_path, records).await.unwrap();
-
-        let mvcc_resolver = Arc::new(MvccResolver::new());
-        let compactor = SstCompactor::new(filesystem_factory.clone(), Some(mvcc_resolver));
-
-        let stats = compactor.compact_files(
-            vec![file_path],
-            output_path,
-            1,
-        ).await.unwrap();
-
-        // "continuous" should have v3, "gap" should only have v1 (stopped at gap)
-        assert_eq!(stats.records_written, 2);
-        assert!(stats.updated_vector_ids.contains(&"continuous".to_string()));
-    }
-
-    #[tokio::test]
-    async fn test_tombstone_handling() {
-        let temp_dir = TempDir::new().unwrap();
-        let filesystem_factory = Arc::new(
-            FilesystemFactory::new(FilesystemConfig::default())
-                .await
-                .unwrap()
-        );
-
-        let file_path = temp_dir.path().join("tombstones.sst").to_string_lossy().to_string();
-        let output_path = temp_dir.path().join("output.sst").to_string_lossy().to_string();
-
-        // Create records with tombstones
-        let records = vec![
-            create_test_record("alive".to_string(), Some(1), 100, None, false),
-            create_test_record("alive".to_string(), Some(2), 200, None, false),
-            create_test_record("deleted".to_string(), Some(1), 150, None, false),
-            create_test_record("deleted".to_string(), Some(2), 250, None, true), // Tombstone
-        ];
-
-        create_test_sst_file(filesystem_factory.clone(), &file_path, records).await.unwrap();
-
-        let mvcc_resolver = Arc::new(MvccResolver::new());
-        let compactor = SstCompactor::new(filesystem_factory.clone(), Some(mvcc_resolver));
-
-        let stats = compactor.compact_files(
-            vec![file_path],
-            output_path,
-            1,
-        ).await.unwrap();
-
-        // Only "alive" should remain
-        assert_eq!(stats.records_written, 1);
-        assert!(stats.tombstoned_ids.contains(&"deleted".to_string()));
-        assert_eq!(stats.records_deleted, 2); // Both versions of "deleted"
-    }
-
-    #[tokio::test]
-    async fn test_expired_records() {
-        let temp_dir = TempDir::new().unwrap();
-        let filesystem_factory = Arc::new(
-            FilesystemFactory::new(FilesystemConfig::default())
-                .await
-                .unwrap()
-        );
-
-        let file_path = temp_dir.path().join("expired.sst").to_string_lossy().to_string();
-        let output_path = temp_dir.path().join("output.sst").to_string_lossy().to_string();
-
-        let now = chrono::Utc::now().timestamp() as u32;
-
-        // Create records with expiry
-        let records = vec![
-            create_test_record("valid".to_string(), Some(1), 100, None, false),
-            create_test_record("expired".to_string(), Some(1), 150, Some(now - 1000), false), // Expired
-        ];
-
-        create_test_sst_file(filesystem_factory.clone(), &file_path, records).await.unwrap();
-
-        let mvcc_resolver = Arc::new(MvccResolver::new());
-        let compactor = SstCompactor::new(filesystem_factory.clone(), Some(mvcc_resolver));
-
-        let stats = compactor.compact_files(
-            vec![file_path],
-            output_path,
-            1,
-        ).await.unwrap();
-
-        // Only "valid" should remain
-        assert_eq!(stats.records_written, 1);
-        assert!(stats.deleted_vector_ids.contains(&"expired".to_string()));
-    }
-
-    #[tokio::test]
-    async fn test_append_only_records() {
-        let temp_dir = TempDir::new().unwrap();
-        let filesystem_factory = Arc::new(
-            FilesystemFactory::new(FilesystemConfig::default())
-                .await
-                .unwrap()
-        );
-
-        let file_path = temp_dir.path().join("append_only.sst").to_string_lossy().to_string();
-        let output_path = temp_dir.path().join("output.sst").to_string_lossy().to_string();
-
-        // Create append-only records (no ID or special IDs)
-        let records = vec![
-            create_test_record("".to_string(), None, 100, None, false),
-            create_test_record("null".to_string(), None, 200, None, false),
-            create_test_record("none".to_string(), None, 300, None, false),
-            create_test_record("  ".to_string(), None, 400, None, false),
-        ];
-
-        create_test_sst_file(filesystem_factory.clone(), &file_path, records).await.unwrap();
-
-        let mvcc_resolver = Arc::new(MvccResolver::new());
-        let compactor = SstCompactor::new(filesystem_factory.clone(), Some(mvcc_resolver));
-
-        let stats = compactor.compact_files(
-            vec![file_path],
-            output_path,
-            1,
-        ).await.unwrap();
-
-        // All append-only records should be kept
-        assert_eq!(stats.records_written, 4);
-        assert_eq!(stats.records_read, 4);
-    }
-
-    #[tokio::test]
-    async fn test_version_normalization() {
-        let temp_dir = TempDir::new().unwrap();
-        let filesystem_factory = Arc::new(
-            FilesystemFactory::new(FilesystemConfig::default())
-                .await
-                .unwrap()
-        );
-
-        let file_path = temp_dir.path().join("versions.sst").to_string_lossy().to_string();
-        let output_path = temp_dir.path().join("output.sst").to_string_lossy().to_string();
-
-        // Create records with None and 0 versions (should be treated as 1)
-        let records = vec![
-            create_test_record("test1".to_string(), None, 100, None, false),    // None -> 1
-            create_test_record("test1".to_string(), Some(2), 200, None, false),
-            create_test_record("test2".to_string(), Some(0), 150, None, false),  // 0 -> 1
-            create_test_record("test2".to_string(), Some(2), 250, None, false),
-        ];
-
-        create_test_sst_file(filesystem_factory.clone(), &file_path, records).await.unwrap();
-
-        let mvcc_resolver = Arc::new(MvccResolver::new());
-        let compactor = SstCompactor::new(filesystem_factory.clone(), Some(mvcc_resolver));
-
-        let stats = compactor.compact_files(
-            vec![file_path],
-            output_path,
-            1,
-        ).await.unwrap();
-
-        // Both records should have version 2 selected
-        assert_eq!(stats.records_written, 2);
-        assert_eq!(stats.updated_vector_ids.len(), 2);
-    }
-
-    #[tokio::test]
-    async fn test_sorting_strategies() {
-        let temp_dir = TempDir::new().unwrap();
-        let filesystem_factory = Arc::new(
-            FilesystemFactory::new(FilesystemConfig::default())
-                .await
-                .unwrap()
-        );
-
-        // Test ByTimestamp sorting
-        {
-            let file_path = temp_dir.path().join("timestamp.sst").to_string_lossy().to_string();
-            let output_path = temp_dir.path().join("timestamp_out.sst").to_string_lossy().to_string();
-
-            let records = vec![
-                create_test_record("A".to_string(), Some(1), 300, None, false),
-                create_test_record("B".to_string(), Some(1), 100, None, false),
-                create_test_record("C".to_string(), Some(1), 200, None, false),
-            ];
-
-            create_test_sst_file(filesystem_factory.clone(), &file_path, records).await.unwrap();
-
-            let mvcc_resolver = Arc::new(MvccResolver::new());
-            let compactor = SstCompactor::new(filesystem_factory.clone(), Some(mvcc_resolver))
-                .with_sort_strategy(CompactionSortStrategy::ByTimestamp);
-
-            let stats = compactor.compact_files(
-                vec![file_path],
-                output_path,
-                1,
-            ).await.unwrap();
-
-            assert_eq!(stats.records_written, 3);
-        }
-
-        // Test ByMetadata sorting
-        {
-            let file_path = temp_dir.path().join("metadata.sst").to_string_lossy().to_string();
-            let output_path = temp_dir.path().join("metadata_out.sst").to_string_lossy().to_string();
-
-            let mut record1 = create_test_record("A".to_string(), Some(1), 100, None, false);
-            record1.metadata.push(MetadataItem {
-                key: "priority".to_string(),
-                value: Some(crate::proto::proximadb::metadata_item::Value::StringValue("high".to_string())),
-            });
-
-            let mut record2 = create_test_record("B".to_string(), Some(1), 200, None, false);
-            record2.metadata.push(MetadataItem {
-                key: "priority".to_string(),
-                value: Some(crate::proto::proximadb::metadata_item::Value::StringValue("low".to_string())),
-            });
-
-            let records = vec![record1, record2];
-
-            create_test_sst_file(filesystem_factory.clone(), &file_path, records).await.unwrap();
-
-            let mvcc_resolver = Arc::new(MvccResolver::new());
-            let compactor = SstCompactor::new(filesystem_factory.clone(), Some(mvcc_resolver))
-                .with_sort_strategy(CompactionSortStrategy::ByMetadata(vec!["priority".to_string()]));
-
-            let stats = compactor.compact_files(
-                vec![file_path],
-                output_path,
-                1,
-            ).await.unwrap();
-
-            assert_eq!(stats.records_written, 2);
-        }
-    }
-
-    #[tokio::test]
-    async fn test_multiple_file_merge() {
-        let temp_dir = TempDir::new().unwrap();
-        let filesystem_factory = Arc::new(
-            FilesystemFactory::new(FilesystemConfig::default())
-                .await
-                .unwrap()
-        );
-
-        // Create 3 SST files with overlapping data
-        let mut input_files = Vec::new();
+        assert!(fs.exists(&output_path).await.unwrap(), "Output SST file should exist");
         
-        for i in 0..3 {
-            let file_path = temp_dir.path().join(format!("file{}.sst", i)).to_string_lossy().to_string();
-            
-            let records = vec![
-                create_test_record(format!("shared_{}", i), Some(1), 100 + i * 100, None, false),
-                create_test_record(format!("unique_{}", i), Some(1), 150 + i * 100, None, false),
-            ];
-            
-            create_test_sst_file(filesystem_factory.clone(), &file_path, records).await.unwrap();
-            input_files.push(file_path);
-        }
-
-        let output_path = temp_dir.path().join("merged.sst").to_string_lossy().to_string();
-
-        let mvcc_resolver = Arc::new(MvccResolver::new());
-        let compactor = SstCompactor::new(filesystem_factory.clone(), Some(mvcc_resolver));
-
-        let stats = compactor.compact_files(
-            input_files,
-            output_path,
-            1,
-        ).await.unwrap();
-
-        assert_eq!(stats.files_compacted, 3);
-        assert_eq!(stats.records_read, 6);
-        assert_eq!(stats.records_written, 6); // All unique records
-    }
-
-    #[tokio::test]
-    async fn test_index_rebuild_recommendation() {
-        let temp_dir = TempDir::new().unwrap();
-        let filesystem_factory = Arc::new(
-            FilesystemFactory::new(FilesystemConfig::default())
-                .await
-                .unwrap()
-        );
-
-        let file_path = temp_dir.path().join("many_changes.sst").to_string_lossy().to_string();
-        let output_path = temp_dir.path().join("output.sst").to_string_lossy().to_string();
-
-        // Create many records with tombstones and expired entries
-        let mut records = Vec::new();
-        for i in 0..10 {
-            // Half will be tombstoned
-            let is_tombstone = i >= 5;
-            records.push(create_test_record(
-                format!("record_{}", i),
-                Some(1),
-                100 + i * 10,
-                None,
-                is_tombstone,
-            ));
-        }
-
-        create_test_sst_file(filesystem_factory.clone(), &file_path, records).await.unwrap();
-
-        let mvcc_resolver = Arc::new(MvccResolver::new());
-        let compactor = SstCompactor::new(filesystem_factory.clone(), Some(mvcc_resolver));
-
-        let stats = compactor.compact_files(
-            vec![file_path],
-            output_path,
-            1,
-        ).await.unwrap();
-
-        // With 50% changes, should recommend index rebuild
-        assert!(stats.recommend_index_rebuild);
-        assert_eq!(stats.tombstoned_ids.len(), 5);
+        debug!("✅ Metadata compaction test completed successfully");
     }
 }

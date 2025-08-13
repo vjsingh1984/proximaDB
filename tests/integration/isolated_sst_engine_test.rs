@@ -156,19 +156,19 @@ async fn test_isolated_sst_flush_and_compaction() -> Result<()> {
     let env = IsolatedTestEnvironment::new().await?;
     let mut engine = env.create_sst_engine().await?;
     
-    println!("🚀 STARTING SST FLUSH AND COMPACTION TEST");
-    println!("🏗️ Test environment:");
-    println!("   - Collection ID: {}", env.collection_id());
-    println!("   - Persistent directory: {}", env.persistent_dir.display());
-    println!("   - Data directory: {}/data", env.persistent_dir.display());
+    info!("🚀 STARTING SST FLUSH AND COMPACTION TEST");
+    info!("🏗️ Test environment:");
+    info!("   - Collection ID: {}", env.collection_id());
+    info!("   - Persistent directory: {}", env.persistent_dir.display());
+    info!("   - Data directory: {}/data", env.persistent_dir.display());
     
     // Verify data directory exists
     let data_dir = env.persistent_dir.join("data");
     if !data_dir.exists() {
-        println!("❌ Data directory does not exist, creating: {}", data_dir.display());
+        warn!("❌ Data directory does not exist, creating: {}", data_dir.display());
         tokio::fs::create_dir_all(&data_dir).await?;
     }
-    println!("✅ Data directory confirmed: {}", data_dir.display());
+    info!("✅ Data directory confirmed: {}", data_dir.display());
     
     // Insert multiple batches to trigger compaction
     let batch_size = 5;
@@ -201,15 +201,15 @@ async fn test_isolated_sst_flush_and_compaction() -> Result<()> {
             ..Default::default()
         };
         
-        println!("🔄 EXECUTING FLUSH for batch {}/{}...", batch + 1, num_batches);
+        info!("🔄 EXECUTING FLUSH for batch {}/{}...", batch + 1, num_batches);
         let result = engine.do_flush(&flush_params).await?;
         
-        println!("✅ FLUSH COMPLETED for batch {}/{}:", batch + 1, num_batches);
-        println!("   - Success: {}", result.success);
-        println!("   - Entries flushed: {}", result.entries_flushed);
-        println!("   - Bytes written: {}", result.bytes_written);
-        println!("   - Files created: {}", result.files_created);
-        println!("   - Duration: {}ms", result.duration_ms);
+        info!("✅ FLUSH COMPLETED for batch {}/{}:", batch + 1, num_batches);
+        info!("   - Success: {}", result.success);
+        info!("   - Entries flushed: {}", result.entries_flushed);
+        info!("   - Bytes written: {}", result.bytes_written);
+        info!("   - Files created: {}", result.files_created);
+        info!("   - Duration: {}ms", result.duration_ms);
         
         assert!(result.success, "Flush should succeed for batch {}", batch + 1);
         assert_eq!(result.entries_flushed, batch_size as u64, 
@@ -231,12 +231,12 @@ async fn test_isolated_sst_flush_and_compaction() -> Result<()> {
         }
     }
     
-    println!("🔧 PREPARING FOR COMPACTION...");
+    debug!("🔧 PREPARING FOR COMPACTION...");
     
     // Final file count before compaction - check the actual SST file location
     // Files are written to: {persistent_dir}/{collection_id}/data/ 
     let actual_sst_dir = env.persistent_dir.join(&env.collection_id).join("data");
-    println!("🔍 Checking actual SST directory: {}", actual_sst_dir.display());
+    debug!("🔍 Checking actual SST directory: {}", actual_sst_dir.display());
     
     let final_data_files = tokio::fs::read_dir(&actual_sst_dir).await;
     match final_data_files {
@@ -247,17 +247,17 @@ async fn test_isolated_sst_flush_and_compaction() -> Result<()> {
                 if let Ok(metadata) = entry.metadata().await {
                     file_count += 1;
                     total_size += metadata.len();
-                    println!("📄 Found file: {} ({} bytes)", 
+                    debug!("📄 Found file: {} ({} bytes)", 
                           entry.file_name().to_string_lossy(), metadata.len());
                 }
             }
-            println!("📊 PRE-COMPACTION STATE:");
-            println!("   - Total files in data dir: {}", file_count);
-            println!("   - Total size: {} bytes", total_size);
+            debug!("📊 PRE-COMPACTION STATE:");
+            debug!("   - Total files in data dir: {}", file_count);
+            debug!("   - Total size: {} bytes", total_size);
             
         }
         Err(e) => {
-            println!("❌ Failed to read data directory before compaction: {}", e);
+            warn!("❌ Failed to read data directory before compaction: {}", e);
         }
     }
     
@@ -284,14 +284,14 @@ async fn test_isolated_sst_flush_and_compaction() -> Result<()> {
     
     let result = engine.compact(compact_params).await?;
     
-    println!("✅ COMPACTION COMPLETED:");
-    println!("   - Success: {}", result.success);
-    println!("   - Entries processed: {}", result.entries_processed);
-    println!("   - Files merged (input): {}", result.input_files);
-    println!("   - Files created (output): {}", result.output_files);
-    println!("   - Bytes read: {}", result.bytes_read);
-    println!("   - Bytes written: {}", result.bytes_written);
-    println!("   - Duration: {}ms", result.duration_ms);
+    info!("✅ COMPACTION COMPLETED:");
+    info!("   - Success: {}", result.success);
+    info!("   - Entries processed: {}", result.entries_processed);
+    info!("   - Files merged (input): {}", result.input_files);
+    info!("   - Files created (output): {}", result.output_files);
+    info!("   - Bytes read: {}", result.bytes_read);
+    info!("   - Bytes written: {}", result.bytes_written);
+    info!("   - Duration: {}ms", result.duration_ms);
     
     assert!(result.success, "Compaction should succeed");
     

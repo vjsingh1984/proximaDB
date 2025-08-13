@@ -143,7 +143,7 @@ async fn create_direct_vector_service(config: &WalOptimizationTestConfig) -> Res
     // Create test LSM engine  
     let lsm_config = SstConfig {
         data_directory: temp_path.to_string(),
-        block_size_kb: 4,
+        block_size_mb: 3,
         cache_size_mb: 64,
         max_levels: 7,
         level_count: 7,

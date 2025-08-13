@@ -71,6 +71,224 @@ struct SerializedSstableBloomFilter {
     metadata_queries_saved: u64,
 }
 
+/// Configuration for hierarchical bloom filters in SST files
+/// Enables selective loading based on query patterns
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HierarchicalBloomConfig {
+    /// Global filters (loaded selectively)
+    pub global_key_filter: BloomFilterConfig,
+    pub global_metadata_filter: BloomFilterConfig,
+    
+    /// Block-level filters (lazy loaded)
+    pub block_key_filter: BloomFilterConfig,
+    pub block_metadata_filter: BloomFilterConfig,
+    
+    /// Smart thresholds for enabling hierarchical features
+    pub block_count_threshold: usize,        // Enable per-block blooms if blocks > N
+    pub metadata_column_threshold: usize,    // Enable metadata blooms if columns > N
+}
+
+impl HierarchicalBloomConfig {
+    /// Create configuration optimized for specific SST level
+    pub fn for_level(level: u8) -> Self {
+        match level {
+            // L0: Optimize for fast writes, minimal bloom overhead
+            0 => Self {
+                global_key_filter: BloomFilterConfig {
+                    strategy: BloomStrategy::ByteAligned,
+                    bits_per_key: 8,  // Lower memory usage for frequent writes
+                    false_positive_rate: Some(0.01),
+                    expected_items: 10_000,
+                    enabled: true,
+                    hash_algorithm: HashAlgorithm::XXHash,
+                },
+                global_metadata_filter: BloomFilterConfig {
+                    strategy: BloomStrategy::Simple,
+                    bits_per_key: 4,  // Minimal metadata filtering at L0
+                    false_positive_rate: Some(0.05),
+                    expected_items: 5_000,
+                    enabled: false,  // Disable for write performance
+                    hash_algorithm: HashAlgorithm::XXHash,
+                },
+                block_key_filter: BloomFilterConfig {
+                    strategy: BloomStrategy::Simple,
+                    bits_per_key: 6,
+                    false_positive_rate: Some(0.02),
+                    expected_items: 1_000,
+                    enabled: false,  // No block-level blooms at L0
+                    hash_algorithm: HashAlgorithm::XXHash,
+                },
+                block_metadata_filter: BloomFilterConfig {
+                    strategy: BloomStrategy::Simple,
+                    bits_per_key: 4,
+                    false_positive_rate: Some(0.05),
+                    expected_items: 500,
+                    enabled: false,
+                    hash_algorithm: HashAlgorithm::XXHash,
+                },
+                block_count_threshold: 100,     // Enable block blooms only for large L0 files
+                metadata_column_threshold: 10,  // Enable metadata only with many columns
+            },
+            
+            // L1-L2: Balanced performance for point queries and metadata filtering
+            1..=2 => Self {
+                global_key_filter: BloomFilterConfig {
+                    strategy: BloomStrategy::ByteAligned,
+                    bits_per_key: 10,
+                    false_positive_rate: Some(0.005),
+                    expected_items: 50_000,
+                    enabled: true,
+                    hash_algorithm: HashAlgorithm::XXHash,
+                },
+                global_metadata_filter: BloomFilterConfig {
+                    strategy: BloomStrategy::Composite,
+                    bits_per_key: 8,
+                    false_positive_rate: Some(0.01),
+                    expected_items: 25_000,
+                    enabled: true,
+                    hash_algorithm: HashAlgorithm::XXHash,
+                },
+                block_key_filter: BloomFilterConfig {
+                    strategy: BloomStrategy::ByteAligned,
+                    bits_per_key: 8,
+                    false_positive_rate: Some(0.01),
+                    expected_items: 2_000,
+                    enabled: true,  // Enable block-level optimization
+                    hash_algorithm: HashAlgorithm::XXHash,
+                },
+                block_metadata_filter: BloomFilterConfig {
+                    strategy: BloomStrategy::Simple,
+                    bits_per_key: 6,
+                    false_positive_rate: Some(0.02),
+                    expected_items: 1_000,
+                    enabled: true,
+                    hash_algorithm: HashAlgorithm::XXHash,
+                },
+                block_count_threshold: 20,      // Enable block blooms for moderate files
+                metadata_column_threshold: 5,   // Enable metadata with fewer columns
+            },
+            
+            // L3+: Optimize for read efficiency, highest bloom filter fidelity
+            _ => Self {
+                global_key_filter: BloomFilterConfig {
+                    strategy: BloomStrategy::Composite,
+                    bits_per_key: 12,  // High fidelity for deep levels
+                    false_positive_rate: Some(0.002),
+                    expected_items: 200_000,
+                    enabled: true,
+                    hash_algorithm: HashAlgorithm::CityHash,
+                },
+                global_metadata_filter: BloomFilterConfig {
+                    strategy: BloomStrategy::Composite,
+                    bits_per_key: 10,
+                    false_positive_rate: Some(0.005),
+                    expected_items: 100_000,
+                    enabled: true,
+                    hash_algorithm: HashAlgorithm::CityHash,
+                },
+                block_key_filter: BloomFilterConfig {
+                    strategy: BloomStrategy::Composite,
+                    bits_per_key: 10,
+                    false_positive_rate: Some(0.005),
+                    expected_items: 5_000,
+                    enabled: true,
+                    hash_algorithm: HashAlgorithm::CityHash,
+                },
+                block_metadata_filter: BloomFilterConfig {
+                    strategy: BloomStrategy::ByteAligned,
+                    bits_per_key: 8,
+                    false_positive_rate: Some(0.01),
+                    expected_items: 2_500,
+                    enabled: true,
+                    hash_algorithm: HashAlgorithm::CityHash,
+                },
+                block_count_threshold: 5,       // Enable block blooms for all files
+                metadata_column_threshold: 2,   // Enable metadata with any columns
+            }
+        }
+    }
+    
+    /// Create configuration for metadata-heavy workloads
+    pub fn for_metadata_workload() -> Self {
+        Self {
+            global_key_filter: BloomFilterConfig {
+                strategy: BloomStrategy::ByteAligned,
+                bits_per_key: 10,
+                false_positive_rate: Some(0.005),
+                expected_items: 100_000,
+                enabled: true,
+                hash_algorithm: HashAlgorithm::XXHash,
+            },
+            global_metadata_filter: BloomFilterConfig {
+                strategy: BloomStrategy::Composite,
+                bits_per_key: 12,  // High fidelity for metadata filtering
+                false_positive_rate: Some(0.002),
+                expected_items: 50_000,
+                enabled: true,
+                hash_algorithm: HashAlgorithm::CityHash,
+            },
+            block_key_filter: BloomFilterConfig {
+                strategy: BloomStrategy::Simple,
+                bits_per_key: 6,
+                false_positive_rate: Some(0.02),
+                expected_items: 2_000,
+                enabled: false,  // Focus on metadata, not per-block keys
+                hash_algorithm: HashAlgorithm::XXHash,
+            },
+            block_metadata_filter: BloomFilterConfig {
+                strategy: BloomStrategy::Composite,
+                bits_per_key: 10,
+                false_positive_rate: Some(0.005),
+                expected_items: 1_000,
+                enabled: true,
+                hash_algorithm: HashAlgorithm::CityHash,
+            },
+            block_count_threshold: 1,       // Always enable for metadata workloads
+            metadata_column_threshold: 1,   // Enable with any metadata
+        }
+    }
+    
+    /// Create minimal configuration for write-heavy workloads
+    pub fn for_write_optimized() -> Self {
+        Self {
+            global_key_filter: BloomFilterConfig {
+                strategy: BloomStrategy::Simple,
+                bits_per_key: 6,  // Minimal overhead
+                false_positive_rate: Some(0.02),
+                expected_items: 10_000,
+                enabled: true,
+                hash_algorithm: HashAlgorithm::Murmur3,  // Fastest hash
+            },
+            global_metadata_filter: BloomFilterConfig {
+                strategy: BloomStrategy::Simple,
+                bits_per_key: 4,
+                false_positive_rate: Some(0.05),
+                expected_items: 5_000,
+                enabled: false,  // Disable for maximum write speed
+                hash_algorithm: HashAlgorithm::Murmur3,
+            },
+            block_key_filter: BloomFilterConfig {
+                strategy: BloomStrategy::Simple,
+                bits_per_key: 4,
+                false_positive_rate: Some(0.05),
+                expected_items: 500,
+                enabled: false,
+                hash_algorithm: HashAlgorithm::Murmur3,
+            },
+            block_metadata_filter: BloomFilterConfig {
+                strategy: BloomStrategy::Simple,
+                bits_per_key: 4,
+                false_positive_rate: Some(0.05),
+                expected_items: 250,
+                enabled: false,
+                hash_algorithm: HashAlgorithm::Murmur3,
+            },
+            block_count_threshold: 1000,    // Very high threshold
+            metadata_column_threshold: 50,  // Very high threshold
+        }
+    }
+}
+
 impl SstableBloomFilter {
     /// Create a new SstableBloomFilter
     pub fn new(

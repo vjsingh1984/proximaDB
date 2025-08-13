@@ -11,7 +11,7 @@ use tracing::{debug, error, info};
 
 fn create_test_config() -> SstConfig {
     SstConfig {
-        block_size_kb: 4, // Use small 4KB blocks for tests
+        block_size_mb: 4, // Use small 4KB blocks for tests
         decompression_cache_config: None,
         ..SstConfig::default()
     }

@@ -550,7 +550,7 @@ max_frame_size_mb = 32          # Bulk operations
 [storage.sst_config]
 compression = "zstd"            # Storage compression (default)
 compression_level = 3           # Balanced speed/ratio
-block_size_kb = 4096           # 4MB blocks for ZSTD
+block_size_mb = 4              # 4MB blocks for ZSTD
 
 [storage.sst_config.decompression_cache]
 max_size_mb = 1024             # 1GB decompression cache

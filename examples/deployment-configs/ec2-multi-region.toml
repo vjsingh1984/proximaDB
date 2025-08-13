@@ -45,7 +45,7 @@ bloom_filter_bits = 12
 memtable_size_mb = 256
 level_count = 7
 compaction_threshold = 4
-block_size_kb = 64
+block_size_mb = 3
 memory_flush_size_bytes = 2097152  # 2MB
 compression = "lz4"  # Fast compression for hot data
 

@@ -1,0 +1,17 @@
+ℹ️ Loading BERT model (all-MiniLM-L6-v2)...
+ℹ️ ✅ BERT model loaded successfully
+ℹ️ Protocol: GRPC, Engine: VIPER, Mode: Complete
+ℹ️ Testing SST engine...
+📊 SST Performance: 24,668 vec/s insert, 9.3ms search
+ℹ️ Testing VIPER engine...
+📊 VIPER Performance: 32,240 vec/s insert, 9.3ms search
+ℹ️ 
+📊 Storage Engine Comparison:
+ℹ️   SST:     24,668 vec/s |    9.3ms search
+ℹ️   VIPER:   32,240 vec/s |    9.3ms search
+ℹ️   🏆 VIPER wins for insertion, VIPER wins for search
+ℹ️ ❌ Showcase failed: type object 'DistanceMetric' has no attribute 'CHEBYSHEV'
+ℹ️ ✅ Deleted collection: demo_sst_engine
+ℹ️ ✅ Deleted collection: demo_viper_engine
+ℹ️ ✅ Deleted collection: demo_distance_metrics
+ℹ️ 🗑️  Cleaned up 3 demo collections

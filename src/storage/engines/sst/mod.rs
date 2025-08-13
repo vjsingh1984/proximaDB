@@ -435,7 +435,7 @@ impl Into<VectorRecord> for SstRecord {
     }
 }
 
-/// SSTable header for row-based storage format with engine optimizations
+/// SSTable header for row-based storage format with hierarchical optimizations
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SstableHeader {
     pub version: u32,
@@ -444,26 +444,58 @@ pub struct SstableHeader {
     pub min_key: String,
     pub max_key: String,
     pub created_at: i64,
+    
     // Compression configuration
     #[serde(default)]
-    pub compression_algorithm: CompressionAlgorithmSst,  // New: specific algorithm
+    pub compression_algorithm: CompressionAlgorithmSst,
     #[serde(default)]
-    pub compression_level: u8,  // New: compression level (e.g., ZSTD 1-22)
+    pub compression_level: u8,
+    
+    // Bloom filter configuration
     #[serde(default)]
     pub has_bloom_filter: bool,
+    #[serde(default)]
+    pub has_global_bloom: bool,        // NEW: Global bloom filter across entire file
+    #[serde(default)]
+    pub has_block_blooms: bool,        // NEW: Per-block bloom filters
+    #[serde(default)]
+    pub metadata_column_count: u32,    // NEW: Number of metadata columns for bloom sizing
+    
+    // Block organization
     #[serde(default = "default_block_size")]
     pub block_size: u32,
     #[serde(default)]
     pub batch_size: u32,
-    // Additional fields for SSTable reader
+    #[serde(default)]
+    pub block_count: u32,
+    
+    // Component sizes (existing)
     #[serde(default)]
     pub header_size: u32,
     #[serde(default)]
     pub index_size: u32,
     #[serde(default)]
     pub data_size: u32,
+    
+    // NEW: Direct access offsets for selective loading (hierarchical architecture)
     #[serde(default)]
-    pub block_count: u32,
+    pub global_bloom_offset: u64,      // Offset to global bloom filter
+    #[serde(default)]
+    pub global_bloom_size: u32,        // Size of global bloom filter
+    #[serde(default)]
+    pub block_index_offset: u64,       // Offset to block index (with per-block blooms)
+    #[serde(default)]
+    pub block_index_size: u32,         // Size of block index
+    #[serde(default)]
+    pub data_blocks_offset: u64,       // Offset to first data block
+    
+    // NEW: Vector format analysis for bytemuck optimization
+    #[serde(default)]
+    pub vector_format: VectorFormatType,     // Fixed, Variable, or Mixed
+    #[serde(default)]
+    pub fixed_dimension: Option<u32>,        // For fixed-dimension optimization
+    #[serde(default)]
+    pub compression_ratio: f32,              // Achieved compression ratio
 }
 
 /// Compression algorithm for SST storage (separate from proto to avoid dependency)
@@ -494,7 +526,24 @@ impl Default for CompressionAlgorithmSst {
     }
 }
 
-/// Index entry for fast key lookups in SSTable with block organization and metadata statistics
+/// Vector format type for bytemuck optimization
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum VectorFormatType {
+    /// All vectors have the same fixed dimension (use bytemuck)
+    Fixed { dimension: usize },
+    /// Vectors have variable dimensions (use standard serialization)
+    Variable,
+    /// Mixed dimensions - majority fixed, some variable
+    Mixed { dominant_dimension: usize },
+}
+
+impl Default for VectorFormatType {
+    fn default() -> Self {
+        VectorFormatType::Variable
+    }
+}
+
+/// Index entry for fast key lookups in SSTable with hierarchical bloom filters
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct IndexEntry {
     pub key: String,
@@ -503,12 +552,27 @@ pub struct IndexEntry {
     pub block_id: u32,
     pub block_offset: u32,
     pub compressed: bool,
+    
     /// Minimum values for each metadata column in this block
     pub metadata_min_values: HashMap<String, serde_json::Value>,
     /// Maximum values for each metadata column in this block
     pub metadata_max_values: HashMap<String, serde_json::Value>,
     /// Count of null values for each metadata column in this block
     pub metadata_null_counts: HashMap<String, u32>,
+    
+    // NEW: Hierarchical bloom filter support
+    /// Block-level key bloom filter (optional, for large blocks)
+    #[serde(default)]
+    pub block_key_bloom: Option<Vec<u8>>,
+    /// Block-level metadata bloom filter (optional, for metadata-heavy queries)
+    #[serde(default)]
+    pub block_metadata_bloom: Option<Vec<u8>>,
+    
+    // NEW: Vector format optimization info
+    #[serde(default)]
+    pub vector_format: VectorFormatType,
+    #[serde(default)]
+    pub compression_ratio: f32,
 }
 
 impl IndexEntry {
@@ -558,6 +622,49 @@ impl IndexEntry {
             buffer.write_all(key_bytes)?;
             buffer.write_all(&value.to_le_bytes())?;
         }
+        
+        // NEW: Write hierarchical bloom filter data
+        match &self.block_key_bloom {
+            Some(bloom_data) => {
+                buffer.write_all(&1u8.to_le_bytes())?; // Has bloom
+                buffer.write_all(&(bloom_data.len() as u32).to_le_bytes())?;
+                buffer.write_all(bloom_data)?;
+            },
+            None => {
+                buffer.write_all(&0u8.to_le_bytes())?; // No bloom
+            }
+        }
+        
+        match &self.block_metadata_bloom {
+            Some(bloom_data) => {
+                buffer.write_all(&1u8.to_le_bytes())?; // Has bloom
+                buffer.write_all(&(bloom_data.len() as u32).to_le_bytes())?;
+                buffer.write_all(bloom_data)?;
+            },
+            None => {
+                buffer.write_all(&0u8.to_le_bytes())?; // No bloom
+            }
+        }
+        
+        // NEW: Write vector format and compression info
+        let format_byte = match self.vector_format {
+            VectorFormatType::Variable => 0u8,
+            VectorFormatType::Fixed { dimension } => {
+                buffer.write_all(&1u8.to_le_bytes())?; // Fixed format
+                buffer.write_all(&(dimension as u32).to_le_bytes())?;
+                1u8
+            },
+            VectorFormatType::Mixed { dominant_dimension } => {
+                buffer.write_all(&2u8.to_le_bytes())?; // Mixed format
+                buffer.write_all(&(dominant_dimension as u32).to_le_bytes())?;
+                2u8
+            }
+        };
+        if format_byte == 0 {
+            buffer.write_all(&format_byte.to_le_bytes())?;
+        }
+        
+        buffer.write_all(&self.compression_ratio.to_le_bytes())?;
         
         Ok(buffer)
     }
@@ -644,6 +751,53 @@ impl IndexEntry {
             metadata_null_counts.insert(key, value);
         }
         
+        // NEW: Read hierarchical bloom filter data
+        cursor.read_exact(&mut bool_buf)?;
+        let has_key_bloom = bool_buf[0] != 0;
+        let block_key_bloom = if has_key_bloom {
+            cursor.read_exact(&mut u32_buf)?;
+            let bloom_len = u32::from_le_bytes(u32_buf) as usize;
+            let mut bloom_data = vec![0u8; bloom_len];
+            cursor.read_exact(&mut bloom_data)?;
+            Some(bloom_data)
+        } else {
+            None
+        };
+        
+        cursor.read_exact(&mut bool_buf)?;
+        let has_metadata_bloom = bool_buf[0] != 0;
+        let block_metadata_bloom = if has_metadata_bloom {
+            cursor.read_exact(&mut u32_buf)?;
+            let bloom_len = u32::from_le_bytes(u32_buf) as usize;
+            let mut bloom_data = vec![0u8; bloom_len];
+            cursor.read_exact(&mut bloom_data)?;
+            Some(bloom_data)
+        } else {
+            None
+        };
+        
+        // NEW: Read vector format and compression info
+        cursor.read_exact(&mut bool_buf)?;
+        let format_type = bool_buf[0];
+        let vector_format = match format_type {
+            0 => VectorFormatType::Variable,
+            1 => {
+                cursor.read_exact(&mut u32_buf)?;
+                let dimension = u32::from_le_bytes(u32_buf) as usize;
+                VectorFormatType::Fixed { dimension }
+            },
+            2 => {
+                cursor.read_exact(&mut u32_buf)?;
+                let dominant_dimension = u32::from_le_bytes(u32_buf) as usize;
+                VectorFormatType::Mixed { dominant_dimension }
+            },
+            _ => VectorFormatType::Variable,
+        };
+        
+        let mut f32_buf = [0u8; 4];
+        cursor.read_exact(&mut f32_buf)?;
+        let compression_ratio = f32::from_le_bytes(f32_buf);
+        
         Ok(Self {
             key,
             offset,
@@ -654,6 +808,10 @@ impl IndexEntry {
             metadata_min_values,
             metadata_max_values,
             metadata_null_counts,
+            block_key_bloom,
+            block_metadata_bloom,
+            vector_format,
+            compression_ratio,
         })
     }
 }
@@ -661,7 +819,7 @@ impl IndexEntry {
 // Default function for serde when reading existing SSTable headers
 // This preserves backward compatibility with existing SSTable files
 fn default_block_size() -> u32 {
-    4 * 1024 * 1024 // 4MB default for optimal ZSTD compression effectiveness
+    3 * 1024 * 1024 // 3MB default for optimal cloud IOPS and compression balance
 }
 
 /// Data block for cache-optimized storage with ZSTD compression
@@ -728,7 +886,7 @@ impl DataBlockCompressionConfig {
             let block_size = if config.dynamic_block_sizing {
                 Self::optimal_block_size(vector_dim)
             } else {
-                config.block_size_mb.unwrap_or(8) as usize * 1024 * 1024
+                config.block_size_mb.unwrap_or(3) as usize * 1024 * 1024
             };
             
             Self {
@@ -756,12 +914,18 @@ impl DataBlockCompressionConfig {
     /// Calculate optimal block size based on vector dimensions
     /// Target: 2000-2500 vectors per block
     pub fn optimal_block_size(vector_dim: usize) -> usize {
-        let vector_size = vector_dim * 4 + 100; // FP32 + metadata overhead
-        let target_vectors = 2250;
-        let block_size = target_vectors * vector_size;
+        let vector_size = vector_dim * 4 + 200; // FP32 + metadata overhead (more realistic estimate)
         
-        // Clamp between 4MB and 16MB
-        block_size.max(4 * 1024 * 1024).min(16 * 1024 * 1024)
+        // Target 3MB as optimal default, varying slightly by dimension
+        let target_block_size = match vector_dim {
+            0..=384 => 3 * 1024 * 1024,      // 3MB for small vectors
+            385..=768 => 3 * 1024 * 1024,    // 3MB for medium vectors  
+            769..=1536 => 3 * 1024 * 1024,   // 3MB for large vectors
+            _ => (2.5 * 1024.0 * 1024.0) as usize, // 2.5MB for XL vectors (network optimization)
+        };
+        
+        // Clamp between 2MB and 4MB (optimal range for cloud IOPS and compression)
+        target_block_size.max(2 * 1024 * 1024).min(4 * 1024 * 1024)
     }
 }
 
@@ -1615,11 +1779,21 @@ impl SstStorage {
 
         // Trigger compaction if manager is available
         if let Some(_compaction_manager) = &self.compaction_manager {
+            // Extract block size from collection config if available
+            let block_size_mb = params.collection_config.as_ref()
+                .and_then(|c| c.config.as_ref())
+                .and_then(|cfg| cfg.sst_config.as_ref())
+                .and_then(|sst| sst.block_size_mb);
+            
             let _task = CompactionTask {
                 level: 0, // Start at level 0
                 input_files: vec![std::path::PathBuf::from(sst_url.clone())],
                 output_file: std::path::PathBuf::from(format!("{}.compacted", sst_url)),
                 priority: CompactionPriority::Medium,
+                block_size_mb,
+                compression_config: params.collection_config.as_ref()
+                    .and_then(|c| c.config.as_ref())
+                    .and_then(|cfg| cfg.compression.clone()),
             };
             // For now, just log that we would trigger compaction
             tracing::debug!(
@@ -2375,7 +2549,7 @@ impl SstStorage {
             }
 
             // Use SstableWriter for consistent format with SDK-driven compression
-            let block_size = (self.config.block_size_kb * 1024) as usize;
+            let block_size = (self.config.block_size_mb * 1024 * 1024) as usize;
             let writer = sstable_writer::SstableWriter::with_compression(&sst_path, block_size, Arc::clone(&self.filesystem), compression_config.clone());
             
             // Use bloom filter config from SST config if available
@@ -2537,7 +2711,7 @@ impl SstStorage {
         let estimated_size = records.len() * 512; // Conservative estimate per record
         let mut sstable_data = Vec::with_capacity(estimated_size);
 
-        // Step 1: Create enhanced header with engine optimizations
+        // Step 1: Create enhanced header with hierarchical optimizations
         let header = SstableHeader {
             version: 1, // Version 1 for initial implementation
             level,
@@ -2545,17 +2719,38 @@ impl SstStorage {
             min_key: records.first().map(|r| r.id.clone()).unwrap_or_default(),
             max_key: records.last().map(|r| r.id.clone()).unwrap_or_default(),
             created_at: Utc::now().timestamp(),
-            // Engine optimizations - compression determined by algorithm (None = disabled)
-            compression_algorithm: CompressionAlgorithmSst::None,  // No compression by default
-            compression_level: 0,  // No compression level by default
+            
+            // Compression configuration
+            compression_algorithm: CompressionAlgorithmSst::None,
+            compression_level: 0,
+            
+            // Bloom filter configuration
             has_bloom_filter: true,
-            block_size: (self.config.block_size_kb * 1024) as u32, // Use configured block size
+            has_global_bloom: true,
+            has_block_blooms: false, // Will be updated based on actual blocks
+            metadata_column_count: 0, // Will be calculated
+            
+            // Block organization
+            block_size: (self.config.block_size_mb * 1024 * 1024) as u32,
             batch_size: records.len() as u32,
-            // Additional fields (will be updated later)
+            block_count: 0, // Will be updated
+            
+            // Component sizes
             header_size: 0,
             index_size: 0,
             data_size: 0,
-            block_count: 0,
+            
+            // NEW: Direct access offsets (placeholder values)
+            global_bloom_offset: 0,
+            global_bloom_size: 0,
+            block_index_offset: 0,
+            block_index_size: 0,
+            data_blocks_offset: 0,
+            
+            // NEW: Vector format optimization (default to variable)
+            vector_format: VectorFormatType::Variable,
+            fixed_dimension: None,
+            compression_ratio: 1.0,
         };
 
         // Step 2: Build bloom filter for fast key existence checks
@@ -2984,6 +3179,12 @@ impl SstStorage {
                     metadata_min_values: HashMap::new(),
                     metadata_max_values: HashMap::new(),
                     metadata_null_counts: HashMap::new(),
+                    // NEW: Hierarchical bloom filter support
+                    block_key_bloom: None,
+                    block_metadata_bloom: None,
+                    // NEW: Vector format optimization
+                    vector_format: VectorFormatType::Variable,
+                    compression_ratio: 1.0,
                 });
                 block_offset += std::mem::size_of::<SstRecord>() as u32;
             }

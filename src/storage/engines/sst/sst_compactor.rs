@@ -187,18 +187,19 @@ impl SstCompactor {
             input_files.len(), target_level
         );
 
-        // Create iterators for each input file
-        let mut iterators = Vec::new();
+        // Use streaming approach for memory-efficient compaction
+        info!("🔄 Using streaming approach for zero-copy compaction");
+        let mut streaming_iterators = Vec::new();
         for (idx, file_path) in input_files.iter().enumerate() {
-            debug!("Opening SST file {} for direct reading", file_path);
-            
-            let mut direct_reader = SstDirectReader::new(self.filesystem_factory.clone())?;
+            debug!("Opening SST file {} for streaming", file_path);
+            let mut direct_reader = SstDirectReader::open(self.filesystem_factory.clone(), file_path).await?;
             let iterator = direct_reader.stream_sst_records(file_path.clone()).await?;
-            iterators.push((idx, iterator));
+            debug!("Created streaming iterator for file {}", file_path);
+            streaming_iterators.push((idx, iterator));
         }
 
-        // Perform k-way merge
-        let (merged_records, merge_stats) = self.k_way_merge(iterators).await?;
+        // Perform streaming k-way merge
+        let (merged_records, merge_stats) = self.k_way_merge(streaming_iterators).await?;
         
         // Merge the stats from k-way merge
         stats.records_read = merge_stats.records_read;
@@ -234,8 +235,157 @@ impl SstCompactor {
         Ok(stats)
     }
 
+    /// K-way merge of pre-loaded SST records with proper MVCC resolution
+    /// Implements upsert semantics: keeps highest continuous version for each ID
+    /// FALLBACK: This batch loading approach is kept for compatibility/testing
+    async fn k_way_merge_records(
+        &self,
+        file_records: Vec<(usize, Vec<SstRecord>)>,
+    ) -> Result<(Vec<SstRecord>, ZeroCopyCompactionStats)> {
+        let mut heap = BinaryHeap::new();
+        let mut merged_records = Vec::new();
+        let mut stats = ZeroCopyCompactionStats::default();
+        // Track all versions for each ID to apply MVCC rules
+        let mut id_versions: HashMap<String, Vec<SstRecord>> = HashMap::new();
+
+        // Add all records to the heap for k-way merge
+        for (file_idx, records) in file_records {
+            for record in records {
+                stats.records_read += 1;
+                heap.push(Reverse(MergeEntry {
+                    timestamp: record.timestamp,
+                    record,
+                    file_index: file_idx,
+                }));
+            }
+        }
+
+        // Process all records from the heap
+        while let Some(Reverse(entry)) = heap.pop() {
+            let record_id = entry.record.id.clone();
+            
+            // Collect all versions of each ID
+            id_versions.entry(record_id.clone())
+                .or_insert_with(Vec::new)
+                .push(entry.record);
+        }
+
+        // Separate append-only records (no ID) from versioned records
+        let mut append_only_records = Vec::new();
+        if let Some(no_id_records) = id_versions.remove("") {
+            append_only_records.extend(no_id_records);
+        }
+        
+        // Now apply MVCC resolution rules for each ID
+        let now = chrono::Utc::now().timestamp() as u32;
+        
+        for (id, mut versions) in id_versions {
+            // Skip append-only IDs
+            if Self::is_append_only(&id) {
+                append_only_records.extend(versions);
+                continue;
+            }
+            
+            // Track if this ID has any tombstones
+            let has_tombstone = versions.iter().any(|r| r.is_tombstone);
+            if has_tombstone {
+                debug!("Skipping tombstoned record: {}", id);
+                stats.tombstoned_ids.push(id.clone());
+                stats.records_deleted += versions.len() as u64;
+                continue;
+            }
+            
+            // Track if this ID has expired versions
+            let has_expired = versions.iter().any(|r| {
+                r.expires_at.map_or(false, |exp| exp < now)
+            });
+            if has_expired {
+                debug!("Skipping expired record: {}", id);
+                stats.deleted_vector_ids.push(id.clone());
+                stats.records_deleted += versions.len() as u64;
+                continue;
+            }
+            
+            // Sort by version (ascending), then by timestamp (ascending for same version)
+            versions.sort_by(|a, b| {
+                let ver_a = Self::normalize_version(a.version);
+                let ver_b = Self::normalize_version(b.version);
+                
+                ver_a.cmp(&ver_b)
+                    .then_with(|| a.timestamp.cmp(&b.timestamp))
+            });
+            
+            // Find the highest continuous version
+            let mut expected_version = 1u32;
+            let mut last_valid: Option<SstRecord> = None;
+            
+            for record in versions {
+                let version = Self::normalize_version(record.version);
+                
+                if version == expected_version {
+                    // This version is continuous
+                    last_valid = Some(record);
+                    expected_version += 1;
+                } else if version > expected_version {
+                    // Version gap detected - stop here
+                    debug!("Version gap for ID '{}': expected {}, found {}", 
+                           id, expected_version, version);
+                    break;
+                }
+                // Skip older versions (version < expected)
+            }
+            
+            // Add the highest continuous version to output
+            if let Some(mut record) = last_valid {
+                let selected_version = Self::normalize_version(record.version);
+                
+                // Track if this was an update (version > 1)
+                if selected_version > 1 {
+                    stats.updated_vector_ids.push(id.clone());
+                    stats.records_merged += 1;
+                }
+                
+                // Update the level to match the target compaction level
+                record.level = self.block_size as u8; // Will be set properly by caller
+                
+                debug!("Selected version {} for ID '{}'", selected_version, id);
+                merged_records.push(record);
+            }
+        }
+
+        // Add all append-only records (they don't participate in deduplication)
+        merged_records.extend(append_only_records);
+        
+        // Determine if index rebuild is recommended
+        let total_changes = stats.deleted_vector_ids.len() + 
+                           stats.updated_vector_ids.len() + 
+                           stats.tombstoned_ids.len();
+        let change_ratio = if stats.records_read > 0 {
+            total_changes as f64 / stats.records_read as f64
+        } else {
+            0.0
+        };
+        
+        // Recommend rebuild if more than 30% of records changed
+        stats.recommend_index_rebuild = change_ratio > 0.3;
+        
+        if stats.recommend_index_rebuild {
+            warn!("🔄 Index rebuild recommended: {:.1}% of records changed during compaction", 
+                  change_ratio * 100.0);
+        }
+        
+        info!("K-way merge completed: {} records after MVCC resolution (deleted: {}, updated: {}, tombstoned: {})", 
+              merged_records.len(), 
+              stats.deleted_vector_ids.len(),
+              stats.updated_vector_ids.len(),
+              stats.tombstoned_ids.len());
+        
+        Ok((merged_records, stats))
+    }
+
     /// K-way merge of multiple SST record streams with proper MVCC resolution
     /// Implements upsert semantics: keeps highest continuous version for each ID
+    /// Uses streaming iterators for memory-efficient compaction
     async fn k_way_merge(
         &self,
         mut iterators: Vec<(usize, BlockIterator<SstRecord>)>,

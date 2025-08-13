@@ -320,7 +320,7 @@ mod tests {
         
         // Should recommend faster tier for HNSW if accessed
         if let Some(rec) = recommendation {
-            println!("Recommendation: {} -> {:?}", 
+            debug!("Recommendation: {} -> {:?}", 
                     rec.collection_id, rec.recommended_tier);
         }
     }

@@ -12,7 +12,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::marker::PhantomData;
 use std::io::Read;
-use tracing::{debug, warn, info};
+use tracing::{debug, error, info, warn};
 use futures::stream::{Stream, StreamExt};
 use futures::TryStreamExt;
 
@@ -25,7 +25,7 @@ use crate::core::search::{SearchParams, SearchResult, FilterExpression};
 use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
 use crate::storage::persistence::filesystem::{FilesystemFactory, FileSystem};
 use crate::storage::engines::sst::bloom_filter::SstableBloomFilter;
-use crate::storage::engines::sst::{SstableHeader, DataBlock, IndexEntry, SstRecord, CompressionAlgorithmSst};
+use crate::storage::engines::sst::{SstableHeader, DataBlock, IndexEntry, SstRecord, CompressionAlgorithmSst, VectorFormatType};
 use crate::core::bloom::{BloomFilterConfig, BloomStrategy};
 
 // Type alias for bloom filter
@@ -245,7 +245,7 @@ impl BlockReader for ModularBlockReader {
 /// Generator-like streaming iterator for data blocks
 pub struct BlockIterator<T> {
     reader: Box<dyn Read + Send>,
-    buffer: Vec<u8>,
+    buffer: Vec<SstRecord>,  // Changed from Vec<u8> to Vec<SstRecord> for proper streaming
     position: usize,
     block_size: usize,
     total_blocks: usize,
@@ -258,7 +258,7 @@ impl<T> BlockIterator<T> {
     pub fn new(reader: Box<dyn Read + Send>, block_size: usize, total_blocks: usize, mode: ReadMode) -> Self {
         Self {
             reader,
-            buffer: Vec::with_capacity(block_size),
+            buffer: Vec::new(),  // Now holds SstRecords, not bytes
             position: 0,
             block_size,
             total_blocks,
@@ -558,38 +558,96 @@ impl Iterator for BlockIterator<SstRecord> {
     
     fn next(&mut self) -> Option<Self::Item> {
         if self.current_block >= self.total_blocks {
+            debug!("🔍 SstRecord STREAMING: Reached end - processed {} of {} blocks", self.current_block, self.total_blocks);
             return None;
         }
         
-        // Read next record from buffer
-        if self.position >= self.buffer.len() {
-            // Need to read next block
-            self.current_block += 1;
-            self.position = 0;
-            self.buffer.clear();
+        // Read next block if buffer is empty
+        if self.buffer.is_empty() {
+            debug!("🔍 SstRecord STREAMING: Reading block {} of {}", self.current_block + 1, self.total_blocks);
             
-            if self.current_block >= self.total_blocks {
+            // Read block size (4 bytes)
+            let mut size_bytes = [0u8; 4];
+            debug!("🔍 SstRecord STREAMING: About to read 4 bytes for block size");
+            match self.reader.read_exact(&mut size_bytes) {
+                Ok(_) => {
+                    debug!("🔍 SstRecord STREAMING: Successfully read 4 bytes for block size: {:?}", size_bytes);
+                },
+                Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
+                    debug!("🔍 SstRecord STREAMING: Reached EOF while reading block size - no more blocks");
+                    return None;
+                },
+                Err(e) => {
+                    error!("❌ SstRecord STREAMING ERROR: Failed to read block size bytes: {:?}", e);
+                    return Some(Err(anyhow::Error::from(e)));
+                },
+            }
+            
+            let block_size = u32::from_le_bytes(size_bytes) as usize;
+            debug!("🔍 SstRecord STREAMING: Parsed block size: {} bytes", block_size);
+            
+            if block_size == 0 {
+                debug!("🔍 SstRecord STREAMING: Block size is 0 - no more data");
                 return None;
             }
             
+            if block_size > 10_000_000 {  // 10MB sanity check
+                error!("❌ SstRecord STREAMING ERROR: Block size {} seems unreasonably large", block_size);
+                return Some(Err(anyhow::anyhow!("Block size {} exceeds sanity check limit", block_size)));
+            }
+            
             // Read block data
-            let mut block_data = vec![0u8; self.block_size];
-            match self.reader.read(&mut block_data) {
-                Ok(0) => return None,
-                Ok(n) => {
-                    self.buffer = block_data[..n].to_vec();
+            debug!("🔍 SstRecord STREAMING: About to read {} bytes for block data", block_size);
+            let mut block_data = vec![0u8; block_size];
+            match self.reader.read_exact(&mut block_data) {
+                Ok(_) => {
+                    debug!("🔍 SstRecord STREAMING: Successfully read {} bytes for block data", block_size);
+                },
+                Err(e) => {
+                    error!("❌ SstRecord STREAMING ERROR: Failed to read {} bytes for block data: {:?}", block_size, e);
+                    error!("❌ SstRecord STREAMING ERROR: Error kind: {:?}", e.kind());
+                    if let Some(raw_error) = e.get_ref() {
+                        error!("❌ SstRecord STREAMING ERROR: Raw error: {:?}", raw_error);
+                    }
+                    return Some(Err(anyhow::Error::from(e)));
+                },
+            }
+            
+            // Deserialize the DataBlock using the proper DataBlock::deserialize method
+            debug!("🔍 SstRecord STREAMING: Attempting to deserialize DataBlock from {} bytes", block_data.len());
+            match DataBlock::deserialize(&block_data) {
+                Ok(data_block) => {
+                    debug!("🔍 SstRecord STREAMING: Successfully deserialized DataBlock with {} records", data_block.records.len());
+                    // Extract all SstRecords from the DataBlock
+                    self.buffer = data_block.records;
+                    self.position = 0;
+                    self.current_block += 1;
                 }
-                Err(e) => return Some(Err(anyhow::Error::from(e))),
+                Err(e) => {
+                    error!("❌ SstRecord STREAMING ERROR: Failed to deserialize DataBlock: {:?}", e);
+                    debug!("🔍 SstRecord STREAMING: Block data preview (first 32 bytes): {:?}", &block_data[..std::cmp::min(32, block_data.len())]);
+                    return Some(Err(anyhow::Error::from(e)));
+                }
             }
         }
         
-        // Deserialize next SstRecord from buffer
-        match bincode::deserialize::<SstRecord>(&self.buffer[self.position..]) {
-            Ok(record) => {
-                self.position += bincode::serialized_size(&record).unwrap_or(0) as usize;
-                Some(Ok(record))
+        // Return next record from buffer
+        if self.position < self.buffer.len() {
+            let record = self.buffer[self.position].clone();
+            self.position += 1;
+            
+            // Clear buffer if we've consumed all records
+            if self.position >= self.buffer.len() {
+                self.buffer.clear();
+                self.position = 0;
             }
-            Err(e) => Some(Err(anyhow::Error::from(e))),
+            
+            Some(Ok(record))
+        } else {
+            // Buffer is empty, try next block
+            self.buffer.clear();
+            self.position = 0;
+            self.next()
         }
     }
 }
@@ -599,50 +657,82 @@ impl Iterator for BlockIterator<VectorRecord> {
     type Item = Result<VectorRecord>;
     
     fn next(&mut self) -> Option<Self::Item> {
-        // Read SstRecord first using simplified direct deserialization
         if self.current_block >= self.total_blocks {
             return None;
         }
         
-        if self.position >= self.buffer.len() {
-            self.current_block += 1;
-            self.position = 0;
-            self.buffer.clear();
+        // Read next block if buffer is empty
+        if self.buffer.is_empty() {
+            // Read block size (4 bytes)
+            let mut size_bytes = [0u8; 4];
+            match self.reader.read_exact(&mut size_bytes) {
+                Ok(_) => {},
+                Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => return None,
+                Err(e) => return Some(Err(anyhow::Error::from(e))),
+            }
             
-            if self.current_block >= self.total_blocks {
+            let block_size = u32::from_le_bytes(size_bytes) as usize;
+            if block_size == 0 {
                 return None;
             }
             
-            let mut block_data = vec![0u8; self.block_size];
-            match self.reader.read(&mut block_data) {
-                Ok(0) => return None,
-                Ok(n) => self.buffer = block_data[..n].to_vec(),
+            // Read block data
+            let mut block_data = vec![0u8; block_size];
+            match self.reader.read_exact(&mut block_data) {
+                Ok(_) => {},
                 Err(e) => return Some(Err(anyhow::Error::from(e))),
+            }
+            
+            // Deserialize the DataBlock
+            debug!("Attempting to deserialize DataBlock from {} bytes", block_data.len());
+            match bincode::deserialize::<DataBlock>(&block_data) {
+                Ok(data_block) => {
+                    debug!("Successfully deserialized DataBlock with {} records", data_block.records.len());
+                    // Extract all SstRecords from the DataBlock
+                    self.buffer = data_block.records;
+                    self.position = 0;
+                    self.current_block += 1;
+                }
+                Err(e) => {
+                    debug!("Failed to deserialize DataBlock: {:?}", e);
+                    debug!("Block data preview (first 32 bytes): {:?}", &block_data[..std::cmp::min(32, block_data.len())]);
+                    return Some(Err(anyhow::Error::from(e)));
+                }
             }
         }
         
-        // Convert SstRecord to VectorRecord with minimal copying
-        match bincode::deserialize::<SstRecord>(&self.buffer[self.position..]) {
-            Ok(sst_record) => {
-                self.position += bincode::serialized_size(&sst_record).unwrap_or(0) as usize;
-                
-                // Convert SstRecord to VectorRecord
-                let vector_record = VectorRecord {
-                    id: Some(sst_record.id.clone()),
-                    vector: sst_record.vector.clone(),
-                    metadata: sst_record.metadata.clone(),
-                    timestamp: sst_record.timestamp,
-                    updated_at: sst_record.updated_at,
-                    expires_at: sst_record.expires_at,
-                    version: sst_record.version,
-                    rank: None,
-                    score: None,
-                    distance: None,
-                };
-                
-                Some(Ok(vector_record))
+        // Return next record from buffer, converting to VectorRecord
+        if self.position < self.buffer.len() {
+            // Clone the record first to avoid borrowing conflicts
+            let sst_record = self.buffer[self.position].clone();
+            self.position += 1;
+            
+            // Clear buffer if we've consumed all records
+            if self.position >= self.buffer.len() {
+                self.buffer.clear();
+                self.position = 0;
             }
-            Err(e) => Some(Err(anyhow::Error::from(e))),
+            
+            // Convert SstRecord to VectorRecord
+            let vector_record = VectorRecord {
+                id: Some(sst_record.id),
+                vector: sst_record.vector,
+                metadata: sst_record.metadata,
+                timestamp: sst_record.timestamp,
+                updated_at: sst_record.updated_at,
+                expires_at: sst_record.expires_at,
+                version: sst_record.version,
+                rank: None,
+                score: None,
+                distance: None,
+            };
+            
+            Some(Ok(vector_record))
+        } else {
+            // Buffer is empty, try next block
+            self.buffer.clear();
+            self.position = 0;
+            self.next()
         }
     }
 }
@@ -677,17 +767,63 @@ impl SstDirectReader {
     }
     
     /// Stream SstRecords directly without conversion for compaction
-    pub async fn stream_sst_records(&mut self, _file_path: String) -> Result<BlockIterator<SstRecord>> {
+    /// NEW: Uses hierarchical header offsets for efficient selective reading
+    pub async fn stream_sst_records(&mut self, file_path: String) -> Result<BlockIterator<SstRecord>> {
         let header = self.block_reader.read_header().await?;
         let total_blocks = header.block_count as usize;
         let block_size = header.block_size as usize;
         
-        // Create raw reader for streaming
-        let reader = Box::new(std::io::Cursor::new(Vec::new())) as Box<dyn Read + Send>;
+        info!("🔄 Streaming SST records from {} with {} blocks (hierarchical format)", file_path, total_blocks);
+        
+        let fs = self.filesystem_factory.get_filesystem(&file_path)?;
+        
+        // NEW: Use direct offsets from enhanced header for efficient access
+        let data_blocks_offset = if header.data_blocks_offset > 0 {
+            // Use pre-calculated offset from enhanced header
+            debug!("✅ Using enhanced header offset: {}", header.data_blocks_offset);
+            header.data_blocks_offset
+        } else {
+            // Fallback to legacy calculation for compatibility
+            debug!("⚠️ Using legacy offset calculation");
+            let mut current_offset = 8 + header.header_size as u64; // After magic + header_len + header
+            
+            // Skip bloom filter if present
+            if header.has_bloom_filter {
+                let bloom_size_bytes = fs.read_range(&file_path, current_offset, 4).await?;
+                let bloom_size = u32::from_le_bytes([
+                    bloom_size_bytes[0], bloom_size_bytes[1], 
+                    bloom_size_bytes[2], bloom_size_bytes[3]
+                ]) as u64;
+                current_offset += 4 + bloom_size;
+            }
+            
+            // Skip index
+            let index_size_bytes = fs.read_range(&file_path, current_offset, 4).await?;
+            let index_size = u32::from_le_bytes([
+                index_size_bytes[0], index_size_bytes[1], 
+                index_size_bytes[2], index_size_bytes[3]
+            ]) as u64;
+            current_offset += 4 + index_size;
+            
+            current_offset
+        };
+        
+        // Read just the data blocks portion of the file
+        let file_metadata = fs.metadata(&file_path).await?;
+        let data_blocks_size = file_metadata.size - data_blocks_offset;
+        
+        debug!("📊 Reading data blocks: offset={}, size={} bytes, format={:?}", 
+               data_blocks_offset, data_blocks_size, header.vector_format);
+        
+        let data_blocks_bytes = fs.read_range(&file_path, data_blocks_offset, data_blocks_size).await?;
+        let reader = Box::new(std::io::Cursor::new(data_blocks_bytes)) as Box<dyn Read + Send>;
+        
+        debug!("✅ Created hierarchical streaming iterator for {} blocks (compression_ratio={:.2})", 
+               total_blocks, header.compression_ratio);
         
         Ok(BlockIterator {
             reader,
-            buffer: Vec::with_capacity(block_size),
+            buffer: Vec::new(),
             position: 0,
             block_size,
             total_blocks,
@@ -697,6 +833,80 @@ impl SstDirectReader {
         })
     }
     
+    /// NEW: Selective loading of global bloom filter for query optimization
+    /// Uses enhanced header offsets to read only the global bloom filter
+    pub async fn load_global_bloom_filter(&mut self, file_path: &str) -> Result<Option<SstableBloomFilter>> {
+        let header = self.block_reader.read_header().await?;
+        
+        if !header.has_global_bloom || header.global_bloom_size == 0 {
+            debug!("No global bloom filter in file {}", file_path);
+            return Ok(None);
+        }
+        
+        let fs = self.filesystem_factory.get_filesystem(file_path)?;
+        
+        // Use direct offset for efficient selective reading
+        let bloom_offset = header.global_bloom_offset;
+        let bloom_size = header.global_bloom_size as u64;
+        
+        debug!("🌸 Loading global bloom filter: offset={}, size={} bytes", bloom_offset, bloom_size);
+        
+        let bloom_data = fs.read_range(file_path, bloom_offset, bloom_size).await?;
+        
+        match SstableBloomFilter::deserialize(&bloom_data) {
+            Ok(bloom_filter) => {
+                debug!("✅ Loaded global bloom filter with {} key filters and {} metadata columns", 
+                       bloom_filter.key_filter_data.len(), 
+                       bloom_filter.metadata_filter_data.len());
+                Ok(Some(bloom_filter))
+            },
+            Err(e) => {
+                warn!("Failed to deserialize global bloom filter: {}", e);
+                Ok(None)
+            }
+        }
+    }
+    
+    /// NEW: Selective loading of block index with hierarchical bloom filters
+    /// Only loads block index without reading data blocks for query planning
+    pub async fn load_block_index(&mut self, file_path: &str) -> Result<Vec<IndexEntry>> {
+        let header = self.block_reader.read_header().await?;
+        let fs = self.filesystem_factory.get_filesystem(file_path)?;
+        
+        // Use direct offset for block index
+        let index_offset = header.block_index_offset;
+        let index_size = header.block_index_size as u64;
+        
+        debug!("📋 Loading block index: offset={}, size={} bytes, has_block_blooms={}", 
+               index_offset, index_size, header.has_block_blooms);
+        
+        let index_data = fs.read_range(file_path, index_offset, index_size).await?;
+        
+        // Parse index entries (enhanced format with block blooms)
+        let mut index_entries = Vec::new();
+        let mut cursor = std::io::Cursor::new(index_data);
+        
+        while cursor.position() < cursor.get_ref().len() as u64 {
+            // Read entry length
+            let mut len_buf = [0u8; 4];
+            if std::io::Read::read_exact(&mut cursor, &mut len_buf).is_err() {
+                break; // End of data
+            }
+            let entry_len = u32::from_le_bytes(len_buf) as usize;
+            
+            // Read entry data
+            let mut entry_data = vec![0u8; entry_len];
+            std::io::Read::read_exact(&mut cursor, &mut entry_data)?;
+            
+            // Deserialize enhanced index entry
+            let entry = IndexEntry::deserialize(&entry_data)?;
+            index_entries.push(entry);
+        }
+        
+        debug!("✅ Loaded {} block index entries with hierarchical bloom support", index_entries.len());
+        Ok(index_entries)
+    }
+
     /// Read all SstRecords for compaction without caching
     /// Uses efficient range reads for cloud storage (S3/GCS/Azure)
     pub async fn read_all_for_compaction(&mut self) -> Result<Vec<SstRecord>> {
@@ -1243,6 +1453,12 @@ impl UnifiedSstableReader {
                         metadata_min_values: HashMap::new(),
                         metadata_max_values: HashMap::new(),
                         metadata_null_counts: HashMap::new(),
+                        // NEW: Hierarchical bloom filter support
+                        block_key_bloom: None,
+                        block_metadata_bloom: None,
+                        // NEW: Vector format optimization
+                        vector_format: VectorFormatType::Variable,
+                        compression_ratio: 1.0,
                     }
                 }).collect();
                 
@@ -1531,6 +1747,12 @@ impl UnifiedSstableReader {
                 metadata_min_values: HashMap::new(),
                 metadata_max_values: HashMap::new(),
                 metadata_null_counts: HashMap::new(),
+                // NEW: Hierarchical bloom filter support
+                block_key_bloom: None,
+                block_metadata_bloom: None,
+                // NEW: Vector format optimization
+                vector_format: VectorFormatType::Variable,
+                compression_ratio: 1.0,
             }).collect();
             
             let metadata_stats: HashMap<String, MetadataStats> = cached_index.metadata_stats.iter().map(|(k, v)| {
@@ -2110,6 +2332,12 @@ impl UnifiedSstableReader {
                 metadata_min_values: HashMap::new(),
                 metadata_max_values: HashMap::new(),
                 metadata_null_counts: HashMap::new(),
+                // NEW: Hierarchical bloom filter support
+                block_key_bloom: None,
+                block_metadata_bloom: None,
+                // NEW: Vector format optimization
+                vector_format: VectorFormatType::Variable,
+                compression_ratio: 1.0,
             }).collect();
             
             let metadata_stats: HashMap<String, MetadataStats> = cached_index.metadata_stats.iter().map(|(k, v)| {
@@ -2564,6 +2792,12 @@ impl UnifiedSstableReader {
                             metadata_min_values: HashMap::new(),
                             metadata_max_values: HashMap::new(),
                             metadata_null_counts: HashMap::new(),
+                            // NEW: Hierarchical bloom filter support
+                            block_key_bloom: None,
+                            block_metadata_bloom: None,
+                            // NEW: Vector format optimization
+                            vector_format: VectorFormatType::Variable,
+                            compression_ratio: 1.0,
                         }).collect(),
                         metadata_stats: HashMap::new(), // Convert metadata stats if needed
                         vector_count: cached.total_vectors,

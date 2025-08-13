@@ -105,6 +105,8 @@ mod tests {
             input_files: input_files.clone(),
             output_file: output_file.clone(),
             priority: CompactionPriority::High,
+            block_size_mb: None, // Use server default for tests
+            compression_config: None, // Use server default for tests
         };
         
         // Test field access
@@ -200,6 +202,8 @@ mod tests {
             input_files: vec![], // Empty input files
             output_file: PathBuf::from("/tmp/empty_output.sst"),
             priority: CompactionPriority::Medium,
+            block_size_mb: None,
+            compression_config: None,
         };
         
         assert!(manager.schedule_compaction(task).await.is_ok());
@@ -220,6 +224,8 @@ mod tests {
             input_files: many_files,
             output_file: PathBuf::from("/tmp/multi_output.sst"),
             priority: CompactionPriority::Critical,
+            block_size_mb: None,
+            compression_config: None,
         };
         
         assert!(manager.schedule_compaction(task).await.is_ok());
@@ -321,6 +327,8 @@ mod tests {
             ],
             output_file: PathBuf::from(format!("/tmp/{}_output.sst", collection_id)),
             priority,
+            block_size_mb: None,
+            compression_config: None,
         }
     }
 }

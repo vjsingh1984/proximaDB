@@ -221,7 +221,23 @@ impl SstableWriter {
                 (super::CompressionAlgorithmSst::None, 0)
             };
 
-        // Create header
+        // NEW: Analyze overall file format for bytemuck optimization
+        let file_vector_format = self.analyze_file_vector_format(&data_blocks);
+        let overall_compression_ratio = self.calculate_overall_compression_ratio(&data_blocks);
+        let metadata_column_count = self.count_metadata_columns(&data_blocks);
+        
+        // Calculate offsets for selective reading (header-first design)
+        const SST_MAGIC_SIZE: u64 = 4;
+        const HEADER_LEN_SIZE: u64 = 4;
+        let header_placeholder_size = 1024u64; // Placeholder for header size calculation
+        
+        let global_bloom_offset = SST_MAGIC_SIZE + HEADER_LEN_SIZE + header_placeholder_size;
+        let global_bloom_size = bloom_data.len() as u32;
+        let block_index_offset = global_bloom_offset + (global_bloom_size as u64) + 4; // +4 for bloom length
+        let block_index_size = index_data.len() as u32;
+        let data_blocks_offset = block_index_offset + (block_index_size as u64) + 4; // +4 for index length
+        
+        // Create enhanced header with hierarchical optimization info
         let mut header = super::SstableHeader {
             version: 1,
             level: 0,
@@ -229,15 +245,38 @@ impl SstableWriter {
             min_key,
             max_key,
             created_at: chrono::Utc::now().timestamp(),
+            
+            // Compression configuration
             compression_algorithm,
             compression_level,
+            
+            // Hierarchical bloom filter configuration
             has_bloom_filter: true,
+            has_global_bloom: true,
+            has_block_blooms: self.has_any_block_blooms(&index_entries),
+            metadata_column_count,
+            
+            // Block organization
             block_size: self.block_size as u32,
             batch_size: 0,
-            header_size: 0,
-            index_size: index_data.len() as u32,
-            data_size: total_data_size as u32,
             block_count: data_blocks.len() as u32,
+            
+            // Component sizes
+            header_size: 0, // Will be updated after serialization
+            index_size: block_index_size,
+            data_size: total_data_size as u32,
+            
+            // NEW: Direct access offsets for selective loading
+            global_bloom_offset,
+            global_bloom_size,
+            block_index_offset,
+            block_index_size,
+            data_blocks_offset,
+            
+            // NEW: Vector format optimization
+            vector_format: file_vector_format,
+            fixed_dimension: self.extract_fixed_dimension(&file_vector_format),
+            compression_ratio: overall_compression_ratio,
         };
         
         let header_data = bincode::serialize(&header)?;
@@ -468,7 +507,7 @@ impl SstableWriter {
                 (super::CompressionAlgorithmSst::None, 0)
             };
 
-        // Create header with correct sizes
+        // Create header with hierarchical optimization fields
         let mut header = SstableHeader {
             version: 1,
             level: 0,
@@ -485,6 +524,18 @@ impl SstableWriter {
             index_size: index_data.len() as u32,
             data_size: total_data_size as u32,
             block_count: data_blocks.len() as u32,
+            // NEW: Hierarchical optimization fields
+            global_bloom_offset: 0, // Will be calculated later
+            global_bloom_size: bloom_data.len() as u32,
+            block_index_offset: 0, // Will be calculated later  
+            block_index_size: index_data.len() as u32,
+            data_blocks_offset: 0, // Will be calculated later
+            vector_format: super::VectorFormatType::Variable, // Default to variable
+            fixed_dimension: None,
+            compression_ratio: 1.0, // Will be calculated
+            has_global_bloom: true,
+            has_block_blooms: false, // Future enhancement
+            metadata_column_count: 0, // TODO: analyze metadata
         };
         
         // Serialize header to get its size
@@ -627,7 +678,14 @@ impl SstableWriter {
             }
         }
         
-        // Add index entry for first record in block
+        // NEW: Analyze vector format for this block
+        let vector_format = self.analyze_block_vector_format(current_block);
+        let compression_ratio = self.estimate_compression_ratio(current_block, &vector_format);
+        
+        // NEW: Build block-level bloom filters if beneficial
+        let (block_key_bloom, block_metadata_bloom) = self.build_block_bloom_filters(current_block, block_id);
+        
+        // Add enhanced index entry for first record in block
         if let Some(first_record) = current_block.first() {
             index_entries.push(IndexEntry {
                 key: first_record.id.clone(),
@@ -639,6 +697,12 @@ impl SstableWriter {
                 metadata_min_values,
                 metadata_max_values,
                 metadata_null_counts,
+                // NEW: Hierarchical bloom filters
+                block_key_bloom,
+                block_metadata_bloom,
+                // NEW: Vector format optimization
+                vector_format,
+                compression_ratio,
             });
         }
         
@@ -658,8 +722,233 @@ impl SstableWriter {
         self
     }
     
-    /// Compare two JSON values for ordering
+    /// NEW: Analyze vector format for optimal compression in this block
+    fn analyze_block_vector_format(&self, block_records: &[SstRecord]) -> super::VectorFormatType {
+        if block_records.is_empty() {
+            return super::VectorFormatType::Variable;
+        }
+        
+        // Collect dimensions
+        let dimensions: Vec<usize> = block_records.iter()
+            .map(|r| r.vector.len())
+            .collect();
+            
+        // Find dominant dimension
+        let mut dimension_counts = std::collections::HashMap::new();
+        for &dim in &dimensions {
+            *dimension_counts.entry(dim).or_insert(0) += 1;
+        }
+        
+        let total_vectors = dimensions.len();
+        if let Some((&dominant_dim, &count)) = dimension_counts.iter().max_by_key(|(_, &count)| count) {
+            let dominance_ratio = count as f64 / total_vectors as f64;
+            
+            if dominance_ratio >= 0.95 && Self::is_supported_fixed_dimension(dominant_dim) {
+                super::VectorFormatType::Fixed { dimension: dominant_dim }
+            } else if dominance_ratio >= 0.7 && Self::is_supported_fixed_dimension(dominant_dim) {
+                super::VectorFormatType::Mixed { dominant_dimension: dominant_dim }
+            } else {
+                super::VectorFormatType::Variable
+            }
+        } else {
+            super::VectorFormatType::Variable
+        }
+    }
+    
+    /// Check if dimension is supported for fixed-length optimization
+    fn is_supported_fixed_dimension(dimension: usize) -> bool {
+        matches!(dimension, 64 | 128 | 256 | 512 | 768 | 1024 | 1536 | 2048)
+    }
+    
+    /// NEW: Estimate compression ratio for this block
+    fn estimate_compression_ratio(&self, block_records: &[SstRecord], format: &super::VectorFormatType) -> f32 {
+        if block_records.is_empty() {
+            return 1.0;
+        }
+        
+        // Estimate based on vector format and sparsity
+        match format {
+            super::VectorFormatType::Fixed { dimension } => {
+                // Fixed dimension vectors compress better with bytemuck
+                let sparsity = self.estimate_vector_sparsity(block_records);
+                if sparsity > 0.7 {
+                    0.3 // Very sparse, excellent compression
+                } else if sparsity > 0.5 {
+                    0.5 // Moderately sparse
+                } else {
+                    0.8 // Dense vectors
+                }
+            },
+            super::VectorFormatType::Mixed { .. } => 0.7, // Mixed format, moderate compression
+            super::VectorFormatType::Variable => 0.9,     // Variable format, minimal compression gain
+        }
+    }
+    
+    /// Estimate vector sparsity (ratio of near-zero elements)
+    fn estimate_vector_sparsity(&self, block_records: &[SstRecord]) -> f32 {
+        if block_records.is_empty() {
+            return 0.0;
+        }
+        
+        let sample_size = block_records.len().min(10); // Sample first 10 vectors
+        let mut total_elements = 0;
+        let mut zero_elements = 0;
+        
+        for record in block_records.iter().take(sample_size) {
+            for &value in &record.vector {
+                total_elements += 1;
+                if value.abs() < 1e-6 {
+                    zero_elements += 1;
+                }
+            }
+        }
+        
+        if total_elements == 0 {
+            0.0
+        } else {
+            zero_elements as f32 / total_elements as f32
+        }
+    }
+    
+    /// NEW: Build block-level bloom filters if beneficial
+    fn build_block_bloom_filters(&self, block_records: &[SstRecord], block_id: u32) -> (Option<Vec<u8>>, Option<Vec<u8>>) {
+        // Only build block blooms for large blocks (>100 records) to avoid overhead
+        if block_records.len() < 100 {
+            return (None, None);
+        }
+        
+        let block_key_bloom = self.build_block_key_bloom(block_records);
+        let block_metadata_bloom = self.build_block_metadata_bloom(block_records);
+        
+        (block_key_bloom, block_metadata_bloom)
+    }
+    
+    /// Build key bloom filter for this block
+    fn build_block_key_bloom(&self, block_records: &[SstRecord]) -> Option<Vec<u8>> {
+        use crate::core::bloom::factory::BloomFilterFactory;
+        
+        let config = crate::core::bloom::BloomFilterConfig {
+            strategy: crate::core::bloom::BloomStrategy::ByteAligned,
+            expected_items: block_records.len(),
+            false_positive_rate: Some(0.01), // 1% false positive rate for block blooms
+            ..Default::default()
+        };
+        
+        let mut bloom = BloomFilterFactory::create(&config);
+        for record in block_records {
+            bloom.insert(record.id.as_bytes());
+        }
+        
+        bloom.serialize().ok()
+    }
+    
+    /// Build metadata bloom filter for this block
+    fn build_block_metadata_bloom(&self, block_records: &[SstRecord]) -> Option<Vec<u8>> {
+        use crate::core::bloom::strategies::composite::CompositeBloomFilterBuilder;
+        
+        let config = crate::core::bloom::BloomFilterConfig {
+            strategy: crate::core::bloom::BloomStrategy::Composite,
+            expected_items: block_records.len(),
+            false_positive_rate: Some(0.01),
+            ..Default::default()
+        };
+        
+        let mut builder = CompositeBloomFilterBuilder::new(config);
+        for record in block_records {
+            for metadata_item in &record.metadata {
+                builder.add_metadata_item(metadata_item.key.clone(), metadata_item.clone());
+            }
+        }
+        
+        let bloom = builder.build();
+        use crate::core::bloom::BloomFilterStrategy;
+        BloomFilterStrategy::serialize(&bloom).ok()
+    }
+    
+    /// NEW: Analyze vector format across the entire file
+    fn analyze_file_vector_format(&self, data_blocks: &[super::DataBlock]) -> super::VectorFormatType {
+        if data_blocks.is_empty() {
+            return super::VectorFormatType::Variable;
+        }
+        
+        let mut all_dimensions = Vec::new();
+        for block in data_blocks {
+            for record in &block.records {
+                all_dimensions.push(record.vector.len());
+            }
+        }
+        
+        if all_dimensions.is_empty() {
+            return super::VectorFormatType::Variable;
+        }
+        
+        // Analyze dimensions across the entire file
+        let mut dimension_counts = std::collections::HashMap::new();
+        for &dim in &all_dimensions {
+            *dimension_counts.entry(dim).or_insert(0) += 1;
+        }
+        
+        let total_vectors = all_dimensions.len();
+        if let Some((&dominant_dim, &count)) = dimension_counts.iter().max_by_key(|(_, &count)| count) {
+            let dominance_ratio = count as f64 / total_vectors as f64;
+            
+            if dominance_ratio >= 0.95 && Self::is_supported_fixed_dimension(dominant_dim) {
+                super::VectorFormatType::Fixed { dimension: dominant_dim }
+            } else if dominance_ratio >= 0.7 && Self::is_supported_fixed_dimension(dominant_dim) {
+                super::VectorFormatType::Mixed { dominant_dimension: dominant_dim }
+            } else {
+                super::VectorFormatType::Variable
+            }
+        } else {
+            super::VectorFormatType::Variable
+        }
+    }
+    
+    /// Calculate overall compression ratio across all blocks
+    fn calculate_overall_compression_ratio(&self, data_blocks: &[super::DataBlock]) -> f32 {
+        if data_blocks.is_empty() {
+            return 1.0;
+        }
+        
+        let total_compression_ratio: f32 = data_blocks.iter()
+            .map(|block| block.compression_ratio)
+            .sum();
+            
+        total_compression_ratio / data_blocks.len() as f32
+    }
+    
+    /// Count unique metadata columns across all blocks
+    fn count_metadata_columns(&self, data_blocks: &[super::DataBlock]) -> u32 {
+        let mut metadata_columns = std::collections::HashSet::new();
+        
+        for block in data_blocks {
+            for record in &block.records {
+                for metadata_item in &record.metadata {
+                    metadata_columns.insert(metadata_item.key.clone());
+                }
+            }
+        }
+        
+        metadata_columns.len() as u32
+    }
+    
+    /// Check if any index entries have block-level bloom filters
+    fn has_any_block_blooms(&self, index_entries: &[super::IndexEntry]) -> bool {
+        index_entries.iter().any(|entry| {
+            entry.block_key_bloom.is_some() || entry.block_metadata_bloom.is_some()
+        })
+    }
+    
+    /// Extract fixed dimension from vector format if applicable
+    fn extract_fixed_dimension(&self, format: &super::VectorFormatType) -> Option<u32> {
+        match format {
+            super::VectorFormatType::Fixed { dimension } => Some(*dimension as u32),
+            super::VectorFormatType::Mixed { dominant_dimension } => Some(*dominant_dimension as u32),
+            super::VectorFormatType::Variable => None,
+        }
+    }
 
+    /// Compare two JSON values for ordering
     fn compare_json_values(a: &serde_json::Value, b: &serde_json::Value) -> std::cmp::Ordering {
         use serde_json::Value;
         use std::cmp::Ordering;

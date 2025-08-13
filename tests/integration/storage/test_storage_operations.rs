@@ -355,7 +355,7 @@ async fn test_compaction_operations() {
         memtable_size_mb: 1,
         level_count: 7,
         compaction_threshold: 2,
-        block_size_kb: 64,
+        block_size_mb: 3,
         memory_flush_size_bytes: 1024 * 1024,
         write_ahead_log_size_mb: 1,
         max_levels: 7,

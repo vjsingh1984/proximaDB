@@ -84,7 +84,7 @@ mod tests {
         let valid_config = SstConfig {
             level_count: 7,
             compaction_threshold: 5,
-            block_size_kb: 1024, // 1MB
+            block_size_mb: 1024, // 1MB
             decompression_cache_config: None,
             ..Default::default()
         };
@@ -108,7 +108,7 @@ mod tests {
         
         // Test block size too small
         let small_blocks = SstConfig {
-            block_size_kb: 2, // Too small
+            block_size_mb: 2, // Too small
             decompression_cache_config: None,
             ..Default::default()
         };
@@ -116,7 +116,7 @@ mod tests {
         
         // Test block size too large
         let large_blocks = SstConfig {
-            block_size_kb: 20 * 1024, // 20MB - too large
+            block_size_mb: 20 * 1024, // 20MB - too large
             decompression_cache_config: None,
             ..Default::default()
         };

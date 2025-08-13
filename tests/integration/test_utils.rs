@@ -225,7 +225,7 @@ impl IsolatedTestEnvironment {
             level_size_multiplier: 2.0,
             
             // Block settings - smaller for faster I/O
-            block_size_kb: 8,
+            block_size_mb: 3,
             
             // Storage type
             compaction_strategy: "leveled".to_string(),
