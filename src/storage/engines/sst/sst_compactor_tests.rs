@@ -9,7 +9,7 @@
 mod tests {
     use super::super::sst_compactor::{SstCompactor, ZeroCopyCompactionStats};
     use super::super::{SstStorage, SstRecord};
-    use super::super::readers::unified_sstable_reader::{SstDirectReader, ModularBlockReader};
+    use super::super::readers::unified_sstable_reader::{SstDirectReader, ModularBlockReader, BlockReader};
     use crate::storage::persistence::filesystem::{FilesystemFactory, FilesystemConfig};
     use crate::storage::traits::{FlushParameters, UnifiedStorageEngine};
     use crate::core::search::mvcc_resolution::MvccResolver;
