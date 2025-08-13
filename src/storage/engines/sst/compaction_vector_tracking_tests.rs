@@ -69,7 +69,7 @@ mod tests {
             ],
             output_file: temp_dir.path().join("output.sst"),
             priority: CompactionPriority::Medium,
-            block_size_mb: None, // Use server default for tests
+            block_size_kb: None, // Use server default for tests
             compression_config: None, // Use server default for tests
         };
         

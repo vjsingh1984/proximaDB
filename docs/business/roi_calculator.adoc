@@ -623,44 +623,37 @@ image::aws-landing-zone.svg[AWS Control Tower Landing Zone with ProximaDB,width=
 
 [cols="3,2,2,2", options="header"]
 |===
-| AWS Landing Zone Component | Traditional Setup | ProximaDB Optimized | Enterprise Savings
+| AWS Infrastructure Component | Traditional Vector DB | ProximaDB Optimized | Enterprise Savings
 
-| *🏛️ Control Tower Governance*
-| Management overhead: $500/mo +
-Compliance tools: $300/mo
-| Automated governance: $200/mo +
-Built-in compliance: $100/mo
-| *$500/mo (62%)*
-
-| *🖥️ Multi-Account Compute*
-| 8× m7i.2xlarge across accounts +
+| *🖥️ Compute Resources*
+| 8× m7i.2xlarge for vector ops +
 $2,304/mo
-| 3× m7i.2xlarge optimized +
+| 3× m7i.2xlarge (optimized) +
 $864/mo
 | *$1,440/mo (62%)*
 
-| *🌐 Transit Gateway Architecture*
-| TGW: $108/mo (3 accounts) +
-Data processing: $200/mo +
-Interface endpoints: $130/mo
-| TGW: $108/mo +
-Optimized processing: $60/mo +
-Free Gateway endpoints: $0/mo
+| *🌐 Network Transfer*
+| Cross-AZ transfers: $200/mo +
+API Gateway: $130/mo +
+Load balancer: $108/mo
+| Reduced transfers: $60/mo +
+Direct gRPC: $0/mo +
+Internal routing: $108/mo
 | *$270/mo (62%)*
 
-| *💾 Storage & APIs*
-| S3: $2,300/mo +
-EBS: $800/mo +
+| *💾 Storage & I/O*
+| S3 Standard: $2,300/mo +
+EBS gp3: $800/mo +
 API calls: $500/mo
-| S3: $345/mo +
-EBS: $240/mo +
-Reduced APIs: $25/mo
-| *$2,990/mo (85%)*
+| S3 with compression: $575/mo +
+EBS optimized: $240/mo +
+Batch APIs: $25/mo
+| *$2,760/mo (77%)*
 
 | *📊 Total Monthly*
-| *$6,242/mo*
-| *$1,542/mo*
-| *$4,700/mo (75%)*
+| *$5,342/mo*
+| *$1,872/mo*
+| *$3,470/mo (65%)*
 
 | *💰 Annual Savings*
 | N/A
@@ -696,18 +689,11 @@ image::azure-landing-zone.svg[Azure Enterprise-Scale Landing Zone with ProximaDB
 * 🔗 *Private Endpoints*: $7.20/month + $0.01/GB for comprehensive PaaS connectivity
 * 🔒 *Cross-Subscription Security*: Centralized network security groups and Azure Firewall
 
-==== 💰 Cost Analysis for Azure Landing Zone (100TB Dataset)
+==== 💰 Cost Analysis for Azure Infrastructure (100TB Dataset)
 
 [cols="3,2,2,2", options="header"]
 |===
-| Azure Landing Zone Component | Traditional Setup | ProximaDB Optimized | Enterprise Savings
-
-| *🏛️ Enterprise-Scale Governance*
-| Management group overhead: $600/mo +
-Policy compliance: $400/mo
-| Automated governance: $250/mo +
-Built-in compliance: $150/mo
-| *$600/mo (60%)*
+| Azure Infrastructure Component | Traditional Vector DB | ProximaDB Optimized | Enterprise Savings
 
 | *🖥️ Multi-Subscription Compute*
 | 8× D8s_v5 across subscriptions +
@@ -773,48 +759,41 @@ image::gcp-landing-zone.svg[GCP Organization Landing Zone with ProximaDB,width=9
 * 🔗 *Private Google Access*: FREE routing for GCS, BigQuery, and major services
 * 🔗 *Private Service Connect*: $7.20/month + $0.01/GB for comprehensive API access
 
-==== 💰 Cost Analysis for GCP Landing Zone (100TB Dataset)
+==== 💰 Cost Analysis for GCP Infrastructure (100TB Dataset)
 
 [cols="3,2,2,2", options="header"]
 |===
-| GCP Landing Zone Component | Traditional Setup | ProximaDB Optimized | Enterprise Savings
+| GCP Infrastructure Component | Traditional Vector DB | ProximaDB Optimized | Enterprise Savings
 
-| *🏛️ Organization Governance*
-| Hierarchy management: $400/mo +
-Security services: $300/mo
-| Automated governance: $200/mo +
-Built-in security: $100/mo
-| *$400/mo (57%)*
-
-| *🖥️ Multi-Project Compute*
+| *🖥️ Compute Resources*
 | 8× c3-standard-8 across projects +
 $2,048/mo
 | 3× c3-standard-8 optimized +
 $768/mo
 | *$1,280/mo (62%)*
 
-| *🌐 Cloud Router Architecture*
-| Cloud Router: $54/mo (3 regions) +
-Data processing: $100/mo +
-Private Service Connect: $130/mo
-| Cloud Router: $36/mo +
-Optimized processing: $30/mo +
-Free Private Google Access: $0/mo
+| *🌐 Network Transfer*
+| Cross-region transfers: $100/mo +
+Load balancer: $130/mo +
+API Gateway: $54/mo
+| Reduced transfers: $30/mo +
+Direct gRPC: $0/mo +
+Internal routing: $36/mo
 | *$218/mo (77%)*
 
-| *💾 Storage & APIs*
-| Cloud Storage: $2,000/mo +
-Persistent Disk: $1,700/mo +
+| *💾 Storage & I/O*
+| Cloud Storage Standard: $2,000/mo +
+Persistent Disk pd-balanced: $1,700/mo +
 API operations: $500/mo
-| Cloud Storage: $300/mo +
-Persistent Disk: $510/mo +
-Reduced APIs: $25/mo
-| *$3,365/mo (85%)*
+| Cloud Storage with compression: $500/mo +
+Persistent Disk optimized: $510/mo +
+Batch APIs: $25/mo
+| *$3,165/mo (76%)*
 
 | *📊 Total Monthly*
-| *$6,132/mo*
-| *$1,199/mo*
-| *$4,933/mo (80%)*
+| *$5,482/mo*
+| *$1,819/mo*
+| *$3,663/mo (67%)*
 
 | *💰 Annual Savings*
 | N/A
@@ -836,11 +815,11 @@ Reduced APIs: $25/mo
 |===
 | Landing Zone Factor | AWS Control Tower | Azure Enterprise-Scale | GCP Organization | Strategic Advantage
 
-| *🏛️ Governance Framework*
-| Control Tower + Organizations
-| Management Groups + Policy
-| Organization + Folders
-| *All provide enterprise governance*
+| *🏢 Deployment Model*
+| Multi-account architecture
+| Multi-subscription model
+| Multi-project hierarchy
+| *ProximaDB works with all*
 
 | *🌐 Network Hub Cost*
 | $36/account (TGW)
