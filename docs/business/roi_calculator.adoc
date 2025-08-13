@@ -434,8 +434,8 @@ Adaptive tier management
 | Tuned for your hardware characteristics
 | 70-80% reduction
 
-| *Hybrid Cloud*
-| Seamless data distribution and failover
+| *Cloud Deployment*
+| Single-server optimized for any cloud
 | 80-85% reduction
 |===
 
@@ -773,7 +773,7 @@ $768/mo
 | *$1,280/mo (62%)*
 
 | *🌐 Network Transfer*
-| Cross-region transfers: $100/mo +
+| Intra-region transfers: $100/mo +
 Load balancer: $130/mo +
 API Gateway: $54/mo
 | Reduced transfers: $30/mo +
@@ -1092,7 +1092,7 @@ compression_level = 6            # Storage optimization
 
 [azure_blob]
 tier = "Cool"                    # Cost optimization
-replication = "ZRS"              # Zone redundancy
+redundancy = "ZRS"               # Storage redundancy only
 
 [tiering]
 hot_retention_days = 30          # Premium SSD
@@ -1156,35 +1156,35 @@ coldline_after_days = 90         # Coldline transition
 archive_after_days = 365         # Archive transition
 ----
 
-== 📋 Appendix H: Multi-Cloud & Hybrid Configurations
+== 📋 Appendix H: Deployment Flexibility
 
-=== Multi-Cloud Distribution
+=== Current Architecture
+ProximaDB is designed as a high-performance single-server solution with vertical scalability:
 
-==== Architecture Benefits
-* **No Vendor Lock-in**: Distribute across providers
-* **Geo-Distribution**: Global presence
-* **Cost Arbitrage**: Leverage best pricing
-* **Resilience**: Provider-level failover
+* **Single Instance**: Optimized for powerful single-node deployments
+* **Vertical Scaling**: Scale up with more CPU, memory, and faster storage
+* **No Complexity**: No distributed system overhead or coordination costs
+* **Predictable Performance**: Consistent sub-millisecond latencies
 
-==== Configuration Template
-[source,toml]
-----
-# config/multi-cloud.toml
-[sst]
-block_size_kb = 2048             # Universal compatibility
-compression_algorithm = "zstd"   # Cross-platform
+=== Deployment Options
+You can deploy ProximaDB on any cloud provider or on-premise:
 
-[replication]
-primary_cloud = "aws"
-secondary_cloud = "gcp"
-tertiary_cloud = "azure"
-sync_interval_minutes = 15       # Near real-time
+* **AWS**: EC2 instances with EBS or instance storage
+* **Azure**: Virtual Machines with Premium SSD
+* **GCP**: Compute Engine with Persistent Disk
+* **On-Premise**: Bare metal or virtualized servers
 
-[routing]
-read_preference = "nearest"      # Latency optimization
-write_preference = "primary"     # Consistency
-failover_timeout_seconds = 30    # Automatic failover
-----
+=== Future Roadmap
+[NOTE]
+====
+**Distributed clustering features are planned for future releases**, including:
+* Multi-node clusters for horizontal scaling
+* Cross-region replication for disaster recovery
+* Read replicas for query distribution
+* Active-active configurations for high availability
+
+Current version focuses on single-server performance optimization.
+====
 
 '''
 

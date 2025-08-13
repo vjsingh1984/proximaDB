@@ -88,7 +88,7 @@ image::business-roi-metrics.svg[ProximaDB Business Value, width=900]
 image::business-capabilities.svg[Operational Excellence, width=800]
 
 * **Faster Time-to-Market**: Deploy in 60 seconds vs weeks
-* **Improved Reliability**: 99.99% uptime with automatic failover
+* **Improved Reliability**: Optimized single-server architecture
 * **Better Compliance**: On-premise option for data sovereignty
 * **Simplified Architecture**: One system for search, analytics, and transactions
 
@@ -247,8 +247,8 @@ link:roi_calculator.adoc[Calculate Your Specific ROI →]
 
 3. **Scale Without Limits**
    - No licensing restrictions
-   - Linear scaling to billions of vectors
-   - Multi-region deployment ready
+   - Vertical scaling to billions of vectors
+   - Deploy on any cloud or on-premise
 
 4. **Maintain Full Control**
    - Open source = no vendor lock-in
@@ -274,12 +274,12 @@ image::business-use-cases.svg[Future-Ready Platform, width=800]
 * **Compliance**: GDPR, HIPAA, SOC2 patterns
 * **Audit**: Complete operation logging
 
-=== High Availability
+=== Production Ready
 
-* **Replication**: Multi-master, async/sync
-* **Backup**: Incremental, point-in-time recovery
-* **Failover**: Automatic, <30s RTO
-* **Monitoring**: Prometheus, Grafana ready
+* **Reliability**: Optimized single-server performance
+* **Backup**: Export/import data functionality  
+* **Monitoring**: Prometheus metrics endpoint
+* **Future**: Distributed clustering on roadmap
 
 === Support Options
 

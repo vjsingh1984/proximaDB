@@ -30,8 +30,8 @@ This document provides the comprehensive roadmap for ProximaDB, including curren
 | Basic metrics with Prometheus export
 
 | **Distributed/HA**
-| ❌ Not Started
-| No consensus, replication, or clustering
+| 🗓️ Roadmap
+| Single-server (current), clustering planned
 
 | **Advanced Security**
 | ❌ Not Started
@@ -39,7 +39,7 @@ This document provides the comprehensive roadmap for ProximaDB, including curren
 
 | **OpenTelemetry**
 | ❌ Not Started
-| No distributed tracing
+| Basic metrics only
 
 | **Multi-tenancy**
 | ❌ Not Started
@@ -164,17 +164,17 @@ Security layers to implement:
 * [ ] Change data capture
 * [ ] GraphQL interface
 
-=== Operational Features
-* [ ] Multi-node clustering
-* [ ] Automatic backups
-* [ ] Point-in-time recovery
+=== Operational Features (Roadmap)
+* [ ] Multi-node clustering (future)
+* [ ] Automatic backups (future)
+* [ ] Point-in-time recovery (future)
 * [ ] Role-based access control
 
 == Version 2.0.0 Vision (2025)
 
 === Advanced Capabilities
-* [ ] Distributed vector search
-* [ ] Cross-region replication
+* [ ] Distributed vector search (future)
+* [ ] Cross-region replication (future)
 * [ ] Federated queries
 * [ ] ML model serving
 
@@ -188,7 +188,7 @@ Security layers to implement:
 
 === Technical Design
 
-image::distributed-architecture.svg[Distributed Architecture, align=center, width=900]
+// Distributed architecture planned for future releases
 
 [source,mermaid]
 ----
@@ -705,7 +705,7 @@ graph TD
 
 === Critical Path
 
-1. **High Availability** - Foundation for all distributed features
+1. **Performance Optimization** - Current focus on single-server performance
 2. **Security** - Required for enterprise deployments
 3. **Observability** - Essential for production operations
 4. **Compliance** - Regulatory requirements

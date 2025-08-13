@@ -91,9 +91,9 @@ write_threads = 8
 | AXIS tiering policies
 | Cost optimization
 
-| `[replication]`
-| Data redundancy, failover
-| High availability
+| `[future]`
+| Reserved for future features
+| Distributed clustering (roadmap)
 
 | `[security]`
 | Authentication, encryption
@@ -841,66 +841,20 @@ write_threads = 8
 | Default: 0.7, Conservative: 0.8
 |===
 
-== [replication] Section - High Availability
+== [future] Section - Roadmap Features
 
-[cols="2,2,3,2,2", options="header"]
-|===
-| Parameter | Default | Description | Impact | Recommendations
+[NOTE]
+====
+**Distributed clustering is on the roadmap for future releases.**
 
-| `mode`
-| "none"
-| Replication mode
-| **Availability**: Data redundancy
-| Dev: "none", Prod: "async", Critical: "sync"
+The following features are planned but not yet available:
+* Multi-node clusters for horizontal scaling
+* Cross-region replication
+* Automatic failover
+* Read replicas
 
-| `replica_count`
-| 1
-| Number of replicas
-| **Redundancy**: Copies of data
-| Default: 1, HA: 2, Mission-critical: 3
-
-| `primary_node`
-| ""
-| Primary node address
-| **Topology**: Master designation
-| Single: "", Cluster: "node1.domain"
-
-| `replica_nodes`
-| []
-| Replica node addresses
-| **Topology**: Slave nodes
-| Single: [], Cluster: ["node2", "node3"]
-
-| `sync_interval_ms`
-| 1000
-| Async replication interval
-| **Lag vs Load**: Replication frequency
-| Real-time: 100, Default: 1000, Batch: 5000
-
-| `replication_port`
-| 5680
-| Replication protocol port
-| **Network**: Inter-node communication
-| Default: 5680
-
-| `enable_compression`
-| true
-| Compress replication data
-| **Bandwidth**: Reduces network usage
-| LAN: false, WAN: true
-
-| `max_replication_lag_ms`
-| 30000
-| Maximum allowed lag
-| **Consistency**: Lag threshold
-| Strict: 1000, Default: 30000, Relaxed: 300000
-
-| `failover_timeout_ms`
-| 30000
-| Automatic failover timeout
-| **Availability**: Dead node detection
-| Fast: 5000, Default: 30000, Conservative: 60000
-|===
+Current version (v0.1.x) is optimized as a single-server solution.
+====
 
 == [security] Section - Security Settings
 

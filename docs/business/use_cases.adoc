@@ -247,7 +247,7 @@ A streaming service with 10M+ videos needed:
 * **Multi-modal search**: Text, audio, video understanding
 * **Personalization**: User-specific recommendations
 * **Fresh content**: Real-time indexing of new uploads
-* **Global scale**: Multi-region deployment
+* **Scalability**: Handle millions of videos
 
 === How ProximaDB Can Help
 
@@ -259,7 +259,7 @@ Tags → Metadata → Structured Features        ↗
 ```
 
 **Deployment Strategy**:
-* 3 regions with replication
+* Single powerful server instance
 * VIPER for personalization vectors
 * SST for content metadata
 * 2-stage search: coarse (INT8) → fine (FP32)

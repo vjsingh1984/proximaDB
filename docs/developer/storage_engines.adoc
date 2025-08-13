@@ -724,8 +724,8 @@ Both engines support tiered storage:
 
 === Recovery & Durability
 * **WAL**: Write-ahead logging for both engines
-* **Snapshots**: Point-in-time backups
-* **Replication**: Async replication support
+* **Snapshots**: Export/import functionality
+* **Future**: Distributed features on roadmap
 
 == Zero-Copy Compaction Architecture
 

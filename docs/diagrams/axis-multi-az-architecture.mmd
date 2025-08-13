@@ -1,118 +1,39 @@
 %%{init: {"theme":"neutral", "themeVariables": {"primaryColor":"#2563eb","primaryTextColor":"#ffffff","primaryBorderColor":"#1e40af","lineColor":"#64748b","secondaryColor":"#10b981","secondaryTextColor":"#ffffff","tertiaryColor":"#f59e0b","tertiaryTextColor":"#ffffff","background":"transparent","mainBkg":"#ffffff","secondBkg":"#f8fafc","textColor":"#1e293b","nodeTextColor":"#1e293b","fontFamily":"-apple-system, BlinkMacSystemFont, Segoe UI, Roboto, sans-serif","fontSize":"14px","clusterBkg":"#f1f5f9","clusterBorder":"#cbd5e1","edgeLabelBackground":"#ffffff"}}}%%
 
 graph TB
-    subgraph "Multi-AZ AXIS Deployment"
-        subgraph "Availability Zone A (Primary)"
-            subgraph "AZ-A Resources"
-                SVRA[ProximaDB Server A]
-                MEMA[Memory Indexes]
-                EBSA[EBS Volume A<br/>Zone-local storage]
-                NVMEA[Instance Store NVMe]
+    subgraph "AXIS Single-Server Deployment"
+        subgraph "Single Availability Zone"
+            subgraph "Server Resources"
+                SVR[ProximaDB Server]
+                MEM[Memory Indexes<br/>Hot Data]
+                NVME[Instance Store NVMe<br/>Warm Data]
+                EBS[EBS Volume<br/>Persistent Storage]
+                S3[S3 Bucket<br/>Cold Data Archive]
             end
         end
         
-        subgraph "Availability Zone B (Replica)"
-            subgraph "AZ-B Resources"
-                SVRB[ProximaDB Server B]
-                MEMB[Memory Indexes]
-                EBSB[EBS Volume B<br/>Zone-local storage]
-                NVMEB[Instance Store NVMe]
-            end
-        end
-        
-        subgraph "Availability Zone C (Replica)"
-            subgraph "AZ-C Resources"
-                SVRC[ProximaDB Server C]
-                MEMC[Memory Indexes]
-                EBSC[EBS Volume C<br/>Zone-local storage]
-                NVMEC[Instance Store NVMe]
-            end
-        end
-        
-        subgraph "Regional Services"
-            subgraph "Metadata Management"
-                DDB[DynamoDB/Firestore<br/>Regional Metadata Store]
-                REDIS[ElastiCache/Redis<br/>Metadata Cache]
-            end
-            
-            subgraph "Regional Storage"
-                S3R[S3 Regional Bucket<br/>Cross-AZ accessible]
-                S3E[S3 Express One Zone<br/>AZ-specific]
-            end
-            
-            subgraph "Cross-Region Backup"
-                S3X[S3 Cross-Region<br/>Replication]
-                GLA[Glacier Archive]
-            end
-        end
-        
-        subgraph "Zone Coordination"
-            MZM[MultiZoneTierManager]
-            ZAC[Zone Affinity Config]
-            FLO[Failover Orchestrator]
-            LDR[Leader Election]
+        subgraph "AXIS Tiering Engine"
+            TM[Tier Manager]
+            AP[Access Pattern Tracker]
+            PM[Promotion/Demotion Engine]
         end
     end
     
-    %% Server connections to local storage
-    SVRA --> MEMA
-    SVRA --> EBSA
-    SVRA --> NVMEA
+    %% Data flow
+    SVR --> MEM
+    SVR --> NVME
+    SVR --> EBS
+    SVR --> S3
     
-    SVRB --> MEMB
-    SVRB --> EBSB
-    SVRB --> NVMEB
+    %% Tiering control
+    TM --> PM
+    AP --> TM
+    PM --> MEM
+    PM --> NVME
+    PM --> EBS
+    PM --> S3
     
-    SVRC --> MEMC
-    SVRC --> EBSC
-    SVRC --> NVMEC
+    %% Note
+    Note[Note: Multi-AZ deployment<br/>planned for future releases]
     
-    %% Servers to regional services
-    SVRA --> DDB
-    SVRB --> DDB
-    SVRC --> DDB
-    
-    SVRA --> REDIS
-    SVRB --> REDIS
-    SVRC --> REDIS
-    
-    SVRA --> S3R
-    SVRB --> S3R
-    SVRC --> S3R
-    
-    %% Zone coordination
-    MZM --> SVRA
-    MZM --> SVRB
-    MZM --> SVRC
-    
-    MZM --> ZAC
-    MZM --> FLO
-    MZM --> LDR
-    
-    %% Metadata synchronization
-    DDB --> REDIS
-    
-    %% Storage tiering
-    EBSA -.->|Demote| S3R
-    EBSB -.->|Demote| S3R
-    EBSC -.->|Demote| S3R
-    
-    S3R -.->|Archive| S3X
-    S3X -.->|Long-term| GLA
-    
-    %% Failover paths
-    FLO -.->|Zone A fails| SVRB
-    FLO -.->|Zone B fails| SVRC
-    FLO -.->|Zone C fails| SVRA
-    
-    %% Data replication
-    MEMA -.->|Replicate hot| MEMB
-    MEMB -.->|Replicate hot| MEMC
-    MEMC -.->|Replicate hot| MEMA
-    
-    style SVRA fill:#c5e1a5
-    style SVRB fill:#ffccbc
-    style SVRC fill:#d1c4e9
-    style DDB fill:#fff3e0
-    style S3R fill:#e1f5fe
-    style MZM fill:#ffcdd2
+    style Note fill:#fffbeb,stroke:#f59e0b,stroke-width:2px,color:#92400e
