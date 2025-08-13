@@ -39,6 +39,8 @@ ProximaDB's **multi-engine architecture with intelligent caching** delivers unpr
 **Characteristics**: Single vector lookups, real-time product search, user recommendations
 **Scale**: 10M-100M vectors, 1K-10K QPS, sub-10ms latency requirements
 
+TIP: **Choose VIPER** for point queries. The 95% cache hit rate and column-wise memory efficiency (12GB vs 20GB) deliver superior cost savings ($21,840/year vs $18,180/year) despite SST's row-based design traditionally favoring point access. VIPER's quantized cache and predicate pushdown optimizations outweigh the row storage advantage.
+
 [cols="2,3,3,3", options="header"]
 |===
 | Cost Component | Traditional Database | SST Engine (Optimized) | VIPER Engine (Optimized)
@@ -102,6 +104,8 @@ Cache hit: 95%
 
 **Characteristics**: Metadata filtering, range queries, business intelligence, dashboard queries
 **Scale**: 50M-500M vectors, 500-2K QPS, complex predicates with 3-15 filter columns
+
+TIP: **Strongly choose VIPER** for filtered search workloads. Parquet-based predicate pushdown delivers 90% data transfer reduction vs SST's 70%, saving an additional $11,880/year ($47,400 vs $35,520). Column projection reads only needed columns (3/15 = 80% reduction), while SST must read full rows then filter. VIPER's vectorized filtering uses 30% CPU vs SST's 55%.
 
 [cols="2,3,3,3", options="header"]
 |===
@@ -168,6 +172,8 @@ Cold columns: S3 Express (2ms avg)
 
 **Characteristics**: Vector similarity, semantic search, RAG retrieval, large-scale ML inference
 **Scale**: 100M-1B vectors, 100-1K QPS, high-dimensional embeddings (768-1536D)
+
+TIP: **Choose VIPER** for RAG and high-dimensional similarity search. VIPER's dual-column storage (FP32 + PQ8) enables two-stage search with 85% data transfer reduction ($71,880/year vs $54,240/year saved). Quantization-based candidate selection (PQ8 first pass → FP32 refinement) delivers 90% query latency improvement while SST lacks built-in quantization support. Bytemuck compression works better with VIPER's columnar format (92% vs 82% reduction).
 
 [cols="2,3,3,3", options="header"]
 |===
@@ -247,6 +253,8 @@ Vectorized operations (4x speedup)
 
 **Characteristics**: ETL operations, index rebuilding, data migration, background maintenance
 **Scale**: 1B+ vectors, throughput-optimized, latency tolerant (seconds acceptable)
+
+TIP: **Choose VIPER** for batch processing despite traditional wisdom favoring row-based engines. VIPER's columnar append-only optimization delivers 90% bandwidth reduction vs SST's 70%, saving $28,200/year more ($133,440 vs $105,240). Vectorized transforms use only 20% CPU vs SST's 35%, and column-wise writes eliminate serialization overhead. However, consider **SST for transactional batch loads** requiring ACID properties with intermediate checkpoints.
 
 [cols="2,3,3,3", options="header"]
 |===
@@ -351,6 +359,35 @@ Archive columns: S3 Standard-IA
 | $19,764 (saving $68,340 - 78%)
 | **Up to 82% cost reduction**
 |===
+
+==== Engine Selection Decision Matrix
+
+TIP: **When to Choose SST Engine:**
+- **Write-heavy OLTP workloads** with frequent updates/deletes
+- **Small result sets** where row assembly overhead is minimal  
+- **Transactional consistency** requirements with intermediate checkpoints
+- **Mixed access patterns** where you can't predict column usage
+- **Legacy compatibility** when migrating from row-based systems
+
+TIP: **When to Choose VIPER Engine:**
+- **Analytical workloads** with filtering on specific columns (79% cost savings)
+- **High-dimensional vectors** where quantization benefits apply (73% savings)
+- **Large-scale similarity search** with candidate selection patterns
+- **Metadata-heavy queries** where predicate pushdown saves 90% I/O
+- **Cloud deployments** where bandwidth costs dominate (92% reduction)
+
+TIP: **When to Choose Hybrid (Dual Engine):**
+- **Mixed workloads** with both OLTP and analytical patterns
+- **Enterprise deployments** requiring workload isolation
+- **Multi-tenant systems** where different collections have different access patterns
+- **Migration scenarios** where you're transitioning from row-based to columnar
+- **Cost optimization** where workload routing can save up to 82% overall
+
+TIP: **Optimization Priority by Workload:**
+1. **Filtered Search → VIPER first** (biggest impact: 79% savings)
+2. **RAG/AI → VIPER + quantization** (biggest ROI: $71,880/year)  
+3. **Batch Processing → VIPER + bytemuck** (unexpected winner: 82% savings)
+4. **Point Queries → VIPER + cache tuning** (cache hit rate trumps row access)
 
 == TCO Analysis & Implementation
 
