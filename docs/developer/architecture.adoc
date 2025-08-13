@@ -12,7 +12,7 @@
 **Result**: A system where vectors flow natively without conversion overhead, storage engines optimize for vector workloads, and hardware acceleration is automatic.
 
 [.text-center]
-image::technical-overview.svg[ProximaDB Architecture, width=900]
+image::proximadb-architecture-consolidated.svg[ProximaDB Architecture, width=900]
 _Zero-conversion vector pipeline with dual storage engines and automatic hardware acceleration_
 
 === Why This Architecture Matters

@@ -46,7 +46,7 @@ flowchart TD
     subgraph "Execution Engine"
         SE[SqlEngine]
         EE[execute]
-        DVS[DirectVectorService]
+        VOS[VectorOperationsService]
         CS[CollectionService]
     end
     
@@ -81,7 +81,7 @@ flowchart TD
     
     QRC --> SE
     SE --> EE
-    EE --> DVS
+    EE --> VOS
     EE --> CS
     
     EE --> ET

@@ -1,0 +1,129 @@
+%%{init: {"theme":"neutral", "themeVariables": {"primaryColor":"#2563eb","primaryTextColor":"#ffffff","primaryBorderColor":"#1e40af","lineColor":"#64748b","secondaryColor":"#10b981","secondaryTextColor":"#ffffff","tertiaryColor":"#f59e0b","tertiaryTextColor":"#ffffff","background":"transparent","mainBkg":"#ffffff","secondBkg":"#f8fafc","textColor":"#1e293b","nodeTextColor":"#1e293b","fontFamily":"-apple-system, BlinkMacSystemFont, Segoe UI, Roboto, sans-serif","fontSize":"14px","clusterBkg":"#f1f5f9","clusterBorder":"#cbd5e1","edgeLabelBackground":"#ffffff"}}}%%
+
+graph TB
+    %% Client Layer
+    subgraph ClientLayer["🌐 Client Layer"]
+        Python["Python SDK<br/>proximadb-python"]
+        Go["Go SDK<br/>proximadb-go"]
+        Java["Java SDK<br/>proximadb-java"]
+        REST["REST API<br/>:5678"]
+        GRPC["gRPC API<br/>:5679"]
+    end
+    
+    %% API Gateway & Routing
+    subgraph APIGateway["⚡ API Gateway"]
+        VOS["VectorOperationsService<br/>40-60% latency reduction<br/>Direct memtable access"]
+        Router["Intelligent Router<br/>Collection-aware<br/>Protocol selection"]
+    end
+    
+    %% Query Planning & Optimization
+    subgraph QueryOptimization["🎯 Query Optimization"]
+        QueryPlanner["Query Planner<br/>Compression-aware<br/>Hardware-optimized"]
+        BloomFilter["Bloom Filters<br/>95% scan reduction<br/>3-stage filtering"]
+        CacheOrchestrator["Cache Orchestrator<br/>Multi-tier caching<br/>LRU/LFU/ARC"]
+    end
+    
+    %% Storage Engines
+    subgraph StorageEngines["💾 Storage Engines"]
+        VIPER["VIPER Engine<br/>Columnar format<br/>Analytics-optimized<br/>Parquet-based"]
+        SST["SST Engine<br/>Row format<br/>OLTP-optimized<br/>LSM-tree based"]
+        WAL["Write-Ahead Log<br/>Durability<br/>Recovery"]
+    end
+    
+    %% Compression & Quantization
+    subgraph Compression["🗜️ Compression & Quantization"]
+        CompEngine["Compression Engine<br/>ZSTD/LZ4/Snappy<br/>Adaptive selection"]
+        QuantEngine["Quantization Engine<br/>INT8/PQ/Binary<br/>Two-stage search"]
+    end
+    
+    %% Hardware Acceleration
+    subgraph HardwareAccel["🚀 Hardware Acceleration"]
+        SIMD["SIMD/AVX-512<br/>Vector operations<br/>Auto-detection"]
+        GPU["GPU Support<br/>CUDA/ROCm<br/>Optional"]
+        Memory["Memory Pool<br/>Zero-copy<br/>Buffer reuse"]
+    end
+    
+    %% AXIS Tiering System
+    subgraph AXISTiering["📊 AXIS Tiering"]
+        TierManager["Tier Manager<br/>Hot→Warm→Cold<br/>Auto-migration"]
+        StorageTiers["Storage Tiers<br/>Memory→NVMe→SSD→S3<br/>Cost-optimized"]
+    end
+    
+    %% Indexing Algorithms
+    subgraph Indexing["🔍 Index Algorithms"]
+        HNSW["HNSW<br/>Graph-based<br/>High recall"]
+        IVF["IVF<br/>Clustering<br/>Scalable"]
+        LSH["LSH<br/>Hash-based<br/>Fast approximate"]
+    end
+    
+    %% Monitoring & Metrics
+    subgraph Monitoring["📈 Observability"]
+        Metrics["Metrics Collector<br/>OpenTelemetry<br/>Real-time stats"]
+        Tracing["Distributed Tracing<br/>Performance analysis"]
+    end
+    
+    %% Connections - Request Flow
+    Python --> REST
+    Go --> GRPC
+    Java --> REST
+    
+    REST --> VOS
+    GRPC --> VOS
+    
+    VOS --> Router
+    Router --> QueryPlanner
+    
+    QueryPlanner --> BloomFilter
+    QueryPlanner --> CacheOrchestrator
+    
+    Router --> VIPER
+    Router --> SST
+    
+    VIPER --> CompEngine
+    SST --> CompEngine
+    
+    CompEngine --> QuantEngine
+    
+    %% Storage Integration
+    VIPER --> WAL
+    SST --> WAL
+    
+    %% Hardware Integration
+    QuantEngine --> SIMD
+    SIMD --> Memory
+    GPU -.->|Optional| Memory
+    
+    %% AXIS Integration
+    VIPER --> TierManager
+    SST --> TierManager
+    TierManager --> StorageTiers
+    
+    %% Index Integration
+    QueryPlanner --> HNSW
+    QueryPlanner --> IVF
+    QueryPlanner --> LSH
+    
+    %% Monitoring Integration
+    VOS --> Metrics
+    Router --> Tracing
+    
+    %% Style Definitions
+    classDef clientClass fill:#dbeafe,stroke:#2563eb,stroke-width:2px,color:#1e293b
+    classDef apiClass fill:#dcfce7,stroke:#16a34a,stroke-width:2px,color:#1e293b
+    classDef queryClass fill:#fef3c7,stroke:#d97706,stroke-width:2px,color:#1e293b
+    classDef storageClass fill:#fce7f3,stroke:#c026d3,stroke-width:2px,color:#1e293b
+    classDef compressionClass fill:#e0e7ff,stroke:#4f46e5,stroke-width:2px,color:#1e293b
+    classDef hardwareClass fill:#fee2e2,stroke:#dc2626,stroke-width:2px,color:#1e293b
+    classDef axisClass fill:#f0fdf4,stroke:#15803d,stroke-width:2px,color:#1e293b
+    classDef indexClass fill:#fef2f2,stroke:#b91c1c,stroke-width:2px,color:#1e293b
+    classDef monitorClass fill:#f3f4f6,stroke:#6b7280,stroke-width:2px,color:#1e293b
+    
+    class Python,Go,Java,REST,GRPC clientClass
+    class VOS,Router apiClass
+    class QueryPlanner,BloomFilter,CacheOrchestrator queryClass
+    class VIPER,SST,WAL storageClass
+    class CompEngine,QuantEngine compressionClass
+    class SIMD,GPU,Memory hardwareClass
+    class TierManager,StorageTiers axisClass
+    class HNSW,IVF,LSH indexClass
+    class Metrics,Tracing monitorClass

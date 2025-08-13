@@ -53,7 +53,7 @@ cargo test --test '*'
 
 == Architecture
 
-image::technical-architecture-complete.svg[ProximaDB Architecture, width=800]
+image::proximadb-architecture-consolidated.svg[ProximaDB Architecture, width=800]
 
 **Core Components:**
 

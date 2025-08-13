@@ -12,7 +12,7 @@ graph TB
     end
 
     subgraph "Service Layer"
-        DVS[DirectVectorService<br/>40-60% latency reduction]
+        VOS[VectorOperationsService<br/>40-60% latency reduction]
         QP[UnifiedQueryPlanner<br/>Compression-aware routing]
     end
 
@@ -55,10 +55,10 @@ graph TB
     OPT --> REST
     OPT --> GRPC
     
-    REST --> DVS
-    GRPC --> DVS
+    REST --> VOS
+    GRPC --> VOS
     
-    DVS --> QP
+    VOS --> QP
     QP --> MB
     
     MB --> SST1
@@ -93,7 +93,7 @@ graph TB
     classDef resultStyle fill:#fee2e2,stroke:#ef4444,stroke-width:2px,color:#1f2937
 
     class SDK,COMP,OPT clientStyle
-    class REST,GRPC,DVS,QP serviceStyle
+    class REST,GRPC,VOS,QP serviceStyle
     class MB,SST1,PAR1,SSTE,VIPERE storageStyle
     class DC,QC cacheStyle
     class DIRECT,TWOSTAGE,HYBRID searchStyle
