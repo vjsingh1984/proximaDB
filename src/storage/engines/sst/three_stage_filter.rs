@@ -1,6 +1,11 @@
-//! Three-Stage SST Filtering Pipeline
+//! Three-Stage SST Filtering Pipeline with Predicate Pushdown
 //! 
-//! Implements the complete filtering workflow you described:
+//! Integrated with UnifiedSstableReader's ReadStrategy pattern for:
+//! - WAL search: Skip stages, direct memory access
+//! - Flush: Moderate filtering, preserve write throughput  
+//! - Compaction: Skip all filtering for maximum throughput
+//! - Search: Full three-stage filtering with predicate pushdown
+//!
 //! Stage 1: Bloom Filter Pre-filtering (Skip entire files)
 //! Stage 2: Index Entry Block Filtering (Skip data blocks)  
 //! Stage 3: Data Block Row Filtering (Fast in-memory metadata filtering)
@@ -15,14 +20,19 @@ use crate::core::search::{FilterExpression, ComparisonOperator};
 use crate::storage::engines::sst::{IndexEntry, DataBlock, VectorFormatType};
 use crate::storage::engines::sst::bloom_filter::SstableBloomFilter;
 use crate::storage::engines::sst::optimized_row_filter::{SSTRowFilterEvaluator, SSTBatchFilterEvaluator};
+use crate::storage::engines::sst::readers::unified_sstable_reader::ReadStrategy;
+use crate::storage::engines::sst::readers::block_filter::{IntelligentBlockFilter, BlockFilter, QueryType};
 
 /// Complete SST filtering pipeline with all three stages
 /// Uses immutable Arc types for optimal read performance
+/// Integrates with UnifiedSstableReader's ReadStrategy for operation-aware filtering
 pub struct ThreeStageFilterPipeline {
     /// Stage 3: Row-level filtering (immutable for read operations)
     row_filter: Arc<SSTRowFilterEvaluator>,
     /// Stage 3: Batch filtering for AND/OR operations (immutable for read operations)
     batch_filter: Arc<SSTBatchFilterEvaluator>,
+    /// Read strategy for operation-aware filtering behavior
+    read_strategy: Option<ReadStrategy>,
 }
 
 impl ThreeStageFilterPipeline {
@@ -30,7 +40,22 @@ impl ThreeStageFilterPipeline {
         Self {
             row_filter: Arc::new(SSTRowFilterEvaluator::new()),
             batch_filter: Arc::new(SSTBatchFilterEvaluator::new()),
+            read_strategy: None,
         }
+    }
+    
+    /// Create pipeline with specific read strategy for operation-aware filtering
+    pub fn with_strategy(strategy: ReadStrategy) -> Self {
+        Self {
+            row_filter: Arc::new(SSTRowFilterEvaluator::new()),
+            batch_filter: Arc::new(SSTBatchFilterEvaluator::new()),
+            read_strategy: Some(strategy),
+        }
+    }
+    
+    /// Check if filtering should be skipped based on strategy
+    fn should_skip_filtering(&self) -> bool {
+        matches!(self.read_strategy, Some(ReadStrategy::CompactionDirect))
     }
     
     /// Complete 3-stage filtering pipeline
@@ -94,6 +119,13 @@ impl ThreeStageFilterPipeline {
         stats: &mut FilterStageStats,
     ) -> Result<bool> {
         let stage_start = std::time::Instant::now();
+        
+        // Skip bloom filtering for compaction
+        if self.should_skip_filtering() {
+            debug!("🚀 Stage 1: Compaction mode - skipping bloom filter check");
+            stats.stage1_duration_us = 0;
+            return Ok(true);
+        }
         
         let Some(bloom_filter) = bloom_filter else {
             debug!("🌸 Stage 1: No bloom filter - assuming potential matches");
