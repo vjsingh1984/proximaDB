@@ -125,8 +125,8 @@ impl DataBlock {
 [source,rust]
 ----
 pub struct OptimizedSstHeader {
-    // File metadata (existing)
-    pub version: u8,
+    // File metadata (existing, maintains version: 1)
+    pub version: u8,  // Always 1 for compatibility
     pub level: u8, 
     pub entry_count: u64,
     pub created_at: i64,
@@ -512,10 +512,10 @@ Total Annual   │ $1,858         │ $279              │ $1,579 saved (85%)
 
 === Backward Compatibility
 
-1. **Header Versioning**: New files use `version: 2`, old files remain `version: 1`
-2. **Progressive Upgrade**: Compaction gradually converts files to new format
-3. **Dual Readers**: `UnifiedSstableReader` supports both formats seamlessly
-4. **No Downtime**: Migration happens during normal compaction cycles
+1. **In-Place Enhancement**: Enhanced format remains `version: 1` with magic `SST1` for compatibility
+2. **Progressive Optimization**: Compaction optimizes blocks with bytemuck compression while maintaining format
+3. **Single Reader**: `UnifiedSstableReader` handles both optimized and non-optimized blocks seamlessly
+4. **No Downtime**: Optimization happens during normal compaction cycles
 
 === Implementation Phases
 

@@ -45,48 +45,48 @@ TIP: **Choose VIPER** for point queries *with metadata*. The 95% cache hit rate 
 |===
 | Cost Component | Traditional Database | SST Engine (Optimized) | VIPER Engine (Optimized)
 
-.4+| **Storage Costs**
-| Full index in memory: $800/mo
-Disk overflow: $120/mo
+| **Storage Costs**
+| Full index in memory: $800/mo +
+Disk overflow: $120/mo +
 **Total: $920/mo**
-| Hierarchical blooms: $240/mo
-Tiered storage: $80/mo
+| Hierarchical blooms: $240/mo +
+Tiered storage: $80/mo +
 **Total: $320/mo (65% reduction)**
-| Column store: $180/mo
-Quantized cache: $60/mo
+| Column store: $180/mo +
+Quantized cache: $60/mo +
 **Total: $240/mo (74% reduction)**
 
-.4+| **Bandwidth Costs**
-| Full record transfer: $450/mo
-No compression: High overhead
+| **Bandwidth Costs**
+| Full record transfer: $450/mo +
+No compression: High overhead +
 **Total: $450/mo**
-| Block-level cache: $135/mo
-Bytemuck compression: 67% reduction
+| Block-level cache: $135/mo +
+Bytemuck compression: 67% reduction +
 **Total: $135/mo (70% reduction)**
-| Column projection: $90/mo
-Predicate pushdown: 85% reduction
+| Column projection: $90/mo +
+Predicate pushdown: 85% reduction +
 **Total: $90/mo (80% reduction)**
 
-.4+| **CPU & Memory**
-| High CPU: 85% utilization
-Memory: 64GB required
+| **CPU & Memory**
+| High CPU: 85% utilization +
+Memory: 64GB required +
 **Total: $1,200/mo**
-| Smart blooms: 45% utilization
-Memory: 20GB required
+| Smart blooms: 45% utilization +
+Memory: 20GB required +
 **Total: $600/mo (50% reduction)**
-| Vectorized ops: 35% utilization
-Memory: 12GB required
+| Vectorized ops: 35% utilization +
+Memory: 12GB required +
 **Total: $420/mo (65% reduction)**
 
-.4+| **Tiering Benefits**
-| Static allocation
-No tier optimization
+| **Tiering Benefits**
+| Static allocation +
+No tier optimization +
 **Baseline cost**
-| Memory → NVMe → S3 Express
-Cache hit: 89%
+| Memory → NVMe → S3 Express +
+Cache hit: 89% +
 **40% cost reduction**
-| Memory → NVMe → S3 Express
-Cache hit: 95%
+| Memory → NVMe → S3 Express +
+Cache hit: 95% +
 **60% cost reduction**
 
 | **Monthly Total**

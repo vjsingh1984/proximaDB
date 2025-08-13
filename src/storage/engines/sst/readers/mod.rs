@@ -8,6 +8,7 @@
 
 pub mod unified_sstable_reader;
 pub mod predictive_prefetcher;
+pub mod block_filter;
 
 // Test modules
 #[cfg(test)]
@@ -22,5 +23,13 @@ pub use predictive_prefetcher::{
     PredictivePrefetcher,
     PrefetchConfig,
     PrefetchStats,
+};
+
+pub use block_filter::{
+    BlockFilter, 
+    IntelligentBlockFilter, 
+    QueryType, 
+    MetadataFilter, 
+    BlockFilterStrategy
 };
 
