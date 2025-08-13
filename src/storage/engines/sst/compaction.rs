@@ -813,7 +813,9 @@ impl CompactionManager {
             let staging_file_path = PathBuf::from(format!("{}/{}", staging_path, staging_filename));
             debug!("Writing SSTable to staging path: {}", staging_file_path.display());
             let writer = SstableWriter::new(&staging_file_path, block_size, filesystem_factory.clone());
-            writer.write_records(btree_records).await
+            let record_count = btree_records.len();
+            let sorted_records_iter = btree_records.into_iter();
+            writer.write_sorted_records(sorted_records_iter, record_count).await
                 .map_err(|e| crate::core::StorageError::Serialization(e.to_string()))?;
             
             // Get file size for stats
@@ -834,7 +836,9 @@ impl CompactionManager {
             // Fallback to direct write (non-atomic)
             debug!("Writing SSTable directly to: {}", task.output_file.display());
             let writer = SstableWriter::new(&task.output_file, block_size, filesystem_factory);
-            writer.write_records(btree_records).await
+            let record_count = btree_records.len();
+            let sorted_records_iter = btree_records.into_iter();
+            writer.write_sorted_records(sorted_records_iter, record_count).await
                 .map_err(|e| crate::core::StorageError::Serialization(e.to_string()))?;
 
             let output_path = task.output_file.to_string_lossy();

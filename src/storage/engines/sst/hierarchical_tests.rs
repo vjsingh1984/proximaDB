@@ -126,7 +126,9 @@ mod tests {
             all_records.insert(record.id.clone(), record);
         }
         
-        writer.write_records(all_records).await.expect("Should write");
+        let record_count = all_records.len();
+        let sorted_records_iter = all_records.into_iter();
+        writer.write_sorted_records(sorted_records_iter, record_count).await.expect("Should write");
         
         // Verify file was created using std::fs
         assert!(std::path::Path::new(&sst_path).exists(), "File should exist at: {}", sst_path);
@@ -184,7 +186,9 @@ mod tests {
             all_records.insert(record.id.clone(), record);
         }
         
-        writer.write_records(all_records).await.expect("Should write");
+        let record_count = all_records.len();
+        let sorted_records_iter = all_records.into_iter();
+        writer.write_sorted_records(sorted_records_iter, record_count).await.expect("Should write");
         
         // Read blocks using ModularBlockReader with filesystem API
         let mut reader = ModularBlockReader::open(fs.clone(), &sst_path).await
@@ -268,7 +272,9 @@ mod tests {
         }
         
         println!("DEBUG: Writing {} records to SST", all_records.len());
-        writer.write_records(all_records).await.expect("Should write");
+        let record_count = all_records.len();
+        let sorted_records_iter = all_records.into_iter();
+        writer.write_sorted_records(sorted_records_iter, record_count).await.expect("Should write");
         
         // Verify file exists
         println!("DEBUG: Checking if file exists at: {}", sst_path);
@@ -355,7 +361,9 @@ mod tests {
             all_records.insert(record.id.clone(), record);
         }
         
-        writer.write_records(all_records).await.expect("Should write");
+        let record_count = all_records.len();
+        let sorted_records_iter = all_records.into_iter();
+        writer.write_sorted_records(sorted_records_iter, record_count).await.expect("Should write");
         
         // Test random access to different blocks using filesystem API
         let mut reader = ModularBlockReader::open(fs.clone(), &sst_path).await
@@ -424,7 +432,9 @@ mod tests {
             all_records.insert(record.id.clone(), record);
         }
         
-        writer.write_records(all_records).await.expect("Should write");
+        let record_count = all_records.len();
+        let sorted_records_iter = all_records.into_iter();
+        writer.write_sorted_records(sorted_records_iter, record_count).await.expect("Should write");
         
         // Read and verify bloom filters
         let mut reader = ModularBlockReader::open(fs.clone(), &sst_path).await

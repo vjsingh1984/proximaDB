@@ -445,16 +445,36 @@ impl ModularBlockReader {
         };
         
         // Read index size using filesystem range read
-        let size_bytes = self.read_range(index_offset, 4).await?;
+        eprintln!("DEBUG read_index_block_async: Reading index size at offset {}", index_offset);
+        let size_bytes = self.read_range(index_offset, 4).await
+            .map_err(|e| anyhow::anyhow!("Failed to read index size at offset {}: {}", index_offset, e))?;
         let index_size = u32::from_le_bytes([
             size_bytes[0], size_bytes[1], size_bytes[2], size_bytes[3]
         ]) as usize;
+        eprintln!("DEBUG read_index_block_async: Index size = {} bytes", index_size);
         
         // Read index data using range read
-        let index_data = self.read_range(index_offset + 4, index_size).await?;
+        eprintln!("DEBUG read_index_block_async: Reading index data at offset {} for {} bytes", index_offset + 4, index_size);
+        let index_data = self.read_range(index_offset + 4, index_size).await
+            .map_err(|e| anyhow::anyhow!("Failed to read index data at offset {} for {} bytes: {}", index_offset + 4, index_size, e))?;
+        eprintln!("DEBUG read_index_block_async: Successfully read {} bytes of index data", index_data.len());
+        eprintln!("DEBUG read_index_block_async: First 20 bytes of index data: {:?}", 
+                  &index_data[..std::cmp::min(20, index_data.len())]);
         
         // Deserialize index
-        let index: SstableIndex = bincode::deserialize(&index_data)?;
+        eprintln!("DEBUG read_index_block_async: About to deserialize index data with bincode...");
+        let index: SstableIndex = match bincode::deserialize::<SstableIndex>(&index_data) {
+            Ok(idx) => {
+                eprintln!("DEBUG read_index_block_async: Successfully deserialized index with {} entries", idx.entries.len());
+                idx
+            },
+            Err(e) => {
+                eprintln!("DEBUG read_index_block_async: Failed to deserialize index: {:?}", e);
+                eprintln!("DEBUG read_index_block_async: Index data length: {}", index_data.len());
+                eprintln!("DEBUG read_index_block_async: Full index data: {:?}", index_data);
+                return Err(anyhow::anyhow!("Failed to deserialize index: {}", e));
+            }
+        };
         
         Ok(index)
     }
@@ -533,15 +553,19 @@ impl ModularBlockReader {
     }
     
     async fn read_data_block_async(&mut self, block_id: u64, mode: ReadMode) -> Result<DataBlock> {
+        eprintln!("DEBUG read_data_block_async: Starting to read block {} with mode {:?}", block_id, mode);
         let header = self.read_header_async().await
             .map_err(|e| anyhow::anyhow!("Failed to read header for block {}: {}", block_id, e))?;
+        eprintln!("DEBUG read_data_block_async: Successfully read header");
         
         // For hierarchical SST design with random block access, we need to use the index
         // to get the actual offset and size of each block
         
         // First, read the index to get block offsets
+        eprintln!("DEBUG read_data_block_async: About to call read_index_block_async for block {}", block_id);
         let index = self.read_index_block_async(&ReadStrategy::FullScan).await
             .map_err(|e| anyhow::anyhow!("Failed to read index for block {}: {}", block_id, e))?;
+        eprintln!("DEBUG read_data_block_async: Successfully read index with {} entries", index.entries.len());
         
         // Find the index entry for this block
         // Note: Index entries map to blocks, so we need to find the right entry

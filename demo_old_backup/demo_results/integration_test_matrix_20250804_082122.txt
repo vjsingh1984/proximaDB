@@ -1,6 +1,0 @@
-ℹ️ Comprehensive testing of all ProximaDB components
-ℹ️ NOTE: This test assumes ProximaDB server is running.
-ℹ️ Expected REST endpoint: http://localhost:5678/api/v1
-ℹ️ Expected gRPC endpoint: localhost:5678
-ℹ️ Auto-proceeding with testing (CI mode)
-✅ Integration tests PASSED!

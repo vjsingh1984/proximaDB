@@ -630,7 +630,9 @@ mod edge_tests {
             };
             records.insert(record.id.clone(), record);
         }
-        writer.write_records(records).await.unwrap();
+        let record_count = records.len();
+        let sorted_records_iter = records.into_iter();
+        writer.write_sorted_records(sorted_records_iter, record_count).await.unwrap();
         
         // Create reader and context
         let reader = Arc::new(UnifiedSstableReader::new(filesystem));

@@ -126,7 +126,9 @@ mod tests {
             }
         }
 
-        writer.write_records(all_records).await?;
+        let record_count = all_records.len();
+        let sorted_records_iter = all_records.into_iter();
+        writer.write_sorted_records(sorted_records_iter, record_count).await?;
         Ok(())
     }
 
@@ -435,7 +437,9 @@ mod tests {
             all_records.insert(record.id.clone(), record);
         }
         
-        writer.write_records(all_records).await.unwrap();
+        let record_count = all_records.len();
+        let sorted_records_iter = all_records.into_iter();
+        writer.write_sorted_records(sorted_records_iter, record_count).await.unwrap();
         
         // Read and validate metadata statistics
         let mut reader = UnifiedSstableReader::open(fs.clone(), &sst_path).await.unwrap();
@@ -593,7 +597,9 @@ mod tests {
             all_records.insert(record.id.clone(), record);
         }
         
-        writer.write_records(all_records).await.unwrap();
+        let record_count = all_records.len();
+        let sorted_records_iter = all_records.into_iter();
+        writer.write_sorted_records(sorted_records_iter, record_count).await.unwrap();
         
         // Validate compressed blocks can be read
         let mut reader = UnifiedSstableReader::open(fs.clone(), &sst_path).await.unwrap();

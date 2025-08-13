@@ -317,7 +317,10 @@ impl TierDataMovement {
             });
         }
         
-        writer.write_records(records).await?;
+        // Write records using streaming approach for production consistency
+        let record_count = records.len();
+        let sorted_records_iter = records.into_iter(); // BTreeMap already sorted by key
+        writer.write_sorted_records(sorted_records_iter, record_count).await?;
         Ok(total_bytes)
     }
 

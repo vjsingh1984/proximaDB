@@ -1,4 +1,0 @@
-ℹ️ Configuration: 2 engines, 2 protocols
-ℹ️ Comparing REST vs gRPC protocol performance for each storage engine
-ℹ️ Testing REST protocol with 1,000 vectors
-ℹ️ Insert error (will retry): Failed to parse the request body as JSON: expected value at line 1 column 1 | Error Code: UNKNOWN

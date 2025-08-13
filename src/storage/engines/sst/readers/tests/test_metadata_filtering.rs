@@ -114,7 +114,10 @@ async fn test_metadata_filtering_basic() {
     }
     
     // Write records
-    writer.write_records(records).await.unwrap();
+    // Write records using streaming approach for production consistency
+    let record_count = records.len();
+    let sorted_records_iter = records.into_iter(); // BTreeMap already sorted by key
+    writer.write_sorted_records(sorted_records_iter, record_count).await.unwrap();
     info!("Wrote SSTable with 10 records (5 category A, 5 category B)");
     
     // Create reader and load metadata
@@ -288,7 +291,10 @@ async fn test_metadata_bloom_filter_optimization() {
         records.insert(record.id.clone(), record);
     }
     
-    writer.write_records(records).await.unwrap();
+    // Write records using streaming approach for production consistency
+    let record_count = records.len();
+    let sorted_records_iter = records.into_iter(); // BTreeMap already sorted by key
+    writer.write_sorted_records(sorted_records_iter, record_count).await.unwrap();
     info!("Wrote SSTable with metadata bloom filters");
     
     // Create reader

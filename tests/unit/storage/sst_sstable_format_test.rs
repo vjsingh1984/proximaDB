@@ -47,7 +47,10 @@ async fn test_sstable_write_read_format() {
         filesystem.clone()
     );
     
-    writer.write_records(records).await.expect("Failed to write SSTable");
+    // Write records using streaming approach for production consistency
+    let record_count = records.len();
+    let sorted_records_iter = records.into_iter(); // BTreeMap already sorted by key
+    writer.write_sorted_records(sorted_records_iter, record_count).await.expect("Failed to write SSTable");
     
     // Verify file exists
     let fs = filesystem.get_filesystem("file:///").unwrap();
@@ -113,7 +116,10 @@ async fn test_sstable_format_inspection() {
         filesystem.clone()
     );
     
-    writer.write_records(records).await.expect("Failed to write SSTable");
+    // Write records using streaming approach for production consistency
+    let record_count = records.len();
+    let sorted_records_iter = records.into_iter(); // BTreeMap already sorted by key
+    writer.write_sorted_records(sorted_records_iter, record_count).await.expect("Failed to write SSTable");
     
     // Read file directly to inspect format
     let fs = filesystem.get_filesystem("file:///").unwrap();

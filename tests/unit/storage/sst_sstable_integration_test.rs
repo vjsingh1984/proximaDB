@@ -99,7 +99,10 @@ async fn test_sstable_write_read_integration() -> Result<()> {
         entries.insert(vec.id.as_ref().unwrap().clone(), lsm_record);
     }
     
-    writer.write_records(entries).await?;
+    // Write records using streaming approach for production consistency
+    let record_count = entries.len();
+    let sorted_records_iter = entries.into_iter(); // BTreeMap already sorted by key
+    writer.write_sorted_records(sorted_records_iter, record_count).await?;
     debug!("Wrote {} vectors to SSTable: {}", vectors.len(), sst_path);
     
     // Create reader
@@ -177,7 +180,10 @@ async fn test_empty_sstable() -> Result<()> {
     let sst_path = format!("file://{}/empty.sst", base_path);
     let writer = SstableWriter::new(&sst_path, 4096, filesystem.clone());
     let entries = std::collections::BTreeMap::new();
-    writer.write_records(entries).await?;
+    // Write records using streaming approach for production consistency
+    let record_count = entries.len();
+    let sorted_records_iter = entries.into_iter(); // BTreeMap already sorted by key
+    writer.write_sorted_records(sorted_records_iter, record_count).await?;
     
     // Create reader
     let reader = UnifiedSstableReader::new(filesystem.clone());

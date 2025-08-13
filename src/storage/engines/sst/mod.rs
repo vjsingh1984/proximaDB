@@ -2853,9 +2853,11 @@ impl SstStorage {
                 writer
             };
             
-            // Write records using SstableWriter
-            debug!("🔍 SST: About to write {} entries to file: {}", entries.len(), sst_path.display());
-            writer.write_records(entries).await
+            // Write records using SstableWriter (streaming approach for production consistency)
+            debug!("🔍 SST: About to write {} entries to file using streaming approach: {}", entries.len(), sst_path.display());
+            let record_count = entries.len();
+            let sorted_records_iter = entries.into_iter(); // BTreeMap already sorted by key
+            writer.write_sorted_records(sorted_records_iter, record_count).await
                 .map_err(|e| anyhow::anyhow!("Failed to write SSTable: {}", e))?;
             debug!("🔍 SST: Successfully wrote SSTable file: {}", sst_path.display());
 

@@ -279,7 +279,7 @@ impl<T: IndexData> UniversalIndexStorage<T> {
                 let filesystem = Arc::new(filesystem_factory);
                 let writer = SstableWriter::new(&file_path, 4096, filesystem);
                 let _value = bincode::serialize(&data)?;
-                // Note: SstableWriter doesn't have add method, need to use write_records
+                // Note: SstableWriter doesn't have add method, need to use write_sorted_records
                 let mut records = std::collections::BTreeMap::new();
                 records.insert(id.to_string(), crate::storage::engines::sst::SstRecord {
                     id: id.to_string(),
@@ -296,7 +296,10 @@ impl<T: IndexData> UniversalIndexStorage<T> {
                     sequence_number: 0,
                     level: 0,
                 });
-                writer.write_records(records).await?;
+                // Write records using streaming approach for production consistency
+                let record_count = records.len();
+                let sorted_records_iter = records.into_iter(); // BTreeMap already sorted by key
+                writer.write_sorted_records(sorted_records_iter, record_count).await?;
             }
             StorageEngine::VIPER => {
                 // Write as VIPER (Parquet)
@@ -435,7 +438,10 @@ impl<T: IndexData> UniversalIndexStorage<T> {
                     level: 0,
                 };
                 records.insert(id.to_string(), record);
-                writer.write_records(records).await?;
+                // Write records using streaming approach for production consistency
+                let record_count = records.len();
+                let sorted_records_iter = records.into_iter(); // BTreeMap already sorted by key
+                writer.write_sorted_records(sorted_records_iter, record_count).await?;
             }
             StorageEngine::VIPER => {
                 // Write VIPER format
