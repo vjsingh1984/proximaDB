@@ -9,7 +9,7 @@
 mod tests {
     use super::super::sst_compactor::{SstCompactor, ZeroCopyCompactionStats};
     use super::super::{SstStorage, SstRecord};
-    use super::super::readers::unified_sstable_reader::SstDirectReader;
+    use super::super::readers::unified_sstable_reader::{SstDirectReader, ModularBlockReader};
     use crate::storage::persistence::filesystem::{FilesystemFactory, FilesystemConfig};
     use crate::storage::traits::{FlushParameters, UnifiedStorageEngine};
     use crate::core::search::mvcc_resolution::MvccResolver;
@@ -758,10 +758,10 @@ mod tests {
         
         // Read back and verify hierarchical structure using SstDirectReader
         for sst_file in &sst_files {
-            let mut reader = SstDirectReader::open(filesystem_factory.clone(), sst_file).await
+            let mut reader = ModularBlockReader::open(filesystem_factory.clone(), sst_file).await
                 .expect("Should open SST file");
             
-            let header = reader.block_reader.read_header().await.expect("Should read header");
+            let header = reader.read_header().await.expect("Should read header");
             assert_eq!(header.entry_count, 100, "Should have 100 entries");
             
             debug!("✅ Hierarchical SST file created and verified: {}", sst_file);

@@ -243,7 +243,7 @@ ProximaDB is designed for seamless integration with enterprise cloud landing zon
 
 === AWS Control Tower Integration
 
-image::{imagesdir}/aws-landing-zone.svg[AWS Control Tower Landing Zone with ProximaDB,width=900,align=center]
+image::aws-landing-zone.svg[AWS Control Tower Landing Zone with ProximaDB,width=900,align=center]
 
 **Architecture Foundation**: AWS Control Tower with Transit Gateway hub provides centralized governance and networking for multi-account ProximaDB deployments.footnote:[AWS Control Tower automates landing zone setup with pre-configured governance guardrails. Transit Gateway enables hub-and-spoke networking across accounts while Gateway Endpoints provide free routing to S3, eliminating TGW charges for storage traffic.]
 
@@ -320,7 +320,7 @@ Reduced APIs: $25/mo
 
 === Azure Enterprise-Scale Integration
 
-image::{imagesdir}/azure-landing-zone.svg[Azure Enterprise-Scale Landing Zone with ProximaDB,width=900,align=center]
+image::azure-landing-zone.svg[Azure Enterprise-Scale Landing Zone with ProximaDB,width=900,align=center]
 
 **Architecture Foundation**: Azure Enterprise-Scale landing zone with Virtual WAN hub provides enterprise governance and connectivity framework for ProximaDB deployments.footnote:[Azure Enterprise-Scale provides management group hierarchy with centralized policy management. Virtual WAN hub enables secure hub-and-spoke networking while Service Endpoints provide free routing to Azure Storage via Microsoft backbone, bypassing hub processing charges.]
 
@@ -397,7 +397,7 @@ Reduced APIs: $33/mo
 
 === GCP Organization Hierarchy Integration
 
-image::{imagesdir}/gcp-landing-zone.svg[GCP Organization Landing Zone with ProximaDB,width=900,align=center]
+image::gcp-landing-zone.svg[GCP Organization Landing Zone with ProximaDB,width=900,align=center]
 
 **Architecture Foundation**: GCP Organization hierarchy with Shared VPC and Cloud Router provides the most cost-effective enterprise landing zone for ProximaDB deployments.footnote:[GCP Organization policies provide centralized governance across folders and projects. Shared VPC architecture with Cloud Router enables cost-effective hub-and-spoke networking, while Private Google Access provides free routing to Cloud Storage and BigQuery via dedicated IP ranges (199.36.153.8/30).]
 
