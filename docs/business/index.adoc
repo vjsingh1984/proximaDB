@@ -3,7 +3,12 @@
 :toclevels: 2
 :imagesdir: ../diagrams/images
 
-**Transform your AI infrastructure with 70% cost reduction and 3x performance gains.**
+**Transform your AI infrastructure with potential 70% cost reduction and 3x performance gains.**
+
+[IMPORTANT]
+====
+**BUSINESS PROJECTIONS**: Performance improvements and cost reductions cited in this document are estimates based on theoretical models and assumptions. Actual results will vary significantly based on your specific use case, implementation, and requirements. Contact our sales team for validated projections.
+====
 
 image::business-roi-metrics.svg[ProximaDB Business Value, width=900]
 

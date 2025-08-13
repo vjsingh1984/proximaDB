@@ -7,6 +7,11 @@
 
 image:https://img.shields.io/badge/files-20%20total-brightgreen[Streamlined] image:https://img.shields.io/badge/performance-49K%2B%20vec%2Fs-blue[Performance] image:https://img.shields.io/badge/reduction-69%25-red[Efficiency]
 
+[IMPORTANT]
+====
+**DEMONSTRATION PURPOSES ONLY**: Performance metrics, efficiency gains, and benchmark results shown in this demo suite are for illustrative and educational purposes. Actual performance will vary significantly based on your hardware, data characteristics, query patterns, and configuration. These demos do not constitute performance guarantees or commitments.
+====
+
 == 🚀 Quick Start
 
 [source,bash]

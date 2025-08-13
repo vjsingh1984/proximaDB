@@ -5,7 +5,12 @@
 
 **How different industries can leverage ProximaDB for competitive advantage.**
 
-== E-commerce Giant: 70% Cost Reduction
+[IMPORTANT]
+====
+**ILLUSTRATIVE USE CASES**: The following industry examples contain hypothetical scenarios with estimated performance improvements and cost reductions. These are for educational purposes only and do not represent guaranteed outcomes. Actual results will vary based on specific implementations, data characteristics, and requirements.
+====
+
+== E-commerce Giant: Potential 70% Cost Reduction
 
 === Challenge
 

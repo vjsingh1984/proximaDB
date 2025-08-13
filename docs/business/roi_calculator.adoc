@@ -3,17 +3,24 @@
 :toclevels: 3
 :imagesdir: ../diagrams/images
 
-**Calculate your return on investment with ProximaDB's multi-engine architecture and enterprise landing zone deployment strategies.**
+**Estimate potential return on investment with ProximaDB's multi-engine architecture and enterprise landing zone deployment strategies.**
+
+[IMPORTANT]
+====
+**ILLUSTRATIVE PROJECTIONS ONLY**: This document contains hypothetical cost estimates and performance projections for educational and planning purposes. Actual results will vary based on your specific environment and requirements. Consult ProximaDB sales engineering for validated assessments.
+====
 
 == Executive Summary
 
-ProximaDB's **intelligent multi-engine architecture** delivers substantial cost reductions for enterprise vector database workloads through patented hierarchical storage and intelligent query optimization, designed for seamless integration with enterprise cloud landing zones.
+ProximaDB's **intelligent multi-engine architecture** is designed to deliver potential cost reductions for enterprise vector database workloads through hierarchical storage and intelligent query optimization, designed for seamless integration with enterprise cloud landing zones.
 
-=== Business Impact at Scale
-* **81-86% total cost reduction** across compute, storage, and network infrastructure
-* **1-3 month payback period** for typical enterprise deployments
-* **$200,000-400,000 annual savings** for large-scale applications (100M+ vectors)
+=== Projected Business Impact at Scale
+* **Potential 81-86% total cost reduction** across compute, storage, and network infrastructure*
+* **Estimated 1-3 month payback period** for typical enterprise deployments*
+* **Projected $200,000-400,000 annual savings** for large-scale applications (100M+ vectors)*
 * **Enterprise landing zone compliant** - deploys within existing governance frameworks
+
+_*Based on theoretical models and assumptions. Actual results will vary significantly based on your specific deployment and requirements._
 
 === Core Value Propositions
 
@@ -23,11 +30,13 @@ ProximaDB's **intelligent multi-engine architecture** delivers substantial cost 
 * 89-95% cache hit rates with three-stage hierarchical filtering
 * 40-75% better compression ratios (SST: 40%, VIPER: 75% for analytical workloads)
 
-**Performance & Bandwidth Optimization**
-* **Query Bandwidth**: 60-85% reduction in network traffic through intelligent filtering
-* **Latency Improvement**: 2-5× faster response times (SST: 2-3×, VIPER: 3-5× for analytics)
-* **Noisy Neighbor Isolation**: Dedicated engine resources eliminate cross-workload interference
-* **Concurrent Query Capacity**: 3-7× higher throughput (1,770 QPS vs 842 QPS baseline)
+**Potential Performance & Bandwidth Optimization**
+* **Query Bandwidth**: Potential 60-85% reduction in network traffic through intelligent filtering*
+* **Latency Improvement**: Potential 2-5× faster response times (SST: 2-3×, VIPER: 3-5× for analytics)*
+* **Noisy Neighbor Isolation**: Dedicated engine resources designed to reduce cross-workload interference*
+* **Concurrent Query Capacity**: Potential 3-7× higher throughput (1,770 QPS vs 842 QPS baseline)*
+
+_*Performance improvements are theoretical projections based on internal testing and may not reflect your actual results._
 
 **Multi-Engine Flexibility**
 * **SST Engine**: Optimized for transactional workloads (e-commerce, real-time APIs)
@@ -41,12 +50,19 @@ ProximaDB's **intelligent multi-engine architecture** delivers substantial cost 
 * Optimized routing eliminates data egress charges within landing zone
 * Built-in compliance with enterprise security and governance policies
 
-**Financial Returns**
-* **E-commerce Platform** (SST Engine): $125,720 → $32,760 annually (74% savings)
-* **RAG Application** (VIPER Engine): $652,800 → $145,200 annually (78% savings)  
-* **Enterprise Analytics** (Multi-Engine): $409,800 → $102,300 annually (75% savings)
+**Projected Financial Returns (Illustrative Examples)**
+* **E-commerce Platform** (SST Engine): $125,720 → $32,760 annually (estimated 74% savings)*
+* **RAG Application** (VIPER Engine): $652,800 → $145,200 annually (estimated 78% savings)*  
+* **Enterprise Analytics** (Multi-Engine): $409,800 → $102,300 annually (estimated 75% savings)*
 
-== ROI Analysis by Business Use Case
+_*Hypothetical calculations based on assumed baseline costs and theoretical performance improvements. Not guaranteed outcomes._
+
+== Illustrative ROI Analysis by Business Use Case
+
+[NOTE]
+====
+The following use cases present hypothetical scenarios with estimated costs and savings. These examples are for planning purposes only and do not represent guaranteed results or commitments.
+====
 
 === E-commerce Product Search & Recommendations
 
@@ -55,10 +71,10 @@ ProximaDB's **intelligent multi-engine architecture** delivers substantial cost 
 **Workload**: High-frequency point queries with metadata filtering (80% transactional, 20% analytics) +
 **Recommended Engine**: **SST Engine** (optimized for transactional workloads)
 
-==== Traditional Database Costs (Annual)
+==== Hypothetical Database Cost Comparison (Annual)
 [cols="3,2,2,2", options="header"]
 |===
-| Cost Category | Traditional Vector DB | ProximaDB SST Engine | Business Savings
+| Cost Category | Estimated Traditional Vector DB | Projected ProximaDB SST Engine | Estimated Business Savings
 
 | **Compute Infrastructure**
 | 8× m7i.2xlarge instances +
@@ -109,10 +125,10 @@ Reduced processing: $720
 **Workload**: Complex semantic search with metadata filtering and analytics (30% transactional, 70% analytics) +
 **Recommended Engine**: **VIPER Engine** (optimized for analytical workloads)
 
-==== Traditional Database Costs (Annual)
+==== Hypothetical Database Cost Comparison (Annual)
 [cols="3,2,2,2", options="header"]
 |===
-| Cost Category | Traditional Vector DB | ProximaDB VIPER Engine | Business Savings
+| Cost Category | Estimated Traditional Vector DB | Projected ProximaDB VIPER Engine | Estimated Business Savings
 
 | **Compute Infrastructure**  
 | 15× m7i.4xlarge instances +
@@ -163,10 +179,10 @@ Compliance features: $3,600
 **Workload**: Range queries, aggregations, time-series analysis (50% transactional, 50% analytics) +
 **Recommended Engine**: **Multi-Engine Hybrid** (SST for real-time + VIPER for analytics)
 
-==== Traditional Database Costs (Annual)
+==== Hypothetical Database Cost Comparison (Annual)
 [cols="3,2,2,2", options="header"]
 |===
-| Cost Category | Traditional Vector DB | ProximaDB Multi-Engine | Business Savings
+| Cost Category | Estimated Traditional Vector DB | Projected ProximaDB Multi-Engine | Estimated Business Savings
 
 | **Compute & Analytics**
 | 12× m7i.2xlarge instances +
@@ -804,6 +820,16 @@ Reduced APIs: $25/mo
 
 *Contact ProximaDB sales engineering for customized landing zone integration assessment and deployment planning.*
 
-**Cost calculations and performance metrics presented in this document are representative examples based on typical enterprise workloads. Actual results will vary significantly depending on your specific use case, data characteristics, query patterns, infrastructure configuration, and deployment scale. For accurate cost projections and performance estimates tailored to your workload, please contact ProximaDB sales engineering for a customized assessment.*
+***IMPORTANT DISCLAIMERS AND LEGAL NOTICE***
+
+**The cost calculations, performance metrics, savings projections, and ROI estimates presented in this document are hypothetical examples for illustrative purposes only and do not constitute guarantees, warranties, or commitments of any kind. These figures are based on theoretical models and assumptions that may not reflect real-world conditions.**
+
+**ACTUAL RESULTS MAY VARY SIGNIFICANTLY** and will depend on numerous factors including but not limited to: your specific use case, data volume and characteristics, query patterns and complexity, existing infrastructure, deployment architecture, configuration choices, operational practices, cloud provider pricing, network topology, security requirements, compliance needs, and scale of deployment.
+
+**NO WARRANTIES**: ProximaDB makes no representations or warranties, express or implied, regarding the accuracy, completeness, or reliability of any cost savings, performance improvements, or ROI projections contained herein. All estimates are subject to change without notice.
+
+**INDEPENDENT VERIFICATION REQUIRED**: Before making any business decisions based on information in this document, you should conduct your own independent analysis, testing, and validation using your actual workloads and requirements.
+
+**CONSULT PROFESSIONALS**: For binding cost projections, performance guarantees, or contractual commitments, please contact ProximaDB sales engineering for a comprehensive assessment tailored to your specific requirements and environment.*
 
 See also: link:../developer/architecture.adoc[Technical Architecture] | link:../user/getting_started.adoc[Getting Started Guide] | link:use_cases.adoc[Industry Use Cases]
