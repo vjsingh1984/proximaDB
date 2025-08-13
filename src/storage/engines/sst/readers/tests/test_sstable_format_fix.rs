@@ -35,7 +35,7 @@ async fn test_sstable_format_with_bloom_filter() {
     // Write SSTable with bloom filter
     let sstable_path = temp_path.join("test_bloom.sst");
     let test_config = create_test_config();
-    let block_size = (test_config.block_size_kb * 1024) as usize;
+    let block_size = (test_config.block_size_mb * 1024) as usize;
     let writer = SstableWriter::new(&sstable_path, block_size, filesystem.clone());
     
     // Create test records

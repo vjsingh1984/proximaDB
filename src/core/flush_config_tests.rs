@@ -30,7 +30,7 @@ mod tests {
         assert_eq!(config.max_files_per_level, 10);
         
         // Test block size
-        assert_eq!(config.block_size_kb, 8192); // 8MB blocks
+        assert_eq!(config.block_size_mb, 8192); // 8MB blocks
         assert_eq!(config.block_size_bytes(), 8192 * 1024);
         
         // Test compression

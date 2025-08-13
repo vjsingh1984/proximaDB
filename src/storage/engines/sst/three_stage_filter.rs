@@ -12,7 +12,7 @@ use tracing::{debug, info, warn};
 
 use crate::core::VectorRecord;
 use crate::core::search::{FilterExpression, ComparisonOperator};
-use crate::storage::engines::sst::{IndexEntry, DataBlock};
+use crate::storage::engines::sst::{IndexEntry, DataBlock, VectorFormatType};
 use crate::storage::engines::sst::bloom_filter::SstableBloomFilter;
 use crate::storage::engines::sst::optimized_row_filter::{SSTRowFilterEvaluator, SSTBatchFilterEvaluator};
 
@@ -543,6 +543,12 @@ mod tests {
                     ("category".to_string(), serde_json::json!("electronics")),
                 ]),
                 metadata_null_counts: HashMap::new(),
+                // NEW: Hierarchical bloom filter support
+                block_key_bloom: None,
+                block_metadata_bloom: None,
+                // NEW: Vector format optimization
+                vector_format: VectorFormatType::Variable,
+                compression_ratio: 1.0,
             },
         ]
     }

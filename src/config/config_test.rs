@@ -56,7 +56,7 @@ mod tests {
         assert!(config.storage.lsm_config.compaction_threshold > 0, "LSM compaction_threshold should be positive");
         assert!(!config.storage.lsm_config.compaction_strategy.is_empty(), "LSM compaction_strategy should not be empty");
         assert!(!config.storage.lsm_config.compression.is_empty(), "LSM compression should not be empty");
-        assert!(config.storage.lsm_config.block_size_kb > 0, "LSM block_size_kb should be positive");
+        assert!(config.storage.lsm_config.block_size_mb > 0, "LSM block_size_kb should be positive");
         assert!(config.storage.lsm_config.cache_size_mb > 0, "LSM cache_size_mb should be positive");
         assert!(config.storage.lsm_config.write_buffer_size_mb > 0, "LSM write_buffer_size_mb should be positive");
         assert!(config.storage.lsm_config.max_files_per_level > 0, "LSM max_files_per_level should be positive");

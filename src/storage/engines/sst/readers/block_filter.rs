@@ -14,7 +14,7 @@ use serde_json::Value as JsonValue;
 use std::collections::HashMap;
 use tracing::{debug, trace};
 
-use crate::core::bloom::BloomFilter;
+use crate::storage::engines::sst::bloom_filter::SstableBloomFilter;
 use crate::storage::engines::sst::IndexEntry;
 
 /// Query filter for intelligent block skipping
@@ -126,7 +126,7 @@ impl IntelligentBlockFilter {
         &self,
         index_entry: &IndexEntry,
         filter: &BlockFilter,
-        global_bloom: Option<&BloomFilter>,
+        global_bloom: Option<&SstableBloomFilter>,
     ) -> Result<bool> {
         // Skip all filtering for compaction
         if self.strategy.skip_all_filtering || filter.query_type == QueryType::Compaction {
@@ -139,7 +139,7 @@ impl IntelligentBlockFilter {
             if self.strategy.use_bloom_filters {
                 // Check global bloom first
                 if let Some(bloom) = global_bloom {
-                    if !bloom.contains(target_id.as_bytes()) {
+                    if !bloom.might_contain_key(target_id)? {
                         debug!("🚫 Global bloom filter: ID '{}' not in file", target_id);
                         return Ok(false);
                     }
@@ -147,8 +147,8 @@ impl IntelligentBlockFilter {
                 
                 // Check block-level bloom if available
                 if let Some(ref block_bloom_bytes) = index_entry.block_key_bloom {
-                    let block_bloom: BloomFilter = bincode::deserialize(block_bloom_bytes)?;
-                    if !block_bloom.contains(target_id.as_bytes()) {
+                    let block_bloom: SstableBloomFilter = bincode::deserialize(block_bloom_bytes)?;
+                    if !block_bloom.might_contain_key(target_id)? {
                         debug!("🚫 Block {} bloom filter: ID '{}' not in block", 
                                index_entry.block_id, target_id);
                         return Ok(false);
@@ -295,12 +295,12 @@ impl IntelligentBlockFilter {
     }
     
     /// Get blocks that should be read for a query
-    pub fn filter_blocks(
+    pub fn filter_blocks<'a>(
         &self,
-        index_entries: &[IndexEntry],
+        index_entries: &'a [IndexEntry],
         filter: &BlockFilter,
-        global_bloom: Option<&BloomFilter>,
-    ) -> Result<Vec<&IndexEntry>> {
+        global_bloom: Option<&SstableBloomFilter>,
+    ) -> Result<Vec<&'a IndexEntry>> {
         let mut selected_blocks = Vec::new();
         
         for entry in index_entries {

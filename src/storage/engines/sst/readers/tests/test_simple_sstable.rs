@@ -29,7 +29,7 @@ async fn test_simple_sstable_write_read() {
     // Write SSTable
     let sstable_path = temp_path.join("test_simple.sst");
     let test_config = create_test_config();
-    let block_size = (test_config.block_size_kb * 1024) as usize;
+    let block_size = (test_config.block_size_mb * 1024) as usize;
     let writer = SstableWriter::new(&sstable_path, block_size, filesystem.clone());
     
     // Create test records

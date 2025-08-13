@@ -144,7 +144,7 @@ mod tests {
     #[tokio::test]
     async fn test_block_range_calculation() {
         let test_config = create_test_config();
-        let block_size = (test_config.block_size_kb * 1024) as usize;
+        let block_size = (test_config.block_size_mb * 1024) as usize;
         let blocks = vec![0, 1, 2, 5, 6, 7, 10]; // Some consecutive, some not
         
         // Calculate ranges for reading

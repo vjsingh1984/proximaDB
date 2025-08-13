@@ -127,7 +127,7 @@ mod tests {
         // Create SST config
         let sst_config = create_test_sst_config(base_path);
         debug!("📝 SST config: data_dir={}, block_size={}", 
-               sst_config.data_directory, sst_config.block_size_kb);
+               sst_config.data_directory, sst_config.block_size_mb);
         
         // Create SST engine
         let distance_compute = Arc::new(UnifiedDistanceCompute::new(DistanceMetric::Cosine));
