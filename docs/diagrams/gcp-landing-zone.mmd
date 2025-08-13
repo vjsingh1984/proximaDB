@@ -1,0 +1,71 @@
+graph TB
+    subgraph "GCP Landing Zone Architecture"
+        subgraph "Organization Hierarchy"
+            OrgNode[GCP Organization<br/>IAM & Policy Governance]
+            SecurityFolder[Security Folder<br/>Centralized Security Services]
+            NetworkFolder[Network Folder<br/>Shared VPC Infrastructure]
+            WorkloadFolder[Workload Folder<br/>Application Projects]
+        end
+        
+        subgraph "Host Network Project"
+            SharedVPC[Shared VPC Host<br/>10.0.0.0/8 Supernet]
+            CloudRouter[Cloud Router<br/>$18/mo per region<br/>Landing Zone Hub]
+            CloudNAT[Cloud NAT<br/>Managed Egress]
+        end
+        
+        subgraph "ProximaDB Service Project"
+            ProdSubnet[Production Subnet<br/>10.1.0.0/16]
+            ProximaDB[ProximaDB Cluster<br/>c3-standard-8 instances]
+            PrivateAccess[Private Google Access<br/>FREE - Landing Zone Standard]
+            PSCEndpoint[Private Service Connect<br/>$7.20/mo each]
+        end
+        
+        subgraph "Application Service Project"  
+            AppSubnet[Application Subnet<br/>10.2.0.0/16]
+            AppServices[GKE, Cloud Run<br/>Serverless Applications]
+        end
+        
+        subgraph "Data Service Project"
+            DataSubnet[Data Subnet<br/>10.3.0.0/16]
+            DataPlatform[BigQuery, Dataflow<br/>Analytics Platform]
+        end
+        
+        CloudStorage[Cloud Storage<br/>Landing Zone Compliant<br/>Multi-region, Versioning, Lifecycle]
+    end
+    
+    %% Landing Zone Governance
+    OrgNode -.->|Organization Policies| SecurityFolder
+    OrgNode -.->|Organization Policies| NetworkFolder  
+    OrgNode -.->|Organization Policies| WorkloadFolder
+    NetworkFolder -.->|Manages| SharedVPC
+    
+    %% Shared VPC Architecture
+    SharedVPC -.->|Host Project| ProdSubnet
+    SharedVPC -.->|Host Project| AppSubnet
+    SharedVPC -.->|Host Project| DataSubnet
+    
+    %% Network Routing
+    ProdSubnet -.->|$18/mo regional routing| CloudRouter
+    AppSubnet -.->|Included in shared VPC| CloudRouter
+    DataSubnet -.->|Included in shared VPC| CloudRouter
+    
+    %% Optimized Data Flow
+    ProximaDB -->|FREE via Private Google Access<br/>199.36.153.8/30 range| PrivateAccess  
+    PrivateAccess -->|Google Private Network<br/>No router charges| CloudStorage
+    
+    ProximaDB -->|Cross-project via Shared VPC<br/>$0.01/GB| CloudRouter
+    CloudRouter -->|Internal routing| AppServices
+    CloudRouter -->|Analytics access| DataPlatform
+    
+    style PrivateAccess fill:#90ee90
+    style OrgNode fill:#e6f3ff  
+    style CloudRouter fill:#ffe4b5
+    style CloudStorage fill:#ffd700
+    
+    classDef landingzone fill:#e6f3ff,stroke:#4285f4,stroke-width:2px
+    classDef free fill:#90ee90,stroke:#2d7a2d,stroke-width:2px  
+    classDef paid fill:#ffcccb,stroke:#8b0000,stroke-width:2px
+    
+    class OrgNode,SecurityFolder,NetworkFolder,SharedVPC landingzone
+    class PrivateAccess free
+    class CloudRouter,PSCEndpoint paid

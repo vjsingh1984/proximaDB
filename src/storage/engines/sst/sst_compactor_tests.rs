@@ -7,7 +7,7 @@
 
 #[cfg(test)]
 mod tests {
-    use super::super::sst_compactor::{SstCompactor, CompactionSortStrategy, ZeroCopyCompactionStats};
+    use super::super::sst_compactor::{SstCompactor, ZeroCopyCompactionStats};
     use super::super::{SstStorage, SstRecord};
     use super::super::readers::unified_sstable_reader::SstDirectReader;
     use crate::storage::persistence::filesystem::{FilesystemFactory, FilesystemConfig};
@@ -16,6 +16,8 @@ mod tests {
     use crate::proto::proximadb::MetadataItem;
     use crate::core::{SstConfig, BloomFilterConfig};
     use crate::core::VectorRecord;
+    use super::super::{DataBlock, DataBlockMetadata};
+    use std::collections::HashMap;
     
     // Import test utilities from sst_test_config
     use std::path::Path;
@@ -651,5 +653,178 @@ mod tests {
         assert!(fs.exists(&output_path).await.unwrap(), "Output SST file should exist");
         
         debug!("✅ Metadata compaction test completed successfully");
+    }
+
+    // ==================== Hierarchical SST Tests ====================
+    // These tests validate the hierarchical SST design with DataBlock metadata
+    
+    #[tokio::test]
+    async fn test_hierarchical_datablock_serialization() {
+        // Create a DataBlock with hierarchical metadata
+        let records = (0..10).map(|i| SstRecord {
+            id: format!("test_{:04}", i),
+            vector: vec![i as f32; 384],
+            metadata: vec![],
+            timestamp: 1000 + i as u32,
+            updated_at: None,
+            expires_at: None,
+            version: Some(1),
+            is_tombstone: false,
+            sequence_number: i as u64,
+            level: 0,
+        }).collect();
+        
+        let mut block = DataBlock::new(0, records);
+        
+        // Populate hierarchical metadata
+        block.metadata_stats = DataBlockMetadata {
+            min_key: "test_0000".to_string(),
+            max_key: "test_0009".to_string(),
+            min_timestamp: 1000,
+            max_timestamp: 1009,
+            record_count: 10,
+            null_count: 0,
+            metadata_columns: vec!["category".to_string(), "score".to_string()],
+            min_values: HashMap::from([
+                ("score".to_string(), serde_json::Value::String("0".to_string())),
+            ]),
+            max_values: HashMap::from([
+                ("score".to_string(), serde_json::Value::String("13.5".to_string())),
+            ]),
+        };
+        
+        // Add a bloom filter
+        block.block_bloom_filter = Some(vec![0xFF; 64]);
+        
+        // Serialize and deserialize
+        let serialized = block.serialize().expect("Should serialize");
+        debug!("Serialized hierarchical block size: {} bytes", serialized.len());
+        
+        let deserialized = DataBlock::deserialize(&serialized)
+            .expect("Should deserialize");
+        
+        // Verify all fields
+        assert_eq!(deserialized.block_id, 0);
+        assert_eq!(deserialized.records.len(), 10);
+        assert_eq!(deserialized.metadata_stats.min_key, "test_0000");
+        assert_eq!(deserialized.metadata_stats.max_key, "test_0009");
+        assert_eq!(deserialized.metadata_stats.record_count, 10);
+        assert!(deserialized.block_bloom_filter.is_some());
+        assert_eq!(deserialized.block_bloom_filter.as_ref().unwrap().len(), 64);
+        
+        debug!("✅ Hierarchical DataBlock serialization test passed");
+    }
+    
+    #[tokio::test]
+    async fn test_hierarchical_sst_with_proper_flush() {
+        // Setup test environment
+        let temp_dir = TempDir::new().unwrap();
+        let base_path = temp_dir.path();
+        setup_test_directories(base_path).await.unwrap();
+        
+        let filesystem_factory = Arc::new(FilesystemFactory::new(create_test_filesystem_config()).await.unwrap());
+        let collection_id = unique_collection_id("hierarchical_test");
+        
+        // Create test vectors with metadata for hierarchical testing
+        let mut vectors = Vec::new();
+        for i in 0..100 {
+            vectors.push(create_test_vector_record(
+                format!("hier_{:04}", i),
+                vec![i as f32; 384],
+                1000 + i as u32,
+                None,
+                vec![
+                    MetadataItem {
+                        key: "score".to_string(),
+                        value: Some(crate::proto::proximadb::metadata_item::Value::StringValue((i * 10).to_string())),
+                    },
+                    MetadataItem {
+                        key: "category".to_string(),
+                        value: Some(crate::proto::proximadb::metadata_item::Value::StringValue(format!("cat_{}", i % 5))),
+                    },
+                ],
+            ));
+        }
+        
+        // Create SST files using proper flush mechanism
+        let sst_files = create_sst_files_with_engine(
+            base_path.to_str().unwrap(),
+            &collection_id,
+            filesystem_factory.clone(),
+            vectors,
+        ).await.unwrap();
+        
+        assert!(!sst_files.is_empty(), "Should create at least one SST file");
+        
+        // Read back and verify hierarchical structure using SstDirectReader
+        for sst_file in &sst_files {
+            let mut reader = SstDirectReader::open(filesystem_factory.clone(), sst_file).await
+                .expect("Should open SST file");
+            
+            let header = reader.block_reader.read_header().await.expect("Should read header");
+            assert_eq!(header.entry_count, 100, "Should have 100 entries");
+            
+            debug!("✅ Hierarchical SST file created and verified: {}", sst_file);
+        }
+    }
+    
+    #[tokio::test]
+    async fn test_hierarchical_metadata_statistics() {
+        // Setup test environment
+        let temp_dir = TempDir::new().unwrap();
+        let base_path = temp_dir.path();
+        setup_test_directories(base_path).await.unwrap();
+        
+        let filesystem_factory = Arc::new(FilesystemFactory::new(create_test_filesystem_config()).await.unwrap());
+        let collection_id = unique_collection_id("metadata_stats_test");
+        
+        // Create records with predictable metadata ranges
+        let mut vectors = Vec::new();
+        for i in 0..200 {
+            vectors.push(create_test_vector_record(
+                format!("meta_{:04}", i),
+                vec![i as f32; 384],
+                3000 + i as u32,
+                None,
+                vec![
+                    MetadataItem {
+                        key: "score".to_string(),
+                        value: Some(crate::proto::proximadb::metadata_item::Value::StringValue((i * 10).to_string())),
+                    },
+                    MetadataItem {
+                        key: "type".to_string(),
+                        value: Some(crate::proto::proximadb::metadata_item::Value::StringValue(
+                            if i < 100 { "A" } else { "B" }.to_string()
+                        )),
+                    },
+                ],
+            ));
+        }
+        
+        // Create SST files using proper flush
+        let sst_files = create_sst_files_with_engine(
+            base_path.to_str().unwrap(),
+            &collection_id,
+            filesystem_factory.clone(),
+            vectors,
+        ).await.unwrap();
+        
+        assert!(!sst_files.is_empty(), "Should create SST files");
+        
+        // Compact the files to test metadata preservation
+        let output_path = format!("file://{}/metadata_stats_compacted.sst", base_path.to_string_lossy());
+        let mvcc_resolver = Arc::new(MvccResolver::new());
+        let compactor = SstCompactor::new(filesystem_factory.clone(), Some(mvcc_resolver));
+        
+        let stats = compactor.compact_files(
+            sst_files,
+            output_path.clone(),
+            1,
+        ).await.unwrap();
+        
+        assert_eq!(stats.records_read, 200, "Should read all 200 records");
+        assert_eq!(stats.records_written, 200, "Should write all 200 records");
+        
+        debug!("✅ Hierarchical metadata statistics test completed");
     }
 }

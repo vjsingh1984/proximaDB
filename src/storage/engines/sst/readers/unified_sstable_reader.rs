@@ -408,8 +408,9 @@ impl ModularBlockReader {
     }
     
     async fn read_index_block_async(&mut self, strategy: &ReadStrategy) -> Result<SstableIndex> {
-        // Skip index for certain strategies
-        if matches!(strategy, ReadStrategy::FullScan | ReadStrategy::CompactionDirect) {
+        // For hierarchical SST, we always need the index for random block access
+        // Only skip for CompactionDirect when we're doing sequential streaming
+        if matches!(strategy, ReadStrategy::CompactionDirect) {
             return Ok(SstableIndex {
                 entries: vec![],
                 metadata_stats: HashMap::new(),
@@ -419,11 +420,29 @@ impl ModularBlockReader {
             });
         }
         
-        let header = self.read_header_async().await?;
+        eprintln!("DEBUG read_index_block_async: Reading header");
+        let header = self.read_header_async().await
+            .map_err(|e| anyhow::anyhow!("Failed to read header in read_index_block_async: {}", e))?;
+        eprintln!("DEBUG read_index_block_async: Header read successfully, block_index_offset = {}", header.block_index_offset);
         
         // Calculate index offset (after header and bloom filter if present)
-        let index_offset = 8 + header.header_size as u64 + 
-            if header.has_bloom_filter { 4 + header.index_size as u64 } else { 0 };
+        // NEW: Use hierarchical offsets if available, otherwise calculate
+        let index_offset = if header.block_index_offset > 0 {
+            header.block_index_offset
+        } else {
+            // Legacy calculation: need to read bloom filter size first
+            let bloom_offset = 8 + header.header_size as u64;
+            if header.has_bloom_filter {
+                let bloom_size_bytes = self.read_range(bloom_offset, 4).await?;
+                let bloom_size = u32::from_le_bytes([
+                    bloom_size_bytes[0], bloom_size_bytes[1], 
+                    bloom_size_bytes[2], bloom_size_bytes[3]
+                ]) as u64;
+                bloom_offset + 4 + bloom_size
+            } else {
+                bloom_offset
+            }
+        };
         
         // Read index size using filesystem range read
         let size_bytes = self.read_range(index_offset, 4).await?;
@@ -441,9 +460,23 @@ impl ModularBlockReader {
     }
     
     async fn read_index(&self, header: &SstableHeader) -> Result<SstableIndex> {
-        // Calculate index offset (after header and bloom filter if present)
-        let index_offset = 8 + header.header_size as u64 + 
-            if header.has_bloom_filter { 4 + header.index_size as u64 } else { 0 };
+        // Calculate index offset using hierarchical offsets when available
+        let index_offset = if header.block_index_offset > 0 {
+            header.block_index_offset
+        } else {
+            // Legacy calculation: need to read bloom filter size first
+            let bloom_offset = 8 + header.header_size as u64;
+            if header.has_bloom_filter {
+                let bloom_size_bytes = self.read_range(bloom_offset, 4).await?;
+                let bloom_size = u32::from_le_bytes([
+                    bloom_size_bytes[0], bloom_size_bytes[1], 
+                    bloom_size_bytes[2], bloom_size_bytes[3]
+                ]) as u64;
+                bloom_offset + 4 + bloom_size
+            } else {
+                bloom_offset
+            }
+        };
         
         debug!("Reading index at offset {} for file: {}", index_offset, self.file_path);
         
@@ -489,58 +522,71 @@ impl ModularBlockReader {
     }
     
     pub async fn read_data_block_at_offset(&self, offset: u64, size: usize) -> Result<DataBlock> {
-        debug!("Reading data block at offset {} with size {} for file: {}", offset, size, self.file_path);
+        debug!("Reading hierarchical data block at offset {} with size {} for file: {}", offset, size, self.file_path);
         
         // Read the block data
         let block_data = self.read_range(offset, size).await?;
         
-        // Deserialize the data block
-        let data_block: DataBlock = bincode::deserialize(&block_data)?;
-        
-        Ok(data_block)
+        // NEW: Use hierarchical deserialization with automatic compression detection
+        DataBlock::deserialize(&block_data)
+            .map_err(|e| anyhow::anyhow!("Failed to deserialize hierarchical DataBlock at offset {}: {}", offset, e))
     }
     
     async fn read_data_block_async(&mut self, block_id: u64, mode: ReadMode) -> Result<DataBlock> {
-        let header = self.read_header_async().await?;
+        let header = self.read_header_async().await
+            .map_err(|e| anyhow::anyhow!("Failed to read header for block {}: {}", block_id, e))?;
         
-        // Calculate data offset (after header, bloom filter, and index)
-        let data_offset = 8 + header.header_size as u64 + header.index_size as u64 +
-            if header.has_bloom_filter { 4 + header.index_size as u64 } else { 0 };
+        // For hierarchical SST design with random block access, we need to use the index
+        // to get the actual offset and size of each block
         
-        // Calculate block offset
-        let block_offset = data_offset + (block_id * header.block_size as u64);
+        // First, read the index to get block offsets
+        let index = self.read_index_block_async(&ReadStrategy::FullScan).await
+            .map_err(|e| anyhow::anyhow!("Failed to read index for block {}: {}", block_id, e))?;
         
-        // Read block size using filesystem range read (efficient for S3/GCS/Azure)
-        let size_bytes = self.read_range(block_offset, 4).await?;
+        // Find the index entry for this block
+        // Note: Index entries map to blocks, so we need to find the right entry
+        if block_id >= index.entries.len() as u64 {
+            return Err(anyhow::anyhow!("Block {} not found in index (only {} entries)", 
+                                       block_id, index.entries.len()));
+        }
+        
+        let index_entry = &index.entries[block_id as usize];
+        
+        // Use the offset from the index entry
+        // The index entry contains the actual offset of this specific block
+        let block_offset = if index_entry.offset > 0 {
+            index_entry.offset
+        } else {
+            // If offset is not set in index, calculate from data_blocks_offset
+            // This handles the case where we have a single block at the start
+            if block_id == 0 && header.data_blocks_offset > 0 {
+                header.data_blocks_offset
+            } else {
+                return Err(anyhow::anyhow!("Block offset not found in index for block {}", block_id));
+            }
+        };
+        
+        // Read block size from the file (first 4 bytes of the block)
+        let size_bytes = self.read_range(block_offset, 4).await
+            .map_err(|e| anyhow::anyhow!("Failed to read block size at offset {}: {}", block_offset, e))?;
         let block_size = u32::from_le_bytes([
             size_bytes[0], size_bytes[1], size_bytes[2], size_bytes[3]
         ]) as usize;
         
-        // Read block data using range read (single network request for cloud storage)
-        let block_data = self.read_range(block_offset + 4, block_size).await?;
+        // Read the entire block data (excluding the size prefix)
+        let block_data = self.read_range(block_offset + 4, block_size).await
+            .map_err(|e| anyhow::anyhow!("Failed to read block data at offset {}, size {}: {}", block_offset + 4, block_size, e))?;
         
         match mode {
             ReadMode::Direct => {
-                // Return raw bytes wrapped in DataBlock for compaction
-                Ok(DataBlock {
-                    records: vec![],
-                    block_id: block_id as u32,
-                    uncompressed_size: block_size as u32,
-                    compression_algorithm: CompressionAlgorithmSst::None,
-                    compression_ratio: 1.0,
-                })
+                // Use hierarchical deserialization for correct format handling
+                DataBlock::deserialize(&block_data)
+                    .map_err(|e| anyhow::anyhow!("Failed to deserialize hierarchical DataBlock: {}", e))
             }
             ReadMode::Buffered | ReadMode::Streaming => {
-                // Decompress if needed
-                let decompressed = if header.compression_algorithm != CompressionAlgorithmSst::None {
-                    self.decompress_block(&block_data, header.compression_algorithm)?
-                } else {
-                    block_data
-                };
-                
-                // Deserialize records
-                let block: DataBlock = bincode::deserialize(&decompressed)?;
-                Ok(block)
+                // Use hierarchical deserialization with automatic compression detection
+                DataBlock::deserialize(&block_data)
+                    .map_err(|e| anyhow::anyhow!("Failed to deserialize hierarchical DataBlock in buffered mode: {}", e))
             }
         }
     }
@@ -575,97 +621,95 @@ impl Iterator for BlockIterator<SstRecord> {
     type Item = Result<SstRecord>;
     
     fn next(&mut self) -> Option<Self::Item> {
+        // First check if we have records in the buffer
+        if self.position < self.buffer.len() {
+            let record = self.buffer[self.position].clone();
+            self.position += 1;
+            
+            debug!("🔍 SstRecord STREAMING: Returning record {} from block {}, position {}/{}", 
+                   record.id, self.current_block, self.position, self.buffer.len());
+            
+            return Some(Ok(record));
+        }
+        
+        // Buffer is empty, clear it and try to read next block
+        self.buffer.clear();
+        self.position = 0;
+        
+        // Check if we've processed all blocks
         if self.current_block >= self.total_blocks {
             debug!("🔍 SstRecord STREAMING: Reached end - processed {} of {} blocks", self.current_block, self.total_blocks);
             return None;
         }
         
-        // Read next block if buffer is empty
-        if self.buffer.is_empty() {
-            debug!("🔍 SstRecord STREAMING: Reading block {} of {}", self.current_block + 1, self.total_blocks);
-            
-            // Read block size (4 bytes)
-            let mut size_bytes = [0u8; 4];
-            debug!("🔍 SstRecord STREAMING: About to read 4 bytes for block size");
-            match self.reader.read_exact(&mut size_bytes) {
-                Ok(_) => {
-                    debug!("🔍 SstRecord STREAMING: Successfully read 4 bytes for block size: {:?}", size_bytes);
-                },
-                Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
-                    debug!("🔍 SstRecord STREAMING: Reached EOF while reading block size - no more blocks");
-                    return None;
-                },
-                Err(e) => {
-                    error!("❌ SstRecord STREAMING ERROR: Failed to read block size bytes: {:?}", e);
-                    return Some(Err(anyhow::Error::from(e)));
-                },
-            }
-            
-            let block_size = u32::from_le_bytes(size_bytes) as usize;
-            debug!("🔍 SstRecord STREAMING: Parsed block size: {} bytes", block_size);
-            
-            if block_size == 0 {
-                debug!("🔍 SstRecord STREAMING: Block size is 0 - no more data");
+        // Read next block
+        debug!("🔍 SstRecord STREAMING: Reading block {} of {}", self.current_block + 1, self.total_blocks);
+        
+        // Read block size (4 bytes)
+        let mut size_bytes = [0u8; 4];
+        debug!("🔍 SstRecord STREAMING: About to read 4 bytes for block size");
+        match self.reader.read_exact(&mut size_bytes) {
+            Ok(_) => {
+                debug!("🔍 SstRecord STREAMING: Successfully read 4 bytes for block size: {:?}", size_bytes);
+            },
+            Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
+                debug!("🔍 SstRecord STREAMING: Reached EOF while reading block size - no more blocks");
                 return None;
-            }
-            
-            if block_size > 10_000_000 {  // 10MB sanity check
-                error!("❌ SstRecord STREAMING ERROR: Block size {} seems unreasonably large", block_size);
-                return Some(Err(anyhow::anyhow!("Block size {} exceeds sanity check limit", block_size)));
-            }
-            
-            // Read block data
-            debug!("🔍 SstRecord STREAMING: About to read {} bytes for block data", block_size);
-            let mut block_data = vec![0u8; block_size];
-            match self.reader.read_exact(&mut block_data) {
-                Ok(_) => {
-                    debug!("🔍 SstRecord STREAMING: Successfully read {} bytes for block data", block_size);
-                },
-                Err(e) => {
-                    error!("❌ SstRecord STREAMING ERROR: Failed to read {} bytes for block data: {:?}", block_size, e);
-                    error!("❌ SstRecord STREAMING ERROR: Error kind: {:?}", e.kind());
-                    if let Some(raw_error) = e.get_ref() {
-                        error!("❌ SstRecord STREAMING ERROR: Raw error: {:?}", raw_error);
-                    }
-                    return Some(Err(anyhow::Error::from(e)));
-                },
-            }
-            
-            // Deserialize the DataBlock using the proper DataBlock::deserialize method
-            debug!("🔍 SstRecord STREAMING: Attempting to deserialize DataBlock from {} bytes", block_data.len());
-            match DataBlock::deserialize(&block_data) {
-                Ok(data_block) => {
-                    debug!("🔍 SstRecord STREAMING: Successfully deserialized DataBlock with {} records", data_block.records.len());
-                    // Extract all SstRecords from the DataBlock
-                    self.buffer = data_block.records;
-                    self.position = 0;
-                    self.current_block += 1;
-                }
-                Err(e) => {
-                    error!("❌ SstRecord STREAMING ERROR: Failed to deserialize DataBlock: {:?}", e);
-                    debug!("🔍 SstRecord STREAMING: Block data preview (first 32 bytes): {:?}", &block_data[..std::cmp::min(32, block_data.len())]);
-                    return Some(Err(anyhow::Error::from(e)));
-                }
-            }
+            },
+            Err(e) => {
+                error!("❌ SstRecord STREAMING ERROR: Failed to read block size bytes: {:?}", e);
+                return Some(Err(anyhow::Error::from(e)));
+            },
         }
         
-        // Return next record from buffer
-        if self.position < self.buffer.len() {
-            let record = self.buffer[self.position].clone();
-            self.position += 1;
-            
-            // Clear buffer if we've consumed all records
-            if self.position >= self.buffer.len() {
-                self.buffer.clear();
+        let block_size = u32::from_le_bytes(size_bytes) as usize;
+        debug!("🔍 SstRecord STREAMING: Parsed block size: {} bytes", block_size);
+        
+        if block_size == 0 {
+            debug!("🔍 SstRecord STREAMING: Block size is 0 - no more data");
+            return None;
+        }
+        
+        if block_size > 10_000_000 {  // 10MB sanity check
+            error!("❌ SstRecord STREAMING ERROR: Block size {} seems unreasonably large", block_size);
+            return Some(Err(anyhow::anyhow!("Block size {} exceeds sanity check limit", block_size)));
+        }
+        
+        // Read block data
+        debug!("🔍 SstRecord STREAMING: About to read {} bytes for block data", block_size);
+        let mut block_data = vec![0u8; block_size];
+        match self.reader.read_exact(&mut block_data) {
+            Ok(_) => {
+                debug!("🔍 SstRecord STREAMING: Successfully read {} bytes for block data", block_size);
+            },
+            Err(e) => {
+                error!("❌ SstRecord STREAMING ERROR: Failed to read {} bytes for block data: {:?}", block_size, e);
+                error!("❌ SstRecord STREAMING ERROR: Error kind: {:?}", e.kind());
+                if let Some(raw_error) = e.get_ref() {
+                    error!("❌ SstRecord STREAMING ERROR: Raw error: {:?}", raw_error);
+                }
+                return Some(Err(anyhow::Error::from(e)));
+            },
+        }
+        
+        // Deserialize the DataBlock using the proper DataBlock::deserialize method
+        debug!("🔍 SstRecord STREAMING: Attempting to deserialize DataBlock from {} bytes", block_data.len());
+        match DataBlock::deserialize(&block_data) {
+            Ok(data_block) => {
+                debug!("🔍 SstRecord STREAMING: Successfully deserialized DataBlock with {} records", data_block.records.len());
+                // Extract all SstRecords from the DataBlock
+                self.buffer = data_block.records;
                 self.position = 0;
+                self.current_block += 1;
+                
+                // Recursively call next() to return the first record from the new buffer
+                self.next()
             }
-            
-            Some(Ok(record))
-        } else {
-            // Buffer is empty, try next block
-            self.buffer.clear();
-            self.position = 0;
-            self.next()
+            Err(e) => {
+                error!("❌ SstRecord STREAMING ERROR: Failed to deserialize DataBlock: {:?}", e);
+                debug!("🔍 SstRecord STREAMING: Block data preview (first 32 bytes): {:?}", &block_data[..std::cmp::min(32, block_data.len())]);
+                Some(Err(anyhow::Error::from(e)))
+            }
         }
     }
 }
@@ -929,19 +973,22 @@ impl SstDirectReader {
     /// Uses efficient range reads for cloud storage (S3/GCS/Azure)
     pub async fn read_all_for_compaction(&mut self) -> Result<Vec<SstRecord>> {
         let header = self.block_reader.read_header().await?;
+        debug!("📖 read_all_for_compaction: header.block_count = {}, header.entry_count = {}", 
+               header.block_count, header.entry_count);
+        
         let mut all_records = Vec::with_capacity(header.entry_count as usize);
         
-        // Skip bloom filters and indexes for compaction
-        let _ = self.block_reader.read_bloom_filter(&header).await?;
-        let _ = self.block_reader.read_index_block(&ReadStrategy::CompactionDirect).await?;
-        
-        // Read all data blocks directly using filesystem range reads
-        // This is efficient for cloud storage as each block is a single range request
+        // For compaction, we don't need bloom filters or indexes - go straight to data blocks
+        // Use hierarchical offsets when available for efficient access
+        debug!("📖 read_all_for_compaction: Reading {} data blocks", header.block_count);
         for block_id in 0..header.block_count {
+            debug!("📖 read_all_for_compaction: Reading block {}", block_id);
             let block = self.block_reader.read_data_block(block_id as u64, ReadMode::Buffered).await?;
+            debug!("📖 read_all_for_compaction: Block {} has {} records", block_id, block.records.len());
             all_records.extend(block.records);
         }
         
+        debug!("📖 read_all_for_compaction: Total records read: {}", all_records.len());
         Ok(all_records)
     }
     
@@ -1704,13 +1751,16 @@ impl UnifiedSstableReader {
                 }
             }).collect();
             
-            // Reconstruct DataBlock from cached vectors
+            // Reconstruct DataBlock from cached vectors with hierarchical metadata
             let block = DataBlock {
                 block_id: block_idx as u32,
                 records: sst_records,
                 uncompressed_size: 0, // Would need to calculate
                 compression_algorithm: CompressionAlgorithmSst::None,
                 compression_ratio: 1.0,
+                metadata_stats: crate::storage::engines::sst::DataBlockMetadata::default(),
+                block_bloom_filter: None,
+                has_deletes: false,
             };
             return Ok(Some(block));
         }
@@ -3035,6 +3085,9 @@ impl UnifiedSstableReader {
                 uncompressed_size: 0,
                 compression_algorithm: CompressionAlgorithmSst::None,
                 compression_ratio: 1.0,
+                metadata_stats: crate::storage::engines::sst::DataBlockMetadata::default(),
+                block_bloom_filter: None,
+                has_deletes: false,
             });
             block_id += 1;
         }

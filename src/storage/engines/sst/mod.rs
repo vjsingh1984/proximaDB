@@ -22,6 +22,7 @@ pub mod bloom_filter_tests;
 pub mod compaction_coverage_tests;
 #[cfg(test)]
 pub mod sst_compactor_tests;
+// Hierarchical tests moved to sst_compactor_tests.rs for better code reuse
 
 // Re-export main types
 pub use bloom_filter::{
@@ -822,6 +823,31 @@ fn default_block_size() -> u32 {
     3 * 1024 * 1024 // 3MB default for optimal cloud IOPS and compression balance
 }
 
+/// Metadata statistics for intelligent block filtering
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct DataBlockMetadata {
+    pub min_key: String,
+    pub max_key: String,
+    pub min_timestamp: u32,
+    pub max_timestamp: u32,
+    pub record_count: u32,
+    pub null_count: u32,
+    pub metadata_columns: Vec<String>,  // List of metadata columns present
+    pub min_values: HashMap<String, serde_json::Value>,  // Min values per column
+    pub max_values: HashMap<String, serde_json::Value>,  // Max values per column
+}
+
+/// Hierarchical block metadata for serialization
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct HierarchicalBlockMetadata {
+    pub block_id: u32,
+    pub record_count: u32,
+    pub uncompressed_size: u32,
+    pub metadata_stats: DataBlockMetadata,
+    pub block_bloom_filter: Option<Vec<u8>>,
+    pub has_deletes: bool,
+}
+
 /// Data block for cache-optimized storage with ZSTD compression
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DataBlock {
@@ -832,6 +858,14 @@ pub struct DataBlock {
     pub compression_algorithm: CompressionAlgorithmSst,
     #[serde(default)]
     pub compression_ratio: f32,
+    
+    // Hierarchical metadata for intelligent block filtering
+    #[serde(default)]
+    pub metadata_stats: DataBlockMetadata,
+    #[serde(default)]
+    pub block_bloom_filter: Option<Vec<u8>>,  // Block-level bloom for quick key filtering
+    #[serde(default)]
+    pub has_deletes: bool,  // Track if block contains tombstones
 }
 
 /// Configuration for DataBlock compression
@@ -944,11 +978,15 @@ const MARKER_LZ4HC: u8 = 0x0C;
 const MARKER_LZMA: u8 = 0x0D;
 
 impl DataBlock {
-    /// Create a new DataBlock with compression settings
+    /// Create a new DataBlock with compression settings and hierarchical metadata
     pub fn new(block_id: u32, records: Vec<SstRecord>) -> Self {
         let uncompressed_size = records.iter()
             .map(|r| r.vector.len() * 4 + r.id.len() + r.metadata.len() * 32) // Rough estimate
             .sum::<usize>() as u32;
+        
+        // Calculate metadata statistics for intelligent filtering
+        let metadata_stats = Self::calculate_metadata_stats(&records);
+        let has_deletes = records.iter().any(|r| r.is_tombstone);
             
         Self {
             block_id,
@@ -956,6 +994,101 @@ impl DataBlock {
             uncompressed_size,
             compression_algorithm: CompressionAlgorithmSst::None,
             compression_ratio: 1.0,
+            metadata_stats,
+            block_bloom_filter: None,
+            has_deletes,
+        }
+    }
+    
+    /// Calculate metadata statistics for intelligent block filtering
+    fn calculate_metadata_stats(records: &[SstRecord]) -> DataBlockMetadata {
+        let mut stats = DataBlockMetadata::default();
+        
+        if records.is_empty() {
+            return stats;
+        }
+        
+        // Initialize with first record
+        if let Some(first) = records.first() {
+            stats.min_key = first.id.clone();
+            stats.max_key = first.id.clone();
+            stats.min_timestamp = first.timestamp;
+            stats.max_timestamp = first.timestamp;
+        }
+        
+        // Process all records for statistics
+        let mut metadata_columns = HashMap::new();
+        
+        for record in records {
+            // Update key range
+            if record.id < stats.min_key {
+                stats.min_key = record.id.clone();
+            }
+            if record.id > stats.max_key {
+                stats.max_key = record.id.clone();
+            }
+            
+            // Update timestamp range
+            stats.min_timestamp = stats.min_timestamp.min(record.timestamp);
+            stats.max_timestamp = stats.max_timestamp.max(record.timestamp);
+            
+            // Process metadata
+            for item in &record.metadata {
+                metadata_columns.insert(item.key.clone(), ());
+                
+                // Convert to JSON value for min/max tracking
+                let value = match &item.value {
+                    Some(crate::proto::proximadb::metadata_item::Value::StringValue(s)) => 
+                        serde_json::Value::String(s.clone()),
+                    Some(crate::proto::proximadb::metadata_item::Value::NumberValue(n)) => 
+                        serde_json::Number::from_f64(*n)
+                            .map(serde_json::Value::Number)
+                            .unwrap_or(serde_json::Value::Null),
+                    Some(crate::proto::proximadb::metadata_item::Value::BoolValue(b)) => 
+                        serde_json::Value::Bool(*b),
+                    None => {
+                        stats.null_count += 1;
+                        continue;
+                    }
+                };
+                
+                // Update min/max values
+                stats.min_values.entry(item.key.clone())
+                    .and_modify(|v| {
+                        if Self::compare_json_values(&value, v) == std::cmp::Ordering::Less {
+                            *v = value.clone();
+                        }
+                    })
+                    .or_insert(value.clone());
+                    
+                stats.max_values.entry(item.key.clone())
+                    .and_modify(|v| {
+                        if Self::compare_json_values(&value, v) == std::cmp::Ordering::Greater {
+                            *v = value.clone();
+                        }
+                    })
+                    .or_insert(value);
+            }
+        }
+        
+        stats.record_count = records.len() as u32;
+        stats.metadata_columns = metadata_columns.into_keys().collect();
+        
+        stats
+    }
+    
+    /// Compare JSON values for ordering
+    fn compare_json_values(a: &serde_json::Value, b: &serde_json::Value) -> std::cmp::Ordering {
+        use serde_json::Value;
+        match (a, b) {
+            (Value::Number(a), Value::Number(b)) => {
+                let a_f64 = a.as_f64().unwrap_or(0.0);
+                let b_f64 = b.as_f64().unwrap_or(0.0);
+                a_f64.partial_cmp(&b_f64).unwrap_or(std::cmp::Ordering::Equal)
+            }
+            (Value::String(a), Value::String(b)) => a.cmp(b),
+            (Value::Bool(a), Value::Bool(b)) => a.cmp(b),
+            _ => std::cmp::Ordering::Equal,
         }
     }
     
@@ -964,7 +1097,7 @@ impl DataBlock {
         self.serialize_with_config(&DataBlockCompressionConfig::default())
     }
     
-    /// Serialize with specific compression configuration
+    /// Serialize with specific compression configuration and hierarchical metadata
     pub fn serialize_with_config(&self, config: &DataBlockCompressionConfig) -> anyhow::Result<Vec<u8>> {
         use std::io::Write;
         
@@ -977,15 +1110,64 @@ impl DataBlock {
             records_data.write_all(&record_data)?;
         }
         
-        // Create block metadata
-        let block_metadata = DataBlockMetadata {
-            block_id: self.block_id,
-            record_count: self.records.len() as u32,
-            uncompressed_size: self.uncompressed_size,
-        };
+        // Custom serialization for hierarchical metadata to avoid bincode issues with serde_json::Value
+        let mut metadata_data = Vec::new();
         
-        let metadata_data = bincode::serialize(&block_metadata)
-            .context("Failed to serialize block metadata")?;
+        // Write basic fields
+        metadata_data.write_all(&self.block_id.to_le_bytes())?;
+        metadata_data.write_all(&(self.records.len() as u32).to_le_bytes())?;
+        metadata_data.write_all(&self.uncompressed_size.to_le_bytes())?;
+        metadata_data.write_all(&(self.has_deletes as u8).to_le_bytes())?;
+        
+        // Write DataBlockMetadata fields
+        let meta = &self.metadata_stats;
+        metadata_data.write_all(&(meta.min_key.len() as u32).to_le_bytes())?;
+        metadata_data.write_all(meta.min_key.as_bytes())?;
+        metadata_data.write_all(&(meta.max_key.len() as u32).to_le_bytes())?;
+        metadata_data.write_all(meta.max_key.as_bytes())?;
+        metadata_data.write_all(&meta.min_timestamp.to_le_bytes())?;
+        metadata_data.write_all(&meta.max_timestamp.to_le_bytes())?;
+        metadata_data.write_all(&meta.record_count.to_le_bytes())?;
+        metadata_data.write_all(&meta.null_count.to_le_bytes())?;
+        
+        // Write metadata_columns
+        metadata_data.write_all(&(meta.metadata_columns.len() as u32).to_le_bytes())?;
+        for col in &meta.metadata_columns {
+            metadata_data.write_all(&(col.len() as u32).to_le_bytes())?;
+            metadata_data.write_all(col.as_bytes())?;
+        }
+        
+        // Write min_values as JSON strings
+        metadata_data.write_all(&(meta.min_values.len() as u32).to_le_bytes())?;
+        for (key, value) in &meta.min_values {
+            metadata_data.write_all(&(key.len() as u32).to_le_bytes())?;
+            metadata_data.write_all(key.as_bytes())?;
+            let value_str = serde_json::to_string(value)?;
+            metadata_data.write_all(&(value_str.len() as u32).to_le_bytes())?;
+            metadata_data.write_all(value_str.as_bytes())?;
+        }
+        
+        // Write max_values as JSON strings
+        metadata_data.write_all(&(meta.max_values.len() as u32).to_le_bytes())?;
+        for (key, value) in &meta.max_values {
+            metadata_data.write_all(&(key.len() as u32).to_le_bytes())?;
+            metadata_data.write_all(key.as_bytes())?;
+            let value_str = serde_json::to_string(value)?;
+            metadata_data.write_all(&(value_str.len() as u32).to_le_bytes())?;
+            metadata_data.write_all(value_str.as_bytes())?;
+        }
+        
+        // Write bloom filter
+        match &self.block_bloom_filter {
+            Some(bloom) => {
+                metadata_data.write_all(&1u8.to_le_bytes())?;
+                metadata_data.write_all(&(bloom.len() as u32).to_le_bytes())?;
+                metadata_data.write_all(bloom)?;
+            }
+            None => {
+                metadata_data.write_all(&0u8.to_le_bytes())?;
+            }
+        }
         
         // Combine metadata and records
         let mut raw_data = Vec::with_capacity(metadata_data.len() + records_data.len() + 8);
@@ -1319,7 +1501,7 @@ impl DataBlock {
         Ok(block)
     }
     
-    /// Deserialize uncompressed format
+    /// Deserialize uncompressed format with hierarchical metadata support
     fn deserialize_uncompressed(data: &[u8]) -> anyhow::Result<Self> {
         use std::io::Read;
         let mut cursor = std::io::Cursor::new(data);
@@ -1329,25 +1511,141 @@ impl DataBlock {
         cursor.read_exact(&mut len_bytes)?;
         let metadata_len = u32::from_le_bytes(len_bytes) as usize;
         
-        // Read and deserialize metadata
-        let mut metadata_data = vec![0u8; metadata_len];
-        cursor.read_exact(&mut metadata_data)?;
+        // Custom deserialization for hierarchical metadata
+        let metadata_data = &data[4..4 + metadata_len];
+        let mut meta_cursor = std::io::Cursor::new(metadata_data);
         
-        let metadata: DataBlockMetadata = bincode::deserialize(&metadata_data)
-            .context("Failed to deserialize DataBlock metadata")?;
+        // Read basic fields
+        let mut u32_bytes = [0u8; 4];
+        meta_cursor.read_exact(&mut u32_bytes)?;
+        let block_id = u32::from_le_bytes(u32_bytes);
         
-        // Read records
-        let mut records = Vec::with_capacity(metadata.record_count as usize);
+        meta_cursor.read_exact(&mut u32_bytes)?;
+        let record_count = u32::from_le_bytes(u32_bytes);
         
-        for _ in 0..metadata.record_count {
+        meta_cursor.read_exact(&mut u32_bytes)?;
+        let uncompressed_size = u32::from_le_bytes(u32_bytes);
+        
+        let mut u8_byte = [0u8; 1];
+        meta_cursor.read_exact(&mut u8_byte)?;
+        let has_deletes = u8_byte[0] != 0;
+        
+        // Read DataBlockMetadata fields
+        meta_cursor.read_exact(&mut u32_bytes)?;
+        let min_key_len = u32::from_le_bytes(u32_bytes) as usize;
+        let mut min_key_bytes = vec![0u8; min_key_len];
+        meta_cursor.read_exact(&mut min_key_bytes)?;
+        let min_key = String::from_utf8(min_key_bytes)?;
+        
+        meta_cursor.read_exact(&mut u32_bytes)?;
+        let max_key_len = u32::from_le_bytes(u32_bytes) as usize;
+        let mut max_key_bytes = vec![0u8; max_key_len];
+        meta_cursor.read_exact(&mut max_key_bytes)?;
+        let max_key = String::from_utf8(max_key_bytes)?;
+        
+        meta_cursor.read_exact(&mut u32_bytes)?;
+        let min_timestamp = u32::from_le_bytes(u32_bytes);
+        
+        meta_cursor.read_exact(&mut u32_bytes)?;
+        let max_timestamp = u32::from_le_bytes(u32_bytes);
+        
+        meta_cursor.read_exact(&mut u32_bytes)?;
+        let metadata_record_count = u32::from_le_bytes(u32_bytes);
+        
+        meta_cursor.read_exact(&mut u32_bytes)?;
+        let null_count = u32::from_le_bytes(u32_bytes);
+        
+        // Read metadata_columns
+        meta_cursor.read_exact(&mut u32_bytes)?;
+        let columns_len = u32::from_le_bytes(u32_bytes) as usize;
+        let mut metadata_columns = Vec::with_capacity(columns_len);
+        for _ in 0..columns_len {
+            meta_cursor.read_exact(&mut u32_bytes)?;
+            let col_len = u32::from_le_bytes(u32_bytes) as usize;
+            let mut col_bytes = vec![0u8; col_len];
+            meta_cursor.read_exact(&mut col_bytes)?;
+            metadata_columns.push(String::from_utf8(col_bytes)?);
+        }
+        
+        // Read min_values
+        meta_cursor.read_exact(&mut u32_bytes)?;
+        let min_values_len = u32::from_le_bytes(u32_bytes) as usize;
+        let mut min_values = HashMap::with_capacity(min_values_len);
+        for _ in 0..min_values_len {
+            meta_cursor.read_exact(&mut u32_bytes)?;
+            let key_len = u32::from_le_bytes(u32_bytes) as usize;
+            let mut key_bytes = vec![0u8; key_len];
+            meta_cursor.read_exact(&mut key_bytes)?;
+            let key = String::from_utf8(key_bytes)?;
+            
+            meta_cursor.read_exact(&mut u32_bytes)?;
+            let value_len = u32::from_le_bytes(u32_bytes) as usize;
+            let mut value_bytes = vec![0u8; value_len];
+            meta_cursor.read_exact(&mut value_bytes)?;
+            let value_str = String::from_utf8(value_bytes)?;
+            let value: serde_json::Value = serde_json::from_str(&value_str)?;
+            min_values.insert(key, value);
+        }
+        
+        // Read max_values
+        meta_cursor.read_exact(&mut u32_bytes)?;
+        let max_values_len = u32::from_le_bytes(u32_bytes) as usize;
+        let mut max_values = HashMap::with_capacity(max_values_len);
+        for _ in 0..max_values_len {
+            meta_cursor.read_exact(&mut u32_bytes)?;
+            let key_len = u32::from_le_bytes(u32_bytes) as usize;
+            let mut key_bytes = vec![0u8; key_len];
+            meta_cursor.read_exact(&mut key_bytes)?;
+            let key = String::from_utf8(key_bytes)?;
+            
+            meta_cursor.read_exact(&mut u32_bytes)?;
+            let value_len = u32::from_le_bytes(u32_bytes) as usize;
+            let mut value_bytes = vec![0u8; value_len];
+            meta_cursor.read_exact(&mut value_bytes)?;
+            let value_str = String::from_utf8(value_bytes)?;
+            let value: serde_json::Value = serde_json::from_str(&value_str)?;
+            max_values.insert(key, value);
+        }
+        
+        // Read bloom filter
+        meta_cursor.read_exact(&mut u8_byte)?;
+        let block_bloom_filter = if u8_byte[0] != 0 {
+            meta_cursor.read_exact(&mut u32_bytes)?;
+            let bloom_len = u32::from_le_bytes(u32_bytes) as usize;
+            let mut bloom_data = vec![0u8; bloom_len];
+            meta_cursor.read_exact(&mut bloom_data)?;
+            Some(bloom_data)
+        } else {
+            None
+        };
+        
+        // Build metadata stats
+        let metadata_stats = DataBlockMetadata {
+            min_key,
+            max_key,
+            min_timestamp,
+            max_timestamp,
+            record_count: metadata_record_count,
+            null_count,
+            metadata_columns,
+            min_values,
+            max_values,
+        };
+        
+        // Read records data section (4 bytes for length + metadata_len)
+        let remaining_data = &data[4 + metadata_len..];
+        let mut records_cursor = std::io::Cursor::new(remaining_data);
+        let mut records = Vec::with_capacity(record_count as usize);
+        
+        for _ in 0..record_count {
             // Read record length
             let mut len_bytes = [0u8; 4];
-            cursor.read_exact(&mut len_bytes)?;
+            records_cursor.read_exact(&mut len_bytes)?;
             let record_len = u32::from_le_bytes(len_bytes) as usize;
             
             // Read and deserialize record
             let mut record_data = vec![0u8; record_len];
-            cursor.read_exact(&mut record_data)?;
+            records_cursor.read_exact(&mut record_data)?;
             
             let record = SstRecord::deserialize(&record_data)
                 .context("Failed to deserialize SstRecord in DataBlock")?;
@@ -1355,11 +1653,14 @@ impl DataBlock {
         }
         
         Ok(DataBlock {
-            block_id: metadata.block_id,
+            block_id,
             records,
-            uncompressed_size: metadata.uncompressed_size,
+            uncompressed_size,
             compression_algorithm: CompressionAlgorithmSst::None,
             compression_ratio: 1.0,
+            metadata_stats,
+            block_bloom_filter,
+            has_deletes,
         })
     }
     
@@ -1373,13 +1674,6 @@ impl DataBlock {
     }
 }
 
-/// Metadata for DataBlock separate from record data
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct DataBlockMetadata {
-    pub block_id: u32,
-    pub record_count: u32,
-    pub uncompressed_size: u32,
-}
 
 
 /// Batch extraction statistics for performance monitoring

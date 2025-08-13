@@ -1,0 +1,60 @@
+graph TB
+    subgraph "Hierarchical SST Architecture"
+        Query[Query Request]
+        
+        subgraph "Stage 1: File-Level Filtering"
+            FileBloom[Global Bloom Filter<br/>85% skip rate]
+            FileMeta[File Metadata<br/>Key Range: user_00001-99999<br/>Time Range: 1000-9999]
+        end
+        
+        subgraph "Stage 2: Block-Level Filtering"
+            Block0[DataBlock 0<br/>Keys: user_00001-09999<br/>Category: A-C<br/>Score: 0-99]
+            Block1[DataBlock 1<br/>Keys: user_10000-19999<br/>Category: D-F<br/>Score: 100-199]
+            Block2[DataBlock 2<br/>Keys: user_20000-29999<br/>Category: G-I<br/>Score: 200-299]
+            BlockBloom[Block Bloom Filters<br/>95% skip rate]
+        end
+        
+        subgraph "Stage 3: Record Access"
+            Bytemuck[Bytemuck Zero-Copy<br/>70% compression]
+            DirectAccess[Direct SstRecord<br/>No VectorRecord conversion]
+            Streaming[Streaming Iterator<br/>Memory efficient]
+        end
+        
+        Query --> FileBloom
+        FileBloom -->|Pass| FileMeta
+        FileBloom -->|Skip 85%| Skip1[Skip File]
+        
+        FileMeta --> BlockBloom
+        BlockBloom -->|Select 5%| Block0
+        BlockBloom -->|Skip 95%| Skip2[Skip Blocks]
+        
+        Block0 --> Bytemuck
+        Block1 --> Bytemuck
+        Block2 --> Bytemuck
+        
+        Bytemuck --> DirectAccess
+        DirectAccess --> Streaming
+        Streaming --> Result[Filtered Results]
+    end
+    
+    subgraph "Cost Savings"
+        API[85% fewer API calls<br/>$450→$68/mo]
+        Bandwidth[95% less bandwidth<br/>$800→$40/mo]
+        CPU[80% CPU reduction<br/>$1200→$240/mo]
+        Total[86% total savings<br/>$25,224/year]
+    end
+    
+    Result --> API
+    Result --> Bandwidth
+    Result --> CPU
+    API --> Total
+    Bandwidth --> Total
+    CPU --> Total
+    
+    style Query fill:#e1f5fe
+    style FileBloom fill:#fff3e0
+    style BlockBloom fill:#fff3e0
+    style Bytemuck fill:#f3e5f5
+    style Total fill:#c8e6c9
+    style Skip1 fill:#ffcdd2
+    style Skip2 fill:#ffcdd2

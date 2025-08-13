@@ -633,7 +633,14 @@ impl SstableWriter {
         block_id: u32,
         _current_block_size: usize,
     ) -> Result<()> {
-        let data_block = DataBlock::new(block_id, current_block.to_vec());
+        // NEW: Build block-level bloom filters first (needed for DataBlock creation)
+        let (block_key_bloom, block_metadata_bloom) = self.build_block_bloom_filters(current_block, block_id);
+        
+        // Create DataBlock with hierarchical metadata
+        let mut data_block = DataBlock::new(block_id, current_block.to_vec());
+        
+        // Set block-level bloom filter (combines key and metadata blooms into one)
+        data_block.block_bloom_filter = block_key_bloom.clone().or(block_metadata_bloom.clone());
         
         let block_size = data_block.serialize().map(|v| v.len()).unwrap_or(0) as u32;
         
@@ -682,9 +689,6 @@ impl SstableWriter {
         let vector_format = self.analyze_block_vector_format(current_block);
         let compression_ratio = self.estimate_compression_ratio(current_block, &vector_format);
         
-        // NEW: Build block-level bloom filters if beneficial
-        let (block_key_bloom, block_metadata_bloom) = self.build_block_bloom_filters(current_block, block_id);
-        
         // Add enhanced index entry for first record in block
         if let Some(first_record) = current_block.first() {
             index_entries.push(IndexEntry {
@@ -697,9 +701,9 @@ impl SstableWriter {
                 metadata_min_values,
                 metadata_max_values,
                 metadata_null_counts,
-                // NEW: Hierarchical bloom filters
-                block_key_bloom,
-                block_metadata_bloom,
+                // NEW: Hierarchical bloom filters (reuse from DataBlock)
+                block_key_bloom: block_key_bloom.clone(),
+                block_metadata_bloom: block_metadata_bloom.clone(),
                 // NEW: Vector format optimization
                 vector_format,
                 compression_ratio,
@@ -811,8 +815,10 @@ impl SstableWriter {
     }
     
     /// NEW: Build block-level bloom filters if beneficial
-    fn build_block_bloom_filters(&self, block_records: &[SstRecord], block_id: u32) -> (Option<Vec<u8>>, Option<Vec<u8>>) {
+    /// Uses CompositeBloomFilter from core for consistency
+    fn build_block_bloom_filters(&self, block_records: &[SstRecord], _block_id: u32) -> (Option<Vec<u8>>, Option<Vec<u8>>) {
         // Only build block blooms for large blocks (>100 records) to avoid overhead
+        // This threshold balances bloom filter overhead vs. I/O savings
         if block_records.len() < 100 {
             return (None, None);
         }
@@ -823,11 +829,12 @@ impl SstableWriter {
         (block_key_bloom, block_metadata_bloom)
     }
     
-    /// Build key bloom filter for this block
+    /// Build key bloom filter for this block using core CompositeBloomFilter
     fn build_block_key_bloom(&self, block_records: &[SstRecord]) -> Option<Vec<u8>> {
         use crate::core::bloom::factory::BloomFilterFactory;
+        use crate::core::bloom::BloomFilterConfig;
         
-        let config = crate::core::bloom::BloomFilterConfig {
+        let config = BloomFilterConfig {
             strategy: crate::core::bloom::BloomStrategy::ByteAligned,
             expected_items: block_records.len(),
             false_positive_rate: Some(0.01), // 1% false positive rate for block blooms
@@ -842,9 +849,10 @@ impl SstableWriter {
         bloom.serialize().ok()
     }
     
-    /// Build metadata bloom filter for this block
+    /// Build metadata bloom filter for this block using core CompositeBloomFilter
     fn build_block_metadata_bloom(&self, block_records: &[SstRecord]) -> Option<Vec<u8>> {
         use crate::core::bloom::strategies::composite::CompositeBloomFilterBuilder;
+        use crate::core::bloom::{BloomFilterConfig, BloomStrategy};
         
         let config = crate::core::bloom::BloomFilterConfig {
             strategy: crate::core::bloom::BloomStrategy::Composite,
