@@ -339,7 +339,7 @@ mod tests {
             block_key_bloom: None,
             block_metadata_bloom: None,
             vector_format: crate::storage::engines::sst::VectorFormatType::Variable,
-            compression_ratio: 1.0,
+            // REMOVED: compression_ratio
         };
         
         let block_filter = BlockFilter {
@@ -369,7 +369,7 @@ mod tests {
             block_key_bloom: None,
             block_metadata_bloom: None,
             vector_format: crate::storage::engines::sst::VectorFormatType::Variable,
-            compression_ratio: 1.0,
+            // REMOVED: compression_ratio
         };
         
         // Query for ID before block's minimum

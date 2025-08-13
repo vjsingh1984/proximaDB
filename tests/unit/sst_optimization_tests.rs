@@ -196,9 +196,15 @@ fn test_data_block_zstd_compression() {
     }
     
     // Check compression statistics  
-    let (is_compressed, compression_ratio, uncompressed_size) = deserialized.compression_stats();
+    let (is_compressed, uncompressed_size) = deserialized.compression_stats();
     
     if is_compressed {
+        // Calculate compression ratio on-demand
+        let compression_ratio = if uncompressed_size > 0 {
+            serialized.len() as f32 / uncompressed_size as f32
+        } else {
+            1.0
+        };
         debug!("📦 DataBlock ZSTD compression - Ratio: {:.3}, Original: {} bytes, Compressed: {} bytes", 
             compression_ratio, uncompressed_size, serialized.len());
         assert!(compression_ratio < 0.95, "Compression should be beneficial");

@@ -306,6 +306,9 @@ impl SstCompactor {
                 continue;
             }
             
+            // Track if this ID has multiple versions (indicates an update)
+            let has_multiple_versions = versions.len() > 1;
+            
             // Sort by version (ascending), then by timestamp (ascending for same version)
             versions.sort_by(|a, b| {
                 let ver_a = Self::normalize_version(a.version);
@@ -339,8 +342,8 @@ impl SstCompactor {
             if let Some(mut record) = last_valid {
                 let selected_version = Self::normalize_version(record.version);
                 
-                // Track if this was an update (version > 1)
-                if selected_version > 1 {
+                // Track if this was an update (version > 1 OR multiple records with same ID)
+                if selected_version > 1 || has_multiple_versions {
                     stats.updated_vector_ids.push(id.clone());
                     stats.records_merged += 1;
                 }
@@ -469,6 +472,9 @@ impl SstCompactor {
                 continue;
             }
             
+            // Track if this ID has multiple versions (indicates an update)
+            let has_multiple_versions = versions.len() > 1;
+            
             // Sort by version (ascending), then by timestamp (ascending for same version)
             versions.sort_by(|a, b| {
                 let ver_a = Self::normalize_version(a.version);
@@ -502,8 +508,8 @@ impl SstCompactor {
             if let Some(mut record) = last_valid {
                 let selected_version = Self::normalize_version(record.version);
                 
-                // Track if this was an update (version > 1)
-                if selected_version > 1 {
+                // Track if this was an update (version > 1 OR multiple records with same ID)
+                if selected_version > 1 || has_multiple_versions {
                     stats.updated_vector_ids.push(id.clone());
                     stats.records_merged += 1;
                 }

@@ -135,13 +135,11 @@ impl CompactionManager {
 
     /// Discover files that can be compacted for a collection
     async fn discover_compactable_files(&self, collection_id: &str, collection_config: Option<&crate::proto::proximadb::Collection>) -> Result<Vec<String>> {
-        debug!("Discovering compactable files for collection: {}", collection_id);
         
         // Use provided collection config or return empty if not available
         let collection = match collection_config {
             Some(col) => col,
             None => {
-                debug!("🔍 Collection config not provided for {}, skipping compaction", collection_id);
                 return Ok(vec![]); // Return empty list instead of failing
             }
         };
@@ -149,13 +147,11 @@ impl CompactionManager {
         let storage_assignment = match &collection.storage_assignment {
             Some(assignment) => assignment,
             None => {
-                debug!("🔍 No storage assignment found for collection {}, skipping compaction", collection_id);
                 return Ok(vec![]); // Return empty list instead of failing
             }
         };
         
         let data_url = format!("{}/{}/data", storage_assignment.base_location, collection_id);
-        debug!("Storage assignment base_location: {}", storage_assignment.base_location);
         info!("🔍 Looking for parquet files in data directory: {}", data_url);
         
         // Get filesystem for the data directory

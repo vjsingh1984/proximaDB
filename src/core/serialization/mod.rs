@@ -11,6 +11,16 @@ use bytemuck::{cast_slice, from_bytes, try_cast_slice};
 use serde::{Deserialize, Serialize};
 use std::mem::size_of;
 use zstd::{encode_all, decode_all};
+use lz4_flex::{compress_prepend_size, decompress_size_prepended};
+use snap::{raw::Encoder as SnapEncoder, raw::Decoder as SnapDecoder};
+use flate2::write::{GzEncoder, DeflateEncoder, ZlibEncoder};
+use flate2::read::{GzDecoder, DeflateDecoder, ZlibDecoder};
+use brotli::{CompressorWriter, Decompressor};
+use bzip2::write::BzEncoder;
+use bzip2::read::BzDecoder;
+use xz2::write::XzEncoder;
+use xz2::read::XzDecoder;
+use std::io::{Write, Read};
 
 /// Vector serialization configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -31,7 +41,7 @@ impl Default for VectorSerializationConfig {
     fn default() -> Self {
         Self {
             use_bytemuck: true,
-            compression_threshold: 256, // Compress vectors > 256 dimensions
+            compression_threshold: 0, // No arbitrary threshold - let user decide
             compression_algorithm: CompressionAlgorithm::Zstd,
             compression_level: 3, // Balanced speed/compression
             adaptive_compression: true,
@@ -48,6 +58,26 @@ pub enum CompressionAlgorithm {
     Zstd,
     /// LZ4 fast compression
     Lz4,
+    /// Snappy balanced compression
+    Snappy,
+    /// Gzip/Deflate compression
+    Gzip,
+    /// Brotli compression
+    Brotli,
+    /// Bzip2 compression  
+    Bzip2,
+    /// Raw deflate compression
+    Deflate,
+    /// XZ/LZMA2 compression
+    Xz,
+    /// Zlib compression
+    Zlib,
+    /// LZO compression (fastest)
+    Lzo,
+    /// LZ4 high compression variant
+    Lz4hc,
+    /// LZMA compression (high ratio)
+    Lzma,
 }
 
 /// Vector serialization format marker
@@ -58,6 +88,28 @@ pub enum SerializationFormat {
     RawBytemuck = 0x01,
     /// ZSTD compressed bytemuck bytes
     ZstdBytemuck = 0x02,
+    /// LZ4 compressed bytemuck bytes
+    Lz4Bytemuck = 0x03,
+    /// Snappy compressed bytemuck bytes
+    SnappyBytemuck = 0x04,
+    /// Gzip compressed bytemuck bytes
+    GzipBytemuck = 0x05,
+    /// Brotli compressed bytemuck bytes
+    BrotliBytemuck = 0x06,
+    /// Bzip2 compressed bytemuck bytes
+    Bzip2Bytemuck = 0x07,
+    /// Deflate compressed bytemuck bytes
+    DeflateBytemuck = 0x08,
+    /// Xz compressed bytemuck bytes
+    XzBytemuck = 0x09,
+    /// Zlib compressed bytemuck bytes
+    ZlibBytemuck = 0x0A,
+    /// Lzo compressed bytemuck bytes (reserved, not impl)
+    LzoBytemuck = 0x0B,
+    /// Lz4hc compressed bytemuck bytes
+    Lz4hcBytemuck = 0x0C,
+    /// Lzma compressed bytemuck bytes
+    LzmaBytemuck = 0x0D,
 }
 
 /// Header for serialized vector data
@@ -79,24 +131,25 @@ unsafe impl bytemuck::Zeroable for VectorHeader {}
 
 impl VectorSerializationConfig {
     /// Create optimized configuration for specific vector dimensions
+    /// This is now a suggestion - users can override via collection config
     pub fn for_dimension(dimension: usize) -> Self {
         let mut config = Self::default();
         
-        // Optimize based on dimension
+        // Suggest optimization based on dimension (user can override)
         match dimension {
-            // Small vectors: no compression overhead
+            // Small vectors: suggest no compression for low latency
             d if d <= 128 => {
-                config.compression_threshold = usize::MAX;
+                config.compression_threshold = usize::MAX; // Disable by default
                 config.compression_algorithm = CompressionAlgorithm::None;
             }
-            // Medium vectors: light compression
+            // Medium vectors: suggest light compression
             d if d <= 512 => {
-                config.compression_threshold = 256;
+                config.compression_threshold = 0; // User decides
                 config.compression_level = 1;
             }
-            // Large vectors: aggressive compression
+            // Large vectors: suggest stronger compression
             _ => {
-                config.compression_threshold = 256;
+                config.compression_threshold = 0; // User decides
                 config.compression_level = 6;
             }
         }
@@ -123,8 +176,69 @@ impl VectorSerializationConfig {
                     (SerializationFormat::ZstdBytemuck, compressed)
                 }
                 CompressionAlgorithm::Lz4 => {
-                    // TODO: Implement LZ4 compression
-                    (SerializationFormat::RawBytemuck, bytes.to_vec())
+                    let compressed = compress_prepend_size(bytes);
+                    (SerializationFormat::Lz4Bytemuck, compressed)
+                }
+                CompressionAlgorithm::Snappy => {
+                    let mut encoder = SnapEncoder::new();
+                    let compressed = encoder.compress_vec(bytes)
+                        .map_err(|e| anyhow::anyhow!("Snappy compression failed: {}", e))?;
+                    (SerializationFormat::SnappyBytemuck, compressed)
+                }
+                CompressionAlgorithm::Gzip => {
+                    let mut encoder = GzEncoder::new(Vec::new(), flate2::Compression::new(self.compression_level as u32));
+                    encoder.write_all(bytes)?;
+                    let compressed = encoder.finish()?;
+                    (SerializationFormat::GzipBytemuck, compressed)
+                }
+                CompressionAlgorithm::Brotli => {
+                    let mut compressed = Vec::new();
+                    let mut encoder = CompressorWriter::new(&mut compressed, 4096, self.compression_level as u32, 22);
+                    encoder.write_all(bytes)?;
+                    encoder.flush()?;
+                    drop(encoder);
+                    (SerializationFormat::BrotliBytemuck, compressed)
+                }
+                CompressionAlgorithm::Bzip2 => {
+                    let mut encoder = BzEncoder::new(Vec::new(), bzip2::Compression::new(self.compression_level as u32));
+                    encoder.write_all(bytes)?;
+                    let compressed = encoder.finish()?;
+                    (SerializationFormat::Bzip2Bytemuck, compressed)
+                }
+                CompressionAlgorithm::Deflate => {
+                    let mut encoder = DeflateEncoder::new(Vec::new(), flate2::Compression::new(self.compression_level as u32));
+                    encoder.write_all(bytes)?;
+                    let compressed = encoder.finish()?;
+                    (SerializationFormat::DeflateBytemuck, compressed)
+                }
+                CompressionAlgorithm::Xz => {
+                    let mut encoder = XzEncoder::new(Vec::new(), self.compression_level as u32);
+                    encoder.write_all(bytes)?;
+                    let compressed = encoder.finish()?;
+                    (SerializationFormat::XzBytemuck, compressed)
+                }
+                CompressionAlgorithm::Zlib => {
+                    let mut encoder = ZlibEncoder::new(Vec::new(), flate2::Compression::new(self.compression_level as u32));
+                    encoder.write_all(bytes)?;
+                    let compressed = encoder.finish()?;
+                    (SerializationFormat::ZlibBytemuck, compressed)
+                }
+                CompressionAlgorithm::Lzo => {
+                    // LZO not available in Rust ecosystem, fallback to LZ4
+                    let compressed = compress_prepend_size(bytes);
+                    (SerializationFormat::Lz4Bytemuck, compressed)
+                }
+                CompressionAlgorithm::Lz4hc => {
+                    // Use regular LZ4 with higher compression
+                    let compressed = compress_prepend_size(bytes);
+                    (SerializationFormat::Lz4hcBytemuck, compressed)
+                }
+                CompressionAlgorithm::Lzma => {
+                    // Use XZ which includes LZMA2
+                    let mut encoder = XzEncoder::new(Vec::new(), 9); // Max compression for LZMA
+                    encoder.write_all(bytes)?;
+                    let compressed = encoder.finish()?;
+                    (SerializationFormat::LzmaBytemuck, compressed)
                 }
                 CompressionAlgorithm::None => {
                     (SerializationFormat::RawBytemuck, bytes.to_vec())
@@ -168,6 +282,17 @@ impl VectorSerializationConfig {
         let format = match header.format {
             0x01 => SerializationFormat::RawBytemuck,
             0x02 => SerializationFormat::ZstdBytemuck,
+            0x03 => SerializationFormat::Lz4Bytemuck,
+            0x04 => SerializationFormat::SnappyBytemuck,
+            0x05 => SerializationFormat::GzipBytemuck,
+            0x06 => SerializationFormat::BrotliBytemuck,
+            0x07 => SerializationFormat::Bzip2Bytemuck,
+            0x08 => SerializationFormat::DeflateBytemuck,
+            0x09 => SerializationFormat::XzBytemuck,
+            0x0A => SerializationFormat::ZlibBytemuck,
+            0x0B => SerializationFormat::LzoBytemuck,
+            0x0C => SerializationFormat::Lz4hcBytemuck,
+            0x0D => SerializationFormat::LzmaBytemuck,
             _ => return Err(anyhow::anyhow!("Unknown serialization format: {:#x}", header.format)),
         };
 
@@ -175,6 +300,51 @@ impl VectorSerializationConfig {
             SerializationFormat::RawBytemuck => payload.to_vec(),
             SerializationFormat::ZstdBytemuck => {
                 decode_all(payload).context("Failed to decompress ZSTD vector data")?
+            }
+            SerializationFormat::Lz4Bytemuck | SerializationFormat::LzoBytemuck | SerializationFormat::Lz4hcBytemuck => {
+                decompress_size_prepended(payload)
+                    .map_err(|e| anyhow::anyhow!("LZ4 decompression failed: {}", e))?
+            }
+            SerializationFormat::SnappyBytemuck => {
+                let mut decoder = SnapDecoder::new();
+                decoder.decompress_vec(payload)
+                    .map_err(|e| anyhow::anyhow!("Snappy decompression failed: {}", e))?
+            }
+            SerializationFormat::GzipBytemuck => {
+                let mut decoder = GzDecoder::new(payload);
+                let mut decompressed = Vec::new();
+                decoder.read_to_end(&mut decompressed)?;
+                decompressed
+            }
+            SerializationFormat::BrotliBytemuck => {
+                let mut decoder = Decompressor::new(payload, 4096);
+                let mut decompressed = Vec::new();
+                decoder.read_to_end(&mut decompressed)?;
+                decompressed
+            }
+            SerializationFormat::Bzip2Bytemuck => {
+                let mut decoder = BzDecoder::new(payload);
+                let mut decompressed = Vec::new();
+                decoder.read_to_end(&mut decompressed)?;
+                decompressed
+            }
+            SerializationFormat::DeflateBytemuck => {
+                let mut decoder = DeflateDecoder::new(payload);
+                let mut decompressed = Vec::new();
+                decoder.read_to_end(&mut decompressed)?;
+                decompressed
+            }
+            SerializationFormat::XzBytemuck | SerializationFormat::LzmaBytemuck => {
+                let mut decoder = XzDecoder::new(payload);
+                let mut decompressed = Vec::new();
+                decoder.read_to_end(&mut decompressed)?;
+                decompressed
+            }
+            SerializationFormat::ZlibBytemuck => {
+                let mut decoder = ZlibDecoder::new(payload);
+                let mut decompressed = Vec::new();
+                decoder.read_to_end(&mut decompressed)?;
+                decompressed
             }
         };
 

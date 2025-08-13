@@ -423,6 +423,8 @@ impl FileSystem for LocalFileSystem {
             );
         }
         
+        // Extra detailed tracing for our SST debug
+        
         // Read the exact amount of bytes
         let mut buffer = vec![0u8; bytes_to_read];
         match file.read_exact(&mut buffer).await {

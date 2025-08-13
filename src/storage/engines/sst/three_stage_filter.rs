@@ -122,7 +122,6 @@ impl ThreeStageFilterPipeline {
         
         // Skip bloom filtering for compaction
         if self.should_skip_filtering() {
-            debug!("🚀 Stage 1: Compaction mode - skipping bloom filter check");
             stats.stage1_duration_us = 0;
             return Ok(true);
         }
@@ -554,7 +553,7 @@ mod tests {
                 ],
                 uncompressed_size: 1024,
                 compression_algorithm: crate::storage::engines::sst::CompressionAlgorithmSst::None,
-                compression_ratio: 1.0,
+                // REMOVED: compression_ratio
                 metadata_stats: crate::storage::engines::sst::DataBlockMetadata::default(),
                 block_bloom_filter: None,
                 has_deletes: false,
@@ -583,7 +582,7 @@ mod tests {
                 block_metadata_bloom: None,
                 // NEW: Vector format optimization
                 vector_format: VectorFormatType::Variable,
-                compression_ratio: 1.0,
+                // REMOVED: compression_ratio
             },
         ]
     }

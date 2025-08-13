@@ -150,20 +150,16 @@ impl UnifiedSearchEngine for SstUnifiedSearchEngine {
         // 1. Get SSTable files - use provided paths if available (FAST PATH)
         let sstable_files = if let Some(ref paths) = context.storage_info.file_paths {
             // Files already discovered by engine - use them directly
-            debug!("📁 SST: Using {} pre-discovered files from context", paths.len());
             // Using pre-discovered files (FAST PATH)
             paths.clone()
         } else {
             // Fallback: discover files from filesystem (SLOW PATH)
             let collection_storage_url = &self.storage_url;
-            debug!("⚠️ SST SEARCH: No files provided, discovering from: {}", collection_storage_url);
             self.discover_sstable_files(context, collection_storage_url).await?
         };
-        debug!("📁 SST SEARCH: Processing {} SSTable files", sstable_files.len());
         
         // 2. Generate SST-specific I/O optimization hints
         let io_hints = self.generate_sst_io_hints(&sstable_files, context, params);
-        debug!("⚡ SST I/O optimization hints: {:?}", io_hints);
         
         // 3. Apply optimization hints to reduce files to search
         let optimized_files = self.apply_optimization_hints(
@@ -225,18 +221,14 @@ impl UnifiedSearchEngine for SstUnifiedSearchEngine {
         }
         
         // 4. Use UnifiedSstableReader for optimized search
-        debug!("🔍 SST SEARCH: Calling sstable_reader.search_vectors with {} files", 
-                collection_context.sstable_files.len());
         let mut search_results = self.sstable_reader.search_vectors(
             &params_with_columns,
             &collection_context,
         ).await?;
-        debug!("🔍 SST SEARCH: Got {} results from sstable_reader", search_results.len());
         
         // 5. Apply MVCC resolution if enabled
         if self.config.enable_mvcc_resolution {
             search_results = self.apply_mvcc_resolution(search_results)?;
-            debug!("🔍 SST SEARCH: After MVCC resolution: {} results", search_results.len());
         }
         
         let processing_time = start_time.elapsed().as_micros() as u64;
@@ -244,7 +236,6 @@ impl UnifiedSearchEngine for SstUnifiedSearchEngine {
         // Log sample results if debug logging enabled
         if tracing::enabled!(tracing::Level::DEBUG) {
             for (i, result) in search_results.iter().take(3).enumerate() {
-                debug!("  SST Result {}: id={}, score={}", i, result.id, result.score);
             }
         }
         

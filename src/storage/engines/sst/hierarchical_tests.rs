@@ -71,7 +71,6 @@ mod tests {
         
         // Serialize and deserialize
         let serialized = block.serialize().expect("Should serialize");
-        println!("Serialized size: {} bytes", serialized.len());
         
         let deserialized = DataBlock::deserialize(&serialized)
             .expect("Should deserialize");
@@ -228,7 +227,6 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let sst_path = temp_dir.path().join("test_metadata.sst").to_str().unwrap().to_string();
         
-        println!("DEBUG: SST path = {}", sst_path);
         
         // Write SST with specific metadata patterns
         use crate::storage::persistence::filesystem::FilesystemConfig;
@@ -237,10 +235,8 @@ mod tests {
             ..Default::default()
         };
         
-        println!("DEBUG: Creating FilesystemFactory with config: {:?}", config);
         let fs = Arc::new(FilesystemFactory::new(config).await.unwrap());
         
-        println!("DEBUG: Creating SstableWriter");
         let writer = SstableWriter::new(&sst_path, 2 * 1024 * 1024, fs.clone());
         
         let mut all_records = BTreeMap::new();
@@ -271,40 +267,31 @@ mod tests {
             all_records.insert(record.id.clone(), record);
         }
         
-        println!("DEBUG: Writing {} records to SST", all_records.len());
         let record_count = all_records.len();
         let sorted_records_iter = all_records.into_iter();
         writer.write_sorted_records(sorted_records_iter, record_count).await.expect("Should write");
         
         // Verify file exists
-        println!("DEBUG: Checking if file exists at: {}", sst_path);
         assert!(std::path::Path::new(&sst_path).exists(), "SST file should exist");
         
         let file_size = std::fs::metadata(&sst_path).unwrap().len();
-        println!("DEBUG: SST file size = {} bytes", file_size);
         
         // Read and verify metadata statistics
-        println!("DEBUG: Opening ModularBlockReader");
         let mut reader = match ModularBlockReader::open(fs.clone(), &sst_path).await {
             Ok(r) => {
-                println!("DEBUG: Successfully opened reader");
                 r
             }
             Err(e) => {
-                println!("DEBUG: Failed to open reader: {:?}", e);
                 panic!("Failed to open reader: {:?}", e);
             }
         };
         
         // Read first block
-        println!("DEBUG: Attempting to read data block 0");
         let block0 = match reader.read_data_block(0, ReadMode::Buffered).await {
             Ok(b) => {
-                println!("DEBUG: Successfully read block 0 with {} records", b.records.len());
                 b
             }
             Err(e) => {
-                println!("DEBUG: Failed to read block 0: {:?}", e);
                 panic!("Should read block 0: {:?}", e);
             }
         };
@@ -376,7 +363,6 @@ mod tests {
         for block_id in block_ids {
             match reader.read_data_block(block_id, ReadMode::Buffered).await {
                 Ok(block) => {
-                    println!("Successfully read block {} with {} records", block_id, block.records.len());
                     
                     // Verify block has proper hierarchical metadata
                     assert!(block.metadata_stats.record_count > 0);
@@ -393,7 +379,6 @@ mod tests {
                 }
                 Err(e) => {
                     // It's ok if block doesn't exist (we might have fewer blocks)
-                    println!("Block {} doesn't exist or error: {}", block_id, e);
                 }
             }
         }

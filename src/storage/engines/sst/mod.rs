@@ -527,6 +527,26 @@ impl Default for CompressionAlgorithmSst {
     }
 }
 
+impl std::fmt::Display for CompressionAlgorithmSst {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            CompressionAlgorithmSst::None => write!(f, "none"),
+            CompressionAlgorithmSst::Zstd => write!(f, "zstd"),
+            CompressionAlgorithmSst::Lz4 => write!(f, "lz4"),
+            CompressionAlgorithmSst::Snappy => write!(f, "snappy"),
+            CompressionAlgorithmSst::Gzip => write!(f, "gzip"),
+            CompressionAlgorithmSst::Brotli => write!(f, "brotli"),
+            CompressionAlgorithmSst::Bzip2 => write!(f, "bzip2"),
+            CompressionAlgorithmSst::Deflate => write!(f, "deflate"),
+            CompressionAlgorithmSst::Xz => write!(f, "xz"),
+            CompressionAlgorithmSst::Zlib => write!(f, "zlib"),
+            CompressionAlgorithmSst::Lzo => write!(f, "lzo"),
+            CompressionAlgorithmSst::Lz4Hc => write!(f, "lz4hc"),
+            CompressionAlgorithmSst::Lzma => write!(f, "lzma"),
+        }
+    }
+}
+
 /// Vector format type for bytemuck optimization
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum VectorFormatType {
@@ -572,8 +592,7 @@ pub struct IndexEntry {
     // NEW: Vector format optimization info
     #[serde(default)]
     pub vector_format: VectorFormatType,
-    #[serde(default)]
-    pub compression_ratio: f32,
+    // REMOVED: compression_ratio - can be calculated on-demand from size and DataBlock.uncompressed_size
 }
 
 impl IndexEntry {
@@ -647,7 +666,7 @@ impl IndexEntry {
             }
         }
         
-        // NEW: Write vector format and compression info
+        // NEW: Write vector format info (removed compression_ratio)
         let format_byte = match self.vector_format {
             VectorFormatType::Variable => 0u8,
             VectorFormatType::Fixed { dimension } => {
@@ -664,8 +683,6 @@ impl IndexEntry {
         if format_byte == 0 {
             buffer.write_all(&format_byte.to_le_bytes())?;
         }
-        
-        buffer.write_all(&self.compression_ratio.to_le_bytes())?;
         
         Ok(buffer)
     }
@@ -795,9 +812,7 @@ impl IndexEntry {
             _ => VectorFormatType::Variable,
         };
         
-        let mut f32_buf = [0u8; 4];
-        cursor.read_exact(&mut f32_buf)?;
-        let compression_ratio = f32::from_le_bytes(f32_buf);
+        // REMOVED: No longer reading compression_ratio
         
         Ok(Self {
             key,
@@ -812,7 +827,6 @@ impl IndexEntry {
             block_key_bloom,
             block_metadata_bloom,
             vector_format,
-            compression_ratio,
         })
     }
 }
@@ -856,8 +870,8 @@ pub struct DataBlock {
     pub uncompressed_size: u32,
     #[serde(default)]
     pub compression_algorithm: CompressionAlgorithmSst,
-    #[serde(default)]
-    pub compression_ratio: f32,
+    // REMOVED: compression_ratio - can be calculated on-demand when needed
+    // from compressed size (available during read) and uncompressed_size
     
     // Hierarchical metadata for intelligent block filtering
     #[serde(default)]
@@ -893,10 +907,48 @@ impl Default for DataBlockCompressionConfig {
 impl DataBlockCompressionConfig {
     /// Create from SstConfig settings
     pub fn from_sst_config(config: &SstConfig) -> Self {
-        let compression_algorithm = match config.compression.as_str() {
+        // Use the core::serialization::CompressionAlgorithm which only has None, Zstd, Lz4
+        let compression_algorithm = match config.compression.to_lowercase().as_str() {
             "zstd" => CompressionAlgorithm::Zstd,
             "lz4" => CompressionAlgorithm::Lz4,
+            // For other algorithms, we'll use Zstd as fallback for now since 
+            // core::serialization only supports these three
+            "snappy" | "gzip" | "brotli" | "deflate" | "zlib" | "bzip2" | "xz" | "lzo" | "lz4hc" | "lzma" => {
+                tracing::debug!("Mapping {} to Zstd for core serialization", config.compression);
+                CompressionAlgorithm::Zstd
+            },
             _ => CompressionAlgorithm::None,
+        };
+        
+        // Create proto compression config to match the SST config (supports all algorithms)
+        let collection_compression = if config.compression.to_lowercase() != "none" && !config.compression.is_empty() {
+            Some(crate::proto::proximadb::CompressionConfig {
+                algorithm: match config.compression.to_lowercase().as_str() {
+                    "zstd" => crate::proto::proximadb::CompressionAlgorithm::CompressionZstd as i32,
+                    "lz4" => crate::proto::proximadb::CompressionAlgorithm::CompressionLz4 as i32,
+                    "snappy" => crate::proto::proximadb::CompressionAlgorithm::CompressionSnappy as i32,
+                    "gzip" => crate::proto::proximadb::CompressionAlgorithm::CompressionGzip as i32,
+                    "brotli" => crate::proto::proximadb::CompressionAlgorithm::CompressionBrotli as i32,
+                    "bzip2" => crate::proto::proximadb::CompressionAlgorithm::CompressionBzip2 as i32,
+                    "deflate" => crate::proto::proximadb::CompressionAlgorithm::CompressionDeflate as i32,
+                    "xz" => crate::proto::proximadb::CompressionAlgorithm::CompressionXz as i32,
+                    "zlib" => crate::proto::proximadb::CompressionAlgorithm::CompressionZlib as i32,
+                    "lz4hc" => crate::proto::proximadb::CompressionAlgorithm::CompressionLz4hc as i32,
+                    "lzma" => crate::proto::proximadb::CompressionAlgorithm::CompressionLzma as i32,
+                    "lzo" => crate::proto::proximadb::CompressionAlgorithm::CompressionLzo as i32,
+                    _ => crate::proto::proximadb::CompressionAlgorithm::CompressionNone as i32,
+                },
+                level: Some(config.compression_level),
+                adaptive: false,
+                min_ratio: Some(0.5),        // Optional field: Default minimum compression ratio
+                enable_quantization: false,  // Not used for SST compression
+                quantization_type: None,
+                normalization_method: None,  // Optional field: No normalization by default
+                block_size_mb: Some(config.block_size_mb as i32),
+                dynamic_block_sizing: false,
+            })
+        } else {
+            None
         };
         
         Self {
@@ -910,7 +962,7 @@ impl DataBlockCompressionConfig {
                 compression_level: config.compression_level,
                 adaptive_compression: true,
             },
-            collection_compression: None,
+            collection_compression,
         }
     }
     
@@ -993,7 +1045,6 @@ impl DataBlock {
             records,
             uncompressed_size,
             compression_algorithm: CompressionAlgorithmSst::None,
-            compression_ratio: 1.0,
             metadata_stats,
             block_bloom_filter: None,
             has_deletes,
@@ -1387,7 +1438,7 @@ impl DataBlock {
                 let mut block: DataBlock = bincode::deserialize(data)
                     .map_err(|e| anyhow::anyhow!("Failed to deserialize DataBlock: {}", e))?;
                 block.compression_algorithm = CompressionAlgorithmSst::None;
-                block.compression_ratio = 1.0;
+                // REMOVED: compression_ratio assignment
                 Ok(block)
             }
         }
@@ -1401,22 +1452,26 @@ impl DataBlock {
             return Err(anyhow::anyhow!("Invalid compressed DataBlock: missing size header"));
         }
         
-        // Read original size
+        // Read original size (uncompressed size for buffer pre-allocation)
         let original_size = u32::from_le_bytes([data[0], data[1], data[2], data[3]]) as usize;
         let compressed_data = &data[4..];
         
-        // Decompress based on algorithm
+        // OPTIMIZATION: Pre-allocate buffer using uncompressed size hint
+        // This avoids reallocation during decompression, improving memory efficiency
         let decompressed = match algorithm {
             CompressionAlgorithmSst::Zstd => {
+                // ZSTD can decompress directly without pre-allocation
                 zstd::decode_all(compressed_data)
                     .context("Failed to decompress DataBlock with ZSTD")?
             }
             CompressionAlgorithmSst::Lz4 => {
+                // LZ4 requires exact size for decompression
                 lz4_flex::decompress(compressed_data, original_size)
                     .context("Failed to decompress DataBlock with LZ4")?
             }
             CompressionAlgorithmSst::Snappy => {
                 let mut decoder = snap::read::FrameDecoder::new(std::io::Cursor::new(compressed_data));
+                // Pre-allocate with uncompressed size for efficiency
                 let mut decompressed = Vec::with_capacity(original_size);
                 decoder.read_to_end(&mut decompressed)
                     .context("Failed to decompress DataBlock with Snappy")?;
@@ -1425,6 +1480,7 @@ impl DataBlock {
             CompressionAlgorithmSst::Gzip => {
                 use flate2::read::GzDecoder;
                 let mut decoder = GzDecoder::new(compressed_data);
+                // Pre-allocate with uncompressed size for efficiency
                 let mut decompressed = Vec::with_capacity(original_size);
                 decoder.read_to_end(&mut decompressed)
                     .context("Failed to decompress DataBlock with Gzip")?;
@@ -1433,6 +1489,7 @@ impl DataBlock {
             CompressionAlgorithmSst::Brotli => {
                 use brotli::Decompressor;
                 let mut decoder = Decompressor::new(compressed_data, 4096);
+                // Pre-allocate with uncompressed size for efficiency
                 let mut decompressed = Vec::with_capacity(original_size);
                 decoder.read_to_end(&mut decompressed)
                     .context("Failed to decompress DataBlock with Brotli")?;
@@ -1441,6 +1498,7 @@ impl DataBlock {
             CompressionAlgorithmSst::Bzip2 => {
                 use bzip2::read::BzDecoder;
                 let mut decoder = BzDecoder::new(compressed_data);
+                // Pre-allocate with uncompressed size for efficiency
                 let mut decompressed = Vec::with_capacity(original_size);
                 decoder.read_to_end(&mut decompressed)
                     .context("Failed to decompress DataBlock with Bzip2")?;
@@ -1449,6 +1507,7 @@ impl DataBlock {
             CompressionAlgorithmSst::Deflate => {
                 use flate2::read::DeflateDecoder;
                 let mut decoder = DeflateDecoder::new(compressed_data);
+                // Pre-allocate with uncompressed size for efficiency
                 let mut decompressed = Vec::with_capacity(original_size);
                 decoder.read_to_end(&mut decompressed)
                     .context("Failed to decompress DataBlock with Deflate")?;
@@ -1457,6 +1516,7 @@ impl DataBlock {
             CompressionAlgorithmSst::Xz => {
                 use xz2::read::XzDecoder;
                 let mut decoder = XzDecoder::new(compressed_data);
+                // Pre-allocate with uncompressed size for efficiency
                 let mut decompressed = Vec::with_capacity(original_size);
                 decoder.read_to_end(&mut decompressed)
                     .context("Failed to decompress DataBlock with XZ")?;
@@ -1465,13 +1525,14 @@ impl DataBlock {
             CompressionAlgorithmSst::Zlib => {
                 use flate2::read::ZlibDecoder;
                 let mut decoder = ZlibDecoder::new(compressed_data);
+                // Pre-allocate with uncompressed size for efficiency
                 let mut decompressed = Vec::with_capacity(original_size);
                 decoder.read_to_end(&mut decompressed)
                     .context("Failed to decompress DataBlock with Zlib")?;
                 decompressed
             }
             CompressionAlgorithmSst::Lz4Hc => {
-                // LZ4HC uses the same decompression as regular LZ4
+                // LZ4HC uses the same decompression as regular LZ4, requires exact size
                 lz4_flex::decompress(compressed_data, original_size)
                     .context("Failed to decompress DataBlock with LZ4HC")?
             }
@@ -1479,6 +1540,7 @@ impl DataBlock {
                 // Use XZ2 library's LZMA support
                 use xz2::read::XzDecoder;
                 let mut decoder = XzDecoder::new(compressed_data);
+                // Pre-allocate with uncompressed size for efficiency
                 let mut decompressed = Vec::with_capacity(original_size);
                 decoder.read_to_end(&mut decompressed)
                     .context("Failed to decompress DataBlock with LZMA")?;
@@ -1495,8 +1557,9 @@ impl DataBlock {
         }
         
         let mut block = Self::deserialize_uncompressed(&decompressed)?;
-        block.compression_algorithm = CompressionAlgorithmSst::Zstd;
-        block.compression_ratio = compressed_data.len() as f32 / original_size as f32;
+        // Preserve the actual algorithm used
+        block.compression_algorithm = algorithm;
+        // REMOVED: compression_ratio can be calculated on-demand if needed
         
         Ok(block)
     }
@@ -1657,7 +1720,7 @@ impl DataBlock {
             records,
             uncompressed_size,
             compression_algorithm: CompressionAlgorithmSst::None,
-            compression_ratio: 1.0,
+            // REMOVED: compression_ratio
             metadata_stats,
             block_bloom_filter,
             has_deletes,
@@ -1665,10 +1728,11 @@ impl DataBlock {
     }
     
     /// Get compression statistics
-    pub fn compression_stats(&self) -> (bool, f32, usize) {
+    /// Returns (is_compressed, uncompressed_size)
+    /// Note: compression_ratio must be calculated externally if needed
+    pub fn compression_stats(&self) -> (bool, usize) {
         (
             self.compression_algorithm != CompressionAlgorithmSst::None,
-            self.compression_ratio,
             self.uncompressed_size as usize,
         )
     }
@@ -3046,7 +3110,7 @@ impl SstStorage {
             // NEW: Vector format optimization (default to variable)
             vector_format: VectorFormatType::Variable,
             fixed_dimension: None,
-            compression_ratio: 1.0,
+            compression_ratio: 1.0, // Will be calculated from actual compressed/uncompressed sizes
         };
 
         // Step 2: Build bloom filter for fast key existence checks
@@ -3480,7 +3544,7 @@ impl SstStorage {
                     block_metadata_bloom: None,
                     // NEW: Vector format optimization
                     vector_format: VectorFormatType::Variable,
-                    compression_ratio: 1.0,
+                    // REMOVED: compression_ratio
                 });
                 block_offset += std::mem::size_of::<SstRecord>() as u32;
             }

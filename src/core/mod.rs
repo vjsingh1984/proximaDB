@@ -11,6 +11,7 @@ pub mod indexing;
 pub mod metadata_query;
 pub mod search;
 pub mod serialization;
+pub mod compression;  // 🆕 UNIFIED COMPRESSION MODULE
 pub mod storage;
 pub mod foundation;
 pub mod storage_layout;

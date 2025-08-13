@@ -24,7 +24,7 @@ mod tests {
             path: "/data/test.sst".to_string(),
             size: 1024 * 1024,
             compression_algorithm: compression,
-            compression_ratio: compression.map(|_| 0.5),
+            // REMOVED: compression_ratio - now calculated from actual sizes
             is_quantized: quantized,
             quantization_config: if quantized {
                 Some(QuantizationConfig {
@@ -365,7 +365,7 @@ mod tests {
         let stats = planner.compression_stats.get(&CompressionAlgorithmSst::Zstd).unwrap();
         assert_eq!(stats.total_operations, 2);
         assert_eq!(stats.avg_decompression_time_ms, 110.0);
-        assert_eq!(stats.avg_compression_ratio, 0.55);
+        // REMOVED: avg_compression_ratio check - no longer tracked in stats
         
         // Update quantization stats
         planner.update_quantization_stats(QuantizationType::BinaryQuantization, 0.95, 10.0).await;

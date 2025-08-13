@@ -1,8 +1,15 @@
 %%{init: {'theme':'neutral', 'themeVariables': {'primaryColor':'#3b82f6','primaryTextColor':'#1f2937','primaryBorderColor':'#6b7280','lineColor':'#9ca3af','secondaryColor':'#10b981','tertiaryColor':'#f59e0b','background':'transparent','mainBkg':'#f3f4f6','secondBkg':'#e5e7eb','textColor':'#1f2937'}}}%%
 graph TB
+    subgraph "Unified Compression Module"
+        UC1["Core Module<br/>src/core/compression/mod.rs"]
+        UC2["13 Algorithms Supported<br/>Context-Aware Processing"]
+        UC3["Parquet Integration<br/>Arrow WriterProperties"]
+        UC4["Zero-Copy Architecture<br/>Elimination of Duplication"]
+    end
+    
     subgraph "Core Principles"
         P1["100% Vector Fidelity<br/>Non-Negotiable"]
-        P2["Lossless Only for FP32<br/>ZSTD Compression"]
+        P2["Lossless Only for FP32<br/>13 Algorithm Support"]
         P3["Quantization = Secondary Index<br/>Optional, User Choice"]
         P4["Engine-Specific Strategy<br/>SST vs VIPER"]
     end
@@ -10,16 +17,16 @@ graph TB
     subgraph "SST Engine Strategy"
         direction TB
         SST1["❌ NEVER Quantize<br/>Row storage = read entire record"]
-        SST2["✅ FP32 + ZSTD Only<br/>20-40% compression"]
+        SST2["✅ FP32 + All Algorithms<br/>20-95% compression possible"]
         SST3["Dynamic Block Size<br/>4-16MB based on dimensions"]
         
-        SST1 --> SSTBlock["Block Format<br/>2000-2500 vectors/block<br/>ZSTD Level 1-9"]
+        SST1 --> SSTBlock["Block Format<br/>2000-2500 vectors/block<br/>13 Algorithm Choices"]
     end
     
     subgraph "VIPER Engine Strategy"
         direction TB
         VIP1["✅ Dual Storage<br/>FP32 (100% fidelity) + Quantized"]
-        VIP2["FP32 Column<br/>Lossless ZSTD only"]
+        VIP2["FP32 Column<br/>Lossless All Algorithms"]
         VIP3["Quantized Column<br/>Normalization + PQ allowed"]
         
         VIP1 --> VIPNorm["Normalization (Quantized Only)<br/>Mean: 2-3x boost<br/>Trimmed Mean: 3-4x boost<br/>Median: 4-5x boost"]
@@ -35,9 +42,9 @@ graph TB
     
     subgraph "Compression Profiles"
         direction TB
-        Prof1["Write-Optimized<br/>ZSTD-1, 4MB blocks"]
-        Prof2["Balanced (Default)<br/>ZSTD-3, 8MB blocks"]
-        Prof3["Storage-Optimized<br/>ZSTD-9, 16MB blocks"]
+        Prof1["Write-Optimized<br/>LZ4/Snappy, 4MB blocks"]
+        Prof2["Balanced (Default)<br/>ZSTD-3/Gzip-6, 8MB blocks"]
+        Prof3["Storage-Optimized<br/>Brotli-8/XZ-9, 16MB blocks"]
     end
     
     subgraph "User Configuration"
@@ -47,6 +54,11 @@ graph TB
     end
     
     %% Connections
+    UC1 --> P1
+    UC2 --> SST2
+    UC2 --> VIP2
+    UC3 --> VIP2
+    
     P1 --> SST1
     P1 --> VIP1
     P4 --> SST1
@@ -57,12 +69,14 @@ graph TB
     SST2 --> Q3
     
     %% Styling
+    classDef unified fill:#e3f2fd
     classDef principle fill:#e8f5e9
     classDef sst fill:#ffebee
     classDef viper fill:#e1f5fe
     classDef search fill:#fff3e0
     classDef profile fill:#f3e5f5
     
+    class UC1,UC2,UC3,UC4 unified
     class P1,P2,P3,P4 principle
     class SST1,SST2,SST3,SSTBlock sst
     class VIP1,VIP2,VIP3,VIPNorm,VIPQuant viper

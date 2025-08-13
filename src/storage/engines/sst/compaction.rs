@@ -546,7 +546,6 @@ impl CompactionManager {
         
         for input_file in &task.input_files {
             let input_path = input_file.to_string_lossy();
-            debug!("Reading SST file using unified reader: {}", input_path);
             
             // 🚀 UNIFIED READER: Use optimized compaction reader
             match self.read_all_records_from_file_unified(&input_path).await {
@@ -609,7 +608,6 @@ impl CompactionManager {
                 merged_records.push((id, record));
             } else {
                 // Same ID, skip (we already have the latest version due to sorting)
-                debug!("Skipping duplicate record for ID: {}", id);
             }
         }
         
@@ -659,8 +657,6 @@ impl CompactionManager {
             // Skip expired records completely - they are physically deleted
             if is_expired {
                 expired_records_count += 1;
-                debug!("⏰ LSM COMPACTION: Physically deleting expired record {} (expired at {})", 
-                      id, sst_record.expires_at.unwrap());
                 // Track deleted vector for AXIS
                 deleted_vector_ids.push(id.to_string());
                 continue;
@@ -674,8 +670,6 @@ impl CompactionManager {
                 
                 if !keep_tombstone {
                     tombstones_removed_count += 1;
-                    debug!("🗑️ LSM COMPACTION: Removing old tombstone {} (age: {}ms)", 
-                          id, age);
                     // Track deleted vector for AXIS
                     deleted_vector_ids.push(id.to_string());
                 }
@@ -765,7 +759,6 @@ impl CompactionManager {
         // Use task-specific block size if provided, otherwise fall back to server config
         let block_size_mb = task.block_size_mb.unwrap_or(_config.block_size_mb);
         let block_size = (block_size_mb * 1024 * 1024) as usize;
-        debug!("📊 COMPACTION: Using block size: {}MB", block_size_mb);
         
         // TODO: Pass filesystem from compaction manager - for now create a new factory
         let filesystem_factory = Arc::new(

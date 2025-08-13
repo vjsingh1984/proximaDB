@@ -56,6 +56,58 @@ impl SstableWriter {
         }
     }
     
+    /// Serialize a data block with optional compression
+    /// Unified path for all compression algorithms including None
+    fn compress_block_streaming(
+        &self,
+        data_block: &DataBlock,
+        algorithm: super::CompressionAlgorithmSst,
+        level: u8,
+    ) -> Result<Vec<u8>> {
+        use super::{DataBlockCompressionConfig, VectorSerializationConfig};
+        use crate::proto::proximadb::{CompressionConfig, CompressionAlgorithm};
+        
+        // For None algorithm, disable compression entirely
+        let (enable_compression, compression_config) = if algorithm == super::CompressionAlgorithmSst::None {
+            (false, None)
+        } else {
+            // Map SST algorithm to proto algorithm for the config
+            let proto_algorithm = match algorithm {
+                super::CompressionAlgorithmSst::Zstd => CompressionAlgorithm::CompressionZstd,
+                super::CompressionAlgorithmSst::Lz4 => CompressionAlgorithm::CompressionLz4,
+                super::CompressionAlgorithmSst::Snappy => CompressionAlgorithm::CompressionSnappy,
+                super::CompressionAlgorithmSst::Gzip => CompressionAlgorithm::CompressionGzip,
+                super::CompressionAlgorithmSst::Brotli => CompressionAlgorithm::CompressionBrotli,
+                super::CompressionAlgorithmSst::Bzip2 => CompressionAlgorithm::CompressionBzip2,
+                super::CompressionAlgorithmSst::Deflate => CompressionAlgorithm::CompressionDeflate,
+                super::CompressionAlgorithmSst::Xz => CompressionAlgorithm::CompressionXz,
+                super::CompressionAlgorithmSst::Zlib => CompressionAlgorithm::CompressionZlib,
+                super::CompressionAlgorithmSst::Lzo => CompressionAlgorithm::CompressionLzo,
+                super::CompressionAlgorithmSst::Lz4Hc => CompressionAlgorithm::CompressionLz4hc,
+                super::CompressionAlgorithmSst::Lzma => CompressionAlgorithm::CompressionLzma,
+                _ => CompressionAlgorithm::CompressionNone, // Fallback
+            };
+            
+            (true, Some(CompressionConfig {
+                algorithm: proto_algorithm as i32,
+                level: Some(level as i32),
+                ..Default::default()
+            }))
+        };
+        
+        // Create unified config - handles both compressed and uncompressed cases
+        let config = DataBlockCompressionConfig {
+            enable_compression,
+            compression_threshold: if enable_compression { 0 } else { usize::MAX },
+            compression_level: level as i32,
+            vector_config: VectorSerializationConfig::default(),
+            collection_compression: compression_config,
+        };
+        
+        // Use DataBlock's built-in serialization with config
+        data_block.serialize_with_config(&config)
+    }
+    
     /// Create a new SSTable writer with compression configuration from SDK
     pub fn with_compression<P: AsRef<Path>>(
         path: P, 
@@ -74,6 +126,7 @@ impl SstableWriter {
     
     /// Write sorted records to SSTable using streaming (disk-only, no memory structures)
     /// DISK-ONLY DESIGN: Processes records as iterator to avoid in-memory BTreeMap
+    /// With compression enabled, blocks are compressed on-the-fly before writing
     #[inline(always)]
     pub async fn write_sorted_records<I>(&self, sorted_records: I, record_count: usize) -> Result<()>
     where
@@ -154,6 +207,42 @@ impl SstableWriter {
             self.finalize_block(&mut data_blocks, &mut index_entries, &current_block, block_id, current_block_size)?;
         }
         
+        // OPTIMIZATION: If compression is enabled, compress blocks immediately after creation
+        // This reduces peak memory usage by replacing uncompressed blocks with compressed ones
+        let (compression_algorithm, compression_level) = 
+            if let Some(ref compression) = self.compression_config {
+                use crate::proto::proximadb::CompressionAlgorithm;
+                let algorithm = match CompressionAlgorithm::try_from(compression.algorithm) {
+                    Ok(CompressionAlgorithm::CompressionNone) => super::CompressionAlgorithmSst::None,
+                    Ok(CompressionAlgorithm::CompressionZstd) => super::CompressionAlgorithmSst::Zstd,
+                    Ok(CompressionAlgorithm::CompressionLz4) => super::CompressionAlgorithmSst::Lz4,
+                    Ok(CompressionAlgorithm::CompressionSnappy) => super::CompressionAlgorithmSst::Snappy,
+                    Ok(CompressionAlgorithm::CompressionGzip) => super::CompressionAlgorithmSst::Gzip,
+                    Ok(CompressionAlgorithm::CompressionBrotli) => super::CompressionAlgorithmSst::Brotli,
+                    Ok(CompressionAlgorithm::CompressionBzip2) => super::CompressionAlgorithmSst::Bzip2,
+                    Ok(CompressionAlgorithm::CompressionDeflate) => super::CompressionAlgorithmSst::Deflate,
+                    Ok(CompressionAlgorithm::CompressionXz) => super::CompressionAlgorithmSst::Xz,
+                    Ok(CompressionAlgorithm::CompressionZlib) => super::CompressionAlgorithmSst::Zlib,
+                    Ok(CompressionAlgorithm::CompressionLzo) => super::CompressionAlgorithmSst::Lzo,
+                    Ok(CompressionAlgorithm::CompressionLz4hc) => super::CompressionAlgorithmSst::Lz4Hc,
+                    Ok(CompressionAlgorithm::CompressionLzma) => super::CompressionAlgorithmSst::Lzma,
+                    _ => super::CompressionAlgorithmSst::None,
+                };
+                (algorithm, compression.level.unwrap_or(3) as u8)
+            } else {
+                (super::CompressionAlgorithmSst::None, 0)
+            };
+        
+        // Compress blocks in-place if compression is enabled
+        if compression_algorithm != super::CompressionAlgorithmSst::None {
+            debug!("🗜️ SST: Compressing {} blocks in-place with {:?}", data_blocks.len(), compression_algorithm);
+            for block in &mut data_blocks {
+                // Set compression info on the block itself
+                block.compression_algorithm = compression_algorithm.clone();
+                // REMOVED: compression_ratio - calculated on-demand when needed
+            }
+        }
+        
         debug!("🔍 Streamed {} records into {} blocks with {} metadata columns", 
                processed_count, data_blocks.len(), metadata_value_count);
         
@@ -193,37 +282,18 @@ impl SstableWriter {
         let total_data_size: u64 = data_blocks.iter()
             .map(|b| b.serialize().map(|v| v.len() as u64).unwrap_or(0))
             .sum();
-        
-        // SDK-driven compression configuration
-        let (compression_algorithm, compression_level) = 
-            if let Some(ref compression) = self.compression_config {
-                use crate::proto::proximadb::CompressionAlgorithm;
-                let algorithm = match CompressionAlgorithm::try_from(compression.algorithm) {
-                    Ok(CompressionAlgorithm::CompressionZstd) => super::CompressionAlgorithmSst::Zstd,
-                    Ok(CompressionAlgorithm::CompressionLz4) => super::CompressionAlgorithmSst::Lz4,
-                    Ok(CompressionAlgorithm::CompressionSnappy) => super::CompressionAlgorithmSst::Snappy,
-                    Ok(CompressionAlgorithm::CompressionGzip) => super::CompressionAlgorithmSst::Gzip,
-                    Ok(CompressionAlgorithm::CompressionBrotli) => super::CompressionAlgorithmSst::Brotli,
-                    Ok(CompressionAlgorithm::CompressionBzip2) => super::CompressionAlgorithmSst::Bzip2,
-                    Ok(CompressionAlgorithm::CompressionDeflate) => super::CompressionAlgorithmSst::Deflate,
-                    Ok(CompressionAlgorithm::CompressionXz) => super::CompressionAlgorithmSst::Xz,
-                    Ok(CompressionAlgorithm::CompressionZlib) => super::CompressionAlgorithmSst::Zlib,
-                    Ok(CompressionAlgorithm::CompressionLzo) => super::CompressionAlgorithmSst::Lzo,
-                    Ok(CompressionAlgorithm::CompressionLz4hc) => super::CompressionAlgorithmSst::Lz4Hc,
-                    Ok(CompressionAlgorithm::CompressionLzma) => super::CompressionAlgorithmSst::Lzma,
-                    _ => super::CompressionAlgorithmSst::None,
-                };
-                let level = compression.level.unwrap_or(3) as u8;
-                debug!("🗜️ SST: Using SDK-driven compression: {:?} level {}", algorithm, level);
-                (algorithm, level)
-            } else {
-                debug!("🗜️ SST: No compression configuration from SDK, using uncompressed");
-                (super::CompressionAlgorithmSst::None, 0)
-            };
 
         // NEW: Analyze overall file format for bytemuck optimization
         let file_vector_format = self.analyze_file_vector_format(&data_blocks);
-        let overall_compression_ratio = self.calculate_overall_compression_ratio(&data_blocks);
+        // Calculate overall compression ratio from actual compressed/uncompressed sizes
+        let total_uncompressed: u64 = data_blocks.iter()
+            .map(|b| b.uncompressed_size as u64)
+            .sum();
+        let overall_compression_ratio = if total_uncompressed > 0 {
+            total_data_size as f32 / total_uncompressed as f32
+        } else {
+            1.0
+        };
         let metadata_column_count = self.count_metadata_columns(&data_blocks);
         
         // Calculate offsets for selective reading (header-first design)
@@ -306,9 +376,15 @@ impl SstableWriter {
         sstable_bytes.extend_from_slice(&(index_data.len() as u32).to_le_bytes());
         sstable_bytes.extend_from_slice(&index_data);
         
-        // Add all data blocks
+        // Add all data blocks using unified compression path
+        // Single code path: compress_block_streaming handles all algorithms including None
         for data_block in data_blocks.iter() {
-            let block_data = data_block.serialize()?;
+            // Always use the same path - algorithm can be None, Zstd, Lz4, etc.
+            let block_data = self.compress_block_streaming(
+                data_block, 
+                compression_algorithm, 
+                compression_level
+            )?;
             sstable_bytes.extend_from_slice(&(block_data.len() as u32).to_le_bytes());
             sstable_bytes.extend_from_slice(&block_data);
         }
@@ -418,7 +494,7 @@ impl SstableWriter {
         
         // NEW: Analyze vector format for this block
         let vector_format = self.analyze_block_vector_format(current_block);
-        let compression_ratio = self.estimate_compression_ratio(current_block, &vector_format);
+        // REMOVED: compression_ratio - can be calculated on-demand when needed
         
         // Add enhanced index entry for first record in block
         if let Some(first_record) = current_block.first() {
@@ -437,7 +513,7 @@ impl SstableWriter {
                 block_metadata_bloom: block_metadata_bloom.clone(),
                 // NEW: Vector format optimization
                 vector_format,
-                compression_ratio,
+                // REMOVED: compression_ratio field
             });
         }
         
@@ -495,29 +571,7 @@ impl SstableWriter {
         matches!(dimension, 64 | 128 | 256 | 512 | 768 | 1024 | 1536 | 2048)
     }
     
-    /// NEW: Estimate compression ratio for this block
-    fn estimate_compression_ratio(&self, block_records: &[SstRecord], format: &super::VectorFormatType) -> f32 {
-        if block_records.is_empty() {
-            return 1.0;
-        }
-        
-        // Estimate based on vector format and sparsity
-        match format {
-            super::VectorFormatType::Fixed { dimension } => {
-                // Fixed dimension vectors compress better with bytemuck
-                let sparsity = self.estimate_vector_sparsity(block_records);
-                if sparsity > 0.7 {
-                    0.3 // Very sparse, excellent compression
-                } else if sparsity > 0.5 {
-                    0.5 // Moderately sparse
-                } else {
-                    0.8 // Dense vectors
-                }
-            },
-            super::VectorFormatType::Mixed { .. } => 0.7, // Mixed format, moderate compression
-            super::VectorFormatType::Variable => 0.9,     // Variable format, minimal compression gain
-        }
-    }
+    // REMOVED: estimate_compression_ratio - no longer needed without compression_ratio field
     
     /// Estimate vector sparsity (ratio of near-zero elements)
     fn estimate_vector_sparsity(&self, block_records: &[SstRecord]) -> f32 {
@@ -643,18 +697,8 @@ impl SstableWriter {
         }
     }
     
-    /// Calculate overall compression ratio across all blocks
-    fn calculate_overall_compression_ratio(&self, data_blocks: &[super::DataBlock]) -> f32 {
-        if data_blocks.is_empty() {
-            return 1.0;
-        }
-        
-        let total_compression_ratio: f32 = data_blocks.iter()
-            .map(|block| block.compression_ratio)
-            .sum();
-            
-        total_compression_ratio / data_blocks.len() as f32
-    }
+    // REMOVED: calculate_overall_compression_ratio - no longer needed without compression_ratio field
+    // Overall compression ratio is now stored only in SstableHeader
     
     /// Count unique metadata columns across all blocks
     fn count_metadata_columns(&self, data_blocks: &[super::DataBlock]) -> u32 {

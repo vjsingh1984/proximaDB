@@ -11,7 +11,8 @@ use anyhow::Result;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::marker::PhantomData;
-use std::io::Read;
+use std::io::{Read, Cursor};
+use std::io::prelude::*;
 use tracing::{debug, error, info, warn};
 use futures::stream::{Stream, StreamExt};
 use futures::TryStreamExt;
@@ -420,10 +421,8 @@ impl ModularBlockReader {
             });
         }
         
-        eprintln!("DEBUG read_index_block_async: Reading header");
         let header = self.read_header_async().await
-            .map_err(|e| anyhow::anyhow!("Failed to read header in read_index_block_async: {}", e))?;
-        eprintln!("DEBUG read_index_block_async: Header read successfully, block_index_offset = {}", header.block_index_offset);
+            .map_err(|e| anyhow::anyhow!("TRACE-016: Failed to read header in read_index_block_async: {}", e))?;
         
         // Calculate index offset (after header and bloom filter if present)
         // NEW: Use hierarchical offsets if available, otherwise calculate
@@ -445,35 +444,59 @@ impl ModularBlockReader {
         };
         
         // Read index size using filesystem range read
-        eprintln!("DEBUG read_index_block_async: Reading index size at offset {}", index_offset);
         let size_bytes = self.read_range(index_offset, 4).await
-            .map_err(|e| anyhow::anyhow!("Failed to read index size at offset {}: {}", index_offset, e))?;
+            .map_err(|e| anyhow::anyhow!("TRACE-026: Failed to read index size at offset {}: {}", index_offset, e))?;
         let index_size = u32::from_le_bytes([
             size_bytes[0], size_bytes[1], size_bytes[2], size_bytes[3]
         ]) as usize;
-        eprintln!("DEBUG read_index_block_async: Index size = {} bytes", index_size);
         
         // Read index data using range read
-        eprintln!("DEBUG read_index_block_async: Reading index data at offset {} for {} bytes", index_offset + 4, index_size);
         let index_data = self.read_range(index_offset + 4, index_size).await
             .map_err(|e| anyhow::anyhow!("Failed to read index data at offset {} for {} bytes: {}", index_offset + 4, index_size, e))?;
-        eprintln!("DEBUG read_index_block_async: Successfully read {} bytes of index data", index_data.len());
-        eprintln!("DEBUG read_index_block_async: First 20 bytes of index data: {:?}", 
-                  &index_data[..std::cmp::min(20, index_data.len())]);
         
-        // Deserialize index
-        eprintln!("DEBUG read_index_block_async: About to deserialize index data with bincode...");
-        let index: SstableIndex = match bincode::deserialize::<SstableIndex>(&index_data) {
-            Ok(idx) => {
-                eprintln!("DEBUG read_index_block_async: Successfully deserialized index with {} entries", idx.entries.len());
-                idx
-            },
-            Err(e) => {
-                eprintln!("DEBUG read_index_block_async: Failed to deserialize index: {:?}", e);
-                eprintln!("DEBUG read_index_block_async: Index data length: {}", index_data.len());
-                eprintln!("DEBUG read_index_block_async: Full index data: {:?}", index_data);
-                return Err(anyhow::anyhow!("Failed to deserialize index: {}", e));
+        // Deserialize index - FIX: Read individual IndexEntry objects, not bincode
+        
+        let mut cursor = std::io::Cursor::new(&index_data);
+        let mut entries = Vec::new();
+        
+        // Read individual IndexEntry objects with length prefixes (as written by the writer)
+        while cursor.position() < index_data.len() as u64 {
+            
+            // Read entry length
+            let mut len_buf = [0u8; 4];
+            if cursor.read_exact(&mut len_buf).is_err() {
+                break;
             }
+            let entry_len = u32::from_le_bytes(len_buf) as usize;
+            
+            // Read entry data
+            let mut entry_data = vec![0u8; entry_len];
+            if cursor.read_exact(&mut entry_data).is_err() {
+                break;
+            }
+            
+            // Deserialize individual IndexEntry
+            match IndexEntry::deserialize(&entry_data) {
+                Ok(entry) => {
+                    entries.push(entry);
+                },
+                Err(e) => {
+                    return Err(anyhow::anyhow!("Failed to deserialize IndexEntry: {}", e));
+                }
+            }
+        }
+        
+        
+        // Build SstableIndex
+        let min_key = entries.first().map(|e| e.key.clone()).unwrap_or_default();
+        let max_key = entries.last().map(|e| e.key.clone()).unwrap_or_default();
+        
+        let index = SstableIndex {
+            entries,
+            metadata_stats: HashMap::new(), // TODO: populate from entries if needed
+            vector_count: header.entry_count as usize,
+            min_key,
+            max_key,
         };
         
         Ok(index)
@@ -553,19 +576,15 @@ impl ModularBlockReader {
     }
     
     async fn read_data_block_async(&mut self, block_id: u64, mode: ReadMode) -> Result<DataBlock> {
-        eprintln!("DEBUG read_data_block_async: Starting to read block {} with mode {:?}", block_id, mode);
         let header = self.read_header_async().await
-            .map_err(|e| anyhow::anyhow!("Failed to read header for block {}: {}", block_id, e))?;
-        eprintln!("DEBUG read_data_block_async: Successfully read header");
+            .map_err(|e| anyhow::anyhow!("TRACE-008: Failed to read header for block {}: {}", block_id, e))?;
         
         // For hierarchical SST design with random block access, we need to use the index
         // to get the actual offset and size of each block
         
         // First, read the index to get block offsets
-        eprintln!("DEBUG read_data_block_async: About to call read_index_block_async for block {}", block_id);
         let index = self.read_index_block_async(&ReadStrategy::FullScan).await
-            .map_err(|e| anyhow::anyhow!("Failed to read index for block {}: {}", block_id, e))?;
-        eprintln!("DEBUG read_data_block_async: Successfully read index with {} entries", index.entries.len());
+            .map_err(|e| anyhow::anyhow!("TRACE-011: Failed to read index for block {}: {}", block_id, e))?;
         
         // Find the index entry for this block
         // Note: Index entries map to blocks, so we need to find the right entry
@@ -904,8 +923,7 @@ impl SstDirectReader {
         let data_blocks_bytes = fs.read_range(&file_path, data_blocks_offset, data_blocks_size).await?;
         let reader = Box::new(std::io::Cursor::new(data_blocks_bytes)) as Box<dyn Read + Send>;
         
-        debug!("✅ Created hierarchical streaming iterator for {} blocks (compression_ratio={:.2})", 
-               total_blocks, header.compression_ratio);
+        debug!("✅ Created hierarchical streaming iterator for {} blocks", total_blocks);
         
         Ok(BlockIterator {
             reader,
@@ -997,8 +1015,6 @@ impl SstDirectReader {
     /// Uses efficient range reads for cloud storage (S3/GCS/Azure)
     pub async fn read_all_for_compaction(&mut self) -> Result<Vec<SstRecord>> {
         let header = self.block_reader.read_header().await?;
-        debug!("📖 read_all_for_compaction: header.block_count = {}, header.entry_count = {}", 
-               header.block_count, header.entry_count);
         
         let mut all_records = Vec::with_capacity(header.entry_count as usize);
         
@@ -1547,7 +1563,7 @@ impl UnifiedSstableReader {
                         block_metadata_bloom: None,
                         // NEW: Vector format optimization
                         vector_format: VectorFormatType::Variable,
-                        compression_ratio: 1.0,
+                        // REMOVED: compression_ratio - calculated on-demand
                     }
                 }).collect();
                 
@@ -1781,7 +1797,7 @@ impl UnifiedSstableReader {
                 records: sst_records,
                 uncompressed_size: 0, // Would need to calculate
                 compression_algorithm: CompressionAlgorithmSst::None,
-                compression_ratio: 1.0,
+                // REMOVED: compression_ratio - calculated on-demand
                 metadata_stats: crate::storage::engines::sst::DataBlockMetadata::default(),
                 block_bloom_filter: None,
                 has_deletes: false,
@@ -1844,7 +1860,7 @@ impl UnifiedSstableReader {
                 block_metadata_bloom: None,
                 // NEW: Vector format optimization
                 vector_format: VectorFormatType::Variable,
-                compression_ratio: 1.0,
+                // REMOVED: compression_ratio - calculated on-demand
             }).collect();
             
             let metadata_stats: HashMap<String, MetadataStats> = cached_index.metadata_stats.iter().map(|(k, v)| {
@@ -2429,7 +2445,7 @@ impl UnifiedSstableReader {
                 block_metadata_bloom: None,
                 // NEW: Vector format optimization
                 vector_format: VectorFormatType::Variable,
-                compression_ratio: 1.0,
+                // REMOVED: compression_ratio - calculated on-demand
             }).collect();
             
             let metadata_stats: HashMap<String, MetadataStats> = cached_index.metadata_stats.iter().map(|(k, v)| {
@@ -2898,7 +2914,7 @@ impl UnifiedSstableReader {
                             block_metadata_bloom: None,
                             // NEW: Vector format optimization
                             vector_format: VectorFormatType::Variable,
-                            compression_ratio: 1.0,
+                            // REMOVED: compression_ratio - calculated on-demand
                         }).collect(),
                         metadata_stats: HashMap::new(), // Convert metadata stats if needed
                         vector_count: cached.total_vectors,
@@ -3108,7 +3124,7 @@ impl UnifiedSstableReader {
                 records: chunk.to_vec(),
                 uncompressed_size: 0,
                 compression_algorithm: CompressionAlgorithmSst::None,
-                compression_ratio: 1.0,
+                // REMOVED: compression_ratio - calculated on-demand
                 metadata_stats: crate::storage::engines::sst::DataBlockMetadata::default(),
                 block_bloom_filter: None,
                 has_deletes: false,

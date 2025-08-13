@@ -95,35 +95,55 @@ pub struct DataBlockMetadata {
 }
 ----
 
-==== Bytemuck Zero-Copy Compression
+==== Unified Compression Integration
 
-The hierarchical SST leverages bytemuck for zero-copy serialization of fixed-size vectors:
+The hierarchical SST leverages the unified compression module (`src/core/compression/mod.rs`) for consistent compression across all contexts:
 
 [source]
 ----
-Traditional Serialization (6 steps):
-┌──────────┐    ┌────────┐    ┌──────────┐    ┌────────┐    ┌──────────┐    ┌─────────┐
-│  Vector  │ => │Bincode │ => │Compress  │ => │  Write │ => │   Read   │ => │Decomp.  │
-│  [f32]   │    │Serialize│    │  (zstd)  │    │  Disk  │    │  Disk    │    │ (zstd)  │
-└──────────┘    └────────┘    └──────────┘    └────────┘    └──────────┘    └─────────┘
-                                                                                    │
-                                                                                    v
-                                                                            ┌──────────┐
-                                                                            │Deserial. │
-                                                                            │ Vector   │
-                                                                            └──────────┘
+Unified Compression Architecture:
 
-Bytemuck Zero-Copy (2 steps):
-┌──────────┐    ┌──────────────────────┐    ┌──────────┐
-│  Vector  │ => │  Direct Memory Map   │ => │  Vector  │
-│  [f32]   │    │  (No Serialization)  │    │  [f32]   │
-└──────────┘    └──────────────────────┘    └──────────┘
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                    CORE COMPRESSION MODULE                                 │
+│                   (src/core/compression/mod.rs)                            │
+│                                                                             │
+│  ┌─────────────────┐  ┌─────────────────┐  ┌─────────────────┐            │
+│  │  SST Context    │  │  Vector Context │  │ Parquet Context │            │
+│  │  • Custom block │  │  • Headers +    │  │ • Arrow         │            │
+│  │    compression  │  │    checksums    │  │   WriterProps   │            │
+│  │  • 13 algorithms│  │  • 13 algorithms│  │ • 7 algorithms  │            │
+│  └─────────────────┘  └─────────────────┘  └─────────────────┘            │
+│           │                    │                      │                    │
+│           ▼                    ▼                      ▼                    │
+│  ┌─────────────────┐  ┌─────────────────┐  ┌─────────────────┐            │
+│  │ Block-level     │  │ Vector-level    │  │ Column-level    │            │
+│  │ compression     │  │ compression     │  │ compression     │            │
+│  │ with markers    │  │ with metadata   │  │ via Parquet     │            │
+│  └─────────────────┘  └─────────────────┘  └─────────────────┘            │
+└─────────────────────────────────────────────────────────────────────────────┘
 
-Benefits by Vector Dimension:
-• 384D (BERT-base):   1.5KB → 0.45KB (70% reduction, 40% better than traditional)
-• 768D (BERT-large):  3.0KB → 0.90KB (70% reduction, saves $36,800/year)
-• 1536D (GPT-3):      6.0KB → 1.80KB (70% reduction, saves $73,600/year)
-• 3072D (Custom):    12.0KB → 3.60KB (70% reduction, saves $147,200/year)
+Algorithm Support Matrix:
+┌─────────────┬─────────┬─────────┬─────────┐
+│ Algorithm   │   SST   │ Vector  │ Parquet │
+├─────────────┼─────────┼─────────┼─────────┤
+│ ZSTD        │    ✓    │    ✓    │    ✓    │
+│ LZ4         │    ✓    │    ✓    │    ✓    │
+│ Snappy      │    ✓    │    ✓    │    ✓    │
+│ Gzip        │    ✓    │    ✓    │    ✓    │
+│ Brotli      │    ✓    │    ✓    │    ✓    │
+│ LZO         │    ✓    │    ✓    │    ✓    │
+│ Bzip2       │    ✓    │    ✓    │   ❌     │
+│ Deflate     │    ✓    │    ✓    │   ❌     │
+│ XZ/LZMA     │    ✓    │    ✓    │   ❌     │
+│ Zlib        │    ✓    │    ✓    │   ❌     │
+│ LZ4HC       │    ✓    │    ✓    │   ❌     │
+│ None        │    ✓    │    ✓    │    ✓    │
+└─────────────┴─────────┴─────────┴─────────┘
+
+Benefits by Context:
+• SST Blocks:      Eliminates double copying for 2000+ vectors per block
+• Vector Serialize: Bytemuck zero-copy with compression headers
+• Parquet Columns: Direct Arrow integration, automatic fallback handling
 ----
 
 ==== Cloud-Optimized Block Sizing
