@@ -500,12 +500,12 @@ Metadata Only      │ 512B     │ N/A           │ 256B     │ No change
 
 [source,text]
 ----
-Operation      │ Current Design │ Hierarchical │ Savings
-───────────────┼────────────────┼──────────────┼─────────
-API Calls      │ 7 per query    │ 1-2 per query│ 85%
-Data Transfer  │ Full structures│ Selective     │ 70%  
-Storage Cost   │ Standard       │ Compressed    │ 40%
-Total Cost     │ $1,858/year    │ $279/year     │ 85%
+Operation      │ Current Cost   │ With Hierarchical │ Savings
+───────────────┼────────────────┼───────────────────┼─────────
+API Calls      │ 7 per query    │ 1-2 per query     │ 85% ✓
+Data Transfer  │ Full structures│ Selective         │ 70% ✓
+Storage Cost   │ Standard       │ Compressed        │ 40% ✓
+Total Annual   │ $1,858         │ $279              │ $1,579 saved (85%)
 ----
 
 == Migration Strategy

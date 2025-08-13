@@ -35,7 +35,7 @@ Your AI applications are growing exponentially. So are your costs.
 
 | **Cost per 1B vectors/year**
 | $150,000
-| $37,500
+| [green]#**$37,500** (75% savings)#
 
 | **Infrastructure ROI**
 | 18 months
@@ -170,23 +170,23 @@ link:use_cases.adoc[Explore Industry Use Cases →]
 
 | **AWS**
 | $4,800/month
-| $1,200/month
-| $3,600 (75%)
+| [green]#**$1,200/month**#
+| [green]#**$3,600 saved (75%)**#
 
 | **Azure**
 | $5,200/month
-| $1,300/month
-| $3,900 (75%)
+| [green]#**$1,300/month**#
+| [green]#**$3,900 saved (75%)**#
 
 | **GCP**
 | $4,600/month
-| $1,150/month
-| $3,450 (75%)
+| [green]#**$1,150/month**#
+| [green]#**$3,450 saved (75%)**#
 
 | **On-Premise**
 | $180K CapEx
-| $45K CapEx
-| $135K (75%)
+| [green]#**$45K CapEx**#
+| [green]#**$135K saved (75%)**#
 |===
 
 _Based on 100M vectors, 500 QPS workload_
