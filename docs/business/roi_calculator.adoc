@@ -804,4 +804,6 @@ Reduced APIs: $25/mo
 
 *Contact ProximaDB sales engineering for customized landing zone integration assessment and deployment planning.*
 
+**Cost calculations and performance metrics presented in this document are representative examples based on typical enterprise workloads. Actual results will vary significantly depending on your specific use case, data characteristics, query patterns, infrastructure configuration, and deployment scale. For accurate cost projections and performance estimates tailored to your workload, please contact ProximaDB sales engineering for a customized assessment.*
+
 See also: link:../developer/architecture.adoc[Technical Architecture] | link:../user/getting_started.adoc[Getting Started Guide] | link:use_cases.adoc[Industry Use Cases]
