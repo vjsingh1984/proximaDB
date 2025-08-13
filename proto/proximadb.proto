@@ -329,8 +329,8 @@ message CompressionConfig {
   optional string quantization_type = 6;  // "int8", "pq8", "pq4"
   optional string normalization_method = 7; // "mean", "trimmed_mean", "median" - for quantized only
   
-  // SST-specific block sizing
-  optional int32 block_size_mb = 8;       // SST block size in MB (4-16, default 8)
+  // SST-specific block sizing (KB format for better granularity)
+  optional int32 block_size_kb = 8;       // SST block size in KB (256-16384, default 2048 = 2MB)
   bool dynamic_block_sizing = 9;          // Auto-adjust based on vector dimensions (default: false)
 }
 

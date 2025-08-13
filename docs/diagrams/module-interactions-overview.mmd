@@ -1,0 +1,48 @@
+%%{init: {"theme":"neutral", "themeVariables": {"primaryColor":"#2563eb","primaryTextColor":"#ffffff","primaryBorderColor":"#1e40af","lineColor":"#64748b","secondaryColor":"#10b981","secondaryTextColor":"#ffffff","tertiaryColor":"#f59e0b","tertiaryTextColor":"#ffffff","background":"transparent","mainBkg":"#ffffff","secondBkg":"#f8fafc","textColor":"#1e293b","nodeTextColor":"#1e293b","fontFamily":"-apple-system, BlinkMacSystemFont, Segoe UI, Roboto, sans-serif","fontSize":"14px","clusterBkg":"#f1f5f9","clusterBorder":"#cbd5e1","edgeLabelBackground":"#ffffff"}}}%%
+
+sequenceDiagram
+    participant Client as 🌐 Client Layer
+    participant API as 🚪 API Gateway  
+    participant Service as ⚡ Service Layer
+    participant Storage as 💾 Storage Layer
+    participant Infrastructure as 🏗️ Infrastructure Layer
+
+    Note over Client,Infrastructure: High-Level Module Interactions & Coupling
+
+    %% Client to API - Loose Coupling
+    Client->>+API: Request (REST/gRPC)
+    Note over Client,API: **Loose Coupling**<br/>Protocol abstraction<br/>Multiple client types supported
+
+    %% API to Service - Interface Coupling  
+    API->>+Service: Business Logic Call
+    Note over API,Service: **Interface Coupling**<br/>Well-defined service contracts<br/>Proto-first communication
+
+    %% Service to Storage - Strategic Coupling
+    Service->>+Storage: Data Operations
+    Note over Service,Storage: **Strategic Coupling**<br/>Engine abstraction<br/>Dual storage coordination
+
+    %% Storage to Infrastructure - Implementation Coupling
+    Storage->>+Infrastructure: Hardware/System Resources
+    Note over Storage,Infrastructure: **Implementation Coupling**<br/>Hardware optimization<br/>Resource management
+
+    %% Response Flow - Maintaining Abstraction
+    Infrastructure-->>-Storage: Optimized Operations
+    Storage-->>-Service: Data Results
+    Service-->>-API: Business Results
+    API-->>-Client: Protocol Response
+
+    rect rgb(240, 255, 240)
+        Note over Client,API: **🔗 Loose Coupling Benefits**<br/>• Protocol independence<br/>• Client flexibility<br/>• Version compatibility
+    end
+
+    rect rgb(255, 248, 220)
+        Note over API,Service: **🎯 Interface Coupling Benefits**<br/>• Clear contracts<br/>• Service modularity<br/>• Proto-first design
+    end
+
+    rect rgb(240, 248, 255)
+        Note over Service,Storage: **⚡ Strategic Coupling Benefits**<br/>• Engine abstraction<br/>• Performance optimization<br/>• Dual storage coordination
+    end
+
+    rect rgb(255, 240, 245)
+        Note over Storage,Infrastructure: **🏗️ Implementation Coupling Benefits**<br/>• Hardware acceleration<br/>• Resource optimization<br/>• System integration
+    end

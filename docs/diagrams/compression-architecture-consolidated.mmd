@@ -1,4 +1,4 @@
-%%{init: {'theme':'neutral', 'themeVariables': {'primaryColor':'#3b82f6','primaryTextColor':'#1f2937','primaryBorderColor':'#6b7280','lineColor':'#9ca3af','secondaryColor':'#10b981','tertiaryColor':'#f59e0b','background':'transparent','mainBkg':'#f3f4f6','secondBkg':'#e5e7eb','textColor':'#1f2937'}}}%%
+%%{init: {"theme":"neutral", "themeVariables": {"primaryColor":"#2563eb","primaryTextColor":"#ffffff","primaryBorderColor":"#1e40af","lineColor":"#64748b","secondaryColor":"#10b981","secondaryTextColor":"#ffffff","tertiaryColor":"#f59e0b","tertiaryTextColor":"#ffffff","background":"transparent","mainBkg":"#ffffff","secondBkg":"#f8fafc","textColor":"#1e293b","nodeTextColor":"#1e293b","fontFamily":"-apple-system, BlinkMacSystemFont, Segoe UI, Roboto, sans-serif","fontSize":"14px","clusterBkg":"#f1f5f9","clusterBorder":"#cbd5e1","edgeLabelBackground":"#ffffff"}}}%%
 graph TB
     subgraph "Unified Compression Module"
         UC1["Core Module<br/>src/core/compression/mod.rs"]
@@ -18,7 +18,7 @@ graph TB
         direction TB
         SST1["❌ NEVER Quantize<br/>Row storage = read entire record"]
         SST2["✅ FP32 + All Algorithms<br/>20-95% compression possible"]
-        SST3["Dynamic Block Size<br/>4-16MB based on dimensions"]
+        SST3["Configurable Block Size<br/>256KB-16MB (default 2MB)<br/>Optimized for deployment type"]
         
         SST1 --> SSTBlock["Block Format<br/>2000-2500 vectors/block<br/>13 Algorithm Choices"]
     end
@@ -40,11 +40,12 @@ graph TB
         Q3 --> Q4["Results<br/>100% accuracy"]
     end
     
-    subgraph "Compression Profiles"
+    subgraph "Cloud-Optimized Block Sizes"
         direction TB
-        Prof1["Write-Optimized<br/>LZ4/Snappy, 4MB blocks"]
-        Prof2["Balanced (Default)<br/>ZSTD-3/Gzip-6, 8MB blocks"]
-        Prof3["Storage-Optimized<br/>Brotli-8/XZ-9, 16MB blocks"]
+        Prof1["Disk/Local Storage<br/>512-1024 KB<br/>IOPS optimization"]
+        Prof2["AWS/Azure Cloud<br/>3072 KB (3MB)<br/>API efficiency optimization"]
+        Prof3["GCP Cloud<br/>2048 KB (2MB)<br/>Cost-effective processing"]
+        Prof4["Generic Default<br/>2048 KB (2MB)<br/>Universal compatibility"]
     end
     
     subgraph "User Configuration"

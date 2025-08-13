@@ -18,6 +18,12 @@ use parquet::file::properties::WriterProperties;
 // Re-export for clean imports
 pub use crate::core::serialization::CompressionAlgorithm;
 
+// Compression markers module
+pub mod markers;
+pub use markers::*;
+
+// Compression markers are defined in the markers.rs module
+
 /// Compression context - determines how compression is applied
 #[derive(Debug, Clone, PartialEq)]
 pub enum CompressionContext {
@@ -315,7 +321,23 @@ pub fn create_parquet_writer_properties(
 
 /// Check if algorithm is supported by Parquet
 pub fn is_parquet_supported(algorithm: &CompressionAlgorithm) -> bool {
-    map_to_parquet_compression(algorithm).is_some()
+    // First check if we have a native mapping (not a fallback)
+    match algorithm {
+        CompressionAlgorithm::None |
+        CompressionAlgorithm::Snappy |
+        CompressionAlgorithm::Gzip |
+        CompressionAlgorithm::Lz4 |
+        CompressionAlgorithm::Zstd |
+        CompressionAlgorithm::Brotli |
+        CompressionAlgorithm::Lzo => true,
+        // These are unsupported - they get fallback to Snappy
+        CompressionAlgorithm::Bzip2 |
+        CompressionAlgorithm::Deflate |
+        CompressionAlgorithm::Xz |
+        CompressionAlgorithm::Zlib |
+        CompressionAlgorithm::Lz4hc |
+        CompressionAlgorithm::Lzma => false,
+    }
 }
 
 #[cfg(test)]

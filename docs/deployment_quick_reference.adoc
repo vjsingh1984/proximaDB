@@ -1,0 +1,217 @@
+= ProximaDB Deployment Quick Reference
+:toc: left
+:toclevels: 2
+
+**Instant optimization guide for your infrastructure.**
+
+== 🚀 Quick Start by Environment
+
+[cols="2,3,2,2", options="header"]
+|===
+| Your Environment | Optimal Block Size | Compression | Deploy Time
+
+| *AWS EBS gp3*
+| 256-3072 KB
+| ZSTD-3
+| < 2 hours
+
+| *AWS S3*
+| 4096 KB
+| ZSTD-6
+| < 2 hours
+
+| *Azure Premium SSD*
+| 512-4096 KB
+| ZSTD-3
+| < 2 hours
+
+| *Azure Blob Storage*
+| 8192 KB
+| Brotli-6
+| < 2 hours
+
+| *GCP Persistent Disk*
+| 256-2048 KB
+| Snappy-1
+| < 2 hours
+
+| *GCP Cloud Storage*
+| 2048 KB
+| ZSTD-9
+| < 2 hours
+
+| *On-Premise HDD/SSD*
+| 512 KB
+| ZSTD-3
+| < 4 hours
+
+| *On-Premise NVMe*
+| 1024 KB
+| LZ4-1
+| < 4 hours
+|===
+
+== 📊 Performance by Deployment Type
+
+=== Cloud Deployments
+
+[cols="3,2,2,2", options="header"]
+|===
+| Metric | AWS | Azure | GCP
+
+| *Cost Reduction*
+| 75-85%
+| 77-85%
+| 80-85%
+
+| *API Call Reduction*
+| 85%
+| 82%
+| 85%
+
+| *Query Latency*
+| < 1ms
+| < 1ms
+| < 1ms
+
+| *Throughput*
+| 17K vec/s
+| 15K vec/s
+| 16K vec/s
+|===
+
+=== On-Premise Deployments
+
+[cols="3,2,2", options="header"]
+|===
+| Metric | HDD/SSD | NVMe
+
+| *Cost Reduction*
+| 70-75%
+| 75-80%
+
+| *IOPS Optimization*
+| 2-3x
+| 3-5x
+
+| *Query Latency*
+| 1-3ms
+| < 1ms
+
+| *Throughput*
+| 8K vec/s
+| 14K vec/s
+|===
+
+== 🛠️ One-Line Deploy Commands
+
+=== Docker (Universal)
+```bash
+docker run -d \
+  -p 5678:5678 -p 5679:5679 \
+  -v /data:/data \
+  proximadb/server:latest
+```
+
+=== AWS ECS
+```bash
+aws ecs create-service \
+  --service-name proximadb \
+  --task-definition proximadb:latest \
+  --desired-count 3
+```
+
+=== Azure Container Instances
+```bash
+az container create \
+  --name proximadb \
+  --image proximadb/server:latest \
+  --ports 5678 5679 \
+  --cpu 4 --memory 16
+```
+
+=== GCP Cloud Run
+```bash
+gcloud run deploy proximadb \
+  --image proximadb/server:latest \
+  --port 5678 \
+  --memory 16Gi \
+  --cpu 4
+```
+
+=== Kubernetes (Any Cloud)
+```bash
+kubectl apply -f https://proximadb.com/deploy/k8s.yaml
+```
+
+== 🎯 Engine Selection Guide
+
+[cols="2,3,2", options="header"]
+|===
+| Use Case | Recommended Engine | Why
+
+| *E-commerce Search*
+| SST
+| Sub-millisecond latency
+
+| *Document Analysis*
+| VIPER
+| 70% better compression
+
+| *Real-time APIs*
+| SST
+| 2.1x higher QPS
+
+| *Analytics & BI*
+| VIPER
+| 3-5x faster queries
+
+| *Mixed Workloads*
+| Multi-Engine
+| Workload isolation
+
+| *Cost Optimization*
+| VIPER + AXIS
+| 85% total savings
+|===
+
+== 📈 Scaling Guidelines
+
+=== Small (< 10M vectors)
+* **Memory**: 8-16 GB
+* **CPU**: 4-8 cores
+* **Storage**: 100-500 GB
+* **Config**: Single engine
+
+=== Medium (10M-100M vectors)
+* **Memory**: 32-64 GB
+* **CPU**: 16-32 cores
+* **Storage**: 1-5 TB
+* **Config**: Consider multi-engine
+
+=== Large (100M+ vectors)
+* **Memory**: 128+ GB
+* **CPU**: 64+ cores
+* **Storage**: 10+ TB
+* **Config**: Multi-engine + AXIS tiering
+
+== 🔧 Auto-Configuration
+
+ProximaDB automatically detects and optimizes for:
+
+* **Cloud Provider**: AWS, Azure, GCP detection
+* **Storage Type**: SSD, HDD, NVMe identification
+* **Available Memory**: Dynamic buffer sizing
+* **CPU Architecture**: x86, ARM, GPU acceleration
+* **Network Topology**: Latency-based routing
+
+== 📞 Need Help?
+
+* **Documentation**: link:index.adoc[Full Documentation]
+* **ROI Calculator**: link:business/roi_calculator.adoc[Calculate Savings]
+* **Use Cases**: link:business/use_cases.adoc[Industry Examples]
+* **Support**: sales@proximadb.com
+
+---
+
+_ProximaDB: Optimized for your infrastructure, automatically._

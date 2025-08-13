@@ -3,7 +3,7 @@
 #[cfg(test)]
 mod tests {
     use super::super::unified_query_planner::*;
-    use super::super::{CompressionAlgorithmSst, FileMetadata, BlockMetadata};
+    use proximadb::core::serialization::CompressionAlgorithm, FileMetadata, BlockMetadata};
     use crate::proto::{SearchQuery, OptimizationHints, QuantizationType};
     use crate::sql::parser::{ParsedQuery, WhereCondition, SelectField};
     use crate::storage::metadata::quantization::QuantizationConfig;
@@ -72,8 +72,8 @@ mod tests {
         let planner = create_test_planner();
         
         let files = vec![
-            create_test_metadata(Some(CompressionAlgorithmSst::Zstd), false),
-            create_test_metadata(Some(CompressionAlgorithmSst::Lz4), false),
+            create_test_metadata(Some(CompressionAlgorithm::Zstd), false),
+            create_test_metadata(Some(CompressionAlgorithm::Lz4), false),
             create_test_metadata(None, false),
         ];
         
@@ -82,8 +82,8 @@ mod tests {
         assert_eq!(status.total_files, 3);
         assert_eq!(status.compressed_files, 2);
         assert_eq!(status.uncompressed_files, 1);
-        assert_eq!(status.algorithm_distribution.get(&CompressionAlgorithmSst::Zstd), Some(&1));
-        assert_eq!(status.algorithm_distribution.get(&CompressionAlgorithmSst::Lz4), Some(&1));
+        assert_eq!(status.algorithm_distribution.get(&CompressionAlgorithm::Zstd), Some(&1));
+        assert_eq!(status.algorithm_distribution.get(&CompressionAlgorithm::Lz4), Some(&1));
     }
 
     #[tokio::test]
@@ -140,7 +140,7 @@ mod tests {
         };
         
         let files = vec![
-            create_test_metadata(Some(CompressionAlgorithmSst::Zstd), false),
+            create_test_metadata(Some(CompressionAlgorithm::Zstd), false),
             create_test_metadata(None, false),
         ];
         
@@ -227,7 +227,7 @@ mod tests {
         };
         
         let files = vec![
-            create_test_metadata(Some(CompressionAlgorithmSst::Zstd), false),
+            create_test_metadata(Some(CompressionAlgorithm::Zstd), false),
             create_test_metadata(None, true),
         ];
         
@@ -242,9 +242,9 @@ mod tests {
         let planner = create_test_planner();
         
         let files = vec![
-            create_test_metadata(Some(CompressionAlgorithmSst::Zstd), false),
-            create_test_metadata(Some(CompressionAlgorithmSst::Lz4), false),
-            create_test_metadata(Some(CompressionAlgorithmSst::Snappy), false),
+            create_test_metadata(Some(CompressionAlgorithm::Zstd), false),
+            create_test_metadata(Some(CompressionAlgorithm::Lz4), false),
+            create_test_metadata(Some(CompressionAlgorithm::Snappy), false),
         ];
         
         let cost = planner.estimate_decompression_cost(&files).await;
@@ -258,7 +258,7 @@ mod tests {
         let planner = create_test_planner();
         
         let files = vec![
-            create_test_metadata(Some(CompressionAlgorithmSst::Zstd), false),
+            create_test_metadata(Some(CompressionAlgorithm::Zstd), false),
             create_test_metadata(None, true),
             create_test_metadata(None, false),
         ];
@@ -300,7 +300,7 @@ mod tests {
     async fn test_concurrent_planning() {
         let planner = Arc::new(create_test_planner());
         let files = Arc::new(vec![
-            create_test_metadata(Some(CompressionAlgorithmSst::Zstd), false),
+            create_test_metadata(Some(CompressionAlgorithm::Zstd), false),
             create_test_metadata(None, true),
         ]);
         
@@ -359,10 +359,10 @@ mod tests {
         let mut planner = create_test_planner();
         
         // Update compression stats
-        planner.update_compression_stats(CompressionAlgorithmSst::Zstd, 100.0, 0.5).await;
-        planner.update_compression_stats(CompressionAlgorithmSst::Zstd, 120.0, 0.6).await;
+        planner.update_compression_stats(CompressionAlgorithm::Zstd, 100.0, 0.5).await;
+        planner.update_compression_stats(CompressionAlgorithm::Zstd, 120.0, 0.6).await;
         
-        let stats = planner.compression_stats.get(&CompressionAlgorithmSst::Zstd).unwrap();
+        let stats = planner.compression_stats.get(&CompressionAlgorithm::Zstd).unwrap();
         assert_eq!(stats.total_operations, 2);
         assert_eq!(stats.avg_decompression_time_ms, 110.0);
         // REMOVED: avg_compression_ratio check - no longer tracked in stats
@@ -414,7 +414,7 @@ mod tests {
         };
         
         let files = vec![
-            create_test_metadata(Some(CompressionAlgorithmSst::Zstd), false),
+            create_test_metadata(Some(CompressionAlgorithm::Zstd), false),
         ];
         
         let plan = planner.plan_proto_query(&query, &files).await.unwrap();
@@ -430,7 +430,7 @@ mod tests {
         
         // Train planner with historical data
         for _ in 0..10 {
-            planner.update_compression_stats(CompressionAlgorithmSst::Zstd, 100.0, 0.5).await;
+            planner.update_compression_stats(CompressionAlgorithm::Zstd, 100.0, 0.5).await;
             planner.update_quantization_stats(QuantizationType::BinaryQuantization, 0.95, 10.0).await;
         }
         
@@ -466,7 +466,7 @@ mod tests {
         };
         
         let files = vec![
-            create_test_metadata(Some(CompressionAlgorithmSst::Zstd), true),
+            create_test_metadata(Some(CompressionAlgorithm::Zstd), true),
         ];
         
         let plan = planner.plan_proto_query(&query, &files).await.unwrap();

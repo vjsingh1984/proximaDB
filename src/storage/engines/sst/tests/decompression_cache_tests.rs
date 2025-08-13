@@ -3,7 +3,7 @@
 #[cfg(test)]
 mod tests {
     use super::super::decompression_cache::*;
-    use super::super::{DataBlock, SstRecord, CompressionAlgorithmSst};
+    use proximadb::core::serialization::CompressionAlgorithm};
     use std::sync::Arc;
     use tokio::time::{sleep, Duration};
 
@@ -35,7 +35,7 @@ mod tests {
         
         // Test put and hit
         let block = DataBlock::new(1, vec![]);
-        cache.put(key.clone(), block.clone(), Some(CompressionAlgorithmSst::Zstd))
+        cache.put(key.clone(), block.clone(), Some(CompressionAlgorithm::Zstd))
             .await
             .unwrap();
         
@@ -250,7 +250,7 @@ mod tests {
                     level: 0,
                 });
             }
-            blocks.push((i, DataBlock::new(i, records), Some(CompressionAlgorithmSst::Lz4)));
+            blocks.push((i, DataBlock::new(i, records), Some(CompressionAlgorithm::Lz4)));
         }
         
         // Prefetch all blocks
@@ -273,9 +273,9 @@ mod tests {
         
         // Add blocks with different compression algorithms
         let algorithms = vec![
-            CompressionAlgorithmSst::Zstd,
-            CompressionAlgorithmSst::Lz4,
-            CompressionAlgorithmSst::Snappy,
+            CompressionAlgorithm::Zstd,
+            CompressionAlgorithm::Lz4,
+            CompressionAlgorithm::Snappy,
         ];
         
         for (i, algo) in algorithms.iter().enumerate() {

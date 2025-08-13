@@ -3,7 +3,7 @@
 :toclevels: 2
 :imagesdir: ../diagrams/images
 
-**Unlock new revenue streams worth $10-100M while reducing AI costs by 70%—the only platform that creates competitive advantages others can't copy.**
+**Unlock new revenue streams worth $10-100M while reducing AI costs by 70%—with deployment-optimized configurations that deliver instant cost savings across any cloud or on-premise infrastructure.**
 
 [IMPORTANT]
 ====

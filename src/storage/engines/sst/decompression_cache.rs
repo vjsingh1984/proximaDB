@@ -37,7 +37,7 @@ pub struct CachedBlock {
     /// Number of times accessed
     pub access_count: u64,
     /// Original compression algorithm
-    pub compression_algorithm: Option<crate::storage::engines::sst::CompressionAlgorithmSst>,
+    pub compression_algorithm: Option<crate::core::compression::CompressionAlgorithm>,
 }
 
 /// Decompression cache for SSTable blocks with automatic invalidation
@@ -51,7 +51,7 @@ pub struct DecompressionCache {
     /// Cache statistics
     stats: Arc<RwLock<CacheStats>>,
     /// Compression-specific sub-caches for better locality
-    compression_caches: Arc<RwLock<HashMap<crate::storage::engines::sst::CompressionAlgorithmSst, Vec<BlockCacheKey>>>>,
+    compression_caches: Arc<RwLock<HashMap<crate::core::compression::CompressionAlgorithm, Vec<BlockCacheKey>>>>,
     /// File modification timestamps for invalidation
     file_timestamps: Arc<dashmap::DashMap<String, i64>>,
     /// Configuration from TOML
@@ -274,7 +274,7 @@ impl DecompressionCache {
             // Estimate decompression time saved based on compression algorithm
             let time_saved = Self::estimate_decompression_time(
                 cached_block.size_bytes,
-                cached_block.compression_algorithm,
+                cached_block.compression_algorithm.clone(),
             );
             stats.time_saved_us += time_saved;
             stats.bytes_saved += cached_block.size_bytes as u64;
@@ -300,7 +300,7 @@ impl DecompressionCache {
         &self,
         key: BlockCacheKey,
         data: DataBlock,
-        compression_algorithm: Option<crate::storage::engines::sst::CompressionAlgorithmSst>,
+        compression_algorithm: Option<crate::core::compression::CompressionAlgorithm>,
     ) -> Result<()> {
         // Calculate block size
         let size_bytes = Self::calculate_block_size(&data);
@@ -322,7 +322,7 @@ impl DecompressionCache {
             size_bytes,
             cached_at: chrono::Utc::now().timestamp(),
             access_count: 0,
-            compression_algorithm,
+            compression_algorithm: compression_algorithm.clone(),
         };
         
         // Add to cache
@@ -336,7 +336,7 @@ impl DecompressionCache {
         if let Some(algo) = compression_algorithm {
             let mut comp_caches = self.compression_caches.write().await;
             comp_caches
-                .entry(algo)
+                .entry(algo.clone())
                 .or_insert_with(Vec::new)
                 .push(key.clone());
         }
@@ -415,13 +415,13 @@ impl DecompressionCache {
     /// Estimate decompression time based on algorithm and size
     fn estimate_decompression_time(
         size_bytes: usize,
-        algorithm: Option<crate::storage::engines::sst::CompressionAlgorithmSst>,
+        algorithm: Option<crate::core::compression::CompressionAlgorithm>,
     ) -> u64 {
         // Rough estimates based on typical decompression speeds
         match algorithm {
-            Some(crate::storage::engines::sst::CompressionAlgorithmSst::Zstd) => (size_bytes as u64) / 1000,   // ~1GB/s
-            Some(crate::storage::engines::sst::CompressionAlgorithmSst::Lz4) => (size_bytes as u64) / 2000,    // ~2GB/s
-            Some(super::CompressionAlgorithmSst::Snappy) => (size_bytes as u64) / 1500, // ~1.5GB/s
+            Some(crate::core::compression::CompressionAlgorithm::Zstd) => (size_bytes as u64) / 1000,   // ~1GB/s
+            Some(crate::core::compression::CompressionAlgorithm::Lz4) => (size_bytes as u64) / 2000,    // ~2GB/s
+            Some(crate::core::compression::CompressionAlgorithm::Snappy) => (size_bytes as u64) / 1500, // ~1.5GB/s
             _ => 0,
         }
     }
@@ -465,7 +465,7 @@ impl DecompressionCache {
     pub async fn prefetch_file_blocks(
         &self,
         file_path: &str,
-        blocks: Vec<(u32, DataBlock, Option<super::CompressionAlgorithmSst>)>,
+        blocks: Vec<(u32, DataBlock, Option<crate::core::compression::CompressionAlgorithm>)>,
     ) -> Result<()> {
         info!(
             "📥 Prefetching {} blocks for file {}",
@@ -489,7 +489,7 @@ impl DecompressionCache {
     /// Get blocks by compression algorithm (for optimization)
     pub async fn get_blocks_by_algorithm(
         &self,
-        algorithm: super::CompressionAlgorithmSst,
+        algorithm: crate::core::compression::CompressionAlgorithm,
     ) -> Vec<BlockCacheKey> {
         let comp_caches = self.compression_caches.read().await;
         comp_caches
@@ -576,7 +576,7 @@ mod tests {
         
         // Test put and hit
         let block = DataBlock::new(1, vec![]);
-        cache.put(key.clone(), block.clone(), Some(crate::storage::engines::sst::CompressionAlgorithmSst::Zstd))
+        cache.put(key.clone(), block.clone(), Some(crate::core::compression::CompressionAlgorithm::Zstd))
             .await
             .unwrap();
         

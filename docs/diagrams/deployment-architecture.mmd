@@ -1,4 +1,4 @@
-%%{init: {'theme':'neutral', 'themeVariables': {'primaryColor':'#3b82f6','primaryTextColor':'#1f2937','primaryBorderColor':'#6b7280','lineColor':'#9ca3af','secondaryColor':'#10b981','tertiaryColor':'#f59e0b','background':'transparent','mainBkg':'#f3f4f6','secondBkg':'#e5e7eb','textColor':'#1f2937'}}}%%
+%%{init: {"theme":"neutral", "themeVariables": {"primaryColor":"#2563eb","primaryTextColor":"#ffffff","primaryBorderColor":"#1e40af","lineColor":"#64748b","secondaryColor":"#10b981","secondaryTextColor":"#ffffff","tertiaryColor":"#f59e0b","tertiaryTextColor":"#ffffff","background":"transparent","mainBkg":"#ffffff","secondBkg":"#f8fafc","textColor":"#1e293b","nodeTextColor":"#1e293b","fontFamily":"-apple-system, BlinkMacSystemFont, Segoe UI, Roboto, sans-serif","fontSize":"14px","clusterBkg":"#f1f5f9","clusterBorder":"#cbd5e1","edgeLabelBackground":"#ffffff"}}}%%
 graph TB
     %% Load Balancer & CDN
     subgraph Edge[" Edge & Load Balancing"]
@@ -24,21 +24,21 @@ graph TB
         end
     end
     
-    %% Multi-Disk Storage Configuration
+    %% Multi-Disk Storage Configuration with Block Size Optimization
     subgraph Storage[" Multi-Disk Storage Configuration"]
         subgraph HighPerf[" High-Performance Tier"]
-            NVMe1["NVMe SSD 1<br/> Hot Data Storage<br/> <100μs Latency<br/> Memory-Mapped Files"]
-            NVMe2["NVMe SSD 2<br/> Index Storage<br/> AXIS Indexes<br/> Search Optimization"]
+            NVMe1["NVMe SSD 1<br/> Hot Data Storage<br/> <100μs Latency<br/> block_size_kb = 512-1024<br/> IOPS Optimized"]
+            NVMe2["NVMe SSD 2<br/> Index Storage<br/> AXIS Indexes<br/> block_size_kb = 1024<br/> Search Optimization"]
         end
         
         subgraph Standard["💿 Standard Tier"]
-            SSD1["SATA SSD 1<br/>💿 Warm Data Storage<br/> ~1ms Latency<br/> Compressed Data"]
-            SSD2["SATA SSD 2<br/>💿 Write Buffers<br/> WAL + Memtables<br/> Batch Processing"]
+            SSD1["SATA SSD 1<br/>💿 Warm Data Storage<br/> ~1ms Latency<br/> block_size_kb = 2048<br/> Balanced Performance"]
+            SSD2["SATA SSD 2<br/>💿 Write Buffers<br/> WAL + Memtables<br/> block_size_kb = 1024<br/> Batch Processing"]
         end
         
         subgraph Archive[" Archive Tier"]
-            HDD1["SATA HDD 1<br/> Cold Data Archive<br/> ~10ms Latency<br/> Cost Optimized"]
-            HDD2["SATA HDD 2<br/> Backup Storage<br/> Snapshot Storage<br/> Disaster Recovery"]
+            HDD1["SATA HDD 1<br/> Cold Data Archive<br/> ~10ms Latency<br/> block_size_kb = 256-512<br/> Cost Optimized"]
+            HDD2["SATA HDD 2<br/> Backup Storage<br/> block_size_kb = 512<br/> Sequential I/O"]
         end
     end
     
@@ -49,21 +49,21 @@ graph TB
         ConfigStore["Configuration Store<br/> Configuration Management<br/> Runtime Settings<br/> Performance Tuning"]
     end
     
-    %% Cloud Storage Integration
+    %% Cloud Storage Integration with Optimized Block Sizes
     subgraph CloudTier[" Multi-Cloud Storage"]
         subgraph AWS["🔶 Amazon Web Services"]
-            S3["S3 Storage<br/> Object Storage<br/> Intelligent Tiering<br/> Cost Optimization"]
-            EBS["EBS Volumes<br/> Block Storage<br/> High IOPS<br/> Provisioned Performance"]
+            S3["S3 Storage<br/> Object Storage<br/> block_size_kb = 3072-4096<br/> API Efficiency Optimized<br/> 7 calls → 1-2 calls"]
+            EBS["EBS gp3 Volumes<br/> Block Storage<br/> block_size_kb = 256-3072<br/> IOPS: 16K, Throughput: 1GB/s<br/> Sequential 256KB blocks"]
         end
         
         subgraph Azure["🔷 Microsoft Azure"]
-            BlobStorage["Blob Storage<br/> Cool/Archive Tiers<br/> Lifecycle Management<br/> Cost Optimization"]
-            PremiumSSD["Premium SSD<br/> High-Performance Disks<br/> Ultra Low Latency<br/> Consistent Performance"]
+            BlobStorage["Blob Storage<br/> Cool/Archive Tiers<br/> block_size_kb = 3072-8192<br/> Cost vs Performance Balance<br/> Lifecycle Management"]
+            PremiumSSD["Premium SSD<br/> Ultra Low Latency<br/> block_size_kb = 512-4096<br/> 80K IOPS, 1.2GB/s<br/> Custom Performance"]
         end
         
         subgraph GCP["🔴 Google Cloud Platform"]
-            CloudStorage["Cloud Storage<br/> Nearline/Coldline<br/> Auto-class Management<br/> Predictive Cost Control"]
-            PersistentDisk["Persistent Disk<br/> SSD/HDD Options<br/> Regional Persistence<br/> Automatic Snapshots"]
+            CloudStorage["Cloud Storage<br/> Nearline/Coldline<br/> block_size_kb = 1024-8192<br/> Cost-Effective Processing<br/> Auto-class Management"]
+            PersistentDisk["Persistent Disk<br/> SSD Extreme/Balanced<br/> block_size_kb = 256-4096<br/> 120K IOPS, 4GB/s<br/> Regional Persistence"]
         end
     end
     

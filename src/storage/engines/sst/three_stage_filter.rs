@@ -552,7 +552,7 @@ mod tests {
                     },
                 ],
                 uncompressed_size: 1024,
-                compression_algorithm: crate::storage::engines::sst::CompressionAlgorithmSst::None,
+                compression_algorithm: crate::core::serialization::CompressionAlgorithm::None,
                 // REMOVED: compression_ratio
                 metadata_stats: crate::storage::engines::sst::DataBlockMetadata::default(),
                 block_bloom_filter: None,

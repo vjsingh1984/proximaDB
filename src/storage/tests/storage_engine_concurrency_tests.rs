@@ -45,7 +45,7 @@ use tracing::{debug, error, info};
         config.sst_config = SstConfig {
             level_count: 3,
             compaction_threshold: 2,
-            block_size_mb: 4,
+            block_size_kb: 4096,
             compaction_strategy: "leveled".to_string(),
             compression: "none".to_string(),  // No compression for faster tests
             compression_level: 0,

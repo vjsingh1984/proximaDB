@@ -19,7 +19,7 @@ metadata_url = "file:///fast-nvme/proximadb/metadata"
 [storage.sst_config]
 # 🎯 OPTIMAL 3MB BLOCK SIZE
 # Universal cloud optimization for AWS/Azure/GCS
-block_size_mb = 3  # 3MB - perfect for all cloud IOPS patterns
+block_size_kb = 2048  # 2MB - perfect balance for cloud IOPS and disk storage
 
 # Compression settings optimized for 3MB blocks
 compression = "zstd"
@@ -43,21 +43,21 @@ eviction_policy = "lru"
 # AWS Configuration (EBS gp3: optimal at 1-4MB, st1: 1-4MB sequential)
 [aws]
 # EBS gp3 optimized - 3MB hits the sweet spot
-preferred_block_size_mb = 3
+preferred_block_size_kb = 3072  # 3MB for cloud optimization
 enable_instance_store = true  # Use instance store for hot data when available
 enable_s3_express = true      # Use S3 Express One Zone for warm tier
 
 # Azure Configuration (Premium SSD: 512KB-2MB optimal, 3MB works well)
 [azure]
 # Azure Premium SSD optimized - 3MB aligns well
-preferred_block_size_mb = 3
+preferred_block_size_kb = 3072  # 3MB for cloud optimization
 enable_local_nvme = true      # Use L-series local NVMe when available
 blob_tier_strategy = "hot"    # Use Hot tier for primary storage
 
 # GCS Configuration (Standard: 1-8MB optimal - 3MB is perfect)
 [gcp]
 # GCS Standard optimized - 3MB in sweet spot
-preferred_block_size_mb = 3
+preferred_block_size_kb = 3072  # 3MB for cloud optimization
 enable_local_ssd = true       # Use local SSD when available
 storage_class = "standard"    # Standard class for primary storage
 

@@ -1,0 +1,58 @@
+%%{init: {"theme":"neutral", "themeVariables": {"primaryColor":"#2563eb","primaryTextColor":"#ffffff","primaryBorderColor":"#1e40af","lineColor":"#64748b","secondaryColor":"#10b981","secondaryTextColor":"#ffffff","tertiaryColor":"#f59e0b","tertiaryTextColor":"#ffffff","background":"transparent","mainBkg":"#ffffff","secondBkg":"#f8fafc","textColor":"#1e293b","nodeTextColor":"#1e293b","fontFamily":"-apple-system, BlinkMacSystemFont, Segoe UI, Roboto, sans-serif","fontSize":"14px","clusterBkg":"#f1f5f9","clusterBorder":"#cbd5e1","edgeLabelBackground":"#ffffff"}}}%%
+
+graph TB
+    subgraph "ProximaDB Use Case Overview"
+        Developer["👨‍💻 Developer"]
+        Admin["👩‍💼 Administrator"] 
+        DataScientist["👩‍🔬 Data Scientist"]
+        EndUser["👤 End User"]
+        
+        subgraph "Vector Operations Module"
+            VectorOps["🔍 Vector Operations<br/>Search, Insert, Update"]
+        end
+        
+        subgraph "Collection Management Module"
+            CollectionMgmt["📋 Collection Management<br/>Create, Configure, Monitor"]
+        end
+        
+        subgraph "Storage Operations Module"
+            StorageOps["💾 Storage Operations<br/>Persistence, Compression, Tiering"]
+        end
+        
+        subgraph "Query Processing Module"
+            QueryOps["🗄️ Query Processing<br/>SQL, Filtering, Analytics"]
+        end
+        
+        subgraph "System Administration Module"
+            SystemAdmin["🔧 System Administration<br/>Deployment, Monitoring, Security"]
+        end
+    end
+    
+    %% Primary Actor to Module Relationships
+    Developer --> VectorOps
+    Developer --> CollectionMgmt
+    Developer --> QueryOps
+    
+    DataScientist --> VectorOps
+    DataScientist --> QueryOps
+    DataScientist --> StorageOps
+    
+    Admin --> CollectionMgmt
+    Admin --> StorageOps
+    Admin --> SystemAdmin
+    
+    EndUser --> VectorOps
+    EndUser --> QueryOps
+    
+    %% Inter-Module Dependencies
+    VectorOps -.-> CollectionMgmt : requires
+    VectorOps -.-> StorageOps : uses
+    QueryOps -.-> VectorOps : includes
+    StorageOps -.-> SystemAdmin : monitored by
+    
+    %% Styling
+    classDef actorStyle fill:#e3f2fd,stroke:#1976d2,stroke-width:3px
+    classDef moduleStyle fill:#e8f5e8,stroke:#388e3c,stroke-width:3px
+    
+    class Developer,Admin,DataScientist,EndUser actorStyle
+    class VectorOps,CollectionMgmt,StorageOps,QueryOps,SystemAdmin moduleStyle

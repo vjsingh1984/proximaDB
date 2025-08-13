@@ -414,11 +414,11 @@ pub struct CompressionConfig {
     /// "mean", "trimmed_mean", "median" - for quantized only
     #[prost(string, optional, tag = "7")]
     pub normalization_method: ::core::option::Option<::prost::alloc::string::String>,
-    /// SST-specific block sizing
+    /// SST-specific block sizing (KB format for better granularity)
     ///
-    /// SST block size in MB (4-16, default 8)
+    /// SST block size in KB (256-16384, default 2048 = 2MB)
     #[prost(int32, optional, tag = "8")]
-    pub block_size_mb: ::core::option::Option<i32>,
+    pub block_size_kb: ::core::option::Option<i32>,
     /// Auto-adjust based on vector dimensions (default: false)
     #[prost(bool, tag = "9")]
     pub dynamic_block_sizing: bool,

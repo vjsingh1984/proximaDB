@@ -16,7 +16,7 @@ use tempfile::TempDir;
 
 fn create_test_config() -> SstConfig {
     SstConfig {
-        block_size_mb: 4, // Use small 4KB blocks for tests
+        block_size_kb: 4, // Use small 4KB blocks for tests
         decompression_cache_config: None,
         ..SstConfig::default()
     }
@@ -38,7 +38,7 @@ async fn test_metadata_filtering_basic() {
     // Create SSTable with records having different metadata
     let sstable_path = temp_path.join("metadata_test.sst");
     let test_config = create_test_config();
-    let block_size = (test_config.block_size_mb * 1024) as usize;
+    let block_size = (test_config.block_size_kb * 1024) as usize;
     let writer = SstableWriter::new(&sstable_path, block_size, filesystem.clone())
         .with_bloom_config(BloomFilterConfig {
             bits_per_key: 10,
@@ -250,7 +250,7 @@ async fn test_metadata_bloom_filter_optimization() {
     // Create SSTable with metadata bloom filters
     let sstable_path = temp_path.join("bloom_metadata_test.sst");
     let test_config = create_test_config();
-    let block_size = (test_config.block_size_mb * 1024) as usize;
+    let block_size = (test_config.block_size_kb * 1024) as usize;
     let writer = SstableWriter::new(&sstable_path, block_size, filesystem.clone())
         .with_bloom_config(BloomFilterConfig {
             bits_per_key: 10,

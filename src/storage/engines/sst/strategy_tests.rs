@@ -611,6 +611,6 @@ mod tests {
         
         // Verify compression metadata
         let header = reader.read_header_async().await.unwrap();
-        assert_eq!(header.compression_algorithm, CompressionAlgorithmSst::Zstd);
+        assert_eq!(header.compression_algorithm, CompressionAlgorithm::Zstd);
     }
 }

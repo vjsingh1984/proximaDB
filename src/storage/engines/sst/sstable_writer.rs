@@ -61,30 +61,30 @@ impl SstableWriter {
     fn compress_block_streaming(
         &self,
         data_block: &DataBlock,
-        algorithm: super::CompressionAlgorithmSst,
+        algorithm: crate::core::compression::CompressionAlgorithm,
         level: u8,
     ) -> Result<Vec<u8>> {
         use super::{DataBlockCompressionConfig, VectorSerializationConfig};
         use crate::proto::proximadb::{CompressionConfig, CompressionAlgorithm};
         
         // For None algorithm, disable compression entirely
-        let (enable_compression, compression_config) = if algorithm == super::CompressionAlgorithmSst::None {
+        let (enable_compression, compression_config) = if algorithm == crate::core::compression::CompressionAlgorithm::None {
             (false, None)
         } else {
             // Map SST algorithm to proto algorithm for the config
             let proto_algorithm = match algorithm {
-                super::CompressionAlgorithmSst::Zstd => CompressionAlgorithm::CompressionZstd,
-                super::CompressionAlgorithmSst::Lz4 => CompressionAlgorithm::CompressionLz4,
-                super::CompressionAlgorithmSst::Snappy => CompressionAlgorithm::CompressionSnappy,
-                super::CompressionAlgorithmSst::Gzip => CompressionAlgorithm::CompressionGzip,
-                super::CompressionAlgorithmSst::Brotli => CompressionAlgorithm::CompressionBrotli,
-                super::CompressionAlgorithmSst::Bzip2 => CompressionAlgorithm::CompressionBzip2,
-                super::CompressionAlgorithmSst::Deflate => CompressionAlgorithm::CompressionDeflate,
-                super::CompressionAlgorithmSst::Xz => CompressionAlgorithm::CompressionXz,
-                super::CompressionAlgorithmSst::Zlib => CompressionAlgorithm::CompressionZlib,
-                super::CompressionAlgorithmSst::Lzo => CompressionAlgorithm::CompressionLzo,
-                super::CompressionAlgorithmSst::Lz4Hc => CompressionAlgorithm::CompressionLz4hc,
-                super::CompressionAlgorithmSst::Lzma => CompressionAlgorithm::CompressionLzma,
+                crate::core::compression::CompressionAlgorithm::Zstd => CompressionAlgorithm::CompressionZstd,
+                crate::core::compression::CompressionAlgorithm::Lz4 => CompressionAlgorithm::CompressionLz4,
+                crate::core::compression::CompressionAlgorithm::Snappy => CompressionAlgorithm::CompressionSnappy,
+                crate::core::compression::CompressionAlgorithm::Gzip => CompressionAlgorithm::CompressionGzip,
+                crate::core::compression::CompressionAlgorithm::Brotli => CompressionAlgorithm::CompressionBrotli,
+                crate::core::compression::CompressionAlgorithm::Bzip2 => CompressionAlgorithm::CompressionBzip2,
+                crate::core::compression::CompressionAlgorithm::Deflate => CompressionAlgorithm::CompressionDeflate,
+                crate::core::compression::CompressionAlgorithm::Xz => CompressionAlgorithm::CompressionXz,
+                crate::core::compression::CompressionAlgorithm::Zlib => CompressionAlgorithm::CompressionZlib,
+                crate::core::compression::CompressionAlgorithm::Lzo => CompressionAlgorithm::CompressionLzo,
+                crate::core::compression::CompressionAlgorithm::Lz4hc => CompressionAlgorithm::CompressionLz4hc,
+                crate::core::compression::CompressionAlgorithm::Lzma => CompressionAlgorithm::CompressionLzma,
                 _ => CompressionAlgorithm::CompressionNone, // Fallback
             };
             
@@ -100,6 +100,7 @@ impl SstableWriter {
             enable_compression,
             compression_threshold: if enable_compression { 0 } else { usize::MAX },
             compression_level: level as i32,
+            compression_algorithm: crate::core::serialization::CompressionAlgorithm::Zstd, // Default to ZSTD
             vector_config: VectorSerializationConfig::default(),
             collection_compression: compression_config,
         };
@@ -213,28 +214,28 @@ impl SstableWriter {
             if let Some(ref compression) = self.compression_config {
                 use crate::proto::proximadb::CompressionAlgorithm;
                 let algorithm = match CompressionAlgorithm::try_from(compression.algorithm) {
-                    Ok(CompressionAlgorithm::CompressionNone) => super::CompressionAlgorithmSst::None,
-                    Ok(CompressionAlgorithm::CompressionZstd) => super::CompressionAlgorithmSst::Zstd,
-                    Ok(CompressionAlgorithm::CompressionLz4) => super::CompressionAlgorithmSst::Lz4,
-                    Ok(CompressionAlgorithm::CompressionSnappy) => super::CompressionAlgorithmSst::Snappy,
-                    Ok(CompressionAlgorithm::CompressionGzip) => super::CompressionAlgorithmSst::Gzip,
-                    Ok(CompressionAlgorithm::CompressionBrotli) => super::CompressionAlgorithmSst::Brotli,
-                    Ok(CompressionAlgorithm::CompressionBzip2) => super::CompressionAlgorithmSst::Bzip2,
-                    Ok(CompressionAlgorithm::CompressionDeflate) => super::CompressionAlgorithmSst::Deflate,
-                    Ok(CompressionAlgorithm::CompressionXz) => super::CompressionAlgorithmSst::Xz,
-                    Ok(CompressionAlgorithm::CompressionZlib) => super::CompressionAlgorithmSst::Zlib,
-                    Ok(CompressionAlgorithm::CompressionLzo) => super::CompressionAlgorithmSst::Lzo,
-                    Ok(CompressionAlgorithm::CompressionLz4hc) => super::CompressionAlgorithmSst::Lz4Hc,
-                    Ok(CompressionAlgorithm::CompressionLzma) => super::CompressionAlgorithmSst::Lzma,
-                    _ => super::CompressionAlgorithmSst::None,
+                    Ok(CompressionAlgorithm::CompressionNone) => crate::core::compression::CompressionAlgorithm::None,
+                    Ok(CompressionAlgorithm::CompressionZstd) => crate::core::compression::CompressionAlgorithm::Zstd,
+                    Ok(CompressionAlgorithm::CompressionLz4) => crate::core::compression::CompressionAlgorithm::Lz4,
+                    Ok(CompressionAlgorithm::CompressionSnappy) => crate::core::compression::CompressionAlgorithm::Snappy,
+                    Ok(CompressionAlgorithm::CompressionGzip) => crate::core::compression::CompressionAlgorithm::Gzip,
+                    Ok(CompressionAlgorithm::CompressionBrotli) => crate::core::compression::CompressionAlgorithm::Brotli,
+                    Ok(CompressionAlgorithm::CompressionBzip2) => crate::core::compression::CompressionAlgorithm::Bzip2,
+                    Ok(CompressionAlgorithm::CompressionDeflate) => crate::core::compression::CompressionAlgorithm::Deflate,
+                    Ok(CompressionAlgorithm::CompressionXz) => crate::core::compression::CompressionAlgorithm::Xz,
+                    Ok(CompressionAlgorithm::CompressionZlib) => crate::core::compression::CompressionAlgorithm::Zlib,
+                    Ok(CompressionAlgorithm::CompressionLzo) => crate::core::compression::CompressionAlgorithm::Lzo,
+                    Ok(CompressionAlgorithm::CompressionLz4hc) => crate::core::compression::CompressionAlgorithm::Lz4hc,
+                    Ok(CompressionAlgorithm::CompressionLzma) => crate::core::compression::CompressionAlgorithm::Lzma,
+                    _ => crate::core::compression::CompressionAlgorithm::None,
                 };
                 (algorithm, compression.level.unwrap_or(3) as u8)
             } else {
-                (super::CompressionAlgorithmSst::None, 0)
+                (crate::core::compression::CompressionAlgorithm::None, 0)
             };
         
         // Compress blocks in-place if compression is enabled
-        if compression_algorithm != super::CompressionAlgorithmSst::None {
+        if compression_algorithm != crate::core::compression::CompressionAlgorithm::None {
             debug!("🗜️ SST: Compressing {} blocks in-place with {:?}", data_blocks.len(), compression_algorithm);
             for block in &mut data_blocks {
                 // Set compression info on the block itself

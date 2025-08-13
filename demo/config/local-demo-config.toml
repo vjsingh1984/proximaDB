@@ -31,7 +31,7 @@ compression_enabled = true
 compression_level = 3
 compaction_threshold = 5
 write_buffer_size_mb = 8192
-block_size_mb = 4
+block_size_kb = 2048  # 2MB default
 
 # Decompression cache configuration for production performance
 [storage.sst_config.decompression_cache]

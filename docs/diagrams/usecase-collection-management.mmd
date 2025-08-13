@@ -1,0 +1,59 @@
+%%{init: {"theme":"neutral", "themeVariables": {"primaryColor":"#2563eb","primaryTextColor":"#ffffff","primaryBorderColor":"#1e40af","lineColor":"#64748b","secondaryColor":"#10b981","secondaryTextColor":"#ffffff","tertiaryColor":"#f59e0b","tertiaryTextColor":"#ffffff","background":"transparent","mainBkg":"#ffffff","secondBkg":"#f8fafc","textColor":"#1e293b","nodeTextColor":"#1e293b","fontFamily":"-apple-system, BlinkMacSystemFont, Segoe UI, Roboto, sans-serif","fontSize":"14px","clusterBkg":"#f1f5f9","clusterBorder":"#cbd5e1","edgeLabelBackground":"#ffffff"}}}%%
+
+graph TB
+    subgraph "Collection Management Module"
+        Developer["👨‍💻 Developer"]
+        Admin["👩‍💼 Administrator"]
+        System["🔧 System"]
+        
+        subgraph "Core Collection Use Cases"
+            CreateCollection["Create Collection<br/>📋 Initialize Schema"]
+            ConfigureCollection["Configure Collection<br/>⚙️ Settings & Policies"]
+            ListCollections["List Collections<br/>📚 Browse & Search"]
+            DeleteCollection["Delete Collection<br/>🗑️ Remove & Cleanup"]
+        end
+        
+        subgraph "Advanced Collection Use Cases"
+            StorageAssignment["Storage Assignment<br/>💾 Multi-disk Setup"]
+            CompressionConfig["Compression Config<br/>🗜️ Optimization"]
+            IndexConfiguration["Index Configuration<br/>🔍 Search Optimization"]
+            BackupRestore["Backup & Restore<br/>💼 Data Protection"]
+        end
+        
+        subgraph "System Use Cases"
+            MonitorHealth["Monitor Health<br/>📊 Collection Status"]
+            PerformMaintenance["Perform Maintenance<br/>🔧 Cleanup & Optimize"]
+        end
+    end
+    
+    %% Primary Actor Relationships
+    Developer --> CreateCollection
+    Developer --> ConfigureCollection
+    Developer --> ListCollections
+    Developer --> DeleteCollection
+    
+    Admin --> StorageAssignment
+    Admin --> CompressionConfig
+    Admin --> IndexConfiguration
+    Admin --> BackupRestore
+    
+    System --> MonitorHealth
+    System --> PerformMaintenance
+    
+    %% Use Case Dependencies
+    CreateCollection -.-> StorageAssignment : includes
+    CreateCollection -.-> CompressionConfig : includes
+    ConfigureCollection -.-> IndexConfiguration : extends
+    DeleteCollection -.-> BackupRestore : includes
+    MonitorHealth -.-> PerformMaintenance : triggers
+    
+    %% Styling
+    classDef actorStyle fill:#e3f2fd,stroke:#1976d2,stroke-width:2px
+    classDef primaryUseCase fill:#e8f5e8,stroke:#388e3c,stroke-width:2px
+    classDef advancedUseCase fill:#fff3e0,stroke:#f57c00,stroke-width:2px
+    classDef systemUseCase fill:#f3e5f5,stroke:#7b1fa2,stroke-width:2px
+    
+    class Developer,Admin,System actorStyle
+    class CreateCollection,ConfigureCollection,ListCollections,DeleteCollection primaryUseCase
+    class StorageAssignment,CompressionConfig,IndexConfiguration,BackupRestore advancedUseCase
+    class MonitorHealth,PerformMaintenance systemUseCase

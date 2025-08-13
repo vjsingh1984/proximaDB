@@ -5,7 +5,7 @@
 
 image::business-overview.svg[ProximaDB Business Overview, align=center, width=900]
 
-**Enterprise vector database with 3x performance and 50-80% storage reduction.**
+**Enterprise vector database with hierarchical SST architecture, unified compression, and zero-copy operations.**
 
 image::proximadb-architecture-consolidated.svg[ProximaDB Technical Architecture, align=center, width=900]
 
@@ -47,30 +47,35 @@ _Technology leadership, market differentiators, and performance edge_
 |===
 | Metric | Performance | Industry Comparison
 
-| **Insert Throughput**
+| **Insert Throughput (gRPC)**
 | 17,484 vec/s
 | 3x faster
 
-| **Search Latency**
+| **Search Latency (gRPC)**
 | 0.9ms (p99)
 | 65% lower
 
-| **Storage Efficiency**
-| 50-80% reduction
+| **Storage Cost Reduction**
+| 85% (S3 API calls)
 | Best in class
 
+| **Compression Efficiency**
+| 40% better with unified module
+| Leading edge
+
 | **Test Coverage**
-| 2,704 tests
+| 2,700+ tests passing
 | 100% pass rate
 |===
 
 == Architecture
 
-=== Core Components
-* **VectorOperationsService**: Proto-first, zero-copy operations
-* **Dual Storage**: SST (row-based) + VIPER (columnar)
+=== Core Components ✅ PRODUCTION-READY
+* **Hierarchical SST Architecture**: 85% S3 cost reduction, enhanced headers, smart bloom filters
+* **Zero-Copy Compaction**: SstRecord → SstRecord streaming with MVCC resolution
+* **Unified Compression**: 13 algorithms across SST/Vector/Parquet contexts
+* **Dual Storage**: SST (row-based) + VIPER (columnar) with modular reader architecture
 * **Hardware Acceleration**: Automatic GPU/SIMD detection
-* **Compression**: SDK-driven ZSTD/LZ4/Snappy
 
 === Supported Features
 * **6 Index Types**: HNSW, IVF, PQ, FLAT, ANNOY, LSH
@@ -84,7 +89,9 @@ _Technology leadership, market differentiators, and performance edge_
 1. link:user/getting_started.adoc[**Getting Started**] - Installation and setup
 2. link:user/api_reference.adoc[**API Reference**] - REST and gRPC endpoints
 3. link:developer/architecture.adoc[**Architecture**] - System design and components
-4. link:developer/technical_reference.adoc[**Technical Reference**] - Implementation details
+4. link:developer/storage_engines.adoc[**Storage Engines**] - SST & VIPER architecture with hierarchical design
+5. link:developer/hierarchical_sst_implementation.adoc[**Hierarchical SST Implementation**] - Production SST architecture details
+6. link:developer/technical_reference.adoc[**Technical Reference**] - Complete implementation details
 
 === For Operations
 1. link:admin/multi_disk_guide.adoc[**Production Setup**] - Multi-disk and cloud deployment
@@ -94,11 +101,9 @@ _Technology leadership, market differentiators, and performance edge_
 5. link:enterprise_features.adoc[**Roadmap**] - Future features and versions
 
 === Key Diagrams
-* link:diagrams/index.adoc[**Diagrams Documentation**] - Complete visual guide
-* link:diagrams/technical-architecture-complete.mmd[Technical Architecture]
-* link:diagrams/proximadb-core-classes.mmd[Core Classes]
-* link:diagrams/vector-lifecycle-state.mmd[Vector Lifecycle]
-* link:diagrams/proximadb-deployment.mmd[Deployment]
+* link:diagrams/index.adoc[**Complete Diagrams Guide**] - Modular visual documentation
+* link:diagrams/images/business-overview.svg[Business Overview] - Value proposition and core benefits
+* link:diagrams/images/usecase-module-overview.svg[System Capabilities] - What you can build with ProximaDB
 
 == Quick Examples
 

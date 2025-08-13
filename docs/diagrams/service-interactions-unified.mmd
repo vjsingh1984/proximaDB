@@ -1,0 +1,187 @@
+%%{init: {"theme":"neutral", "themeVariables": {"primaryColor":"#2563eb","primaryTextColor":"#ffffff","primaryBorderColor":"#1e40af","lineColor":"#64748b","secondaryColor":"#10b981","secondaryTextColor":"#ffffff","tertiaryColor":"#f59e0b","tertiaryTextColor":"#ffffff","background":"transparent","mainBkg":"#ffffff","secondBkg":"#f8fafc","textColor":"#1e293b","nodeTextColor":"#1e293b","fontFamily":"-apple-system, BlinkMacSystemFont, Segoe UI, Roboto, sans-serif","fontSize":"14px","clusterBkg":"#f1f5f9","clusterBorder":"#cbd5e1","edgeLabelBackground":"#ffffff"}}}%%
+
+sequenceDiagram
+    participant Client as 🌐 Client
+    participant API as 🚪 API Gateway<br/>(REST/gRPC)
+    participant Handlers as 🔄 Unified Handlers
+    participant VOS as ⚡ VectorOperationsService
+    participant CS as 📁 CollectionService
+    participant Engine as 💾 Storage Engine<br/>(VIPER/SST)
+    participant WAL as 📝 Write-Ahead Log
+    participant Memtable as 🧠 Memtable
+    participant Index as 🔍 Index Layer
+    participant Cache as 🗄️ Cache Orchestrator
+    participant TxCoord as 🔄 Transaction Coordinator
+    participant Compression as 🗜️ Compression Module
+    participant Hardware as 🚀 Hardware Layer
+    participant Metrics as 📊 Metrics
+
+    %% === COLLECTION CREATION FLOW ===
+    Note over Client,Metrics: 📋 Collection Creation with Storage Assignment
+
+    Client->>+API: POST /collections<br/>CollectionConfig + compression settings
+    API->>+Handlers: handle_collection_operation()<br/>JSON → Proto conversion
+    Handlers->>+CS: create_collection()<br/>with storage_assignment
+    
+    CS->>CS: Generate collection metadata<br/>assign storage locations
+    CS->>+Engine: initialize_storage()<br/>data_location, wal_location
+    Engine->>+TxCoord: setup_collection_storage()<br/>atomic directory creation
+    TxCoord->>TxCoord: Create staging directories<br/>prepare atomic operation
+    TxCoord-->>-Engine: Storage paths ready
+    Engine-->>-CS: Collection storage initialized
+    CS->>CS: Persist collection metadata<br/>with storage_assignment
+    CS-->>-Handlers: Collection created successfully
+    Handlers-->>-API: Proto → JSON response
+    API-->>-Client: Collection details + ID
+    
+    %% === VECTOR INSERT FLOW ===
+    Note over Client,Metrics: 📥 High-Performance Vector Insert (17K vec/s gRPC)
+
+    Client->>+API: POST /collections/{id}/vectors<br/>Batch of 500 vectors
+    API->>+Handlers: handle_vector_batch()<br/>validate & convert
+    Handlers->>+VOS: insert_vectors_direct()<br/>Direct memtable access
+    
+    VOS->>+CS: get_collection_metadata(id)<br/>get storage_assignment
+    CS-->>-VOS: Collection + storage locations
+    
+    VOS->>+Compression: compress_batch()<br/>SDK-driven compression config
+    Compression->>Compression: Apply unified compression<br/>ZSTD/LZ4/Snappy based on config
+    Compression-->>-VOS: Compressed vector batch
+    
+    par Parallel Write Operations
+        VOS->>+WAL: append_batch(vectors)<br/>Proto serialization
+        WAL->>WAL: Serialize to protobuf<br/>durability guarantee
+        WAL-->>-VOS: WAL position confirmed
+    and
+        VOS->>+Memtable: insert_batch(vectors)<br/>In-memory buffer
+        Memtable->>Memtable: Store vectors in memory<br/>fast write access
+        Memtable-->>-VOS: Insert confirmed
+    and
+        VOS->>+Index: add_vectors(batch)<br/>Update search indexes
+        Index->>Hardware: detect_hardware_capabilities()<br/>GPU/SIMD optimization
+        Hardware-->>Index: Hardware profile
+        Index->>Index: Update HNSW/IVF/LSH indexes<br/>with hardware acceleration
+        Index-->>-VOS: Index updated
+    end
+    
+    VOS->>+Cache: invalidate_cache(vector_ids)<br/>Maintain consistency
+    Cache->>Cache: Cascade invalidation<br/>query cache, metadata cache
+    Cache-->>-VOS: Cache cleared
+    
+    VOS->>+Metrics: record_insert(count, latency)<br/>Performance tracking
+    Metrics-->>-VOS: Metrics recorded
+    
+    alt Flush Threshold Reached
+        Note over Memtable,Engine: 🔄 Automatic Flush Process
+        Memtable->>+Engine: trigger_flush()<br/>Memory → Disk persistence
+        Engine->>+Compression: compress_for_storage()<br/>Engine-specific compression
+        Compression-->>-Engine: Compressed data blocks
+        Engine->>+TxCoord: begin_atomic_flush()<br/>ACID guarantees
+        TxCoord->>TxCoord: Write to staging<br/>prepare atomic operation
+        TxCoord->>TxCoord: Finalize operation<br/>move staging → final
+        TxCoord-->>-Engine: Flush completed atomically
+        Engine-->>-Memtable: Flush acknowledged
+        Memtable->>Memtable: Clear flushed data<br/>reclaim memory
+    end
+    
+    VOS-->>-Handlers: Insert batch completed
+    Handlers-->>-API: Proto → JSON response
+    API-->>-Client: Insert statistics<br/>{success: true, count: 500}
+
+    %% === VECTOR SEARCH FLOW ===
+    Note over Client,Metrics: 🔍 Intelligent Vector Search (0.9ms p99 latency)
+
+    Client->>+API: POST /search<br/>Query vector + metadata filters
+    API->>+Handlers: handle_vector_search()<br/>Parse search parameters
+    Handlers->>+VOS: search_vectors()<br/>Intelligent routing
+    
+    VOS->>+CS: get_collection_metadata(id)<br/>Check compression config
+    CS-->>-VOS: Collection config + storage info
+    
+    VOS->>+Cache: check_query_cache(query_hash)<br/>Cache lookup first
+    Cache-->>-VOS: Cache miss (or cached results)
+    
+    alt Cache Miss - Execute Search
+        VOS->>+Engine: search_vectors_unified()<br/>Engine-specific optimization
+        
+        par Dual Engine Search Strategy
+            Note over Engine: VIPER Engine Search
+            Engine->>+Compression: decompress_for_search()<br/>Selective decompression
+            Compression-->>-Engine: Decompressed data blocks
+            Engine->>Engine: Search columnar data<br/>predicate pushdown
+            Engine->>Engine: Two-stage search<br/>Quantized → FP32 reranking
+        and
+            Note over Engine: SST Engine Search  
+            Engine->>Engine: Hierarchical bloom filtering<br/>95% block skip rate
+            Engine->>Engine: Three-stage filtering<br/>File→Block→Record
+            Engine->>+Hardware: simd_distance_compute()<br/>AVX2/AVX-512 acceleration
+            Hardware-->>-Engine: Accelerated distances
+        end
+        
+        Engine->>Engine: MVCC resolution<br/>Handle multiple versions
+        Engine->>Engine: Multi-tier deduplication<br/>Merge engine results
+        Engine-->>-VOS: Search results
+        
+        VOS->>+Cache: cache_results(query_hash, results)<br/>Cache for future queries
+        Cache-->>-VOS: Results cached
+    end
+    
+    VOS->>+Metrics: record_search(latency, result_count)<br/>Performance tracking
+    Metrics-->>-VOS: Search metrics recorded
+    
+    VOS-->>-Handlers: Search results
+    Handlers-->>-API: Proto → JSON response
+    API-->>-Client: Ranked results<br/>with similarity scores
+
+    %% === SQL QUERY FLOW ===
+    Note over Client,Metrics: 🗄️ GPU/SIMD-Accelerated SQL Processing
+
+    Client->>+API: POST /query<br/>SQL with VECTOR_SIMILARITY
+    API->>+Handlers: handle_sql_query()<br/>Parse SQL query
+    Handlers->>+VOS: execute_sql()<br/>Vector-aware SQL execution
+    
+    VOS->>+Hardware: get_capabilities()<br/>Check GPU/SIMD availability
+    Hardware-->>-VOS: Hardware profile<br/>GPU: CUDA, CPU: AVX2
+    
+    alt GPU Available
+        VOS->>+Hardware: parse_sql_gpu()<br/>GPU-accelerated parsing
+        Hardware->>Hardware: Tokenize on GPU<br/>CUDA/ROCm parallel processing
+        Hardware->>Hardware: Parse grammar on CPU<br/>Structured query plan
+        Hardware-->>-VOS: Optimized query plan
+    else SIMD Fallback
+        VOS->>+Hardware: parse_vector_simd()<br/>SIMD vector parsing
+        Hardware->>Hardware: AVX2 parallel parsing<br/>8 elements per instruction
+        Hardware-->>-VOS: Parsed query components
+    end
+    
+    VOS->>+Engine: execute_vector_query()<br/>Optimized vector search in SQL
+    Engine->>Engine: Apply WHERE clauses<br/>Metadata filtering
+    Engine->>Engine: Execute VECTOR_SIMILARITY<br/>Similarity search with ranking
+    Engine->>Engine: Apply ORDER BY/LIMIT<br/>Result ranking and pagination
+    Engine-->>-VOS: SQL query results
+    
+    VOS-->>-Handlers: Query results
+    Handlers-->>-API: Proto → JSON response
+    API-->>-Client: SQL result set<br/>Sub-2ms query time
+
+    %% === ERROR HANDLING FLOW ===
+    Note over Client,Metrics: ⚠️ Error Handling & Recovery
+
+    Client->>+API: Invalid request<br/>Malformed data
+    API->>+Handlers: handle_request()<br/>Request validation
+    Handlers->>Handlers: Schema validation<br/>Proto/JSON validation
+    Handlers-->>-API: ValidationError<br/>Detailed error information
+    API-->>-Client: HTTP 400<br/>Actionable error message
+
+    %% Performance annotations
+    rect rgb(240, 255, 240)
+        Note over VOS: **🚀 Performance Highlights**<br/>• 40-60% latency reduction<br/>• Direct memtable access<br/>• 17K vectors/sec (gRPC)<br/>• 0.9ms p99 search latency
+    end
+
+    rect rgb(255, 248, 220)
+        Note over Engine: **🗜️ Compression Benefits**<br/>• 13 algorithms supported<br/>• SDK-driven configuration<br/>• 50-80% storage reduction<br/>• Context-aware optimization
+    end
+
+    rect rgb(240, 248, 255)
+        Note over Hardware: **⚡ Hardware Acceleration**<br/>• Auto GPU/SIMD detection<br/>• CUDA/ROCm/MPS support<br/>• AVX2/AVX-512 optimization<br/>• 163MB/s SIMD throughput
+    end

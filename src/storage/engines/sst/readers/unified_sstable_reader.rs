@@ -26,7 +26,8 @@ use crate::core::search::{SearchParams, SearchResult, FilterExpression};
 use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
 use crate::storage::persistence::filesystem::{FilesystemFactory, FileSystem};
 use crate::storage::engines::sst::bloom_filter::SstableBloomFilter;
-use crate::storage::engines::sst::{SstableHeader, DataBlock, IndexEntry, SstRecord, CompressionAlgorithmSst, VectorFormatType};
+use crate::storage::engines::sst::{SstableHeader, DataBlock, IndexEntry, SstRecord, VectorFormatType};
+use crate::core::compression::CompressionAlgorithm;
 use crate::core::bloom::{BloomFilterConfig, BloomStrategy};
 use super::block_filter::{IntelligentBlockFilter, BlockFilter, QueryType, MetadataFilter};
 
@@ -636,18 +637,18 @@ impl ModularBlockReader {
 }
 
 impl ModularBlockReader {
-    fn decompress_block(&self, data: &[u8], algorithm: CompressionAlgorithmSst) -> Result<Vec<u8>> {
+    fn decompress_block(&self, data: &[u8], algorithm: CompressionAlgorithm) -> Result<Vec<u8>> {
         match algorithm {
-            CompressionAlgorithmSst::None => Ok(data.to_vec()),
-            CompressionAlgorithmSst::Lz4 => {
+            CompressionAlgorithm::None => Ok(data.to_vec()),
+            CompressionAlgorithm::Lz4 => {
                 let decompressed = lz4_flex::decompress_size_prepended(data)?;
                 Ok(decompressed)
             }
-            CompressionAlgorithmSst::Zstd => {
+            CompressionAlgorithm::Zstd => {
                 let decompressed = zstd::decode_all(data)?;
                 Ok(decompressed)
             }
-            CompressionAlgorithmSst::Snappy => {
+            CompressionAlgorithm::Snappy => {
                 let decompressed = snap::raw::Decoder::new().decompress_vec(data)?;
                 Ok(decompressed)
             }
@@ -1796,7 +1797,7 @@ impl UnifiedSstableReader {
                 block_id: block_idx as u32,
                 records: sst_records,
                 uncompressed_size: 0, // Would need to calculate
-                compression_algorithm: CompressionAlgorithmSst::None,
+                compression_algorithm: CompressionAlgorithm::None,
                 // REMOVED: compression_ratio - calculated on-demand
                 metadata_stats: crate::storage::engines::sst::DataBlockMetadata::default(),
                 block_bloom_filter: None,
@@ -3123,7 +3124,7 @@ impl UnifiedSstableReader {
                 block_id,
                 records: chunk.to_vec(),
                 uncompressed_size: 0,
-                compression_algorithm: CompressionAlgorithmSst::None,
+                compression_algorithm: CompressionAlgorithm::None,
                 // REMOVED: compression_ratio - calculated on-demand
                 metadata_stats: crate::storage::engines::sst::DataBlockMetadata::default(),
                 block_bloom_filter: None,

@@ -151,8 +151,8 @@ async fn test_sst_datablock_compression() -> anyhow::Result<()> {
     assert_eq!(data_block.records.len(), recovered_block.records.len());
     
     // Check compression was applied
-    use proximadb::storage::engines::sst::CompressionAlgorithmSst;
-    assert!(!matches!(recovered_block.compression_algorithm, CompressionAlgorithmSst::None));
+    use proximadb::core::serialization::CompressionAlgorithm;
+    assert!(!matches!(recovered_block.compression_algorithm, CompressionAlgorithm::None));
     
     // Calculate compression ratio on-demand
     let compression_ratio = if recovered_block.uncompressed_size > 0 {

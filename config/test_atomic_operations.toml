@@ -15,7 +15,7 @@ bloom_filter_bits = 10
 memtable_size_mb = 2          # Small memtable for testing
 level_count = 4
 compaction_threshold = 2      # Trigger compaction quickly
-block_size_mb = 3
+block_size_kb = 2048  # 2MB default
 
 # WAL configuration - size-based flush only
 [storage.wal]

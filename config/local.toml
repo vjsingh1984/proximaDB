@@ -29,7 +29,7 @@ enable_wal = true
 [storage.sst_config]
 level_count = 7
 compaction_threshold = 5  # Minimum 5 files before compaction
-block_size_mb = 3
+block_size_kb = 2048  # 2MB default - optimal balance for disk IOPS and cloud storage
 compaction_strategy = "leveled"
 compression = "snappy"
 data_directory = "./data/sst_data"

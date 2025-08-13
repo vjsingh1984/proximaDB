@@ -15,7 +15,7 @@ mod tests {
         let mut config = SstConfig::default();
         config.level_count = 4;
         config.compaction_threshold = 3;
-        config.block_size_mb = 3;
+        config.block_size_kb = 3072;
         config.compaction_strategy = "tiered".to_string();
         config.compression = "lz4".to_string();
         config.decompression_cache_config = None;

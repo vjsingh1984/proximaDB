@@ -21,7 +21,7 @@ mod tests {
         SstConfig {
             level_count: 3,
             compaction_threshold: 2,
-            block_size_mb: 4,
+            block_size_kb: 4096,
             compaction_strategy: "leveled".to_string(),
             compression: "snappy".to_string(),
             compression_level: 3,

@@ -1,0 +1,90 @@
+%%{init: {"theme":"neutral", "themeVariables": {"primaryColor":"#2563eb","primaryTextColor":"#ffffff","primaryBorderColor":"#1e40af","lineColor":"#64748b","secondaryColor":"#10b981","secondaryTextColor":"#ffffff","tertiaryColor":"#f59e0b","tertiaryTextColor":"#ffffff","background":"transparent","mainBkg":"#ffffff","secondBkg":"#f8fafc","textColor":"#1e293b","nodeTextColor":"#1e293b","fontFamily":"-apple-system, BlinkMacSystemFont, Segoe UI, Roboto, sans-serif","fontSize":"14px","clusterBkg":"#f1f5f9","clusterBorder":"#cbd5e1","edgeLabelBackground":"#ffffff"}}}%%
+
+classDiagram
+    %% High-Level Module Overview - Shows module relationships and boundaries
+    
+    class APIModule {
+        <<Module>>
+        api/
+        +REST API Endpoints
+        +gRPC Service Implementation
+        +Request Validation
+        +Protocol Conversion
+        Protocol Abstraction Layer
+        Client Interface
+    }
+    
+    class VectorOperationsModule {
+        <<Module>>
+        services/vector_operations/
+        +Vector Insert/Update/Delete
+        +Vector Search & Analytics
+        +Bulk Operations
+        +MVCC Resolution
+        Core Business Logic
+        Performance Optimized
+    }
+    
+    class StorageModule {
+        <<Module>>
+        storage/
+        +Dual Storage Engines
+        +Write-Ahead Logging
+        +Compression & Quantization
+        +Transaction Coordination
+        Data Persistence Layer
+        Hardware Optimized
+    }
+    
+    class QueryModule {
+        <<Module>>
+        query/
+        +SQL Query Processing
+        +Filter Evaluation
+        +Query Optimization
+        +Hardware Acceleration
+        Query Processing Layer
+        SQL-First Design
+    }
+    
+    class InfrastructureModule {
+        <<Module>>
+        infrastructure/
+        +Hardware Capabilities
+        +Cache Management
+        +Metrics & Monitoring
+        +Resource Coordination
+        System Foundation Layer
+        Platform Abstraction
+    }
+    
+    %% Module Dependencies (High-Level Coupling)
+    APIModule --> VectorOperationsModule : delegates to
+    APIModule --> QueryModule : routes queries to
+    
+    VectorOperationsModule --> StorageModule : persists via
+    QueryModule --> StorageModule : reads from
+    QueryModule --> VectorOperationsModule : coordinates with
+    
+    StorageModule --> InfrastructureModule : utilizes
+    VectorOperationsModule --> InfrastructureModule : utilizes
+    QueryModule --> InfrastructureModule : utilizes
+    
+    %% Module Interfaces (Well-Defined Boundaries)
+    VectorOperationsModule ..> APIModule : provides services
+    StorageModule ..> VectorOperationsModule : provides storage
+    InfrastructureModule ..> StorageModule : provides capabilities
+    QueryModule ..> APIModule : provides query processing
+    
+    %% Professional styling
+    classDef apiStyle fill:#e3f2fd,stroke:#1976d2,stroke-width:3px,color:#1e293b
+    classDef businessStyle fill:#e8f5e8,stroke:#388e3c,stroke-width:3px,color:#1e293b
+    classDef dataStyle fill:#fff3e0,stroke:#f57c00,stroke-width:3px,color:#1e293b
+    classDef queryStyle fill:#f3e5f5,stroke:#7b1fa2,stroke-width:3px,color:#1e293b
+    classDef infraStyle fill:#fce4ec,stroke:#c2185b,stroke-width:3px,color:#1e293b
+    
+    class APIModule apiStyle
+    class VectorOperationsModule businessStyle
+    class StorageModule dataStyle
+    class QueryModule queryStyle
+    class InfrastructureModule infraStyle

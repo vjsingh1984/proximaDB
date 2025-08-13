@@ -38,7 +38,7 @@ enable_wal = true
 [storage.sst_config]
 level_count = 7
 compaction_threshold = 5  # Minimum 5 files before compaction
-block_size_mb = 3  # 8MB blocks for optimal ZSTD compression
+block_size_kb = 2048  # 2MB blocks (2048 KB) - optimal balance for disk IOPS and cloud storage
 compaction_strategy = "leveled"
 compression = "zstd"  # ZSTD for better compression ratio
 compression_enabled = true  # Enable compression by default

@@ -1,0 +1,112 @@
+%%{init: {"theme":"neutral", "themeVariables": {"primaryColor":"#2563eb","primaryTextColor":"#ffffff","primaryBorderColor":"#1e40af","lineColor":"#64748b","secondaryColor":"#10b981","secondaryTextColor":"#ffffff","tertiaryColor":"#f59e0b","tertiaryTextColor":"#ffffff","background":"transparent","mainBkg":"#ffffff","secondBkg":"#f8fafc","textColor":"#1e293b","nodeTextColor":"#1e293b","fontFamily":"-apple-system, BlinkMacSystemFont, Segoe UI, Roboto, sans-serif","fontSize":"14px","clusterBkg":"#f1f5f9","clusterBorder":"#cbd5e1","edgeLabelBackground":"#ffffff"}}}%%
+
+classDiagram
+    %% Vector Operations Module - Focused on vector manipulation capabilities
+    
+    class VectorOperationsService {
+        <<Service>>
+        services/vector_operations_service.rs
+        -viper_engine: Arc~ViperEngine~
+        -sst_engine: Arc~SstEngine~
+        -mvcc_resolver: MvccResolver
+        +insert_vectors_direct(collection_id: String, vectors: Vec~VectorRecord~) Result~()~
+        +search_vectors(collection_id: String, query: Vec~f32~, k: usize) Result~Vec~SearchResult~~
+        +update_vector(collection_id: String, vector_id: String, vector: VectorRecord) Result~()~
+        +delete_vector(collection_id: String, vector_id: String) Result~()~
+        +bulk_operations(operations: Vec~VectorOperation~) Result~BulkResult~
+        Direct Memtable Access
+        40-60% Latency Reduction
+        Dual Engine Coordination
+    }
+    
+    class VectorRecord {
+        <<Entity>>
+        core/models/vector_record.rs
+        +id: Option~String~
+        +vector: Vec~f32~
+        +metadata: HashMap~String, Value~
+        +timestamp: u64
+        +version: u32
+        +validate_dimensions(expected: usize) Result~()~
+        +extract_metadata_value(key: String) Option~Value~
+        Core Vector Data Structure
+        Proto-First Design
+        MVCC Support
+    }
+    
+    class VectorOperation {
+        <<Enum>>
+        core/models/vector_operation.rs
+        Insert(VectorRecord)
+        Update(String, VectorRecord)
+        Delete(String)
+        Search(SearchQuery)
+        +execute() Result~OperationResult~
+        +validate() Result~()~
+        Polymorphic Operations
+        Batch Processing Support
+    }
+    
+    class SearchQuery {
+        <<ValueObject>>
+        core/models/search_query.rs
+        +vector: Vec~f32~
+        +top_k: usize
+        +filters: Vec~MetadataFilter~
+        +distance_metric: DistanceMetric
+        +build_execution_plan() ExecutionPlan
+        +optimize_for_engine(engine: EngineType) SearchQuery
+        Query Optimization
+        Filter Pushdown Support
+    }
+    
+    class MetadataFilter {
+        <<ValueObject>>
+        core/models/metadata_filter.rs
+        +field: String
+        +operator: FilterOperator
+        +value: Value
+        +apply(record: VectorRecord) bool
+        +combine(other: MetadataFilter, op: LogicalOperator) MetadataFilter
+        Complex Filtering Logic
+        SQL-Like Operations
+    }
+    
+    class SearchResult {
+        <<ValueObject>>
+        core/models/search_result.rs
+        +vector_record: VectorRecord
+        +similarity_score: f32
+        +distance: f32
+        +metadata: HashMap~String, Value~
+        +rank() usize
+        Result Ranking
+        Metadata Enrichment
+    }
+    
+    %% Relationships
+    VectorOperationsService --> VectorRecord : manages
+    VectorOperationsService --> VectorOperation : executes
+    VectorOperationsService --> SearchQuery : processes
+    VectorOperationsService --> SearchResult : returns
+    
+    VectorOperation --> VectorRecord : contains
+    SearchQuery --> MetadataFilter : includes
+    SearchQuery --> SearchResult : produces
+    MetadataFilter --> VectorRecord : filters
+    SearchResult --> VectorRecord : wraps
+    
+    %% Composition relationships
+    VectorRecord *-- MetadataFilter : filtered by
+    SearchQuery *-- MetadataFilter : composed of
+    
+    %% Professional styling
+    classDef serviceClass fill:#e3f2fd,stroke:#1976d2,stroke-width:3px,color:#1e293b
+    classDef entityClass fill:#e8f5e8,stroke:#388e3c,stroke-width:2px,color:#1e293b
+    classDef valueClass fill:#fff3e0,stroke:#f57c00,stroke-width:2px,color:#1e293b
+    classDef enumClass fill:#f3e5f5,stroke:#7b1fa2,stroke-width:2px,color:#1e293b
+    
+    class VectorOperationsService serviceClass
+    class VectorRecord,SearchResult entityClass
+    class SearchQuery,MetadataFilter valueClass
+    class VectorOperation enumClass

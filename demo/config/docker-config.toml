@@ -34,7 +34,7 @@ compression_enabled = true  # Enable compression by default
 compression_level = 3  # Balanced speed/compression (1-22)
 compaction_threshold = 5  # Minimum 5 files before compaction
 write_buffer_size_mb = 8192  # 8GB for global write buffer
-block_size_mb = 4  # 4MB blocks for optimal ZSTD compression
+block_size_kb = 2048  # 2MB blocks for optimal balance
 
 # Decompression cache configuration for optimal performance
 [storage.sst_config.decompression_cache]

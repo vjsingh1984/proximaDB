@@ -1,214 +1,227 @@
-= ProximaDB Diagrams Documentation
+= ProximaDB Modular Diagrams Documentation
 :toc: left
-:toclevels: 2
+:toclevels: 3
 :imagesdir: images
 
-**Complete visual documentation of ProximaDB architecture and business capabilities.**
+**Hierarchical visual documentation organized by abstraction level and capability modules.**
 
-== Business Architecture Diagrams
-
-ProximaDB's business architecture is organized into multiple focused diagrams for clarity and easy navigation.
-
-=== Diagram Structure
-
-[cols="1,2,2", options="header"]
-|===
-| Diagram | Purpose | Content
-
-| **Navigation Hub**
-| Central navigation to all business views
-| `business-architecture-consolidated.svg` +
-Interactive menu linking to detailed diagrams
-
-| **Business Overview**
-| High-level platform overview
-| `business-overview.svg` +
-Core engine → Capabilities → Value → Applications → ROI
-
-| **Core Capabilities**
-| Technical and enterprise features
-| `business-capabilities.svg` +
-Storage, Search, ML, Analytics, Security, HA
-
-| **ROI & Metrics**
-| Quantifiable benefits
-| `business-roi-metrics.svg` +
-3x performance, 50-80% storage savings, 70% TCO reduction
-
-| **Use Cases**
-| Industry applications
-| `business-use-cases.svg` +
-E-commerce, AI/LLM, Media, Finance, Healthcare
-
-| **Competitive Advantages**
-| Market differentiators
-| `business-competitive-advantages.svg` +
-Proto-first, dual engines, no lock-in
-|===
+== Diagram Architecture Philosophy
 
 === Design Principles
+* **Modular by Capability**: Each diagram focuses on one capability or module
+* **Hierarchical Abstraction**: High-level overviews → detailed implementations  
+* **Content Alignment**: Diagrams match their documentation section purpose
+* **Cognitive Load Management**: No monolithic diagrams, clear focus areas
 
-. **Clarity**: Each diagram focuses on one aspect to avoid information overload
-. **Hierarchy**: Clear visual hierarchy with headers, sections, and connections
-. **Consistency**: Uniform color scheme and styling across all diagrams
-. **Accessibility**: High contrast colors and clear text for readability
-. **Navigation**: Interconnected diagrams with clear relationships
-
-=== Color Scheme
-
-[cols="1,1,2", options="header"]
+=== Abstraction Levels
+[cols="1,2,2", options="header"]
 |===
-| Color | Hex Code | Usage
+| Level | Purpose | Audience
 
-| Primary Blue | #2E86AB | Main components, headers
-| Success Green | #e6f4ea | Performance, positive metrics
-| Warning Yellow | #fef7e0 | Cost savings, efficiency
-| Info Light Blue | #e8f0fe | Features, capabilities
-| Secondary Purple | #f3e5f5 | Advanced features, differentiators
-| Accent Pink | #fce4ec | Future-proof, scalability
-|===
+| **Overview** 
+| System-wide understanding, module relationships
+| Business stakeholders, new developers
 
-== Technical Architecture Diagrams
+| **Module**
+| Capability-focused, module boundaries
+| Developers working on specific modules
 
-=== Core Technical Diagrams
-
-[cols="1,2", options="header"]
-|===
-| Diagram | Description
-
-| **Technical Overview**
-| `technical-overview.svg` +
-High-level system architecture showing all major components
-
-| **API & Protocols**
-| `technical-api-protocols.svg` +
-REST, gRPC, and SQL interfaces with protocol handlers
-
-| **Storage Architecture**
-| `technical-storage-architecture.svg` +
-Write path, storage engines, compression, and tiering
-
-| **Data Flow**
-| `technical-data-flow.svg` +
-Insert flow, search flow, and background operations
-
-| **Hardware Acceleration**
-| `technical-hardware-acceleration.svg` +
-GPU, SIMD detection and compute strategies
-
-| **Cache Architecture**
-| `technical-cache-architecture.svg` +
-Multi-tier cache system with orchestration
-
-| **Index Algorithms**
-| `technical-index-algorithms.svg` +
-HNSW, IVF, LSH, Annoy, PQ, and Flat indexes
-
-| **Navigation Hub**
-| `technical-architecture-complete.svg` +
-Central navigation to all technical diagrams
+| **Implementation**  
+| Detailed workflows, class relationships
+| Developers implementing features
 |===
 
-=== UML Diagrams
+== High-Level Overview Diagrams
+*For main documentation sections (docs/index.adoc, getting started)*
 
-[cols="1,2", options="header"]
+=== Business Understanding
+[cols="1,3", options="header"]
 |===
-| Diagram | Description
+| Diagram | Content & Usage
 
-| **Use Cases**
-| `proximadb-use-cases.svg` +
-Comprehensive use case diagram showing all actors and interactions
+| **link:business-overview.svg[Business Overview]**
+| **Use in**: Main docs, executive summaries +
+**Shows**: Core value proposition, business flow +
+**Source**: link:business-overview.mmd[business-overview.mmd]
 
-| **Core Classes**
-| `proximadb-core-classes.svg` +
-Detailed class diagram of core components
-
-| **Vector Search Activity**
-| `vector-search-activity.svg` +
-Activity diagram for vector search flow
-
-| **Vector Insert Sequence**
-| `vector-insert-sequence.svg` +
-Sequence diagram for insert operations
-
-| **Deployment Architecture**
-| `proximadb-deployment.svg` +
-Deployment architecture diagram
-
-| **Vector Lifecycle**
-| `vector-lifecycle-state.svg` +
-State diagram for vector lifecycle
+| **link:business-capabilities.svg[Core Capabilities]**
+| **Use in**: Feature overview sections +
+**Shows**: Key features and benefits +
+**Source**: link:business-capabilities.mmd[business-capabilities.mmd]
 |===
 
-=== System Architecture
-
-[cols="1,2", options="header"]
+=== System Understanding  
+[cols="1,3", options="header"]
 |===
-| Diagram | Description
+| Diagram | Content & Usage
 
-| **Technical Architecture**
-| `technical-architecture-complete.svg` +
-Complete technical architecture with all components
+| **link:usecase-module-overview.svg[Use Case Overview]**
+| **Use in**: docs/user/getting_started.adoc +
+**Shows**: Actor-module relationships, system boundaries +
+**Source**: link:usecase-module-overview.mmd[usecase-module-overview.mmd]
 
-| **Compression Architecture**
-| `compression-encoding-architecture.svg` +
-SDK-driven compression and encoding flow
+| **link:class-module-overview.svg[Module Architecture]**
+| **Use in**: docs/developer/architecture.adoc +
+**Shows**: Module boundaries, dependencies, coupling +
+**Source**: link:class-module-overview.mmd[class-module-overview.mmd]
 
-| **Component Relationships**
-| `proximadb-component-relationships.svg` +
-Inter-component dependencies and data flow
+| **link:module-interactions-overview.svg[Module Interactions]**
+| **Use in**: docs/developer/architecture.adoc +
+**Shows**: High-level service communication patterns +
+**Source**: link:module-interactions-overview.mmd[module-interactions-overview.mmd]
 |===
 
-== Documentation Update History
+== Module-Specific Diagrams  
+*For capability-focused documentation sections*
 
-=== 2025-08-09 Updates
+=== Vector Operations Module
+*Use in: docs/developer/technical_reference.adoc (Vector Operations section)*
 
-==== Business Diagram Reorganization
-* Created 6 focused business diagrams from consolidated view
-* Improved readability with proper spacing and hierarchy
-* Added navigation hub for easy diagram discovery
-* Consistent theming across all diagrams
+[cols="1,3", options="header"]
+|===
+| Diagram | Content & Usage
 
-==== Technical Enhancements
-* Comprehensive UML diagram suite
-* Standardized neutral theme for light/dark compatibility
-* SVG-only approach for scalability
-* Professional styling with consistent colors
+| **link:usecase-vector-operations.svg[Vector Use Cases]**
+| **Purpose**: Actor-capability mapping for vector operations +
+**Shows**: Developer, Data Scientist, Application use cases +
+**Source**: link:usecase-vector-operations.mmd[usecase-vector-operations.mmd]
 
-=== Generation Scripts
+| **link:class-vector-operations-module.svg[Vector Classes]**
+| **Purpose**: Vector operations module class structure +
+**Shows**: VectorOperationsService, VectorRecord, SearchQuery +
+**Source**: link:class-vector-operations-module.mmd[class-vector-operations-module.mmd]
+|===
 
-==== Mermaid Diagrams
-[source,bash]
-----
-# Generate single diagram
-npx @mermaid-js/mermaid-cli -i [diagram].mmd -o images/[diagram].svg
+=== Storage Module
+*Use in: docs/developer/storage_engines.adoc*
 
-# Generate all business diagrams
-for f in business-*.mmd; do
-  npx @mermaid-js/mermaid-cli -i "$f" -o "images/${f%.mmd}.svg"
-done
-----
+[cols="1,3", options="header"]
+|===
+| Diagram | Content & Usage
 
-==== Online Preview
-Preview and edit Mermaid diagrams at: https://mermaid.live/
+| **link:class-storage-module.svg[Storage Classes]**
+| **Purpose**: Storage engine architecture and relationships +
+**Shows**: StorageEngine interface, VIPER/SST implementations +
+**Source**: link:class-storage-module.mmd[class-storage-module.mmd]
+
+| **link:storage-engine-classes.svg[Detailed Storage Classes]**
+| **Purpose**: Complete storage engine implementation details +
+**Shows**: Hierarchical SST, compression, search engines +
+**Source**: link:storage-engine-classes.mmd[storage-engine-classes.mmd]
+|===
+
+=== Collection Management Module
+*Use in: docs/user/user_guide.adoc (Collection Management section)*
+
+[cols="1,3", options="header"]
+|===
+| Diagram | Content & Usage
+
+| **link:usecase-collection-management.svg[Collection Use Cases]**
+| **Purpose**: Collection management capabilities +
+**Shows**: Create, configure, monitor, backup operations +
+**Source**: link:usecase-collection-management.mmd[usecase-collection-management.mmd]
+|===
+
+== Implementation Detail Diagrams
+*For technical deep-dive sections*
+
+=== Workflow Sequences
+*Use in: docs/developer/technical_reference.adoc (Implementation Details)*
+
+[cols="1,3", options="header"]  
+|===
+| Diagram | Content & Usage
+
+| **link:vector-insert-workflow.svg[Vector Insert Process]**
+| **Purpose**: Detailed insert workflow with performance metrics +
+**Shows**: SDK → API → VOS → Storage with timings +
+**Source**: link:vector-insert-workflow.mmd[vector-insert-workflow.mmd]
+
+| **link:vector-search-workflow.svg[Vector Search Process]**
+| **Purpose**: Dual-engine search strategy implementation +
+**Shows**: Cache → VIPER/SST → Hardware acceleration +
+**Source**: link:vector-search-workflow.mmd[vector-search-workflow.mmd]
+
+| **link:collection-management-workflow.svg[Collection Lifecycle]**
+| **Purpose**: Complete collection management workflow +
+**Shows**: Create → Configure → Monitor → Delete with ACID +
+**Source**: link:collection-management-workflow.mmd[collection-management-workflow.mmd]
+|===
+
+=== Specialized Architectures
+*Use in: docs/developer/ specialized sections*
+
+[cols="1,3", options="header"]
+|===
+| Diagram | Content & Usage
+
+| **link:hierarchical-sst-architecture.svg[Hierarchical SST Details]**
+| **Purpose**: SST architecture implementation details +
+**Shows**: Enhanced headers, bloom filters, zero-copy compaction +
+**Source**: link:hierarchical-sst-architecture.mmd[hierarchical-sst-architecture.mmd]
+
+| **link:compression-architecture-consolidated.svg[Compression Architecture]**
+| **Purpose**: Unified compression module details +
+**Shows**: 13 algorithms, context-aware processing +
+**Source**: link:compression-architecture-consolidated.mmd[compression-architecture-consolidated.mmd]
+|===
+
+== Documentation Alignment Guide
+
+=== By Documentation Section
+
+==== docs/index.adoc (Main Documentation)
+* link:business-overview.svg[Business Overview] - Value proposition
+* link:usecase-module-overview.svg[Use Case Overview] - System capabilities
+
+==== docs/user/getting_started.adoc  
+* link:usecase-module-overview.svg[Use Case Overview] - What you can do
+* link:vector-insert-workflow.svg[Vector Insert Process] - How to insert vectors
+
+==== docs/developer/architecture.adoc
+* link:class-module-overview.svg[Module Architecture] - System design
+* link:module-interactions-overview.svg[Module Interactions] - Communication patterns
+
+==== docs/developer/storage_engines.adoc
+* link:class-storage-module.svg[Storage Classes] - Engine overview  
+* link:storage-engine-classes.svg[Detailed Storage Classes] - Full implementation
+
+==== docs/developer/technical_reference.adoc
+* **Vector Operations Section**: link:class-vector-operations-module.svg[Vector Classes]
+* **Implementation Details**: All workflow sequence diagrams
+
+==== docs/admin/multi_disk_guide.adoc
+* link:collection-management-workflow.svg[Collection Lifecycle] - Storage assignment
+* Storage-related technical diagrams
+
+=== Abstraction Progression Example
+
+1. **Main Docs**: link:business-overview.svg[Business Overview] (What is ProximaDB?)
+2. **User Guide**: link:usecase-module-overview.svg[Use Case Overview] (What can I do?)  
+3. **Architecture**: link:class-module-overview.svg[Module Architecture] (How is it structured?)
+4. **Technical**: link:vector-insert-workflow.svg[Vector Insert Process] (How does it work?)
 
 == Maintenance Guidelines
 
 === Adding New Diagrams
-. Create `.mmd` file with consistent theme header
-. Follow naming convention: `category-purpose.mmd`
-. Generate SVG with appropriate dimensions
-. Update this index with diagram information
+1. **Identify abstraction level**: Overview, Module, or Implementation
+2. **Choose appropriate diagram type**: Use case, class, sequence, activity, or state
+3. **Follow naming convention**: `[type]-[module/capability]-[purpose].mmd`
+4. **Create focused content**: One capability or workflow per diagram
+5. **Update appropriate documentation section**: Align with content purpose
 
-=== Updating Existing Diagrams
-. Modify the `.mmd` source file
-. Regenerate SVG using mermaid-cli
-. Verify rendering in both light and dark modes
-. Update documentation if structure changes
+=== Updating Existing Diagrams  
+1. **Maintain focus**: Keep diagrams capability-focused
+2. **Preserve abstraction level**: Don't add implementation details to overview diagrams
+3. **Update documentation references**: Ensure links remain valid
+4. **Test content alignment**: Verify diagram matches section purpose
 
 === Best Practices
-* Keep diagrams focused on single concepts
-* Use consistent color coding across related diagrams
-* Maintain visual hierarchy with clear sections
-* Test readability at different zoom levels
-* Include descriptive titles and labels
+* **Modular Design**: Each diagram addresses one specific need
+* **Hierarchical Clarity**: Clear distinction between overview and detail
+* **Content Alignment**: Diagram complexity matches documentation section
+* **Cognitive Load**: Prefer multiple focused diagrams over one complex diagram
+
+---
+**Status**: Modular diagram architecture implemented with proper abstraction hierarchy and content alignment.

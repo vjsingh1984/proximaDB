@@ -10,7 +10,7 @@
 # - 1MB (1024): Standard workloads, good balance
 # - 4MB (4096): High compression effectiveness (default)
 # - 8MB (8192): Maximum compression, higher memory usage
-block_size_mb = 3
+block_size_kb = 2048  # 2MB default
 
 # Compression algorithm: "zstd", "snappy", "lz4", "none"
 compression = "zstd"
@@ -74,7 +74,7 @@ cache_size_mb = 512
 
 # Example: High-compression archival configuration
 # [storage.sst_config]
-# block_size_mb = 3
+# block_size_kb = 2048  # 2MB default
 # compression = "zstd"
 # compression_enabled = true
 # compression_level = 9
@@ -87,7 +87,7 @@ cache_size_mb = 512
 
 # Example: Low-latency real-time configuration
 # [storage.sst_config]
-# block_size_mb = 3
+# block_size_kb = 2048  # 2MB default
 # compression = "lz4"
 # compression_enabled = true
 # compression_level = 1

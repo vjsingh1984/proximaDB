@@ -1,12 +1,16 @@
-= Compression Guide
+= Unified Compression Architecture Guide
 :toc: left
-:toclevels: 2
+:toclevels: 3
+:imagesdir: diagrams/images
 
-**SDK-driven compression for optimal storage efficiency.**
+**Complete guide to ProximaDB's unified compression system with 13 algorithms across all storage contexts.**
 
 == Overview
 
-ProximaDB compression is **100% SDK-controlled** - no server defaults. Configure compression per collection through the client SDK.
+ProximaDB features a **unified compression architecture** (`src/core/compression/mod.rs`) that provides consistent compression across SST blocks, vector serialization, and Parquet columns. All compression is **100% SDK-controlled** with no server defaults.
+
+image::compression-architecture-consolidated.svg[Unified Compression Architecture, width=900]
+_Context-aware compression with algorithm-specific optimization and zero-copy integration_
 
 == Quick Start
 

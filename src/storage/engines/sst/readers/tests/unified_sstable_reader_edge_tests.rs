@@ -23,7 +23,7 @@ mod edge_tests {
 
     fn create_test_config() -> SstConfig {
         SstConfig {
-            block_size_mb: 4, // Use small 4KB blocks for tests
+            block_size_kb: 4, // Use small 4KB blocks for tests
             decompression_cache_config: None,
             ..SstConfig::default()
         }
@@ -611,7 +611,7 @@ mod edge_tests {
         // Write test data
         let filesystem = Arc::new(FilesystemFactory::new(FilesystemConfig::default()).await.unwrap());
         let test_config = create_test_config();
-        let block_size = (test_config.block_size_mb * 1024) as usize;
+        let block_size = (test_config.block_size_kb * 1024) as usize;
         let writer = SstableWriter::new(&sst_path, block_size, filesystem.clone());
         
         let mut records = std::collections::BTreeMap::new();

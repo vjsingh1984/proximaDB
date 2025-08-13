@@ -50,7 +50,7 @@ impl Default for VectorSerializationConfig {
 }
 
 /// Compression algorithms supported for vector data
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub enum CompressionAlgorithm {
     /// No compression
     None,
@@ -78,6 +78,12 @@ pub enum CompressionAlgorithm {
     Lz4hc,
     /// LZMA compression (high ratio)
     Lzma,
+}
+
+impl Default for CompressionAlgorithm {
+    fn default() -> Self {
+        CompressionAlgorithm::None
+    }
 }
 
 /// Vector serialization format marker

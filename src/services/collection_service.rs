@@ -777,7 +777,7 @@ impl CollectionService {
                                 enable_quantization: config.enable_quantization,
                                 quantization_type: config.quantization_type.clone(),
                                 normalization_method: config.normalization_method.clone(),
-                                block_size_mb: config.block_size_mb,
+                                block_size_kb: config.block_size_kb,
                                 dynamic_block_sizing: config.dynamic_block_sizing,
                             });
                         }

@@ -1,0 +1,61 @@
+%%{init: {"theme":"neutral", "themeVariables": {"primaryColor":"#2563eb","primaryTextColor":"#ffffff","primaryBorderColor":"#1e40af","lineColor":"#64748b","secondaryColor":"#10b981","secondaryTextColor":"#ffffff","tertiaryColor":"#f59e0b","tertiaryTextColor":"#ffffff","background":"transparent","mainBkg":"#ffffff","secondBkg":"#f8fafc","textColor":"#1e293b","nodeTextColor":"#1e293b","fontFamily":"-apple-system, BlinkMacSystemFont, Segoe UI, Roboto, sans-serif","fontSize":"14px","clusterBkg":"#f1f5f9","clusterBorder":"#cbd5e1","edgeLabelBackground":"#ffffff"}}}%%
+
+sequenceDiagram
+    participant Client as 🐍 Python SDK
+    participant API as 🚪 REST/gRPC API
+    participant VOS as ⚡ VectorOperationsService
+    participant CS as 📁 CollectionService
+    participant Compression as 🗜️ Unified Compression
+    participant WAL as 📝 Write-Ahead Log
+    participant Memtable as 🧠 Memtable
+    participant Engine as 💾 Storage Engine
+    participant Metrics as 📊 Metrics
+
+    Note over Client,Metrics: 📥 High-Performance Vector Insert Workflow (17K vec/s gRPC)
+
+    Client->>+API: POST /collections/{id}/vectors<br/>Batch of 500 vectors
+    Note over API: Request validation &<br/>JSON → Proto conversion
+    API->>+VOS: insert_vectors_direct()<br/>Direct memtable access (40-60% faster)
+    
+    VOS->>+CS: get_collection_metadata(id)<br/>Get storage assignment & compression config
+    CS-->>-VOS: Collection config + storage locations
+    
+    VOS->>+Compression: apply_compression()<br/>SDK-driven configuration
+    Note over Compression: Unified compression module<br/>ZSTD/LZ4/Snappy selection
+    Compression-->>-VOS: Compressed vector batch
+    
+    par Parallel Write Operations
+        VOS->>+WAL: append_batch(vectors)<br/>Durability guarantee
+        Note over WAL: Proto serialization<br/>Recovery point creation
+        WAL-->>-VOS: WAL position confirmed
+    and
+        VOS->>+Memtable: insert_batch(vectors)<br/>In-memory buffer
+        Note over Memtable: Fast write access<br/>Flush threshold monitoring
+        Memtable-->>-VOS: Insert confirmed
+    and
+        VOS->>Engine: update_indexes_async()<br/>Background index updates
+        Note over Engine: HNSW/IVF/LSH indexes<br/>Hardware-accelerated
+    end
+    
+    VOS->>+Metrics: record_insert_metrics()<br/>Performance tracking
+    Metrics-->>-VOS: Metrics recorded
+    
+    alt Flush Threshold Reached
+        Note over Memtable,Engine: 🔄 Automatic Flush to Persistent Storage
+        Memtable->>+Engine: trigger_flush()<br/>Memory → Disk persistence
+        Engine->>Engine: Apply engine-specific compression<br/>Create SST/Parquet files
+        Engine->>Engine: Atomic write operation<br/>ACID guarantees
+        Engine-->>-Memtable: Flush completed
+        Memtable->>Memtable: Clear flushed data<br/>Reclaim memory
+    end
+    
+    VOS-->>-API: Insert batch completed<br/>Performance statistics
+    API-->>-Client: Success response<br/>{success: true, count: 500, latency_ms: 2.1}
+
+    rect rgb(240, 255, 240)
+        Note over VOS: **🚀 Performance Benefits**<br/>• Direct memtable access<br/>• Eliminated registry overhead<br/>• 40-60% latency reduction<br/>• 17K vectors/sec throughput
+    end
+
+    rect rgb(255, 248, 220)
+        Note over Compression: **🗜️ Compression Features**<br/>• 13 algorithms supported<br/>• Context-aware processing<br/>• SDK-driven configuration<br/>• 50-80% storage reduction
+    end

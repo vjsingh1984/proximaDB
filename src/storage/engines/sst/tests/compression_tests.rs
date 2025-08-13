@@ -8,11 +8,9 @@
 //! Comprehensive tests for SST compression with self-describing block markers
 
 use crate::storage::engines::sst::{
-    DataBlock, DataBlockCompressionConfig, SstRecord, CompressionAlgorithmSst,
-    MARKER_UNCOMPRESSED, MARKER_ZSTD, MARKER_LZ4, MARKER_SNAPPY, MARKER_GZIP,
-    MARKER_BROTLI, MARKER_BZIP2, MARKER_DEFLATE, MARKER_XZ, MARKER_ZLIB,
-    MARKER_LZ4HC, MARKER_LZMA,
+    DataBlock, DataBlockCompressionConfig, SstRecord,
 };
+use crate::core::compression::{CompressionAlgorithm as UnifiedCompressionAlgorithm};
 use crate::proto::proximadb::{CompressionConfig, CompressionAlgorithm, MetadataItem};
 
 fn create_test_record(id: &str, vector_dim: usize) -> SstRecord {
@@ -49,11 +47,14 @@ fn test_uncompressed_block() {
         enable_compression: false,
         compression_threshold: 0,
         compression_level: 0,
+        compression_algorithm: UnifiedCompressionAlgorithm::None,
         vector_config: Default::default(),
         collection_compression: None,
     };
     
     let serialized = block.serialize_with_config(&config).unwrap();
+    
+    use crate::core::compression::markers::MARKER_UNCOMPRESSED;
     
     // Check for uncompressed marker
     assert_eq!(serialized[0], MARKER_UNCOMPRESSED);
@@ -78,6 +79,7 @@ fn test_zstd_compression() {
         enable_compression: true,
         compression_threshold: 100,
         compression_level: 3,
+        compression_algorithm: UnifiedCompressionAlgorithm::Zstd,
         vector_config: Default::default(),
         collection_compression: Some(CompressionConfig {
             algorithm: CompressionAlgorithm::CompressionZstd as i32,
@@ -112,6 +114,7 @@ fn test_lz4_compression() {
         enable_compression: true,
         compression_threshold: 100,
         compression_level: 0, // LZ4 doesn't use levels in lz4_flex
+        compression_algorithm: UnifiedCompressionAlgorithm::Lz4,
         vector_config: Default::default(),
         collection_compression: Some(CompressionConfig {
             algorithm: CompressionAlgorithm::CompressionLz4 as i32,
@@ -123,6 +126,8 @@ fn test_lz4_compression() {
     };
     
     let serialized = block.serialize_with_config(&config).unwrap();
+    
+    use crate::core::compression::markers::MARKER_LZ4;
     
     // Check for LZ4 marker
     assert_eq!(serialized[0], MARKER_LZ4);
@@ -142,6 +147,7 @@ fn test_snappy_compression() {
         enable_compression: true,
         compression_threshold: 100,
         compression_level: 0, // Snappy doesn't use levels
+        compression_algorithm: UnifiedCompressionAlgorithm::Snappy,
         vector_config: Default::default(),
         collection_compression: Some(CompressionConfig {
             algorithm: CompressionAlgorithm::CompressionSnappy as i32,
@@ -153,6 +159,8 @@ fn test_snappy_compression() {
     };
     
     let serialized = block.serialize_with_config(&config).unwrap();
+    
+    use crate::core::compression::markers::MARKER_SNAPPY;
     
     // Check for Snappy marker
     assert_eq!(serialized[0], MARKER_SNAPPY);
@@ -292,6 +300,7 @@ fn test_compression_threshold() {
         enable_compression: true,
         compression_threshold: 10000, // High threshold
         compression_level: 3,
+        compression_algorithm: UnifiedCompressionAlgorithm::Zstd,
         vector_config: Default::default(),
         collection_compression: Some(CompressionConfig {
             algorithm: CompressionAlgorithm::CompressionZstd as i32,
@@ -319,6 +328,7 @@ fn test_compression_ratio_check() {
         enable_compression: true,
         compression_threshold: 100,
         compression_level: 3,
+        compression_algorithm: UnifiedCompressionAlgorithm::Zstd,
         vector_config: Default::default(),
         collection_compression: Some(CompressionConfig {
             algorithm: CompressionAlgorithm::CompressionZstd as i32,

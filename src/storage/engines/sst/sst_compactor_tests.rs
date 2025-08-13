@@ -52,7 +52,7 @@ mod tests {
             level_size_multiplier: 4.0,
             
             // Block and file settings
-            block_size_mb: 16,
+            block_size_kb: 16384,
             
             // Storage type
             compaction_strategy: "leveled".to_string(),
@@ -129,7 +129,7 @@ mod tests {
         // Create SST config
         let sst_config = create_test_sst_config(base_path);
         debug!("📝 SST config: data_dir={}, block_size={}", 
-               sst_config.data_directory, sst_config.block_size_mb);
+               sst_config.data_directory, sst_config.block_size_kb);
         
         // Create SST engine
         let distance_compute = Arc::new(UnifiedDistanceCompute::new(DistanceMetric::Cosine));

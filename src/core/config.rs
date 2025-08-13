@@ -426,11 +426,12 @@ pub struct SstConfig {
     /// - 2MB: Memory-constrained environments
     /// - 4MB: Very large sparse vector deployments
     /// 
+    /// Block size in KB (256-16384 KB range, default 2048 KB = 2MB)
     /// **Backward Compatibility:** 
     /// Changing this value during restarts is safe. Each SSTable block stores its own
     /// length prefix [block_len:4][block_data], so existing files continue to work.
     /// Mixed block sizes within the same system are fully supported.
-    pub block_size_mb: u32,
+    pub block_size_kb: u32,
     /// Compaction strategy (leveled, tiered, unified)
     pub compaction_strategy: String,
     /// Compression algorithm (snappy, lz4, zstd, none)
@@ -508,7 +509,7 @@ impl Default for SstConfig {
         Self {
             level_count: 7,
             compaction_threshold: 5,
-            block_size_mb: 3, // 3MB default - optimal for all cloud IOPS patterns and vector dimensions
+            block_size_kb: 2048, // 2MB default (2048 KB) - optimal balance for disk IOPS and cloud storage
             compaction_strategy: "leveled".to_string(),
             compression: "zstd".to_string(),  // ZSTD for better compression
             compression_level: 3,  // Balanced speed/compression
@@ -542,34 +543,38 @@ impl SstConfig {
         }
         
         // Validate block size for optimal performance and storage compatibility
-        if self.block_size_mb < 1 {
-            return Err("block_size_mb must be at least 1MB for reasonable I/O performance".to_string());
+        if self.block_size_kb < 256 {
+            return Err("block_size_kb must be at least 256KB for reasonable I/O performance".to_string());
         }
-        if self.block_size_mb > 8 {
-            return Err("block_size_mb should not exceed 8MB to avoid excessive memory usage per block".to_string());
+        if self.block_size_kb > 16384 {
+            return Err("block_size_kb should not exceed 16384KB (16MB) to avoid excessive memory usage per block".to_string());
         }
         
         // Performance recommendations for common deployment scenarios
-        match self.block_size_mb {
-            1 => {
-                // 1MB - Good for memory-constrained environments
-                info!("block_size_mb=1MB - Good for memory-constrained deployments");
+        match self.block_size_kb {
+            256..=512 => {
+                // 256-512KB - Good for disk IOPS optimization and memory-constrained environments
+                info!("block_size_kb={}KB - Optimized for disk IOPS and memory-constrained deployments", self.block_size_kb);
             }
-            2 => {
-                // 2MB - Good for standard deployments
-                info!("block_size_mb=2MB - Good for standard deployments with moderate memory");
+            1024 => {
+                // 1MB - Good for standard disk deployments
+                info!("block_size_kb=1024KB (1MB) - Good for standard disk deployments with moderate memory");
             }
-            3 => {
+            2048 => {
+                // 2MB - Optimal balance for both disk and cloud
+                info!("block_size_kb=2048KB (2MB) - Optimal balance for disk IOPS and cloud storage patterns");
+            }
+            3072 => {
                 // 3MB - Optimal for all cloud providers (AWS EBS gp3/st1, Azure Premium SSD, GCS Standard)
-                info!("block_size_mb=3MB - Optimal for all cloud storage IOPS patterns (AWS/Azure/GCS)");
+                info!("block_size_kb=3072KB (3MB) - Optimal for cloud storage IOPS patterns (AWS/Azure/GCS)");
             }
-            4 => {
-                // 4MB - Good for high-throughput scenarios
-                info!("block_size_mb=4MB - Optimized for high-throughput workloads");
+            4096..=8192 => {
+                // 4-8MB - Good for high-throughput cloud scenarios
+                info!("block_size_kb={}KB ({}MB) - Optimized for high-throughput cloud workloads", self.block_size_kb, self.block_size_kb / 1024);
             }
-            5..=8 => {
+            8193..=16384 => {
                 // Large blocks for very high-throughput workloads
-                info!("block_size_mb={}MB - Large blocks for high-throughput workloads", self.block_size_mb);
+                info!("block_size_kb={}KB ({}MB) - Large blocks for very high-throughput workloads", self.block_size_kb, self.block_size_kb / 1024);
             }
             _ => {
                 // Any other size is fine
@@ -581,7 +586,7 @@ impl SstConfig {
     
     /// Get block size in bytes for internal use
     pub fn block_size_bytes(&self) -> usize {
-        (self.block_size_mb as usize) * 1024 * 1024
+        (self.block_size_kb as usize) * 1024
     }
 }
 
