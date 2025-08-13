@@ -27,6 +27,7 @@ use crate::storage::persistence::filesystem::{FilesystemFactory, FileSystem};
 use crate::storage::engines::sst::bloom_filter::SstableBloomFilter;
 use crate::storage::engines::sst::{SstableHeader, DataBlock, IndexEntry, SstRecord, CompressionAlgorithmSst, VectorFormatType};
 use crate::core::bloom::{BloomFilterConfig, BloomStrategy};
+use super::block_filter::{IntelligentBlockFilter, BlockFilter, QueryType, MetadataFilter};
 
 // Type alias for bloom filter
 type BloomFilter = SstableBloomFilter;
@@ -147,6 +148,23 @@ pub enum ReadStrategy {
     CompactionDirect,
     /// Search optimized with full bloom/index and cache usage
     SearchOptimized,
+}
+
+impl ReadStrategy {
+    /// Convert ReadStrategy to QueryType for intelligent block filtering
+    fn to_query_type(&self) -> QueryType {
+        match self {
+            ReadStrategy::CompactionDirect => QueryType::Compaction,
+            ReadStrategy::FilteredScan(_) => QueryType::MetadataFilter,
+            ReadStrategy::SearchOptimized => QueryType::PointQuery,
+            ReadStrategy::FullScan => QueryType::FullScan,
+        }
+    }
+    
+    /// Check if this strategy should use block filtering
+    fn should_filter_blocks(&self) -> bool {
+        !matches!(self, ReadStrategy::CompactionDirect)
+    }
 }
 
 /// Read modes for data blocks
@@ -2581,6 +2599,10 @@ impl UnifiedSstableReader {
     }
 
     async fn read_file_direct(&self, path: &str) -> Result<Vec<DataBlock>> {
+        self.read_file_direct_with_strategy(path, &ReadStrategy::FullScan).await
+    }
+    
+    async fn read_file_direct_with_strategy(&self, path: &str, strategy: &ReadStrategy) -> Result<Vec<DataBlock>> {
         // Load index directly without caching (true direct access)
         let index = Arc::new(self.load_index_optimized(path).await?);
         
@@ -2617,6 +2639,7 @@ impl UnifiedSstableReader {
         let bloom_len = u32::from_le_bytes([
             data[offset], data[offset + 1], data[offset + 2], data[offset + 3]
         ]) as usize;
+        let bloom_offset = offset + 4;
         offset += 4 + bloom_len;
         
         // Skip index
@@ -2628,54 +2651,75 @@ impl UnifiedSstableReader {
         ]) as usize;
         offset += 4 + index_len;
         
-        // Read all data blocks
+        // Create intelligent block filter based on strategy
+        let block_filter = IntelligentBlockFilter::for_query_type(&strategy.to_query_type());
+        
+        // Create block filter (empty for now, could be enhanced with actual filter params)
+        let filter = BlockFilter {
+            target_id: None,
+            id_range: None,
+            metadata_filters: HashMap::new(),
+            query_type: strategy.to_query_type(),
+        };
+        
+        // Load bloom filter if needed for filtering
+        let global_bloom = if strategy.should_filter_blocks() && bloom_len > 0 {
+            let bloom_data = &data[bloom_offset..bloom_offset + bloom_len];
+            bincode::deserialize::<BloomFilter>(bloom_data).ok()
+        } else {
+            None
+        };
+        
+        // Filter blocks based on strategy
+        let selected_entries = if strategy.should_filter_blocks() {
+            block_filter.filter_blocks(&index.entries, &filter, global_bloom.as_ref())?
+        } else {
+            // For compaction, read all blocks
+            index.entries.iter().collect()
+        };
+        
+        debug!("📊 Selected {} of {} blocks based on {} strategy", 
+               selected_entries.len(), index.entries.len(), 
+               match strategy {
+                   ReadStrategy::CompactionDirect => "CompactionDirect",
+                   ReadStrategy::FilteredScan(_) => "FilteredScan",
+                   ReadStrategy::SearchOptimized => "SearchOptimized",
+                   ReadStrategy::FullScan => "FullScan",
+               });
+        
+        // Read selected data blocks
         let mut blocks = Vec::new();
-        debug!("Starting to read data blocks at offset {}", offset);
-        debug!("Total file size: {}, remaining data: {}", data.len(), data.len() - offset);
+        debug!("Starting to read {} selected data blocks", selected_entries.len());
         
-        // Decode header to get block count (header always starts at offset 8 after magic + header_len)
-        let header_start = 8; // Always 8: magic (4) + header_len (4)
-        let header: SstableHeader = bincode::deserialize(&data[header_start..header_start+header_len])
-            .map_err(|e| anyhow::anyhow!("Failed to deserialize header for block count: {}", e))?;
-        debug!("Header info: {} blocks expected, {} index entries", header.block_count, index.entries.len());
-        
-        // Verify we have data blocks section
-        if offset >= data.len() {
-            warn!("No data blocks section found! File ends at index section.");
-            warn!("File structure: header_len={}, bloom_len={}, index_len={}, total_size={}", 
-                  header_len, bloom_len, index_len, data.len());
-            return Ok(blocks); // Return empty blocks
-        }
-        
-        while offset + 4 <= data.len() {
-            let block_len = u32::from_le_bytes([
-                data[offset], data[offset + 1], data[offset + 2], data[offset + 3]
-            ]) as usize;
-            offset += 4;
+        // For each selected entry, read the block at its offset
+        for entry in selected_entries {
+            // Use the offset from the index entry
+            let block_offset = entry.offset as usize;
+            let block_size = entry.size as usize;
             
-            debug!("Reading block of length {} at offset {}", block_len, offset - 4);
+            debug!("Reading block {} at offset {} with size {}", entry.block_id, block_offset, block_size);
             
-            if offset + block_len > data.len() {
-                warn!("Not enough data for block (need {}, have {})", block_len, data.len() - offset);
-                warn!("Current offset: {}, block_len: {}, total file size: {}", offset, block_len, data.len());
-                break;
+            if block_offset + block_size > data.len() {
+                warn!("Block {} extends beyond file (offset={}, size={}, file_len={})", 
+                      entry.block_id, block_offset, block_size, data.len());
+                continue;
             }
             
-            let block_data = &data[offset..offset + block_len];
+            let block_data = &data[block_offset..block_offset + block_size];
             
             // Debug: Check if block data starts with expected magic header
             if block_data.len() >= 4 {
                 let magic = &block_data[0..4];
-                debug!("Block magic header: {:?} (expecting b\"BLK1\")", 
-                       std::str::from_utf8(magic).unwrap_or("invalid"));
+                debug!("Block {} magic header: {:?}", 
+                       entry.block_id, std::str::from_utf8(magic).unwrap_or("invalid"));
             }
             
-            debug!("🔍 Deserializing block data of {} bytes at offset {}", block_data.len(), offset - 4);
+            debug!("🔍 Deserializing block {} data of {} bytes", entry.block_id, block_data.len());
             match DataBlock::deserialize(block_data) {
                 Ok(block) => {
-                    debug!("✅ Successfully deserialized block with {} records", block.records.len());
-                    // Debug: Print all record IDs for debugging
-                    for (i, record) in block.records.iter().enumerate() {
+                    debug!("✅ Successfully deserialized block {} with {} records", entry.block_id, block.records.len());
+                    // Debug: Print sample record IDs for debugging
+                    for (i, record) in block.records.iter().take(3).enumerate() {
                         debug!("  Record {}: id='{}', vector_len={}, metadata_keys={:?}", 
                                i, record.id, record.vector.len(), 
                                record.metadata.iter().map(|item| &item.key).collect::<Vec<_>>());
@@ -2683,39 +2727,22 @@ impl UnifiedSstableReader {
                     blocks.push(block);
                 }
                 Err(e) => {
-                    warn!("Failed to deserialize block at offset {}: {:?}", offset - 4, e);
+                    warn!("Failed to deserialize block {} at offset {}: {:?}", entry.block_id, block_offset, e);
                     // Debug: Print first few bytes of the problematic block
                     let preview_len = std::cmp::min(block_data.len(), 32);
-                    warn!("Block data preview (first {} bytes): {:?}", preview_len, &block_data[..preview_len]);
-                    
-                    // Try to understand what's in the block
-                    if block_data.len() >= 4 {
-                        let magic = &block_data[0..4];
-                        warn!("Found magic: {:?}, expected: {:?}", magic, b"BLK1");
-                        
-                        
-                        // Check if it might be bincode or JSON
-                        if let Ok(s) = std::str::from_utf8(&block_data[..std::cmp::min(block_data.len(), 100)]) {
-                            warn!("Block as string (first 100 chars): {}", s);
-                        }
-                    }
-                    
+                    warn!("Block {} data preview (first {} bytes): {:?}", entry.block_id, preview_len, &block_data[..preview_len]);
                     // Continue processing other blocks even if one fails
-                    warn!("Skipping corrupted block at offset {}", offset - 4);
+                    warn!("Skipping corrupted block {} at offset {}", entry.block_id, block_offset);
                 }
             }
-            offset += block_len;
         }
         
-        debug!("Total blocks read: {}", blocks.len());
+        debug!("📊 Total blocks read: {} (filtered from {})", blocks.len(), index.entries.len());
         
-        // Print records in each block
-        for (i, block) in blocks.iter().enumerate() {
-            debug!("Block {} has {} records", i, block.records.len());
-            for (j, record) in block.records.iter().take(3).enumerate() {
-                debug!("Record {}: id={}, vector_len={}, tombstone={}", 
-                         j, record.id, record.vector.len(), record.is_tombstone);
-            }
+        // Print summary of blocks read
+        if !blocks.is_empty() {
+            let total_records: usize = blocks.iter().map(|b| b.records.len()).sum();
+            debug!("📦 Read {} blocks containing {} total records", blocks.len(), total_records);
         }
         
         Ok(blocks)
