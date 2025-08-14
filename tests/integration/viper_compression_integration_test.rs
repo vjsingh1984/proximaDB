@@ -233,7 +233,6 @@ async fn test_viper_engine_flush_creates_compressed_parquet_files() -> anyhow::R
     ensure_test_directories();
     
     let temp_dir = TempDir::new().unwrap();
-    let config = Arc::new(create_test_config(&temp_dir, true));
     
     // Set up storage assignment for the test collection
     setup_test_assignment("test_collection").await?;
@@ -252,9 +251,16 @@ async fn test_viper_engine_flush_creates_compressed_parquet_files() -> anyhow::R
         create_metadata_store_config(&temp_dir)
     ).await.unwrap());
     
+    // Create proper VIPER config with compression
+    let viper_config = proximadb::core::config::ViperConfig {
+        row_group_size: 50_000,
+        compression: "zstd".to_string(),
+        compression_level: 3,
+        ..Default::default()
+    };
     
     let engine = ViperEngine::from_core_config(
-        (*config).clone(),
+        viper_config,
         filesystem.clone()
     ).await?;
     
@@ -349,7 +355,6 @@ async fn test_viper_search_compressed_data() -> anyhow::Result<()> {
     ensure_test_directories();
     
     let temp_dir = TempDir::new().unwrap();
-    let config = Arc::new(create_test_config(&temp_dir, true));
     
     // Set up storage assignment for the test collection
     setup_test_assignment("search_test").await?;
@@ -367,9 +372,16 @@ async fn test_viper_search_compressed_data() -> anyhow::Result<()> {
         create_metadata_store_config(&temp_dir)
     ).await.unwrap());
     
+    // Create proper VIPER config with compression
+    let viper_config = proximadb::core::config::ViperConfig {
+        row_group_size: 50_000,
+        compression: "zstd".to_string(),
+        compression_level: 3,
+        ..Default::default()
+    };
     
     let engine = ViperEngine::from_core_config(
-        (*config).clone(),
+        viper_config,
         filesystem.clone()
     ).await?;
     
@@ -431,9 +443,6 @@ async fn test_viper_compaction_merges_compressed_parquet_efficiently() -> anyhow
     ensure_test_directories();
     
     let temp_dir = TempDir::new().unwrap();
-    let config = create_test_config(&temp_dir, true);
-    // Note: row_group_size is VIPER-specific, not part of SstConfig
-    let config = Arc::new(config);
     
     // Set up storage assignment for the test collection
     setup_test_assignment("compaction_test").await?;
@@ -450,9 +459,16 @@ async fn test_viper_compaction_merges_compressed_parquet_efficiently() -> anyhow
         create_metadata_store_config(&temp_dir)
     ).await.unwrap());
     
+    // Create proper VIPER config with compression
+    let viper_config = proximadb::core::config::ViperConfig {
+        row_group_size: 50_000,
+        compression: "zstd".to_string(),
+        compression_level: 3,
+        ..Default::default()
+    };
     
     let engine = ViperEngine::from_core_config(
-        (*config).clone(),
+        viper_config,
         filesystem.clone()
     ).await?;
     
@@ -555,9 +571,16 @@ async fn test_compression_algorithms_comparison() -> anyhow::Result<()> {
             create_metadata_store_config(&temp_dir)
         ).await.unwrap());
         
+        // Create proper VIPER config
+        let viper_config = proximadb::core::config::ViperConfig {
+            row_group_size: 50_000,
+            compression: algo.to_string(),
+            compression_level: level,
+            ..Default::default()
+        };
         
         let engine = ViperEngine::from_core_config(
-            config,
+            viper_config,
             filesystem.clone()
         ).await?;
         
@@ -647,9 +670,16 @@ async fn test_compression_algorithm_vs_disabled() -> anyhow::Result<()> {
             create_metadata_store_config(&temp_dir)
         ).await.unwrap());
         
+        // Create proper VIPER config based on compression setting
+        let viper_config = proximadb::core::config::ViperConfig {
+            row_group_size: 50_000,
+            compression: if compression_algorithm { "zstd".to_string() } else { "none".to_string() },
+            compression_level: 3,
+            ..Default::default()
+        };
         
         let engine = ViperEngine::from_core_config(
-            (*config).clone(),
+            viper_config,
             filesystem.clone()
         ).await?;
         

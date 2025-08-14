@@ -500,7 +500,7 @@ async fn test_compression_algorithm_vs_disabled() -> anyhow::Result<()> {
     let collection_data_dir = temp_dir_uncompressed.path().join("uncompressed_test").join("data");
     tokio::fs::create_dir_all(&collection_data_dir).await?;
     
-    let collection_config = create_test_collection_with_storage("uncompressed_test", base_path_uncompressed);
+    let collection_config = create_test_collection_with_storage("uncompressed_test", base_path_uncompressed.to_string());
     let flush_params = proximadb::storage::traits::FlushParameters {
         collection_id: Some("uncompressed_test".to_string()),
         vector_records: vectors,
@@ -566,7 +566,7 @@ async fn test_compression_levels() -> anyhow::Result<()> {
         
         let start = std::time::Instant::now();
         let base_path = sub_dir.to_str().unwrap();
-        let collection_config = create_test_collection_with_storage(&format!("test_level_{}", level), base_path);
+        let collection_config = create_test_collection_with_storage(&format!("test_level_{}", level), base_path.to_string());
         let flush_params = proximadb::storage::traits::FlushParameters {
             collection_id: Some(format!("test_level_{}", level)),
             vector_records: vectors.clone(),

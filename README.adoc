@@ -41,7 +41,7 @@ toc::[]
 
 == Quick Start
 
-image::proximadb-overview.svg[ProximaDB Architecture, width=800, align=center]
+image::proximadb-overview.svg[ProximaDB Architecture, width=267, align=center]
 
 === 60-Second Installation
 

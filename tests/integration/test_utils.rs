@@ -528,10 +528,13 @@ pub async fn setup_test_assignment(collection_id: &str) -> Result<()> {
 }
 
 /// Create metadata store config
-pub fn create_metadata_store_config(temp_dir: &tempfile::TempDir) -> proximadb::core::config::StorageLocation {
-    proximadb::core::config::StorageLocation {
-        url: format!("file://{}/metadata", temp_dir.path().to_string_lossy()),
-        weight: 1,
-        tags: vec!["test".to_string()],
+pub fn create_metadata_store_config(temp_dir: &tempfile::TempDir) -> proximadb::storage::metadata::store::MetadataStoreConfig {
+    proximadb::storage::metadata::store::MetadataStoreConfig {
+        metadata_base_dir: temp_dir.path().join("metadata"),
+        metadata_storage_urls: vec![format!("file://{}/metadata", temp_dir.path().display())],
+        enable_atomic_operations: true,
+        cache_config: Default::default(),
+        backup_config: None,
+        replication_config: None,
     }
 }
