@@ -10,8 +10,8 @@
 //!
 //! Refactored to use unified test utilities for consistent path handling and configuration.
 
-use common::unified_test_utils::{UnifiedTestEnvironment, operations};
-use common::ensure_test_directories;
+use crate::common::unified_test_utils::{UnifiedTestEnvironment, operations};
+use crate::common::ensure_test_directories;
 use crate::integration::test_utils::{create_test_config, setup_test_assignment, create_metadata_store_config, create_test_collection_with_storage};
 
 // Metadata store configuration now handled by UnifiedTestEnvironment
@@ -428,8 +428,8 @@ async fn test_viper_compaction_merges_compressed_parquet_efficiently() -> anyhow
     ensure_test_directories();
     
     let temp_dir = TempDir::new().unwrap();
-    let mut config = create_test_config(&temp_dir, true);
-    config.row_group_size = 100; // Small row groups to create more files
+    let config = create_test_config(&temp_dir, true);
+    // Note: row_group_size is VIPER-specific, not part of SstConfig
     let config = Arc::new(config);
     
     // Set up storage assignment for the test collection

@@ -9,7 +9,8 @@ use std::path::PathBuf;
 use tempfile::TempDir;
 use uuid::Uuid;
 
-use proximadb::core::{SstConfig, BloomFilterConfig, VectorRecord};
+use proximadb::core::{SstConfig, VectorRecord};
+use proximadb::core::bloom::{BloomFilterConfig, BloomStrategy, HashAlgorithm};
 use proximadb::core::config::WriteBufferUserConfig;
 use proximadb::core::config::StorageLocation;
 use proximadb::storage::traits::FlushParameters;
@@ -481,12 +482,15 @@ mod tests {
 /// Create test config with compression option
 pub fn create_test_config(temp_dir: &tempfile::TempDir, enable_compression: bool) -> SstConfig {
     SstConfig {
-        base_path: temp_dir.path().to_string_lossy().to_string(),
-        bloom_filter_config: BloomFilterConfig {
-            false_positive_rate: 0.01,
-            max_keys: 10000,
-        },
-        enable_compression,
+        bloom_filter_config: Some(BloomFilterConfig {
+            strategy: BloomStrategy::ByteAligned,
+            bits_per_key: 10,
+            false_positive_rate: Some(0.01),
+            expected_items: 10000,
+            enabled: true,
+            hash_algorithm: HashAlgorithm::Murmur3,
+        }),
+        compression: if enable_compression { "zstd".to_string() } else { "none".to_string() },
         ..Default::default()
     }
 }
@@ -494,9 +498,8 @@ pub fn create_test_config(temp_dir: &tempfile::TempDir, enable_compression: bool
 /// Create test collection with storage assignment
 pub fn create_test_collection_with_storage(collection_id: &str, base_path: String) -> proximadb::proto::proximadb::Collection {
     let storage_assignment = StorageAssignment {
-        data_url: format!("file://{}/data", base_path),
-        assignment_id: format!("{}_assignment", collection_id),
-        ..Default::default()
+        base_location: format!("file://{}", base_path),
+        assigned_at: chrono::Utc::now().timestamp_millis(),
     };
     
     let config = CollectionConfig {
@@ -527,8 +530,8 @@ pub async fn setup_test_assignment(collection_id: &str) -> Result<()> {
 /// Create metadata store config
 pub fn create_metadata_store_config(temp_dir: &tempfile::TempDir) -> proximadb::core::config::StorageLocation {
     proximadb::core::config::StorageLocation {
-        storage_type: "filesystem".to_string(),
-        location: temp_dir.path().join("metadata").to_string_lossy().to_string(),
-        config: std::collections::HashMap::new(),
+        url: format!("file://{}/metadata", temp_dir.path().to_string_lossy()),
+        weight: 1,
+        tags: vec!["test".to_string()],
     }
 }

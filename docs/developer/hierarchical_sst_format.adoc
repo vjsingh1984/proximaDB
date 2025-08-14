@@ -1,0 +1,202 @@
+= Hierarchical SST Format Specification
+:toc: left
+:toclevels: 2
+:imagesdir: ../diagrams/images
+
+**ProximaDB's enhanced SSTable format with hierarchical structure and direct offset access.**
+
+== Overview
+
+The hierarchical SST design provides advanced capabilities including:
+* Direct offset access to minimize cloud API calls
+* Composite bloom filters for smart query routing  
+* Zero-copy operations with SstRecord streaming
+* Self-describing compression markers
+
+image::sst-hierarchical-detail-modular.svg[Hierarchical SST Structure, width=900, align=center]
+
+== File Format Specification
+
+=== Binary Layout
+```
+┌─────────────────────────────────┐
+│ SST1 Magic (4 bytes)            │ 0x53535431
+├─────────────────────────────────┤
+│ Header Length (4 bytes, LE)     │ Variable size
+├─────────────────────────────────┤
+│ Serialized Header (bincode)     │
+│ • version: u32                  │
+│ • level: u8                     │
+│ • entry_count: u64              │
+│ • min_key: String               │
+│ • max_key: String               │
+│ • created_at: i64               │
+│ • compression_algorithm: enum   │
+│ • compression_level: u8         │
+│ • has_bloom_filter: bool        │
+│ • has_global_bloom: bool        │
+│ • has_block_blooms: bool        │
+│ • global_bloom_offset: u64      │
+│ • block_index_offset: u64       │
+│ • data_blocks_offset: u64       │
+├─────────────────────────────────┤
+│ Bloom Length (4 bytes, LE)      │
+├─────────────────────────────────┤
+│ Bloom Filter Data               │
+│ • Composite bloom structure     │
+├─────────────────────────────────┤
+│ Index Length (4 bytes, LE)      │
+├─────────────────────────────────┤
+│ Index Data (BTreeMap)           │
+│ • Key → IndexEntry mapping      │
+├─────────────────────────────────┤
+│ Data Blocks (repeated)          │
+│ ├─ Block Length (4 bytes, LE)   │
+│ └─ Compressed Block Data        │
+│     • SstRecord format          │
+└─────────────────────────────────┘
+```
+
+== Key Components
+
+=== Magic Bytes
+```rust
+const SST_MAGIC: &[u8; 4] = b"SST1";  // 0x53535431
+```
+
+The SST1 magic identifies files using the enhanced hierarchical format with:
+* Direct offset access capabilities
+* Composite bloom filter support
+* Unified compression integration
+
+=== Header Structure
+```rust
+#[derive(Serialize, Deserialize)]
+pub struct SstableHeader {
+    // Basic metadata
+    pub version: u32,
+    pub level: u8,
+    pub entry_count: u64,
+    pub min_key: String,
+    pub max_key: String,
+    pub created_at: i64,
+    
+    // Compression configuration
+    pub compression_algorithm: CompressionAlgorithm,
+    pub compression_level: u8,
+    
+    // Bloom filter flags
+    pub has_bloom_filter: bool,
+    pub has_global_bloom: bool,  
+    pub has_block_blooms: bool,
+    
+    // Direct access offsets (key enhancement)
+    pub global_bloom_offset: u64,
+    pub block_index_offset: u64,
+    pub data_blocks_offset: u64,
+}
+```
+
+=== Index Entry Format
+```rust
+#[derive(Serialize, Deserialize)]
+pub struct IndexEntry {
+    pub key: String,
+    pub block_offset: u64,
+    pub block_size: u32,
+    pub first_key: String,
+    pub last_key: String,
+}
+```
+
+=== SstRecord Format
+```rust
+#[derive(Serialize, Deserialize)]
+pub struct SstRecord {
+    pub key: String,
+    pub value: Vec<u8>,  // Serialized VectorRecord
+    pub version: u64,    // MVCC version
+    pub tombstone: bool, // Deletion marker
+}
+```
+
+== Performance Benefits
+
+=== Cloud Storage Optimization
+
+[cols="2,1,1,1", options="header"]
+|===
+| Operation | Traditional | Hierarchical | Improvement
+
+| Check existence
+| 3 API calls
+| 1 API call
+| 67% reduction
+
+| Point query
+| 5 API calls
+| 2 API calls
+| 60% reduction
+
+| Range scan
+| 7+ API calls
+| 2-3 API calls
+| 70% reduction
+
+| Metadata only
+| 2 API calls
+| 1 API call
+| 50% reduction
+|===
+
+=== Direct Offset Access Flow
+```
+1. Read header (single API call)
+   → Extract all offsets
+   
+2. Jump directly to needed component:
+   → Bloom: Seek to global_bloom_offset
+   → Index: Seek to block_index_offset
+   → Data: Seek to data_blocks_offset + block_offset
+   
+3. Read only required data (second API call)
+```
+
+== Compression Integration
+
+The format supports all 13 ProximaDB compression algorithms:
+* **None**: Direct storage for hot data
+* **LZ4/Snappy**: Fast compression for warm data
+* **ZSTD**: Maximum compression for cold data
+* **Others**: Gzip, Brotli, Bzip2, Deflate, XZ, Zlib, LZO, LZ4HC, LZMA
+
+Each data block is independently compressed, allowing:
+* Selective decompression of only needed blocks
+* Mixed compression levels within same file
+* Progressive optimization during compaction
+
+== VIPER Engine Format
+
+VIPER uses standard Apache Parquet format with magic bytes:
+
+[cols="1,1,2", options="header"]
+|===
+| Format | Magic | Location
+
+| Parquet
+| PAR1
+| File footer (last 4 bytes)
+
+| Arrow
+| ARROW1
+| File header (first 6 bytes)
+|===
+
+== Related Documentation
+
+* link:hierarchical_sst_implementation.adoc[Implementation Details]
+* link:compression_guide.adoc[Compression Guide]
+* link:storage_engines.adoc[Storage Engine Architecture]
+
+---
+**Version 0.1.4** | Last Updated: 2025-01

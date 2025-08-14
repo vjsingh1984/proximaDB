@@ -9,7 +9,7 @@
 //!
 //! Refactored to use unified test utilities for consistent path handling and configuration.
 
-use common::unified_test_utils::{UnifiedTestEnvironment, operations};
+use crate::common::unified_test_utils::{UnifiedTestEnvironment, operations};
 use crate::integration::viper_compression_integration_test::create_test_vectors;
 use crate::integration::test_utils::{setup_hardware_capabilities, create_test_config, create_test_collection_with_storage};
 use proximadb::core::{SstConfig, VectorRecord};

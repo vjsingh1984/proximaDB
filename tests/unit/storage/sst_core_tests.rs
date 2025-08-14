@@ -2,7 +2,7 @@
 //!
 //! Refactored to use unified test utilities for consistent path handling and configuration.
 
-use common::unified_test_utils::{UnifiedTestEnvironment, operations};
+use crate::common::unified_test_utils::{UnifiedTestEnvironment, operations};
 use proximadb::core::VectorRecord;
 use proximadb::core::search::{FilterExpression, ComparisonOperator};
 use proximadb::proto::proximadb::MetadataItem;
