@@ -793,7 +793,7 @@ async fn test_generate_comprehensive_benchmark_report() -> Result<()> {
     println!("{}", "=".repeat(100));
     
     // Test configurations - reduced for faster testing
-    let sparsity_levels = vec![0, 50, 90];  // Test dense, medium, and sparse
+    let sparsity_levels = vec![10, 50, 90];  // Test mostly dense, medium, and sparse
     let algorithms_and_levels = vec![
         ("none", vec![0]),
         ("lz4", vec![1]),
