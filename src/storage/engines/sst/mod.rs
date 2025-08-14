@@ -3382,15 +3382,15 @@ impl SstStorage {
             }
         };
         
-        // Create compaction parameters
+        // Create compaction parameters with collection info
         let params = crate::storage::traits::CompactionParameters {
-            collection_id: None,  // SST is collection-agnostic
+            collection_id: Some(collection_id.to_string()),
             force: true,
             synchronous: false,
             hints: std::collections::HashMap::new(),
             timeout_ms: None,
             priority: crate::storage::traits::OperationPriority::Medium,
-            collection_config: None,
+            collection_config: collection_config.cloned(),
         };
         
         // Use the consolidated do_compact implementation
