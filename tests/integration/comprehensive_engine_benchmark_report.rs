@@ -343,11 +343,14 @@ async fn run_benchmark(
             
             // Print summary after all batches
             let avg_flush = batch_summary.iter().sum::<u64>() / batch_summary.len() as u64;
-            println!("      Flushed {} batches, avg: {}ms, total: {}ms", 
+            println!("      Flushed {} SST batches, avg: {}ms, total: {}ms", 
                 config.batch_count, avg_flush, batch_summary.iter().sum::<u64>());
             
             // Get size BEFORE compaction for fair comparison
             let compressed_size_before_compaction = get_directory_size(env.get_sst_data_directory().to_str().unwrap()).await;
+            println!("      Pre-compaction: {} files, {} bytes total", 
+                count_files_in_dir(env.get_sst_data_directory().to_str().unwrap()).await,
+                compressed_size_before_compaction);
             
             // Count files before compaction
             file_counts_before_compaction = count_files_in_dir(
@@ -365,6 +368,18 @@ async fn run_benchmark(
                 env.get_sst_data_directory().to_str().unwrap()
             ).await;
             
+            // Validate compaction results
+            println!("      Compaction: {} input files → {} output files, {} entries processed",
+                file_counts_before_compaction, 
+                file_counts_after_compaction,
+                compact_result.entries_processed);
+            
+            // Check if old files were cleaned up
+            if file_counts_after_compaction > file_counts_before_compaction {
+                println!("        ⚠️ WARNING: More files after compaction! Old files may not be deleted yet");
+                println!("        This is normal for atomic compaction - old files deleted after success");
+            }
+            
             // Measure query performance with validation
             let query_vector = create_vectors_with_sparsity(1, config.dimension, 0, 0)[0].vector.clone();
             let mut query_latencies = Vec::new();
@@ -375,16 +390,17 @@ async fn run_benchmark(
             let first_latency = start_query.elapsed().as_micros() as f64 / 1000.0;
             query_latencies.push(first_latency);
             
-            // Validate results
+            // Validate results and record count
+            let expected_records = config.batch_count * config.vectors_per_batch;
             if results.is_empty() {
-                println!("        ⚠️ SST search: No results (data may not be flushed)");
+                println!("        ⚠️ SST search: No results (expected {} records)", expected_records);
                 // Fill with high latency to indicate problem
                 for _ in 1..10 {
                     query_latencies.push(1000.0);
                 }
             } else {
-                println!("        SST search: {} results in {:.2}ms (full scan, no index)", 
-                    results.len(), first_latency);
+                println!("        SST search: {} results in {:.2}ms (full scan, {} total records)", 
+                    results.len(), first_latency, expected_records);
                 
                 // Run 2 more queries (3 total) - SST is slow without index
                 for _ in 1..3 {
@@ -408,9 +424,15 @@ async fn run_benchmark(
                 println!("        ERROR: SST compressed size is 0, checking directory: {}", 
                     env.get_sst_data_directory().to_str().unwrap());
             } else {
-                println!("        SST compressed size: {} bytes (before compaction)", compressed_size);
+                let compression_ratio = if baseline.uncompressed_size > 0 {
+                    ((compressed_size as f64 / baseline.uncompressed_size as f64) - 1.0) * 100.0
+                } else {
+                    0.0
+                };
+                println!("        SST compression result: {} bytes vs baseline {} bytes ({:+.1}%)", 
+                    compressed_size, baseline.uncompressed_size, compression_ratio);
                 let post_compaction_size = get_directory_size(env.get_sst_data_directory().to_str().unwrap()).await;
-                println!("        SST size after compaction: {} bytes", post_compaction_size);
+                println!("        After compaction: {} files, {} bytes", file_counts_after_compaction, post_compaction_size);
             }
             
             // Baseline uncompressed size is passed in, no need to recalculate
@@ -495,6 +517,10 @@ async fn run_benchmark(
             println!("      Flushed {} VIPER batches, avg: {}ms, total: {}ms", 
                 config.batch_count, avg_flush, batch_summary.iter().sum::<u64>());
             
+            // Show where we expect files
+            println!("      VIPER storage location: file://{}/{}", 
+                env.persistent_dir.display(), env.collection_id());
+            
             // Count files before compaction
             file_counts_before_compaction = count_files_in_dir(
                 env.get_viper_data_directory().to_str().unwrap()
@@ -506,10 +532,16 @@ async fn run_benchmark(
             let compact_result = engine.compact(compact_params).await?;
             let compaction_time = start_compact.elapsed().as_millis() as u64;
             
-            // Count files after compaction
+            // Count files after compaction  
             file_counts_after_compaction = count_files_in_dir(
                 env.get_viper_data_directory().to_str().unwrap()
             ).await;
+            
+            // Validate VIPER compaction
+            println!("      VIPER Compaction: {} input files → {} output files, {} entries",
+                file_counts_before_compaction,
+                file_counts_after_compaction, 
+                compact_result.entries_processed);
             
             // Measure query performance with actual VIPER search
             let query_vector = create_vectors_with_sparsity(1, config.dimension, 0, 0)[0].vector.clone();
@@ -521,16 +553,17 @@ async fn run_benchmark(
             let first_latency = start_query.elapsed().as_micros() as f64 / 1000.0;
             query_latencies.push(first_latency);
             
-            // Validate VIPER results
+            // Validate VIPER results and record count
+            let expected_records = config.batch_count * config.vectors_per_batch;
             if results.is_empty() {
-                println!("        ⚠️ VIPER search: No results (data may not be flushed)");
+                println!("        ⚠️ VIPER search: No results (expected {} records)", expected_records);
                 // Fill with reasonable latency to indicate problem
                 for _ in 1..10 {
                     query_latencies.push(100.0);  // 100ms to indicate issue
                 }
             } else {
-                println!("        VIPER search: {} results in {:.2}ms (columnar format)", 
-                    results.len(), first_latency);
+                println!("        VIPER search: {} results in {:.2}ms (expected {} total records)", 
+                    results.len(), first_latency, expected_records);
                 
                 // Run more queries for performance measurement
                 for _ in 1..10 {
@@ -567,6 +600,15 @@ async fn run_benchmark(
                 // If still 0, estimate based on data
                 compressed_size = (config.batch_count * config.vectors_per_batch * config.dimension * 4 / 10) as u64;
                 println!("        WARNING: No VIPER files found, using estimate: {} bytes", compressed_size);
+                println!("        This likely means VIPER flush is not writing to expected location");
+            } else {
+                let compression_ratio = if baseline.uncompressed_size > 0 {
+                    ((compressed_size as f64 / baseline.uncompressed_size as f64) - 1.0) * 100.0
+                } else {
+                    0.0
+                };
+                println!("        VIPER compression result: {} bytes vs baseline {} bytes ({:+.1}%)", 
+                    compressed_size, baseline.uncompressed_size, compression_ratio);
             }
             
             // Baseline uncompressed size is passed in, no need to recalculate
