@@ -169,8 +169,7 @@ image::storage-engine-search-detail-modular.svg[SST Search Flow, width=700]
 _Three-stage filtering pipeline for row-based storage_
 
 **VIPER Engine Search Flow**:  
-image::two-stage-search-detail-modular.svg[VIPER Search Flow, width=700]
-_Columnar search with predicate pushdown and quantization_
+_Columnar search with predicate pushdown and quantization (see Two-Stage Search above)_
 
 === Query Processing Flow
 

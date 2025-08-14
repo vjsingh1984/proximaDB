@@ -1,58 +1,59 @@
-%%{init: {"theme":"neutral", "themeVariables": {"primaryColor":"#2563eb","primaryTextColor":"#ffffff","primaryBorderColor":"#1e40af","lineColor":"#64748b","secondaryColor":"#10b981","secondaryTextColor":"#ffffff","tertiaryColor":"#f59e0b","tertiaryTextColor":"#ffffff","background":"transparent","mainBkg":"#ffffff","secondBkg":"#f8fafc","textColor":"#1e293b","nodeTextColor":"#1e293b","fontFamily":"-apple-system, BlinkMacSystemFont, Segoe UI, Roboto, sans-serif","fontSize":"14px","clusterBkg":"#f1f5f9","clusterBorder":"#cbd5e1","edgeLabelBackground":"#ffffff"}}}%%
+%%{init: {"theme":"neutral", "themeVariables": {"primaryColor":"#2563eb","primaryTextColor":"#000000","primaryBorderColor":"#1e40af","lineColor":"#374151","secondaryColor":"#10b981","secondaryTextColor":"#000000","tertiaryColor":"#f59e0b","tertiaryTextColor":"#000000","background":"transparent","mainBkg":"#ffffff","secondBkg":"#f8fafc","textColor":"#000000","nodeTextColor":"#000000","fontFamily":"Arial, sans-serif","fontSize":"14px","clusterBkg":"#f1f5f9","clusterBorder":"#374151","edgeLabelBackground":"#ffffff"}}}%%
 flowchart TD
-    %% External entities (sources/sinks)
-    Client[🎯 Client Applications]
-    Storage[(💾 Persistent Storage)]
+    %% External entities
+    Client[Client Applications]
+    CloudStorage[(Cloud Storage)]
     
-    %% Data processes (circles/ellipses in traditional DFD)
-    P1((Write<br/>Process))
-    P2((Search<br/>Process))
-    P3((Flush<br/>Process))
-    P4((Compaction<br/>Process))
+    %% Core processing layer
+    P1((Write<br/>Processing))
+    P2((Search<br/>Processing))
     
-    %% Data stores (open rectangles in traditional DFD)
-    DS1[📝 Write-Ahead Log]
-    DS2[🧠 Memtable Buffer]
-    DS3[📊 Vector Index]
-    DS4[⚡ Search Cache]
-    DS5[📁 SSTable Files]
+    %% Storage layer processes
+    P3((Flush<br/>Management))
+    P4((Storage<br/>Selection))
     
-    %% Data flows - Write Path (vertical flow)
-    Client -->|Vector Data| P1
-    P1 -->|Log Entry| DS1
-    P1 -->|Vector Record| DS2
-    P1 -->|Index Update| DS3
-    P1 -->|Write ACK| Client
+    %% Data stores
+    DS1[Write-Ahead Log]
+    DS2[Memory Buffer]
+    DS3[Vector Indexes]
+    DS4[Query Cache]
     
-    %% Data flows - Search Path (vertical flow)
-    Client -->|Search Query| P2
-    P2 -->|Cache Lookup| DS4
-    P2 -->|Index Query| DS3
-    P2 -->|Memtable Scan| DS2
+    %% Storage engines
+    DS5[SST Engine<br/>Row-based Storage]
+    DS6[VIPER Engine<br/>Columnar Storage]
+    
+    %% Clean vertical data flow
+    Client -->|Insert Requests| P1
+    Client -->|Search Queries| P2
+    
+    P1 --> DS1
+    P1 --> DS2
+    
+    P2 --> DS2
+    P2 --> DS4
+    P2 --> DS3
+    
+    DS2 -->|Threshold Reached| P3
+    P3 --> P4
+    
+    P4 -->|OLTP Workload| DS5
+    P4 -->|Analytics Workload| DS6
+    
+    DS5 --> DS3
+    DS6 --> DS3
+    
     P2 -->|Search Results| Client
     
-    %% Data flows - Background Operations (vertical flow)
-    DS2 -->|Flush Trigger| P3
-    P3 -->|SSTable Data| DS5
-    P3 -->|Clear Buffer| DS2
+    DS5 --> CloudStorage
+    DS6 --> CloudStorage
     
-    DS5 -->|Compact Trigger| P4
-    P4 -->|Merged Data| DS5
-    P4 -->|Updated Index| DS3
+    %% Professional styling
+    classDef external fill:#e8f4fd,stroke:#1565c0,stroke-width:2px,color:#000000
+    classDef process fill:#fff8e1,stroke:#ef6c00,stroke-width:2px,color:#000000
+    classDef datastore fill:#f3e5f5,stroke:#7b1fa2,stroke-width:2px,color:#000000
+    classDef engine fill:#e8f5e8,stroke:#2e7d32,stroke-width:2px,color:#000000
     
-    %% Persistence flows (vertical flow)
-    DS1 -->|WAL Flush| Storage
-    DS5 -->|SSTable Write| Storage
-    Storage -->|Data Recovery| DS1
-    Storage -->|SSTable Read| DS5
-    
-    %% DFD styling - Traditional data flow diagram colors
-    classDef externalEntity fill:#f9f9f9,stroke:#333,stroke-width:2px,color:#333
-    classDef process fill:#e1f5fe,stroke:#0277bd,stroke-width:2px,color:#0277bd
-    classDef dataStore fill:#f3e5f5,stroke:#7b1fa2,stroke-width:2px,color:#7b1fa2
-    classDef storage fill:#e8f5e8,stroke:#2e7d32,stroke-width:2px,color:#2e7d32
-    
-    class Client externalEntity
+    class Client,CloudStorage external
     class P1,P2,P3,P4 process
-    class DS1,DS2,DS3,DS4,DS5 dataStore
-    class Storage storage
+    class DS1,DS2,DS3,DS4 datastore
+    class DS5,DS6 engine

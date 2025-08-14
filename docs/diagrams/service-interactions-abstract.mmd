@@ -1,4 +1,4 @@
-%%{init: {"theme":"neutral", "themeVariables": {"primaryColor":"#2563eb","primaryTextColor":"#ffffff","primaryBorderColor":"#1e40af","lineColor":"#64748b","secondaryColor":"#10b981","secondaryTextColor":"#ffffff","tertiaryColor":"#f59e0b","tertiaryTextColor":"#ffffff","background":"transparent","mainBkg":"#ffffff","secondBkg":"#f8fafc","textColor":"#1e293b","nodeTextColor":"#1e293b","fontFamily":"-apple-system, BlinkMacSystemFont, Segoe UI, Roboto, sans-serif","fontSize":"14px","clusterBkg":"#f1f5f9","clusterBorder":"#cbd5e1","edgeLabelBackground":"#ffffff"}}}%%
+%%{init: {"theme":"neutral", "themeVariables": {"primaryColor":"#2563eb","primaryTextColor":"#000000","primaryBorderColor":"#1e40af","lineColor":"#1e293b","secondaryColor":"#10b981","secondaryTextColor":"#000000","tertiaryColor":"#f59e0b","tertiaryTextColor":"#000000","background":"#ffffff","mainBkg":"#ffffff","secondBkg":"#f8fafc","textColor":"#000000","nodeTextColor":"#000000","fontFamily":"-apple-system, BlinkMacSystemFont, Segoe UI, Roboto, sans-serif","fontSize":"16px","clusterBkg":"#f1f5f9","clusterBorder":"#475569","edgeLabelBackground":"#ffffff","sequenceNumberColor":"#000000","labelTextColor":"#000000","actorLineColor":"#1e293b","actorTextColor":"#000000","activationBorderColor":"#1e293b","activationBkgColor":"#e2e8f0","noteBkgColor":"#fef3c7","noteTextColor":"#000000","noteBorderColor":"#f59e0b"}}}%%
 sequenceDiagram
     participant Client as  Client
     participant REST as  REST API
@@ -17,124 +17,122 @@ sequenceDiagram
     participant Cloud as  Cloud Storage
     
     %% Vector Insert Flow
-    Note over Client,Cloud: Vector Insert Operation (Test Status: 1,460+ passed, 0 failed, 40+ ignored)
+    Note over Client,Cloud: VECTOR INSERT OPERATION
     
-    Client->>+REST: POST /collections/{id}/vectors<br/> JSON Batch (500 vectors)
-    REST->>+Handler: insert_vectors_unified()<br/> JSON → Proto
-    Handler->>+VOS: insert_vectors_direct()<br/> Direct Memtable Access
+    Client->>+REST: POST /collections/{id}/vectors<br/>JSON Batch
+    REST->>+Handler: insert_vectors_unified()
+    Handler->>+VOS: insert_vectors_direct()
     
-    Note over VOS:  Engine Routing Decision<br/>Via Collection Service
+    Note over VOS: Engine Routing
     
-    VOS->>+CS: get_collection_metadata(collection_id)
-    CS->>CS: Check storage_assignment<br/>in collection metadata
-    CS-->>-VOS: StorageEngine + Locations<br/>data_location, wal_location
+    VOS->>+CS: get_collection_metadata()
+    CS->>CS: Check storage_assignment
+    CS-->>-VOS: StorageEngine + Locations
     
-    alt VIPER Engine (Default)
-        VOS->>+VIPER: do_flush()<br/> Columnar Storage
-        VIPER->>+TxCoord: begin_atomic_operation()<br/> ACID Transaction
-        TxCoord->>+Cloud: write_to_staging()<br/> Creates .parquet files
-        Cloud-->>-TxCoord:  Write Confirmed
-        TxCoord-->>-VIPER:  Transaction ID
-        VIPER-->>-VOS:  Insert Complete
-    else SST Engine (If Configured)  
-        VOS->>+SST: do_flush()<br/> Row-based Storage
-        SST->>+TxCoord: begin_atomic_operation()<br/> ACID Transaction
-        TxCoord->>+Cloud: write_sstables()<br/> Creates .sst files
-        Cloud-->>-TxCoord:  Write Confirmed
-        TxCoord-->>-SST:  Transaction ID
-        SST-->>-VOS:  Insert Complete
+    alt VIPER Engine
+        VOS->>+VIPER: do_flush()
+        VIPER->>+TxCoord: begin_atomic_operation()
+        TxCoord->>+Cloud: write_to_staging()
+        Cloud-->>-TxCoord: Confirmed
+        TxCoord-->>-VIPER: Transaction ID
+        VIPER-->>-VOS: Complete
+    else SST Engine
+        VOS->>+SST: do_flush()
+        SST->>+TxCoord: begin_atomic_operation()
+        TxCoord->>+Cloud: write_sstables()
+        Cloud-->>-TxCoord: Confirmed
+        TxCoord-->>-SST: Transaction ID
+        SST-->>-VOS: Complete
     end
     
-    VOS-->>-Handler:  Batch Inserted
-    Handler-->>-REST:  Proto → JSON Response
-    REST-->>-Client:  Insert Stats<br/> 10-49K vectors/sec
+    VOS-->>-Handler: Batch Inserted
+    Handler-->>-REST: Response
+    REST-->>-Client: Success
     
     %% Vector Search Flow
-    Note over Client,Cloud: Vector Search with Metadata Filtering (Known Issues)
+    Note over Client,Cloud: VECTOR SEARCH OPERATION
     
-    Client->>+gRPC: SearchVectors()<br/> Query + metadata filter
-    gRPC->>+Handler: search_vectors_unified()<br/> Direct Proto
-    Handler->>+VOS: search_vectors()<br/> Dual Engine Search
+    Client->>+gRPC: SearchVectors()
+    gRPC->>+Handler: search_vectors_unified()
+    Handler->>+VOS: search_vectors()
     
-    Note over VOS:  Parallel Search Strategy<br/>Both engines searched simultaneously
+    Note over VOS: Parallel Search
     
     par VIPER Search
-        VOS->>+VIPER: search_vectors_unified()<br/> Reads .parquet files
-        VIPER->>VIPER:  Metadata filter bug<br/>(Returns 0 results)
-        VIPER-->>-VOS:  Empty Results (Issue)
+        VOS->>+VIPER: search_vectors_unified()
+        VIPER->>VIPER: Apply filters
+        VIPER-->>-VOS: Results
     and SST Search
-        VOS->>+SST: search_vectors_unified()<br/> Looks for .sst files
-        SST->>SST:  File pattern mismatch<br/>(No .sst files found)
-        SST-->>-VOS:  Empty Results (Issue)
+        VOS->>+SST: search_vectors_unified()
+        SST->>SST: Apply filters
+        SST-->>-VOS: Results
     end
     
-    VOS->>VOS: merge_and_deduplicate()<br/> MvccResolver + MultiTierDeduplicator
-    VOS-->>-Handler:  Empty Results (0 matches)
-    Handler-->>-gRPC:  Direct Proto Response
-    gRPC-->>-Client:  No Results<br/> Expected matches but got 0
+    VOS->>VOS: merge_and_deduplicate()
+    VOS-->>-Handler: Search Results
+    Handler-->>-gRPC: Response
+    gRPC-->>-Client: Results
     
-    rect rgb(34, 139, 34)
-        Note over VIPER, SST: <span style="color:white">**✅ All Issues Resolved**<br/>• VIPER metadata filters working correctly<br/>• Storage engine routing fixed<br/>• SQL AND/OR operators fully implemented<br/>• 1,460+ tests passing with 0 failures</span>
-    end
+    Note over VIPER, SST: All systems operational
     
-    %% Collection Management Flow (Updated 2025-08-06)
-    Note over Client,Cloud: Collection Operations with Storage Assignment
+    %% Collection Management Flow
+    Note over Client,Cloud: COLLECTION MANAGEMENT
     
-    Client->>+REST: POST /collections<br/> Collection Config
-    REST->>+Handler: handle_collection_operation()<br/> JSON → Proto
-    Handler->>+CS: create_collection()<br/> Metadata Setup
-    CS->>CS: Assign storage location<br/>Create StorageAssignment
-    CS->>+Engine: initialize_storage()<br/> With storage_assignment
-    Engine->>Engine: Create directories at<br/>assigned locations
-    Engine->>+TxCoord: setup_collection_storage()<br/> data_location, wal_location
-    TxCoord->>+Cloud: create_collection_dirs()<br/> At specified paths
-    Cloud-->>-TxCoord:  Directories Created
-    TxCoord-->>-Engine:  Storage Ready
-    Engine-->>-CS:  Collection Initialized<br/>with StorageAssignment
-    CS->>CS: Persist metadata<br/>with storage_assignment
-    CS-->>-Handler:  Collection Created
-    Handler-->>-REST:  Proto → JSON Response
-    REST-->>-Client:  Collection Details
+    Client->>+REST: POST /collections
+    REST->>+Handler: handle_collection_operation()
+    Handler->>+CS: create_collection()
+    CS->>CS: Assign storage
+    CS->>+Engine: initialize_storage()
+    Engine->>Engine: Create directories
+    Engine->>+TxCoord: setup_collection_storage()
+    TxCoord->>+Cloud: create_collection_dirs()
+    Cloud-->>-TxCoord: Created
+    TxCoord-->>-Engine: Ready
+    Engine-->>-CS: Initialized
+    CS->>CS: Persist metadata
+    CS-->>-Handler: Created
+    Handler-->>-REST: Response
+    REST-->>-Client: Success
     
     %% SQL Query Processing Flow
-    Note over Client,Cloud: GPU/SIMD-Accelerated SQL Processing
+    Note over Client,Cloud: SQL QUERY PROCESSING
     
-    Client->>+REST: POST /query<br/> SQL with VECTOR_SIMILARITY
-    REST->>+SQL: execute_sql()<br/> Complex vector query
+    Client->>+REST: POST /query
+    REST->>+SQL: execute_sql()
     
-    SQL->>+HW: get_hardware_capabilities()<br/> Check available acceleration
-    HW-->>-SQL: GPU: CUDA, CPU: AVX2<br/> Hardware profile
+    SQL->>+HW: get_hardware_capabilities()
+    HW-->>-SQL: Hardware profile
     
     alt GPU Available
-        SQL->>+GPU: parse_sql_gpu()<br/> "SELECT * FROM collection<br/>ORDER BY VECTOR_SIMILARITY(vector, [0.1, 0.2], 'cosine')"
-        GPU->>+HW: has_gpu_parsing()<br/> Check GPU parsing enabled
+        SQL->>+GPU: parse_sql_gpu()
+        GPU->>+HW: has_gpu_parsing()
         HW-->>-GPU: true
-        GPU->>GPU: tokenize_gpu()<br/> CUDA/ROCm/MPS/OpenCL
-        GPU->>GPU: parse_tokens_cpu()<br/> Grammar processing
-        GPU-->>-SQL: ParsedQuery<br/> 0.8ms parse time
-    else GPU Unavailable
-        SQL->>+SIMD: parse_vector_array()<br/> "[0.1, 0.2, 0.3, ...]"
-        SIMD->>+HW: has_simd()<br/> Check SIMD capabilities
-        HW-->>-SIMD: AVX2 available
-        SIMD->>SIMD: parse_avx2()<br/> 8 elements per instruction
-        SIMD-->>-SQL: Vec<f32><br/> 163.3 MB/s throughput
+        GPU->>GPU: tokenize_gpu()
+        GPU->>GPU: parse_tokens()
+        GPU-->>-SQL: ParsedQuery
+    else CPU/SIMD
+        SQL->>+SIMD: parse_vector_array()
+        SIMD->>+HW: has_simd()
+        HW-->>-SIMD: AVX2
+        SIMD->>SIMD: parse_avx2()
+        SIMD-->>-SQL: Vec<f32>
     end
     
-    SQL->>+VOS: search_vectors()<br/> Optimized query execution
-    VOS->>+Engine: search_with_metadata()<br/> Hardware-aware search
-    Engine-->>-VOS: Vector results
+    SQL->>+VOS: search_vectors()
+    VOS->>+Engine: search_with_metadata()
+    Engine-->>-VOS: Results
     VOS-->>-SQL: Ranked results
     SQL-->>-REST: Query results
-    REST-->>-Client: JSON response<br/> Sub-2ms query time
+    REST-->>-Client: Response
     
     %% Error Handling Flow
-    Note over Client,Cloud: Error Handling & Recovery
+    Note over Client,Cloud: ERROR HANDLING
     
-    Client->>+gRPC: InsertVectors()<br/> Invalid Data Format
+    Client->>+gRPC: InsertVectors()
     gRPC->>+Handler: handle_vector_batch()
-    Handler->>Handler: validate_proto()<br/> Schema Validation
-    Handler-->>-gRPC:  ValidationError<br/> Detailed Error Info
-    gRPC-->>-Client:  Error Response<br/> Actionable Message
+    Handler->>Handler: validate_proto()
+    Handler-->>-gRPC: ValidationError
+    gRPC-->>-Client: Error Response
     
     %% Note: Sequence diagrams don't support classDef styling
     %% Colors are controlled by the theme variables in the header

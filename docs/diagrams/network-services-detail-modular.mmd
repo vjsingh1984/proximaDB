@@ -1,9 +1,9 @@
-%%{init: {"theme":"neutral", "themeVariables": {"primaryColor":"#2563eb","primaryTextColor":"#ffffff","primaryBorderColor":"#1e40af","lineColor":"#64748b","secondaryColor":"#10b981","secondaryTextColor":"#ffffff","tertiaryColor":"#f59e0b","tertiaryTextColor":"#ffffff","background":"transparent","mainBkg":"#ffffff","secondBkg":"#f8fafc","textColor":"#1e293b","nodeTextColor":"#1e293b","fontFamily":"-apple-system, BlinkMacSystemFont, Segoe UI, Roboto, sans-serif","fontSize":"14px","clusterBkg":"#f1f5f9","clusterBorder":"#cbd5e1","edgeLabelBackground":"#ffffff"}}}%%
+%%{init: {"theme":"neutral", "themeVariables": {"primaryColor":"#2563eb","primaryTextColor":"#000000","primaryBorderColor":"#1e40af","lineColor":"#374151","secondaryColor":"#10b981","secondaryTextColor":"#000000","tertiaryColor":"#f59e0b","tertiaryTextColor":"#000000","background":"#ffffff","mainBkg":"#ffffff","secondBkg":"#f8fafc","textColor":"#000000","nodeTextColor":"#000000","fontFamily":"Arial, sans-serif","fontSize":"16px","clusterBkg":"#f1f5f9","clusterBorder":"#374151","edgeLabelBackground":"#ffffff"}}}%%
 classDiagram
     class RestServer {
         +port: u16
         +handlers: UnifiedHandlers
-        +start(config: ServerConfig) Result~()~
+        +start() Result
         +health_check() HealthStatus
         +register_routes() Router
     }
@@ -11,31 +11,31 @@ classDiagram
     class GrpcServer {
         +port: u16
         +services: VectorOperationsServiceImpl
-        +start(config: ServerConfig) Result~()~
+        +start() Result
         +register_services() ServiceBuilder
         +with_reflection() ServiceBuilder
     }
     
     class UnifiedHandlers {
-        +vector_operations_service: Arc~VectorOperationsService~
-        +collection_service: Arc~CollectionService~
-        +handle_vector_insert(request: InsertRequest) Result~Response~
-        +handle_vector_search(request: SearchRequest) Result~Response~
-        +handle_collection_create(request: CreateRequest) Result~Response~
+        +vector_operations_service: VectorOperationsService
+        +collection_service: CollectionService
+        +handle_vector_insert() Result
+        +handle_vector_search() Result
+        +handle_collection_create() Result
     }
     
     class VectorOperationsServiceImpl {
-        +vector_operations_service: Arc~VectorOperationsService~
-        +insert_vectors(request: InsertVectorsRequest) Result~Response~
-        +search_vectors(request: SearchRequest) Result~Response~
-        +delete_vectors(request: DeleteRequest) Result~Response~
+        +vector_operations_service: VectorOperationsService
+        +insert_vectors() Result
+        +search_vectors() Result
+        +delete_vectors() Result
     }
     
     class NetworkCoordinator {
         +rest_server: RestServer
         +grpc_server: GrpcServer
-        +start_all_services() Result~()~
-        +graceful_shutdown() Result~()~
+        +start_all_services() Result
+        +graceful_shutdown() Result
         +health_status() SystemHealth
     }
     
@@ -46,10 +46,10 @@ classDiagram
     NetworkCoordinator --> GrpcServer : manages
     UnifiedHandlers --> VectorOperationsServiceImpl : shares logic
     
-    %% Professional styling
-    classDef serverStyle fill:#dbeafe,stroke:#1d4ed8,stroke-width:2px,color:#1e293b,font-weight:bold
-    classDef handlerStyle fill:#f0fdf4,stroke:#16a34a,stroke-width:2px,color:#14532d,font-weight:bold
-    classDef coordinatorStyle fill:#fef2f2,stroke:#dc2626,stroke-width:2px,color:#7f1d1d,font-weight:bold
+    %% Browser-independent styling with explicit colors
+    classDef serverStyle fill:#e8f4fd,stroke:#1565c0,stroke-width:3px,color:#000000
+    classDef handlerStyle fill:#e8f5e8,stroke:#2e7d32,stroke-width:3px,color:#000000
+    classDef coordinatorStyle fill:#ffebee,stroke:#d32f2f,stroke-width:3px,color:#000000
     
     class RestServer serverStyle
     class GrpcServer serverStyle

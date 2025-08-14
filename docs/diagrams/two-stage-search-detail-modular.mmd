@@ -74,12 +74,12 @@ flowchart TD
     RankingSort -.->|"Top-K Selection"| FinalResults
     
     %% Decision Styling
-    classDef startStyle fill:#38a169,stroke:#2f855a,stroke-width:3px,color:#ffffff
-    classDef processStyle fill:#3182ce,stroke:#2c5aa0,stroke-width:2px,color:#ffffff
-    classDef decisionStyle fill:#805ad5,stroke:#6b46c1,stroke-width:2px,color:#ffffff
-    classDef indexStyle fill:#d69e2e,stroke:#b7791f,stroke-width:2px,color:#ffffff
-    classDef resultStyle fill:#e53e3e,stroke:#c53030,stroke-width:2px,color:#ffffff
-    classDef endStyle fill:#38b2ac,stroke:#319795,stroke-width:3px,color:#ffffff
+    classDef startStyle fill:#38a169,stroke:#2f855a,stroke-width:3px,color:#000000
+    classDef processStyle fill:#3182ce,stroke:#2c5aa0,stroke-width:2px,color:#000000
+    classDef decisionStyle fill:#805ad5,stroke:#6b46c1,stroke-width:2px,color:#000000
+    classDef indexStyle fill:#d69e2e,stroke:#b7791f,stroke-width:2px,color:#000000
+    classDef resultStyle fill:#e53e3e,stroke:#c53030,stroke-width:2px,color:#000000
+    classDef endStyle fill:#38b2ac,stroke:#319795,stroke-width:3px,color:#000000
     
     class Start,FinalResults startStyle
     class VectorQuery,MetadataFilter,CoarseResults,DistanceCalc,FilteredResults,RankingSort processStyle

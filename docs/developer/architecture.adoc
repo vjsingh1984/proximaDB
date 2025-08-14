@@ -657,9 +657,7 @@ The detailed startup sequence follows careful dependency management across multi
 
 ==== Storage System Setup  
 2. **Storage Engine Setup**: Engines created independently, then dependency injection
-
-image::storage-components-detail-modular.svg[Storage Engine Initialization, width=700]
-_Dual storage engine initialization with dependency injection_
+_Dual storage engine initialization with dependency injection (see Storage Engine Components below)_
 
 ==== Network Layer Activation
 3. **Network Layer**: REST and gRPC servers with unified handler architecture

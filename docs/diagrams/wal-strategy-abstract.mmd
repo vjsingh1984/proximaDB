@@ -1,69 +1,71 @@
-%%{init: {"theme":"neutral", "themeVariables": {"primaryColor":"#2563eb","primaryTextColor":"#ffffff","primaryBorderColor":"#1e40af","lineColor":"#64748b","secondaryColor":"#10b981","secondaryTextColor":"#ffffff","tertiaryColor":"#f59e0b","tertiaryTextColor":"#ffffff","background":"transparent","mainBkg":"#ffffff","secondBkg":"#f8fafc","textColor":"#1e293b","nodeTextColor":"#1e293b","fontFamily":"-apple-system, BlinkMacSystemFont, Segoe UI, Roboto, sans-serif","fontSize":"14px","clusterBkg":"#f1f5f9","clusterBorder":"#cbd5e1","edgeLabelBackground":"#ffffff"}}}%%
+%%{init: {"theme":"neutral", "themeVariables": {"primaryColor":"#2563eb","primaryTextColor":"#000000","primaryBorderColor":"#1e40af","lineColor":"#374151","secondaryColor":"#10b981","secondaryTextColor":"#000000","tertiaryColor":"#f59e0b","tertiaryTextColor":"#000000","background":"#ffffff","mainBkg":"#ffffff","secondBkg":"#f8fafc","textColor":"#000000","nodeTextColor":"#000000","fontFamily":"Arial, sans-serif","fontSize":"16px","clusterBkg":"#f1f5f9","clusterBorder":"#374151","edgeLabelBackground":"#ffffff"}}}%%
 classDiagram
     %% Strategy Pattern Implementation for Write-Ahead Log Serialization
     
     class WriteAheadLogManager {
-        -strategy: Box~dyn SerializationStrategy~
+        -strategy: SerializationStrategy
         -batch_coordinator: BatchSyncCoordinator
         -flush_coordinator: FlushCoordinator
-        +new(strategy: SerializationStrategy) WriteAheadLogManager
-        +write_batch(vectors: Vec~VectorRecord~) Result~()~
-        +flush_to_storage() Result~FlushResult~
-        +set_strategy(strategy: SerializationStrategy)
+        +new() WriteAheadLogManager
+        +write_batch() Result
+        +flush_to_storage() Result
+        +set_strategy()
+        +select_strategy_by_workload()
+        +get_optimal_strategy()
     }
     
     class SerializationStrategy {
         <<interface>>
-        +serialize(data: &VectorBatch) Result~Vec~u8~~
-        +deserialize(bytes: &[u8]) Result~VectorBatch~
-        +get_format_name() &str
+        +serialize() Result
+        +deserialize() Result
+        +get_format_name() String
         +supports_schema_evolution() bool
     }
     
     class ProtoSerializationStrategy {
         -schema_registry: ProtoSchemaRegistry
-        +serialize(data: &VectorBatch) Result~Vec~u8~~
-        +deserialize(bytes: &[u8]) Result~VectorBatch~
+        +serialize() Result
+        +deserialize() Result
         +get_format_name() "protobuf"
         +supports_schema_evolution() true
     }
     
     class AvroSerializationStrategy {
         -schema: Schema
-        -writer_cache: LruCache~String, Writer~
-        +serialize(data: &VectorBatch) Result~Vec~u8~~
-        +deserialize(bytes: &[u8]) Result~VectorBatch~
+        -writer_cache: LruCache
+        +serialize() Result
+        +deserialize() Result
         +get_format_name() "avro"
         +supports_schema_evolution() true
     }
     
     class BincodeSerializationStrategy {
         -config: BincodeConfig
-        +serialize(data: &VectorBatch) Result~Vec~u8~~
-        +deserialize(bytes: &[u8]) Result~VectorBatch~
+        +serialize() Result
+        +deserialize() Result
         +get_format_name() "bincode"
         +supports_schema_evolution() false
     }
     
     class BatchSyncCoordinator {
-        -active_batches: DashMap~BatchId, BatchMetadata~
-        -serialization_strategy: Arc~dyn SerializationStrategy~
-        +coordinate_batch_write(batch: VectorBatch) Result~BatchId~
-        +sync_batch_to_disk(batch_id: BatchId) Result~()~
-        +get_batch_status(batch_id: BatchId) BatchStatus
+        -active_batches: DashMap
+        -serialization_strategy: SerializationStrategy
+        +coordinate_batch_write() Result
+        +sync_batch_to_disk() Result
+        +get_batch_status() BatchStatus
     }
     
     class FlushCoordinator {
         -flush_strategy: FlushStrategy
-        -transaction_coordinator: Arc~TransactionCoordinator~
-        +schedule_flush(trigger: FlushTrigger) Result~()~
-        +execute_flush() Result~FlushResult~
+        -transaction_coordinator: TransactionCoordinator
+        +schedule_flush() Result
+        +execute_flush() Result
         +get_flush_stats() FlushStatistics
     }
     
     class VectorBatch {
         +collection_id: String
-        +vectors: Vec~VectorRecord~
+        +vectors: Vec
         +metadata: BatchMetadata
         +timestamp: SystemTime
         +batch_id: BatchId
@@ -88,27 +90,21 @@ classDiagram
     BatchSyncCoordinator --> VectorBatch : processes
     VectorBatch --> BatchMetadata : contains
     
-    %% Strategy Selection Logic
-    WriteAheadLogManager : +select_strategy_by_workload()
-    WriteAheadLogManager : +get_optimal_strategy(requirements)
+    %% Usage Pattern Notes
+    note for ProtoSerializationStrategy "Production Default\nSchema evolution\nCross-language support\nCompact binary format"
     
+    note for AvroSerializationStrategy "Analytics Workloads\nRich schema metadata\nSchema registry integration\nForward/backward compatibility"
     
-    %% Usage Patterns
-    note for ProtoSerializationStrategy "Production Default\n• Schema evolution\n• Cross-language support\n• Compact binary format"
+    note for BincodeSerializationStrategy "High-Performance Scenarios\nMaximum throughput\nRust-native serialization\nNo schema evolution"
     
-    note for AvroSerializationStrategy "Analytics Workloads\n• Rich schema metadata\n• Schema registry integration\n• Forward/backward compatibility"
+    %% Clear Styling with High Contrast
+    classDef managerStyle fill:#e3f2fd,stroke:#1976d2,stroke-width:3px,color:#000000
+    classDef strategyStyle fill:#ffebee,stroke:#d32f2f,stroke-width:3px,color:#000000
+    classDef traitStyle fill:#f5f5f5,stroke:#424242,stroke-width:3px,color:#000000
+    classDef coordinatorStyle fill:#e8f5e8,stroke:#388e3c,stroke-width:3px,color:#000000
+    classDef dataStyle fill:#fff3e0,stroke:#f57c00,stroke-width:3px,color:#000000
     
-    note for BincodeSerializationStrategy "High-Performance Scenarios\n• Maximum throughput\n• Rust-native serialization\n• No schema evolution"
-    
-    %% Professional Styling with High Contrast and Clear Text
-    classDef managerStyle fill:#e0f2fe,stroke:#0284c7,stroke-width:2px,color:#0c4a6e,font-weight:bold
-    classDef strategyStyle fill:#fef2f2,stroke:#dc2626,stroke-width:2px,color:#7f1d1d,font-weight:bold
-    classDef traitStyle fill:#f3f4f6,stroke:#374151,stroke-width:2px,color:#111827,font-weight:bold
-    classDef coordinatorStyle fill:#f0fdf4,stroke:#16a34a,stroke-width:2px,color:#14532d,font-weight:bold
-    classDef dataStyle fill:#fffbeb,stroke:#d97706,stroke-width:2px,color:#92400e,font-weight:bold
-    classDef optimizationStyle fill:#f0fdfa,stroke:#059669,stroke-width:2px,color:#064e3b,font-weight:bold
-    
-    %% Apply Styling (one per line to avoid parser issues)
+    %% Apply Clear Styling
     class WriteAheadLogManager managerStyle
     class ProtoSerializationStrategy strategyStyle
     class AvroSerializationStrategy strategyStyle
