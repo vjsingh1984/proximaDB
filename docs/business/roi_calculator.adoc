@@ -142,7 +142,7 @@ The following use cases present hypothetical scenarios with estimated costs and 
 | Cost Category | Estimated Traditional Vector DB | Projected ProximaDB SST Engine | Estimated Business Savings
 
 | *🖥️ Compute Infrastructure*
-| 8× m7i.2xlarge instances +
+| 1× m7i.16xlarge instance +
 $67,200/year
 | 1× m7i.8xlarge instance +
 $25,200/year  
@@ -260,10 +260,10 @@ Compliance features: $3,600
 | Cost Category | Estimated Traditional Vector DB | Projected ProximaDB Multi-Engine | Estimated Business Savings
 
 | *🖥️ Compute & Analytics*
-| 12× m7i.2xlarge instances +
+| 1× m7i.24xlarge instance +
 $100,800/year +  
 Analytics overhead: $48,000
-| 4× m7i.2xlarge instances +
+| 1× m7i.8xlarge instance +
 $33,600/year +
 Optimized analytics: $14,400
 | *$100,800 saved* +
