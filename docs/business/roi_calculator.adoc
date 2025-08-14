@@ -626,11 +626,11 @@ image::aws-landing-zone.svg[AWS Control Tower Landing Zone with ProximaDB,width=
 | AWS Infrastructure Component | Traditional Vector DB | ProximaDB Optimized | Enterprise Savings
 
 | *🖥️ Compute Resources*
-| 3× m7i.2xlarge traditional DB +
-$864/mo
+| 1× m7i.8xlarge traditional DB +
+$1,152/mo
 | 1× m7i.4xlarge ProximaDB +
 $576/mo
-| *$288/mo (33%)*
+| *$576/mo (50%)*
 
 | *🌐 Network Transfer*
 | API Gateway: $130/mo +
@@ -651,14 +651,14 @@ Batch APIs: $25/mo
 | *$2,600/mo (72%)*
 
 | *📊 Total Monthly*
-| *$4,802/mo*
+| *$5,090/mo*
 | *$1,631/mo*
-| *$3,171/mo (66%)*
+| *$3,459/mo (68%)*
 
 | *💰 Annual Savings*
-| *$57,624/year*
+| *$61,080/year*
 | *$19,572/year*
-| *$38,052/year saved*
+| *$41,508/year saved*
 |===
 
 ==== ✨ AWS-Specific Landing Zone Advantages
@@ -696,11 +696,11 @@ image::azure-landing-zone.svg[Azure Enterprise-Scale Landing Zone with ProximaDB
 | Azure Infrastructure Component | Traditional Vector DB | ProximaDB Optimized | Enterprise Savings
 
 | *🖥️ Compute Resources*
-| 3× D8s_v5 traditional DB +
-$828/mo
+| 1× D32s_v5 traditional DB +
+$1,104/mo
 | 1× D16s_v5 ProximaDB +
 $552/mo
-| *$276/mo (33%)*
+| *$552/mo (50%)*
 
 | *🌐 Network Transfer*
 | Application Gateway: $175/mo +
@@ -721,14 +721,14 @@ Batch APIs: $33/mo
 | *$2,797/mo (76%)*
 
 | *📊 Total Monthly*
-| *$4,918/mo*
+| *$5,194/mo*
 | *$1,505/mo*
-| *$3,413/mo (69%)*
+| *$3,689/mo (71%)*
 
 | *💰 Annual Savings*
-| *$59,016/year*
+| *$62,328/year*
 | *$18,060/year*
-| *$40,956/year saved*
+| *$44,268/year saved*
 |===
 
 ==== ✨ Azure-Specific Landing Zone Advantages
@@ -766,11 +766,11 @@ image::gcp-landing-zone.svg[GCP Organization Landing Zone with ProximaDB,width=9
 | GCP Infrastructure Component | Traditional Vector DB | ProximaDB Optimized | Enterprise Savings
 
 | *🖥️ Compute Resources*
-| 3× c3-standard-8 traditional DB +
-$768/mo
+| 1× c3-standard-32 traditional DB +
+$1,024/mo
 | 1× c3-standard-16 ProximaDB +
 $512/mo
-| *$256/mo (33%)*
+| *$512/mo (50%)*
 
 | *🌐 Network Transfer*
 | Load balancer: $130/mo +
@@ -791,14 +791,14 @@ Batch APIs: $25/mo
 | *$3,335/mo (79%)*
 
 | *📊 Total Monthly*
-| *$5,242/mo*
+| *$5,498/mo*
 | *$1,422/mo*
-| *$3,820/mo (73%)*
+| *$4,076/mo (74%)*
 
 | *💰 Annual Savings*
-| *$62,904/year*
+| *$65,976/year*
 | *$17,064/year*
-| *$45,840/year saved*
+| *$48,912/year saved*
 |===
 
 ==== ✨ GCP-Specific Landing Zone Advantages
