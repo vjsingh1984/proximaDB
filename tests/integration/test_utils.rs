@@ -12,6 +12,8 @@ use uuid::Uuid;
 use proximadb::core::{SstConfig, BloomFilterConfig, VectorRecord};
 use proximadb::core::config::WriteBufferUserConfig;
 use proximadb::core::config::StorageLocation;
+use proximadb::storage::traits::FlushParameters;
+use proximadb::proto::proximadb::{StorageAssignment, CollectionConfig};
 use proximadb::proto::proximadb::MetadataItem;
 use proximadb::compute::distance_computation::UnifiedDistanceCompute;
 use proximadb::core::hardware_capabilities::HardwareBackend;
@@ -23,7 +25,7 @@ use proximadb::storage::traits::UnifiedStorageEngine;
 static HARDWARE_INIT: Once = Once::new();
 
 /// Setup hardware capabilities for tests
-fn setup_hardware_capabilities() {
+pub fn setup_hardware_capabilities() {
     HARDWARE_INIT.call_once(|| {
         let _ = proximadb::core::hardware_capabilities::initialize_hardware_capabilities_default();
     });
@@ -471,5 +473,62 @@ mod tests {
         for id in collection_ids {
             debug!("  - {}", id);
         }
+    }
+}
+
+/// Standalone helper functions for backward compatibility
+
+/// Create test config with compression option
+pub fn create_test_config(temp_dir: &tempfile::TempDir, enable_compression: bool) -> SstConfig {
+    SstConfig {
+        base_path: temp_dir.path().to_string_lossy().to_string(),
+        bloom_filter_config: BloomFilterConfig {
+            false_positive_rate: 0.01,
+            max_keys: 10000,
+        },
+        enable_compression,
+        ..Default::default()
+    }
+}
+
+/// Create test collection with storage assignment
+pub fn create_test_collection_with_storage(collection_id: &str, base_path: String) -> proximadb::proto::proximadb::Collection {
+    let storage_assignment = StorageAssignment {
+        data_url: format!("file://{}/data", base_path),
+        assignment_id: format!("{}_assignment", collection_id),
+        ..Default::default()
+    };
+    
+    let config = CollectionConfig {
+        name: collection_id.to_string(),
+        dimension: 256,
+        distance_metric: proximadb::proto::proximadb::DistanceMetric::Cosine as i32,
+        storage_engine: proximadb::proto::proximadb::StorageEngine::Sst as i32,
+        ..Default::default()
+    };
+    
+    proximadb::proto::proximadb::Collection {
+        id: collection_id.to_string(),
+        config: Some(config),
+        storage_assignment: Some(storage_assignment),
+        created_at: chrono::Utc::now().timestamp_millis(),
+        updated_at: chrono::Utc::now().timestamp_millis(),
+        ..Default::default()
+    }
+}
+
+/// Setup test assignment (placeholder for backward compatibility)
+pub async fn setup_test_assignment(collection_id: &str) -> Result<()> {
+    debug!("Setting up test assignment for collection: {}", collection_id);
+    // This is now handled by UnifiedTestEnvironment
+    Ok(())
+}
+
+/// Create metadata store config
+pub fn create_metadata_store_config(temp_dir: &tempfile::TempDir) -> proximadb::core::config::StorageLocation {
+    proximadb::core::config::StorageLocation {
+        storage_type: "filesystem".to_string(),
+        location: temp_dir.path().join("metadata").to_string_lossy().to_string(),
+        config: std::collections::HashMap::new(),
     }
 }

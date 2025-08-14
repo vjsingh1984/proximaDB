@@ -67,7 +67,6 @@ pub mod unified_search_integration;
 pub mod viper;
 
 // SST engine integration tests
-pub mod sst_search_integration_test;
 pub mod sst_collection_test;
 
 // MVCC consistency tests

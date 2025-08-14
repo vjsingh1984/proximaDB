@@ -10,7 +10,9 @@
 //!
 //! Refactored to use unified test utilities for consistent path handling and configuration.
 
-use crate::common::unified_test_utils::{UnifiedTestEnvironment, operations};
+use common::unified_test_utils::{UnifiedTestEnvironment, operations};
+use common::ensure_test_directories;
+use crate::integration::test_utils::{create_test_config, setup_test_assignment, create_metadata_store_config, create_test_collection_with_storage};
 
 // Metadata store configuration now handled by UnifiedTestEnvironment
 
@@ -69,7 +71,7 @@ fn create_test_viper_config_with_compression(env: &UnifiedTestEnvironment, enabl
 // Collection creation now handled by UnifiedTestEnvironment::create_test_collection_for_engine(StorageEngine::Viper)
 
 /// Create test vector records with patterns optimized for compression testing
-fn create_test_vectors(count: usize, dimension: usize, prefix: &str) -> Vec<VectorRecord> {
+pub fn create_test_vectors(count: usize, dimension: usize, prefix: &str) -> Vec<VectorRecord> {
     use rand::{Rng, SeedableRng};
     use rand::seq::SliceRandom;
     use rand_chacha::ChaCha8Rng;

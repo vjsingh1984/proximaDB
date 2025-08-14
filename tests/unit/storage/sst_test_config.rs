@@ -294,7 +294,7 @@ pub async fn setup_storage_assignment(collection_id: &str, _base_path: &str) -> 
     // let assignment_service = proximadb::storage::assignment_service::get_assignment_service();
     
     // Create storage location using the persistent assignment's base directory
-    let storage_location = StorageLocation {
+    let _storage_location = StorageLocation {
         url: format!("file://{}", test_assignment.base_directory),
         weight: 1,
         tags: Default::default(),

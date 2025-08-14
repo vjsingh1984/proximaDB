@@ -534,7 +534,7 @@ pub mod operations {
         environment: &UnifiedTestEnvironment,
         query_vector: &[f32],
         top_k: usize
-    ) -> Result<Vec<proximadb::core::VectorSearchResult>> {
+    ) -> Result<Vec<proximadb::core::search::SearchResult>> {
         let storage_url = format!("file://{}/data", environment.persistent_dir.to_str().unwrap());
         
         let results = engine.search_vectors_unified(

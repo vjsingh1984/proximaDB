@@ -14,13 +14,13 @@
 [.text-center]
 **Core Architecture Components**
 
-.Vector Data Pipeline
-image::system-data-flow-abstract.svg[Data Flow Architecture, width=450]
-
 .Storage Engine Architecture  
 image::storage-components-abstract.svg[Storage Architecture, width=450]
 
-_Zero-conversion vector pipeline with dual storage engines and automatic hardware acceleration_
+.Hardware Acceleration
+image::hardware-acceleration-abstract.svg[Hardware Acceleration, width=450]
+
+_Dual storage engines with automatic hardware acceleration and compression_
 
 === Why This Architecture Matters
 
