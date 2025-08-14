@@ -499,11 +499,14 @@ fn generate_html_report(results: &[BenchmarkResult]) -> String {
 }
 
 #[tokio::test]
-#[ignore] // Run with: cargo test --test integration test_generate_comprehensive_benchmark_report -- --ignored
 async fn test_generate_comprehensive_benchmark_report() -> Result<()> {
     // Skip if not explicitly enabled
     if std::env::var("RUN_BENCHMARKS").unwrap_or_default() != "true" {
-        println!("Skipping comprehensive benchmark (set RUN_BENCHMARKS=true to run)");
+        println!("\n╔════════════════════════════════════════════════════════════════════╗");
+        println!("║  BENCHMARK SKIPPED                                                ║");
+        println!("║  To run comprehensive benchmarks:                                 ║");
+        println!("║  RUN_BENCHMARKS=true cargo test test_generate_comprehensive_benchmark_report ║");
+        println!("╚════════════════════════════════════════════════════════════════════╝\n");
         return Ok(());
     }
     
