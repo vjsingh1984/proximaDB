@@ -5,661 +5,191 @@
 
 **Deep dive into ProximaDB's dual storage engine architecture.**
 
-== SST Engine Architecture
+== Overview
 
-The SST (Sorted String Table) engine is optimized for write-heavy OLTP workloads with row-based storage.
+image::storage-engine-abstract.svg[Storage Engine Architecture, width=900]
 
-=== Hierarchical SST File Format ✅ IMPLEMENTED
+ProximaDB implements two specialized storage engines optimized for different workloads:
 
-image::sst-format-detail-modular.svg[SST1 File Format, width=900]
-_Production hierarchical SST structure with enhanced headers, bloom filters, and zero-copy compaction_
+[cols="1,2,2", options="header"]
+|===
+| Engine | Optimization | Best For
 
-==== Enhanced SST Header Structure
+| **SST**
+| Write-heavy, row-based storage
+| Real-time ingestion, OLTP workloads, streaming data
 
-ProximaDB uses an optimized SST header with direct access offsets and vector format analysis:
+| **VIPER**
+| Read-heavy, columnar storage
+| Analytics, batch processing, high compression needs
+|===
 
-[source,rust]
-----
-pub struct SstableHeader {
-    // Core metadata
-    pub version: u8,
-    pub level: u8,
-    pub entry_count: u64,
-    pub created_at: i64,
-    
-    // Hierarchical bloom filter offsets
-    pub global_bloom_offset: u64,
-    pub global_bloom_size: u32,
-    pub block_index_offset: u64,
-    pub block_index_size: u32,
-    pub data_blocks_offset: u64,
-    
-    // Vector format optimization
-    pub vector_format: VectorFormatType,
-    pub fixed_dimension: Option<u32>,
-    pub compression_ratio: f32,
-}
-----
+== SST Engine
 
-==== Three-Stage Filtering Architecture ✅ IMPLEMENTED
+=== Hierarchical Architecture
 
-The hierarchical SST design implements a sophisticated three-stage filtering system that reduces S3 API costs by 85% and metadata scans by 95%:
+image::sst-format-detail-modular.svg[SST Format, width=900]
 
-[source]
-----
-┌──────────────────────────────────────────────────────────────────────┐
-│                     HIERARCHICAL SST FILE STRUCTURE                  │
-├──────────────────────────────────────────────────────────────────────┤
-│                                                                       │
-│  STAGE 1: FILE-LEVEL FILTERING                                       │
-│  ┌─────────────────────────────────────────────────────────────┐    │
-│  │  SST1 Magic Bytes: 0x535354310A1A0A0D                       │    │
-│  │  Global Bloom Filter (2KB): 85% file skip rate              │    │
-│  │  Min/Max Keys: "user_00001" → "user_99999"                  │    │
-│  │  Timestamp Range: 1000 → 9999                               │    │
-│  └─────────────────────────────────────────────────────────────┘    │
-│                                ↓                                     │
-│  STAGE 2: BLOCK-LEVEL FILTERING                                      │
-│  ┌─────────────────────────────────────────────────────────────┐    │
-│  │  DataBlock 0 Metadata:                                      │    │
-│  │  • Block Bloom (256B): 95% block skip rate                  │    │
-│  │  • Key Range: "user_00001" → "user_09999"                   │    │
-│  │  • Metadata Stats: {category: [A-C], score: [0-99]}         │    │
-│  │  • Compression: Bytemuck (3MB → 0.9MB)                      │    │
-│  ├─────────────────────────────────────────────────────────────┤    │
-│  │  DataBlock 1 Metadata:                                      │    │
-│  │  • Block Bloom (256B): 95% block skip rate                  │    │
-│  │  • Key Range: "user_10000" → "user_19999"                   │    │
-│  │  • Metadata Stats: {category: [D-F], score: [100-199]}      │    │
-│  │  • Compression: Bytemuck (3MB → 0.85MB)                     │    │
-│  └─────────────────────────────────────────────────────────────┘    │
-│                                ↓                                     │
-│  STAGE 3: RECORD-LEVEL ACCESS                                        │
-│  ┌─────────────────────────────────────────────────────────────┐    │
-│  │  Direct SstRecord Access:                                   │    │
-│  │  • Zero-copy deserialization via bytemuck                   │    │
-│  │  • Memory-mapped I/O for hot blocks                         │    │
-│  │  • Streaming iterator for large scans                       │    │
-│  │  • MVCC resolution at read time                             │    │
-│  └─────────────────────────────────────────────────────────────┘    │
-│                                                                       │
-└──────────────────────────────────────────────────────────────────────┘
+The SST engine implements a sophisticated three-stage filtering system:
 
-Result: 95% reduction in blocks scanned, 85% reduction in API calls
-----
+**Stage 1: File-Level Filtering**
+* Global bloom filter (2KB): 85% file skip rate
+* Min/max keys and timestamp ranges
+* SST1 magic bytes: `0x535354310A1A0A0D`
 
-Key features:
-* **Magic bytes**: SST1 (0x535354310A1A0A0D) for format identification
-* **Hierarchical bloom filters**: 4-tier filtering (file→block→page→record)
-* **Block metadata statistics**: Min/max values per column for predicate pushdown
-* **Bytemuck compression**: 40% better compression for fixed-dimension vectors
-* **Zero-copy streaming**: Direct SstRecord pipeline without VectorRecord conversion
+**Stage 2: Block-Level Filtering**
+* Per-block bloom filters (256B): 95% block skip rate
+* Metadata statistics for predicate pushdown
+* Compression metadata for adaptive decompression
 
-==== DataBlock Metadata Structure
+**Stage 3: Record-Level Access**
+* Zero-copy deserialization via bytemuck
+* Memory-mapped I/O for hot blocks
+* MVCC resolution at read time
 
-Each DataBlock maintains comprehensive metadata for intelligent query routing without reading the actual data:
+=== Zero-Copy Compaction
 
 [source,rust]
 ----
-pub struct DataBlockMetadata {
-    // Key range for efficient lookups
-    pub min_key: String,           // e.g., "user_00001"
-    pub max_key: String,           // e.g., "user_09999"
-    
-    // Temporal filtering
-    pub min_timestamp: u32,        // Oldest record timestamp
-    pub max_timestamp: u32,        // Newest record timestamp
-    
-    // Column statistics for predicate pushdown
-    pub metadata_columns: Vec<String>,                    // ["category", "score", "region"]
-    pub min_values: HashMap<String, serde_json::Value>,   // {"score": 0.0}
-    pub max_values: HashMap<String, serde_json::Value>,   // {"score": 99.9}
-    
-    // Data characteristics
-    pub record_count: u32,         // Number of records in block
-    pub null_count: u32,           // Number of null values
-    pub compression_ratio: f32,    // Achieved compression (e.g., 0.3 = 70% reduction)
-}
-----
-
-==== Unified Compression Integration
-
-The hierarchical SST leverages the unified compression module (`src/core/compression/mod.rs`) for consistent compression across all contexts:
-
-[source]
-----
-Unified Compression Architecture:
-
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                    CORE COMPRESSION MODULE                                 │
-│                   (src/core/compression/mod.rs)                            │
-│                                                                             │
-│  ┌─────────────────┐  ┌─────────────────┐  ┌─────────────────┐            │
-│  │  SST Context    │  │  Vector Context │  │ Parquet Context │            │
-│  │  • Custom block │  │  • Headers +    │  │ • Arrow         │            │
-│  │    compression  │  │    checksums    │  │   WriterProps   │            │
-│  │  • 13 algorithms│  │  • 13 algorithms│  │ • 7 algorithms  │            │
-│  └─────────────────┘  └─────────────────┘  └─────────────────┘            │
-│           │                    │                      │                    │
-│           ▼                    ▼                      ▼                    │
-│  ┌─────────────────┐  ┌─────────────────┐  ┌─────────────────┐            │
-│  │ Block-level     │  │ Vector-level    │  │ Column-level    │            │
-│  │ compression     │  │ compression     │  │ compression     │            │
-│  │ with markers    │  │ with metadata   │  │ via Parquet     │            │
-│  └─────────────────┘  └─────────────────┘  └─────────────────┘            │
-└─────────────────────────────────────────────────────────────────────────────┘
-
-Algorithm Support Matrix:
-┌─────────────┬─────────┬─────────┬─────────┐
-│ Algorithm   │   SST   │ Vector  │ Parquet │
-├─────────────┼─────────┼─────────┼─────────┤
-│ ZSTD        │    ✓    │    ✓    │    ✓    │
-│ LZ4         │    ✓    │    ✓    │    ✓    │
-│ Snappy      │    ✓    │    ✓    │    ✓    │
-│ Gzip        │    ✓    │    ✓    │    ✓    │
-│ Brotli      │    ✓    │    ✓    │    ✓    │
-│ LZO         │    ✓    │    ✓    │    ✓    │
-│ Bzip2       │    ✓    │    ✓    │   ❌     │
-│ Deflate     │    ✓    │    ✓    │   ❌     │
-│ XZ/LZMA     │    ✓    │    ✓    │   ❌     │
-│ Zlib        │    ✓    │    ✓    │   ❌     │
-│ LZ4HC       │    ✓    │    ✓    │   ❌     │
-│ None        │    ✓    │    ✓    │    ✓    │
-└─────────────┴─────────┴─────────┴─────────┘
-
-Benefits by Context:
-• SST Blocks:      Eliminates double copying for 2000+ vectors per block
-• Vector Serialize: Bytemuck zero-copy with compression headers
-• Parquet Columns: Direct Arrow integration, automatic fallback handling
-----
-
-==== Zero-Copy Compaction Pipeline ✅ IMPLEMENTED
-
-ProximaDB implements a sophisticated zero-copy compaction system that eliminates expensive SstRecord ↔ VectorRecord conversions:
-
-[source,rust]
-----
+// Direct SST operations without VectorRecord conversion
 pub struct SstCompactor {
-    // Zero-copy streaming compaction with MVCC resolution
     pub async fn compact_with_streaming(
         &self,
         input_files: Vec<String>,
         target_level: u8,
     ) -> Result<ZeroCopyCompactionStats> {
-        // Phase 1: Create streaming iterators (no VectorRecord conversion)
-        let streaming_iterators = self.create_sst_direct_readers(input_files).await?;
+        // Phase 1: Create streaming iterators
+        let iterators = self.create_sst_direct_readers(input_files).await?;
         
-        // Phase 2: K-way merge with MVCC (SstRecord → SstRecord)
-        let merged_records = self.k_way_merge_streaming(streaming_iterators).await?;
+        // Phase 2: K-way merge with MVCC
+        let merged = self.k_way_merge_streaming(iterators).await?;
         
         // Phase 3: Direct write with hierarchical blooms
-        let writer = SstableWriter::new()
-            .with_hierarchical_blooms(HierarchicalBloomConfig::for_level(target_level))
-            .with_vector_format_analysis(true);
-            
-        writer.write_streaming_sst_records(merged_records).await
+        writer.write_streaming_sst_records(merged).await
     }
 }
 ----
 
 **Performance Benefits:**
-- **Eliminates double copying** for 2000+ vectors per data block
-- **Reduces memory pressure** during compaction by 60%
-- **Zero-copy streaming** with direct SstRecord operations
-- **MVCC resolution** maintains version semantics efficiently
+* Eliminates double copying for 2000+ vectors per block
+* 60% reduction in memory pressure
+* 40-60% faster than traditional compaction
 
-**Architecture Components:**
-- `ModularBlockReader`: Block-level operations with filesystem API
-- `SstDirectReader`: Zero-copy compaction path 
-- `BlockIterator<SstRecord>`: Streaming support with configurable read modes
-- `ZeroCopyCompactionStats`: Comprehensive compaction metrics
+=== Adaptive Sorting
 
-==== Cloud-Optimized Block Sizing
+image::sst-sorting-detail-modular.svg[SST Sorting, width=900]
 
-The 3MB default block size is universally optimized for cloud storage patterns:
+The SST engine automatically selects optimal sorting algorithms:
 
-[cols="3,2,2,2", options="header"]
+[cols="2,1,1,2", options="header"]
 |===
-| Cloud Storage | Optimal I/O Size | SST Block Alignment | Performance Gain
+| Strategy | Threshold | Complexity | Use Case
 
-| **AWS S3**
-| 5MB multipart
-| 2 blocks per part
-| 85% fewer API calls
-
-| **AWS EBS gp3**
-| 256KB IOPS
-| 12 parallel reads
-| 4x throughput
-
-| **Azure Blob**
-| 4MB blocks
-| Perfect alignment
-| 90% efficiency
-
-| **GCS Standard**
-| 8MB chunks
-| 3 blocks per chunk
-| 60% cost reduction
-|===
-
-=== Adaptive Precision
-
-image::sst-precision-detail-modular.svg[SST Adaptive Precision, width=900]
-_Dynamic precision adjustment based on data characteristics_
-
-The SST engine automatically adjusts precision based on:
-* Vector dimensionality
-* Data distribution
-* Query patterns
-* Available memory
-
-=== Multi-Batch Sorting Architecture
-
-image::sst-sorting-detail-modular.svg[SST Sorting Architecture, width=900]
-_Adaptive multi-batch sorting pipeline optimized for global partitioned memtable_
-
-==== Adaptive Sorting Strategy
-
-The SST engine implements **adaptive sorting** that automatically selects the optimal algorithm based on data characteristics:
-
-....
-┌─────────────────────────────────────────────────────────────────────────────────┐
-│               GLOBAL PARTITIONED MEMTABLE (Batch Storage)                      │
-│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐            │
-│  │   Batch 1   │  │   Batch 2   │  │   Batch 3   │  │   Batch N   │            │
-│  │ • Vector A  │  │ • Vector D  │  │ • Vector G  │  │ • Vector X  │            │
-│  │ • Vector B  │  │ • Vector E  │  │ • Vector H  │  │ • Vector Y  │            │
-│  │ • Vector C  │  │ • Vector F  │  │ • Vector I  │  │ • Vector Z  │            │
-│  └─────────────┘  └─────────────┘  └─────────────┘  └─────────────┘            │
-└──────────────────────────────┬──────────────────────────────────────────────────┘
-                               │ Extract all vectors from all batches
-                               ▼
-                    ┌─────────────────────┐
-                    │  Vector Extraction  │
-                    │  • Total vectors    │
-                    │  • Source batches   │
-                    │  • Size analysis    │
-                    └──────────┬──────────┘
-                               │
-                               ▼
-              ┌─────────────────────────────────────┐
-              │         DECISION LOGIC              │
-              │                                     │
-              │  IF record_count < 10K OR           │
-              │     batch_count <= 1                │
-              │  THEN: Simple Vec + Sort            │
-              │  ELSE: K-Way Merge Sort             │
-              └─────────────┬───────────────────────┘
-                            │
-           ┌────────────────┴─────────────────┐
-           ▼                                  ▼
-  ┌─────────────────┐                ┌─────────────────┐
-  │ SIMPLE STRATEGY │                │ K-WAY STRATEGY  │
-  │ (Small/Single)  │                │ (Large/Multi)   │
-  └─────────────────┘                └─────────────────┘
-           │                                  │
-           ▼                                  ▼
-  ┌─────────────────┐                ┌─────────────────┐
-  │ 1. Collect all  │                │ 1. Split into   │
-  │    vectors      │                │    batch chunks │
-  │ 2. Single sort  │                │ 2. Sort each    │
-  │    O(n log n)   │                │    batch sep.   │
-  │ 3. Create iter  │                │ 3. K-way merge  │
-  └─────────────────┘                └─────────────────┘
-           │                                  │
-           └──────────────┬───────────────────┘
-                          ▼
-              ┌─────────────────────┐
-              │  STREAMING WRITER   │
-              │  • Process records  │
-              │  • Build blocks     │
-              │  • Generate blooms  │
-              │  • Atomic write     │
-              └─────────────────────┘
-....
-
-==== Algorithm Complexity Analysis
-
-[cols="3,2,2,3", options="header"]
-|===
-| Strategy | Insertion | Sorting | Total Complexity
-
-| **BTreeMap (Old)**
-| O(log n) per insert
-| Pre-sorted
-| **O(n log n)** - _High constant factor_
-
-| **Vec + Sort (Small)**
-| O(1) per insert
+| Vec + Sort
+| <10K records
 | O(n log n)
-| **O(n log n)** - _Low constant factor_
+| Small datasets, single batch
 
-| **K-Way Merge (Large)**
-| O(1) per insert
-| O(m log m) + O(n log k)
-| **O(n log m + n log k)** - _where k << n_
+| K-Way Merge
+| >10K records
+| O(n log k)
+| Large datasets, multiple batches
 |===
 
-==== Performance Optimizations
+=== Cloud-Optimized Block Sizing
 
-**Memory Efficiency:**
-* **Immediate Deallocation**: All transient structures are scoped
-* **Cache Locality**: Smaller batch sorts improve CPU cache utilization
-* **Zero-Copy**: Iterator-based streaming to disk
+Default 3MB blocks align with cloud storage patterns:
 
-**Algorithmic Benefits:**
-* **Better Complexity**: K-way merge is more efficient when k << n
-* **Adaptive Selection**: Automatically chooses optimal strategy
-* **Batch Awareness**: Leverages natural batch boundaries from memtable
-
-**Production Characteristics:**
-* **10K Record Threshold**: Empirically determined crossover point
-* **Heap-Based Merge**: Min-heap for efficient k-way merge
-* **Database Optimized**: Designed for multiple collections and frequent flushes
-
-==== Multi-Batch Flush Pipeline
-
-1. **Batch Extraction**: Extract individual vectors from multiple batch entries in global partitioned memtable
-   - Each batch entry contains multiple vectors
-   - Vectors arrive unsorted across batches (different write times)
-   - Flatten all vectors into single stream for processing
-
-2. **Strategy Selection**: Choose Vec+Sort or K-Way Merge based on total vector count and batch count
-   - Small datasets (< 10K vectors): Use simple Vec + sort
-   - Large multi-batch datasets: Use k-way merge for better cache locality
-
-3. **Efficient Sorting**: Minimize memory allocation and CPU cache misses
-   - Group vectors by original batch boundaries when beneficial
-   - Sort smaller groups separately for better cache performance
-
-4. **Streaming Write**: Process sorted records directly to SSTable blocks
-   - No intermediate BTreeMap storage
-   - Immediate deallocation of transient structures
-
-5. **Atomic Flush**: Ensure ACID compliance during write operations
-
-=== Intelligent DataBlock Filtering
-
-The SST engine implements sophisticated block filtering that reduces I/O by 85-95% through hierarchical bloom filters and metadata statistics, seamlessly integrated with the existing `ReadStrategy` patterns.
-
-==== Three-Stage Filtering Pipeline
-
-[source,asciidoc]
-----
-┌─────────────────────────────────────────────────────────────────────┐
-│                    QUERY REQUEST WITH STRATEGY                       │
-└───────────────────┬─────────────────────────────────────────────────┘
-                    ▼
-┌─────────────────────────────────────────────────────────────────────┐
-│ STAGE 1: File-Level Filtering (Global Bloom Filter)                 │
-│ • Check if key/metadata might exist in entire SST file             │
-│ • Skip entire file if bloom filter says no (95% accuracy)          │
-│ • Cost: 1 API call for bloom filter vs 1000 for all blocks         │
-└───────────────────┬─────────────────────────────────────────────────┘
-                    ▼
-┌─────────────────────────────────────────────────────────────────────┐
-│ STAGE 2: Block-Level Filtering (Index Entry Statistics)             │
-│ • For CompactionDirect: Skip all filtering, read all blocks        │
-│ • For SearchOptimized: Use block-level bloom filters               │
-│ • For FilteredScan: Check min/max metadata statistics              │
-│ • Skip blocks that can't contain matches (85-95% reduction)       │
-└───────────────────┬─────────────────────────────────────────────────┘
-                    ▼
-┌─────────────────────────────────────────────────────────────────────┐
-│ STAGE 3: Row-Level Filtering (In-Memory)                            │
-│ • Apply fine-grained filters on loaded blocks only                 │
-│ • Fast in-memory evaluation with SIMD optimizations                │
-│ • Return only matching records                                     │
-└─────────────────────────────────────────────────────────────────────┘
-----
-
-==== Integration with ReadStrategy
-
-The filtering automatically adapts based on the operation type:
-
-[cols="2,3,2,2", options="header"]
+[cols="2,1,1,1", options="header"]
 |===
-| ReadStrategy | Filtering Behavior | Optimizations | Skip Rate
+| Storage | Optimal I/O | SST Alignment | API Reduction
 
-| **CompactionDirect**
-| Skip all filtering for maximum throughput
-| Direct streaming, no bloom checks
-| 0% (read all)
-
-| **SearchOptimized**
-| Point query optimization
-| Global + block-level bloom filters
-| 95-99%
-
-| **FilteredScan**
-| Metadata predicate pushdown
-| Min/max stats + null counts
-| 85-95%
-
-| **FullScan**
-| Balanced filtering
-| All available optimizations
-| 70-85%
+| AWS S3 | 5MB | 2 blocks/part | 85%
+| Azure Blob | 4MB | Perfect | 90%
+| GCS | 8MB | 3 blocks/chunk | 60%
+| EBS gp3 | 256KB | 12 parallel | 4x throughput
 |===
 
-==== Implementation Architecture
+== VIPER Engine
 
-[source,rust]
-----
-// Seamless integration with existing ReadStrategy
-impl ReadStrategy {
-    fn to_query_type(&self) -> QueryType {
-        match self {
-            ReadStrategy::CompactionDirect => QueryType::Compaction,
-            ReadStrategy::FilteredScan(_) => QueryType::MetadataFilter,
-            ReadStrategy::SearchOptimized => QueryType::PointQuery,
-            ReadStrategy::FullScan => QueryType::FullScan,
-        }
-    }
-}
+=== Columnar Architecture
 
-// Intelligent block selection
-let block_filter = IntelligentBlockFilter::for_query_type(
-    &strategy.to_query_type()
-);
+VIPER leverages Apache Parquet for columnar storage:
 
-// Filter blocks based on strategy (85-95% I/O reduction)
-let selected_entries = if strategy.should_filter_blocks() {
-    block_filter.filter_blocks(&index.entries, &filter, bloom)?
-} else {
-    index.entries.iter().collect() // Compaction reads all
-};
-----
-
-==== Enhanced IndexEntry Structure
-
-Each block maintains comprehensive statistics for intelligent filtering:
-
-[source,rust]
-----
-pub struct IndexEntry {
-    // Block identification
-    pub key: String,
-    pub offset: u64,
-    pub size: u32,
-    
-    // Metadata statistics for predicate pushdown
-    pub metadata_min_values: HashMap<String, JsonValue>,
-    pub metadata_max_values: HashMap<String, JsonValue>,
-    pub metadata_null_counts: HashMap<String, u64>,
-    
-    // Hierarchical bloom filters (NEW)
-    pub block_key_bloom: Option<Vec<u8>>,      // Serialized CompositeBloomFilter
-    pub block_metadata_bloom: Option<Vec<u8>>, // Metadata-specific bloom
-    
-    // Compression optimization
-    pub vector_format: VectorFormatType,       // Fixed/Variable/Compressed
-    pub compression_ratio: f32,                // For adaptive decompression
-}
-----
-
-==== Performance Impact
-
-**I/O Reduction by Operation Type:**
-
-[cols="3,2,2,2,2", options="header"]
-|===
-| Operation | Total Blocks | Blocks Read | Reduction | Cloud API Savings
-
-| Point Query (ID lookup)
-| 1000
-| 10-50
-| 95-99%
-| $0.38/million queries
-
-| Range Query
-| 1000
-| 100-200
-| 80-90%
-| $0.32/million queries
-
-| Metadata Filter
-| 1000
-| 50-150
-| 85-95%
-| $0.34/million queries
-
-| Compaction
-| 1000
-| 1000
-| 0%
-| N/A (streaming)
-|===
-
-**Cloud Cost Impact:**
-- AWS S3: 95% reduction in GET requests ($0.0004 → $0.00002 per query)
-- Azure Blob: 95% reduction in read operations  
-- GCS: 95% reduction in Class A operations ($0.005 → $0.00025 per 1000)
-
-==== Bloom Filter Architecture
-
-The system reuses the core `CompositeBloomFilter` for consistency:
-
-[source,rust]
-----
-// SstableBloomFilter wraps core bloom filters (not a duplicate)
-pub struct SstableBloomFilter {
-    key_filter_data: Vec<u8>,        // Serialized CompositeBloomFilter
-    metadata_filter_data: Vec<u8>,   // Serialized metadata filters
-}
-
-impl SstableBloomFilter {
-    pub fn might_contain_key(&self, key: &str) -> Result<bool> {
-        // Deserialize and use core CompositeBloomFilter
-        let filter = BloomFilterFactory::from_serialized(&self.data)?;
-        Ok(filter.might_contain(key.as_bytes()))
-    }
-}
-----
-
-==== Configuration
-
-Block filtering is automatically enabled with sensible defaults:
-
-[source,yaml]
-----
-sst:
-  block_size_mb: 3              # Optimized for cloud IOPS
-  enable_block_bloom: true       # Block-level bloom filters
-  bloom_bits_per_key: 10        # ~1% false positive rate
-  enable_metadata_stats: true    # Min/max/null tracking
-  compression: lz4              # Fast decompression for filtered blocks
-----
-
-== VIPER Engine Architecture
-
-The VIPER (Vector Indexed Parquet Enhanced Reader) engine uses columnar storage optimized for analytics.
-
-=== Parquet Integration
-
-VIPER leverages Apache Parquet for:
-* **Columnar compression**: 50-80% storage reduction
-* **Predicate pushdown**: Filter at storage layer
-* **Vector quantization**: Optional INT8/PQ compression
-* **Batch processing**: Optimized for large scans
+* **Compression**: 50-80% storage reduction
+* **Predicate Pushdown**: Filter at storage layer
+* **Quantization**: Optional INT8/PQ compression
+* **Batch Processing**: Optimized for large scans
 
 === Quantization Strategy
 
-The key difference between engines:
-* **VIPER**: Quantization RECOMMENDED ✓
-  - Columnar format benefits from uniform types
-  - Better compression ratios
-  - Faster SIMD operations
+[cols="1,2,2", options="header"]
+|===
+| Engine | Quantization | Reason
 
-* **SST**: Quantization NOT RECOMMENDED ✗
-  - Row format doesn't benefit
-  - Added complexity without gains
-  - Better to use native FP32
+| **VIPER**
+| ✅ Recommended
+| Columnar format benefits from uniform types
 
-== Storage Engine Selection
+| **SST**
+| ❌ Not Recommended
+| Row format doesn't benefit, adds complexity
+|===
+
+== Engine Selection Guide
 
 === Decision Matrix
 
-[cols="2,2,2,2", options="header"]
+[cols="2,2,2", options="header"]
 |===
-| Criteria | SST | VIPER | Recommendation
+| Criteria | Choose SST | Choose VIPER
 
 | **Dataset Size**
 | <100K vectors
 | >100K vectors
-| VIPER for large scale
 
 | **Write Pattern**
 | Real-time/streaming
 | Batch inserts
-| SST for streaming
 
 | **Query Pattern**
 | Point lookups
 | Range scans
-| Match to pattern
 
-| **Compression Need**
+| **Compression**
 | Low priority
 | High priority
-| VIPER for compression
-
-| **Hardware**
-| Standard CPU
-| GPU/High-end CPU
-| VIPER for acceleration
 |===
 
 === Configuration Examples
 
-==== SST for Real-time
+**SST for Real-time:**
 [source,python]
 ----
 config = CollectionConfig(
-    name="realtime_vectors",
+    name="realtime_stream",
     dimension=768,
     storage_engine="sst",
     compression=CompressionConfig(
-        algorithm="lz4",  # Fast compression
-        level=1,          # Minimal overhead
-        enable_quantization=False  # Not recommended for SST
+        algorithm="lz4",          # Fast
+        level=1,                  # Minimal overhead
+        enable_quantization=False # Not for SST
     )
 )
 ----
 
-==== VIPER for Analytics
+**VIPER for Analytics:**
 [source,python]
 ----
 config = CollectionConfig(
-    name="analytics_vectors",
+    name="analytics_warehouse",
     dimension=1536,
     storage_engine="viper",
     compression=CompressionConfig(
-        algorithm="zstd",
+        algorithm="zstd",         # High compression
         level=6,
         enable_quantization=True,
-        quantization_type="pq8"  # Product quantization
+        quantization_type="pq8"   # Product quantization
     )
 )
 ----
@@ -667,257 +197,30 @@ config = CollectionConfig(
 == Performance Characteristics
 
 === Write Performance
-[cols="2,2,2", options="header"]
+[cols="2,1,1", options="header"]
 |===
 | Metric | SST | VIPER
-
-| Single insert
-| 0.5ms
-| 2ms
-
-| Batch (1000)
-| 50ms
-| 100ms
-
-| Flush time
-| 100ms/MB
-| 500ms/MB
-
-| Compaction
-| Incremental
-| Full rewrite
+| Single insert | 0.5ms | 2ms
+| Batch (1000) | 50ms | 100ms
+| Flush time | 100ms/MB | 500ms/MB
 |===
 
 === Read Performance
-[cols="2,2,2", options="header"]
+[cols="2,1,1", options="header"]
 |===
 | Metric | SST | VIPER
-
-| Point query
-| 0.3ms
-| 1ms
-
-| Range scan (1000)
-| 10ms
-| 5ms
-
-| Metadata filter
-| Bloom filter
-| Parquet pushdown
-
-| Compression overhead
-| 10%
-| 5%
+| Point query | 0.3ms | 1ms
+| Range scan (1000) | 10ms | 5ms
+| Compression overhead | 10% | 5%
 |===
 
-== Advanced Features
+== Implementation Details
 
-=== Multi-Tier Storage
-Both engines support tiered storage:
-1. **Hot tier**: Memory (Bincode)
-2. **Warm tier**: NVMe (Native format)
-3. **Cold tier**: HDD/S3 (Compressed)
+For detailed implementation and advanced features, see:
 
-=== Concurrent Operations
-* **SST**: Lock-free reads, sequential writes
-* **VIPER**: Batch writes, parallel reads
+* link:hierarchical_sst_implementation.adoc[Hierarchical SST Implementation]
+* link:../compression_guide.adoc[Compression Guide]
+* link:technical_reference.adoc[Technical Reference]
 
-=== Recovery & Durability
-* **WAL**: Write-ahead logging for both engines
-* **Snapshots**: Export/import functionality
-* **Future**: Distributed features on roadmap
-
-== Zero-Copy Compaction Architecture
-
-=== Overview
-
-ProximaDB implements a **dual-path compaction strategy** with zero-copy operations as the primary path and traditional compaction as fallback.
-
-==== Compaction Path Selection
-
-....
-┌─────────────────────────────────────────────────────────────────────────────────────┐
-│                         COMPACTION MANAGER                                         │
-│                                                                                     │
-│  ┌─────────────────────────────┐           ┌─────────────────────────────┐        │
-│  │    Compaction Task Queue     │           │    Active Compactions      │        │
-│  │  • Level-based priorities    │           │  • Track in-progress       │        │
-│  │  • Size-based triggers       │           │  • Prevent duplicates      │        │
-│  │  • Time-based scheduling     │           │  • Resource management     │        │
-│  └──────────────┬───────────────┘           └─────────────────────────────┘        │
-│                 │                                                                   │
-│                 ▼                                                                   │
-│     ┌───────────────────────┐                                                      │
-│     │  perform_compaction()  │                                                      │
-│     │  [Entry Point]         │                                                      │
-│     └───────────┬───────────┘                                                      │
-│                 │                                                                   │
-│                 ▼                                                                   │
-│     ┌───────────────────────────────────────────┐                             │
-│     │         PATH SELECTION LOGIC                  │                             │
-│     │                                                │                             │
-│     │  1. Check if SstCompactor available           │                             │
-│     │  2. Attempt zero-copy compaction              │                             │
-│     │  3. On failure → fallback to regular          │                             │
-│     └────────┬──────────────────────┬───────────────┘                             │
-│              │                      │                                              │
-│              ▼                      ▼                                              │
-│  ┌──────────────────────┐  ┌───────────────────────┐                             │
-│  │  ZERO-COPY PATH ✓    │  │  REGULAR PATH (Fallback)│                           │
-│  │  [Primary]            │  │  [Secondary]            │                           │
-│  └──────────────────────┘  └───────────────────────┘                             │
-└─────────────────────────────────────────────────────────────────────────────────────┘
-....
-
-==== Zero-Copy Compaction Flow
-
-....
-┌─────────────────────────────────────────────────────────────────────────────────────┐
-│                           SST COMPACTOR (Zero-Copy)                                │
-│                                                                                     │
-│  Input Files                          Processing                      Output File   │
-│  ───────────                          ──────────                      ───────────   │
-│                                                                                     │
-│  ┌──────────┐                    ┌─────────────────────┐                          │
-│  │  SST1    │───┐                │   K-Way Merge Heap   │            ┌──────────┐ │
-│  │  File    │   │                │                      │            │  Merged  │ │
-│  └──────────┘   │                │  ┌─────────────┐    │            │   SST    │ │
-│                  ├──►Iterator────►│  │ Min Heap    │    │───────────►│  File    │ │
-│  ┌──────────┐   │                │  │ • By ID     │    │            │          │ │
-│  │  SST2    │───┤                │  │ • By Version│    │            │ • Sorted │ │
-│  │  File    │   │                │  └─────────────┘    │            │ • MVCC   │ │
-│  └──────────┘   │                │                      │            │   Clean  │ │
-│                  │                │  HashMap<ID, Vec>   │            │ • Indexed│ │
-│  ┌──────────┐   │                │  ┌─────────────┐    │            └──────────┘ │
-│  │  SST3    │───┘                │  │ Version     │    │                          │
-│  │  File    │                    │  │ Collection  │    │                          │
-│  └──────────┘                    │  └─────────────┘    │                          │
-│                                   └─────────────────────┘                          │
-│                                                                                     │
-│  Key Benefits:                                                                      │
-│  • No VectorRecord conversion (works directly with SstRecord)                      │
-│  • Streaming iteration (memory efficient)                                          │
-│  • MVCC resolution during merge                                                    │
-│  • AXIS change tracking integrated                                                 │
-└─────────────────────────────────────────────────────────────────────────────────────┘
-....
-
-==== Version Tracking During Merge
-
-....
-┌─────────────────────────────────────────────────────────────────────────────────────┐
-│                        VERSION TRACKING & MVCC RESOLUTION                          │
-│                                                                                     │
-│  Phase 1: Collection                    Phase 2: Resolution                        │
-│  ────────────────────                   ─────────────────────                      │
-│                                                                                     │
-│  K-Way Merge Heap                       HashMap Processing                         │
-│  ┌──────────────┐                       ┌────────────────────────┐                │
-│  │ Record: id=A │                       │ ID "A" → [v1,v2,v3]   │                │
-│  │ version=1    │──┐                    │  • Sort by version     │                │
-│  └──────────────┘  │                    │  • Check continuity    │                │
-│                     │                    │  • Select highest      │                │
-│  ┌──────────────┐  │    Collect         │    continuous version  │                │
-│  │ Record: id=A │──┼─────────────►        └────────────────────────┘                │
-│  │ version=2    │  │    by ID                      │                              │
-│  └──────────────┘  │                               ▼                              │
-│                     │                    ┌────────────────────────┐                │
-│  ┌──────────────┐  │                    │ MVCC Rules Applied:    │                │
-│  │ Record: id=A │──┘                    │                        │                │
-│  │ version=3    │                       │ 1. Version continuity  │                │
-│  └──────────────┘                       │ 2. Tombstone check     │                │
-│                                          │ 3. TTL expiry check   │                │
-│  HashMap<String, Vec<SstRecord>>        │ 4. None/0 → version 1  │                │
-│  ┌────────────────────────┐             └────────────────────────┘                │
-│  │ "A" → [v1, v2, v3]     │                          │                             │
-│  │ "B" → [v1, v4]   ❌gap │                          ▼                             │
-│  │ "C" → [v2, v3]   ❌gap │             ┌────────────────────────┐                │
-│  │ "D" → [v1, v2]   ✓    │             │  Output Records:       │                │
-│  └────────────────────────┘             │  • A (version 3)       │                │
-│                                          │  • D (version 2)       │                │
-│  Tracking for AXIS:                     │  • B,C dropped (gaps)  │                │
-│  • deleted_vector_ids: [B, C]           └────────────────────────┘                │
-│  • updated_vector_ids: [A, D]                                                      │
-│  • tombstoned_ids: []                                                              │
-└─────────────────────────────────────────────────────────────────────────────────────┘
-....
-
-==== Fallback Mechanism
-
-....
-┌─────────────────────────────────────────────────────────────────────────────────────┐
-│                          AUTOMATIC FALLBACK LOGIC                                  │
-│                                                                                     │
-│  ┌──────────────────────┐                                                          │
-│  │ Try Zero-Copy Path   │                                                          │
-│  │                      │                                                          │
-│  │ SstCompactor::       │                                                          │
-│  │   compact_files()    │                                                          │
-│  └──────────┬───────────┘                                                          │
-│             │                                                                       │
-│             ▼                                                                       │
-│      ┌─────────────┐                                                               │
-│      │  Success?   │                                                               │
-│      └──────┬──────┘                                                               │
-│             │                                                                       │
-│         ┌───┴───┐                                                                   │
-│         │       │                                                                   │
-│     Yes ▼       ▼ No                                                               │
-│  ┌──────────┐  ┌─────────────────────┐                                           │
-│  │  Return  │  │   Log Warning:       │                                           │
-│  │  Stats   │  │  "Zero-copy failed,  │                                           │
-│  │          │  │   using fallback"    │                                           │
-│  └──────────┘  └──────────┬──────────┘                                           │
-│                           │                                                        │
-│                           ▼                                                        │
-│              ┌──────────────────────────┐                                         │
-│              │  REGULAR COMPACTION      │                                         │
-│              │                          │                                         │
-│              │  1. Read via UnifiedReader│                                        │
-│              │  2. Convert to VectorRecord│                                       │
-│              │  3. Sort all records      │                                        │
-│              │  4. Apply MVCC resolution │                                        │
-│              │  5. Write new SST file    │                                        │
-│              └──────────────────────────┘                                         │
-│                                                                                    │
-│  Fallback Triggers:                                                               │
-│  • File format errors (non-SST1)                                                  │
-│  • Filesystem access failures                                                     │
-│  • Memory allocation errors                                                       │
-│  • Corrupted data blocks                                                          │
-│  • MVCC resolver unavailable                                                      │
-└─────────────────────────────────────────────────────────────────────────────────────┘
-....
-
-=== Performance Comparison
-
-[cols="3,3,3", options="header"]
-|===
-| Metric | Zero-Copy Path | Regular Path
-
-| Memory Usage
-| O(unique_ids)
-| O(total_records)
-
-| Conversions
-| None (SstRecord → SstRecord)
-| Double (VectorRecord ↔ SstRecord)
-
-| Sorting
-| After MVCC resolution
-| Before MVCC resolution
-
-| AXIS Tracking
-| Integrated
-| Post-processing
-
-| Typical Speedup
-| 40-60% faster
-| Baseline
-|===
-
-=== Migration Strategy
-
-1. **Phase 1 (Current)**: Zero-copy as primary, automatic fallback
-2. **Phase 2**: Monitor success rates, optimize edge cases
-3. **Phase 3**: Deprecate regular path when confidence > 99.9%
+---
+**Version 0.1.4** | Last Updated: 2025-01

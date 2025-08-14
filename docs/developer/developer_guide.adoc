@@ -23,21 +23,21 @@ cargo build --release
 cargo test --all
 
 # Python SDK development
-cd clients/python && pip install -e ".[dev]" && cd ../..
+cd clients/python && pip install -e ".[dev]"
 ----
 
 == Testing
 
 image::test-infrastructure-detail-modular.svg[Test Infrastructure, width=900]
-_Test execution flow with hardware capability initialization_
 
-**Test Coverage**: 1,460+ tests, 100% pass rate
-- Core Services: 550+ tests (98% coverage)
-- Storage Engines: 450+ tests (95% coverage)
-- API Handlers: 280+ tests (92% coverage)
-- Python SDK: 180+ tests (72% coverage)
+=== Test Coverage
+* **2,700+ tests**, 100% pass rate
+* Core Services: 98% coverage
+* Storage Engines: 95% coverage
+* API Handlers: 92% coverage
+* Python SDK: 72% coverage
 
-**Run Tests:**
+=== Running Tests
 [source,bash]
 ----
 cargo test --all                    # All Rust tests
@@ -45,22 +45,16 @@ cargo test storage::engines::sst    # Specific module
 cargo test --release               # Release mode (faster)
 
 # Python SDK
-cd clients/python && python -m pytest tests/ -v && cd ../..
+cd clients/python && python -m pytest tests/ -v
 
 # Integration tests
 cargo test --test '*'
 ----
 
-=== Unified Test Infrastructure
+=== Writing Tests
 
-All new tests use the **UnifiedTestEnvironment** to eliminate common testing issues:
+Use the **UnifiedTestEnvironment** for consistent testing:
 
-- **Collection ID conflicts**: Unique IDs generated automatically
-- **Path duplication**: Proper storage URL construction
-- **Hardware initialization**: Handled once with proper synchronization
-- **Resource cleanup**: Automatic cleanup of test resources
-
-**Writing New Tests:**
 [source,rust]
 ----
 use crate::common::unified_test_utils::{UnifiedTestEnvironment, operations};
@@ -73,55 +67,29 @@ async fn test_example() -> Result<()> {
     let vectors = env.create_test_vectors(10);
     operations::insert_and_flush_sst(&engine, &env, vectors).await?;
     
-    let query_vector = env.create_query_vector();
-    let results = operations::search_vectors_sst(&engine, &env, &query_vector, 5).await?;
+    let results = operations::search_vectors_sst(
+        &engine, &env, &query_vector, 5
+    ).await?;
     
     assert!(!results.is_empty());
     Ok(())
 }
 ----
 
-**Available Operations:**
-- `operations::insert_and_flush_sst()` - SST storage operations
-- `operations::insert_and_flush_viper()` - VIPER storage operations  
-- `operations::search_vectors_sst()` - SST search operations
-- `operations::compact_sst_storage()` - SST compaction operations
-
-**Test Data Creation:**
-- `env.create_test_vectors(count)` - Test vectors with metadata
-- `env.create_query_vector()` - Query vector for testing
-- `env.create_test_collection()` - Collection with proper storage assignment
-
-== Architecture
-
-image::technical-architecture-abstract.svg[ProximaDB Architecture, width=800]
-
-**Core Components:**
-
-- **VectorOperationsService**: Main service with 40-60% latency improvement
-- **Storage Engines**: VIPER (columnar) + SST (row-based)
-- **Dual Protocol**: REST (5678) + gRPC (5679)
-- **Hardware Acceleration**: Auto-detect GPU/SIMD capabilities
-
-**Key Directories:**
-[source]
+**Required for all tests:**
+[source,rust]
 ----
-src/
-├── services/           # Business logic (VectorOperationsService, CollectionService)
-├── storage/            # Storage engines (VIPER, SST)
-├── handlers/           # REST/gRPC API handlers
-├── proto/              # Protocol buffer definitions
-├── core/              # Core utilities (hardware, config)
-└── index/             # Indexing algorithms (HNSW, IVF, PQ)
-
-clients/python/         # Python SDK
-docs/                   # Documentation
-demo/                   # Example configurations
+#[test] 
+fn test_example() {
+    // Initialize hardware capabilities
+    let _ = initialize_hardware_capabilities_default();
+    // Test code
+}
 ----
 
 == Development Workflow
 
-**Code Standards:**
+=== Code Standards
 [source,bash]
 ----
 cargo fmt              # Format code
@@ -129,171 +97,93 @@ cargo clippy           # Lint code
 cargo test --all       # Run tests
 ----
 
-**Proto-First Design:**
-- Use proto types directly, avoid conversions
-- VectorRecord flows natively through pipeline
-- Zero double serialization
+=== Proto-First Design
+* Use proto types directly (no JSON conversion)
+* VectorRecord flows natively through pipeline
+* Zero double serialization
 
-**Recent Architecture Implementations (2025-08-12):**
-- ✅ **AXIS Unified Tiering**: Phases 1-3 completed with 85% infrastructure reuse
-- ✅ **Background Task Optimization**: 84% resource reduction (26.36s → 5.15s CPU per hour)
-- ✅ **Unified Compression Module**: 13 algorithms with context-aware processing
-- ✅ **Zero-Copy SST Compactor**: Direct SST operations without VectorRecord conversion
+=== Key Principles
+1. **No mock data** - Use real services, fail fast
+2. **Clean design** - No backward compatibility layers
+3. **Direct integration** - No wrapper layers
+4. **Concurrency** - Prefer DashMap over Arc<RwLock>
+5. **Stateless engines** - Pass parameters explicitly
 
-**Testing Requirements:**
-[source,rust]
-----
-#[test] 
-fn test_example() {
-    // ALL tests must initialize hardware capabilities
-    let _ = proximadb::core::hardware_capabilities::initialize_hardware_capabilities_default();
-    
-    // Test code here
-}
-----
+== Project Structure
+
+```
+src/
+├── services/         # VectorOperationsService, CollectionService
+├── storage/          # VIPER and SST engines
+├── api_handlers/     # REST/gRPC handlers
+├── proto/            # Protocol buffer definitions
+├── core/            # Hardware capabilities, compression
+├── index/           # HNSW, IVF, PQ, LSH algorithms
+└── query/           # SQL engine
+
+clients/python/       # Python SDK
+docs/                # Documentation
+demo/                # Example configurations
+```
 
 == Key APIs
 
-**Hardware Capabilities:**
+=== Hardware Capabilities
 [source,rust]
 ----
-use proximadb::core::hardware_capabilities::{
-    initialize_hardware_capabilities_default, 
-    get_hardware_capabilities
-};
+use proximadb::core::hardware_capabilities::*;
 
 // Initialize once at startup
 initialize_hardware_capabilities_default();
+
+// Auto-detect GPU/SIMD
+let caps = get_hardware_capabilities();
+if caps.has_gpu() {
+    // Use GPU acceleration
+}
 ----
 
-**VectorOperationsService:**
+=== VectorOperationsService
 [source,rust]
 ----
-// Collection ID passed separately (not in proto)
+// Direct memtable access (40-60% faster)
 service.insert_vectors("collection_id", vectors).await?;
 service.search_vectors("collection_id", query).await?;
 ----
 
-**Search with Optimization:**
+=== Storage Engines
 [source,rust]
 ----
-let query = proto::SearchQuery {
-    collection_id: "my_collection".to_string(),
-    vector: vec![0.1; 128],
-    k: 10,
-    optimization_hints: Some(OptimizationHints {
-        predicate_pushdown: true,  // VIPER column filtering
-        ..Default::default()
-    }),
-};
+// SST: Row-based, write-optimized
+let sst_engine = SstEngine::new(config)?;
+
+// VIPER: Columnar, analytics-optimized  
+let viper_engine = ViperEngine::new(config)?;
 ----
 
-== Storage Engines
+== Recent Implementations
 
-**VIPER (Columnar)**:
-- Parquet-based with Arrow integration
-- Best for analytics and complex queries
-- Supports quantization (INT8, PQ8, PQ4)
-- Column pruning and predicate pushdown
+**Completed (2025-08):**
+* ✅ AXIS Unified Tiering (85% infrastructure reuse)
+* ✅ Background Task Optimization (84% resource reduction)
+* ✅ Unified Compression Module (13 algorithms)
+* ✅ Zero-Copy SST Compactor (40-60% faster)
+* ✅ Hierarchical SST (85% S3 cost reduction)
 
-**SST (Row-based)**:
-- Write-optimized with three-stage filtering
-- Bloom filters and sorted key ranges
-- Block compression (ZSTD, LZ4, Snappy)
-- Optimal for high-throughput writes
+== Contributing
 
-**Selection Logic:**
-[source,rust]
-----
-match workload_type {
-    WorkloadType::WriteHeavy => StorageEngine::SST,
-    WorkloadType::Analytics => StorageEngine::VIPER,
-    WorkloadType::Mixed => StorageEngine::SST,  // Default
-}
-----
+1. Fork the repository
+2. Create a feature branch
+3. Make changes with tests
+4. Run `cargo fmt && cargo clippy`
+5. Submit PR with description
 
-== Performance Features
+== Resources
 
-**Current Performance (2025-08-05)**:
-- Bulk Insert: gRPC 5K/s, REST 2K/s (2.5x speedup)
-- Search: gRPC 0.9ms, REST 2.6ms (2.9x speedup)
-- Concurrent: gRPC 1,200 QPS, REST 600 QPS (2x speedup)
+* link:architecture.adoc[Architecture Overview]
+* link:technical_reference.adoc[Technical Reference]
+* link:storage_engines.adoc[Storage Engines]
+* link:../DOCUMENTATION_MAP.adoc[Documentation Map]
 
-**Distance Metrics (13 supported)**:
-- Core: cosine, euclidean, dot_product
-- Extended: manhattan, hamming, jaccard, chebyshev, canberra, minkowski, angular, bray_curtis, hellinger, custom
-
-**Indexing Algorithms (6 supported)**:
-- Available: HNSW, IVF, PQ, FLAT, ANNOY, LSH
-
-== Compression Implementation
-
-**Phase 1: SST Block Compression** ✅
-- ZSTD/LZ4/Snappy support
-- Dynamic block sizing (2000-2500 vectors, 4-16MB)
-- SDK-driven configuration
-
-**Phase 2: VIPER Dual Storage** ✅
-- FP32 + quantized columns
-- 100% vector fidelity preserved
-- INT8, PQ8, PQ4 quantization
-
-**Phase 3: Query Support** 🚧
-- Two-stage search (quantized → FP32)
-- Compression-aware routing
-
-## Contributing
-
-**Pull Request Process:**
-1. Fork repository
-2. Create feature branch
-3. Add tests for new functionality
-4. Ensure all tests pass
-5. Run `cargo fmt && cargo clippy`
-6. Submit PR with clear description
-
-**Code Review Checklist:**
-- [ ] Tests added/updated
-- [ ] Documentation updated
-- [ ] Performance benchmarks (if applicable)
-- [ ] Proto schema changes reviewed
-- [ ] Hardware capabilities initialized in tests
-
-**Common Patterns:**
-- Use DashMap over Arc<RwLock> for concurrency
-- Prefer proto types directly
-- Test with `println!`, not tracing macros
-- Initialize hardware capabilities in all tests
-- Use absolute paths in documentation
-
-== Debugging
-
-**Logging:**
-[source,bash]
-----
-RUST_LOG=debug cargo run --bin proximadb-server
-RUST_LOG=proximadb::storage::engines::viper=trace cargo test
-----
-
-**Performance Profiling:**
-[source,bash]
-----
-cargo build --release
-perf record --call-graph=dwarf ./target/release/proximadb-server
-perf report
-----
-
-**Memory Debugging:**
-[source,bash]
-----
-valgrind --tool=massif --stacks=yes ./target/debug/proximadb-server
-----
-
-== Release Process
-
-1. Update version in `Cargo.toml`
-2. Update `CHANGELOG.md`
-3. Run full test suite: `cargo test --all --release`
-4. Build release: `cargo build --release`
-5. Tag release: `git tag v0.x.x`
-6. Publish Python SDK: `cd clients/python && python -m build && twine upload dist/*`
+---
+**Version 0.1.4** | Last Updated: 2025-01

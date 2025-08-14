@@ -3,654 +3,491 @@
 :toclevels: 2
 :imagesdir: ../diagrams/images
 
-**Complete implementation guide for building with ProximaDB - code examples, APIs, and performance optimization.**
+**Implementation guide with code examples, API reference, and performance optimization patterns.**
 
-image::system-data-flow-abstract.svg[Data Flow Architecture, width=900]
-_Production data flow patterns for high-performance applications_
+== Quick Reference
 
-== Hardware Acceleration
+=== Performance Targets
+[cols="2,1,1", options="header"]
+|===
+| Operation | Target | Achieved
+| Insert (gRPC) | >5K vec/s | 17K vec/s
+| Search (p99) | <2ms | 0.9ms  
+| Compression | >50% | 50-80%
+| Cache Hit Rate | >80% | 95%
+|===
 
-**Why This Matters**: Get 10x performance improvement automatically.
-
-=== Auto-Detection Pattern
+=== Required Setup
 [source,rust]
 ----
+// Initialize once at startup (required for all operations)
 use proximadb::core::hardware_capabilities::*;
-
-// Required once at startup
 initialize_hardware_capabilities_default()?;
-
-// ProximaDB automatically detects and uses best hardware
-let caps = get_hardware_capabilities();
-if caps.has_avx512() {
-    // 4x faster distance computation with SIMD
-} else if caps.has_gpu() {
-    // 10x faster with GPU acceleration
-}
 ----
 
-=== Production Configuration
-[source,toml]
+== API Usage
+
+=== REST API
+
+==== Create Collection
+[source,http]
 ----
-[hardware]
-enable_gpu_acceleration = true    # 10x speedup for large vectors
-enable_simd = true               # 4x speedup with AVX-512
-gpu_min_vector_size = 512        # GPU threshold for efficiency
-gpu_min_batch_size = 100         # Batch size for optimal GPU utilization
-----
-
-**Best Practice**: Let ProximaDB auto-detect. Manual tuning only needed for specialized hardware.
-
-== Performance Optimization
-
-**Why This Matters**: Achieve 17K vectors/sec and sub-millisecond search.
-
-=== Workload-Aware Selection
-
-[cols="2,2,2", options="header"]
-|===
-| Your Workload | ProximaDB Optimizes | Performance Gain
-
-| **Bulk Inserts**
-| DashMap + Write Buffer batching
-| 5x faster writes, lock-free concurrent access
-
-| **Read-Heavy Search**
-| Multi-tier cache with auto-eviction
-| 95% cache hit rate, 5x faster reads
-
-| **Mixed Operations**
-| Hot/Cold data tiering
-| Automatic optimization based on access patterns
-|===
-
-=== Key Implementation Patterns
-
-**High-Performance Indexing**:
-```rust
-// Lock-free concurrent index updates
-pub struct IndexVectorStore {
-    vectors: DashMap<String, Arc<VectorRecord>>,  // Zero-copy sharing
-    dimension: usize,
-}
-```
-
-**Intelligent Caching**:
-```rust
-// TTL-aware query result caching
-pub struct QueryCache {
-    results: DashMap<QueryKey, SearchResults>,    // Concurrent access
-    ttl_tracker: TimeToLive,                      // Auto-expiry
-}
-```
-
-**Adaptive Storage**:
-```rust
-// Metrics-driven storage optimization
-pub struct ConcurrentStorage<K, V> {
-    storage: DashMap<K, StoredItem<V>>,
-    metrics: AtomicMetrics,                       // Performance tracking
-}
-```
-
-== Search Implementation
-
-**Why This Matters**: Understand how to achieve sub-millisecond search at scale.
-
-=== Two-Stage Search for Speed
-
-image::two-stage-search-detail-modular.svg[Two-Stage Search, width=900]
-_Production pattern: Fast filtering followed by precise ranking_
-
-**The Strategy**:
-1. **Stage 1**: Quantized/index search gets 10-100x more candidates than needed
-2. **Stage 2**: Full-precision reranking on candidates only
-
-**Result**: 90% of computation saved while maintaining accuracy.
-
-=== Implementation Architecture
-
-==== Search Orchestration (Your Entry Point)
-```rust
-// VectorOperationsService coordinates everything
-impl VectorOperationsService {
-    pub async fn search(&self, request: SearchRequest) -> SearchResult {
-        // Parallel execution across all sources
-        let (wal_results, index_results, storage_results) = 
-            tokio::join!(
-                self.search_wal(&request),      // Unflushed data
-                self.search_indexes(&request),  // AXIS indexes  
-                self.search_storage(&request)   // Storage engines
-            );
-        
-        // Smart deduplication and ranking
-        self.merge_and_deduplicate(wal_results, index_results, storage_results)
-    }
-}
-```
-
-**Key Benefits**:
-- **Stateless design**: No complex state management
-- **Parallel execution**: All sources searched concurrently
-- **Automatic routing**: Engine selection based on collection metadata
-
-==== Engine-Specific Optimizations
-
-**SST Engine** (Row-based, write-optimized):
-```rust
-// Three-stage filtering minimizes disk I/O
-impl SstEngine {
-    fn search(&self, query: &Query) -> Result<Vec<Match>> {
-        self.bloom_filter_stage()     // Skip entire files
-            .index_filter_stage()     // Skip data blocks
-            .row_filter_stage()       // Skip individual records
-    }
-}
-```
-
-**VIPER Engine** (Columnar, analytics-optimized):
-```rust
-// Predicate pushdown to Parquet level
-impl ViperEngine {
-    fn search(&self, query: &Query) -> Result<Vec<Match>> {
-        self.push_predicates_to_parquet()
-            .prune_unnecessary_columns()
-            .use_row_group_statistics()
-    }
-}
-```
-
-==== Storage Engine Search Implementation
-
-The search orchestration varies by engine type, with each engine implementing specialized optimizations:
-
-**SST Engine Search Flow**:
-image::storage-engine-search-detail-modular.svg[SST Search Flow, width=700]
-_Three-stage filtering pipeline for row-based storage_
-
-**VIPER Engine Search Flow**:  
-_Columnar search with predicate pushdown and quantization (see Two-Stage Search above)_
-
-=== Query Processing Flow
-
-image::query-processing-abstract.svg[Query Processing, width=900]
-_From SDK request to final results: the complete pipeline_
-
-== Compression & Storage Optimization
-
-**Why This Matters**: Achieve 50-80% storage savings without performance loss.
-
-=== Two-Tier Compression Strategy
-
-image::quantization-system-detail-modular.svg[Compression Pipeline, width=900]
-_Production compression pipeline: Transport + Storage layers_
-
-**ProximaDB uses separate compression tiers**:
-
-1. **Transport Layer** (Protocol compression): Disabled by default for debugging
-2. **Storage Layer** (Collection compression): SDK-driven, 50-80% reduction
-
-=== Quantization Methods by Use Case
-
-[cols="2,2,2,1", options="header"]
-|===
-| Method | Compression Ratio | Accuracy | Best For
-
-| **Scalar (INT8)**
-| 4x compression
-| 99.5%+ accuracy
-| Production systems requiring high accuracy
-
-| **Product Quantization (PQ8)**
-| 16x compression  
-| 95-99% accuracy
-| Large-scale deployments with acceptable accuracy trade-off
-
-| **Binary Quantization**
-| 32x compression
-| 85-95% accuracy
-| Memory-constrained environments, similarity ranking
-|===
-
-=== Engine-Specific Recommendations
-
-image::quantization-strategy-abstract.svg[Engine Strategy, width=900]
-_Choose compression based on your storage engine and workload_
-
-**SST Engine**: Best for write-heavy workloads
-```rust
-// Row-based compression for transactional data
-CompressionConfig {
-    algorithm: "lz4",           // Fast compression/decompression
-    level: 1,                   // Low latency
-    enable_quantization: false  // Maintain precision for transactions
-}
-```
-
-**VIPER Engine**: Best for analytics workloads  
-```rust
-// Columnar compression for analytics
-CompressionConfig {
-    algorithm: "zstd",          // High compression ratio
-    level: 6,                   // Balanced speed/compression
-    enable_quantization: true,  // Two-stage search optimization
-    quantization_type: "pq8"    // Good balance of compression/accuracy
-}
-```
-
-== Storage Implementation
-
-**Why This Matters**: Choose the right engine for your workload and optimize cache usage.
-
-=== Storage Engine Selection Guide
-
-image::storage-engine-abstract.svg[Storage Classes, width=900]
-_Engine class hierarchy: choose SST for transactions, VIPER for analytics_
-
-**Decision Tree**:
-```rust
-match your_workload {
-    WorkloadType::HighWriteThroughput => {
-        // SST Engine: Row-based, optimized for writes
-        StorageEngine::Sst
-    },
-    WorkloadType::AnalyticsQueries => {
-        // VIPER Engine: Columnar, optimized for reads
-        StorageEngine::Viper  
-    },
-    WorkloadType::Mixed => {
-        // Use both engines with intelligent routing
-        StorageEngine::Hybrid
-    }
-}
-```
-
-=== API Architecture
-
-image::api-handlers-detail-modular.svg[API Handlers, width=900]
-_Single codebase serves both REST and gRPC with identical performance_
-
-**Implementation Pattern**:
-```rust
-// Unified handler serves both protocols
-pub struct UnifiedVectorHandler {
-    vector_service: Arc<VectorOperationsService>,
-}
-
-impl UnifiedVectorHandler {
-    // REST endpoint
-    pub async fn rest_search(&self, req: RestSearchRequest) -> RestResponse {
-        let internal_req = self.convert_from_rest(req);
-        let result = self.vector_service.search(internal_req).await;
-        self.convert_to_rest(result)
-    }
-    
-    // gRPC endpoint  
-    pub async fn grpc_search(&self, req: GrpcSearchRequest) -> GrpcResponse {
-        let internal_req = self.convert_from_grpc(req);
-        let result = self.vector_service.search(internal_req).await;
-        self.convert_to_grpc(result)
-    }
-}
-```
-
-=== VIPER Engine Optimization
-
-image::parquet-reader-detail-modular.svg[Parquet Pipeline, width=900]
-_Columnar reading optimizations for analytics workloads_
-
-**Key Optimizations**:
-- **Predicate Pushdown**: Filter at Parquet level, not in memory
-- **Column Pruning**: Read only required columns
-- **Row Group Skipping**: Use statistics to skip irrelevant data
-
-== Cache System Implementation
-
-**Why This Matters**: Achieve 95% cache hit rates for optimal performance.
-
-image::cache-system-abstract.svg[Cache System, width=900]
-_Production cache architecture with automatic memory management_
-
-=== Cache Allocation Strategy
-
-**Memory Distribution** (configurable per workload):
-```rust
-pub struct CacheConfig {
-    vector_store_percent: 40,      // Vector data (largest allocation)
-    query_cache_percent: 30,       // Search results
-    filter_cache_percent: 20,      // Bloom filters, bitmaps
-    index_cache_percent: 10,       // Index nodes, metadata
-}
-```
-
-**Implementation**:
-```rust
-// CrossCacheOrchestrator manages all caches
-pub struct CrossCacheOrchestrator {
-    vector_store: VectorStore,      // DashMap for concurrent access
-    query_cache: QueryCache,        // TTL-aware result caching
-    filter_cache: BitmapFilterCache, // Bloom filter optimization
-    index_cache: IndexNodeCache,    // Index structure caching
-}
-```
-
-== Data Consistency (MVCC)
-
-**Why This Matters**: Maintain data consistency across concurrent operations.
-
-```rust
-use proximadb::core::search::mvcc_resolution::MvccResolver;
-
-// Handle version conflicts automatically
-let resolver = MvccResolver::new();
-let resolved_records = resolver.resolve_batch(vector_records);
-```
-
-**Automatic Features**:
-- **Version Deduplication**: Keeps latest version automatically
-- **Expiry Management**: TTL-based cleanup without manual intervention
-- **Timestamp Resolution**: Consistent ordering across operations
-- **Append-Only Safety**: Never lose data during updates
-- **Global Deletion**: Tombstone markers for consistent deletes
-
-## SQL Processing with Hardware Acceleration
-
-**Why This Matters**: 10x faster SQL parsing with GPU/SIMD optimization.
-
-=== GPU-Accelerated Parsing
-```rust
-use proximadb::query::sql_engine::gpu_parser::*;
-
-// Automatic GPU acceleration when available
-let query = parse_sql_gpu(sql_string)?;
-let performance_stats = parser.get_stats();
-
-// Example: Complex analytical queries processed 10x faster
-```
-
-=== SIMD Vector Processing
-```rust
-use proximadb::query::sql_engine::simd_parser::*;
-
-// Parse vector literals with SIMD optimization
-let parser = SimdVectorParser::new();
-let vectors = parser.parse_vector_array("[1.0, 2.0, 3.0, 4.0]")?;
-
-// 4x performance improvement on AVX-512 systems
-```
-
-== Production API Usage
-
-**Why This Matters**: Three interfaces, identical performance - choose what fits your stack.
-
-=== REST API (Best for Web Applications)
-
-**Collection Management**:
-```http
-# Create optimized collection
 POST /collections
 {
-  "name": "product_vectors",
-  "dimension": 1536,           # OpenAI ada-002
-  "distance_metric": "cosine", # Best for semantic similarity
-  "storage_engine": "viper",   # Analytics-optimized
+  "name": "product_vectors",  # Min 8 characters
+  "dimension": 1536,
+  "distance_metric": "cosine",
+  "storage_engine": "viper",   # viper or sst
   "compression": {
     "algorithm": "zstd",
     "level": 6,
     "enable_quantization": true
   }
 }
+----
 
-# Production search with metadata filtering
+==== Insert Vectors
+[source,http]
+----
+POST /collections/product_vectors/vectors
+{
+  "vectors": [
+    {
+      "id": "prod_001",
+      "vector": [0.1, 0.2, ...],
+      "metadata": {
+        "category": "electronics",
+        "price": 299.99
+      }
+    }
+  ]
+}
+----
+
+==== Search Vectors
+[source,http]
+----
 POST /collections/product_vectors/search
 {
-  "vector": [0.1, 0.2, ...],  # Your query embedding
+  "vector": [0.1, 0.2, ...],
   "top_k": 10,
   "metadata_filter": {
     "category": "electronics",
-    "in_stock": true,
-    "price": {"$lt": 1000}
+    "price": {"$lt": 500}
   },
   "include_metadata": true
 }
-```
+----
 
-=== gRPC API (Best for Performance)
+=== gRPC API (3x Faster)
 
-**3x faster than REST for bulk operations**:
-```protobuf
+==== Proto Definition
+[source,protobuf]
+----
 service ProximaDB {
-  // 17K vectors/sec throughput
-  rpc InsertVectors(VectorBatchRequest) returns (VectorBatchResponse);
-  
-  // Sub-millisecond search  
-  rpc SearchVectors(VectorSearchRequest) returns (VectorSearchResponse);
-  
-  // Collection lifecycle
   rpc CreateCollection(CreateCollectionRequest) returns (Collection);
+  rpc InsertVectors(VectorBatchRequest) returns (VectorBatchResponse);
+  rpc SearchVectors(VectorSearchRequest) returns (VectorSearchResponse);
+  rpc DeleteVectors(DeleteVectorsRequest) returns (DeleteResponse);
 }
-```
+----
 
-=== SQL Interface (Best for Analytics)
+==== Python Client
+[source,python]
+----
+from proximadb import ProximaDBClient, Protocol
 
-**Familiar SQL with vector extensions**:
-```sql
--- Create analytics collection
-CREATE COLLECTION customer_insights (
+# Use gRPC for best performance
+client = ProximaDBClient(
+    "localhost:5679",
+    protocol=Protocol.GRPC
+)
+
+# Bulk insert with batching
+vectors = [{"id": f"vec_{i}", "vector": [...]} 
+           for i in range(10000)]
+client.insert_vectors("product_vectors", vectors, batch_size=1000)
+
+# Search with filters
+results = client.search_vectors(
+    "product_vectors",
+    query_vector=[...],
+    metadata_filter={"category": "electronics"},
+    top_k=10
+)
+----
+
+=== SQL Interface
+
+[source,sql]
+----
+-- Create collection
+CREATE COLLECTION customer_embeddings (
   dimension=384,
   engine='viper',
   distance_metric='cosine'
 );
 
 -- Insert with metadata
-INSERT INTO customer_insights (id, vector, metadata) 
-VALUES ('customer_123', [0.1, 0.2, ...], '{"tier": "premium", "region": "US"}');
+INSERT INTO customer_embeddings (id, vector, metadata)
+VALUES ('cust_123', [0.1, 0.2, ...], '{"tier": "premium"}');
 
--- Complex analytical queries
+-- Vector similarity search
 SELECT 
-  c.id,
-  c.metadata->>'tier' as customer_tier,
-  VECTOR_SIMILARITY(c.vector, [0.1, 0.2, ...], 'cosine') as similarity
-FROM customer_insights c
-WHERE c.metadata->>'region' = 'US'
-  AND c.metadata->>'tier' = 'premium'
-ORDER BY similarity DESC
-LIMIT 100;
-```
+  id,
+  metadata->>'tier' as tier,
+  VECTOR_SIMILARITY(vector, [0.1, 0.2, ...], 'cosine') as score
+FROM customer_embeddings
+WHERE metadata->>'tier' = 'premium'
+ORDER BY score DESC
+LIMIT 10;
+----
+
+== Storage Engine Selection
+
+=== Decision Matrix
+[cols="2,2,2,2", options="header"]
+|===
+| Workload | Engine | Configuration | Reason
+
+| **High Write Volume**
+| SST
+| `compression: lz4, level: 1`
+| Row-based, optimized for writes
+
+| **Analytics/BI**
+| VIPER
+| `compression: zstd, quantization: pq8`
+| Columnar, high compression
+
+| **Real-time Search**
+| SST
+| `compression: none`
+| Lowest latency
+
+| **Cost-Optimized**
+| VIPER
+| `compression: zstd, level: 9`
+| Maximum compression
+|===
+
+=== Engine Implementation
+[source,rust]
+----
+// SST Engine - Row-based
+pub struct SstEngine {
+    three_stage_filter: FilterPipeline,  // Bloom → Index → Row
+    cache: VectorStore,                   // Hot data cache
+}
+
+// VIPER Engine - Columnar  
+pub struct ViperEngine {
+    parquet_reader: ParquetReader,       // Predicate pushdown
+    quantization: QuantizationEngine,    // Two-stage search
+}
+----
+
+== Compression Configuration
+
+=== Compression Algorithms
+[cols="2,1,1,2", options="header"]
+|===
+| Algorithm | Speed | Ratio | Use Case
+
+| **LZ4** | Fastest | 2-3x | Real-time, low latency
+| **Snappy** | Very Fast | 2-3x | Balanced performance
+| **ZSTD** | Moderate | 3-5x | Best compression ratio
+| **Gzip** | Slow | 3-4x | Compatibility
+|===
+
+=== Quantization Options
+[source,python]
+----
+from proximadb.models import CompressionConfig
+
+# High accuracy (99.5%)
+high_accuracy = CompressionConfig(
+    algorithm="lz4",
+    enable_quantization=True,
+    quantization_type="int8"  # 4x compression
+)
+
+# Balanced (95-99% accuracy)
+balanced = CompressionConfig(
+    algorithm="zstd",
+    level=6,
+    enable_quantization=True,
+    quantization_type="pq8"   # 16x compression
+)
+
+# Maximum compression (85-95% accuracy)
+max_compression = CompressionConfig(
+    algorithm="zstd",
+    level=9,
+    enable_quantization=True,
+    quantization_type="binary"  # 32x compression
+)
+----
+
+== Distance Metrics
+
+=== Metric Selection Guide
+[cols="2,3,2", options="header"]
+|===
+| Metric | Use Case | Formula
+
+| **cosine**
+| Text embeddings, normalized vectors
+| `1 - (A·B)/(‖A‖‖B‖)`
+
+| **euclidean**
+| Spatial data, absolute distances
+| `√Σ(Ai - Bi)²`
+
+| **dot_product**
+| Recommendation scores
+| `Σ(Ai × Bi)`
+
+| **manhattan**
+| Sparse data, outlier-robust
+| `Σ│Ai - Bi│`
+
+| **hamming**
+| Binary vectors, feature hashes
+| `Σ(Ai ≠ Bi)`
+|===
+
+== Index Selection
+
+=== Algorithm Comparison
+[cols="2,2,1,1,2", options="header"]
+|===
+| Algorithm | Scale | Memory | Speed | Accuracy
+
+| **HNSW** | <10M | High | Fast | 99%+
+| **IVF** | >10M | Medium | Good | 95-99%
+| **PQ** | Any | Low | Moderate | 90-95%
+| **FLAT** | <100K | Low | Slow | 100%
+| **LSH** | >100M | Medium | Fast | 85-95%
+|===
+
+=== Configuration Examples
+[source,toml]
+----
+# HNSW for high accuracy
+[index.hnsw]
+M = 16                    # Connections per node
+ef_construction = 200     # Build quality
+ef_search = 100          # Search quality
+
+# IVF for large scale
+[index.ivf]
+n_lists = 1024           # Number of clusters
+n_probe = 10             # Clusters to search
+
+# PQ for compression
+[index.pq]
+n_subquantizers = 8      # Vector segments
+n_bits = 8               # Bits per segment
+----
+
+== Cache Configuration
+
+=== Memory Allocation
+[source,rust]
+----
+pub struct CacheConfig {
+    // Total cache size in MB
+    total_memory_mb: 8192,
+    
+    // Percentage allocation
+    vector_store_percent: 40,    // Vector data
+    query_cache_percent: 30,     // Search results
+    filter_cache_percent: 20,    // Bloom filters
+    index_cache_percent: 10,     // Index nodes
+}
+----
+
+=== Cache Implementation
+[source,rust]
+----
+// Lock-free concurrent cache
+pub struct VectorStore {
+    cache: DashMap<VectorId, Arc<VectorRecord>>,
+    lru: EvictionPolicy,
+    metrics: CacheMetrics,
+}
+
+// TTL-aware query cache
+pub struct QueryCache {
+    results: DashMap<QueryHash, CachedResult>,
+    ttl: Duration,
+    cleanup_interval: Duration,
+}
+----
+
+== Performance Optimization
+
+=== Hardware Acceleration
+[source,rust]
+----
+// Automatic SIMD/GPU detection
+let caps = get_hardware_capabilities();
+
+if caps.has_gpu() {
+    // 10x faster for large batches
+    distance::compute_gpu(&vectors, &query)
+} else if caps.has_avx512() {
+    // 4x faster with SIMD
+    distance::compute_simd(&vectors, &query)
+} else {
+    // Fallback to scalar
+    distance::compute_scalar(&vectors, &query)
+}
+----
+
+=== Batch Processing
+[source,rust]
+----
+// Optimal batch sizes
+const SIMD_BATCH_SIZE: usize = 256;      // AVX-512 optimal
+const GPU_BATCH_SIZE: usize = 10_000;    // GPU efficiency threshold
+const DISK_BATCH_SIZE: usize = 1_000;    // I/O optimization
+
+// Adaptive batching
+impl BatchProcessor {
+    fn select_batch_size(&self) -> usize {
+        match self.hardware {
+            Hardware::GPU => GPU_BATCH_SIZE,
+            Hardware::SIMD => SIMD_BATCH_SIZE,
+            _ => DISK_BATCH_SIZE,
+        }
+    }
+}
+----
 
 == Production Configuration
 
-**Why This Matters**: Optimize for your deployment environment and workload.
-
-=== Production Server Setup
-```toml
+=== Server Configuration
+[source,toml]
+----
 [server]
-node_id = "proximadb-prod-1"         # Unique identifier for monitoring
-rest_port = 5678                     # REST API endpoint
-grpc_port = 5679                     # gRPC endpoint (3x faster)
+node_id = "prod-node-1"
+rest_port = 5678
+grpc_port = 5679
 
 [api]
-rest_compression = false             # Disabled for debugging/benchmarking
-grpc_compression = true              # Enabled for network efficiency
+rest_compression = false     # Disabled for debugging
+grpc_compression = true      # Network efficiency
 
 [storage]
 metadata_url = "file:///data/proximadb/metadata"
 
-# Multi-disk configuration for performance
+# Multi-tier storage
 [[storage.storage_locations]]
-url = "file:///nvme/proximadb/hot"    # High-performance storage
+url = "file:///nvme/proximadb/hot"     # Fast tier
 
-[[storage.storage_locations]]
-url = "s3://bucket/proximadb/cold"    # Cost-effective long-term storage
+[[storage.storage_locations]]  
+url = "s3://bucket/proximadb/cold"     # Cost tier
 
 [storage.wal_config]
-write_buffer_size_mb = 1024          # Larger buffer for high-throughput
-flush_interval_ms = 1000             # Balance durability vs performance
-```
+write_buffer_size_mb = 1024
+flush_interval_ms = 1000
+----
 
-=== Cloud-Specific Optimizations
-
-**AWS Configuration**:
-```toml
-[storage]
-metadata_url = "s3://mybucket/proximadb/metadata"
-
+=== Cloud Deployment
+[source,toml]
+----
+# AWS S3
 [[storage.storage_locations]]
-url = "s3://mybucket/proximadb/storage"   # S3 Standard for active data
+url = "s3://my-bucket/proximadb"
 region = "us-east-1"
-```
+storage_class = "STANDARD_IA"
 
-**Multi-Cloud Setup**:
-```toml
-# Primary: AWS
+# Google Cloud Storage
 [[storage.storage_locations]]
-url = "s3://aws-bucket/proximadb/primary"
+url = "gcs://my-bucket/proximadb"
+storage_class = "NEARLINE"
 
-# Backup: GCP  
+# Azure Blob Storage
 [[storage.storage_locations]]
-url = "gcs://gcp-bucket/proximadb/backup"
-
-# Archive: Azure
-[[storage.storage_locations]]
-url = "azblob://azure-account/proximadb/archive"
-```
-
-== Distance Metrics Selection Guide
-
-**Why This Matters**: Choose the right metric for your similarity requirements.
-
-[cols="2,3,2,2", options="header"]
-|===
-| Metric | Best Use Case | Range | Performance
-
-| **cosine**
-| Semantic similarity, text embeddings, normalized data
-| [0, 2] (0=identical)
-| Fast, recommended default
-
-| **euclidean**  
-| Image embeddings, spatial data, absolute distances
-| [0, ∞) (0=identical)
-| Fast, hardware-accelerated
-
-| **dot_product**
-| Recommendation systems, raw scores
-| (-∞, ∞) (higher=similar)
-| Fastest available
-
-| **manhattan**
-| High-dimensional sparse data, robust to outliers
-| [0, ∞) (0=identical)
-| Good for sparse vectors
-
-| **hamming**
-| Binary data, feature hashes, bit vectors
-| [0, n] (0=identical)
-| Extremely fast on binary data
-
-| **jaccard**
-| Set similarity, categorical data overlap
-| [0, 1] (1=identical)
-| Good for sparse categorical features
-|===
-
-== Index Algorithm Selection
-
-**Why This Matters**: Right index = 100x performance improvement for your workload.
-
-[cols="2,3,2,1", options="header"]
-|===
-| Algorithm | When to Use | Memory Cost | Search Speed
-
-| **HNSW**
-| High accuracy required, medium scale (<10M vectors)
-| High (M×N)
-| Excellent (log N)
-
-| **IVF**
-| Large scale (>10M vectors), balanced accuracy/speed
-| Medium (N)
-| Good (configurable)
-
-| **FLAT**  
-| Perfect accuracy required, small scale (<100K vectors)
-| Low (N)
-| Exact (linear)
-
-| **LSH**
-| Approximate similarity, extremely large scale
-| Medium (L×N)
-| Very fast (constant)
-
-| **ANNOY**
-| Memory-constrained environments
-| Medium (trees×N)
-| Good (log N)
-
-| **PQ**
-| Compression-first, accuracy secondary
-| Very low (N/8)
-| Moderate (linear)
-|===
+url = "azblob://my-account/proximadb"
+access_tier = "Cool"
+----
 
 == Error Handling
 
-**Production Error Codes**:
-```rust
-match error {
-    ProximaError::CollectionNotFound => {
-        // Handle missing collection gracefully
-        create_collection_if_needed()?;
+=== Common Errors
+[source,rust]
+----
+use proximadb::error::ProximaError;
+
+match operation_result {
+    Err(ProximaError::CollectionNotFound(name)) => {
+        // Auto-create collection
+        create_collection(&name, default_config())?;
     },
-    ProximaError::DimensionMismatch { expected, actual } => {
-        // Validate embeddings before insertion
-        log::warn!("Vector dimension {} != collection dimension {}", actual, expected);
+    Err(ProximaError::DimensionMismatch { expected, actual }) => {
+        // Validate before retry
+        validate_dimensions(expected, actual)?;
     },
-    ProximaError::StorageError(e) => {
-        // Check disk space, permissions
-        check_storage_health()?;
+    Err(ProximaError::StorageError(e)) => {
+        // Check storage health
+        if e.is_disk_full() {
+            trigger_compaction()?;
+        }
+    },
+    Ok(result) => process_result(result),
+}
+----
+
+== Testing Patterns
+
+=== Unit Test Template
+[source,rust]
+----
+#[cfg(test)]
+mod tests {
+    use super::*;
+    
+    #[test]
+    fn test_vector_operations() {
+        // Required initialization
+        let _ = initialize_hardware_capabilities_default();
+        
+        // Your test code
+        let engine = SstEngine::new(config)?;
+        let result = engine.insert_vectors(vectors)?;
+        assert_eq!(result.inserted_count, vectors.len());
     }
 }
-```
+----
 
-== Production Performance Baselines
+=== Integration Test
+[source,rust]
+----
+#[tokio::test]
+async fn test_end_to_end() {
+    // Start test server
+    let server = TestServer::start().await;
+    
+    // Test operations
+    let client = ProximaDBClient::new(&server.url());
+    client.create_collection("test_coll", 384).await?;
+    client.insert_vectors("test_coll", vectors).await?;
+    
+    // Verify
+    let results = client.search("test_coll", query, 10).await?;
+    assert_eq!(results.len(), 10);
+}
+----
 
-**Expected Performance** (validated with 2,704 tests):
+== Related Documentation
 
-[cols="2,2,2,2", options="header"]  
-|===
-| Configuration | Insert Rate | Search Latency | Storage Efficiency
-
-| **gRPC + VIPER + Compression**
-| 5,000 vec/s
-| 0.9ms p99
-| 50-80% reduction
-
-| **REST + SST + No Compression**  
-| 6,000 vec/s
-| 2.6ms p99
-| Baseline storage
-
-| **gRPC + SST + LZ4**
-| 12,000 vec/s  
-| 1.8ms p99
-| 50% reduction
-
-| **Mixed Workload + Auto-tiering**
-| 14,000 vec/s
-| 1.2ms p99  
-| 60% reduction
-|===
-
-**Tuning for Your Environment**:
-- **CPU-bound**: Enable SIMD optimizations, increase cache size
-- **Memory-bound**: Use compression, enable tiering
-- **I/O-bound**: Optimize storage URLs, use faster storage tiers
-- **Network-bound**: Use gRPC, enable compression
+* link:architecture.adoc[Architecture Overview] - System design
+* link:../user/api_reference.adoc[API Reference] - Complete endpoint documentation
+* link:../performance_reference.adoc[Performance Guide] - Benchmarking and tuning
+* link:storage_engines.adoc[Storage Engines] - SST & VIPER details
 
 ---
-
-**📖 Continue Learning**:
-- link:architecture.adoc[Architecture Deep Dive] - System design principles
-- link:../user/api_reference.adoc[Complete API Reference] - All endpoints and parameters  
-- link:../performance_reference.adoc[Performance Guide] - Benchmarking and optimization
+**Version 0.1.4** | Last Updated: 2025-01

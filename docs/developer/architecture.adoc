@@ -260,4 +260,4 @@ fn test_example() {
 * link:../diagrams/index.adoc[Architecture Diagrams] - Visual documentation
 
 ---
-**Version 1.0.0** | Last Updated: 2025-01
+**Version 0.1.4** | Last Updated: 2025-01
