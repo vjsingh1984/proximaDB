@@ -711,6 +711,67 @@ graph TD
 4. **Compliance** - Regulatory requirements
 5. **Multi-tenancy** - Efficient resource utilization
 
+== Future High-Performance Enhancements
+
+=== Arrow Flight Protocol - Ultra-High Throughput Bulk Operations
+
+**Status**: Design Complete - Implementation Ready  
+**Target**: 4.7x throughput improvement for bulk operations
+
+==== Problem Statement
+ProximaDB's current bulk operations are limited by multiple bottlenecks:
+
+* **17K vectors/sec** throughput ceiling
+* **Triple serialization**: JSON → Proto → Internal → Parquet  
+* **WAL overhead**: Every operation goes through WAL
+* **Memory pressure**: 8GB for 1M vectors
+* **Storage inefficiency**: No compression optimization
+
+==== Solution: Arrow Flight Protocol with Direct Parquet Generation
+
+The client generates VIPER-compatible Parquet files directly, bypassing:
+
+* Proto serialization
+* WAL writes  
+* Memtable management
+* Server-side flush operations
+
+==== Expected Performance Gains
+
+[cols="2,2,2,2", options="header"]
+|===
+| Metric | Current | Arrow Flight | Improvement
+
+| **Throughput**
+| 17K vec/s
+| 80K vec/s  
+| **4.7x faster**
+
+| **Memory Usage**
+| 8GB
+| 500MB
+| **16x reduction**
+
+| **Latency**
+| 60s for 1M vectors
+| 12s for 1M vectors
+| **5x faster**
+
+| **Storage Size**
+| 1.47GB
+| 0.95GB
+| **35% smaller**
+|===
+
+==== Implementation Components
+
+* **Python SDK Enhancement**: Parquet generation with Arrow
+* **Rust Server Extension**: Direct file ingestion API
+* **Protocol Selection Logic**: Automatic routing for large batches
+* **Atomic Operations**: Crash-safe file handling
+
+**Priority**: High - Targets enterprise bulk loading use cases
+
 == Technical Decisions Required
 
 [cols="2,3,3", options="header"]

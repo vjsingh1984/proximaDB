@@ -226,12 +226,12 @@ wal-strategy-abstract.mmd
 | `storage-components-detail-modular.svg`
 
 | **Troubleshooting Guides**
-| Detail-monolithic
-| `service-interactions-detail-monolithic.svg`
+| Abstract + Detail-modular
+| `service-interactions-abstract.svg` + relevant modular components
 
 | **Progressive Learning**
-| Abstract → Detail-modular → Detail-monolithic
-| Architecture overview → Component focus → Complete system
+| Abstract → Detail-modular
+| Architecture overview → Component-focused implementation
 |===
 
 == 📈 Quality Metrics & Standards

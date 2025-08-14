@@ -160,8 +160,17 @@ impl ViperEngine {
 }
 ```
 
-image::search-orchestration-detail-monolithic.svg[Search Orchestration, width=900]
-_How orchestration and engine layers work together_
+==== Storage Engine Search Implementation
+
+The search orchestration varies by engine type, with each engine implementing specialized optimizations:
+
+**SST Engine Search Flow**:
+image::storage-engine-search-detail-modular.svg[SST Search Flow, width=700]
+_Three-stage filtering pipeline for row-based storage_
+
+**VIPER Engine Search Flow**:  
+image::two-stage-search-detail-modular.svg[VIPER Search Flow, width=700]
+_Columnar search with predicate pushdown and quantization_
 
 === Query Processing Flow
 

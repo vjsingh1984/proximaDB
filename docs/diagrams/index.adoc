@@ -59,12 +59,12 @@ For comprehensive details about diagram classification, usage guidelines, and co
 * link:images/storage-components-detail-modular.svg[Storage Components Detail]
 * link:images/vector-operations-detail-modular.svg[Vector Operations Detail]
 
-=== System Comprehensive (5 diagrams)
-* link:images/technical-architecture-detail-monolithic.svg[Complete Technical Architecture]
-* link:images/service-interactions-detail-monolithic.svg[Complete Service Interactions]
-* link:images/search-flow-detail-monolithic.svg[Complete Search Flow]
-* link:images/system-initialization-detail-monolithic.svg[System Initialization]
-* link:images/search-orchestration-detail-monolithic.svg[Search Orchestration]
+=== System Comprehensive (Modular Approach)
+* link:images/storage-components-detail-modular.svg[Storage Engine Components]
+* link:images/network-services-detail-modular.svg[Network Services Architecture]
+* link:images/storage-engine-search-detail-modular.svg[Storage Engine Search Flow]
+* link:images/two-stage-search-detail-modular.svg[VIPER Two-Stage Search]
+* link:images/api-handlers-detail-modular.svg[API Handler Architecture]
 
 == 📖 Usage Guidelines
 
@@ -83,7 +83,7 @@ For comprehensive details about diagram classification, usage guidelines, and co
 | Detail-modular diagrams for specific components
 
 | **System Troubleshooting**
-| Detail-monolithic comprehensive diagrams
+| Combination of abstract + relevant detail-modular diagrams
 |===
 
 === By Audience

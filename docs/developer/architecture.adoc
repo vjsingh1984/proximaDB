@@ -151,16 +151,23 @@ match capabilities {
 | 100%
 |===
 
-== System Initialization
+== System Overview  
 
-image::system-initialization-detail-monolithic.svg[Initialization Sequence, width=900]
-_Complete startup sequence showing service creation, dependency injection, and recovery phases_
+image::system-data-flow-abstract.svg[System Data Flow, width=900]
+_High-level data flow through ProximaDB's core components_
 
-The initialization follows a careful sequence to avoid circular dependencies:
-1. **Core Services Creation**: MetricsCollector and SharedServices
-2. **Storage Engine Setup**: Created without CollectionService, then injected
-3. **Network Layer**: REST and gRPC servers with unified handlers
-4. **Recovery**: Collections from metadata, then vectors from WAL
+The system follows a clean layered architecture:
+1. **API Layer**: REST and gRPC endpoints with unified handlers
+2. **Service Layer**: VectorOperationsService and CollectionService coordination  
+3. **Storage Layer**: Dual engines (SST + VIPER) with compression and tiering
+4. **Persistence Layer**: WAL, metadata, and multi-cloud storage backends
+
+=== System Initialization
+
+image::system-initialization-abstract.svg[System Initialization Flow, width=700]
+_Startup sequence following dependency management patterns_
+
+The initialization process ensures all components start in the correct order with proper dependency injection.
 
 == Storage Architecture
 
@@ -638,6 +645,47 @@ CrossCacheOrchestrator manages:
 ====
 **Architecture Validation**: This architecture summary is validated against the current codebase (v0.1.2) with all references confirmed to exist and be accurately represented.
 ====
+
+== Detailed Implementation Components
+
+=== System Initialization Sequence
+
+The detailed startup sequence follows careful dependency management across multiple components:
+
+==== Core Services Initialization
+1. **Core Services Creation**: MetricsCollector and SharedServices initialization
+
+==== Storage System Setup  
+2. **Storage Engine Setup**: Engines created independently, then dependency injection
+
+image::storage-components-detail-modular.svg[Storage Engine Initialization, width=700]
+_Dual storage engine initialization with dependency injection_
+
+==== Network Layer Activation
+3. **Network Layer**: REST and gRPC servers with unified handler architecture
+
+image::network-services-detail-modular.svg[Network Services Startup, width=700]  
+_REST and gRPC server initialization with unified handlers_
+
+==== Data Recovery Process
+4. **Recovery Process**: Collections restored from metadata, vectors from WAL
+
+=== Modular Component Architecture
+
+==== API Handler Components
+image::api-handlers-detail-modular.svg[API Handler Architecture, width=700]
+
+The unified handler architecture provides consistent behavior across REST and gRPC protocols.
+
+==== Storage Engine Components  
+image::storage-components-detail-modular.svg[Storage Engine Details, width=700]
+
+Detailed view of the dual storage engine implementation with shared interfaces.
+
+==== Storage Engine Search Flow
+image::storage-engine-search-detail-modular.svg[Search Engine Flow, width=700]
+
+Detailed search orchestration between SST and VIPER engines with caching.
 
 == Diagrams
 
