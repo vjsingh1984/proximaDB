@@ -5,7 +5,7 @@
 
 **Complete implementation guide for building with ProximaDB - code examples, APIs, and performance optimization.**
 
-image::technical-data-flow.svg[Data Flow Architecture, width=900]
+image::system-data-flow-abstract.svg[Data Flow Architecture, width=900]
 _Production data flow patterns for high-performance applications_
 
 == Hardware Acceleration
@@ -99,7 +99,7 @@ pub struct ConcurrentStorage<K, V> {
 
 === Two-Stage Search for Speed
 
-image::two-stage-search.svg[Two-Stage Search, width=900]
+image::two-stage-search-detail-modular.svg[Two-Stage Search, width=900]
 _Production pattern: Fast filtering followed by precise ranking_
 
 **The Strategy**:
@@ -160,12 +160,12 @@ impl ViperEngine {
 }
 ```
 
-image::search_orchestration_swimlanes.svg[Search Orchestration, width=900]
+image::search-orchestration-detail-monolithic.svg[Search Orchestration, width=900]
 _How orchestration and engine layers work together_
 
 === Query Processing Flow
 
-image::query-flow-complete.svg[Query Processing, width=900]
+image::query-processing-abstract.svg[Query Processing, width=900]
 _From SDK request to final results: the complete pipeline_
 
 == Compression & Storage Optimization
@@ -174,7 +174,7 @@ _From SDK request to final results: the complete pipeline_
 
 === Two-Tier Compression Strategy
 
-image::unified_quantization_system.svg[Compression Pipeline, width=900]
+image::quantization-system-detail-modular.svg[Compression Pipeline, width=900]
 _Production compression pipeline: Transport + Storage layers_
 
 **ProximaDB uses separate compression tiers**:
@@ -206,7 +206,7 @@ _Production compression pipeline: Transport + Storage layers_
 
 === Engine-Specific Recommendations
 
-image::engine-quantization-strategy.svg[Engine Strategy, width=900]
+image::quantization-strategy-abstract.svg[Engine Strategy, width=900]
 _Choose compression based on your storage engine and workload_
 
 **SST Engine**: Best for write-heavy workloads
@@ -236,7 +236,7 @@ CompressionConfig {
 
 === Storage Engine Selection Guide
 
-image::storage-engine-classes.svg[Storage Classes, width=900]
+image::storage-engine-abstract.svg[Storage Classes, width=900]
 _Engine class hierarchy: choose SST for transactions, VIPER for analytics_
 
 **Decision Tree**:
@@ -259,7 +259,7 @@ match your_workload {
 
 === API Architecture
 
-image::unified-handlers-architecture.svg[API Handlers, width=900]
+image::api-handlers-detail-modular.svg[API Handlers, width=900]
 _Single codebase serves both REST and gRPC with identical performance_
 
 **Implementation Pattern**:
@@ -288,7 +288,7 @@ impl UnifiedVectorHandler {
 
 === VIPER Engine Optimization
 
-image::unified-parquet-reader-architecture.svg[Parquet Pipeline, width=900]
+image::parquet-reader-detail-modular.svg[Parquet Pipeline, width=900]
 _Columnar reading optimizations for analytics workloads_
 
 **Key Optimizations**:
@@ -300,7 +300,7 @@ _Columnar reading optimizations for analytics workloads_
 
 **Why This Matters**: Achieve 95% cache hit rates for optimal performance.
 
-image::technical-cache-architecture.svg[Cache System, width=900]
+image::cache-system-abstract.svg[Cache System, width=900]
 _Production cache architecture with automatic memory management_
 
 === Cache Allocation Strategy

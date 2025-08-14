@@ -19,7 +19,7 @@ ProximaDB's hierarchical SST architecture is **production-ready** and fully impl
 
 == Architecture Overview
 
-image::hierarchical-sst-architecture.svg[Hierarchical SST Architecture, width=900]
+image::sst-hierarchical-detail-modular.svg[Hierarchical SST Architecture, width=900]
 _Production hierarchical SST structure with enhanced headers, bloom filters, and zero-copy compaction_
 
 === Enhanced File Format

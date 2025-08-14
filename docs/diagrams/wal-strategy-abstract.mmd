@@ -3,7 +3,6 @@ classDiagram
     %% Strategy Pattern Implementation for Write-Ahead Log Serialization
     
     class WriteAheadLogManager {
-         storage/persistence/write_ahead_log/mod.rs
         -strategy: Box~dyn SerializationStrategy~
         -batch_coordinator: BatchSyncCoordinator
         -flush_coordinator: FlushCoordinator
@@ -11,87 +10,63 @@ classDiagram
         +write_batch(vectors: Vec~VectorRecord~) Result~()~
         +flush_to_storage() Result~FlushResult~
         +set_strategy(strategy: SerializationStrategy)
-         Strategy Pattern Coordinator
     }
     
     class SerializationStrategy {
         <<interface>>
-         storage/persistence/write_ahead_log/
         +serialize(data: &VectorBatch) Result~Vec~u8~~
         +deserialize(bytes: &[u8]) Result~VectorBatch~
         +get_format_name() &str
         +supports_schema_evolution() bool
-         Pluggable Serialization Interface
     }
     
     class ProtoSerializationStrategy {
-         proto_serialization_strategy.rs
         -schema_registry: ProtoSchemaRegistry
         +serialize(data: &VectorBatch) Result~Vec~u8~~
         +deserialize(bytes: &[u8]) Result~VectorBatch~
         +get_format_name() "protobuf"
         +supports_schema_evolution() true
-         Protocol Buffers - Production Default
-         Zero-copy deserialization
-         Schema evolution support
     }
     
     class AvroSerializationStrategy {
-         avro_serialization_strategy.rs
         -schema: Schema
         -writer_cache: LruCache~String, Writer~
         +serialize(data: &VectorBatch) Result~Vec~u8~~
         +deserialize(bytes: &[u8]) Result~VectorBatch~
         +get_format_name() "avro"
         +supports_schema_evolution() true
-         Apache Avro - Schema Evolution
-         Rich metadata support
-         Forward/backward compatibility
     }
     
     class BincodeSerializationStrategy {
-         bincode_serialization_strategy.rs
         -config: BincodeConfig
         +serialize(data: &VectorBatch) Result~Vec~u8~~
         +deserialize(bytes: &[u8]) Result~VectorBatch~
         +get_format_name() "bincode"
         +supports_schema_evolution() false
-         Bincode - High Performance
-         Compact binary format
-         Fastest serialization
     }
     
     class BatchSyncCoordinator {
-         batch_sync_coordinator.rs
         -active_batches: DashMap~BatchId, BatchMetadata~
         -serialization_strategy: Arc~dyn SerializationStrategy~
         +coordinate_batch_write(batch: VectorBatch) Result~BatchId~
         +sync_batch_to_disk(batch_id: BatchId) Result~()~
         +get_batch_status(batch_id: BatchId) BatchStatus
-         Coordinates batched writes
-         ACID transaction support
     }
     
     class FlushCoordinator {
-         flush_coordinator.rs
         -flush_strategy: FlushStrategy
         -transaction_coordinator: Arc~TransactionCoordinator~
         +schedule_flush(trigger: FlushTrigger) Result~()~
         +execute_flush() Result~FlushResult~
         +get_flush_stats() FlushStatistics
-         Manages write-ahead log flushes
-         Performance monitoring
     }
     
     class VectorBatch {
-         storage/persistence/write_ahead_log/
         +collection_id: String
         +vectors: Vec~VectorRecord~
         +metadata: BatchMetadata
         +timestamp: SystemTime
         +batch_id: BatchId
-         Batch data container
-         Optimized for bulk operations
     }
     
     class BatchMetadata {
@@ -99,8 +74,6 @@ classDiagram
         +compression_type: CompressionType
         +checksum: u64
         +schema_version: u32
-         Batch processing metadata
-         Integrity verification
     }
     
     %% Strategy Pattern Relationships
@@ -119,10 +92,6 @@ classDiagram
     WriteAheadLogManager : +select_strategy_by_workload()
     WriteAheadLogManager : +get_optimal_strategy(requirements)
     
-    %% Performance Annotations
-    ProtoSerializationStrategy :  15MB/s throughput
-    AvroSerializationStrategy :  12MB/s + rich metadata  
-    BincodeSerializationStrategy :  25MB/s fastest
     
     %% Usage Patterns
     note for ProtoSerializationStrategy "Production Default\n• Schema evolution\n• Cross-language support\n• Compact binary format"
@@ -131,13 +100,13 @@ classDiagram
     
     note for BincodeSerializationStrategy "High-Performance Scenarios\n• Maximum throughput\n• Rust-native serialization\n• No schema evolution"
     
-    %% Professional Styling with High Contrast
-    classDef managerStyle fill:#dbeafe,stroke:#1d4ed8,stroke-width:3px,color:#1e293b,font-weight:bold
-    classDef strategyStyle fill:#fee2e2,stroke:#b91c1c,stroke-width:3px,color:#1e293b,font-weight:bold
-    classDef traitStyle fill:#ede9fe,stroke:#6b46c1,stroke-width:3px,color:#1e293b,font-weight:bold
-    classDef coordinatorStyle fill:#d1fae5,stroke:#047857,stroke-width:3px,color:#1e293b,font-weight:bold
-    classDef dataStyle fill:#fed7aa,stroke:#b45309,stroke-width:3px,color:#1e293b,font-weight:bold
-    classDef optimizationStyle fill:#cffafe,stroke:#0e7490,stroke-width:3px,color:#1e293b,font-weight:bold
+    %% Professional Styling with High Contrast and Clear Text
+    classDef managerStyle fill:#e0f2fe,stroke:#0284c7,stroke-width:2px,color:#0c4a6e,font-weight:bold
+    classDef strategyStyle fill:#fef2f2,stroke:#dc2626,stroke-width:2px,color:#7f1d1d,font-weight:bold
+    classDef traitStyle fill:#f3f4f6,stroke:#374151,stroke-width:2px,color:#111827,font-weight:bold
+    classDef coordinatorStyle fill:#f0fdf4,stroke:#16a34a,stroke-width:2px,color:#14532d,font-weight:bold
+    classDef dataStyle fill:#fffbeb,stroke:#d97706,stroke-width:2px,color:#92400e,font-weight:bold
+    classDef optimizationStyle fill:#f0fdfa,stroke:#059669,stroke-width:2px,color:#064e3b,font-weight:bold
     
     %% Apply Styling (one per line to avoid parser issues)
     class WriteAheadLogManager managerStyle

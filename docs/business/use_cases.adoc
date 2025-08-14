@@ -23,7 +23,7 @@ A Fortune 500 e-commerce company with 100M+ products faced:
 
 === How ProximaDB Can Help
 
-image::business-use-cases.svg[E-commerce Implementation, width=800]
+image::business-applications-abstract.svg[E-commerce Implementation, width=800]
 
 **Solution Architecture**:
 * **Search Engine**: Real-time product matching under 1ms
@@ -136,7 +136,7 @@ A major bank processing 10M+ transactions daily needed:
 
 === How ProximaDB Can Help
 
-image::business-capabilities.svg[Financial Services Architecture, width=800]
+image::business-capabilities-abstract.svg[Financial Services Architecture, width=800]
 
 **Key Features Used**:
 * Hardware acceleration (AVX-512) for distance computation

@@ -105,7 +105,7 @@ vector = client.get_vector("vectors", "vec1")
 
 == SQL Queries
 
-image::../diagrams/images/sql-acceleration-architecture.svg[SQL Acceleration Architecture, width=900]
+image::../diagrams/images/sql-acceleration-abstract.svg[SQL Acceleration Architecture, width=900]
 _Lock-free SQL parser pool and query optimization pipeline_
 
 [source,sql]

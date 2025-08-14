@@ -11,7 +11,7 @@ The SST (Sorted String Table) engine is optimized for write-heavy OLTP workloads
 
 === Hierarchical SST File Format ✅ IMPLEMENTED
 
-image::sst1-format.svg[SST1 File Format, width=900]
+image::sst-format-detail-modular.svg[SST1 File Format, width=900]
 _Production hierarchical SST structure with enhanced headers, bloom filters, and zero-copy compaction_
 
 ==== Enhanced SST Header Structure
@@ -245,7 +245,7 @@ The 3MB default block size is universally optimized for cloud storage patterns:
 
 === Adaptive Precision
 
-image::sst-adaptive-precision-detail.svg[SST Adaptive Precision, width=900]
+image::sst-precision-detail-modular.svg[SST Adaptive Precision, width=900]
 _Dynamic precision adjustment based on data characteristics_
 
 The SST engine automatically adjusts precision based on:
@@ -256,7 +256,7 @@ The SST engine automatically adjusts precision based on:
 
 === Multi-Batch Sorting Architecture
 
-image::sst-sorting-architecture.svg[SST Sorting Architecture, width=900]
+image::sst-sorting-detail-modular.svg[SST Sorting Architecture, width=900]
 _Adaptive multi-batch sorting pipeline optimized for global partitioned memtable_
 
 ==== Adaptive Sorting Strategy

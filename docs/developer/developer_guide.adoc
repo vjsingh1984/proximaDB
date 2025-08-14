@@ -28,7 +28,7 @@ cd clients/python && pip install -e ".[dev]" && cd ../..
 
 == Testing
 
-image::test-infrastructure-flow.svg[Test Infrastructure, width=900]
+image::test-infrastructure-detail-modular.svg[Test Infrastructure, width=900]
 _Test execution flow with hardware capability initialization_
 
 **Test Coverage**: 1,460+ tests, 100% pass rate
@@ -94,7 +94,7 @@ async fn test_example() -> Result<()> {
 
 == Architecture
 
-image::proximadb-architecture-consolidated.svg[ProximaDB Architecture, width=800]
+image::technical-architecture-abstract.svg[ProximaDB Architecture, width=800]
 
 **Core Components:**
 

@@ -52,7 +52,7 @@ This document provides the comprehensive roadmap for ProximaDB, including curren
 
 == Multi-Tenancy Architecture (Planned)
 
-image::multi-tenancy-architecture.svg[Multi-Tenancy Architecture, width=900]
+image::multi-tenant-abstract.svg[Multi-Tenancy Architecture, width=900]
 _Planned multi-tenant isolation and resource management architecture_
 
 Key features to implement:
@@ -63,7 +63,7 @@ Key features to implement:
 
 == Security Architecture (Planned)
 
-image::security-architecture.svg[Security Architecture, width=900]
+image::security-components-abstract.svg[Security Architecture, width=900]
 _Comprehensive security model for enterprise deployments_
 
 Security layers to implement:

@@ -10,7 +10,7 @@
 **BUSINESS PROJECTIONS**: Performance improvements and cost reductions cited in this document are estimates based on theoretical models and assumptions. Actual results will vary significantly based on your specific use case, implementation, and requirements. Contact our sales team for validated projections.
 ====
 
-image::business-roi-metrics.svg[ProximaDB Business Value, width=900]
+image::roi-metrics-abstract.svg[ProximaDB Business Value, width=900]
 
 == The Executive Decision
 
@@ -85,7 +85,7 @@ image::business-roi-metrics.svg[ProximaDB Business Value, width=900]
 
 === Operational Benefits
 
-image::business-capabilities.svg[Operational Excellence, width=800]
+image::business-capabilities-abstract.svg[Operational Excellence, width=800]
 
 * **Faster Time-to-Market**: Deploy in 60 seconds vs weeks
 * **Improved Reliability**: Optimized single-server architecture
@@ -257,7 +257,7 @@ link:roi_calculator.adoc[Calculate Your Specific ROI →]
 
 === Future-Proof Architecture
 
-image::business-use-cases.svg[Future-Ready Platform, width=800]
+image::business-applications-abstract.svg[Future-Ready Platform, width=800]
 
 **Built for Tomorrow**:
 * Multi-modal AI ready (text + image + audio)

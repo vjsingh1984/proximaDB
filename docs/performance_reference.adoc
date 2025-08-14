@@ -10,7 +10,7 @@
 This guide covers ProximaDB's comprehensive performance testing suite with **2,704 tests** ensuring 100% reliability across all components.
 ====
 
-image::diagrams/images/business-roi-metrics.svg[Performance and ROI Metrics, width=900]
+image::diagrams/images/roi-metrics-abstract.svg[Performance and ROI Metrics, width=900]
 _Comprehensive performance metrics and ROI analysis showing 3x performance gains and 70% TCO reduction_
 
 == Performance Benchmarks

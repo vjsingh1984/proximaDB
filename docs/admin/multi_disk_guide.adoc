@@ -4,7 +4,7 @@
 
 ProximaDB's multi-disk persistence system for enhanced performance, scalability, and fault tolerance.
 
-image::multi_disk_architecture.svg[Multi-Disk Architecture,800,600]
+image::multi-disk-deployment-detail-modular.svg[Multi-Disk Architecture,800,600]
 
 == Architecture Benefits
 
@@ -104,7 +104,7 @@ bloom_filter_bits = 10
 
 == Cloud Storage Configuration
 
-image::deployment-architecture.svg[Deployment Architecture, align=center, width=900]
+image::production-deployment-detail-modular.svg[Deployment Architecture, align=center, width=900]
 _link:../diagrams/deployment-architecture.mmd[View source diagram]_
 
 === Supported Providers

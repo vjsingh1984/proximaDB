@@ -9,7 +9,7 @@
 
 ProximaDB features a **unified compression architecture** (`src/core/compression/mod.rs`) that provides consistent compression across SST blocks, vector serialization, and Parquet columns. All compression is **100% SDK-controlled** with no server defaults.
 
-image::compression-architecture-consolidated.svg[Unified Compression Architecture, width=900]
+image::compression-architecture-abstract.svg[Unified Compression Architecture, width=900]
 _Context-aware compression with algorithm-specific optimization and zero-copy integration_
 
 == Quick Start

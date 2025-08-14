@@ -3,7 +3,7 @@
 :toclevels: 3
 :imagesdir: ../diagrams/images
 
-image::business-architecture-consolidated.svg[ProximaDB Semantic Search, align=center, width=600]
+image::business-architecture-abstract.svg[ProximaDB Semantic Search, align=center, width=600]
 
 **Complete guide to semantic vector search with ProximaDB - from basic queries to advanced indexing strategies.**
 
@@ -71,7 +71,7 @@ PYTHONPATH=src python examples/basic_usage_working.py
 
 == 📄 Text Chunking Strategies
 
-image::chunking-strategies.svg[Text Chunking Strategies, width=900]
+image::text-chunking-abstract.svg[Text Chunking Strategies, width=900]
 _Different chunking strategies for optimal semantic search_
 
 === Chunking Methods
