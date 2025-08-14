@@ -1,268 +1,125 @@
-= Developer Quick Start: ProximaDB in 5 Minutes
+= Getting Started with ProximaDB
 :toc: left
 :toclevels: 2
 :imagesdir: ../diagrams/images
 
-**Go from zero to production-ready vector search in 5 minutes.**
+**From zero to production-ready vector search in 5 minutes.**
 
 image::technical-architecture-abstract.svg[ProximaDB Architecture, width=900]
-_Production-grade vector database with dual storage engines and hardware acceleration_
 
-== What You'll Build
-
-By the end of this guide:
-✅ **Running Database**: ProximaDB with REST + gRPC endpoints  
-✅ **Vector Collection**: Optimized for your embedding model  
-✅ **Search Pipeline**: Sub-millisecond vector similarity search  
-✅ **Production Ready**: Multi-cloud deployment patterns
-
-== System Requirements
+== Prerequisites
 
 [cols="1,2,1", options="header"]
 |===
-| Component | Requirement | Production Recommendation
+| Component | Minimum | Recommended
 
-| **Docker** | 20.10+ with Compose v2 | Latest stable
-| **Memory** | 4GB minimum | 16GB+ for production  
-| **Storage** | 10GB available | NVMe SSD preferred
-| **Network** | Ports 5678, 5679 | Load balancer ready
+| Docker | 20.10+ | Latest stable
+| Memory | 4GB | 16GB+
+| Storage | 10GB | NVMe SSD
+| Ports | 5678, 5679 | Available
 |===
 
-== Step 1: Deploy ProximaDB (60 seconds)
+== Installation
 
-=== Option A: One-Line Docker Deploy
-
-[source,bash]
-----
-# Production-ready deployment with persistent storage
-curl -fsSL https://raw.githubusercontent.com/vjsingh1984/proximadb/main/docker-compose.yml | docker compose -f - up -d
-
-# Verify both endpoints are live
-curl http://localhost:5678/health && echo "✅ REST API ready"
-grpcurl -plaintext localhost:5679 proximadb.ProximaDB/Health && echo "✅ gRPC API ready"
-----
-
-=== Option B: Development Setup
+=== Docker (Recommended)
 
 [source,bash]
 ----
-# Clone for development and customization
+# Quick start
+docker run -d \
+  -p 5678:5678 -p 5679:5679 \
+  -v proximadb_data:/data \
+  proximadb/proximadb:latest
+
+# Verify
+curl http://localhost:5678/health
+----
+
+=== Build from Source
+
+[source,bash]
+----
 git clone https://github.com/vjsingh1984/proximadb.git
 cd proximadb
-
-# Start with development configuration
-docker compose -f docker-compose.dev.yml up -d
-
-# Enable debug logging
-curl -X POST http://localhost:5678/admin/log-level -d '{"level": "debug"}'
+cargo build --release
+./target/release/proximadb-server --config demo/config.toml
 ----
 
-=== Option C: Build from Source (Advanced)
-
-[source,bash]
-----
-# For contributors and advanced users
-curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
-source ~/.cargo/env
-
-git clone https://github.com/vjsingh1984/proximadb.git
-cd proximadb
-
-# Production build with all optimizations
-cargo build --release --features "gpu,simd"
-./target/release/proximadb-server --config production.toml
-----
-
-== Step 2: Build Your First AI Search (3 minutes)
+== First Steps
 
 === Install Python SDK
 
 [source,bash]
 ----
-# Install with all optional dependencies
-pip install "proximadb[all]"
-
-# Or minimal installation
 pip install proximadb
 ----
 
-=== Create Your Search Pipeline
+=== Create Your First Collection
 
 [source,python]
 ----
 from proximadb import ProximaDBClient
-import numpy as np
 
-# Connect (automatically detects best protocol)
+# Connect (auto-detects best protocol)
 client = ProximaDBClient("http://localhost:5678")
 
-# Create collection optimized for your use case
+# Create collection
 collection = client.create_collection(
-    name="semantic_search",
-    dimension=1536,                    # OpenAI ada-002 embeddings
-    distance_metric="cosine",          # Best for semantic similarity
-    storage_engine="viper",            # Columnar for analytics
-    enable_compression=True            # 50-80% storage reduction
+    name="my_vectors",  # Min 8 characters
+    dimension=384,
+    distance_metric="cosine",
+    storage_engine="viper"  # or "sst"
 )
-print("✅ Collection created")
 
-# Insert vectors with metadata
+# Insert vectors
 vectors = [
     {
-        "id": "doc_1",
-        "vector": np.random.random(1536).tolist(),
-        "metadata": {
-            "title": "Introduction to AI",
-            "category": "education",
-            "price": 99.99
-        }
-    },
-    {
-        "id": "doc_2", 
-        "vector": np.random.random(1536).tolist(),
-        "metadata": {
-            "title": "Advanced Machine Learning",
-            "category": "education", 
-            "price": 149.99
-        }
+        "id": "vec_001",
+        "vector": [0.1, 0.2, ...],  # 384 dimensions
+        "metadata": {"category": "A", "score": 0.95}
     }
 ]
+client.insert_vectors("my_vectors", vectors)
 
-# High-performance batch insert
-result = client.insert_vectors("semantic_search", vectors)
-print(f"✅ Inserted {len(vectors)} vectors")
-
-# Search with filters and metadata
-query_vector = np.random.random(1536).tolist()
+# Search
 results = client.search_vectors(
-    collection_id="semantic_search",
-    query_vector=query_vector,
+    collection_id="my_vectors",
+    query_vector=[0.1, 0.2, ...],
     top_k=10,
-    filters={"category": "education"},    # Metadata filtering
-    include_metadata=True                 # Return metadata with results
+    metadata_filter={"category": "A"}
 )
 
-print(f"✅ Found {len(results)} results")
-for result in results:
-    print(f"  📄 {result['metadata']['title']} (score: {result['score']:.3f})")
+print(f"Found {len(results)} matches")
 ----
 
-== Step 3: Production Deployment (2 minutes)
-
-=== Multi-Cloud Deployment
-
-[source,bash]
-----
-# AWS deployment with EFS storage
-docker run -d \
-  --name proximadb-prod \
-  -p 5678:5678 -p 5679:5679 \
-  -v /mnt/efs/proximadb:/data \
-  -e PROXIMADB_CONFIG=/data/production.toml \
-  proximadb/proximadb:latest
-
-# Azure deployment with Azure Files
-docker run -d \
-  --name proximadb-prod \
-  -p 5678:5678 -p 5679:5679 \
-  -v /mnt/azure/proximadb:/data \
-  -e PROXIMADB_STORAGE_TYPE=azure \
-  proximadb/proximadb:latest
-
-# GCP deployment with Cloud Storage
-docker run -d \
-  --name proximadb-prod \
-  -p 5678:5678 -p 5679:5679 \
-  -v /mnt/gcs/proximadb:/data \
-  -e PROXIMADB_STORAGE_TYPE=gcs \
-  proximadb/proximadb:latest
-----
-
-=== High Availability Setup
-
-[source,yaml]
-----
-# docker-compose.ha.yml
-version: '3.8'
-services:
-  proximadb-primary:
-    image: proximadb/proximadb:latest
-    ports: ["5678:5678", "5679:5679"]
-    volumes: ["./data/primary:/data"]
-    environment:
-      PROXIMADB_NODE_TYPE: primary
-      PROXIMADB_REPLICATION_ENABLED: true
-    
-  proximadb-replica:
-    image: proximadb/proximadb:latest
-    ports: ["5680:5678", "5681:5679"]  
-    volumes: ["./data/replica:/data"]
-    environment:
-      PROXIMADB_NODE_TYPE: replica
-      PROXIMADB_PRIMARY_HOST: proximadb-primary
-    depends_on: [proximadb-primary]
-
-  nginx:
-    image: nginx:alpine
-    ports: ["80:80", "443:443"]
-    volumes: ["./nginx.conf:/etc/nginx/nginx.conf"]
-    depends_on: [proximadb-primary, proximadb-replica]
-----
-
-== Next Steps
-
-🎉 **Congratulations!** You now have a production-ready vector database with:
-- Sub-millisecond search performance
-- Automatic compression (50-80% storage savings)
-- Multi-cloud deployment capability
-- High availability setup
-
-=== Production Optimization
+== Storage Engine Selection
 
 [cols="1,2,2", options="header"]
 |===
-| Optimization | Configuration | Business Impact
+| Engine | Use When | Example
 
-| **Hardware Acceleration**
-| Enable GPU/SIMD features
-| 10x faster distance computation
+| **SST**
+| Real-time ingestion, frequent updates
+| Chat applications, live data
 
-| **Compression** 
-| Enable ZSTD/LZ4 compression
-| 50-80% storage cost reduction
-
-| **Multi-Engine**
-| VIPER for analytics, SST for writes
-| Optimal performance per workload
-
-| **Caching**
-| Enable intelligent cache layers
-| 95% cache hit rate, faster queries
+| **VIPER**
+| Analytics, batch processing
+| Data warehouses, archives
 |===
 
-=== What's Next?
+== Performance Tips
 
-**🔧 For Developers:**
-- link:../developer/architecture.adoc[Deep-dive into architecture]
-- link:api_reference.adoc[Complete API reference]
-- link:../performance_reference.adoc[Performance tuning guide]
+1. **Use gRPC** for 3x better performance
+2. **Batch inserts** with 100-500 vectors
+3. **Enable compression** for 50-80% storage savings
+4. **Choose right engine** based on workload
 
-**📊 For DevOps:**
-- link:../admin/multi_disk_guide.adoc[Production deployment patterns]
-- link:../admin/configuration_reference.adoc[Complete configuration reference]
-- Monitoring and observability setup
+== Next Steps
 
-**💼 For Business:**
-- link:../business/roi_calculator.adoc[Calculate your ROI]
-- link:../business/use_cases.adoc[Industry-specific implementations]
-- Enterprise features and support
-
-=== Community & Support
-
-- **GitHub**: https://github.com/vjsingh1984/proximadb[Report issues and contribute]
-- **Documentation**: link:../index.adoc[Complete documentation hub]  
-- **Enterprise Support**: singhvjd@gmail.com
+* link:user_guide.adoc[User Guide] - Complete operations guide
+* link:api_reference.adoc[API Reference] - REST & gRPC endpoints
+* link:../developer/architecture.adoc[Architecture] - System design
+* link:../admin/configuration_reference.adoc[Configuration] - Production setup
 
 ---
-
-**🚀 Ready to build something amazing with AI?** Your vector database is ready.
+**Version 0.1.4** | Last Updated: 2025-01

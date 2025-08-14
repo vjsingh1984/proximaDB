@@ -1,232 +1,254 @@
 = ProximaDB User Guide
 :toc: left
 :toclevels: 2
+:imagesdir: ../diagrams/images
 
 **Complete operations guide for ProximaDB.**
 
 == Collections
 
-=== Create Collection
+=== Creating Collections
+
 [source,python]
 ----
 from proximadb import ProximaDBClient
+from proximadb.models import CompressionConfig
 
 client = ProximaDBClient("http://localhost:5678")
 
 # Basic collection
 collection = client.create_collection(
-    name="vectors",
+    name="my_vectors",  # Min 8 characters
     dimension=384,
-    engine="viper"  # or "sst"
+    distance_metric="cosine",
+    storage_engine="viper"  # or "sst"
 )
 
 # With compression
-from proximadb.models import CompressionConfig
-
 collection = client.create_collection(
-    name="compressed",
+    name="compressed_vecs",
     dimension=1536,
+    storage_engine="viper",
     compression=CompressionConfig(
         algorithm="zstd",
         level=6,
-        enable_quantization=True
+        enable_quantization=True,
+        quantization_type="pq8"
     )
 )
 ----
 
-=== Manage Collections
+=== Managing Collections
+
 [source,python]
 ----
-# List all
+# List all collections
 collections = client.list_collections()
 
-# Get details
-info = client.get_collection("vectors")
+# Get collection details
+info = client.get_collection("my_vectors")
 
-# Delete
-client.delete_collection("vectors")
+# Delete collection
+client.delete_collection("my_vectors")
 ----
 
 == Vector Operations
 
-=== Insert
+=== Inserting Vectors
+
 [source,python]
 ----
 # Single vector
 vector = {
-    "id": "vec1",
-    "vector": [0.1, 0.2, ...],  # must match dimension
+    "id": "vec_001",
+    "vector": [0.1, 0.2, ...],  # Must match dimension
     "metadata": {"category": "A", "score": 0.95}
 }
-client.insert_vectors("vectors", [vector])
+client.insert_vector("my_vectors", vector)
 
-# Batch insert (faster)
-vectors = [...]  # list of vector objects
-client.insert_vectors("vectors", vectors, batch_size=100)
+# Batch insert (recommended)
+vectors = [...]  # List of vector objects
+client.insert_vectors("my_vectors", vectors, batch_size=100)
 
 # Upsert (insert or update)
-client.upsert_vectors("vectors", vectors)
+client.upsert_vectors("my_vectors", vectors)
 ----
 
-=== Search
+=== Searching Vectors
+
 [source,python]
 ----
 # Basic search
 results = client.search_vectors(
-    collection_id="vectors",
+    collection_id="my_vectors",
     query_vector=[0.1, 0.2, ...],
     top_k=10
 )
 
-# With filters
+# With metadata filters
 results = client.search_vectors(
-    collection_id="vectors",
+    collection_id="my_vectors",
     query_vector=query,
     metadata_filter={
         "category": "A",
-        "score": {">=": 0.8}
+        "score": {"$gte": 0.8}
     },
+    top_k=10,
+    include_metadata=True
+)
+
+# Multi-query search
+results = client.batch_search(
+    collection_id="my_vectors",
+    queries=[query1, query2, query3],
     top_k=10
 )
 ----
 
-=== Update/Delete
+=== Managing Vectors
+
 [source,python]
 ----
+# Get vector by ID
+vector = client.get_vector("my_vectors", "vec_001")
+
 # Update vector
-client.update_vector("vectors", "vec1", new_vector)
+client.update_vector("my_vectors", "vec_001", new_vector)
 
 # Delete vector
-client.delete_vector("vectors", "vec1")
+client.delete_vector("my_vectors", "vec_001")
 
-# Get vector
-vector = client.get_vector("vectors", "vec1")
+# Delete multiple vectors
+client.delete_vectors("my_vectors", ["vec_001", "vec_002"])
 ----
 
-== SQL Queries
+== SQL Interface
 
-image::../diagrams/images/sql-acceleration-abstract.svg[SQL Acceleration Architecture, width=900]
-_Lock-free SQL parser pool and query optimization pipeline_
+image::sql-acceleration-abstract.svg[SQL Architecture, width=900]
 
 [source,sql]
 ----
 -- Vector similarity search
-SELECT id, metadata->>'title',
+SELECT id, metadata->>'title' as title,
        VECTOR_SIMILARITY(vector, [...], 'cosine') as score
-FROM vectors
-WHERE score > 0.8
+FROM my_vectors
+WHERE metadata->>'category' = 'A'
+  AND score > 0.8
 ORDER BY score DESC
 LIMIT 10;
 
--- Complex filtering
-SELECT * FROM vectors
-WHERE metadata->>'category' = 'A'
-  AND metadata->>'score' > 0.9
-  AND VECTOR_SIMILARITY(vector, [...], 'euclidean') < 1.0;
+-- Complex queries
+SELECT COUNT(*) as count, 
+       metadata->>'category' as category
+FROM my_vectors
+WHERE VECTOR_SIMILARITY(vector, [...], 'euclidean') < 1.0
+GROUP BY category;
 ----
 
-== Performance Tips
+== Performance Optimization
 
-=== Choose the Right Engine
-[cols="1,1,1", options="header"]
+=== Engine Selection
+
+[cols="2,2,2", options="header"]
 |===
-| Engine | Best For | Characteristics
+| Criteria | Choose SST | Choose VIPER
 
-| **SST**
-| Write-heavy, OLTP
-| Row storage, bloom filters
-
-| **VIPER**
-| Analytics, compression
-| Columnar, quantization
+| Write Pattern | Streaming/real-time | Batch inserts
+| Query Pattern | Point lookups | Range scans
+| Dataset Size | <100K vectors | >100K vectors
+| Compression Need | Low | High
 |===
 
-=== Optimization Guidelines
-* **Batch Size**: 100-500 vectors per request
-* **Protocol**: Use gRPC for 3x better performance
-* **Compression**: ZSTD level 6 for balance
-* **Index**: HNSW for quality, IVF for scale
+=== Best Practices
+
+1. **Batch Operations**
+   - Insert: 100-500 vectors per batch
+   - Search: Use batch_search for multiple queries
+
+2. **Protocol Selection**
+   - gRPC: 3x faster than REST
+   - REST: Better for debugging
+
+3. **Compression Settings**
+   - LZ4: Fast, 2-3x compression
+   - ZSTD: Balanced, 3-5x compression
+   - With quantization: 16-64x compression
+
+4. **Index Selection**
+   - HNSW: Best quality, <10M vectors
+   - IVF: Scalable, >10M vectors
+   - PQ: Maximum compression
 
 == Configuration
 
-=== config.toml
+=== Python SDK Configuration
+
+[source,python]
+----
+from proximadb import ProximaDBClient, Protocol
+
+# Force specific protocol
+client = ProximaDBClient(
+    "http://localhost:5678",
+    protocol=Protocol.GRPC,
+    timeout=30,
+    max_retries=3
+)
+
+# Connection pooling
+client = ProximaDBClient(
+    "http://localhost:5678",
+    pool_size=10,
+    max_connections=50
+)
+----
+
+=== Server Configuration
+
 [source,toml]
 ----
+# /data/proximadb/config.toml
 [server]
-node_id = "proximadb-node-1"
+node_id = "prod-1"
 bind_address = "0.0.0.0"
-port = 5678
 
 [api]
 rest_port = 5678
 grpc_port = 5679
+max_request_size_mb = 100
 
 [storage]
-metadata_url = "file:///data/proximadb/metadata"
+cache_size_mb = 1024
+write_buffer_size_mb = 256
 
-[[storage.storage_locations]]
-url = "file:///data/proximadb/storage"
-weight = 1
-tags = ["local"]
-
-cache_size_mb = 512
-mmap_enabled = true
+[performance]
+num_threads = 0  # Auto-detect
+enable_simd = true
+enable_gpu = true
 ----
 
-=== Distance Metrics
-* **cosine**: Semantic similarity (normalized)
-* **euclidean**: Geometric distance
-* **dot_product**: Magnitude-aware similarity
-* Plus 10 more specialized metrics
+== Troubleshooting
 
-== Integration Examples
+=== Common Issues
 
-=== With Embeddings
-[source,python]
-----
-# Sentence Transformers
-from sentence_transformers import SentenceTransformer
-model = SentenceTransformer('all-MiniLM-L6-v2')
-embeddings = model.encode(texts)
+**Collection name too short:**
+- Error: "Collection name must be at least 8 characters"
+- Solution: Use names like "my_vectors" instead of "vectors"
 
-# OpenAI
-import openai
-response = openai.Embedding.create(
-    input=texts,
-    model="text-embedding-ada-002"
-)
-embeddings = [r["embedding"] for r in response["data"]]
-----
+**Dimension mismatch:**
+- Error: "Vector dimension 384 doesn't match collection dimension 768"
+- Solution: Ensure all vectors match collection dimension
 
-=== RAG Pipeline
-[source,python]
-----
-# 1. Embed query
-query_embedding = model.encode(query)
+**Out of memory:**
+- Error: "Cannot allocate memory"
+- Solution: Reduce batch size or increase server memory
 
-# 2. Search vectors
-results = client.search_vectors(
-    "documents",
-    query_embedding,
-    top_k=5
-)
+== Related Documentation
 
-# 3. Use results as context
-context = [r["metadata"]["text"] for r in results]
-prompt = f"Context: {context}\nQuestion: {query}"
-----
-
-== Monitoring
-
-* **Health Check**: `GET /health`
-* **Metrics**: `GET /metrics` (Prometheus format)
-* **Collection Stats**: `GET /collections/{name}/stats`
-
-== Next Steps
-
-* link:api_reference.adoc[**API Reference**] - Complete endpoint documentation
-* link:../performance_reference.adoc[**Performance Guide**] - Benchmarks and tuning
-* link:../compression_guide.adoc[**Compression Guide**] - Storage optimization
+* link:getting_started.adoc[Getting Started] - Quick setup
+* link:api_reference.adoc[API Reference] - Complete API docs
+* link:../developer/technical_reference.adoc[Technical Reference] - Implementation details
+* link:../admin/configuration_reference.adoc[Configuration] - All settings
 
 ---
-**Support**: GitHub Issues | Email: singhvjd@gmail.com
+**Version 0.1.4** | Last Updated: 2025-01
