@@ -295,7 +295,7 @@ let caps = get_hardware_capabilities();
 image::compression-decision-abstract.svg[Compression Decision Tree, width=1000]
 
 .Unified Quantization System  
-image::quantization-system-detail-modular.svg[Compression Pipeline, width=400]
+image::quantization-system-detail-modular.svg[Quantization System Architecture, width=1000]
 
 [NOTE]
 ====
