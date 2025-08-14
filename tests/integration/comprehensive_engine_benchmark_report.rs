@@ -13,7 +13,7 @@ mod common {
 use common::unified_test_utils::{UnifiedTestEnvironment, operations};
 
 use anyhow::Result;
-use tracing::{info, debug};
+use tracing::debug;
 use proximadb::core::VectorRecord;
 use proximadb::storage::traits::{FlushParameters, CompactionParameters, UnifiedStorageEngine};
 use proximadb::proto::proximadb::{CompressionAlgorithm as ProtoCompressionAlgorithm, StorageEngine};
@@ -98,7 +98,10 @@ fn create_vectors_with_sparsity(count: usize, dim: usize, sparsity_percent: usiz
 }
 
 /// Run benchmark for a specific configuration
-async fn run_benchmark(engine_type: &str, config: BenchmarkConfig) -> Result<BenchmarkResult> {
+async fn run_benchmark(engine_type: &str, config: BenchmarkConfig, test_number: usize, total_tests: usize) -> Result<BenchmarkResult> {
+    println!("    [{}/{}] Running {} with {}% sparsity, {} level {}", 
+        test_number, total_tests, engine_type, config.sparsity_percent, config.algorithm, config.level);
+    
     let env = UnifiedTestEnvironment::new().await?;
     
     // Prepare algorithm enum
@@ -139,7 +142,7 @@ async fn run_benchmark(engine_type: &str, config: BenchmarkConfig) -> Result<Ben
                 ).await?;
                 flush_times.push(start_flush.elapsed().as_millis() as u64);
                 
-                debug!("SST Batch {} flushed in {}ms", batch_id, flush_times.last().unwrap());
+                println!("      Batch {}/{} flushed in {}ms", batch_id + 1, config.batch_count, flush_times.last().unwrap());
             }
             
             // Count files before compaction
@@ -249,7 +252,7 @@ async fn run_benchmark(engine_type: &str, config: BenchmarkConfig) -> Result<Ben
                 let _ = engine.flush(flush_params).await?;
                 
                 flush_times.push(start_flush.elapsed().as_millis() as u64);
-                debug!("VIPER Batch {} flushed in {}ms", batch_id, flush_times.last().unwrap());
+                println!("      Batch {}/{} flushed in {}ms", batch_id + 1, config.batch_count, flush_times.last().unwrap());
             }
             
             // Count files before compaction
@@ -496,11 +499,18 @@ fn generate_html_report(results: &[BenchmarkResult]) -> String {
 }
 
 #[tokio::test]
+#[ignore] // Run with: cargo test --test integration test_generate_comprehensive_benchmark_report -- --ignored
 async fn test_generate_comprehensive_benchmark_report() -> Result<()> {
+    // Skip if not explicitly enabled
+    if std::env::var("RUN_BENCHMARKS").unwrap_or_default() != "true" {
+        println!("Skipping comprehensive benchmark (set RUN_BENCHMARKS=true to run)");
+        return Ok(());
+    }
+    
     let _ = proximadb::core::hardware_capabilities::initialize_hardware_capabilities_default();
     
-    info!("🚀 GENERATING COMPREHENSIVE BENCHMARK REPORT");
-    info!("{}", "=".repeat(100));
+    println!("\n🚀 GENERATING COMPREHENSIVE BENCHMARK REPORT");
+    println!("{}", "=".repeat(100));
     
     // Test configurations
     let sparsity_levels = vec![0, 10, 25, 50, 75, 90, 99];
@@ -518,9 +528,22 @@ async fn test_generate_comprehensive_benchmark_report() -> Result<()> {
     
     let mut all_results = Vec::new();
     
+    // Calculate total number of tests
+    let mut total_tests = 0;
+    for (_algo, levels) in &algorithms_and_levels {
+        total_tests += levels.len() * 2 * sparsity_levels.len(); // 2 engines
+    }
+    
+    println!("\n📊 Total benchmarks to run: {}", total_tests);
+    println!("   Sparsity levels: {:?}", sparsity_levels);
+    println!("   Batch count: {}, Vectors per batch: {}, Dimension: {}", batch_count, vectors_per_batch, dimension);
+    println!("   Estimated time: {} minutes\n", (total_tests * 30) / 60); // ~30 seconds per test
+    
+    let mut test_number = 0;
+    
     // Run benchmarks
     for sparsity in &sparsity_levels {
-        info!("\n📊 Testing {}% sparsity", sparsity);
+        println!("\n━━━━━ SPARSITY LEVEL: {}% ━━━━━", sparsity);
         
         for (algo, levels) in &algorithms_and_levels {
             for level in levels {
@@ -535,33 +558,31 @@ async fn test_generate_comprehensive_benchmark_report() -> Result<()> {
                 
                 // Test SST
                 if !(*algo == "gzip" && *level > 9) {
-                    info!("  Testing SST with {} level {}", algo, level);
-                    match run_benchmark("SST", config.clone()).await {
+                    test_number += 1;
+                    match run_benchmark("SST", config.clone(), test_number, total_tests).await {
                         Ok(result) => {
-                            info!("    ✅ Compression: {:.1}%, Compaction: {} files → {} files",
+                            println!("    ✅ Complete - Compression: {:.1}%, Query P50: {:.2}ms",
                                 result.compression_savings_percent,
-                                result.compaction_input_files,
-                                result.compaction_output_files
+                                result.query_latency_p50_ms
                             );
                             all_results.push(result);
                         },
-                        Err(e) => info!("    ⚠️ Failed: {}", e),
+                        Err(e) => println!("    ⚠️ Failed: {}", e),
                     }
                 }
                 
                 // Test VIPER (skip unsupported algorithms)
                 if !(*algo == "gzip" || (*algo == "zstd" && *level > 6)) {
-                    info!("  Testing VIPER with {} level {}", algo, level);
-                    match run_benchmark("VIPER", config.clone()).await {
+                    test_number += 1;
+                    match run_benchmark("VIPER", config.clone(), test_number, total_tests).await {
                         Ok(result) => {
-                            info!("    ✅ Compression: {:.1}%, Compaction: {} files → {} files",
+                            println!("    ✅ Complete - Compression: {:.1}%, Query P50: {:.2}ms",
                                 result.compression_savings_percent,
-                                result.compaction_input_files,
-                                result.compaction_output_files
+                                result.query_latency_p50_ms
                             );
                             all_results.push(result);
                         },
-                        Err(e) => info!("    ⚠️ Failed: {}", e),
+                        Err(e) => println!("    ⚠️ Failed: {}", e),
                     }
                 }
             }
@@ -569,13 +590,13 @@ async fn test_generate_comprehensive_benchmark_report() -> Result<()> {
     }
     
     // Generate reports
-    info!("\n📈 GENERATING REPORTS");
+    println!("\n📈 GENERATING REPORTS");
     
     // 1. Compression Effectiveness by Sparsity
-    info!("\n═══ COMPRESSION EFFECTIVENESS BY SPARSITY ═══");
-    info!("┌──────────┬─────────────────────────────┬─────────────────────────────┐");
-    info!("│ Sparsity │ SST Best (algo, savings%)  │ VIPER Best (algo, savings%)│");
-    info!("├──────────┼─────────────────────────────┼─────────────────────────────┤");
+    println!("\n═══ COMPRESSION EFFECTIVENESS BY SPARSITY ═══");
+    println!("┌──────────┬─────────────────────────────┬─────────────────────────────┐");
+    println!("│ Sparsity │ SST Best (algo, savings%)  │ VIPER Best (algo, savings%)│");
+    println!("├──────────┼─────────────────────────────┼─────────────────────────────┤");
     
     for sparsity in &sparsity_levels {
         let sst_best = all_results.iter()
@@ -587,19 +608,19 @@ async fn test_generate_comprehensive_benchmark_report() -> Result<()> {
             .max_by(|a, b| a.compression_savings_percent.partial_cmp(&b.compression_savings_percent).unwrap());
         
         if let (Some(s), Some(v)) = (sst_best, viper_best) {
-            info!("│ {:7}% │ {:7} L{}: {:5.1}%       │ {:7} L{}: {:5.1}%      │",
+            println!("│ {:7}% │ {:7} L{}: {:5.1}%       │ {:7} L{}: {:5.1}%      │",
                 sparsity, s.algorithm, s.level, s.compression_savings_percent,
                 v.algorithm, v.level, v.compression_savings_percent
             );
         }
     }
-    info!("└──────────┴─────────────────────────────┴─────────────────────────────┘");
+    println!("└──────────┴─────────────────────────────┴─────────────────────────────┘");
     
     // 2. Compaction Efficiency Report
-    info!("\n═══ COMPACTION EFFICIENCY (5 BATCHES) ═══");
-    info!("┌────────┬──────────┬────────┬───────────┬───────────┬──────────┬────────┐");
-    info!("│ Engine │ Sparsity │ Algo   │ Files In  │ Files Out │ Time(ms) │ Ratio  │");
-    info!("├────────┼──────────┼────────┼───────────┼───────────┼──────────┼────────┤");
+    println!("\n═══ COMPACTION EFFICIENCY (5 BATCHES) ═══");
+    println!("┌────────┬──────────┬────────┬───────────┬───────────┬──────────┬────────┐");
+    println!("│ Engine │ Sparsity │ Algo   │ Files In  │ Files Out │ Time(ms) │ Ratio  │");
+    println!("├────────┼──────────┼────────┼───────────┼───────────┼──────────┼────────┤");
     
     // Show best compaction results for each sparsity level
     for sparsity in &sparsity_levels {
@@ -609,7 +630,7 @@ async fn test_generate_comprehensive_benchmark_report() -> Result<()> {
                 .min_by(|a, b| a.compaction_reduction_ratio.partial_cmp(&b.compaction_reduction_ratio).unwrap());
             
             if let Some(bc) = best_compact {
-                info!("│ {:6} │ {:7}% │ {:6} │ {:9} │ {:9} │ {:8} │ {:.3}  │",
+                println!("│ {:6} │ {:7}% │ {:6} │ {:9} │ {:9} │ {:8} │ {:.3}  │",
                     engine, sparsity, bc.algorithm,
                     bc.compaction_input_files, bc.compaction_output_files,
                     bc.compaction_time_ms, bc.compaction_reduction_ratio
@@ -617,13 +638,13 @@ async fn test_generate_comprehensive_benchmark_report() -> Result<()> {
             }
         }
     }
-    info!("└────────┴──────────┴────────┴───────────┴───────────┴──────────┴────────┘");
+    println!("└────────┴──────────┴────────┴───────────┴───────────┴──────────┴────────┘");
     
     // 3. Query Performance Comparison
-    info!("\n═══ QUERY PERFORMANCE COMPARISON ═══");
-    info!("┌────────┬──────────┬────────┬──────────┬──────────┬──────────┬────────┐");
-    info!("│ Engine │ Sparsity │ Algo   │ P50 (ms) │ P99 (ms) │ QPS      │ Winner │");
-    info!("├────────┼──────────┼────────┼──────────┼──────────┼──────────┼────────┤");
+    println!("\n═══ QUERY PERFORMANCE COMPARISON ═══");
+    println!("┌────────┬──────────┬────────┬──────────┬──────────┬──────────┬────────┐");
+    println!("│ Engine │ Sparsity │ Algo   │ P50 (ms) │ P99 (ms) │ QPS      │ Winner │");
+    println!("├────────┼──────────┼────────┼──────────┼──────────┼──────────┼────────┤");
     
     for sparsity in &sparsity_levels {
         let sst_best = all_results.iter()
@@ -637,22 +658,22 @@ async fn test_generate_comprehensive_benchmark_report() -> Result<()> {
         if let (Some(s), Some(v)) = (sst_best, viper_best) {
             let winner = if s.query_latency_p50_ms < v.query_latency_p50_ms { "SST" } else { "VIPER" };
             
-            info!("│ SST    │ {:7}% │ {:6} │ {:8.2} │ {:8.2} │ {:8.0} │        │",
+            println!("│ SST    │ {:7}% │ {:6} │ {:8.2} │ {:8.2} │ {:8.0} │        │",
                 sparsity, s.algorithm, s.query_latency_p50_ms, s.query_latency_p99_ms, s.query_throughput_qps
             );
-            info!("│ VIPER  │ {:7}% │ {:6} │ {:8.2} │ {:8.2} │ {:8.0} │ {:6} │",
+            println!("│ VIPER  │ {:7}% │ {:6} │ {:8.2} │ {:8.2} │ {:8.0} │ {:6} │",
                 sparsity, v.algorithm, v.query_latency_p50_ms, v.query_latency_p99_ms, v.query_throughput_qps, winner
             );
-            info!("├────────┼──────────┼────────┼──────────┼──────────┼──────────┼────────┤");
+            println!("├────────┼──────────┼────────┼──────────┼──────────┼──────────┼────────┤");
         }
     }
-    info!("└────────┴──────────┴────────┴──────────┴──────────┴──────────┴────────┘");
+    println!("└────────┴──────────┴────────┴──────────┴──────────┴──────────┴────────┘");
     
     // 4. Recommendations Matrix
-    info!("\n═══ RECOMMENDATIONS BY USE CASE ═══");
-    info!("┌─────────────────────────┬────────┬─────────────────────────────────┐");
-    info!("│ Use Case                │ Engine │ Configuration                   │");
-    info!("├─────────────────────────┼────────┼─────────────────────────────────┤");
+    println!("\n═══ RECOMMENDATIONS BY USE CASE ═══");
+    println!("┌─────────────────────────┬────────┬─────────────────────────────────┐");
+    println!("│ Use Case                │ Engine │ Configuration                   │");
+    println!("├─────────────────────────┼────────┼─────────────────────────────────┤");
     
     // Dense embeddings (0% sparsity)
     let dense_best = all_results.iter()
@@ -660,7 +681,7 @@ async fn test_generate_comprehensive_benchmark_report() -> Result<()> {
         .max_by(|a, b| a.compression_savings_percent.partial_cmp(&b.compression_savings_percent).unwrap());
     
     if let Some(db) = dense_best {
-        info!("│ Dense ML Embeddings     │ {:6} │ {} L{}: {:.1}% savings         │",
+        println!("│ Dense ML Embeddings     │ {:6} │ {} L{}: {:.1}% savings         │",
             db.engine, db.algorithm, db.level, db.compression_savings_percent);
     }
     
@@ -670,7 +691,7 @@ async fn test_generate_comprehensive_benchmark_report() -> Result<()> {
         .max_by(|a, b| a.compression_savings_percent.partial_cmp(&b.compression_savings_percent).unwrap());
     
     if let Some(sb) = sparse_best {
-        info!("│ Sparse Vectors (90%)    │ {:6} │ {} L{}: {:.1}% savings         │",
+        println!("│ Sparse Vectors (90%)    │ {:6} │ {} L{}: {:.1}% savings         │",
             sb.engine, sb.algorithm, sb.level, sb.compression_savings_percent);
     }
     
@@ -680,7 +701,7 @@ async fn test_generate_comprehensive_benchmark_report() -> Result<()> {
         .max_by(|a, b| a.compression_savings_percent.partial_cmp(&b.compression_savings_percent).unwrap());
     
     if let Some(vsb) = very_sparse_best {
-        info!("│ Very Sparse (99%)       │ {:6} │ {} L{}: {:.1}% savings         │",
+        println!("│ Very Sparse (99%)       │ {:6} │ {} L{}: {:.1}% savings         │",
             vsb.engine, vsb.algorithm, vsb.level, vsb.compression_savings_percent);
     }
     
@@ -689,7 +710,7 @@ async fn test_generate_comprehensive_benchmark_report() -> Result<()> {
         .min_by(|a, b| a.query_latency_p50_ms.partial_cmp(&b.query_latency_p50_ms).unwrap());
     
     if let Some(ll) = low_latency {
-        info!("│ Low Latency (<1ms)      │ {:6} │ {}: {:.2}ms P50 latency       │",
+        println!("│ Low Latency (<1ms)      │ {:6} │ {}: {:.2}ms P50 latency       │",
             ll.engine, ll.algorithm, ll.query_latency_p50_ms);
     }
     
@@ -698,7 +719,7 @@ async fn test_generate_comprehensive_benchmark_report() -> Result<()> {
         .max_by(|a, b| a.compression_savings_percent.partial_cmp(&b.compression_savings_percent).unwrap());
     
     if let Some(mc) = max_compression {
-        info!("│ Maximum Compression     │ {:6} │ {} L{}: {:.1}% savings         │",
+        println!("│ Maximum Compression     │ {:6} │ {} L{}: {:.1}% savings         │",
             mc.engine, mc.algorithm, mc.level, mc.compression_savings_percent);
     }
     
@@ -708,17 +729,17 @@ async fn test_generate_comprehensive_benchmark_report() -> Result<()> {
         .min_by(|a, b| a.compaction_time_ms.partial_cmp(&b.compaction_time_ms).unwrap());
     
     if let Some(fc) = fast_compact {
-        info!("│ Fast Compaction         │ {:6} │ {}: {}ms for {} files         │",
+        println!("│ Fast Compaction         │ {:6} │ {}: {}ms for {} files         │",
             fc.engine, fc.algorithm, fc.compaction_time_ms, fc.compaction_input_files);
     }
     
-    info!("└─────────────────────────┴────────┴─────────────────────────────────┘");
+    println!("└─────────────────────────┴────────┴─────────────────────────────────┘");
     
     // Save HTML report
     let html_report = generate_html_report(&all_results);
     let mut file = File::create("/tmp/proximadb_benchmark_report.html")?;
     file.write_all(html_report.as_bytes())?;
-    info!("\n✅ HTML report saved to: /tmp/proximadb_benchmark_report.html");
+    println!("\n✅ HTML report saved to: /tmp/proximadb_benchmark_report.html");
     
     // Save CSV for further analysis
     let mut csv = String::from("Engine,Sparsity,Algorithm,Level,Batches,CompressedKB,OriginalKB,Ratio,SavingsPercent,AvgFlushMs,CompactMs,FilesIn,FilesOut,P50Ms,P99Ms,QPS\n");
@@ -739,9 +760,9 @@ async fn test_generate_comprehensive_benchmark_report() -> Result<()> {
     
     let mut csv_file = File::create("/tmp/proximadb_benchmark_results.csv")?;
     csv_file.write_all(csv.as_bytes())?;
-    info!("✅ CSV data saved to: /tmp/proximadb_benchmark_results.csv");
+    println!("✅ CSV data saved to: /tmp/proximadb_benchmark_results.csv");
     
-    info!("\n🎉 COMPREHENSIVE BENCHMARK REPORT COMPLETE!");
+    println!("\n🎉 COMPREHENSIVE BENCHMARK REPORT COMPLETE!");
     
     Ok(())
 }
