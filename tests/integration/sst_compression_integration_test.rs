@@ -9,7 +9,10 @@
 //!
 //! Refactored to use unified test utilities for consistent path handling and configuration.
 
-use crate::common::unified_test_utils::{UnifiedTestEnvironment, operations};
+mod common {
+    include!("../common/mod.rs");
+}
+use common::unified_test_utils::{UnifiedTestEnvironment, operations};
 use crate::integration::viper_compression_integration_test::create_test_vectors;
 use crate::integration::test_utils::{setup_hardware_capabilities, create_test_config, create_test_collection_with_storage};
 use proximadb::core::{SstConfig, VectorRecord};
@@ -155,7 +158,7 @@ async fn test_sst_engine_flush_with_compression_integration() -> anyhow::Result<
     let collection_data_dir = temp_dir.path().join("test_collection").join("data");
     tokio::fs::create_dir_all(&collection_data_dir).await?;
     
-    let collection_config = create_test_collection_with_storage("test_collection", base_path);
+    let collection_config = create_test_collection_with_storage("test_collection", base_path.to_string());
     let flush_params = proximadb::storage::traits::FlushParameters {
         collection_id: Some("test_collection".to_string()),
         vector_records: vectors,
@@ -239,7 +242,7 @@ async fn test_sst_compaction_preserves_compression_integrity() -> anyhow::Result
     
     for batch in 0..3 {
         let vectors = create_test_vectors(500, 128, &format!("batch_{}", batch));
-        let collection_config = create_test_collection_with_storage("test_compaction", base_path);
+        let collection_config = create_test_collection_with_storage("test_compaction", base_path.to_string());
         let flush_params = proximadb::storage::traits::FlushParameters {
             collection_id: Some("test_compaction".to_string()),
             vector_records: vectors,
@@ -370,7 +373,7 @@ async fn test_sst_search_compressed_blocks() -> anyhow::Result<()> {
     let collection_data_dir = temp_dir.path().join("test_search").join("data");
     tokio::fs::create_dir_all(&collection_data_dir).await?;
     
-    let collection_config = create_test_collection_with_storage("test_search", base_path);
+    let collection_config = create_test_collection_with_storage("test_search", base_path.to_string());
     let flush_params = proximadb::storage::traits::FlushParameters {
         collection_id: Some("test_search".to_string()),
         vector_records: all_vectors,
@@ -471,7 +474,7 @@ async fn test_compression_algorithm_vs_disabled() -> anyhow::Result<()> {
     let collection_data_dir = temp_dir_compressed.path().join("compressed_test").join("data");
     tokio::fs::create_dir_all(&collection_data_dir).await?;
     
-    let collection_config = create_test_collection_with_storage("compressed_test", base_path);
+    let collection_config = create_test_collection_with_storage("compressed_test", base_path.to_string());
     let flush_params = proximadb::storage::traits::FlushParameters {
         collection_id: Some("compressed_test".to_string()),
         vector_records: vectors.clone(),

@@ -2,11 +2,15 @@
 //!
 //! Refactored to use unified test utilities for consistent path handling and configuration.
 
-use crate::common::unified_test_utils::{UnifiedTestEnvironment, operations};
+mod common {
+    include!("../../common/mod.rs");
+}
+use common::unified_test_utils::{UnifiedTestEnvironment, operations};
 use proximadb::core::VectorRecord;
 use proximadb::core::search::{FilterExpression, ComparisonOperator};
 use proximadb::proto::proximadb::MetadataItem;
 use proximadb::compute::distance_computation::DistanceMetric;
+use proximadb::storage::traits::UnifiedStorageEngine;
 use std::sync::Arc;
 use tracing::{debug, info};
 

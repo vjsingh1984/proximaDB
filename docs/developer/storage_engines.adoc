@@ -7,7 +7,7 @@
 
 == Overview
 
-image::storage-engine-abstract.svg[Storage Engine Architecture, width=900]
+image::storage-engine-abstract.svg[Storage Engine Architecture, width=2700]
 
 ProximaDB implements two specialized storage engines optimized for different workloads:
 

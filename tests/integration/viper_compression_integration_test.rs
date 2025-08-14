@@ -10,8 +10,11 @@
 //!
 //! Refactored to use unified test utilities for consistent path handling and configuration.
 
-use crate::common::unified_test_utils::{UnifiedTestEnvironment, operations};
-use crate::common::ensure_test_directories;
+mod common {
+    include!("../common/mod.rs");
+}
+use common::unified_test_utils::{UnifiedTestEnvironment, operations};
+use common::ensure_test_directories;
 use crate::integration::test_utils::{create_test_config, setup_test_assignment, create_metadata_store_config, create_test_collection_with_storage};
 
 // Metadata store configuration now handled by UnifiedTestEnvironment
@@ -290,7 +293,7 @@ async fn test_viper_engine_flush_creates_compressed_parquet_files() -> anyhow::R
     // Flush vectors
     let vectors = create_test_vectors(1000, 256, "flush_test");
     let base_path = temp_dir.path().to_str().unwrap();
-    let collection_config = create_test_collection_with_storage("test_collection", base_path);
+    let collection_config = create_test_collection_with_storage("test_collection", base_path.to_string());
     let flush_params = proximadb::storage::traits::FlushParameters {
         collection_id: Some("test_collection".to_string()),
         vector_records: vectors,
@@ -393,7 +396,7 @@ async fn test_viper_search_compressed_data() -> anyhow::Result<()> {
     // Create and flush diverse test data
     let vectors = create_test_vectors(2000, 512, "search");
     let base_path = temp_dir.path().to_str().unwrap();
-    let collection_config = create_test_collection_with_storage("search_test", base_path);
+    let collection_config = create_test_collection_with_storage("search_test", base_path.to_string());
     let flush_params = proximadb::storage::traits::FlushParameters {
         collection_id: Some("search_test".to_string()),
         vector_records: vectors,
@@ -473,7 +476,7 @@ async fn test_viper_compaction_merges_compressed_parquet_efficiently() -> anyhow
     for batch in 0..5 {
         let vectors = create_test_vectors(200, 128, &format!("batch_{}", batch));
         let base_path = temp_dir.path().to_str().unwrap();
-        let collection_config = create_test_collection_with_storage("compaction_test", base_path);
+        let collection_config = create_test_collection_with_storage("compaction_test", base_path.to_string());
         let flush_params = proximadb::storage::traits::FlushParameters {
             collection_id: Some("compaction_test".to_string()),
             vector_records: vectors,
@@ -576,7 +579,7 @@ async fn test_compression_algorithms_comparison() -> anyhow::Result<()> {
         let vectors = create_test_vectors(500, 512, "algo");
         
         let base_path = temp_dir.path().to_str().unwrap();
-        let collection_config = create_test_collection_with_storage("algo_test", base_path);
+        let collection_config = create_test_collection_with_storage("algo_test", base_path.to_string());
         let flush_params = proximadb::storage::traits::FlushParameters {
             collection_id: Some("algo_test".to_string()),
             vector_records: vectors,
@@ -676,7 +679,7 @@ async fn test_compression_algorithm_vs_disabled() -> anyhow::Result<()> {
         info!("🔍 Vector sparsity: {:.1}% zeros ({} out of {} elements)", 
               sparsity_percent, zero_count, total_elements);
         let base_path = temp_dir.path().to_str().unwrap();
-        let collection_config = create_test_collection_with_storage("compression_test", base_path);
+        let collection_config = create_test_collection_with_storage("compression_test", base_path.to_string());
         let flush_params = proximadb::storage::traits::FlushParameters {
             collection_id: Some("compression_test".to_string()),
             vector_records: vectors,

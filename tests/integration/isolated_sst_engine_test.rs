@@ -10,7 +10,10 @@ use anyhow::Result;
 use tracing::{debug, error, info, warn};
 use std::collections::{HashMap, HashSet};
 
-use crate::common::unified_test_utils::{UnifiedTestEnvironment, MultiUnifiedEnvironmentTest, operations};
+mod common {
+    include!("../common/mod.rs");
+}
+use common::unified_test_utils::{UnifiedTestEnvironment, MultiUnifiedEnvironmentTest, operations};
 use crate::integration::test_utils::{IsolatedTestEnvironment, MultiEnvironmentTest};
 use proximadb::core::search::{FilterExpression, ComparisonOperator};
 use proximadb::core::VectorRecord;
