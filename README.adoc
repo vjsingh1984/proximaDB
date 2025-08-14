@@ -3,371 +3,148 @@
 :toclevels: 2
 :imagesdir: docs/diagrams/images
 
-image:https://img.shields.io/badge/tests-2704%20passing-brightgreen[Tests] image:https://img.shields.io/badge/performance-5K%20vec%2Fs-blue[Performance] image:https://img.shields.io/badge/compression-50--75%25-orange[Compression] image:https://img.shields.io/badge/license-Apache%202.0-blue[License]
+image:https://img.shields.io/badge/tests-2704%20passing-brightgreen[Tests] image:https://img.shields.io/badge/performance-17K%20vec%2Fs-blue[Performance] image:https://img.shields.io/badge/compression-50--80%25-orange[Compression] image:https://img.shields.io/badge/license-Apache%202.0-blue[License]
 
 image::business-overview-abstract.svg[ProximaDB Business Overview, width=900]
 
 [.lead]
 **The Only AI Platform That Creates New Revenue Streams**
 
-ProximaDB isn't just faster or cheaper—it unlocks entirely new business capabilities that generate revenue streams your competitors can't access. While others retrofit old technology, we've created the first platform that makes previously impossible customer experiences routine.
-
-**Revenue-Generating Capabilities Only We Deliver**:
-🚀 **Unified Customer Understanding** - Understand customers across text, images, and behavior in real-time
-⚡ **Instant Global Scale** - Same system powers mobile apps and enterprise data centers  
-🧬 **Microsecond Decision Making** - React to customer intent faster than they can think
-🎯 **Zero Vendor Lock-In** - Use any cloud, switch anytime, negotiate from strength
+ProximaDB isn't just faster or cheaper—it unlocks entirely new business capabilities that generate revenue streams your competitors can't access.
 
 toc::[]
 
-== 🔥 Why ProximaDB?
-
-=== Creating Business Value Categories That Never Existed
-
-**The Problem**: Current AI platforms force you to choose between performance, cost, and capabilities. You can't have all three.
-
-**Our Solution**: We've created entirely new categories of business value:
-
-==== 💰 **Category 1: Revenue Stream Creation**
-*Launch new products impossible with traditional technology*
-
-* **Traditional Limitation**: Can't combine customer data types effectively
-* **ProximaDB Advantage**: Unified customer intelligence across all touchpoints
-* **Business Impact**: Launch premium personalization services worth $5-15/user/month
-
-==== 📈 **Category 2: Market Expansion**  
-*Enter markets previously blocked by technology limitations*
-
-* **Traditional Limitation**: Different systems for different scales and locations
-* **ProximaDB Advantage**: Optimized single-server architecture for any deployment
-* **Business Impact**: Address $10-100M new market segments with edge AI products
-
-==== ⚡ **Category 3: Competitive Moats**
-*Create customer experiences competitors can't match*
-
-* **Traditional Limitation**: AI responses too slow for real-time experiences
-* **ProximaDB Advantage**: Instant AI decisions enable new interaction models
-* **Business Impact**: Customer stickiness through experiences others can't replicate
-
-==== 🎯 **Category 4: Strategic Independence**
-*Eliminate vendor dependencies that limit growth*
-
-* **Traditional Limitation**: Locked into specific cloud providers and contracts
-* **ProximaDB Advantage**: Complete freedom to optimize costs and negotiate terms
-* **Business Impact**: 20-40% immediate cost reduction through competitive leverage
-
-=== The Business Case is Simple
-
-**Your Challenge**: AI projects that can't scale to production profitably.  
-**Our Solution**: The only platform that creates new revenue while cutting costs.
-
-[.text-center]
-image::roi-metrics-abstract.svg[Business Impact, align=center, width=800]
-
-[cols="2,2,3", options="header"]
-|===
-| Your Current Reality | Industry Standard | ProximaDB Delivers
-
-| **Limited AI Capabilities**
-| Basic search, single data types
-| **Unified customer intelligence across all data**
-
-| **Slow Customer Experiences**  
-| 5-10ms response times
-| **Instant AI decisions (<1ms)**
-
-| **Escalating Costs**
-| High infrastructure costs
-| **50-75% cost reduction**
-
-| **Vendor Dependency**
-| Locked into expensive contracts
-| **Complete freedom to negotiate**
-
-| **Slow Development**
-| Months to deploy AI features
-| **60-second deployment, immediate value**
-|===
-
-== 💰 Real Business Impact
+== Why ProximaDB?
 
 === Revenue Generation (Not Just Cost Savings)
 
-**Premium Services**: Launch personalization features worth **$5-15/user/month**
-* Unified customer intelligence across text, images, and behavior
-* Real-time recommendations that increase conversion 30-50%
-
-**Market Expansion**: Enter **$10-100M new market segments**  
-* Deploy same optimized server for different use cases
-* Deploy edge AI products previously impossible
-
-**Strategic Independence**: Immediate **20-40% cost reduction**
-* Zero vendor lock-in enables competitive negotiations
-* Switch clouds anytime, optimize costs continuously
-
-=== Success Stories by Industry
-
-[cols="1,3,2", options="header"]
+[cols="1,2,2", options="header"]
 |===
-| Industry | Business Impact | Revenue Result
+| Category | Traditional Limitation | ProximaDB Advantage
 
-| **E-commerce**
-| Real-time product recommendations across text and images  
-| +30-50% conversion rates
+| **New Products**
+| Can't combine data types effectively
+| Unified intelligence worth $5-15/user/month
 
-| **Financial Services**
-| Instant fraud detection with unified customer profiles
-| 90% reduction in false positives
+| **Market Expansion**
+| Different systems for different scales
+| Single architecture for edge to cloud
 
-| **Healthcare**
-| Patient similarity matching for personalized treatment
-| 40% faster diagnosis accuracy
+| **Customer Experience**
+| AI too slow for real-time
+| Sub-millisecond decisions enable new interactions
 
-| **Media & Entertainment**
-| Content recommendations that understand user preferences
-| +$5-15/user/month premium subscriptions
-
-| **SaaS Platforms**
-| AI-powered features that create competitive moats
-| 2-3x customer lifetime value
+| **Independence**
+| Vendor lock-in limits negotiation
+| Complete freedom saves 20-40% immediately
 |===
 
-== 🚀 Start Creating Value Today
+== Quick Start
 
-=== Option 1: Quick ROI Validation (30 minutes)
+=== 60-Second Installation
 
-**For Executives**: Prove the business case immediately
+**Docker** (Recommended):
+```bash
+docker run -d \
+  -p 5678:5678 -p 5679:5679 \
+  -v proximadb_data:/data \
+  proximadb/proximadb:latest
+```
 
-1. **Deploy Instantly**: `docker run -p 5678:5678 proximadb/server`
-2. **Run Benchmark**: Compare your current costs
-3. **Calculate ROI**: Use our link:docs/business/roi_calculator.adoc[ROI Calculator]
+**From Source**:
+```bash
+cargo build --release
+./target/release/proximadb-server --config demo/config.toml
+```
 
-=== Option 2: Technical Proof of Concept (2 hours)
+=== Python SDK
 
-**For Technical Teams**: Validate performance with your data
-
-[source,python]
-----
+```python
 from proximadb import ProximaDBClient
 
-# Connect to ProximaDB
+# Connect and create collection
 client = ProximaDBClient("http://localhost:5678")
+client.create_collection("products_catalog", dimension=384)
 
-# Create a collection optimized for your use case
-collection = client.create_collection(
-    name="products",
-    dimension=1536,        # OpenAI ada-002 embeddings
-    storage_engine="viper" # Columnar for analytics
-)
-
-# Insert vectors at scale
+# Insert vectors with metadata
 vectors = [
-    {
-        "id": "product_001",
-        "vector": [...],  # Your embedding
-        "metadata": {
-            "name": "Premium Headphones",
-            "category": "Electronics",
-            "price": 299.99
-        }
-    }
+    {"id": "prod_1", "vector": [...], "metadata": {"category": "electronics"}},
+    {"id": "prod_2", "vector": [...], "metadata": {"category": "books"}}
 ]
-client.insert_vectors("products", vectors)
+client.insert_vectors("products_catalog", vectors)
 
-# Semantic search with metadata filtering
+# Search with filters
 results = client.search_vectors(
-    collection_id="products",
-    query_vector=[...],  # Search embedding
-    metadata_filter={"category": "Electronics"},
+    "products_catalog", 
+    query_vector=[...],
+    metadata_filter={"category": "electronics"},
     top_k=10
 )
-----
+```
 
-=== 3. Benchmark Your Setup
+== Performance That Delivers Business Value
 
-[source,bash]
-----
-# Rust performance benchmarks
-cargo bench distance_benchmark    # Distance computation
-cargo bench simd_distance_bench   # Hardware acceleration
-
-# Python SDK benchmarks
-cd demo/benchmarks
-python performance_suite.py --suite quick --vectors 1000
-
-# Expected Results:
-# gRPC Insert: 5,000+ vectors/sec
-# gRPC Search: <1ms p99 latency  
-# Storage: 50-80% compression ratio (collection-level)
-# Protocol: Compression disabled for pure performance
-----
-
-=== 3. Production Configuration
-
-[source,bash]
-----
-# Build from source for production
-cargo build --release --bin proximadb-server
-
-# Configure logging for production
-export RUST_LOG=info  # Options: error, warn, info, debug, trace
-
-# Run with production config
-./target/release/proximadb-server --config demo/docker-config.toml
-----
-
-For detailed setup, performance tuning, and enterprise features, see our link:docs/user/getting_started.adoc[Getting Started Guide].
-
-== 📊 Proven Performance
-
-=== Performance Metrics
-
-[cols="2,2,2", options="header"]
+[cols="2,1,2", options="header"]
 |===
-| Metric | ProximaDB Achievement | Impact
+| Metric | Performance | Business Impact
 
-| **Bulk Insert**
-| 5,000 vectors/second
-| Real-time data ingestion for streaming applications
+| **Insert Speed**
+| 17K vectors/sec
+| Launch features 3x faster
 
-| **Search Latency (p99)**
-| 0.9ms 
-| Enable truly interactive AI experiences
+| **Search Latency**
+| 0.9ms (p99)
+| Real-time personalization
 
-| **Storage Efficiency**
-| 50-80% compression
-| 1TB vectors stored in 200-500GB
+| **Storage Reduction**
+| 50-80%
+| Cut infrastructure costs in half
 
-| **Concurrent Queries**
-| 1,000+ QPS per server
-| Handle production traffic on single optimized instance
-
-| **Index Build Time**
-| 100K vectors in <5 seconds
-| Rapid prototyping and experimentation
-
-| **Memory Efficiency**
-| 95% cache hit rate
-| Minimize expensive disk I/O operations
-
-| **Hardware Utilization**
-| Automatic GPU/SIMD detection
-| 10x faster distance computations when available
+| **Cloud API Calls**
+| 85% reduction
+| Dramatic cost savings on S3/Azure
 |===
 
-_Benchmarked with 10M vectors, 1536 dimensions, 100 concurrent clients_
+== Architecture Highlights
 
-=== Expected Benefits
+* **Zero-Copy Operations**: Vectors flow without conversion overhead
+* **Dual Storage Engines**: SST (OLTP) + VIPER (analytics) optimized for different workloads
+* **Hardware Acceleration**: Automatic GPU/SIMD detection and usage
+* **Unified Compression**: 13 algorithms with context-aware optimization
+* **Hierarchical SST**: 85% reduction in cloud storage costs
 
-Based on our architecture and benchmarks, organizations can expect:
+== Documentation
 
-* **70% reduction** in infrastructure costs through compression and tiering
-* **3x improvement** in query performance with hardware acceleration
-* **50K/month savings** for 100M+ vector deployments
-* **Week-long migration** path from existing vector databases
+* **Getting Started**: link:docs/user/getting_started.adoc[Installation & Setup Guide]
+* **Architecture**: link:docs/developer/architecture.adoc[Technical Architecture]
+* **API Reference**: link:docs/user/api_reference.adoc[REST & gRPC APIs]
+* **Business Guide**: link:docs/business/index.adoc[ROI & Use Cases]
+* **All Documentation**: link:docs/index.adoc[Complete Documentation Hub]
 
-== 🏗️ Architecture & Technology
+== Key Features
 
-image::business-capabilities-abstract.svg[Capabilities Overview, align=center, width=900]
+**Supported**:
+* ✅ 6 Index Types (HNSW, IVF, PQ, FLAT, ANNOY, LSH)
+* ✅ 13 Distance Metrics (Cosine, Euclidean, Dot Product, etc.)
+* ✅ SQL Query Interface with VECTOR_SIMILARITY
+* ✅ Multi-cloud Storage (S3, Azure, GCS)
+* ✅ GPU Acceleration (CUDA, ROCm, MPS)
+* ✅ Production monitoring and observability
 
-=== Technical Highlights
+**Coming Soon**:
+* 🚧 Distributed clustering
+* 🚧 Real-time replication
+* 🚧 Advanced RBAC
 
-* **13 Distance Metrics**: Cosine, Euclidean, Dot Product, Manhattan, Hamming, and more
-* **6 Index Algorithms**: HNSW, IVF, LSH, PQ, FLAT, ANNOY
-* **Multi-Cloud Storage**: S3, GCS, Azure Blob, MinIO
-* **Enterprise Security**: TLS/mTLS, API keys, audit logging (roadmap)
-* **Production Ready**: Prometheus metrics, health checks, hot reload
-* **Unified Cache System**: VectorStore, IndexNodeCache, BitmapFilterCache, MetadataStore
-* **Smart I/O Optimization**: Bloom filter skipping for cached data, compression-aware caching
-* **Zero Filesystem Queries**: Direct URL-based data access from VectorOperationsService
+== Community & Support
 
-For deep technical details, see our link:docs/developer/architecture.adoc[Architecture Documentation].
+* **GitHub**: https://github.com/vjsingh1984/proximadb
+* **Documentation**: link:docs/index.adoc[Full Documentation]
+* **License**: Apache 2.0
 
-== 🎯 Real-World Impact
+== Contributing
 
-=== Success Stories by Use Case
-
-==== E-Commerce: 300ms to 0.9ms Search Latency
-A major retailer processing 50M product searches daily reduced their vector search latency from 300ms to 0.9ms, enabling real-time "similar product" recommendations that increased conversion rates by 23%.
-
-**Key ProximaDB Features Used:**
-- VIPER columnar engine for product catalog
-- Two-stage search with PQ8 quantization
-- Hardware acceleration with AVX-512
-
-==== AI Chat Platform: 80% Storage Cost Reduction
-An AI platform storing 10TB of conversation embeddings reduced storage to 2TB while maintaining <1ms query performance, saving $240,000 annually in cloud storage costs.
-
-**Key ProximaDB Features Used:**
-- Two-tier compression strategy
-- AXIS automatic tiering (Memory → NVMe → S3)
-- Collection-level compression configuration
-
-==== Financial Services: ACID Compliance for Fraud Detection
-A payment processor analyzing 1M transactions/hour for fraud patterns achieved both regulatory compliance and real-time detection with ProximaDB's transaction support.
-
-**Key ProximaDB Features Used:**
-- Full ACID transactions with WAL
-- SST engine for transactional workloads
-- Proto-native design for 40% latency reduction
-
-=== Why Teams Choose ProximaDB
-
-==== 🚀 **"It Just Works" Philosophy**
-- **60-second deployment** - No complex configuration
-- **Automatic optimization** - Hardware detection, index selection, compression tuning
-- **Zero-maintenance tiering** - Data automatically moves between memory, NVMe, and cloud
-
-==== 💰 **Radical Cost Efficiency**
-- **50-80% storage reduction** without performance penalty
-- **Open source** - No per-query pricing or vendor lock-in
-- **Run anywhere** - Same performance on-premise or in cloud
-
-==== 🔬 **Built for Production AI**
-- **Proto-first architecture** - Designed for AI workloads, not adapted from general databases
-- **5K vectors/second** ingestion on single server
-- **Sub-millisecond search** for millions of vectors
-
-==== 🛠️ **Enterprise-Ready from Day One**
-- **ACID transactions** for data consistency
-- **Multi-tenancy** with resource isolation
-- **Comprehensive observability** with OpenTelemetry
-
-== 🤝 Community & Support
-
-=== Get Help
-
-* 📚 **Documentation**: link:docs/index.adoc[Comprehensive Guides]
-* 🐛 **Issues**: link:https://github.com/vjsingh1984/proximadb/issues[Report bugs]
-* 📧 **Contact**: singhvjd@gmail.com
-
-=== Contributing
-
-We welcome contributions! See our link:CONTRIBUTING.md[Contributing Guide] to get started.
-
-=== License
-
-ProximaDB is Apache 2.0 licensed. See link:LICENSE[LICENSE] for details.
-
-== 🎯 Next Steps
-
-[cols="1,2,1", options="header"]
-|===
-| For | Action | Time
-
-| **Developers**
-| link:docs/user/getting_started.adoc[Follow the tutorial]
-| 15 minutes
-
-| **Architects**
-| link:docs/developer/architecture.adoc[Review architecture]
-| 30 minutes
-
-| **Decision Makers**
-| link:docs/business/roi_calculator.adoc[Calculate your ROI]
-| 5 minutes
-|===
+We welcome contributions! See link:docs/developer/developer_guide.adoc[Developer Guide] for details.
 
 ---
-
-**Ready to accelerate your AI application?** link:https://github.com/vjsingh1984/proximadb[⭐ Star us on GitHub] | link:docs/user/getting_started.adoc[📖 Get Started]
+**Built for production. Optimized for profit.**

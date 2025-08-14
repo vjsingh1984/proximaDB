@@ -3,142 +3,119 @@
 :toclevels: 2
 :imagesdir: diagrams/images
 
-image::business-overview-abstract.svg[ProximaDB Business Overview, align=center, width=900]
+image::technical-architecture-abstract.svg[ProximaDB Architecture, width=900]
 
+[.lead]
 **Enterprise vector database with hierarchical SST architecture, unified compression, and zero-copy operations.**
 
-**Technical Architecture Overview**
-
-[cols="1,1", frame=none, grid=none]
-|===
-| image::system-data-flow-abstract.svg[Data Flow, width=400] +
-_**Vector Pipeline**: Zero-conversion data flow_
-| image::service-interactions-abstract.svg[Services, width=400] +
-_**Service Architecture**: Microservice coordination_
-|===
-
-_For detailed architecture diagrams:_
-* link:diagrams/business-architecture-consolidated.mmd[Business Architecture Hub] | link:diagrams/proximadb-architecture-consolidated.mmd[Technical Architecture Hub]
-* link:diagrams/index.adoc[Complete Diagrams Documentation]
-
-== Quick Start
+== Documentation Hub
 
 [cols="1,1,1", frame=none, grid=none]
 |===
 | **🚀 Get Started**
-link:user/getting_started.adoc[Install] +
+link:user/getting_started.adoc[Installation & Setup] +
 link:user/user_guide.adoc[User Guide] +
-link:user/api_reference.adoc[API Reference]
+link:user/api_reference.adoc[API Reference] +
+link:user/semantic_search_guide.adoc[Semantic Search]
 
-| **🔧 Develop**
-link:developer/architecture.adoc[Architecture] +
-link:developer/technical_reference.adoc[Technical Docs] +
-link:developer/developer_guide.adoc[Contributing]
+| **🔧 Developer Docs**
+link:developer/architecture.adoc[Architecture Overview] +
+link:developer/technical_reference.adoc[Technical Reference] +
+link:developer/storage_engines.adoc[Storage Engines] +
+link:developer/developer_guide.adoc[Contributing Guide]
 
-| **📊 Deploy**
-link:admin/multi_disk_guide.adoc[Production] +
-link:performance_reference.adoc[Performance] +
-link:compression_guide.adoc[Compression]
+| **📊 Operations**
+link:admin/multi_disk_guide.adoc[Production Setup] +
+link:admin/configuration_reference.adoc[Configuration] +
+link:performance_reference.adoc[Performance Guide] +
+link:compression_guide.adoc[Compression Guide]
 |===
 
-=== For Business Leaders
-* link:business/index.adoc[**Business Overview**] - Executive summary and value proposition
-* link:business/roi_calculator.adoc[**ROI Calculator**] - Calculate your cost savings
-* link:business/use_cases.adoc[**Industry Use Cases**] - How different industries can benefit
+== For Business Leaders
 
-== Key Capabilities
+[cols="1,1,1", frame=none, grid=none]
+|===
+| link:business/index.adoc[**Business Overview**] +
+Executive summary and value proposition
 
-image::competitive-advantages-abstract.svg[ProximaDB Competitive Advantages, width=900]
-_Technology leadership, market differentiators, and performance edge_
+| link:business/roi_calculator.adoc[**ROI Calculator**] +
+Calculate cost savings and revenue impact
 
+| link:business/use_cases.adoc[**Industry Use Cases**] +
+Real-world applications by industry
+|===
+
+== Key Features
+
+=== Core Capabilities
+* **6 Index Types**: HNSW, IVF, PQ, FLAT, ANNOY, LSH
+* **13 Distance Metrics**: Cosine, Euclidean, Dot Product, Manhattan, Hamming, Jaccard, and more
+* **13 Compression Algorithms**: ZSTD, LZ4, Snappy, Gzip, Brotli, and more
+* **Query Interfaces**: SQL, REST API, gRPC, Python SDK
+* **Cloud Storage**: S3, Azure Blob, Google Cloud Storage, MinIO
+
+=== Performance Metrics
 [cols="2,1,1", options="header"]
 |===
-| Metric | Performance | Industry Comparison
+| Metric | Performance | vs Industry
 
-| **Insert Throughput (gRPC)**
-| 5,000 vec/s
-| 2.5x faster
-
-| **Search Latency (gRPC)**
-| 0.9ms (p99)
-| 65% lower
-
-| **Storage Cost Reduction**
-| 85% (S3 API calls)
-| Best in class
-
-| **Compression Efficiency**
-| 40% better with unified module
-| Leading edge
-
-| **Test Coverage**
-| 2,700+ tests passing
-| 100% pass rate
+| Insert Throughput (gRPC) | 17K vec/s | 2.9x faster
+| Search Latency (p99) | 0.9ms | 65% lower
+| Storage Compression | 50-80% | 40% better
+| Test Coverage | 2,700+ tests | 100% pass
 |===
 
-== Architecture
+== Architecture Highlights
 
-=== Core Components ✅ PRODUCTION-READY
-* **Hierarchical SST Architecture**: 85% S3 cost reduction, enhanced headers, smart bloom filters
-* **Zero-Copy Compaction**: SstRecord → SstRecord streaming with MVCC resolution
-* **Unified Compression**: 13 algorithms across SST/Vector/Parquet contexts
-* **Dual Storage**: SST (row-based) + VIPER (columnar) with modular reader architecture
-* **Hardware Acceleration**: Automatic GPU/SIMD detection
+image::system-data-flow-abstract.svg[Data Flow Architecture, width=900]
 
-=== Supported Features
-* **6 Index Types**: HNSW, IVF, PQ, FLAT, ANNOY, LSH
-* **13 Distance Metrics**: Cosine, Euclidean, Dot Product, Manhattan, etc.
-* **Query Options**: SQL, REST, gRPC, Python SDK
-* **Cloud Storage**: S3, Azure Blob, Google Cloud Storage
+=== Production-Ready Components
+* **Hierarchical SST**: 85% S3 cost reduction with smart bloom filters
+* **Zero-Copy Compaction**: Direct SstRecord streaming with MVCC
+* **Unified Compression**: Single module for all compression contexts
+* **Dual Storage Engines**: SST (row-based) + VIPER (columnar)
+* **Hardware Acceleration**: Automatic GPU/SIMD detection and usage
 
-== Documentation Guide
+== Quick Start Examples
 
-=== For Developers
-1. link:user/getting_started.adoc[**Getting Started**] - Installation and setup
-2. link:user/api_reference.adoc[**API Reference**] - REST and gRPC endpoints
-3. link:developer/architecture.adoc[**Architecture**] - System design and components
-4. link:developer/storage_engines.adoc[**Storage Engines**] - SST & VIPER architecture with hierarchical design
-5. link:developer/hierarchical_sst_implementation.adoc[**Hierarchical SST Implementation**] - Production SST architecture details
-6. link:developer/technical_reference.adoc[**Technical Reference**] - Complete implementation details
-
-=== For Operations
-1. link:admin/multi_disk_guide.adoc[**Production Setup**] - Multi-disk and cloud deployment
-2. link:admin/configuration_reference.adoc[**Configuration Reference**] - Complete TOML configuration guide
-3. link:performance_reference.adoc[**Performance & Benchmarking Guide**] - Complete testing methodology and performance tuning
-4. link:compression_guide.adoc[**Compression**] - Storage optimization
-5. link:enterprise_features.adoc[**Roadmap**] - Future features and versions
-
-=== Key Diagrams
-* link:diagrams/index.adoc[**Complete Diagrams Guide**] - Modular visual documentation
-* link:diagrams/images/business-overview-abstract.svg[Business Overview] - Value proposition and core benefits
-* link:diagrams/images/module-integration-abstract.svg[System Capabilities] - What you can build with ProximaDB
-
-== Quick Examples
-
-=== Docker Setup
-```bash
+=== Docker Deployment
+[source,bash]
+----
 docker run -d \
   -p 5678:5678 \
   -p 5679:5679 \
   -v proximadb_data:/data \
   proximadb/proximadb:latest
-```
+----
 
-=== Python Client
-```python
+=== Python SDK
+[source,python]
+----
 from proximadb import ProximaDBClient
 
 client = ProximaDBClient("http://localhost:5678")
 client.create_collection("my_vectors", dimension=384)
-client.insert_vectors("my_vectors", vectors)
+client.insert_vectors("my_vectors", data)
 results = client.search("my_vectors", query_vector, top_k=10)
-```
+----
+
+== Specialized Documentation
+
+=== Implementation Guides
+* link:developer/hierarchical_sst_implementation.adoc[Hierarchical SST Architecture]
+* link:developer/axis_unified_tiering_architecture.adoc[AXIS Tiering System]
+* link:developer/search_optimization_analysis.adoc[Search Optimization]
+* link:developer/magic_bytes_architecture.adoc[Magic Bytes Architecture]
+
+=== Visual Documentation
+* link:diagrams/index.adoc[Complete Diagrams Guide]
+* link:DOCUMENTATION_MAP.adoc[Documentation Map]
 
 == Resources
 
 * link:https://github.com/vjsingh1984/proximadb[GitHub Repository]
-* link:enterprise_features.adoc[Version Roadmap]
-* link:DOCUMENTATION_MAP.adoc[Documentation Map]
+* link:enterprise_features.adoc[Roadmap & Future Features]
+* link:deployment_quick_reference.adoc[Deployment Guide]
 
 ---
 **Version 1.0.0** | **Apache 2.0 License**
