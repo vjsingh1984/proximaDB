@@ -28,7 +28,7 @@ link:developer/developer_guide.adoc[Contributing Guide]
 
 | **📊 Operations**
 link:admin/multi_disk_guide.adoc[Production Setup] +
-link:admin/configuration_reference.adoc[Configuration] +
+link:deployment_guide.adoc[Deployment Guide] +
 link:performance_reference.adoc[Performance Guide] +
 link:compression_guide.adoc[Compression Guide]
 |===

@@ -45,7 +45,17 @@ image::proximadb-overview.svg[ProximaDB Architecture, width=267, align=center]
 
 === 60-Second Installation
 
-**Docker** (Recommended):
+**Docker with Cloud Storage** (Recommended for Production):
+```bash
+# Stateless deployment with S3 backend
+docker run -d \
+  -p 5678:5678 -p 5679:5679 \
+  -e STORAGE_BACKEND=s3 \
+  -e S3_BUCKET=my-proximadb-data \
+  proximadb/proximadb:latest
+```
+
+**Docker with Local Storage** (Development):
 ```bash
 docker run -d \
   -p 5678:5678 -p 5679:5679 \
@@ -109,6 +119,8 @@ results = client.search_vectors(
 
 == Architecture Highlights
 
+* **Single-Server Simplicity**: No coordination overhead, instant deployment
+* **Elastic Spot Scaling**: 70-80% compute savings with automatic elasticity
 * **Zero-Copy Operations**: Vectors flow without conversion overhead
 * **Dual Storage Engines**: SST (OLTP) + VIPER (analytics) optimized for different workloads
 * **Hardware Acceleration**: Automatic GPU/SIMD detection and usage
@@ -118,9 +130,11 @@ results = client.search_vectors(
 == Documentation
 
 * **Getting Started**: link:docs/user/getting_started.adoc[Installation & Setup Guide]
+* **Deployment Guide**: link:docs/deployment_guide.adoc[Complete Deployment with Spot Elasticity]
 * **Architecture**: link:docs/developer/architecture.adoc[Technical Architecture]
 * **API Reference**: link:docs/user/api_reference.adoc[REST & gRPC APIs]
 * **Business Guide**: link:docs/business/index.adoc[ROI & Use Cases]
+* **Performance Guide**: link:docs/performance_reference.adoc[Optimization & Benchmarks]
 * **All Documentation**: link:docs/index.adoc[Complete Documentation Hub]
 
 == Key Features

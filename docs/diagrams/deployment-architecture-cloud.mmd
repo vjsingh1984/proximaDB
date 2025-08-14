@@ -1,0 +1,88 @@
+%%{init: {'theme':'dark', 'themeVariables': { 'primaryColor':'#1f2937', 'primaryTextColor':'#f3f4f6', 'primaryBorderColor':'#4b5563', 'lineColor':'#6b7280', 'secondaryColor':'#374151', 'tertiaryColor':'#111827', 'background':'#111827', 'mainBkg':'#1f2937', 'secondBkg':'#374151', 'tertiaryBkg':'#111827'}}}%%
+graph TB
+    subgraph "AWS Deployment - Stateless (Recommended)"
+        subgraph "EKS Cluster"
+            EKS[EKS Control Plane]
+            subgraph "Availability Zone 1"
+                POD1[ProximaDB Pod<br/>Single Container]
+            end
+            subgraph "Availability Zone 2"
+                POD2[ProximaDB Pod<br/>Standby/Failover]
+            end
+        end
+        
+        subgraph "Storage Layer"
+            S3[S3 Bucket<br/>Data & Metadata<br/>$0.023/GB/month]
+            S3REP[S3 Cross-Region<br/>Replication<br/>15-min RTO]
+        end
+        
+        POD1 --> S3
+        POD2 --> S3
+        S3 --> S3REP
+        
+        subgraph "Cost Savings"
+            AWSSAVE[No API Gateway: -$50K/yr<br/>No Load Balancer: -$20K/yr<br/>No Multi-Instance: -$100K/yr<br/>Total: $170K saved]
+        end
+    end
+    
+    subgraph "Azure Deployment - Stateless"
+        subgraph "AKS Cluster"
+            AKS[AKS Control Plane]
+            subgraph "Zone 1"
+                APOD1[ProximaDB Container<br/>Primary]
+            end
+            subgraph "Zone 2"
+                APOD2[ProximaDB Container<br/>Auto-failover]
+            end
+        end
+        
+        subgraph "Azure Storage"
+            BLOB[Blob Storage<br/>LRS/ZRS/GRS<br/>$0.0184/GB/month]
+            BLOBGEO[Geo-Replication<br/>Automatic<br/>< 15-min RTO]
+        end
+        
+        APOD1 --> BLOB
+        APOD2 --> BLOB
+        BLOB --> BLOBGEO
+        
+        subgraph "Azure Savings"
+            AZSAVE[No App Gateway: -$45K/yr<br/>No Traffic Manager: -$25K/yr<br/>Single Instance: -$90K/yr<br/>Total: $160K saved]
+        end
+    end
+    
+    subgraph "GCP Deployment - Stateless"
+        subgraph "GKE Cluster"
+            GKE[GKE Autopilot]
+            subgraph "Zone A"
+                GPOD1[ProximaDB Pod<br/>Active]
+            end
+            subgraph "Zone B"
+                GPOD2[ProximaDB Pod<br/>Ready]
+            end
+        end
+        
+        subgraph "Cloud Storage"
+            GCS[Cloud Storage<br/>Standard/Nearline<br/>$0.020/GB/month]
+            GCSREP[Multi-Region<br/>Automatic Sync<br/>< 1-min RPO]
+        end
+        
+        GPOD1 --> GCS
+        GPOD2 --> GCS
+        GCS --> GCSREP
+        
+        subgraph "GCP Savings"
+            GCPSAVE[No Cloud LB: -$40K/yr<br/>No API Gateway: -$35K/yr<br/>Autopilot Scaling: -$80K/yr<br/>Total: $155K saved]
+        end
+    end
+    
+    style EKS fill:#ff9900,stroke:#fff,color:#000
+    style AKS fill:#0078d4,stroke:#fff,color:#fff
+    style GKE fill:#4285f4,stroke:#fff,color:#fff
+    
+    style S3 fill:#569a31,stroke:#fff,color:#fff
+    style BLOB fill:#0078d4,stroke:#fff,color:#fff
+    style GCS fill:#ea4335,stroke:#fff,color:#fff
+    
+    style AWSSAVE fill:#90ee90,stroke:#000,color:#000
+    style AZSAVE fill:#90ee90,stroke:#000,color:#000
+    style GCPSAVE fill:#90ee90,stroke:#000,color:#000

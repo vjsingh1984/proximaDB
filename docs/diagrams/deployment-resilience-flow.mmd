@@ -1,0 +1,56 @@
+%%{init: {'theme':'dark', 'themeVariables': { 'primaryColor':'#1f2937', 'primaryTextColor':'#f3f4f6', 'primaryBorderColor':'#4b5563', 'lineColor':'#6b7280', 'secondaryColor':'#374151', 'tertiaryColor':'#111827', 'background':'#111827', 'mainBkg':'#1f2937', 'secondBkg':'#374151', 'tertiaryBkg':'#111827'}}}%%
+sequenceDiagram
+    participant Client
+    participant K8s as Kubernetes
+    participant Pod1 as ProximaDB Pod (AZ-1)
+    participant Pod2 as ProximaDB Pod (AZ-2)
+    participant S3 as S3/Blob/GCS
+    participant S3R as Cross-Region Storage
+    
+    Note over Client,S3R: Normal Operation - Stateless Deployment
+    
+    Client->>K8s: Vector Search Request
+    K8s->>Pod1: Route to Active Pod
+    Pod1->>S3: Read Metadata/Data
+    S3-->>Pod1: Return Data
+    Pod1-->>Client: Search Results
+    
+    Note over Pod1,S3: Continuous Replication
+    S3->>S3R: Async Replication (continuous)
+    
+    Note over Client,S3R: Failure Scenario - AZ-1 Goes Down
+    
+    Client->>K8s: Vector Search Request
+    Note over Pod1: ❌ AZ-1 Failure
+    K8s->>Pod2: Instant Failover (<1s)
+    Pod2->>S3: Read Same Data
+    S3-->>Pod2: Return Data
+    Pod2-->>Client: Search Results
+    
+    Note over Client,S3R: Region Failure - Disaster Recovery
+    
+    Note over S3: ❌ Primary Region Down
+    K8s->>Pod2: Deploy in DR Region
+    Pod2->>S3R: Read from Replica
+    S3R-->>Pod2: Return Data (15-min old)
+    Pod2-->>Client: Search Results
+    
+    Note over Client,S3R: Cost Savings Achieved
+    
+    rect rgb(144, 238, 144)
+        Note over K8s,S3: No API Gateway: -$50K/year
+        Note over K8s,S3: No Load Balancer: -$20K/year  
+        Note over K8s,S3: Single Instance: -$100K/year
+        Note over K8s,S3: No Custom HA: -$40K/year
+        Note over K8s,S3: Total Saved: $210K/year
+    end
+    
+    Note over Client,S3R: Performance Metrics
+    
+    rect rgb(135, 206, 235)
+        Note over Pod1,Pod2: RTO: <1 minute (AZ failover)
+        Note over Pod1,Pod2: RTO: 15 minutes (Region failover)
+        Note over S3,S3R: RPO: 0 (continuous replication)
+        Note over Client,K8s: Availability: 99.99%
+        Note over Pod1,S3: Latency: 0.9ms (gRPC)
+    end
