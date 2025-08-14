@@ -22,8 +22,8 @@
 // Integration test modules - these are organized by functional area
 // Each subdirectory contains integration tests for that area
 
-// Test utilities for isolated integration testing
-pub mod test_utils;
+// Test utilities moved to common/unified_test_utils.rs for consolidation
+// pub mod test_utils; // Deprecated - use common::unified_test_utils
 
 // Isolated integration tests with individual collections
 // pub mod isolated_storage_assignment_test; // File not found - commented for now
@@ -67,7 +67,7 @@ pub mod unified_search_integration;
 pub mod viper;
 
 // SST engine integration tests
-pub mod sst_collection_test;
+pub mod sst_collection_test_fixed;
 
 // MVCC consistency tests
 pub mod mvcc_logic_integration_test;
@@ -83,6 +83,13 @@ pub mod mvcc_logic_integration_test;
 pub mod sst_compression_integration_test;
 pub mod viper_compression_integration_test;
 pub mod optimization_e2e_test;
+pub mod sst_compression_comprehensive_test;
+pub mod sst_compression_sparse_dense_test;
+
+// Benchmark and comparison tests
+pub mod engine_compression_comparison_test;
+pub mod engine_sparsity_compression_benchmark;
+pub mod comprehensive_engine_benchmark_report;
 
 // Early termination optimization tests
 pub mod early_termination_test;

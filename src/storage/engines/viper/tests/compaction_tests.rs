@@ -722,27 +722,37 @@ async fn test_concurrent_compaction_across_collections() {
 
 #[tokio::test]
 async fn test_atomic_coordinator_prevents_concurrent_same_collection_compaction() {
-    // Initialize hardware capabilities for testing
-    let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+    // Initialize tracing for detailed debugging
+    let _ = tracing_subscriber::fmt::try_init();
+    debug!("🧪 TEST START: atomic coordinator concurrent compaction prevention");
     
-    // Test that atomic coordinator prevents concurrent compactions on same collection
+    // Use the same pattern as successful SST tests - simple filesystem creation
     let temp_dir = TempDir::new().unwrap();
-    let config = create_compaction_config(temp_dir.path().to_str().unwrap());
+    debug!("📁 Created temp directory: {}", temp_dir.path().display());
     
     let filesystem_factory = Arc::new(FilesystemFactory::new(Default::default()).await.unwrap());
+    debug!("🗃️ Created filesystem factory");
+    
     let engine = Arc::new(ViperEngine::from_core_config(crate::core::config::ViperConfig::default(), filesystem_factory).await
         .expect("Failed to create engine"));
+    debug!("🚀 Created VIPER engine");
     
     let collection_id = "test_atomic";
-    setup_test_assignment(collection_id, temp_dir.path().to_str().unwrap()).await;
+    debug!("🏷️ Using collection ID: {}", collection_id);
     
-    // Create initial data
+    setup_test_assignment(collection_id, temp_dir.path().to_str().unwrap()).await;
+    debug!("📋 Set up test assignment for collection");
+    
+    // Create initial data using test utility vector generator  
     let mut vectors = vec![];
     for i in 0..50 {
         vectors.push(create_test_vector(&format!("atomic_{}", i), 128));
     }
+    debug!("📦 Created {} test vectors", vectors.len());
     
     let collection = create_test_collection(collection_id, temp_dir.path().to_str().unwrap());
+    debug!("🗂️ Created test collection config");
+    
     let flush_params = FlushParameters {
         collection_id: Some(collection_id.to_string()),
         force: true,
@@ -754,9 +764,23 @@ async fn test_atomic_coordinator_prevents_concurrent_same_collection_compaction(
         trigger_compaction: false,
         collection_config: Some(collection.clone()),
     };
-    engine.do_flush(&flush_params).await.unwrap();
+    debug!("⚡ Starting flush operation with {} vectors", flush_params.vector_records.len());
+    
+    let flush_result = engine.do_flush(&flush_params).await;
+    match &flush_result {
+        Ok(result) => {
+            debug!("✅ Flush succeeded: {} entries flushed, success: {}", 
+                   result.entries_flushed, result.success);
+        }
+        Err(e) => {
+            debug!("❌ Flush failed: {}", e);
+        }
+    }
+    flush_result.unwrap();
     
     // Try to start two concurrent compactions on the same collection
+    debug!("🔀 Setting up concurrent compaction test");
+    
     let engine1 = engine.clone();
     let engine2 = engine.clone();
     let collection1 = collection.clone();
@@ -765,12 +789,17 @@ async fn test_atomic_coordinator_prevents_concurrent_same_collection_compaction(
     let (tx1, rx1) = tokio::sync::oneshot::channel();
     let (tx2, rx2) = tokio::sync::oneshot::channel();
     
+    debug!("📊 Created communication channels for coordination");
+    
     // First compaction
+    debug!("🥇 Setting up first compaction task");
+    let collection_id_clone1 = collection_id.to_string();
     let handle1 = tokio::spawn(async move {
+        debug!("🥇 First compaction task started");
         tx1.send(()).unwrap(); // Signal that we're starting
         
         let compact_params = CompactionParameters {
-            collection_id: Some(collection_id.to_string()),
+            collection_id: Some(collection_id_clone1.clone()),
             force: true,
             synchronous: true,
             hints: std::collections::HashMap::new(),
@@ -779,19 +808,31 @@ async fn test_atomic_coordinator_prevents_concurrent_same_collection_compaction(
             collection_config: Some(collection1),
         };
         
-        engine1.do_compact(&compact_params).await
+        debug!("🥇 First compaction: calling do_compact for collection {}", collection_id_clone1);
+        let result = engine1.do_compact(&compact_params).await;
+        match &result {
+            Ok(res) => debug!("🥇 First compaction result: success={}, entries_processed={}", 
+                             res.success, res.entries_processed),
+            Err(e) => debug!("🥇 First compaction failed: {}", e),
+        }
+        result
     });
     
     // Wait for first compaction to start
+    debug!("⏳ Waiting for first compaction to start");
     rx1.await.unwrap();
+    debug!("🥇 First compaction started, waiting 100ms");
     tokio::time::sleep(Duration::from_millis(100)).await;
     
     // Second compaction (should be blocked by atomic coordinator)
+    debug!("🥈 Setting up second compaction task (should be blocked)");
+    let collection_id_clone2 = collection_id.to_string();
     let handle2 = tokio::spawn(async move {
+        debug!("🥈 Second compaction task started");
         tx2.send(()).unwrap(); // Signal that we're starting
         
         let compact_params = CompactionParameters {
-            collection_id: Some(collection_id.to_string()),
+            collection_id: Some(collection_id_clone2.clone()),
             force: true,
             synchronous: true,
             hints: std::collections::HashMap::new(),
@@ -800,10 +841,18 @@ async fn test_atomic_coordinator_prevents_concurrent_same_collection_compaction(
             collection_config: Some(collection2),
         };
         
-        engine2.do_compact(&compact_params).await
+        debug!("🥈 Second compaction: calling do_compact for collection {}", collection_id_clone2);
+        let result = engine2.do_compact(&compact_params).await;
+        match &result {
+            Ok(res) => debug!("🥈 Second compaction result: success={}, entries_processed={}", 
+                             res.success, res.entries_processed),
+            Err(e) => debug!("🥈 Second compaction failed (expected): {}", e),
+        }
+        result
     });
     
     // Wait for second compaction to start attempting
+    debug!("⏳ Waiting for second compaction to start");
     rx2.await.unwrap();
     
     // Get results

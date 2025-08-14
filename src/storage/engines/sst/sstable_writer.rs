@@ -11,7 +11,7 @@
 //! Uses unified atomic write strategies for cross-cloud compatibility.
 
 use anyhow::Result;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
 use tracing::{debug, info};
@@ -21,13 +21,12 @@ use crate::storage::persistence::filesystem::{
     atomic_strategy::{AtomicWriteExecutorFactory}
 };
 
-use super::{DataBlock, IndexEntry, SstRecord, SstableHeader};
+use super::{DataBlock, IndexEntry, SstRecord};
 use crate::core::bloom::{
     BloomFilterConfig, BloomStrategy, BloomFilterStrategy,
     factory::BloomFilterFactory,
 };
 use crate::core::bloom::strategies::composite::CompositeBloomFilterBuilder;
-use super::bloom_filter::SstableBloomFilter;
 use crate::proto::proximadb::CompressionConfig;
 
 /// SSTable writer with atomic write optimization
@@ -638,7 +637,7 @@ impl SstableWriter {
     /// Build metadata bloom filter for this block using core CompositeBloomFilter
     fn build_block_metadata_bloom(&self, block_records: &[SstRecord]) -> Option<Vec<u8>> {
         use crate::core::bloom::strategies::composite::CompositeBloomFilterBuilder;
-        use crate::core::bloom::{BloomFilterConfig, BloomStrategy};
+        
         
         let config = crate::core::bloom::BloomFilterConfig {
             strategy: crate::core::bloom::BloomStrategy::Composite,

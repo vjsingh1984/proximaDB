@@ -19,7 +19,7 @@
 //! Handles restoration of indexes from persisted state across different storage tiers.
 
 use crate::index::axis::serialization::{
-    IndexSerializer, IndexMetadata, IndexCheckpoint, IndexDelta, DeltaManager,
+    IndexSerializer, IndexCheckpoint, IndexDelta, DeltaManager,
     IndexType, SerializationError,
 };
 use crate::index::axis::tiering_manager::AxisTieringManager;
@@ -27,7 +27,7 @@ use crate::index::axis::collection_state::{CollectionStateManager, CollectionTie
 use crate::storage::persistence::filesystem::{FilesystemFactory, StorageTier};
 use dashmap::DashMap;
 use std::sync::Arc;
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant};
 use std::pin::Pin;
 use std::future::Future;
 use tokio::sync::RwLock;

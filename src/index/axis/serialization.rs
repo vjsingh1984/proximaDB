@@ -22,12 +22,10 @@
 use crate::index::axis::{
     AxisHnswIndex, AxisHnswConfig,
     UnifiedIvfIndex, UnifiedIvfConfig,
-    AxisLshIndex, AxisLshConfig,
-    AxisAnnoyIndex, AxisAnnoyConfig,
 };
 use serde::{Serialize, Deserialize};
 use bincode;
-use std::io::{Read, Write};
+use std::io::Write;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tracing::{debug, info, warn, error};
 

@@ -195,8 +195,7 @@ async fn test_optimization_end_to_end() -> anyhow::Result<()> {
     
     // Create metadata store config with temp directory
     let metadata_config = MetadataStoreConfig {
-        metadata_base_dir: temp_dir.path().join("metadata"),
-        metadata_storage_urls: vec![format!("file://{}/metadata", temp_dir.path().display())],
+        metadata_storage_urls: vec![temp_dir.path().join("metadata").to_str().unwrap().to_string()],
         enable_atomic_operations: true,
         cache_config: Default::default(),
         backup_config: None,

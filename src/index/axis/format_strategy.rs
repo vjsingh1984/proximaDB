@@ -24,9 +24,8 @@
 //! - This separation allows optimal formats for each data type
 
 use serde::{Serialize, Deserialize};
-use apache_avro::{Schema, Writer, Reader, types::Record};
 use bincode;
-use std::io::{Read, Write as IoWrite};
+use std::io::Write as IoWrite;
 use tracing::{debug, info, warn};
 
 /// Serialization format for AXIS indexes

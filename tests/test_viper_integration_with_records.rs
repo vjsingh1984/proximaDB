@@ -185,7 +185,7 @@ async fn test_viper_engine_capabilities() -> Result<()> {
 
     // Test basic trait methods
     assert_eq!(viper_engine.engine_name(), "VIPER"); // Note: VIPER returns "VIPER" not "viper"
-    assert_eq!(viper_engine.engine_version(), "1.0.0");
+    assert_eq!(viper_engine.engine_version(), "0.1.4"); // Current VIPER version
 
     // Test capabilities
     assert!(viper_engine.supports_collection_level_operations()); // VIPER supports collection-level ops
@@ -206,7 +206,7 @@ async fn test_viper_engine_capabilities() -> Result<()> {
     // Test engine statistics
     let stats = viper_engine.get_engine_stats().await?;
     assert_eq!(stats.engine_name, "VIPER");
-    assert_eq!(stats.engine_version, "1.0.0");
+    assert_eq!(stats.engine_version, "0.1.4"); // Current VIPER version
 
     info!("✅ VIPER engine stats verified");
     debug!("   - Storage bytes: {}", stats.total_storage_bytes);

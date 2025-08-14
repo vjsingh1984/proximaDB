@@ -719,7 +719,11 @@ async fn test_metadata_backend_updates() {
 async fn test_collection_metadata_provider_trait() {
     let temp_dir = TempDir::new().unwrap();
     let metadata_path = temp_dir.path().join("metadata");
+    let temp_path = temp_dir.path().join("temp");
+    
+    // Create all required directories
     std::fs::create_dir_all(&metadata_path).unwrap();
+    std::fs::create_dir_all(&temp_path).unwrap();
     
     // Clean up any existing metadata to prevent Avro/Proto conflicts
     if metadata_path.exists() {
@@ -738,7 +742,7 @@ async fn test_collection_metadata_provider_trait() {
         snapshot_threshold: 100000, // Very high threshold
         keep_snapshots: 0,         // No snapshots
         backup_url: None,
-        temp_dir: Some(temp_dir.path().join("temp").to_string_lossy().to_string()),
+        temp_dir: Some(temp_path.to_string_lossy().to_string()),
     };
     
     let metadata_backend = Arc::new(

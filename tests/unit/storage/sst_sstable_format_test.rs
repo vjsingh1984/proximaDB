@@ -1,6 +1,7 @@
 //! Test SSTable format compatibility between writer and reader
 
-use super::sst_test_config::{create_test_filesystem_config};
+// Use default filesystem config
+use proximadb::storage::persistence::filesystem::FilesystemConfig;
 use tracing::{debug, error, info, warn};
 
 use proximadb::storage::engines::sst::{
@@ -20,8 +21,8 @@ async fn test_sstable_write_read_format() {
     let temp_dir = TempDir::new().unwrap();
     let sstable_path = temp_dir.path().join("test.sst");
     
-    // Create filesystem factory with consistent config
-    let fs_config = create_test_filesystem_config();
+    // Create filesystem factory with default config
+    let fs_config = FilesystemConfig::default();
     let filesystem = Arc::new(FilesystemFactory::new(fs_config).await.unwrap());
     
     // Create a simple record
@@ -80,8 +81,8 @@ async fn test_sstable_format_inspection() {
     let temp_dir = TempDir::new().unwrap();
     let sstable_path = temp_dir.path().join("inspect.sst");
     
-    // Create filesystem factory with consistent config
-    let fs_config = create_test_filesystem_config();
+    // Create filesystem factory with default config
+    let fs_config = FilesystemConfig::default();
     let filesystem = Arc::new(FilesystemFactory::new(fs_config).await.unwrap());
     
     // Create records with metadata for bloom filter

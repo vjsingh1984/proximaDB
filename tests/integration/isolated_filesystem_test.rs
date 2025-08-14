@@ -7,7 +7,10 @@ use anyhow::Result;
 use tracing::{debug, error, info, warn};
 use std::sync::Arc;
 
-use super::test_utils::IsolatedTestEnvironment;
+mod common {
+    include!("../common/mod.rs");
+}
+use common::unified_test_utils::UnifiedTestEnvironment as IsolatedTestEnvironment;
 use proximadb::storage::persistence::filesystem::{FilesystemFactory, FilesystemConfig};
 
 #[tokio::test]

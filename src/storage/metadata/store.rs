@@ -27,10 +27,7 @@ use crate::storage::persistence::filesystem::FilesystemFactory;
 /// Configuration for metadata store
 #[derive(Debug, Clone)]
 pub struct MetadataStoreConfig {
-    /// Base directory for metadata storage (separate from WAL data)
-    pub metadata_base_dir: PathBuf,
-
-    /// Filesystem URLs for metadata storage
+    /// Filesystem URLs for metadata storage (supports file://, s3://, gcs://, etc.)
     pub metadata_storage_urls: Vec<String>,
 
     /// Whether to use atomic transactions
@@ -49,7 +46,6 @@ pub struct MetadataStoreConfig {
 impl Default for MetadataStoreConfig {
     fn default() -> Self {
         Self {
-            metadata_base_dir: PathBuf::from("./data/metadata"),
             metadata_storage_urls: vec!["file://./data/metadata".to_string()],
             enable_atomic_operations: true,
             cache_config: MetadataCacheConfig::default(),
@@ -179,18 +175,23 @@ impl MetadataStore {
     /// Create new metadata store
     pub async fn new(config: MetadataStoreConfig) -> Result<Self> {
         tracing::info!("🚀 Creating MetadataStore with dedicated storage location");
-        tracing::info!("📂 Metadata base directory: {:?}", config.metadata_base_dir);
         tracing::info!("🔗 Storage URLs: {:?}", config.metadata_storage_urls);
 
-        // Ensure metadata directory exists
-        tokio::fs::create_dir_all(&config.metadata_base_dir)
-            .await
-            .with_context(|| {
-                format!(
-                    "Failed to create metadata directory: {:?}",
-                    config.metadata_base_dir
-                )
-            })?;
+        // Ensure metadata directories exist for local file URLs
+        for url in &config.metadata_storage_urls {
+            if url.starts_with("file://") || !url.contains("://") {
+                let path = if url.starts_with("file://") {
+                    url.strip_prefix("file://").unwrap()
+                } else {
+                    url
+                };
+                tokio::fs::create_dir_all(path)
+                    .await
+                    .with_context(|| {
+                        format!("Failed to create metadata directory: {}", path)
+                    })?;
+            }
+        }
 
         // Create filesystem factory with metadata-specific configuration
         let filesystem_config = crate::storage::persistence::filesystem::FilesystemConfig {
@@ -203,8 +204,8 @@ impl MetadataStore {
         let mut metadata_wal_config = MetadataWALConfig::default();
 
         // Override data directories to use metadata-specific locations
-        metadata_wal_config.base_config.multi_disk.data_directories =
-            vec![format!("file://{}", config.metadata_base_dir.display())];
+        metadata_wal_config.base_config.multi_disk.data_directories = 
+            config.metadata_storage_urls.clone();
 
         // Create WAL manager
         let write_buffer_manager = Arc::new(

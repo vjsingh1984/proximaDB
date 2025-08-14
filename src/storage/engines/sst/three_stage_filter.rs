@@ -21,7 +21,6 @@ use crate::storage::engines::sst::{IndexEntry, DataBlock, VectorFormatType};
 use crate::storage::engines::sst::bloom_filter::SstableBloomFilter;
 use crate::storage::engines::sst::optimized_row_filter::{SSTRowFilterEvaluator, SSTBatchFilterEvaluator};
 use crate::storage::engines::sst::readers::unified_sstable_reader::ReadStrategy;
-use crate::storage::engines::sst::readers::block_filter::{IntelligentBlockFilter, BlockFilter, QueryType};
 
 /// Complete SST filtering pipeline with all three stages
 /// Uses immutable Arc types for optimal read performance

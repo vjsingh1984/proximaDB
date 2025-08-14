@@ -980,9 +980,7 @@ impl DataBlockCompressionConfig {
 
 // Import centralized compression markers and helper functions
 use crate::core::compression::markers::{
-    MARKER_UNCOMPRESSED, MARKER_ZSTD, MARKER_LZ4, MARKER_SNAPPY, 
-    MARKER_GZIP, MARKER_BROTLI, MARKER_BZIP2, MARKER_DEFLATE,
-    MARKER_XZ, MARKER_ZLIB, MARKER_LZ4HC, MARKER_LZMA,
+    MARKER_UNCOMPRESSED,
     get_compression_marker, get_compression_algorithm_from_marker
 };
 

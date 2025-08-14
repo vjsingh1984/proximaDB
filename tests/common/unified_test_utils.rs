@@ -22,6 +22,7 @@ use proximadb::core::{SstConfig, BloomFilterConfig, VectorRecord};
 use proximadb::core::config::{WriteBufferUserConfig, ViperConfig};
 use proximadb::core::config::StorageLocation;
 use proximadb::proto::proximadb::{MetadataItem, Collection, CollectionConfig, StorageAssignment, CollectionStats, DistanceMetric, StorageEngine};
+use proximadb::storage::metadata::store::MetadataCacheConfig;
 use proximadb::compute::distance_computation::UnifiedDistanceCompute;
 use proximadb::core::hardware_capabilities::HardwareBackend;
 use proximadb::storage::engines::sst::SstStorage;
@@ -139,6 +140,7 @@ impl UnifiedTestEnvironment {
     /// Get the data directory path for SST operations
     pub fn get_sst_data_directory(&self) -> PathBuf {
         // SST writes to {base_location}/{collection_id}/data
+        // persistent_dir already includes collection_id, so data goes inside it
         self.persistent_dir.join("data")
     }
     
@@ -161,11 +163,21 @@ impl UnifiedTestEnvironment {
     }
     
     /// Create a test collection for specific storage engine
+    /// 
+    /// CRITICAL: This method handles several setup complexities that cause test failures when done manually:
+    /// 1. Sets base_location to PARENT directory (not the collection directory itself!)
+    /// 2. Uses proper file:// URL format (though system defaults to file:// anyway)
+    /// 3. Uses correct timestamp units (millis, not micros)
+    /// 4. Ensures storage_assignment is consistent across flush and compaction operations
+    /// 
+    /// Storage engines expect: {base_location}/{collection_id}/data/
+    /// So if base_location = /tmp/test, files go to /tmp/test/collection_123/data/
     pub fn create_test_collection_for_engine(&self, engine: StorageEngine) -> Collection {
+        // CRITICAL: base_location must point to parent directory since engines append collection_id
         let base_path = self.persistent_dir.parent().unwrap().to_str().unwrap();
         let storage_assignment = StorageAssignment {
             base_location: format!("file://{}", base_path),
-            assigned_at: chrono::Utc::now().timestamp_millis(),
+            assigned_at: chrono::Utc::now().timestamp_millis(), // Must use millis, not micros!
         };
         
         let config = CollectionConfig {
@@ -387,6 +399,58 @@ impl UnifiedTestEnvironment {
         &self.collection_id
     }
     
+    /// Create test assignment (for backward compatibility)
+    pub fn setup_test_assignment(&self) -> StorageAssignment {
+        let base_path = self.persistent_dir.parent().unwrap().to_str().unwrap();
+        StorageAssignment {
+            base_location: format!("file://{}", base_path),
+            assigned_at: chrono::Utc::now().timestamp_millis(),
+        }
+    }
+    
+    /// Create metadata store config (for backward compatibility)  
+    pub fn create_metadata_store_config(&self) -> proximadb::storage::metadata::MetadataStoreConfig {
+        let metadata_path = self.persistent_dir.join("metadata").to_str().unwrap().to_string();
+        proximadb::storage::metadata::MetadataStoreConfig {
+            metadata_storage_urls: vec![metadata_path], // Filesystem API defaults to file:// scheme
+            enable_atomic_operations: true,
+            cache_config: MetadataCacheConfig::default(),
+            backup_config: None,
+            replication_config: None,
+        }
+    }
+    
+    /// Create test collection with storage (for backward compatibility)
+    pub fn create_test_collection_with_storage(&self, name: &str, base_location: String) -> Collection {
+        let storage_assignment = StorageAssignment {
+            base_location,
+            assigned_at: chrono::Utc::now().timestamp_millis(),
+        };
+        
+        let config = CollectionConfig {
+            name: name.to_string(),
+            dimension: 3,
+            distance_metric: DistanceMetric::Cosine as i32,
+            storage_engine: StorageEngine::Sst as i32,
+            ..Default::default()
+        };
+        
+        let stats = CollectionStats {
+            vector_count: 0,
+            index_size_bytes: 0,
+            data_size_bytes: 0,
+        };
+        
+        Collection {
+            id: name.to_string(),
+            config: Some(config),
+            stats: Some(stats),
+            created_at: chrono::Utc::now().timestamp_millis(),
+            updated_at: chrono::Utc::now().timestamp_millis(),
+            storage_assignment: Some(storage_assignment),
+        }
+    }
+    
     /// Create test SST configuration optimized for testing (from sst_compactor_tests)
     fn create_test_sst_config(base_path: &std::path::Path) -> SstConfig {
         SstConfig {
@@ -427,6 +491,12 @@ impl UnifiedTestEnvironment {
             prefetch_enabled: false,
             prefetch_size_kb: 0,
         }
+    }
+    
+    /// Create general test config (for backward compatibility)
+    pub fn create_test_config(&self) -> proximadb::core::config::Config {
+        // Use default config since struct fields may vary
+        proximadb::core::config::Config::default()
     }
     
     /// Create test VIPER configuration optimized for testing
@@ -483,61 +553,166 @@ impl MultiUnifiedEnvironmentTest {
     }
 }
 
-/// Utility functions for common test operations
+/// Helper functions to build correct test parameters
+/// Tests should call production code directly with these parameters
 pub mod operations {
     use super::*;
     use proximadb::compute::distance_computation::DistanceMetric;
     
-    /// Insert vectors and flush to SST storage
+    /// Build correct FlushParameters - the critical configuration that was causing failures
+    pub async fn build_flush_params(
+        environment: &UnifiedTestEnvironment,
+        vectors: Vec<VectorRecord>,
+        engine: StorageEngine
+    ) -> Result<FlushParameters> {
+        // Ensure directories exist
+        environment.ensure_all_directories().await?;
+        
+        let collection_config = environment.create_test_collection_for_engine(engine);
+        Ok(FlushParameters {
+            collection_id: Some(environment.collection_id().to_string()),
+            vector_records: vectors,
+            force: true,
+            synchronous: true,
+            collection_config: Some(collection_config),
+            ..Default::default()
+        })
+    }
+    
+    /// Build FlushParameters for SST with custom compression
+    /// SST supports: none, zstd, lz4, snappy, gzip, brotli, bzip2, deflate, xz, zlib, lzo, lz4hc, lzma
+    pub async fn build_sst_flush_params_with_compression(
+        environment: &UnifiedTestEnvironment,
+        vectors: Vec<VectorRecord>,
+        compression_algo: &str,
+        compression_level: i32
+    ) -> Result<FlushParameters> {
+        environment.ensure_all_directories().await?;
+        
+        // For SST, compression is configured in the engine config, not collection config
+        // But we can pass it through collection config's compression field
+        let mut collection = environment.create_test_collection_for_engine(StorageEngine::Sst);
+        
+        // SST uses collection compression config if present
+        if let Some(ref mut config) = collection.config {
+            use proximadb::proto::proximadb::CompressionAlgorithm;
+            
+            // Map string algorithm name to enum value
+            let algorithm = match compression_algo {
+                "none" => CompressionAlgorithm::CompressionNone as i32,
+                "zstd" => CompressionAlgorithm::CompressionZstd as i32,
+                "lz4" => CompressionAlgorithm::CompressionLz4 as i32,
+                "snappy" => CompressionAlgorithm::CompressionSnappy as i32,
+                "gzip" => CompressionAlgorithm::CompressionGzip as i32,
+                "brotli" => CompressionAlgorithm::CompressionBrotli as i32,
+                "bzip2" => CompressionAlgorithm::CompressionBzip2 as i32,
+                "deflate" => CompressionAlgorithm::CompressionDeflate as i32,
+                "xz" => CompressionAlgorithm::CompressionXz as i32,
+                "zlib" => CompressionAlgorithm::CompressionZlib as i32,
+                "lzo" => CompressionAlgorithm::CompressionLzo as i32,
+                "lz4hc" => CompressionAlgorithm::CompressionLz4hc as i32,
+                "lzma" => CompressionAlgorithm::CompressionLzma as i32,
+                _ => CompressionAlgorithm::CompressionNone as i32,
+            };
+            
+            config.compression = Some(proximadb::proto::proximadb::CompressionConfig {
+                algorithm,
+                level: Some(compression_level),
+                ..Default::default()
+            });
+        }
+        
+        Ok(FlushParameters {
+            collection_id: Some(environment.collection_id().to_string()),
+            vector_records: vectors,
+            force: true,
+            synchronous: true,
+            collection_config: Some(collection),
+            ..Default::default()
+        })
+    }
+    
+    /// Build FlushParameters for VIPER with custom compression
+    /// VIPER/Parquet supports: none, snappy, gzip, lz4, zstd, brotli (limited by Parquet format)
+    pub async fn build_viper_flush_params_with_compression(
+        environment: &UnifiedTestEnvironment,
+        vectors: Vec<VectorRecord>,
+        compression_algo: &str,
+        compression_level: i32
+    ) -> Result<FlushParameters> {
+        environment.ensure_all_directories().await?;
+        
+        let mut collection = environment.create_test_collection_for_engine(StorageEngine::Viper);
+        
+        // VIPER uses Parquet compression, configured through collection config
+        if let Some(ref mut config) = collection.config {
+            use proximadb::proto::proximadb::CompressionAlgorithm;
+            
+            // Map to Parquet-supported algorithms
+            let algorithm = match compression_algo {
+                "none" | "uncompressed" => CompressionAlgorithm::CompressionNone as i32,
+                "zstd" => CompressionAlgorithm::CompressionZstd as i32,
+                "snappy" => CompressionAlgorithm::CompressionSnappy as i32,
+                "gzip" => CompressionAlgorithm::CompressionGzip as i32,
+                "lz4" => CompressionAlgorithm::CompressionLz4 as i32,
+                "brotli" => CompressionAlgorithm::CompressionBrotli as i32,
+                // Unsupported algorithms default to snappy
+                _ => {
+                    debug!("Algorithm {} not supported by Parquet, using snappy", compression_algo);
+                    CompressionAlgorithm::CompressionSnappy as i32
+                }
+            };
+            
+            config.compression = Some(proximadb::proto::proximadb::CompressionConfig {
+                algorithm,
+                level: Some(compression_level),
+                ..Default::default()
+            });
+        }
+        
+        Ok(FlushParameters {
+            collection_id: Some(environment.collection_id().to_string()),
+            vector_records: vectors,
+            force: true,
+            synchronous: true,
+            collection_config: Some(collection),
+            ..Default::default()
+        })
+    }
+    
+    /// DEPRECATED: Use build_flush_params() + engine.do_flush() directly
+    #[deprecated(note = "Use build_flush_params() + engine.do_flush() for direct production calls")]
     pub async fn insert_and_flush_sst(
         engine: &SstStorage,
         environment: &UnifiedTestEnvironment,
         vectors: Vec<VectorRecord>
     ) -> Result<()> {
-        let (flush_params, _data_dir, _collection_config) = environment.setup_sst_test(vectors).await?;
-        
+        let flush_params = build_flush_params(environment, vectors, StorageEngine::Sst).await?;
         let result = engine.do_flush(&flush_params).await?;
-        
         if !result.success {
-            return Err(anyhow::anyhow!("SST flush failed for collection {}", environment.collection_id()));
+            return Err(anyhow::anyhow!("SST flush failed"));
         }
-        
-        debug!("✅ SST flushed {} vectors for collection {}", 
-                result.entries_flushed, environment.collection_id());
-        
         Ok(())
     }
     
-    /// Insert vectors and flush to VIPER storage
-    pub async fn insert_and_flush_viper(
-        engine: &ViperEngine,
-        environment: &UnifiedTestEnvironment,
-        vectors: Vec<VectorRecord>
-    ) -> Result<()> {
-        let (flush_params, _data_dir, _collection_config) = environment.setup_viper_test(vectors).await?;
-        
-        let result = engine.do_flush(&flush_params).await?;
-        
-        if !result.success {
-            return Err(anyhow::anyhow!("VIPER flush failed for collection {}", environment.collection_id()));
-        }
-        
-        debug!("✅ VIPER flushed {} vectors for collection {}", 
-                result.entries_flushed, environment.collection_id());
-        
-        Ok(())
+    /// Build correct storage URL for SST search operations
+    pub fn build_sst_storage_url(environment: &UnifiedTestEnvironment) -> String {
+        // SST expects storage_url to point directly to where .sst files are located
+        format!("file://{}", environment.get_sst_data_directory().to_str().unwrap())
     }
     
-    /// Search vectors using SST engine
+    /// DEPRECATED: Use build_sst_storage_url() + engine.search_vectors_unified() directly
+    #[deprecated(note = "Use build_sst_storage_url() + engine.search_vectors_unified() for direct production calls")]
     pub async fn search_vectors_sst(
         engine: &SstStorage,
         environment: &UnifiedTestEnvironment,
         query_vector: &[f32],
         top_k: usize
     ) -> Result<Vec<proximadb::core::search::SearchResult>> {
-        let storage_url = format!("file://{}/data", environment.persistent_dir.to_str().unwrap());
+        let storage_url = build_sst_storage_url(environment);
         
-        let results = engine.search_vectors_unified(
+        // Direct production call
+        engine.search_vectors_unified(
             environment.collection_id(),
             &storage_url,
             query_vector,
@@ -546,39 +721,106 @@ pub mod operations {
             None,
             true,
             true
-        ).await?;
-        
-        debug!("🔍 SST search found {} results for collection {}", 
-                results.len(), environment.collection_id());
-        
-        Ok(results)
+        ).await
     }
     
-    /// Compact SST storage
-    pub async fn compact_sst_storage(
-        engine: &mut SstStorage,
-        environment: &UnifiedTestEnvironment
-    ) -> Result<()> {
-        let collection_config = environment.create_test_collection_for_engine(StorageEngine::Sst);
-        let compact_params = CompactionParameters {
+    /// Build correct CompactionParameters for any storage engine
+    /// This is the critical part - getting the configuration right
+    pub fn build_compaction_params(
+        environment: &UnifiedTestEnvironment,
+        engine: StorageEngine
+    ) -> CompactionParameters {
+        let collection_config = environment.create_test_collection_for_engine(engine);
+        CompactionParameters {
             collection_id: Some(environment.collection_id().to_string()),
             force: true,
             synchronous: true,
             collection_config: Some(collection_config),
             ..Default::default()
-        };
-        
-        let result = engine.compact(compact_params).await?;
-        
-        if !result.success {
-            return Err(anyhow::anyhow!("SST compaction failed for collection {}", environment.collection_id()));
         }
-        
-        debug!("🗜️ SST compacted {} entries for collection {}", 
-                result.entries_processed, environment.collection_id());
-        
-        Ok(())
     }
+}
+
+/// Global utility functions for backward compatibility with existing tests
+/// These functions create temporary environments for one-off operations
+
+/// Create test vectors (global function for backward compatibility)
+pub fn create_test_vectors(count: usize, dimension: usize, prefix: &str) -> Vec<VectorRecord> {
+    (0..count).map(|i| {
+        VectorRecord {
+            id: Some(format!("{}_{}", prefix, i)),
+            vector: (0..dimension).map(|j| (i + j) as f32 * 0.1).collect(),
+            timestamp: (1000 + i) as u32,
+            metadata: vec![
+                MetadataItem {
+                    key: "test_type".to_string(),
+                    value: Some(proximadb::proto::proximadb::metadata_item::Value::StringValue(
+                        prefix.to_string()
+                    )),
+                },
+            ],
+            ..Default::default()
+        }
+    }).collect()
+}
+
+/// Create test assignment (global function for backward compatibility)
+pub fn setup_test_assignment() -> StorageAssignment {
+    let temp_dir = std::env::temp_dir().join("proximadb_test");
+    StorageAssignment {
+        base_location: format!("file://{}", temp_dir.to_str().unwrap()),
+        assigned_at: chrono::Utc::now().timestamp_millis(),
+    }
+}
+
+/// Create metadata store config (global function for backward compatibility)  
+pub fn create_metadata_store_config() -> proximadb::storage::metadata::MetadataStoreConfig {
+    let temp_dir = std::env::temp_dir().join("proximadb_test").join("metadata");
+    let metadata_path = temp_dir.to_str().unwrap().to_string();
+    proximadb::storage::metadata::MetadataStoreConfig {
+        metadata_storage_urls: vec![metadata_path], // Filesystem API defaults to file:// scheme
+        enable_atomic_operations: true,
+        cache_config: MetadataCacheConfig::default(),
+        backup_config: None,
+        replication_config: None,
+    }
+}
+
+/// Create test collection with storage (global function for backward compatibility)
+pub fn create_test_collection_with_storage(name: &str, base_location: String) -> Collection {
+    let storage_assignment = StorageAssignment {
+        base_location,
+        assigned_at: chrono::Utc::now().timestamp_millis(),
+    };
+    
+    let config = CollectionConfig {
+        name: name.to_string(),
+        dimension: 256,  // Default dimension for generic tests
+        distance_metric: DistanceMetric::Cosine as i32,
+        storage_engine: StorageEngine::Sst as i32,
+        ..Default::default()
+    };
+    
+    let stats = CollectionStats {
+        vector_count: 0,
+        index_size_bytes: 0,
+        data_size_bytes: 0,
+    };
+    
+    Collection {
+        id: name.to_string(),
+        config: Some(config),
+        stats: Some(stats),
+        created_at: chrono::Utc::now().timestamp_millis(),
+        updated_at: chrono::Utc::now().timestamp_millis(),
+        storage_assignment: Some(storage_assignment),
+    }
+}
+
+/// Create general test config (global function for backward compatibility)
+pub fn create_test_config() -> proximadb::core::config::Config {
+    // Use default config since struct fields may vary
+    proximadb::core::config::Config::default()
 }
 
 #[cfg(test)]
@@ -605,11 +847,11 @@ mod tests {
         let env = UnifiedTestEnvironment::new().await.unwrap();
         
         // Test SST engine creation
-        let sst_engine = env.create_sst_engine().await.unwrap();
+        let _sst_engine = env.create_sst_engine().await.unwrap();
         debug!("✅ Created SST engine for: {}", env.collection_id());
         
         // Test VIPER engine creation  
-        let viper_engine = env.create_viper_engine().await.unwrap();
+        let _viper_engine = env.create_viper_engine().await.unwrap();
         debug!("✅ Created VIPER engine for: {}", env.collection_id());
         
         // Test directory creation

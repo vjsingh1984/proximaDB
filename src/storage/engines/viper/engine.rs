@@ -830,8 +830,12 @@ impl UnifiedStorageEngine for ViperEngine {
     async fn do_compact(&self, params: &crate::storage::traits::CompactionParameters) -> Result<crate::storage::traits::CompactionResult> {
         let start_time = std::time::Instant::now();
         
+        debug!("🗜️ VIPER do_compact called with params: collection_id={:?}, force={}, synchronous={}, timeout_ms={:?}", 
+               params.collection_id, params.force, params.synchronous, params.timeout_ms);
+        
         let collection_id = params.collection_id.as_ref()
             .ok_or_else(|| anyhow::anyhow!("Collection ID required for VIPER compaction"))?;
+        debug!("🗜️ VIPER compaction collection ID: {}", collection_id);
         
         // Get input files from hints or use default empty list
         let input_files = params.hints.get("input_files")
@@ -841,13 +845,30 @@ impl UnifiedStorageEngine for ViperEngine {
         
         info!("🗜️ VIPER Engine: Starting compaction for collection {} with {} hinted input files", 
               collection_id, input_files.len());
+        debug!("🗜️ VIPER input files: {:?}", input_files);
         
         // Use the modular compaction manager to compact Parquet files
         // If no input files specified, the compaction manager will discover them
         // Pass the collection config from parameters to avoid collection service lookups
+        debug!("🗜️ VIPER calling compaction_manager.compact_parquet_files");
+        debug!("🗜️ VIPER collection_config present: {}", params.collection_config.is_some());
+        
         let compaction_result = self.compaction_manager
             .compact_parquet_files(collection_id, input_files.clone(), params.collection_config.as_ref())
-            .await?;
+            .await;
+            
+        match &compaction_result {
+            Ok(result) => {
+                debug!("🗜️ VIPER compaction_manager returned success");
+                debug!("🗜️ VIPER compaction result details: {:?}", result);
+            }
+            Err(e) => {
+                debug!("🗜️ VIPER compaction_manager failed: {}", e);
+                return Err(anyhow::anyhow!("Compaction failed: {}", e));
+            }
+        }
+        
+        let compaction_result = compaction_result?;
         
         let duration_ms = start_time.elapsed().as_millis() as u64;
         

@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
-use tracing::{info, warn};
+use tracing::info;
 use crate::network::NetworkConfig;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

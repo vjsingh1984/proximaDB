@@ -21,7 +21,7 @@
 //!
 //! ## Integration Architecture
 //!
-//! ```
+//! ```text
 //! AxisTieringManager
 //!     ↓
 //! ┌──────────────────────────────────────────────────────────────────┐
@@ -45,19 +45,19 @@
 //! 4. **Collection-Level Granularity**: Entire collection indexes move together
 //! 5. **Format Strategy Integration**: Bincode/Avro selection based on tier
 
-use crate::index::axis::collection_state::{CollectionStateManager, CollectionTierState, TierLevel};
+use crate::index::axis::collection_state::{CollectionStateManager, CollectionTierState};
 use crate::index::axis::memory_tracker::IndexMemoryTracker;
 use crate::index::axis::format_strategy::{IndexFormatStrategy, IndexSerializationFormat};
 use crate::index::axis::serialization::IndexSerializer;
 use crate::common::tier_policy_engine::{
     GlobalTierManager, SmartTierPolicy, StorageTier, WorkloadPattern, WorkloadMetrics,
-    AccessPatternMetrics, CostMetrics
+    AccessPatternMetrics
 };
 use crate::common::adaptive_structures::{AdaptiveStore, IndexBackend};
-use crate::storage::cache::orchestrator::{AccessPatternTracker, CacheType, CacheAccessEvent};
+use crate::storage::cache::orchestrator::{AccessPatternTracker, CacheType};
 use dashmap::DashMap;
 use std::sync::Arc;
-use std::time::{Duration, Instant, SystemTime};
+use std::time::{Duration, Instant};
 use tokio::sync::RwLock;
 use tracing::{debug, info, warn, error};
 use serde::{Serialize, Deserialize};

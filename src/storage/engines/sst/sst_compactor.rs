@@ -11,18 +11,16 @@
 
 use super::{SstRecord, SstableWriter};
 use super::readers::unified_sstable_reader::{
-    ModularBlockReader, SstDirectReader, BlockIterator, ReadMode
+    SstDirectReader, BlockIterator
 };
 use crate::storage::persistence::filesystem::{FilesystemFactory, FileSystem};
-use crate::storage::transaction_coordinator::TransactionCoordinator;
 use crate::core::search::mvcc_resolution::MvccResolver;
-use anyhow::{Result, Context};
+use anyhow::Result;
 use std::collections::{BinaryHeap, HashMap};
 use std::cmp::{Ordering, Reverse};
 use std::sync::Arc;
-use tracing::{debug, info, warn, error};
-use futures::stream::{Stream, StreamExt};
-use async_trait::async_trait;
+use tracing::{debug, info, warn};
+use futures::stream::StreamExt;
 
 /// Statistics for zero-copy compaction with AXIS integration
 #[derive(Debug, Clone, Default)]
@@ -391,7 +389,7 @@ impl SstCompactor {
     /// Uses streaming iterators for memory-efficient compaction
     async fn k_way_merge(
         &self,
-        mut iterators: Vec<(usize, BlockIterator<SstRecord>)>,
+        iterators: Vec<(usize, BlockIterator<SstRecord>)>,
     ) -> Result<(Vec<SstRecord>, ZeroCopyCompactionStats)> {
         let mut heap = BinaryHeap::new();
         let mut merged_records = Vec::new();

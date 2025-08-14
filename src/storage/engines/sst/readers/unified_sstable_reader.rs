@@ -11,7 +11,7 @@ use anyhow::Result;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::marker::PhantomData;
-use std::io::{Read, Cursor};
+use std::io::Read;
 use std::io::prelude::*;
 use tracing::{debug, error, info, warn};
 use futures::stream::{Stream, StreamExt};
@@ -29,7 +29,7 @@ use crate::storage::engines::sst::bloom_filter::SstableBloomFilter;
 use crate::storage::engines::sst::{SstableHeader, DataBlock, IndexEntry, SstRecord, VectorFormatType};
 use crate::core::compression::CompressionAlgorithm;
 use crate::core::bloom::{BloomFilterConfig, BloomStrategy};
-use super::block_filter::{IntelligentBlockFilter, BlockFilter, QueryType, MetadataFilter};
+use super::block_filter::{IntelligentBlockFilter, BlockFilter, QueryType};
 
 // Type alias for bloom filter
 type BloomFilter = SstableBloomFilter;

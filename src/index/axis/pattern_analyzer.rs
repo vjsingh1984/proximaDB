@@ -29,16 +29,15 @@
 
 use crate::storage::cache::orchestrator::{AccessPatternTracker, CacheType};
 use crate::common::tier_policy_engine::{
-    AccessPatternMetrics, WorkloadMetrics, WorkloadPattern, StorageTier, 
-    GlobalTierManager, RuleBasedTierPolicy
+    WorkloadPattern, StorageTier, 
+    GlobalTierManager
 };
-use crate::index::axis::collection_state::{CollectionTierState, TierLevel};
+use crate::index::axis::collection_state::TierLevel;
 
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-use std::time::SystemTime;
-use tracing::{debug, info};
+use tracing::{info, debug};
 
 /// AXIS Tiering Integration Manager
 /// 

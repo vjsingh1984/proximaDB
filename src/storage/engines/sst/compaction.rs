@@ -20,13 +20,13 @@
 //! of SST files. Uses background workers to merge files when thresholds are exceeded.
 
 use super::{SstRecord, SstableWriter};
-use super::sst_compactor::{SstCompactor, ZeroCopyCompactionStats, CompactionSortStrategy};
+use super::sst_compactor::{SstCompactor, ZeroCopyCompactionStats};
 use crate::core::{String, SstConfig, VectorId, VectorRecord};
 use crate::core::search::mvcc_resolution::MvccResolver;
 use crate::storage::optimization::{MetadataSorter, SortingStats};
 use crate::storage::Result;
 use crate::storage::transaction_coordinator::{TransactionCoordinator, StagingConfig, TransactionStageType};
-use crate::storage::engines::sst::readers::unified_sstable_reader::{UnifiedSstableReader, CollectionContext};
+use crate::storage::engines::sst::readers::unified_sstable_reader::UnifiedSstableReader;
 use crate::storage::persistence::filesystem::FilesystemFactory;
 use chrono::Utc;
 use std::collections::{BTreeMap, HashMap, VecDeque};
