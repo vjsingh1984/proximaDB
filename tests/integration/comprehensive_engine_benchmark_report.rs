@@ -148,10 +148,10 @@ async fn run_baseline(engine_type: &str, sparsity: usize, dimension: usize, batc
             
             // Extract top-k IDs and scores
             let top_k_ids: Vec<String> = results.iter()
-                .map(|r| r.id.clone().unwrap_or_default())
+                .map(|r| r.id.clone())
                 .collect();
             let top_k_scores: Vec<f32> = results.iter()
-                .map(|r| r.score.unwrap_or(0.0))
+                .map(|r| r.score)
                 .collect();
             
             println!("      SST Baseline: {} results, {:.2}ms latency, {} bytes",
@@ -211,10 +211,10 @@ async fn run_baseline(engine_type: &str, sparsity: usize, dimension: usize, batc
             
             // Extract top-k IDs and scores from real results
             let top_k_ids: Vec<String> = results.iter()
-                .map(|r| r.id.clone().unwrap_or_default())
+                .map(|r| r.id.clone())
                 .collect();
             let top_k_scores: Vec<f32> = results.iter()
-                .map(|r| r.score.unwrap_or(0.0))
+                .map(|r| r.score)
                 .collect();
             
             println!("      VIPER Baseline: {} results, {:.2}ms latency, {} bytes",
@@ -382,7 +382,7 @@ async fn run_benchmark(
             // Get actual search results for accuracy comparison
             let final_results = operations::search_vectors_sst(&engine, &env, &query_vector, 10).await?;
             let actual_ids: Vec<String> = final_results.iter()
-                .map(|r| r.id.clone().unwrap_or_default())
+                .map(|r| r.id.clone())
                 .collect();
             
             // Calculate accuracy vs baseline
@@ -542,7 +542,7 @@ async fn run_benchmark(
             // Get REAL VIPER search results for accuracy comparison
             let final_results = operations::search_vectors_viper(&engine, &env, &query_vector, 10).await?;
             let actual_ids: Vec<String> = final_results.iter()
-                .map(|r| r.id.clone().unwrap_or_default())
+                .map(|r| r.id.clone())
                 .collect();
             
             // Calculate accuracy vs baseline
