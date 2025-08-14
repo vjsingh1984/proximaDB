@@ -12,6 +12,8 @@ ProximaDB auto-configures optimal defaults. Most deployments only need to set 5-
 
 == Quick Start Configurations
 
+image::configuration-hierarchy.svg[Configuration Hierarchy, width=900, align=center]
+
 === Minimal Configuration
 [source,toml]
 ----

@@ -1,0 +1,16 @@
+graph LR
+    Video["Video Content"] --> Visual["Visual Embeddings"]
+    Audio["Audio Stream"] --> Text["Text Embeddings"]
+    Tags["Metadata Tags"] --> Features["Metadata Features"]
+    
+    Visual --> ProximaDB["ProximaDB<br/>Vector Database"]
+    Text --> ProximaDB
+    Features --> ProximaDB
+    
+    ProximaDB --> Recommendations["Personalized<br/>Recommendations"]
+    
+    style Video fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
+    style Audio fill:#fff3e0,stroke:#ef6c00,stroke-width:2px
+    style Tags fill:#f3e5f5,stroke:#7b1fa2,stroke-width:2px
+    style ProximaDB fill:#e8f5e9,stroke:#2e7d32,stroke-width:3px
+    style Recommendations fill:#c8e6c9,stroke:#1b5e20,stroke-width:2px

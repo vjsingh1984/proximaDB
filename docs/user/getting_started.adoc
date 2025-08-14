@@ -47,6 +47,8 @@ cargo build --release
 
 == First Steps
 
+image::getting-started-flow.svg[Getting Started Flow, width=800, align=center]
+
 === Install Python SDK
 
 [source,bash]

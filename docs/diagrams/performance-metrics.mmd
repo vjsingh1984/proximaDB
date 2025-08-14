@@ -1,0 +1,29 @@
+graph LR
+    subgraph "Traditional Vector DB"
+        T1["6K vectors/sec<br/>Bulk Insert"] 
+        T2["2.6ms<br/>Search Latency"]
+        T3["842 QPS<br/>Concurrent Search"]
+        T4["26.36s/hour<br/>Background CPU"]
+    end
+    
+    subgraph "ProximaDB"
+        P1["17K vectors/sec<br/>Bulk Insert<br/>🚀 2.9x faster"]
+        P2["0.9ms<br/>Search Latency<br/>🚀 2.9x faster"]
+        P3["1,770 QPS<br/>Concurrent Search<br/>🚀 2.1x faster"]
+        P4["5.15s/hour<br/>Background CPU<br/>✨ 84% reduction"]
+    end
+    
+    T1 -.->|"Improvement"| P1
+    T2 -.->|"Improvement"| P2
+    T3 -.->|"Improvement"| P3
+    T4 -.->|"Improvement"| P4
+    
+    style T1 fill:#ffebee,stroke:#c62828,stroke-width:2px
+    style T2 fill:#ffebee,stroke:#c62828,stroke-width:2px
+    style T3 fill:#ffebee,stroke:#c62828,stroke-width:2px
+    style T4 fill:#ffebee,stroke:#c62828,stroke-width:2px
+    
+    style P1 fill:#e8f5e9,stroke:#2e7d32,stroke-width:2px
+    style P2 fill:#e8f5e9,stroke:#2e7d32,stroke-width:2px
+    style P3 fill:#e8f5e9,stroke:#2e7d32,stroke-width:2px
+    style P4 fill:#e8f5e9,stroke:#2e7d32,stroke-width:2px

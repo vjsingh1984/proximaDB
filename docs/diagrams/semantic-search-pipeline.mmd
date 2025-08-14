@@ -1,0 +1,11 @@
+graph TD
+    Input["1. TEXT INPUT<br/>'How does machine learning work?'"] --> Embedding["2. EMBEDDING GENERATION<br/>Text → Transformer Model → Vector<br/>'How does...' → 384-dim vector"]
+    
+    Embedding --> Search["3. VECTOR SIMILARITY SEARCH<br/>• Cosine similarity<br/>• K-NN search<br/>• Metadata filtering"]
+    
+    Search --> Results["4. SEMANTIC RESULTS<br/>1. 'ML Fundamentals' - Score: 0.95<br/>2. 'Neural Networks Guide' - Score: 0.92<br/>3. 'AI Introduction' - Score: 0.89"]
+    
+    style Input fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
+    style Embedding fill:#fff3e0,stroke:#ef6c00,stroke-width:2px
+    style Search fill:#fce4ec,stroke:#c2185b,stroke-width:2px
+    style Results fill:#c8e6c9,stroke:#2e7d32,stroke-width:2px

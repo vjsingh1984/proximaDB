@@ -87,11 +87,8 @@ collection = client.create_collection(
 == Media Platform: Content Recommendation
 
 === Multi-modal Pipeline
-```
-Video → Visual Embeddings ↘
-Audio → Text Embeddings    → ProximaDB → Recommendations
-Tags → Metadata Features   ↗
-```
+
+image::multimodal-pipeline.svg[Multi-modal Content Pipeline, width=800, align=center]
 
 === Results
 * Recommendation CTR: 65% → 84%

@@ -1,0 +1,16 @@
+graph TD
+    Insert[INSERT/UPSERT<br/>Vector ID: vec_001<br/>Dimensions: 384<br/>Metadata: JSON] --> Pipeline[STORAGE PIPELINE]
+    
+    Pipeline --> WAL[1. Write to WAL<br/>Durability guarantee]
+    WAL --> Memtable[2. Add to Memtable<br/>Fast in-memory access]
+    Memtable --> Index[3. Build Index<br/>HNSW/IVF/PQ structures]
+    Index --> Storage[4. Flush to Storage<br/>SST or VIPER engine]
+    
+    Storage --> Search[SEARCH REQUEST<br/>Query vector<br/>Metadata filters<br/>Top-K: 10]
+    
+    Search --> Results[SEARCH RESULTS<br/>1. vec_001 - Score: 0.98<br/>2. vec_045 - Score: 0.94<br/>3. vec_023 - Score: 0.91]
+    
+    style Insert fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
+    style Pipeline fill:#fff3e0,stroke:#ef6c00,stroke-width:2px
+    style Search fill:#e8f5e9,stroke:#2e7d32,stroke-width:2px
+    style Results fill:#c8e6c9,stroke:#1b5e20,stroke-width:2px

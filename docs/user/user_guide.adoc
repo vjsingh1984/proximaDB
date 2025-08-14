@@ -54,6 +54,8 @@ client.delete_collection("my_vectors")
 
 == Vector Operations
 
+image::vector-lifecycle.svg[Vector Lifecycle in ProximaDB, width=900, align=center]
+
 === Inserting Vectors
 
 [source,python]

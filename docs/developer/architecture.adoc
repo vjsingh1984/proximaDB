@@ -23,6 +23,8 @@ image::technical-architecture-abstract.svg[ProximaDB Architecture, width=900]
 
 image::system-data-flow-abstract.svg[System Data Flow, width=900]
 
+image::system-layers.svg[ProximaDB System Layers, width=900, align=center]
+
 The system follows a clean layered architecture:
 
 1. **API Layer**: REST and gRPC endpoints with unified handlers

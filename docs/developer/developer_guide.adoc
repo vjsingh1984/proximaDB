@@ -89,6 +89,8 @@ fn test_example() {
 
 == Development Workflow
 
+image::development-workflow.svg[Development Workflow, width=800, align=center]
+
 === Code Standards
 [source,bash]
 ----

@@ -7,14 +7,66 @@
 
 == Performance Summary
 
-[cols="2,1,1,1", options="header"]
-|===
-| Metric | Target | Achieved | vs Industry
+```
+Performance Architecture Stack:
+┌──────────────────────────────────────────────────┐
+│              APPLICATION LAYER                    │
+│         REST (6K/s) | gRPC (17K/s)               │
+└────────────────┬─────────────────────────────────┘
+                 ▼
+┌──────────────────────────────────────────────────┐
+│           OPTIMIZATION LAYER                      │
+│  ┌──────────────────────────────────────────┐   │
+│  │ • Hardware Detection (GPU/SIMD)          │   │
+│  │ • Batch Optimization (100-500 optimal)   │   │
+│  │ • Connection Pooling                     │   │
+│  └──────────────────────────────────────────┘   │
+└────────────────┬─────────────────────────────────┘
+                 ▼
+┌──────────────────────────────────────────────────┐
+│              CACHE LAYER                          │
+│         95% Hit Rate | Sub-ms Latency            │
+│  ┌──────────────────────────────────────────┐   │
+│  │ Query Cache (30%) | Vector Store (40%)   │   │
+│  │ Filter Cache (20%) | Index Cache (10%)   │   │
+│  └──────────────────────────────────────────┘   │
+└────────────────┬─────────────────────────────────┘
+                 ▼
+┌──────────────────────────────────────────────────┐
+│            STORAGE ENGINES                        │
+│  ┌────────────────┬─────────────────────────┐   │
+│  │  SST (0.9ms)   │   VIPER (2ms)          │   │
+│  │  17K vec/s     │   5K vec/s              │   │
+│  │  Row-based     │   Columnar              │   │
+│  └────────────────┴─────────────────────────┘   │
+└──────────────────────────────────────────────────┘
 
-| Insert (gRPC) | 5K/s | 17K/s | 2.9x
-| Search p99 | <2ms | 0.9ms | 65% lower
-| Compression | 50% | 50-80% | 40% better
-| Cache Hit Rate | 80% | 95% | Best in class
+```
+
+.Performance Highlights
+[%autowidth.stretch, cols="^1h,^1,^1,^1", options="header", frame="none", grid="rows", stripes="even"]
+|===
+| Metric | Target | ✅ Achieved | 🚀 vs Industry
+
+| Insert (gRPC) 
+| 5K/s 
+| *17K/s* 
+| [.badge-success]#2.9x faster#
+
+| Search Latency 
+| <2ms 
+| *0.9ms* 
+| [.badge-success]#65% lower#
+
+| Compression 
+| 50% 
+| *50-80%* 
+| [.badge-success]#40% better#
+
+| Cache Hit Rate 
+| 80% 
+| *95%* 
+| [.badge-success]#Best in class#
 |===
 
 == Benchmark Results
@@ -137,6 +189,29 @@ enable_quantization = true # Additional compression
 ```
 
 == Scaling Guidelines
+
+image::scaling-architecture.svg[Scaling Architecture, width=900, align=center]
+
+.Storage Tiering Strategy
+[%autowidth.stretch, cols="1h,1,2,1", options="header", frame="none", grid="rows", stripes="even"]
+|===
+| Temperature | Percentage | Storage Type | Access Time
+
+| 🔥 HOT 
+| 10% 
+| Memory/NVMe 
+| *< 1ms*
+
+| 🌡️ WARM 
+| 30% 
+| NVMe/SSD 
+| *1-10ms*
+
+| ❄️ COLD 
+| 60% 
+| HDD/S3 
+| *10-100ms*
+|===
 
 === Vertical Scaling
 * **<10M vectors**: 8GB RAM, 4 cores

@@ -9,6 +9,8 @@ image::compression-architecture-abstract.svg[Compression Architecture, width=900
 
 == Overview
 
+image::compression-flow.svg[Unified Compression Architecture, width=900, align=center]
+
 ProximaDB implements a unified compression module supporting 13 algorithms across all storage contexts, achieving 50-80% storage reduction with minimal performance impact.
 
 == Quick Start

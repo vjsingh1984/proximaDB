@@ -41,6 +41,8 @@ toc::[]
 
 == Quick Start
 
+image::proximadb-overview.svg[ProximaDB Architecture, width=800, align=center]
+
 === 60-Second Installation
 
 **Docker** (Recommended):

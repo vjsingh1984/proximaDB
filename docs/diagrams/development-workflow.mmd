@@ -1,0 +1,19 @@
+graph TD
+    Dev[1. LOCAL DEVELOPMENT<br/>• Edit code in src/<br/>• Proto-first design<br/>• DashMap for concurrency] 
+    
+    Dev --> Quality[2. CODE QUALITY<br/>cargo fmt - Auto-format<br/>cargo clippy - Lint checks<br/>cargo build - Compilation]
+    
+    Quality --> Test[3. TESTING<br/>cargo test --all - 2700+ tests<br/>cargo test --release - Performance<br/>pytest tests/ - Python SDK]
+    
+    Test --> Integration[4. INTEGRATION TESTING<br/>• Start server<br/>• Run demo<br/>• Check metrics]
+    
+    Integration --> PR[5. SUBMIT PR<br/>✓ All tests pass<br/>✓ Code formatted<br/>✓ Documentation updated]
+    
+    PR --> Success([PR Ready for Review])
+    
+    style Dev fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
+    style Quality fill:#fff3e0,stroke:#ef6c00,stroke-width:2px
+    style Test fill:#e8f5e9,stroke:#2e7d32,stroke-width:2px
+    style Integration fill:#fce4ec,stroke:#c2185b,stroke-width:2px
+    style PR fill:#f3e5f5,stroke:#7b1fa2,stroke-width:2px
+    style Success fill:#c8e6c9,stroke:#1b5e20,stroke-width:2px

@@ -1,0 +1,21 @@
+graph TD
+    Config[Client Configuration<br/>CompressionConfig] --> Module[Unified Compression Module<br/>src/core/compression/mod.rs]
+    
+    Module --> Algorithms[13 Compression Algorithms<br/>LZ4, ZSTD, Snappy, Gzip, Brotli<br/>Bzip2, Deflate, XZ, Zlib, LZO<br/>LZ4HC, LZMA, None]
+    
+    Algorithms --> Context[Context Detection]
+    
+    Context --> SST[SST Blocks<br/>• Block-level<br/>• Random access<br/>• 3MB blocks]
+    Context --> Vectors[Vectors<br/>• Header<br/>• Checksum<br/>• Streaming]
+    Context --> Parquet[Parquet Columns<br/>• Column-level<br/>• Predicate pushdown]
+    
+    SST --> Results[Storage Results]
+    Vectors --> Results
+    Parquet --> Results
+    
+    Results --> Savings[75% Storage Reduction<br/>From 100% → 25%]
+    
+    style Config fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
+    style Module fill:#fce4ec,stroke:#c2185b,stroke-width:2px
+    style Algorithms fill:#fff3e0,stroke:#ef6c00,stroke-width:2px
+    style Savings fill:#c8e6c9,stroke:#2e7d32,stroke-width:2px

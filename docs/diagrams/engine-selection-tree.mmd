@@ -1,0 +1,20 @@
+graph TD
+    Start[What's Your Primary Use Case?] --> Workload{Workload Type?}
+    
+    Workload -->|Real-time Updates| RealTime[Real-time<br/>Streaming Data]
+    Workload -->|Analytics/Batch| Analytics[Analytics<br/>Batch Processing]
+    
+    RealTime --> SizeRT{Dataset Size?}
+    Analytics --> SizeAN{Dataset Size?}
+    
+    SizeRT -->|< 100K vectors| SST[SST ENGINE<br/>✓ Row-based<br/>✓ Fast write: 17K/sec<br/>✓ Low latency: 0.9ms<br/>✓ Bloom filter]
+    SizeRT -->|> 100K vectors| SST2[SST ENGINE<br/>Consider VIPER for<br/>large analytics]
+    
+    SizeAN -->|< 100K vectors| VIPER2[VIPER ENGINE<br/>Consider SST for<br/>real-time needs]
+    SizeAN -->|> 100K vectors| VIPER[VIPER ENGINE<br/>✓ Columnar storage<br/>✓ High compression: 70-80%<br/>✓ Quantization support<br/>✓ Batch optimized]
+    
+    style SST fill:#e8f5e9,stroke:#2e7d32,stroke-width:2px
+    style SST2 fill:#e8f5e9,stroke:#2e7d32,stroke-width:1px
+    style VIPER fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
+    style VIPER2 fill:#e3f2fd,stroke:#1565c0,stroke-width:1px
+    style Start fill:#fff3e0,stroke:#ef6c00,stroke-width:2px

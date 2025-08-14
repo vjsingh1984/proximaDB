@@ -1,0 +1,16 @@
+%%{init: {'theme':'base', 'themeVariables': { 'primaryColor':'#ff6f00', 'primaryTextColor':'#000', 'primaryBorderColor':'#ff8f00', 'lineColor':'#5a5a5a', 'secondaryColor':'#fff3e0', 'tertiaryColor':'#e1f5fe'}}}%%
+graph LR
+    subgraph "Insert Performance (vectors/sec)"
+        REST[REST: 6K/s]
+        GRPC[gRPC: 17K/s<br/>🚀 2.9x faster]
+    end
+    
+    subgraph "Search Latency (p99)"
+        Industry[Industry: 2.5ms]
+        ProximaDB[ProximaDB: 0.9ms<br/>⚡ 65% lower]
+    end
+    
+    style REST fill:#ffecb3
+    style GRPC fill:#c8e6c9
+    style Industry fill:#ffccbc
+    style ProximaDB fill:#c8e6c9

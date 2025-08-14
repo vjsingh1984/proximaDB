@@ -1,0 +1,17 @@
+graph TD
+    Start[Dataset Size] --> Decision{Size Range?}
+    
+    Decision -->|< 10M vectors| Small[Single Node<br/>8GB RAM<br/>4 Cores<br/>100GB SSD]
+    Decision -->|10M - 100M| Medium[Medium Node<br/>32GB RAM<br/>8 Cores<br/>NVMe SSD]
+    Decision -->|> 100M| Large[Large Node<br/>128GB+ RAM<br/>16+ Cores<br/>Multi-NVMe]
+    
+    Small --> Tier1[Hot Data: Memory/NVMe<br/>10% of data<br/>< 1ms access]
+    Medium --> Tier2[Warm Data: NVMe/SSD<br/>30% of data<br/>1-10ms access]
+    Large --> Tier3[Cold Data: HDD/S3<br/>60% of data<br/>10-100ms access]
+    
+    style Small fill:#e8f5e9,stroke:#2e7d32,stroke-width:2px
+    style Medium fill:#fff3e0,stroke:#ef6c00,stroke-width:2px
+    style Large fill:#fce4ec,stroke:#c2185b,stroke-width:2px
+    style Tier1 fill:#ffebee,stroke:#d32f2f,stroke-width:1px
+    style Tier2 fill:#fff3e0,stroke:#f57c00,stroke-width:1px
+    style Tier3 fill:#e3f2fd,stroke:#1976d2,stroke-width:1px

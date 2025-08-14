@@ -1,0 +1,16 @@
+graph TD
+    Start[GETTING STARTED<br/>user/getting_started.adoc<br/>Installation & Setup] --> Choice{Choose Your<br/>Learning Path}
+    
+    Choice --> User[USER DOCS<br/>• User Guide<br/>• API Reference<br/>• Search Guide]
+    Choice --> Dev[DEVELOPER DOCS<br/>• Architecture<br/>• Tech Reference<br/>• Storage Engines]
+    Choice --> Biz[BUSINESS DOCS<br/>• ROI Calculator<br/>• Use Cases<br/>• Overview]
+    
+    User --> Advanced[ADVANCED TOPICS<br/>• Hierarchical SST<br/>• AXIS Tiering<br/>• Performance Optimization<br/>• Production Deployment]
+    Dev --> Advanced
+    Biz --> Advanced
+    
+    style Start fill:#e1f5fe,stroke:#01579b,stroke-width:2px
+    style User fill:#e8f5e9,stroke:#2e7d32,stroke-width:2px
+    style Dev fill:#fff3e0,stroke:#ef6c00,stroke-width:2px
+    style Biz fill:#fce4ec,stroke:#c2185b,stroke-width:2px
+    style Advanced fill:#f3e5f5,stroke:#7b1fa2,stroke-width:2px

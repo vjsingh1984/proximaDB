@@ -1,0 +1,24 @@
+%%{init: {'theme':'base', 'themeVariables': { 'primaryColor':'#ff6f00', 'primaryTextColor':'#000', 'primaryBorderColor':'#ff8f00'}}}%%
+graph LR
+    subgraph "Traditional Solution"
+        TS[Storage: $150K/yr]
+        TC[Compute: $100K/yr]
+        TN[Network: $50K/yr]
+        TTotal[Total: $300K/yr]
+        TS --> TTotal
+        TC --> TTotal
+        TN --> TTotal
+    end
+    
+    subgraph "ProximaDB Solution"
+        PS[Storage: $37.5K/yr]
+        PC[Compute: $30K/yr]
+        PN[Network: $10K/yr]
+        PTotal[Total: $77.5K/yr<br/>74% Savings]
+        PS --> PTotal
+        PC --> PTotal
+        PN --> PTotal
+    end
+    
+    style TTotal fill:#ffccbc
+    style PTotal fill:#c8e6c9

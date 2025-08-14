@@ -138,6 +138,34 @@ VIPER leverages Apache Parquet for columnar storage:
 
 == Engine Selection Guide
 
+image::engine-selection-tree.svg[Engine Selection Decision Tree, width=900, align=center]
+
+.Performance Characteristics: SST vs VIPER
+[%autowidth.stretch, cols="^1h,^2,^2", options="header", frame="none", grid="rows", stripes="even"]
+|===
+| Metric | SST Engine | VIPER Engine
+
+| Write Speed 
+| *17K/sec* 🚀
+| 5K/sec
+
+| Query Latency 
+| *0.9ms* ⚡
+| 2-3ms
+
+| Compression 
+| 40-50%
+| *70-80%* 📦
+
+| Memory Usage 
+| Higher
+| *Lower* ✓
+
+| Best For 
+| *OLTP* / Real-time
+| *OLAP* / Analytics
+|===
+
 === Decision Matrix
 
 [cols="2,2,2", options="header"]

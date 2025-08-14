@@ -7,6 +7,40 @@
 
 image::api-protocols-abstract.svg[API Architecture, width=900]
 
+== API Protocol Comparison
+
+.Protocol Selection Guide
+[%autowidth.stretch, cols="^1h,^2,^2", options="header", frame="none", grid="rows", stripes="even"]
+|===
+| Feature | REST API | gRPC API
+
+| Port 
+| 5678 
+| 5679
+
+| Format 
+| JSON 
+| Protobuf
+
+| Speed 
+| Baseline 
+| *3x faster* 🚀
+
+| Use Case 
+| Development/Debug 
+| *Production* ✓
+
+| Compression 
+| Optional 
+| Built-in
+
+| Streaming 
+| Limited 
+| *Native support*
+|===
+
+image::request-flow.svg[Request Flow Architecture, width=800, align=center]
+
 == REST API
 
 **Base URL**: `http://localhost:5678`

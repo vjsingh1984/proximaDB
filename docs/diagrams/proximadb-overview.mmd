@@ -1,0 +1,12 @@
+graph TD
+    App["YOUR APPLICATION<br/>Python / REST / gRPC / SQL"] --> Server["PROXIMADB SERVER<br/>• 17K vectors/sec insert<br/>• 0.9ms search latency<br/>• 50-80% compression<br/>• Auto GPU/SIMD acceleration"]
+    
+    Server --> Engines[STORAGE ENGINES]
+    
+    Engines --> SST[SST<br/>Real-time<br/>Row-based]
+    Engines --> VIPER[VIPER<br/>Analytics<br/>Columnar]
+    
+    style App fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
+    style Server fill:#fff3e0,stroke:#ef6c00,stroke-width:3px
+    style SST fill:#e8f5e9,stroke:#2e7d32,stroke-width:2px
+    style VIPER fill:#fce4ec,stroke:#c2185b,stroke-width:2px

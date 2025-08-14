@@ -1,7 +1,7 @@
 = ProximaDB Demo Suite - Streamlined
 :toc: left
 :toclevels: 3
-:imagesdir: static
+:imagesdir: ../docs/diagrams/images
 
 **Enterprise vector database demonstrations: 20 files, 100% functionality, zero redundancy**
 
@@ -15,6 +15,39 @@ image:https://img.shields.io/badge/files-20%20total-brightgreen[Streamlined] ima
 ====
 
 == 🚀 Quick Start
+
+image::demo-learning-path.svg[Demo Learning Path, width=900, align=center]
+
+.Demo Suite Structure
+[%autowidth.stretch, cols="^1h,^1,2", options="header", frame="none", grid="rows", stripes="even"]
+|===
+| Category | Files | Purpose
+
+| quickstart/ 
+| 3 files 
+| New users getting started
+
+| showcases/ 
+| 10 files 
+| Features & Use Cases demonstrations
+
+| benchmarks/ 
+| 4 files 
+| Performance Testing suite
+
+| validation/ 
+| 2 files 
+| System Validation tests
+
+| utils/ 
+| Shared 
+| Common Utilities and helpers
+|===
+
+[NOTE]
+====
+*20 Files Total* | *69% Reduction* from original suite while maintaining 100% functionality
+====
 
 [source,bash]
 ----

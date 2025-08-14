@@ -1,0 +1,23 @@
+graph TD
+    Client[Client Request] --> Protocol{Protocol?}
+    
+    Protocol -->|REST| REST[REST API<br/>Port: 5678<br/>JSON Format]
+    Protocol -->|gRPC| GRPC[gRPC API<br/>Port: 5679<br/>Protobuf Format]
+    
+    REST --> Handler[API Handler]
+    GRPC --> Handler
+    
+    Handler --> VOS[VectorOperationsService<br/>Direct Memtable Access]
+    
+    VOS --> Engine{Storage Engine}
+    
+    Engine -->|Row-based| SST[SST Engine<br/>Real-time OLTP]
+    Engine -->|Columnar| VIPER[VIPER Engine<br/>Analytics OLAP]
+    
+    SST --> Response[Response to Client]
+    VIPER --> Response
+    
+    style Client fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
+    style REST fill:#fff3e0,stroke:#ef6c00,stroke-width:2px
+    style GRPC fill:#e8f5e9,stroke:#2e7d32,stroke-width:2px
+    style Response fill:#c8e6c9,stroke:#1b5e20,stroke-width:2px

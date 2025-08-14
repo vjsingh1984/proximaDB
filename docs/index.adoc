@@ -10,6 +10,8 @@ image::technical-architecture-abstract.svg[ProximaDB Architecture, width=900]
 
 == Documentation Hub
 
+image::documentation-hub.svg[Documentation Learning Path, width=900, align=center]
+
 [cols="1,1,1", frame=none, grid=none]
 |===
 | **🚀 Get Started**

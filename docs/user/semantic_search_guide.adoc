@@ -9,6 +9,8 @@
 
 Semantic search finds results based on meaning rather than exact keywords, using vector embeddings to represent concepts in high-dimensional space.
 
+image::semantic-search-pipeline.svg[Semantic Search Pipeline, width=800, align=center]
+
 == Quick Start
 
 === 1. Generate Embeddings
