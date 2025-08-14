@@ -292,7 +292,7 @@ let caps = get_hardware_capabilities();
 **Modular Compression Components**
 
 .Compression Decision Flow
-image::compression-decision-abstract.svg[Compression Decision Tree, width=400]
+image::compression-decision-abstract.svg[Compression Decision Tree, width=1000]
 
 .Unified Quantization System  
 image::quantization-system-detail-modular.svg[Compression Pipeline, width=400]
