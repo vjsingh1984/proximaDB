@@ -701,8 +701,13 @@ pub mod operations {
         format!("file://{}", environment.get_sst_data_directory().to_str().unwrap())
     }
     
-    /// DEPRECATED: Use build_sst_storage_url() + engine.search_vectors_unified() directly
-    #[deprecated(note = "Use build_sst_storage_url() + engine.search_vectors_unified() for direct production calls")]
+    /// Build correct storage URL for VIPER search operations
+    pub fn build_viper_storage_url(environment: &UnifiedTestEnvironment) -> String {
+        // VIPER expects storage_url to point to where parquet files are located
+        format!("file://{}", environment.get_viper_data_directory().to_str().unwrap())
+    }
+    
+    /// Search vectors in SST engine
     pub async fn search_vectors_sst(
         engine: &SstStorage,
         environment: &UnifiedTestEnvironment,
@@ -712,6 +717,28 @@ pub mod operations {
         let storage_url = build_sst_storage_url(environment);
         
         // Direct production call
+        engine.search_vectors_unified(
+            environment.collection_id(),
+            &storage_url,
+            query_vector,
+            top_k,
+            &DistanceMetric::Cosine,
+            None,
+            true,
+            true
+        ).await
+    }
+    
+    /// Search vectors in VIPER engine - REAL search, not simulated
+    pub async fn search_vectors_viper(
+        engine: &proximadb::storage::engines::viper::ViperEngine,
+        environment: &UnifiedTestEnvironment,
+        query_vector: &[f32],
+        top_k: usize
+    ) -> Result<Vec<proximadb::core::search::SearchResult>> {
+        let storage_url = build_viper_storage_url(environment);
+        
+        // Direct production call to VIPER's search_vectors_unified
         engine.search_vectors_unified(
             environment.collection_id(),
             &storage_url,
