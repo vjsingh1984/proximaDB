@@ -205,7 +205,8 @@ async fn run_baseline(engine_type: &str, sparsity: usize, dimension: usize, batc
             }
             
             // Get storage size - VIPER writes to {base_location}/{collection_id}/data
-            let viper_actual_dir = env.base_path.join("data").join(env.collection_id()).join("data");
+            // The base location is the persistent_dir
+            let viper_actual_dir = env.persistent_dir.join("data").join(env.collection_id()).join("data");
             let mut uncompressed_size = if viper_actual_dir.exists() {
                 get_directory_size(viper_actual_dir.to_str().unwrap()).await
             } else {
@@ -535,7 +536,7 @@ async fn run_benchmark(
             
             // Calculate metrics - VIPER writes to {base_location}/{collection_id}/data
             println!("      Calculating VIPER compressed size:");
-            let viper_actual_dir = env.base_path.join("data").join(env.collection_id()).join("data");
+            let viper_actual_dir = env.persistent_dir.join("data").join(env.collection_id()).join("data");
             let mut compressed_size = if viper_actual_dir.exists() {
                 println!("        Checking VIPER data in: {}", viper_actual_dir.display());
                 get_directory_size(viper_actual_dir.to_str().unwrap()).await
