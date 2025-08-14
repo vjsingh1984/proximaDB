@@ -40,7 +40,8 @@ async fn test_isolated_sst_basic_operations() -> Result<()> {
     
     // Search without filters
     let query_vector = env.create_query_vector();
-    let storage_url = format!("file://{}/data", env.persistent_dir.to_str().unwrap());
+    // SST engine adds {collection_id}/data to base_location internally
+    let storage_url = format!("file://{}/{}/data", env.persistent_dir.to_str().unwrap(), env.collection_id());
     info!("🔍 Using storage URL for search: {}", storage_url);
     let results = engine.search_vectors_unified(
         env.collection_id(),
@@ -103,7 +104,8 @@ async fn test_isolated_sst_metadata_filtering() -> Result<()> {
         value: serde_json::Value::String("A".to_string()),
     };
     
-    let storage_url = format!("file://{}/data", env.persistent_dir.to_str().unwrap());
+    // SST engine adds {collection_id}/data to base_location internally
+    let storage_url = format!("file://{}/{}/data", env.persistent_dir.to_str().unwrap(), env.collection_id());
     info!("🔍 Using storage URL for filtered search: {}", storage_url);
     let filtered_results = engine.search_vectors_unified(
         env.collection_id(),
@@ -331,7 +333,8 @@ async fn test_isolated_sst_flush_and_compaction() -> Result<()> {
         "Compaction should process all {} vectors that were flushed", expected_total_vectors);
     
     // Verify all vectors are still searchable after compaction
-    let storage_url = format!("file://{}/data", env.persistent_dir.to_str().unwrap());
+    // SST engine adds {collection_id}/data to base_location internally
+    let storage_url = format!("file://{}/{}/data", env.persistent_dir.to_str().unwrap(), env.collection_id());
     info!("🔍 Using storage URL for filtered search: {}", storage_url);
     let all_results = engine.search_vectors_unified(
         env.collection_id(),
@@ -442,7 +445,8 @@ async fn test_isolated_sst_concurrent_operations() -> Result<()> {
         "Should have flushed expected total");
     
     // Verify all vectors are searchable
-    let storage_url = format!("file://{}/data", env.persistent_dir.to_str().unwrap());
+    // SST engine adds {collection_id}/data to base_location internally
+    let storage_url = format!("file://{}/{}/data", env.persistent_dir.to_str().unwrap(), env.collection_id());
     info!("🔍 Using storage URL for filtered search: {}", storage_url);
     let search_results = engine.search_vectors_unified(
         env.collection_id(),
@@ -491,7 +495,8 @@ async fn test_isolated_sst_recovery_persistence() -> Result<()> {
         let engine = env.create_sst_engine().await?;
         
         // Search for persisted data
-        let storage_url = format!("file://{}/data", env.persistent_dir.to_str().unwrap());
+        // SST engine adds {collection_id}/data to base_location internally
+    let storage_url = format!("file://{}/{}/data", env.persistent_dir.to_str().unwrap(), env.collection_id());
     info!("🔍 Using storage URL for filtered search: {}", storage_url);
         let results = engine.search_vectors_unified(
             env.collection_id(),
@@ -553,12 +558,30 @@ async fn test_isolated_multi_collection_isolation() -> Result<()> {
         };
         let result = engine.do_flush(&flush_params).await?;
         assert!(result.success, "Flush should succeed");
-        debug!("📁 Inserted data in collection {}: {}", i, env.collection_id());
+        assert!(result.entries_flushed > 0, "Should have flushed some entries");
+        assert!(result.files_created > 0, "Should have created SST files");
+        debug!("📁 Inserted data in collection {}: {} - Flushed {} entries, created {} files", 
+               i, env.collection_id(), result.entries_flushed, result.files_created);
+        
+        // Verify files exist
+        let data_path = env.persistent_dir.join(env.collection_id()).join("data");
+        if data_path.exists() {
+            let entries = std::fs::read_dir(&data_path)?;
+            let sst_files: Vec<_> = entries
+                .filter_map(|e| e.ok())
+                .filter(|e| e.path().extension().map_or(false, |ext| ext == "sst"))
+                .collect();
+            debug!("✅ Found {} SST files in {}", sst_files.len(), data_path.display());
+            assert!(!sst_files.is_empty(), "Should have created SST files on disk");
+        } else {
+            panic!("❌ Data directory doesn't exist: {}", data_path.display());
+        }
     }
     
     // Verify complete isolation - each collection should only see its own data
     for (i, (env, engine)) in multi_env.environments.iter().zip(engines.iter()).enumerate() {
-        let storage_url = format!("file://{}/data", env.persistent_dir.to_str().unwrap());
+        // SST engine adds {collection_id}/data to base_location internally
+    let storage_url = format!("file://{}/{}/data", env.persistent_dir.to_str().unwrap(), env.collection_id());
     info!("🔍 Using storage URL for filtered search: {}", storage_url);
         let results = engine.search_vectors_unified(
             env.collection_id(),
@@ -669,7 +692,8 @@ async fn test_isolated_sst_distance_metrics() -> Result<()> {
         DistanceMetric::DotProduct,
     ];
     
-    let storage_url = format!("file://{}/data", env.persistent_dir.to_str().unwrap());
+    // SST engine adds {collection_id}/data to base_location internally
+    let storage_url = format!("file://{}/{}/data", env.persistent_dir.to_str().unwrap(), env.collection_id());
     info!("🔍 Using storage URL for filtered search: {}", storage_url);
     for metric in metrics {
         let results = engine.search_vectors_unified(
@@ -772,7 +796,8 @@ async fn test_isolated_sst_large_dataset() -> Result<()> {
     // Test various search scenarios
     
     // 1. Search for top-k results
-    let storage_url = format!("file://{}/data", env.persistent_dir.to_str().unwrap());
+    // SST engine adds {collection_id}/data to base_location internally
+    let storage_url = format!("file://{}/{}/data", env.persistent_dir.to_str().unwrap(), env.collection_id());
     info!("🔍 Using storage URL for filtered search: {}", storage_url);
     let top_k_results = engine.search_vectors_unified(
         env.collection_id(),

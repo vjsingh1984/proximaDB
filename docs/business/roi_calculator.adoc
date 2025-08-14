@@ -72,7 +72,7 @@ _^*^Based on theoretical models and assumptions. Actual results will vary signif
 [cols="1,4", frame=none, grid=none]
 |===
 | 🌐 | *Query Bandwidth*: Potential 60-85% reduction in network traffic through intelligent filtering^*^
-| ⚡ | *Latency Improvement*: Potential 2-5× faster response times (SST: 2-3×, VIPER: 3-5× for analytics)^*^
+| ⚡ | *Latency Improvement*: Potential 40-60% faster response times (SST: 40%, VIPER: 60% for analytics)^*^
 | 🛡️ | *Noisy Neighbor Isolation*: Dedicated engine resources designed to reduce cross-workload interference^*^
 | 📊 | *Query Capacity*: 1,000-1,500 QPS on single optimized server^*^
 |===
@@ -82,7 +82,7 @@ _^*^Performance improvements are theoretical projections based on internal testi
 
 ==== Multi-Engine Flexibility
 * 🔸 *SST Engine*: Optimized for transactional workloads (e-commerce, real-time APIs)
-* 🔸 *VIPER Engine*: Columnar analytics with 3-5× faster reporting and 70% storage savings
+* 🔸 *VIPER Engine*: Columnar analytics with 60% faster reporting and 70% storage savings
 * 🔸 *Hybrid Deployment*: Intelligent workload routing for 75-85% total cost reduction
 * 🔸 *Automatic Optimization*: AXIS tiering adapts to changing access patterns
 
@@ -144,7 +144,7 @@ The following use cases present hypothetical scenarios with estimated costs and 
 | *🖥️ Compute Infrastructure*
 | 8× m7i.2xlarge instances +
 $67,200/year
-| 3× m7i.2xlarge instances +
+| 1× m7i.8xlarge instance +
 $25,200/year  
 | *$42,000 saved* +
 62% reduction
@@ -177,7 +177,7 @@ Reduced processing: $720
 
 ==== ✨ Business Benefits
 
-* 🚀 *3× faster query response times* improve conversion rates (10ms → 3ms average)
+* 🚀 *40% faster query response times* improve conversion rates (10ms → 6ms average)
 * 📈 *85% reduction in query bandwidth* eliminates network bottlenecks during peak traffic
 * 🛡️ *Noisy neighbor elimination* ensures consistent sub-10ms performance during Black Friday
 * ⚡ *Higher query capacity* (1,000-1,500 QPS) on single optimized server
@@ -201,9 +201,9 @@ Reduced processing: $720
 | Cost Category | Estimated Traditional Vector DB | Projected ProximaDB VIPER Engine | Estimated Business Savings
 
 | *🖥️ Compute Infrastructure*  
-| 15× m7i.4xlarge instances +
+| 1× m7i.24xlarge instance +
 $262,800/year
-| 5× m7i.4xlarge instances +
+| 1× m7i.16xlarge instance +
 $87,600/year
 | *$175,200 saved* +
 67% reduction
@@ -236,7 +236,7 @@ Compliance features: $3,600
 
 ==== ✨ Business Benefits
 
-* 🚀 *5× faster analytical queries* enable real-time document insights (500ms → 100ms average)
+* 🚀 *60% faster analytical queries* enable real-time document insights (500ms → 200ms average)
 * 📊 *70% reduction in data transfer* through columnar compression and predicate pushdown
 * 🔒 *Workload isolation* prevents resource contention between search and analytics operations
 * ⚡ *Vectorized processing* delivers 3-7× higher throughput for batch document analysis
@@ -343,7 +343,7 @@ Built-in monitoring: $4,500
 |===
 | *Workload Profile* | >60% analytical queries (aggregations, range searches, reporting)
 | *Use Cases* | Document analysis, business intelligence, data science workloads
-| *Performance Focus* | 3-5× faster analytics, 70% data transfer reduction
+| *Performance Focus* | 60% faster analytics, 70% data transfer reduction
 | *Bandwidth Benefits* | Columnar compression reduces I/O by 50-75%, vectorized processing
 | *Cost Benefits* | 70-85% reduction in storage costs, 50-70% better compression
 |===
@@ -455,13 +455,13 @@ For detailed technical specifications and deployment-specific configurations, se
 | *SST Only* 
 | $24,600
 | *$60,400 (71%)*
-| 3× faster queries, 2× QPS
+| 40% faster queries, 50% higher QPS
 | Pure transactional workloads
 
 | *VIPER Only*
 | $21,200  
 | *$63,800 (75%)*
-| 5× faster analytics, 70% less I/O
+| 60% faster analytics, 70% less I/O
 | Pure analytical workloads
 
 | *Multi-Engine*
@@ -486,7 +486,7 @@ For detailed technical specifications and deployment-specific configurations, se
 | *VIPER Only*
 | $57,900
 | *$227,100 (80%)*
-| 3-5× analytics speed, 85% bandwidth reduction
+| 60% analytics speed improvement, 85% bandwidth reduction
 | Data science, reporting platforms
 
 | *Multi-Engine*
@@ -920,7 +920,7 @@ Batch APIs: $25/mo
 === 📊 Success Metrics & KPIs
 
 ==== Technical Metrics
-* ⚡ *Query response time improvement*: Target 2-3× faster
+* ⚡ *Query response time improvement*: Target 40-60% faster
 * 💾 *Storage cost reduction*: Target 80-85% 
 * 🖥️ *Compute efficiency improvement*: Target 60-70% reduction
 * 🔗 *API call optimization*: Target 85-95% reduction
