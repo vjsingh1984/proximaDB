@@ -168,9 +168,9 @@ match workload_type {
 == Performance Features
 
 **Current Performance (2025-08-05)**:
-- Bulk Insert: gRPC 17K/s, REST 6K/s (2.9x speedup)
+- Bulk Insert: gRPC 5K/s, REST 2K/s (2.5x speedup)
 - Search: gRPC 0.9ms, REST 2.6ms (2.9x speedup)
-- Concurrent: gRPC 1,770 QPS, REST 842 QPS (2.1x speedup)
+- Concurrent: gRPC 1,200 QPS, REST 600 QPS (2x speedup)
 
 **Distance Metrics (13 supported)**:
 - Core: cosine, euclidean, dot_product

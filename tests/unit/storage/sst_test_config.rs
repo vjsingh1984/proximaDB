@@ -215,7 +215,7 @@ pub fn create_test_sst_config(base_path: &str) -> SstConfig {
         level_size_multiplier: 4.0,
         
         // Block and file settings
-        block_size_mb: 3,  // Smaller blocks for tests
+        block_size_kb: 3072,  // 3MB blocks for tests
         
         // Storage type
         compaction_strategy: "leveled".to_string(),

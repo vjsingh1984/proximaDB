@@ -3,7 +3,7 @@
 :toclevels: 2
 :imagesdir: docs/diagrams/images
 
-image:https://img.shields.io/badge/tests-2704%20passing-brightgreen[Tests] image:https://img.shields.io/badge/performance-17K%20vec%2Fs-blue[Performance] image:https://img.shields.io/badge/compression-50--80%25-orange[Compression] image:https://img.shields.io/badge/license-Apache%202.0-blue[License]
+image:https://img.shields.io/badge/tests-2704%20passing-brightgreen[Tests] image:https://img.shields.io/badge/performance-5K%20vec%2Fs-blue[Performance] image:https://img.shields.io/badge/compression-50--75%25-orange[Compression] image:https://img.shields.io/badge/license-Apache%202.0-blue[License]
 
 [.lead]
 **The Only AI Platform That Creates New Revenue Streams**
@@ -37,7 +37,7 @@ toc::[]
 *Enter markets previously blocked by technology limitations*
 
 * **Traditional Limitation**: Different systems for different scales and locations
-* **ProximaDB Advantage**: One platform scales from mobile to enterprise globally
+* **ProximaDB Advantage**: Optimized single-server architecture for any deployment
 * **Business Impact**: Address $10-100M new market segments with edge AI products
 
 ==== ⚡ **Category 3: Competitive Moats**
@@ -75,8 +75,8 @@ image::business-roi-metrics.svg[Business Impact, align=center, width=800]
 | **Instant AI decisions (<1ms)**
 
 | **Escalating Costs**
-| $150K/year per billion vectors
-| **$37K/year (75% savings)**
+| High infrastructure costs
+| **50-75% cost reduction**
 
 | **Vendor Dependency**
 | Locked into expensive contracts
@@ -96,7 +96,7 @@ image::business-roi-metrics.svg[Business Impact, align=center, width=800]
 * Real-time recommendations that increase conversion 30-50%
 
 **Market Expansion**: Enter **$10-100M new market segments**  
-* Scale from mobile apps to enterprise without rebuilding
+* Deploy same optimized server for different use cases
 * Deploy edge AI products previously impossible
 
 **Strategic Independence**: Immediate **20-40% cost reduction**
@@ -194,7 +194,7 @@ cd demo/benchmarks
 python performance_suite.py --suite quick --vectors 1000
 
 # Expected Results:
-# gRPC Insert: 17,000+ vectors/sec
+# gRPC Insert: 5,000+ vectors/sec
 # gRPC Search: <1ms p99 latency  
 # Storage: 50-80% compression ratio (collection-level)
 # Protocol: Compression disabled for pure performance
@@ -225,7 +225,7 @@ For detailed setup, performance tuning, and enterprise features, see our link:do
 | Metric | ProximaDB Achievement | Impact
 
 | **Bulk Insert**
-| 17,000 vectors/second
+| 5,000 vectors/second
 | Real-time data ingestion for streaming applications
 
 | **Search Latency (p99)**
@@ -237,8 +237,8 @@ For detailed setup, performance tuning, and enterprise features, see our link:do
 | 1TB vectors stored in 200-500GB
 
 | **Concurrent Queries**
-| 1,770 QPS (gRPC)
-| Handle production traffic without scaling issues
+| 1,000+ QPS per server
+| Handle production traffic on single optimized instance
 
 | **Index Build Time**
 | 100K vectors in <5 seconds
@@ -323,8 +323,8 @@ A payment processor analyzing 1M transactions/hour for fraud patterns achieved b
 
 ==== 🔬 **Built for Production AI**
 - **Proto-first architecture** - Designed for AI workloads, not adapted from general databases
-- **17K vectors/second** ingestion for real-time applications
-- **Sub-millisecond search** at billion-vector scale
+- **5K vectors/second** ingestion on single server
+- **Sub-millisecond search** for millions of vectors
 
 ==== 🛠️ **Enterprise-Ready from Day One**
 - **ACID transactions** for data consistency

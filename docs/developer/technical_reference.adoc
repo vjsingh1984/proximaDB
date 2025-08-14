@@ -614,7 +614,7 @@ match error {
 | Configuration | Insert Rate | Search Latency | Storage Efficiency
 
 | **gRPC + VIPER + Compression**
-| 17,000 vec/s
+| 5,000 vec/s
 | 0.9ms p99
 | 50-80% reduction
 

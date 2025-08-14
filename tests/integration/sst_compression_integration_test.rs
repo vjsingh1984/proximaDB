@@ -36,7 +36,7 @@ fn create_test_config(temp_dir: &TempDir, enable_compression: bool) -> SstConfig
     SstConfig {
         level_count: 3,
         compaction_threshold: 3,
-        block_size_mb: 3, // 4MB for optimal ZSTD compression
+        block_size_kb: 4096, // 4MB for optimal ZSTD compression
         compaction_strategy: "leveled".to_string(),
         compression: if enable_compression { "zstd".to_string() } else { "none".to_string() },
         compression_level: 3,

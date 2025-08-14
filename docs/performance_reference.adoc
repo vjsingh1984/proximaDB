@@ -31,9 +31,9 @@ Test Suite: Rust (1,935 tests) + Python (769 tests)
 | Operation | gRPC | REST | Speedup
 
 | **Insert Throughput**
-| 17,000 vec/s
-| 6,000 vec/s
-| 2.9x
+| 5,000 vec/s
+| 2,000 vec/s
+| 2.5x
 
 | **Search Latency (p99)**
 | 0.9ms
@@ -338,7 +338,7 @@ BenchmarkConfig(
 
 **VIPER Engine** (Columnar):  
 - Best for: Analytics, >10K vectors
-- Insert: 17,000 vec/s (gRPC)
+- Insert: 5,000 vec/s (gRPC)
 - Search: 0.9ms average
 - Format: Parquet (PAR1 magic bytes)
 

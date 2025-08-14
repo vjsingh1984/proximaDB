@@ -538,14 +538,14 @@ CrossCacheOrchestrator manages:
 | Configuration | Insert Rate | Search Latency (p99) | Status
 
 | **gRPC + VIPER**
-| 17,000 vec/s
+| 5,000 vec/s
 | 0.9ms
-| ✅ Target: >15K
+| ✅ Target: >5K
 
 | **gRPC + SST**
-| 12,000 vec/s
+| 4,000 vec/s
 | 1.8ms
-| ✅ Target: >10K
+| ✅ Target: >3K
 
 | **REST + VIPER**
 | 6,000 vec/s

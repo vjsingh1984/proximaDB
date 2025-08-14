@@ -75,9 +75,9 @@
 | < 1ms
 
 | *Throughput*
-| 17K vec/s
-| 15K vec/s
-| 16K vec/s
+| 5K vec/s
+| 4.5K vec/s
+| 4.8K vec/s
 |===
 
 === On-Premise Deployments

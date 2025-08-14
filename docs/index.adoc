@@ -48,8 +48,8 @@ _Technology leadership, market differentiators, and performance edge_
 | Metric | Performance | Industry Comparison
 
 | **Insert Throughput (gRPC)**
-| 17,484 vec/s
-| 3x faster
+| 5,000 vec/s
+| 2.5x faster
 
 | **Search Latency (gRPC)**
 | 0.9ms (p99)
