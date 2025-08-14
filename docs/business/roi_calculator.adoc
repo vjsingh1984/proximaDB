@@ -180,7 +180,7 @@ Reduced processing: $720
 * 🚀 *3× faster query response times* improve conversion rates (10ms → 3ms average)
 * 📈 *85% reduction in query bandwidth* eliminates network bottlenecks during peak traffic
 * 🛡️ *Noisy neighbor elimination* ensures consistent sub-10ms performance during Black Friday
-* ⚡ *2.1× higher concurrent capacity* (1,770 QPS vs 842 QPS) supports traffic spikes
+* ⚡ *Higher query capacity* (1,000-1,500 QPS) on single optimized server
 * 💵 *62% reduction in infrastructure spend* increases profit margins  
 * 😊 *Enhanced user experience* drives customer retention
 
@@ -480,7 +480,7 @@ For detailed technical specifications and deployment-specific configurations, se
 | *SST Only*
 | $71,200
 | *$213,800 (75%)*
-| Sub-10ms latency, 1,770 QPS
+| Sub-10ms latency, 1,000+ QPS
 | E-commerce, real-time systems
 
 | *VIPER Only*
@@ -839,7 +839,7 @@ Batch APIs: $25/mo
 | $0.01/GB
 | *GCP 50% cheaper*
 
-| *💰 Annual Savings (100TB)*
+| *💰 Annual Savings (10M vectors)*
 | $56,400
 | $67,332
 | $59,196

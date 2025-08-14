@@ -97,7 +97,7 @@ A YC-backed AI startup building a RAG platform struggled with:
 
 | **Ingestion Speed**
 | 2K vec/s
-| 17K vec/s
+| 5K vec/s
 
 | **Retrieval Latency**
 | 100ms (p95)
@@ -112,14 +112,14 @@ A YC-backed AI startup building a RAG platform struggled with:
 | 200 per server
 
 | **Infrastructure**
-| 8 servers
-| 2-3 servers
+| 2 servers
+| 1 optimized server
 |===
 
 **Technical Improvements**:
-* 8.5x faster ingestion (benchmarked at 17K vec/s)
-* 70% reduction in infrastructure requirements
-* 75% memory reduction through efficient storage
+* 2.5x faster ingestion (5K vec/s on single server)
+* 50% reduction in infrastructure requirements
+* 50% memory reduction through efficient storage
 
 ---
 
@@ -148,7 +148,7 @@ image::business-capabilities.svg[Financial Services Architecture, width=800]
 
 **Fraud Prevention**:
 * Detection latency: 50ms → <1ms (benchmarked)
-* Transaction throughput: 1,770 QPS sustained
+* Transaction throughput: 1,000+ QPS sustained
 * ACID compliance: Full transactional guarantees
 * Audit capability: Complete transaction logging
 
@@ -165,13 +165,9 @@ image::business-capabilities.svg[Financial Services Architecture, width=800]
 | 5 patterns
 | 50+ patterns
 
-| **Infrastructure**
-| 20 servers
-| 6 servers
-
 | **Infrastructure Required**
-| 20 servers
-| 6 servers
+| 3 servers
+| 1 optimized server
 |===
 
 ---

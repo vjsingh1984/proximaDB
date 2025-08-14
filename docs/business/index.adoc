@@ -160,7 +160,7 @@ link:use_cases.adoc[See Detailed Case Studies →]
 
 | **Scalability**
 | None
-| Proven at billions of vectors
+| Tested up to 100M vectors per server
 
 | **Security**
 | None
@@ -247,7 +247,7 @@ link:roi_calculator.adoc[Calculate Your Specific ROI →]
 
 3. **Scale Without Limits**
    - No licensing restrictions
-   - Vertical scaling to billions of vectors
+   - Vertical scaling to 100M+ vectors per server
    - Deploy on any cloud or on-premise
 
 4. **Maintain Full Control**
