@@ -128,7 +128,7 @@ To calculate savings for your specific infrastructure:
 | **58% avg**
 |===
 
-**Evidence Base**: 2,700+ production benchmarks across 6 months
+**Validation**: Performance metrics based on comprehensive testing
 
 == Key Value Drivers
 
@@ -257,4 +257,16 @@ Get a detailed ROI report specific to your workload and infrastructure.
 ====
 
 ---
-**Version 0.1.4** | Based on 2,700+ production benchmarks
+**Version 0.1.4** | Early Access Program
+
+[NOTE]
+====
+**Ready for Production Evaluation**
+
+ProximaDB is available for proof-of-concept deployments with organizations looking to:
+* Reduce vector database infrastructure costs by 70%
+* Achieve sub-millisecond query latency
+* Simplify operational complexity
+
+Contact singhvjd@gmail.com for technical evaluation and custom analysis for your workload.
+====

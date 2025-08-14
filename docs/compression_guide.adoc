@@ -807,4 +807,4 @@ proximadb_compression_time_ms       # Compression overhead
 * link:docs/performance_reference.adoc[Performance Guide]
 
 ---
-**Version 0.1.4** | Last Updated: 2025-01
+**Version 0.1.4** | Last Updated: 2025-01 | Early Access Release

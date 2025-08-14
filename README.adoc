@@ -3,7 +3,7 @@
 :toclevels: 2
 :imagesdir: docs/diagrams/images
 
-image:https://img.shields.io/badge/tests-2700%2B%20passing-brightgreen[Tests] image:https://img.shields.io/badge/performance-17K%20vec%2Fs-blue[Performance] image:https://img.shields.io/badge/compression-50--80%25-orange[Compression] image:https://img.shields.io/badge/license-Apache%202.0-blue[License]
+image:https://img.shields.io/badge/version-0.1.4-yellow[Version] image:https://img.shields.io/badge/performance-17K%20vec%2Fs-blue[Performance] image:https://img.shields.io/badge/compression-50--80%25-orange[Compression] image:https://img.shields.io/badge/license-Apache%202.0-blue[License]
 
 image::business-overview-abstract.svg[ProximaDB Business Overview, width=900]
 
@@ -12,9 +12,13 @@ image::business-overview-abstract.svg[ProximaDB Business Overview, width=900]
 
 ProximaDB eliminates the complexity and cost overhead of distributed vector databases while delivering superior performance through proto-first architecture and dual storage engines.
 
-[IMPORTANT]
+[NOTE]
 ====
-**Development Status**: ProximaDB is in active development. Contact singhvjd@gmail.com for current deployment status and validation testing opportunities.
+**Early Access Program Available**
+
+ProximaDB is currently in early access with select design partners. 
+
+For evaluation opportunities and technical discussions: singhvjd@gmail.com
 ====
 
 toc::[]
@@ -119,9 +123,9 @@ results = client.search_vectors(
 )
 ```
 
-== Performance Benchmarks
+== Performance Characteristics
 
-**Measured Performance (Single Server)**:
+**Validated Performance (Single Server)**:
 
 [cols="2,1,2", options="header"]
 |===
@@ -178,20 +182,15 @@ results = client.search_vectors(
 * ✅ Context-Aware Compression: SST blocks, Vector data, Parquet columns
 * ✅ Quantization: INT8, PQ8, PQ4 with dual-column storage
 
-== Market Applications
+== Target Use Cases
 
-ProximaDB's unique architecture creates potential competitive advantages in:
+ProximaDB is optimized for applications requiring:
 
-* **E-Commerce Platforms**: Sub-millisecond product search and recommendations
-* **Financial Services**: Real-time fraud detection with <1ms decision latency
-* **Healthcare Systems**: HIPAA-compliant similarity search with data sovereignty
-* **Media Platforms**: Multi-modal content discovery and personalization
-* **AI Startups**: Rapid deployment with minimal DevOps requirements
-
-[NOTE]
-====
-These represent market opportunities based on architectural analysis. Contact singhvjd@gmail.com for current deployment examples and validation testing.
-====
+* **E-Commerce**: Real-time product search and recommendations at scale
+* **AI Applications**: RAG systems, semantic search, and embedding storage
+* **Content Platforms**: Multi-modal similarity search and personalization
+* **Analytics**: High-throughput vector operations with metadata filtering
+* **Edge Deployments**: Single-server architecture for data sovereignty
 
 == Documentation
 
@@ -205,12 +204,12 @@ These represent market opportunities based on architectural analysis. Contact si
 
 == Development Status
 
-**Current State** (v0.1.4):
+**Current Release** (v0.1.4 - Early Access):
 * ✅ Core vector operations with dual storage engines
-* ✅ Comprehensive test suite (2700+ tests passing)
+* ✅ Comprehensive test coverage and validation
 * ✅ Docker containerization with cloud storage backends
 * ✅ Python SDK with REST/gRPC support
-* ✅ Production-ready single-server architecture
+* ✅ Single-server architecture ready for evaluation
 
 **Active Development**:
 * 🚧 Advanced indexing optimizations
