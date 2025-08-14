@@ -1,579 +1,307 @@
-= ProximaDB Semantic Search Guide
-:toc: macro
-:toclevels: 3
+= Semantic Search Guide
+:toc: left
+:toclevels: 2
 :imagesdir: ../diagrams/images
 
-image::business-architecture-abstract.svg[ProximaDB Semantic Search, align=center, width=600]
+**Build powerful semantic search applications with ProximaDB.**
 
-**Complete guide to semantic vector search with ProximaDB - from basic queries to advanced indexing strategies.**
+== Overview
 
-toc::[]
+Semantic search finds results based on meaning rather than exact keywords, using vector embeddings to represent concepts in high-dimensional space.
 
-== 🎯 Real-World Semantic Search Demo
+== Quick Start
 
-=== Production Results with BERT Embeddings
+=== 1. Generate Embeddings
 
-ProximaDB delivers accurate semantic search with unmanipulated embeddings. Here are measured results from our demo using genuine BERT embeddings (all-MiniLM-L6-v2, 384 dimensions):
+**Using OpenAI:**
+```python
+import openai
 
-[source,text]
-----
-🎯 Query: "machine learning algorithms for data analysis"
-   
-   Results (No Artificial Boosting):
-   1. Similarity: 0.7923 - "Machine learning algorithms enable computers..."
-      Category: ai_ml | Match: Lexical + Semantic
-      Direct word matches: machine, learning, algorithms, data
-      
-   2. Similarity: 0.7050 - "Deep learning neural networks can extract..."
-      Category: ai_ml | Match: Lexical + Semantic  
-      Direct word matches: learning, data
-      
-   3. Similarity: 0.6757 - "Data science combines statistics, programming..."
-      Category: data_science | Match: Cross-category semantic
-      Direct word matches: data
-----
-
-[source,text]
-----
-🎯 Query: "computer vision and image processing"
-
-   Results:
-   1. Similarity: 0.8754 - "Computer vision algorithms process and analyze visual..."
-      Category: data_science | Perfect semantic match
-      Direct word matches: computer, vision, and
-      
-   2. Similarity: 0.6672 - "Machine learning algorithms enable computers..."
-      Category: ai_ml | Pure semantic inference  
-      Direct word matches: none (demonstrates semantic understanding)
-      
-   3. Similarity: 0.6450 - "Natural language processing transforms human language..."
-      Category: data_science | Related processing domain
-      Direct word matches: processing
-----
-
-[IMPORTANT]
-====
-**Production-Grade Results**: All similarity scores represent genuine BERT cosine similarity. No embedding manipulation, artificial clustering, or result bias applied.
-====
-
-=== Running the Demo
-
-[source,bash]
-----
-# Clone and start ProximaDB
-git clone https://github.com/vjsingh1984/proximadb.git
-cd proximadb && docker compose up -d
-
-# Run production semantic search demo
-cd clients/python
-PYTHONPATH=src python examples/basic_usage_working.py
-----
-
-== 📄 Text Chunking Strategies
-
-image::text-chunking-abstract.svg[Text Chunking Strategies, width=900]
-_Different chunking strategies for optimal semantic search_
-
-=== Chunking Methods
-
-ProximaDB supports multiple chunking strategies for text processing:
-
-* **Fixed-size chunks**: Simple, predictable memory usage
-* **Sentence-based**: Preserves semantic boundaries
-* **Paragraph-based**: Maintains context
-* **Sliding window**: Overlapping chunks for better recall
-* **Semantic chunking**: Smart splitting based on topic changes
-
-== 🚀 Advanced Indexing Algorithms
-
-=== Multi-Algorithm Performance Comparison
-
-ProximaDB's AXIS (Adaptive eXtended Indexing System) supports multiple algorithms. Choose based on your specific needs:
-
-[cols="2,3,2,2,2"]
-|===
-|Algorithm |Best Use Case |Memory Usage |Query Time |Recall@10
-
-|**HNSW**
-|High-recall applications, general purpose
-|Medium-High
-|0.8ms
-|97.8%
-
-|**Product Quantization (PQ)**
-|Memory-constrained environments
-|Low (8x compression)
-|1.2ms
-|89.2%
-
-|**ANNOY** 
-|Read-heavy workloads, static datasets
-|Low
-|0.6ms  
-|91.2%
-
-|**LSH**
-|Approximate similarity, large scale
-|Very Low
-|0.4ms
-|87.5%
-
-|**IVF**
-|Clustered data, GPU acceleration
-|Medium
-|2.1ms
-|94.7%
-|===
-
-[NOTE]
-====
-**Real Benchmarks**: Measured on 16-core CPU, 32GB RAM, with 100K real BERT embeddings (384D). No synthetic optimization.
-====
-
-=== Algorithm Selection Examples
-
-[source,python]
-----
-# HNSW for high-recall semantic search
-client.create_collection("knowledge_base", 
-                        dimension=384,
-                        indexing_algorithm="hnsw",
-                        storage_engine="viper")
-
-# PQ for memory-efficient deployment
-client.create_collection("large_corpus", 
-                        dimension=768,
-                        indexing_algorithm="pq",
-                        pq_segments=64,  # 8x compression
-                        storage_engine="sst")
-
-# ANNOY for read-heavy applications
-client.create_collection("product_catalog", 
-                        dimension=384,
-                        indexing_algorithm="annoy",
-                        annoy_trees=100,
-                        storage_engine="viper")
-----
-
-=== Adaptive Algorithm Selection
-
-ProximaDB can automatically select the optimal indexing strategy:
-
-[source,python]
-----
-# Enable adaptive indexing
-client.create_collection("adaptive_search",
-                        dimension=384,
-                        indexing_algorithm="adaptive",  # Auto-select best algorithm
-                        benchmark_queries=sample_queries,  # Use for optimization
-                        performance_target="latency")  # or "recall" or "memory"
-----
-
-== 🗄️ Storage Engine Comparison
-
-=== VIPER vs SST Engine Performance
-
-[cols="2,3,3"]
-|===
-|Aspect |VIPER (Columnar) |SST (Row-based)
-
-|**Best For**
-|Analytics, metadata-heavy queries
-|High-throughput ingestion, simple queries
-
-|**Insert Performance**
-|6,320 vec/s (REST), 18,024 vec/s (gRPC)
-|6,346 vec/s (REST), 18,529 vec/s (gRPC)
-
-|**Search Performance**
-|1.9ms (REST), 1.5ms (gRPC)
-|1.9ms (REST), 1.7ms (gRPC)
-
-|**Metadata Filtering**
-|60-90% I/O reduction via predicate pushdown
-|Three-stage filtering (Bloom → Index → Row)
-
-|**Storage Format**
-|Parquet with ZSTD compression
-|LSM-Tree with SSTables
-
-|**Compression Ratio**
-|3:1 typical, 5:1 with bloom filters
-|2:1 typical, optimized for write speed
-|===
-
-=== Storage Engine Examples
-
-[source,python]
-----
-# VIPER for analytical workloads
-collection = client.create_collection(
-    "analytics_data",
-    dimension=768,
-    storage_engine="viper",  # Columnar analytics
-    indexing_algorithm="hnsw"
-)
-
-# Complex metadata queries are efficient
-results = client.execute_sql("""
-    SELECT vector, metadata->>'title', metadata->>'category'
-    FROM analytics_data
-    WHERE metadata->>'published_date' > '2023-01-01'
-      AND metadata->>'author' IN ('Smith', 'Johnson')  
-      AND metadata->>'rating' > 4.0
-    ORDER BY VECTOR_SIMILARITY(vector, {query_vector}, 'cosine')
-    LIMIT 20
-""")
-----
-
-[source,python]
-----
-# SST for high-throughput ingestion
-collection = client.create_collection(
-    "streaming_data", 
-    dimension=384,
-    storage_engine="sst",  # Write-optimized
-    indexing_algorithm="annoy"
-)
-
-# Efficient for simple similarity queries
-results = client.search(
-    collection_id="streaming_data",
-    vector=query_vector,
-    top_k=10,
-    metadata_filter={"category": "news"}  # Simple filtering
-)
-----
-
-== 📊 SQL + Vector Similarity Engine
-
-=== Advanced SQL Capabilities
-
-ProximaDB's SQL engine combines familiar SQL syntax with powerful vector operations:
-
-[source,sql]
-----
--- Semantic search with complex metadata filtering
-SELECT 
-    id,
-    metadata->>'title' as title,
-    metadata->>'category' as category,
-    VECTOR_SIMILARITY(vector, {query_vector}, 'cosine') as similarity
-FROM knowledge_base
-WHERE 
-    metadata->>'language' = 'english'
-    AND metadata->>'published' > '2023-01-01'
-    AND VECTOR_SIMILARITY(vector, {query_vector}, 'cosine') > 0.75
-ORDER BY similarity DESC
-LIMIT 10;
-----
-
-=== Distance Metrics Comparison
-
-ProximaDB supports 13 distance metrics. Here's how they perform on semantic search:
-
-[cols="2,3,2"]
-|===
-|Distance Metric |Best Use Case |Demo Results (Real)
-
-|**Cosine**
-|Normalized embeddings (BERT, OpenAI)
-|0.79 max similarity
-
-|**Euclidean**
-|Geometric relationships, clustering  
-|2.14 min distance
-
-|**Dot Product**
-|Magnitude-sensitive similarity
-|0.82 max score
-
-|**Manhattan**
-|Sparse vectors, interpretability
-|1.89 min distance
-
-|**Hamming**
-|Binary embeddings, hash codes
-|3 bit differences
-
-|**Jaccard**
-|Set similarity, boolean features
-|0.73 max coefficient
-
-|**Chebyshev**
-|Maximum difference sensitivity
-|1.42 max distance
-
-|**Canberra**
-|Sparse positive vectors
-|2.91 weighted distance
-
-|**Minkowski**
-|Generalized distance (p-norm)
-|Variable by p-value
-
-|**Angular**
-|Direction-based similarity
-|0.65 max angle similarity
-
-|**Bray-Curtis**
-|Ecological/abundance data
-|0.58 dissimilarity
-
-|**Hellinger**
-|Probability distributions
-|0.71 distance
-|===
-
-=== Query Performance Optimization
-
-[source,text]
-----
-🔧 SQL Engine Performance Features:
-  • Lock-Free Parser: 1M+ queries/sec, 85%+ reuse ratio
-  • SIMD Vector Processing: Hardware-accelerated for large arrays  
-  • Query Result Caching: 70%+ cache hit ratio, 5-minute TTL
-  • Predicate Pushdown: 60-90% I/O reduction (VIPER engine)
-  • Parallel Execution: Multi-threaded query processing
-----
-
-== 🎯 Production Deployment Patterns
-
-=== E-commerce Semantic Search
-
-[source,python]
-----
-# Product recommendation system
-collection = client.create_collection(
-    "product_embeddings",
-    dimension=384,  # BERT embeddings
-    storage_engine="viper",  # Analytics-optimized
-    indexing_algorithm="hnsw"  # High recall
-)
-
-# Semantic product search with filters
-results = client.execute_sql("""
-    SELECT 
-        id,
-        metadata->>'name' as product_name,
-        metadata->>'price' as price,
-        VECTOR_SIMILARITY(vector, {user_query_vector}, 'cosine') as relevance
-    FROM product_embeddings
-    WHERE 
-        metadata->>'category' = 'electronics'
-        AND CAST(metadata->>'price' AS FLOAT) BETWEEN 100 AND 500
-        AND metadata->>'in_stock' = 'true'
-        AND VECTOR_SIMILARITY(vector, {user_query_vector}, 'cosine') > 0.6
-    ORDER BY relevance DESC
-    LIMIT 20
-""")
-----
-
-=== Document Retrieval System
-
-[source,python]
-----
-# Knowledge base with semantic search
-collection = client.create_collection(
-    "documents",
-    dimension=768,  # Larger embeddings for accuracy
-    storage_engine="viper",  # Column-oriented for metadata
-    indexing_algorithm="hnsw"
-)
-
-# Multi-stage semantic retrieval
-broad_results = client.search(
-    collection_id="documents",
-    vector=query_vector,
-    top_k=100,  # Cast wide net
-    metadata_filter={"document_type": "technical"}
-)
-
-# Re-rank with more precise similarity
-precise_results = client.execute_sql("""
-    SELECT id, metadata, VECTOR_SIMILARITY(vector, {query}, 'cosine') as score
-    FROM documents 
-    WHERE id IN ({', '.join(result_ids)})
-    ORDER BY score DESC
-    LIMIT 10
-""")
-----
-
-=== Real-time Recommendation Engine
-
-[source,python]
-----
-# High-throughput recommendation system
-collection = client.create_collection(
-    "user_preferences",
-    dimension=384,
-    storage_engine="sst",  # Write-optimized for user updates
-    indexing_algorithm="annoy"  # Fast reads
-)
-
-# Stream user behavior updates
-for user_action in user_stream:
-    updated_embedding = update_user_embedding(user_action)
-    client.upsert_vector(
-        collection_id="user_preferences",
-        vector_id=user_action.user_id,
-        vector=updated_embedding,
-        metadata={"last_activity": timestamp}
+def get_embeddings(texts):
+    response = openai.Embedding.create(
+        input=texts,
+        model="text-embedding-ada-002"
     )
+    return [r["embedding"] for r in response["data"]]
+```
 
-# Fast similarity recommendations  
-similar_users = client.search(
-    collection_id="user_preferences", 
-    vector=target_user_embedding,
-    top_k=50,
-    metadata_filter={"last_activity": {"$gte": recent_threshold}}
+**Using Sentence Transformers:**
+```python
+from sentence_transformers import SentenceTransformer
+
+model = SentenceTransformer('all-MiniLM-L6-v2')
+embeddings = model.encode(texts)
+```
+
+=== 2. Create Collection
+
+```python
+from proximadb import ProximaDBClient
+
+client = ProximaDBClient("http://localhost:5678")
+
+collection = client.create_collection(
+    name="documents_search",
+    dimension=384,  # Match your embedding model
+    distance_metric="cosine",  # Best for semantic similarity
+    storage_engine="viper"  # Optimized for search
 )
-----
+```
 
-== 🔍 Performance Tuning Guide
+=== 3. Index Documents
 
-=== Memory Optimization
+```python
+# Prepare documents with metadata
+documents = [
+    {
+        "id": "doc_001",
+        "vector": embeddings[0],
+        "metadata": {
+            "title": "Introduction to AI",
+            "content": "Full text content...",
+            "category": "tutorial",
+            "author": "John Doe"
+        }
+    }
+]
 
-[source,toml]
-----
-# Configuration for memory-constrained environments
-[storage.memory]
-write_ahead_log_size_mb = 512  # Smaller WAL
-flush_threshold_mb = 64     # More frequent flushes
+# Insert with batching for performance
+client.insert_vectors("documents_search", documents, batch_size=100)
+```
 
-[indexing.pq]
-segments = 64               # Higher compression
-codebook_size = 256         # Balance quality vs memory
+=== 4. Search
 
-[caching]
-query_cache_size_mb = 128   # Reduced cache size
-bloom_filter_memory_mb = 32 # Efficient filtering
-----
+```python
+# Generate query embedding
+query_text = "How does machine learning work?"
+query_embedding = model.encode([query_text])[0]
 
-=== Throughput Optimization
+# Search with filters
+results = client.search_vectors(
+    collection_id="documents_search",
+    query_vector=query_embedding,
+    top_k=10,
+    metadata_filter={"category": "tutorial"},
+    include_metadata=True
+)
 
-[source,toml]
-----
-# Configuration for high-throughput scenarios  
-[storage.memory]
-write_ahead_log_size_mb = 2048  # Larger WAL
-batch_size = 1000           # Bigger batches
+# Display results
+for result in results:
+    print(f"Score: {result['score']:.3f}")
+    print(f"Title: {result['metadata']['title']}")
+    print(f"Content: {result['metadata']['content'][:200]}...")
+```
 
-[indexing.hnsw]
-ef_construction = 200       # Higher build quality
-max_connections = 32        # More graph connectivity
+== Embedding Models
 
-[network]
-grpc_max_concurrent = 1000  # High concurrency
-compression_enabled = true  # Bandwidth efficiency
-----
+=== Model Selection
 
-== 📈 Monitoring and Observability
+[cols="2,1,1,2", options="header"]
+|===
+| Model | Dimensions | Speed | Use Case
 
-=== Key Metrics to Track
+| all-MiniLM-L6-v2 | 384 | Fast | General purpose
+| all-mpnet-base-v2 | 768 | Balanced | High quality
+| text-embedding-ada-002 | 1536 | API call | Best quality
+| e5-large-v2 | 1024 | Slow | Multilingual
+|===
 
-[source,text]
-----
-🔍 Search Performance:
-  • Query latency (p50, p95, p99)
-  • Throughput (QPS)
-  • Recall@k accuracy
-  • Cache hit ratio
+=== Preprocessing Best Practices
 
-💾 Storage Health:  
-  • Write buffer utilization
-  • Compaction frequency
-  • Index build time
-  • Storage size growth
+1. **Text Cleaning**
+   - Remove HTML tags
+   - Normalize whitespace
+   - Handle special characters
 
-🔧 System Resources:
-  • CPU utilization during indexing
-  • Memory usage by component
-  • I/O patterns and bottlenecks
-  • Network bandwidth utilization
-----
+2. **Chunking Strategy**
+   - Sentence-level: Precise matching
+   - Paragraph-level: Context preservation
+   - Fixed-size: Consistent performance
 
-=== Prometheus Integration
+3. **Metadata Enrichment**
+   - Add timestamps
+   - Include source references
+   - Tag with categories
 
-[source,yaml]
-----
-# prometheus.yml
-scrape_configs:
-  - job_name: 'proximadb'
-    static_configs:
-      - targets: ['localhost:5678']
-    metrics_path: '/metrics'
-    scrape_interval: 15s
-----
+== Advanced Techniques
 
-[source,text]
-----
-# Key ProximaDB metrics available:
-proximadb_query_duration_seconds{operation="search"}
-proximadb_vector_insert_total{engine="viper"}  
-proximadb_index_build_duration_seconds{algorithm="hnsw"}
-proximadb_memory_usage_bytes{component="write_ahead_log"}
-proximadb_cache_hit_ratio{cache_type="query_results"}
-----
+=== Hybrid Search
 
-== 🎓 Best Practices Summary
+Combine vector similarity with keyword matching:
 
-=== Algorithm Selection Guide
+```python
+# Vector search
+vector_results = client.search_vectors(
+    collection_id="documents_search",
+    query_vector=query_embedding,
+    top_k=20
+)
 
-[source,text]
-----
-✅ Choose HNSW when:
-  • Recall is critical (>95% required)
-  • Query latency can be 1-2ms
-  • Memory usage is acceptable
+# Filter by keywords in metadata
+keyword_filtered = [
+    r for r in vector_results
+    if keyword in r['metadata']['content'].lower()
+]
+```
 
-✅ Choose PQ when:
-  • Memory is severely constrained
-  • 8x compression is needed
-  • 85-90% recall is sufficient
+=== Re-ranking
 
-✅ Choose ANNOY when:
-  • Dataset is relatively static
-  • Consistent performance is key
-  • Simple deployment is preferred
+Improve relevance with two-stage search:
 
-✅ Choose LSH when:
-  • Approximate similarity is sufficient
-  • Ultra-high throughput required
-  • Working with sparse vectors
-----
+```python
+# Stage 1: Fast approximate search
+initial_results = client.search_vectors(
+    collection_id="documents_search",
+    query_vector=query_embedding,
+    top_k=100
+)
 
-=== Storage Engine Selection
+# Stage 2: Precise re-ranking
+reranked = rerank_with_cross_encoder(
+    query_text,
+    initial_results,
+    top_k=10
+)
+```
 
-[source,text]
-----
-✅ Choose VIPER when:
-  • Complex metadata filtering is common
-  • Analytical queries are frequent  
-  • Storage efficiency is important
-  • Update frequency is moderate
+=== Query Expansion
 
-✅ Choose SST when:
-  • High write throughput is critical
-  • Simple similarity queries dominate
-  • Real-time ingestion is required
-  • Metadata filtering is basic
-----
+Improve recall with synonym expansion:
 
-=== Query Optimization
+```python
+# Expand query with synonyms
+expanded_queries = [
+    "machine learning",
+    "artificial intelligence",
+    "deep learning",
+    "neural networks"
+]
 
-[source,text]
-----
-🚀 Performance Tips:
-  • Use metadata filters to reduce search space
-  • Cache frequently used query vectors
-  • Batch similar queries together
-  • Monitor and tune top_k values
-  • Enable query result caching
-  • Use appropriate distance metrics
-----
+# Search with multiple queries
+all_results = []
+for query in expanded_queries:
+    embedding = model.encode([query])[0]
+    results = client.search_vectors(
+        "documents_search",
+        embedding,
+        top_k=5
+    )
+    all_results.extend(results)
 
-[IMPORTANT]
-====
-**Production Readiness**: All examples and configurations in this guide are tested in production environments. Performance metrics are measured with real workloads, not synthetic benchmarks.
-====
+# Deduplicate and merge scores
+final_results = merge_and_deduplicate(all_results)
+```
+
+== Performance Optimization
+
+=== Collection Configuration
+
+```python
+# Optimized for search quality
+config = {
+    "name": "high_quality_search",
+    "dimension": 768,
+    "storage_engine": "viper",
+    "compression": {
+        "algorithm": "zstd",
+        "level": 6,
+        "enable_quantization": False  # Keep full precision
+    }
+}
+
+# Optimized for scale
+config = {
+    "name": "large_scale_search",
+    "dimension": 384,
+    "storage_engine": "viper",
+    "compression": {
+        "algorithm": "zstd",
+        "level": 9,
+        "enable_quantization": True,  # Trade precision for scale
+        "quantization_type": "pq8"
+    }
+}
+```
+
+=== Indexing Strategy
+
+* **HNSW**: Best quality, <10M vectors
+* **IVF**: Scalable, >10M vectors
+* **LSH**: Fast approximate, >100M vectors
+
+== Use Case Examples
+
+=== Document Search
+```python
+# Index documents with full text
+doc_vector = {
+    "id": document_id,
+    "vector": embedding,
+    "metadata": {
+        "title": title,
+        "content": full_text,
+        "url": source_url,
+        "date": timestamp
+    }
+}
+```
+
+=== Product Recommendations
+```python
+# Index products with attributes
+product_vector = {
+    "id": product_id,
+    "vector": feature_embedding,
+    "metadata": {
+        "name": product_name,
+        "category": category,
+        "price": price,
+        "rating": rating
+    }
+}
+```
+
+=== Q&A Systems
+```python
+# Index Q&A pairs
+qa_vector = {
+    "id": qa_id,
+    "vector": question_embedding,
+    "metadata": {
+        "question": question_text,
+        "answer": answer_text,
+        "votes": vote_count
+    }
+}
+```
+
+== Troubleshooting
+
+=== Common Issues
+
+**Poor Search Results**
+* Check embedding model consistency
+* Verify distance metric (cosine for normalized)
+* Increase top_k parameter
+* Review preprocessing pipeline
+
+**Slow Performance**
+* Use gRPC instead of REST
+* Enable caching
+* Batch operations
+* Consider quantization
+
+**High Memory Usage**
+* Enable compression
+* Use tiering for cold data
+* Reduce cache size
+* Switch to VIPER engine
+
+== Related Documentation
+
+* link:getting_started.adoc[Getting Started]
+* link:user_guide.adoc[User Guide]
+* link:api_reference.adoc[API Reference]
+
+---
+**Version 0.1.4** | Last Updated: 2025-01

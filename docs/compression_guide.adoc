@@ -1,22 +1,21 @@
-= Unified Compression Architecture Guide
+= ProximaDB Compression Guide
 :toc: left
-:toclevels: 3
+:toclevels: 2
 :imagesdir: diagrams/images
 
-**Complete guide to ProximaDB's unified compression system with 13 algorithms across all storage contexts.**
+**Comprehensive guide to ProximaDB's unified compression system.**
+
+image::compression-architecture-abstract.svg[Compression Architecture, width=900]
 
 == Overview
 
-ProximaDB features a **unified compression architecture** (`src/core/compression/mod.rs`) that provides consistent compression across SST blocks, vector serialization, and Parquet columns. All compression is **100% SDK-controlled** with no server defaults.
-
-image::compression-architecture-abstract.svg[Unified Compression Architecture, width=900]
-_Context-aware compression with algorithm-specific optimization and zero-copy integration_
+ProximaDB implements a unified compression module supporting 13 algorithms across all storage contexts, achieving 50-80% storage reduction with minimal performance impact.
 
 == Quick Start
 
-=== Basic Compression
-[source,python]
-----
+=== Enable Compression
+
+```python
 from proximadb import ProximaDBClient
 from proximadb.models import CompressionConfig
 
@@ -24,308 +23,194 @@ client = ProximaDBClient("http://localhost:5678")
 
 # Create collection with compression
 collection = client.create_collection(
-    name="compressed",
+    name="compressed_data",
     dimension=1536,
-    engine="viper",
+    storage_engine="viper",
     compression=CompressionConfig(
         algorithm="zstd",
-        level=6
+        level=6,
+        enable_quantization=True,
+        quantization_type="pq8"
     )
 )
-----
+```
 
-== Unified Compression Architecture
+== Compression Algorithms
 
-ProximaDB features a **unified compression module** (`src/core/compression/mod.rs`) that provides consistent compression across all storage engines and contexts.
-
-=== Supported Algorithms (13 Total)
-[cols="1,1,1,1,1", options="header"]
+[cols="1,1,1,2", options="header"]
 |===
-| Algorithm | Ratio | Speed | Context Support | Use Case
+| Algorithm | Ratio | Speed | Best For
 
-| **ZSTD**
-| 2-10x
-| Medium
-| All contexts
-| Balanced (default)
-
-| **LZ4**
-| 1.5-3x
-| Fast
-| All contexts
-| Low latency
-
-| **Snappy**
-| 1.5-2x
-| Very Fast
-| All contexts + Parquet
-| Real-time
-
-| **Gzip**
-| 2-8x
-| Medium
-| All contexts + Parquet
-| Web compatibility
-
-| **Brotli**
-| 3-12x
-| Slow
-| All contexts + Parquet
-| Maximum compression
-
-| **Bzip2**
-| 4-15x
-| Very Slow
-| SST + Vector only
-| Archive storage
-
-| **Deflate**
-| 2-8x
-| Medium
-| SST + Vector only
-| Standard compression
-
-| **XZ/LZMA**
-| 5-20x
-| Very Slow
-| SST + Vector only
-| Archive storage
-
-| **Zlib**
-| 2-8x
-| Medium
-| SST + Vector only
-| Legacy compatibility
-
-| **LZO**
-| 1.5-2.5x
-| Very Fast
-| All contexts + Parquet
-| High-speed requirements
-
-| **LZ4HC**
-| 2-4x
-| Medium
-| SST + Vector only
-| Balanced LZ4 variant
-
-| **None**
-| 1x
-| Fastest
-| All contexts
-| Maximum speed
+| LZ4 | 2-3x | Fastest | Real-time, low latency
+| Snappy | 2-3x | Very fast | Balanced performance
+| ZSTD | 3-5x | Moderate | Best ratio/speed balance
+| Gzip | 3-4x | Slow | Compatibility
+| Brotli | 4-6x | Slow | Maximum compression
+| None | 1x | No overhead | Testing/debugging
 |===
 
-=== Compression Contexts
+Additional algorithms: Bzip2, Deflate, XZ, Zlib, LZO, LZ4HC, LZMA
 
-The unified module supports three distinct compression contexts:
+== Two-Tier Architecture
 
-1. **SST Block Context**: Custom block compression with format markers
-2. **Vector Serialization Context**: Headers and checksums for vector data
-3. **Parquet Column Context**: Arrow WriterProperties integration (7 algorithms supported)
+=== Protocol Level (Transport)
+* **Purpose**: Network bandwidth reduction
+* **Default**: Disabled (for debugging)
+* **Configuration**: Server-wide
 
-=== Compression Levels
+```toml
+[api]
+rest_compression = false  # Keep disabled for debugging
+grpc_compression = true   # Enable for production
+```
 
-**Level-aware algorithms:**
-* **ZSTD**: 1-22 (default: 6) - Write-optimized (1-3), Balanced (4-9), Storage-optimized (10+)
-* **Gzip**: 1-9 (default: 6) - Speed vs compression tradeoff
-* **Brotli**: 1-11 (default: 4) - Quality vs speed balance
-* **Bzip2**: 1-9 (default: 6) - Block size 100K-900K
-* **Deflate**: 1-9 (default: 6) - Same as Gzip without wrapper
-* **XZ/LZMA**: 1-9 (default: 6) - Extreme compression at higher levels
-* **Zlib**: 1-9 (default: 6) - Standard deflate with checksum
+=== Collection Level (Storage)
+* **Purpose**: Storage optimization
+* **Default**: Per-collection configuration
+* **Configuration**: SDK-driven
 
-**Fixed-level algorithms:**
-* **LZ4/LZ4HC/LZO**: Single compression level optimized for speed
-* **Snappy**: Single level optimized for speed/ratio balance
-
-== Engine-Specific Features
-
-=== SST Engine (Row-Based)
-[source,python]
-----
-# SST with block compression
-config = CompressionConfig(
+```python
+compression = CompressionConfig(
     algorithm="zstd",
-    level=6,
-    block_size_mb=16,      # SST-specific
-    dynamic_block_sizing=True
+    level=6,  # 1-9, higher = better compression
+    enable_quantization=True
 )
-----
+```
 
-**Features**:
-* Block-level compression
-* Dynamic block sizing
-* Bloom filter optimization
-* Fast decompression
+== Quantization Options
 
-=== VIPER Engine (Columnar)
-[source,python]
-----
-# VIPER with quantization
-config = CompressionConfig(
-    algorithm="lz4",
-    level=1,
-    enable_quantization=True,     # VIPER-specific
-    quantization_type="int8",     # or "pq8", "pq4"
-    normalization_method="mean"
-)
-----
+=== Vector Quantization Types
 
-**Features**:
-* Column compression
-* Dual storage (FP32 + quantized)
-* 100% vector fidelity
-* Two-stage search
-
-== Quantization (VIPER Only)
-
-=== Types
-[cols="1,1,1,1", options="header"]
+[cols="1,1,1,2", options="header"]
 |===
-| Type | Compression | Accuracy | Speed
+| Type | Compression | Accuracy | Use Case
 
-| **INT8**
-| 4:1
-| High
-| Fast
-
-| **PQ8**
-| 8-32:1
-| Medium
-| Medium
-
-| **PQ4**
-| 16-64:1
-| Lower
-| Slow
+| INT8 | 4x | 99.5% | High accuracy required
+| PQ8 | 8-32x | 95-99% | Balanced
+| PQ4 | 16-64x | 90-95% | Maximum compression
+| Binary | 32x | 85-95% | Extreme scale
 |===
 
-=== Two-Stage Search
-1. **Stage 1**: Search quantized vectors (fast)
-2. **Stage 2**: Rerank with FP32 (accurate)
-3. **Result**: 2x speed, 100% accuracy
+=== Engine Recommendations
 
-== Advanced Configuration
+**VIPER Engine**: ✅ Quantization recommended
+* Columnar format benefits from uniform types
+* Better compression ratios
+* Faster SIMD operations
 
-=== Adaptive Compression
-[source,python]
-----
-config = CompressionConfig(
-    algorithm="zstd",
-    level=6,
-    adaptive=True,         # Auto-adjust level
-    min_ratio=2.0         # Minimum compression ratio
-)
-----
-
-=== Search Optimization
-[source,python]
-----
-from proximadb.models import SearchOptimization
-
-# Compression-aware search
-optimization = SearchOptimization(
-    enable_two_stage=True,
-    prefer_compressed_search=True,
-    decompression_budget_ms=100,
-    use_decompression_cache=True
-)
-
-results = client.search_vectors(
-    "compressed",
-    query_vector,
-    search_optimization=optimization
-)
-----
+**SST Engine**: ❌ Quantization not recommended
+* Row format doesn't benefit
+* Added complexity without gains
+* Use native FP32
 
 == Performance Impact
 
 [cols="2,1,1,1", options="header"]
 |===
-| Operation | No Compression | LZ4 | ZSTD-6
+| Configuration | Storage | Speed | Accuracy
 
-| **Insert Speed**
-| 10K vec/s
-| 8.5K vec/s
-| 6K vec/s
-
-| **Search Latency**
-| 0.5ms
-| 0.7ms
-| 1.2ms
-
-| **Storage Size**
-| 100GB
-| 50GB
-| 30GB
-
-| **Cache Hit Rate**
-| N/A
-| 75%
-| 75%
+| No compression | 100% | Fastest | 100%
+| LZ4 only | 40% | -5% | 100%
+| ZSTD only | 25% | -10% | 100%
+| ZSTD + INT8 | 6% | -15% | 99.5%
+| ZSTD + PQ8 | 3% | -20% | 95%
 |===
+
+== Configuration Examples
+
+=== High Performance
+```python
+# Minimal compression for speed
+config = CompressionConfig(
+    algorithm="lz4",
+    level=1,
+    enable_quantization=False
+)
+```
+
+=== Balanced
+```python
+# Good compression with accuracy
+config = CompressionConfig(
+    algorithm="zstd",
+    level=6,
+    enable_quantization=True,
+    quantization_type="int8"
+)
+```
+
+=== Maximum Compression
+```python
+# Extreme compression for cold storage
+config = CompressionConfig(
+    algorithm="zstd",
+    level=9,
+    enable_quantization=True,
+    quantization_type="pq4"
+)
+```
+
+== Context-Aware Compression
+
+The unified compression module automatically optimizes for different contexts:
+
+=== SST Blocks
+* Algorithm: LZ4 or ZSTD
+* Block-level compression
+* Preserves random access
+
+=== Vector Serialization
+* Algorithm: Any supported
+* Header with checksums
+* Streaming support
+
+=== Parquet Columns
+* Algorithm: 7 supported (ZSTD, LZ4, Snappy, Gzip, Brotli, LZO, None)
+* Column-level compression
+* Predicate pushdown preserved
+
+== Monitoring & Metrics
+
+=== Compression Metrics
+```bash
+curl http://localhost:5678/metrics | grep compression
+
+# Key metrics
+proximadb_compression_ratio         # Current compression ratio
+proximadb_compression_bytes_saved   # Total bytes saved
+proximadb_compression_time_ms       # Compression overhead
+```
+
+=== Performance Tuning
+
+**Low compression ratio (<30%)**
+* Switch to ZSTD from LZ4
+* Increase compression level
+* Enable quantization
+
+**High latency impact (>20%)**
+* Switch to LZ4 from ZSTD
+* Reduce compression level
+* Disable quantization
+
+**Memory pressure**
+* Enable compression for all collections
+* Use higher compression levels
+* Enable tiering for cold data
 
 == Best Practices
 
-=== Choosing Compression
-```
-Write-Heavy → LZ4 or Snappy
-Storage-Optimized → ZSTD level 9+
-Analytics → VIPER + Quantization
-Real-time → No compression or Snappy
-```
+1. **Start with defaults** (ZSTD level 6)
+2. **Measure impact** before optimization
+3. **Test with your data** - compression varies by content
+4. **Consider workload** - read vs write patterns
+5. **Monitor metrics** - track ratio and performance
 
-=== Configuration Tips
-1. **Start with ZSTD-6** for balanced performance
-2. **Enable quantization** for VIPER analytics
-3. **Use adaptive compression** for mixed workloads
-4. **Monitor compression ratios** via metrics
-5. **Size decompression cache** based on working set
+== Related Documentation
 
-== Monitoring
-
-=== Compression Metrics
-```python
-# Get compression stats
-stats = client.get_collection_stats("compressed")
-print(f"Compression ratio: {stats['compression_ratio']:.2f}x")
-print(f"Compressed size: {stats['compressed_size_mb']:.1f} MB")
-print(f"Original size: {stats['original_size_mb']:.1f} MB")
-```
-
-=== Cache Performance
-```python
-# Monitor decompression cache
-cache_stats = client.get_cache_stats()
-print(f"Cache hit rate: {cache_stats['hit_rate']:.1%}")
-print(f"Cache size: {cache_stats['size_mb']:.1f} MB")
-```
-
-== Migration Guide
-
-=== Enable Compression
-```python
-# Update existing collection
-client.update_collection(
-    "my_collection",
-    compression=CompressionConfig(
-        algorithm="zstd",
-        level=6
-    )
-)
-```
-
-=== Disable Compression
-```python
-# Remove compression
-client.update_collection(
-    "my_collection",
-    compression=CompressionConfig(
-        algorithm="none"
-    )
-)
-```
+* link:docs/developer/technical_reference.adoc[Technical Reference]
+* link:docs/developer/storage_engines.adoc[Storage Engines]
+* link:docs/performance_reference.adoc[Performance Guide]
 
 ---
-**Next**: link:performance_reference.adoc[Performance] | link:developer/architecture.adoc[Architecture]
+**Version 0.1.4** | Last Updated: 2025-01

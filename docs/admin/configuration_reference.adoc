@@ -65,7 +65,7 @@ grpc_port = 5679
 grpc_compression = false  # Disable for lowest latency
 
 [sst]
-block_size_mb = 3  # Optimized for cloud storage
+block_size_kb = 3072  # 3MB optimized for cloud
 compression_algorithm = "lz4"  # Fastest
 enable_bloom_filter = true
 
@@ -173,7 +173,7 @@ storage_class = "STANDARD_IA"
 |===
 | Parameter | Default | Description
 
-| block_size_mb | 3 | SST block size
+| block_size_kb | 3072 | SST block size (3MB)
 | compression_algorithm | "lz4" | Compression (lz4, zstd, snappy, none)
 | compression_level | 1 | Compression level (1-9)
 | enable_bloom_filter | true | Bloom filters for fast lookups

@@ -1,1248 +1,212 @@
-= ProximaDB ROI Calculator & Enterprise Deployment Guide
+= ProximaDB ROI Calculator
 :toc: left
-:toclevels: 3
+:toclevels: 2
 :imagesdir: ../diagrams/images
-:icons: font
-:source-highlighter: highlightjs
-:sectanchors:
-:sectlinks:
 
 image::business-overview-abstract.svg[ProximaDB Business Overview, width=900]
 
-[.lead]
-*Estimate potential return on investment with ProximaDB's multi-engine architecture and enterprise landing zone deployment strategies.*
+**Calculate your potential return on investment with ProximaDB.**
 
 [IMPORTANT]
-.ILLUSTRATIVE PROJECTIONS ONLY
 ====
-*This document contains hypothetical cost estimates and performance projections for educational and planning purposes.* Actual results will vary based on your specific environment and requirements. Consult ProximaDB sales engineering for validated assessments.
-====
-
-== 📊 Executive Summary
-
-=== 🎯 Revenue Generation Beyond Cost Savings
-
-ProximaDB doesn't just cut costs—it creates *entirely new revenue streams* that were impossible before:
-
-[cols="1,3,2", frame=all, grid=all]
-|===
-| 💼 *Business Category* | 🚀 *New Capability* | 📈 *Revenue Impact*
-
-| *Premium Services* 
-| Unified customer intelligence across all data types
-| +30-50% conversion rates = +$2-5M/year revenue boost
-
-| *Market Expansion*
-| Scale from mobile apps to enterprise without rebuilding  
-| Enter new markets = $10-100M expansion opportunity
-
-| *Competitive Advantage*
-| Instant AI responses create unmatched user experiences
-| Premium features = +$5-15/user/month pricing power
-
-| *Strategic Freedom*
-| Zero vendor lock-in enables optimal negotiations
-| Cloud cost leverage = 20-40% immediate savings
-|===
-
-=== 💼 Traditional ROI Calculation
-
-Beyond category creation, ProximaDB's *intelligent multi-engine architecture* delivers measurable cost reductions for enterprise vector database workloads through hierarchical storage and intelligent query optimization, designed for seamless integration with enterprise cloud landing zones.
-
-=== 🚀 Projected Business Impact at Scale
-
-[cols="1,4", frame=none, grid=none]
-|===
-| 💰 | *Potential 81-86% total cost reduction* across compute, storage, and network infrastructure^*^
-| ⚡ | *Estimated 1-3 month payback period* for typical enterprise deployments^*^
-| 📈 | *Projected $30,000-50,000 annual savings* for enterprise applications (10M vectors)^*^
-| 🏢 | *Enterprise landing zone compliant* - deploys within existing governance frameworks
-|===
-
-[.small]
-_^*^Based on theoretical models and assumptions. Actual results will vary significantly based on your specific deployment and requirements._
-
-=== 🎯 Core Value Propositions
-
-==== Infrastructure Efficiency
-* 🔹 *85% reduction* in cloud storage API calls through intelligent block filtering
-* 🔹 *70% reduction* in compute requirements via optimized query execution  
-* 🔹 *89-95% cache hit rates* with three-stage hierarchical filtering
-* 🔹 *40-75% better compression* ratios (SST: 40%, VIPER: 75% for analytical workloads)
-
-==== Potential Performance & Bandwidth Optimization
-[cols="1,4", frame=none, grid=none]
-|===
-| 🌐 | *Query Bandwidth*: Potential 60-85% reduction in network traffic through intelligent filtering^*^
-| ⚡ | *Latency Improvement*: Potential 40-60% faster response times (SST: 40%, VIPER: 60% for analytics)^*^
-| 🛡️ | *Noisy Neighbor Isolation*: Dedicated engine resources designed to reduce cross-workload interference^*^
-| 📊 | *Query Capacity*: 1,000-1,500 QPS on single optimized server^*^
-|===
-
-[.small]
-_^*^Performance improvements are theoretical projections based on internal testing and may not reflect your actual results._
-
-==== Multi-Engine Flexibility
-* 🔸 *SST Engine*: Optimized for transactional workloads (e-commerce, real-time APIs)
-* 🔸 *VIPER Engine*: Columnar analytics with 60% faster reporting and 70% storage savings
-* 🔸 *Hybrid Deployment*: Intelligent workload routing for 75-85% total cost reduction
-* 🔸 *Automatic Optimization*: AXIS tiering adapts to changing access patterns
-
-==== Deployment Simplicity
-* ✅ Single-server architecture eliminates distributed system complexity
-* ✅ Vertical scaling: Just upgrade instance size as needed
-* ✅ Deploys on any cloud provider or on-premise hardware
-* ✅ No coordination overhead, no consensus protocols, no replica management
-
-==== Projected Financial Returns (Illustrative Examples)
-
-[cols="3,2,2,1", options="header"]
-|===
-| Use Case | Annual Cost Before | Annual Cost After | Savings
-
-| *E-commerce Platform* (SST Engine)
-| $125,720
-| $32,760
-| *74%*^*^
-
-| *RAG Application* (VIPER Engine)  
-| $652,800
-| $145,200
-| *78%*^*^
-
-| *Enterprise Analytics* (Multi-Engine)
-| $409,800
-| $102,300
-| *75%*^*^
-|===
-
-[.small]
-_^*^Hypothetical calculations based on assumed baseline costs and theoretical performance improvements. Not guaranteed outcomes._
-
-== 💼 Illustrative ROI Analysis by Business Use Case
-
-[NOTE]
-.Planning Purposes Only
-====
-The following use cases present hypothetical scenarios with estimated costs and savings. These examples are for planning purposes only and do not represent guaranteed results or commitments.
+Projections are estimates based on typical deployments. Actual results vary based on your specific requirements.
 ====
 
-=== 🛒 E-commerce Product Search & Recommendations
+== Executive Summary
 
-[cols="1,3", frame=none, grid=none]
+=== Revenue Generation
+
+ProximaDB enables new revenue streams beyond cost savings:
+
+[cols="1,2,1", options="header"]
 |===
-| *Business Context* | Real-time product matching, user recommendations, inventory optimization
-| *Scale* | 50M products, 10K concurrent users, <50ms response requirements
-| *Workload* | High-frequency point queries with metadata filtering (80% transactional, 20% analytics)
-| *Recommended Engine* | *SST Engine* (optimized for transactional workloads)
-|===
+| Category | Capability | Revenue Impact
 
-==== 💰 Hypothetical Database Cost Comparison (Annual)
+| Premium Services
+| Unified intelligence across all data
+| +$2-5M/year
 
-[cols="3,2,2,2", options="header"]
-|===
-| Cost Category | Estimated Traditional Vector DB | Projected ProximaDB SST Engine | Estimated Business Savings
+| Market Expansion
+| Scale without rebuilding
+| $10-100M opportunity
 
-| *🖥️ Compute Infrastructure*
-| 1× m7i.16xlarge instance +
-$67,200/year
-| 1× m7i.8xlarge instance +
-$25,200/year  
-| *$42,000 saved* +
-62% reduction
+| Competitive Edge
+| Instant AI responses
+| +$5-15/user/month
 
-| *💾 Storage & API Costs*
-| Cloud storage: $18,000 +
-API calls: $24,000 +
-Data transfer: $8,000
-| Cloud storage: $2,700 +
-API calls: $1,200 +  
-Data transfer: $2,400
-| *$44,400 saved* +
-85% reduction
-
-| *🌐 Network Infrastructure*
-| Landing zone endpoints: $1,800 +
-Hub routing charges: $4,320 +
-Processing fees: $2,400
-| Optimized routing: $540 +
-Free gateway endpoints: $0 +
-Reduced processing: $720
-| *$7,260 saved* +
-85% reduction
-
-| *📊 Total Annual Cost*
-| *$125,720*
-| *$32,760*
-| *$92,960 saved (74%)*
+| Strategic Freedom
+| No vendor lock-in
+| 20-40% cost savings
 |===
 
-==== ✨ Business Benefits
+=== Cost Reduction
 
-* 🚀 *40% faster query response times* improve conversion rates (10ms → 6ms average)
-* 📈 *85% reduction in query bandwidth* eliminates network bottlenecks during peak traffic
-* 🛡️ *Noisy neighbor elimination* ensures consistent sub-10ms performance during Black Friday
-* ⚡ *Higher query capacity* (1,000-1,500 QPS) on single optimized server
-* 💵 *62% reduction in infrastructure spend* increases profit margins  
-* 😊 *Enhanced user experience* drives customer retention
-
-=== 📚 RAG Applications & Document Search
-
-[cols="1,3", frame=none, grid=none]
+[cols="2,1,1", options="header"]
 |===
-| *Business Context* | Intelligent document retrieval, knowledge management, AI-powered search
-| *Scale* | 100M documents, enterprise deployment, multi-tenant architecture
-| *Workload* | Complex semantic search with metadata filtering and analytics (30% transactional, 70% analytics)
-| *Recommended Engine* | *VIPER Engine* (optimized for analytical workloads)
-|===
+| Category | Traditional Cost | ProximaDB Cost
 
-==== 💰 Hypothetical Database Cost Comparison (Annual)
+| Storage (1B vectors)
+| $150,000/year
+| $37,500/year
 
-[cols="3,2,2,2", options="header"]
-|===
-| Cost Category | Estimated Traditional Vector DB | Projected ProximaDB VIPER Engine | Estimated Business Savings
+| Compute Infrastructure
+| $100,000/year
+| $30,000/year
 
-| *🖥️ Compute Infrastructure*  
-| 1× m7i.24xlarge instance +
-$262,800/year
-| 1× m7i.16xlarge instance +
-$87,600/year
-| *$175,200 saved* +
-67% reduction
+| Network Transfer
+| $50,000/year
+| $10,000/year
 
-| *💾 Storage & Analytics*
-| Cloud storage: $96,000 +
-API operations: $180,000 +
-Compute overhead: $48,000
-| Optimized storage: $14,400 +
-Reduced API calls: $9,000 +
-Efficient compute: $14,400  
-| *$286,200 saved* +
-88% reduction
-
-| *🌐 Network & Compliance*
-| Data transfer: $36,000 +
-Landing zone infrastructure: $18,000 +
-Security endpoints: $12,000
-| Optimized routing: $10,800 +
-Built-in security: $5,400 +
-Compliance features: $3,600
-| *$46,200 saved* +  
-70% reduction
-
-| *📊 Total Annual Cost*
-| *$652,800*
-| *$145,200*  
-| *$507,600 saved (78%)*
+| **Total Annual Savings**
+| $300,000
+| **$222,500 (74%)**
 |===
 
-==== ✨ Business Benefits
+== ROI Calculator
 
-* 🚀 *60% faster analytical queries* enable real-time document insights (500ms → 200ms average)
-* 📊 *70% reduction in data transfer* through columnar compression and predicate pushdown
-* 🔒 *Workload isolation* prevents resource contention between search and analytics operations
-* ⚡ *Vectorized processing* delivers 3-7× higher throughput for batch document analysis
-* 🧠 *Native quantization* reduces memory pressure by 50-75%, eliminating OOM errors
-* 🚀 *Enhanced AI capabilities* drive competitive advantage through faster knowledge discovery
+=== Input Your Metrics
 
-=== 📈 Enterprise Analytics & Business Intelligence
-
-[cols="1,3", frame=none, grid=none]
+[cols="2,1,1", options="header"]
 |===
-| *Business Context* | Multi-dimensional analysis, real-time dashboards, predictive modeling
-| *Scale* | 75M vectors, mixed workloads, regulatory compliance requirements
-| *Workload* | Range queries, aggregations, time-series analysis (50% transactional, 50% analytics)
-| *Recommended Engine* | *Multi-Engine Hybrid* (SST for real-time + VIPER for analytics)
+| Metric | Your Value | Unit
+
+| Number of vectors | ___ | millions
+| Queries per second | ___ | QPS
+| Average vector dimension | ___ | dimensions
+| Current annual cost | ___ | USD
 |===
 
-==== 💰 Hypothetical Database Cost Comparison (Annual)
+=== Estimated Savings
 
-[cols="3,2,2,2", options="header"]
+**Storage Optimization**
+* Compression: 50-80% reduction
+* Tiering: 85% reduction in hot storage needs
+* **Savings**: `Current Storage Cost × 0.75`
+
+**Compute Optimization**
+* Hardware acceleration: 4-10x speedup
+* Efficient algorithms: 40-60% less CPU
+* **Savings**: `Current Compute Cost × 0.70`
+
+**Network Optimization**
+* Intelligent filtering: 85% fewer API calls
+* Compression: 60% less bandwidth
+* **Savings**: `Current Network Cost × 0.80`
+
+=== Payback Period
+
+[cols="2,1", options="header"]
 |===
-| Cost Category | Estimated Traditional Vector DB | Projected ProximaDB Multi-Engine | Estimated Business Savings
+| Deployment Size | Payback Period
 
-| *🖥️ Compute & Analytics*
-| 1× m7i.24xlarge instance +
-$100,800/year +  
-Analytics overhead: $48,000
-| 1× m7i.8xlarge instance +
-$33,600/year +
-Optimized analytics: $14,400
-| *$100,800 saved* +
-68% reduction
-
-| *💾 Data Management*
-| Storage tiers: $72,000 +
-API charges: $96,000 +
-Backup/compliance: $24,000  
-| Tiered optimization: $21,600 +
-Reduced API usage: $4,800 +
-Integrated compliance: $7,200
-| *$158,400 saved* +
-82% reduction
-
-| *🌐 Infrastructure & Operations*
-| Network costs: $18,000 +
-Management overhead: $36,000 +
-Monitoring/tools: $15,000
-| Streamlined network: $5,400 +
-Automated management: $10,800 +
-Built-in monitoring: $4,500
-| *$48,300 saved* +
-70% reduction
-
-| *📊 Total Annual Cost*
-| *$409,800*
-| *$102,300*
-| *$307,500 saved (75%)*
+| Small (<10M vectors) | 2-3 months
+| Medium (10M-100M) | 1-2 months
+| Large (>100M) | <1 month
 |===
 
-==== ✨ Business Benefits
+== Cost Breakdown by Engine
 
-* ⚡ *Hybrid performance optimization* delivers optimal latency for each query type (sub-10ms OLTP, 100ms OLAP)
-* 📊 *80% reduction in query bandwidth* through intelligent engine routing and data locality
-* 🔒 *Complete workload isolation* eliminates noisy neighbor effects between real-time and batch operations
-* 📈 *Auto-scaling capacity* handles mixed workloads with 5-10× better resource utilization
-* 🔄 *Cross-engine optimization* enables complex queries spanning both transactional and analytical data
-* 🛠️ *Simplified operations* reduce IT management overhead and improve system reliability
+=== SST Engine (OLTP)
+* **Best for**: Real-time applications
+* **Storage**: $0.03/GB/month
+* **Compute**: $0.10/1M queries
+* **Compression**: 40-50%
 
-== 🏗️ ProximaDB Architecture Advantages
+=== VIPER Engine (Analytics)
+* **Best for**: Batch analytics
+* **Storage**: $0.02/GB/month
+* **Compute**: $0.05/1M queries
+* **Compression**: 70-80%
 
-=== ⚙️ Multi-Engine Flexibility
+== Enterprise Deployment Costs
 
-==== SST Engine - Optimized for OLTP Workloads
-* 🎯 Point queries and real-time operations
-* 📊 Row-based storage for transactional efficiency  
-* 🔍 Hierarchical bloom filters eliminate 95% of unnecessary I/O
-* 💡 Perfect for product search, user recommendations
+=== Cloud Deployment
 
-==== VIPER Engine - Optimized for Analytics
-* 📊 Columnar storage with advanced compression
-* ⚡ Predicate pushdown reduces data movement by 85%
-* 🧠 Quantization support for ML workloads
-* 💡 Ideal for document analysis, business intelligence
-
-==== AXIS Tiered Storage - Cost Optimization
-* 🔥 Automatic data movement: Hot (memory) → Warm (NVMe) → Cold (cloud storage)
-* 💾 Intelligent caching with 89-95% hit rates
-* 🔄 Seamless tier transitions based on access patterns
-* 💰 Up to 90% storage cost reduction
-
-=== 🎯 Engine Selection Guide & Cost Impact
-
-==== Choose SST Engine When:
-[cols="1,4", frame=none, grid=none]
+[cols="1,1,1,1", options="header"]
 |===
-| *Workload Profile* | >70% transactional queries (point lookups, real-time search)
-| *Use Cases* | E-commerce search, recommendation engines, real-time APIs
-| *Performance Focus* | Sub-10ms latency requirements, 2.1× higher concurrent QPS
-| *Bandwidth Benefits* | 85% reduction in network traffic, 95% metadata scanning efficiency
-| *Cost Benefits* | 60-75% reduction in compute costs, 85% reduction in API calls
+| Provider | Instance Type | Monthly Cost | Capacity
+
+| AWS | r6i.4xlarge | $900 | 100M vectors
+| Azure | E16s_v5 | $850 | 100M vectors
+| GCP | n2-highmem-16 | $875 | 100M vectors
 |===
 
-==== Choose VIPER Engine When:
-[cols="1,4", frame=none, grid=none]
-|===
-| *Workload Profile* | >60% analytical queries (aggregations, range searches, reporting)
-| *Use Cases* | Document analysis, business intelligence, data science workloads
-| *Performance Focus* | 60% faster analytics, 70% data transfer reduction
-| *Bandwidth Benefits* | Columnar compression reduces I/O by 50-75%, vectorized processing
-| *Cost Benefits* | 70-85% reduction in storage costs, 50-70% better compression
-|===
+=== On-Premise Deployment
 
-==== Choose Multi-Engine Hybrid When:
-[cols="1,4", frame=none, grid=none]
+[cols="2,1", options="header"]
 |===
-| *Workload Profile* | 40-60% mix of transactional and analytical queries
-| *Use Cases* | Enterprise platforms, mixed workloads, evolving requirements
-| *Performance Focus* | Optimal latency per query type, complete workload isolation
-| *Bandwidth Benefits* | 80% reduction through intelligent routing, eliminates noisy neighbors
-| *Cost Benefits* | 75-85% total cost reduction through intelligent workload routing
+| Component | One-Time Cost
+
+| Server (128GB RAM, 16 cores) | $8,000
+| NVMe Storage (8TB) | $2,000
+| Software License | Contact Sales
+| **Total** | **$10,000+**
 |===
 
-=== 💰 Workload-Based Cost Optimization
+== Performance Metrics
 
-[cols="2,2,2,1,2", options="header"]
+=== Query Performance
+* **Latency**: 0.9ms p99 (gRPC)
+* **Throughput**: 17K vectors/sec insert
+* **Concurrent queries**: 1,000-1,500 QPS
+
+=== Storage Efficiency
+* **Compression ratio**: 50-80%
+* **Cache hit rate**: 95%+
+* **API call reduction**: 85%
+
+== Migration ROI
+
+=== From Competing Solutions
+
+[cols="2,1,1", options="header"]
 |===
-| Workload Distribution | Recommended Strategy | Annual Cost (10M vectors) | Cost Reduction | Best For
+| Current Solution | Migration Cost | Annual Savings
 
-| *90% Transactional* +
-10% Analytics
-| *SST Engine* +
-Single-engine deployment
-| *$89,400*
-| *78% reduction*
-| E-commerce, APIs, real-time systems
-
-| *30% Transactional* +
-70% Analytics  
-| *VIPER Engine* +
-Columnar optimization
-| *$94,200*
-| *82% reduction*
-| Data science, reporting, document analysis
-
-| *50% Transactional* +
-50% Analytics
-| *Multi-Engine Hybrid* +
-SST + VIPER deployment
-| *$102,300*
-| *75% reduction*
-| Enterprise platforms, mixed workloads
-
-| *Variable Workloads* +
-Seasonal patterns
-| *Multi-Engine + AXIS* +
-Adaptive tier management  
-| *$76,800*
-| *85% reduction*
-| Dynamic enterprises, growing platforms
+| Pinecone | $5,000 | $120,000
+| Weaviate | $3,000 | $80,000
+| Milvus | $4,000 | $60,000
+| Custom Build | $10,000 | $150,000
 |===
 
-==== 🚀 Multi-Engine Deployment Strategies
+=== Migration Timeline
+1. **Week 1**: Setup and data export
+2. **Week 2**: Data migration and validation
+3. **Week 3**: Application integration
+4. **Week 4**: Production cutover
 
-===== Hot-Warm Architecture (Recommended for Enterprise)
-* 🔥 *Hot tier*: SST engine for real-time queries (<10ms)
-* 🔄 *Warm tier*: VIPER engine for analytical workloads (100ms-1s)
-* 💰 *Cost allocation*: 40% SST, 60% VIPER based on query patterns
-* 📊 *Total savings*: 75-85% compared to traditional systems
+== Total Cost of Ownership (3 Years)
 
-===== Time-Based Partitioning
-* 📅 *Recent data (0-30 days)*: SST engine for operational queries
-* 📚 *Historical data (30+ days)*: VIPER engine for analytics and reporting
-* 🔄 *Automatic migration* based on access patterns
-* 💾 *Storage cost reduction*: 80-90% for historical data
-
-=== 🔬 Key Technology Advantages
-
-==== What Makes ProximaDB Different
-
-* **95% Faster Data Access**: Smart filtering eliminates unnecessary scanning
-* **85% Fewer API Calls**: Intelligent caching reduces cloud storage costs
-* **70% Better Compression**: Advanced algorithms minimize storage footprint
-* **3-7× Performance Boost**: Optimized for your specific deployment environment
-
-==== Business Benefits by Deployment Type
-
-[cols="2,3,2", options="header"]
+[cols="2,1,1,1", options="header"]
 |===
-| Deployment Type | Key Benefit | Cost Impact
+| Category | Traditional | ProximaDB | Savings
 
-| *Cloud (AWS/Azure/GCP)*
-| Optimized for cloud APIs and pricing models
-| 75-85% reduction
-
-| *On-Premise*
-| Tuned for your hardware characteristics
-| 70-80% reduction
-
-| *Cloud Deployment*
-| Single-server optimized for any cloud
-| 80-85% reduction
+| Infrastructure | $900,000 | $225,000 | 75%
+| Operations | $300,000 | $50,000 | 83%
+| Licensing | $150,000 | $75,000 | 50%
+| **Total** | **$1,350,000** | **$350,000** | **74%**
 |===
 
-[NOTE]
-====
-For detailed technical specifications and deployment-specific configurations, see Appendices D-G.
-====
-
-== 📊 Engine ROI Comparison by Scale
-
-=== Small Deployment (10M vectors, $85,000 baseline cost)
-
-[cols="2,2,2,2,3", options="header"]
-|===
-| Engine Strategy | Annual Cost | Savings | Performance Gains | Best For
-
-| *SST Only* 
-| $24,600
-| *$60,400 (71%)*
-| 40% faster queries, 50% higher QPS
-| Pure transactional workloads
-
-| *VIPER Only*
-| $21,200  
-| *$63,800 (75%)*
-| 60% faster analytics, 70% less I/O
-| Pure analytical workloads
-
-| *Multi-Engine*
-| $22,900
-| *$62,100 (73%)*
-| Optimal per query type, no interference
-| Mixed workloads, future flexibility
-|===
-
-=== Medium Deployment (50M vectors, $285,000 baseline cost)
-
-[cols="2,2,2,2,3", options="header"]
-|===
-| Engine Strategy | Annual Cost | Savings | Performance Gains | Best For
-
-| *SST Only*
-| $71,200
-| *$213,800 (75%)*
-| Sub-10ms latency, 1,000+ QPS
-| E-commerce, real-time systems
-
-| *VIPER Only*
-| $57,900
-| *$227,100 (80%)*
-| 60% analytics speed improvement, 85% bandwidth reduction
-| Data science, reporting platforms
-
-| *Multi-Engine*
-| $64,600
-| *$220,400 (77%)*
-| Workload isolation, 5-10× resource efficiency
-| Enterprise platforms, growth scenarios
-|===
-
-=== Enterprise Deployment (10M vectors, single server)
-
-[cols="2,2,2,2,3", options="header"]
-|===
-| Engine Strategy | Annual Cost | Savings | Performance Gains | Best For
-
-| *SST Only*
-| $143,800
-| *$481,200 (77%)*
-| Consistent sub-10ms, 95% cache hits
-| High-volume transactional systems
-
-| *VIPER Only*
-| $118,400
-| *$506,600 (81%)*
-| 7× throughput, 75% memory reduction
-| Large-scale analytics, ML pipelines
-
-| *Multi-Engine + AXIS*
-| $92,600
-| *$532,400 (85%)*
-| Auto-optimization, zero noisy neighbors
-| Dynamic workloads, optimal cost efficiency
-|===
-
-==== 🎯 Key Insights
-
-* 🚀 *VIPER Engine* delivers highest savings (80-81%) plus 3-7× analytical performance gains
-* ⚡ *SST Engine* provides fastest real-time response (sub-10ms) with 75-77% cost savings  
-* 🎯 *Multi-Engine + AXIS* offers best overall TCO (85% savings) with complete workload isolation
-* 📈 *Performance scaling* improves with deployment size: 7× throughput at 100M+ vectors
-* 🌐 *Bandwidth optimization* ranges from 60-85% reduction, eliminating network bottlenecks
-* 🛡️ *Noisy neighbor elimination* ensures consistent performance across all query types
-
-== 🏢 Enterprise Integration Made Simple
-
-=== Seamless Deployment in Your Environment
-
-ProximaDB deploys directly into your existing infrastructure:
-
-* ✅ **No Architecture Changes**: Works with your current setup
-* ✅ **Automated Configuration**: Optimizes for your specific environment
-* ✅ **Enterprise Ready**: Full compliance and governance support
-* ✅ **Multi-Cloud Compatible**: Deploy anywhere, migrate anytime
-
-=== Quick Start for Your Environment
-
-[cols="2,3,2", options="header"]
-|===
-| Your Environment | What ProximaDB Does | Time to Deploy
-
-| *AWS with Control Tower*
-| Auto-configures for EBS gp3 and S3
-| < 2 hours
-
-| *Azure Enterprise-Scale*
-| Optimizes for Premium SSD and Blob Storage
-| < 2 hours
-
-| *GCP Organization*
-| Tunes for Persistent Disk and Cloud Storage
-| < 2 hours
-
-| *On-Premise Data Center*
-| Adapts to your storage hardware
-| < 4 hours
-|===
-
-=== 🏗️ Enterprise Architecture Benefits
-
-==== Universal Landing Zone Benefits
-* 🏛️ Centralized governance and policy management
-* 🔒 Standardized security and compliance controls
-* 🌐 Optimized network routing with hub-and-spoke architecture
-* 💰 Cost optimization through shared infrastructure and services
-
-==== ProximaDB Integration Advantages
-* ✅ Deploys within existing landing zone governance structure
-* 🌐 Leverages established network hubs for connectivity
-* ☁️ Utilizes native cloud services for optimal cost routing
-* 🔒 Maintains enterprise security and compliance standards
-
-== 📋 Appendix A: AWS Deployment Guide
-
-=== AWS Quick Reference
-
-[cols="2,3,2", options="header"]
-|===
-| Storage Type | Recommended Config | Cost Optimization
-
-| *EBS gp3*
-| `block_size_kb = 256-3072`
-| 85% API reduction
-
-| *S3 Standard*
-| `block_size_kb = 4096`
-| 90% fewer calls
-
-| *S3 Glacier*
-| `block_size_kb = 8192`
-| Archive optimization
-|===
-
-=== ☁️ AWS Control Tower Integration
-
-image::aws-deployment-detail-modular.svg[AWS Control Tower Landing Zone with ProximaDB,width=900,align=center]
-
-*Architecture Foundation*: AWS Control Tower with Transit Gateway hub provides centralized governance and networking for multi-account ProximaDB deployments.footnote:[AWS Control Tower automates landing zone setup with pre-configured governance guardrails. Transit Gateway enables hub-and-spoke networking across accounts while Gateway Endpoints provide free routing to S3, eliminating TGW charges for storage traffic.]
-
-==== 🌐 Enterprise Network Design
-
-===== Multi-Account Structure
-* 🏛️ *Management Account*: AWS Control Tower, Organizations, centralized billing
-* 🚀 *Production Account*: ProximaDB cluster with optimized networking
-* 📱 *Application Accounts*: Business applications with secure connectivity
-* 💾 *Data Account*: Enterprise data lake and analytics platform
-
-===== Network Optimization Strategy
-* 🌐 *Transit Gateway Hub*: $36/month per account attachment for inter-account routing
-* 💰 *S3 Gateway Endpoints*: FREE routing for primary storage (bypasses TGW charges)
-* 🔗 *Interface Endpoints*: $7.20/month + $0.01/GB for comprehensive AWS service access
-* 🔒 *Cross-Account Security*: Centralized security groups and NACLs via Control Tower
-
-==== 💰 Cost Analysis for AWS Infrastructure (10M vectors, 1000 QPS workload)
-
-[cols="3,2,2,2", options="header"]
-|===
-| AWS Infrastructure Component | Traditional Vector DB | ProximaDB Optimized | Enterprise Savings
-
-| *🖥️ Compute Resources*
-| 1× m7i.8xlarge traditional DB +
-$1,152/mo
-| 1× m7i.4xlarge ProximaDB +
-$576/mo
-| *$576/mo (50%)*
-
-| *🌐 Network Transfer*
-| API Gateway: $130/mo +
-Load balancer: $108/mo +
-Data transfer: $100/mo
-| Direct gRPC: $0/mo +
-Single instance: $25/mo +
-Batch transfers: $30/mo
-| *$283/mo (84%)*
-
-| *💾 Storage & I/O*
-| S3 Standard: $2,300/mo +
-EBS gp3: $800/mo +
-API calls: $500/mo
-| S3 with compression: $575/mo +
-EBS gp3: $400/mo +
-Batch APIs: $25/mo
-| *$2,600/mo (72%)*
-
-| *📊 Total Monthly*
-| *$5,090/mo*
-| *$1,631/mo*
-| *$3,459/mo (68%)*
-
-| *💰 Annual Savings*
-| *$61,080/year*
-| *$19,572/year*
-| *$41,508/year saved*
-|===
-
-==== ✨ AWS-Specific Landing Zone Advantages
-* 🤖 Native integration with AWS AI/ML services (SageMaker, Bedrock)
-* ✅ Automated compliance with AWS Config and Control Tower guardrails
-* 🔗 Seamless connectivity to AWS data services (Redshift, Athena, EMR)
-* 📊 Enterprise-grade monitoring with CloudWatch and X-Ray integration
-
-== 📋 Appendix B: Azure Landing Zone Deployment
-
-=== ☁️ Azure Enterprise-Scale Integration
-
-image::azure-deployment-detail-modular.svg[Azure Enterprise-Scale Landing Zone with ProximaDB,width=900,align=center]
-
-*Architecture Foundation*: Azure Enterprise-Scale landing zone with Virtual WAN hub provides enterprise governance and connectivity framework for ProximaDB deployments.footnote:[Azure Enterprise-Scale provides management group hierarchy with centralized policy management. Virtual WAN hub enables secure hub-and-spoke networking while Service Endpoints provide free routing to Azure Storage via Microsoft backbone, bypassing hub processing charges.]
-
-==== 🌐 Enterprise Network Design
-
-===== Management Group Hierarchy
-* 🏛️ *Root Management Group*: Organization-wide Azure Policy and governance
-* 🏗️ *Platform Management Group*: Core infrastructure and shared services
-* 🚀 *Landing Zone Management Group*: Application workloads and data platforms
-* 🧪 *Sandbox Management Group*: Development and testing environments
-
-===== Network Architecture Strategy
-* 🌐 *Virtual WAN Hub*: $125/month standard hub (all connections included)
-* 💰 *Service Endpoints*: FREE routing for Azure Storage and SQL Database
-* 🔗 *Private Endpoints*: $7.20/month + $0.01/GB for comprehensive PaaS connectivity
-* 🔒 *Cross-Subscription Security*: Centralized network security groups and Azure Firewall
-
-==== 💰 Cost Analysis for Azure Infrastructure (10M vectors, 1000 QPS workload)
-
-[cols="3,2,2,2", options="header"]
-|===
-| Azure Infrastructure Component | Traditional Vector DB | ProximaDB Optimized | Enterprise Savings
-
-| *🖥️ Compute Resources*
-| 1× D32s_v5 traditional DB +
-$1,104/mo
-| 1× D16s_v5 ProximaDB +
-$552/mo
-| *$552/mo (50%)*
-
-| *🌐 Network Transfer*
-| Application Gateway: $175/mo +
-Load balancer: $100/mo +
-Data transfer: $125/mo
-| Direct gRPC: $0/mo +
-Single instance: $25/mo +
-Batch transfers: $35/mo
-| *$340/mo (85%)*
-
-| *💾 Storage & I/O*
-| Blob Standard: $1,840/mo +
-Premium SSD: $1,200/mo +
-API operations: $650/mo
-| Blob with compression: $460/mo +
-Premium SSD: $400/mo +
-Batch APIs: $33/mo
-| *$2,797/mo (76%)*
-
-| *📊 Total Monthly*
-| *$5,194/mo*
-| *$1,505/mo*
-| *$3,689/mo (71%)*
-
-| *💰 Annual Savings*
-| *$62,328/year*
-| *$18,060/year*
-| *$44,268/year saved*
-|===
-
-==== ✨ Azure-Specific Landing Zone Advantages
-* 🤖 Native integration with Azure Cognitive Services and OpenAI Service
-* ✅ Automated compliance with Azure Policy and Microsoft Cloud Adoption Framework
-* 🔗 Seamless connectivity to Azure data platform (Synapse, Data Factory, Power BI)
-* 👥 Enterprise identity integration with Azure Active Directory
-
-== 📋 Appendix C: GCP Landing Zone Deployment  
-
-=== ☁️ GCP Organization Hierarchy Integration
-
-image::gcp-deployment-detail-modular.svg[GCP Organization Landing Zone with ProximaDB,width=900,align=center]
-
-*Architecture Foundation*: GCP Organization hierarchy with Shared VPC and Cloud Router provides the most cost-effective enterprise landing zone for ProximaDB deployments.footnote:[GCP Organization policies provide centralized governance across folders and projects. Shared VPC architecture with Cloud Router enables cost-effective hub-and-spoke networking, while Private Google Access provides free routing to Cloud Storage and BigQuery via dedicated IP ranges (199.36.153.8/30).]
-
-==== 🌐 Enterprise Network Design
-
-===== Organization Hierarchy
-* 🏛️ *Organization Node*: Root-level IAM and organization policy management
-* 🔒 *Security Folder*: Centralized security services and monitoring
-* 🌐 *Network Folder*: Shared VPC host projects and networking infrastructure  
-* 🚀 *Workload Folders*: Application and data platform service projects
-
-===== Network Architecture Strategy
-* 🌐 *Cloud Router Hub*: $18/month per router (lowest cloud hub cost)
-* 💰 *Shared VPC*: FREE subnet sharing across service projects
-* 🔗 *Private Google Access*: FREE routing for GCS, BigQuery, and major services
-* 🔗 *Private Service Connect*: $7.20/month + $0.01/GB for comprehensive API access
-
-==== 💰 Cost Analysis for GCP Infrastructure (10M vectors, 1000 QPS workload)
-
-[cols="3,2,2,2", options="header"]
-|===
-| GCP Infrastructure Component | Traditional Vector DB | ProximaDB Optimized | Enterprise Savings
-
-| *🖥️ Compute Resources*
-| 1× c3-standard-32 traditional DB +
-$1,024/mo
-| 1× c3-standard-16 ProximaDB +
-$512/mo
-| *$512/mo (50%)*
-
-| *🌐 Network Transfer*
-| Load balancer: $130/mo +
-API Gateway: $54/mo +
-Data transfer: $90/mo
-| Direct gRPC: $0/mo +
-Single instance: $20/mo +
-Batch transfers: $25/mo
-| *$229/mo (83%)*
-
-| *💾 Storage & I/O*
-| Cloud Storage Standard: $2,000/mo +
-Persistent Disk pd-balanced: $1,700/mo +
-API operations: $500/mo
-| Cloud Storage with compression: $500/mo +
-Persistent Disk pd-ssd: $340/mo +
-Batch APIs: $25/mo
-| *$3,335/mo (79%)*
-
-| *📊 Total Monthly*
-| *$5,498/mo*
-| *$1,422/mo*
-| *$4,076/mo (74%)*
-
-| *💰 Annual Savings*
-| *$65,976/year*
-| *$17,064/year*
-| *$48,912/year saved*
-|===
-
-==== ✨ GCP-Specific Landing Zone Advantages
-* 🤖 Native integration with Vertex AI and Google Cloud AI Platform
-* 💰 Most cost-effective network routing ($18/month vs $36-125/month for other clouds)
-* 🔗 Comprehensive free routing via Private Google Access (covers majority of services)
-* 📊 Sustained use discounts and committed use discounts for additional savings
-
-== ☁️ Multi-Cloud Landing Zone Strategy
-
-=== 🏢 Enterprise Architecture Comparison
-
-[cols="2,2,2,2,2", options="header"]
-|===
-| Landing Zone Factor | AWS Control Tower | Azure Enterprise-Scale | GCP Organization | Strategic Advantage
-
-| *🏢 Deployment Model*
-| Multi-account architecture
-| Multi-subscription model
-| Multi-project hierarchy
-| *ProximaDB works with all*
-
-| *🌐 Network Hub Cost*
-| $36/account (TGW)
-| $125/hub (VWAN)
-| $18/router (CR)
-| *GCP 50-85% cheaper*
-
-| *💰 Free Service Routing*
-| S3 + DynamoDB
-| Storage + SQL Database
-| GCS + BigQuery + more
-| *GCP most comprehensive*
-
-| *📊 Data Processing Cost*
-| $0.02/GB
-| $0.02/GB
-| $0.01/GB
-| *GCP 50% cheaper*
-
-| *💰 Annual Savings (10M vectors)*
-| $56,400
-| $67,332
-| $59,196
-| *All deliver 75-80% reduction*
-
-| *🏢 Enterprise Maturity*
-| Most mature ecosystem
-| Strong hybrid integration
-| AI/ML leadership
-| *Choose based on strategy*
-|===
-
-=== 🎯 Strategic Landing Zone Recommendations
-
-==== Choose AWS Control Tower When:
-* ✅ Existing AWS enterprise agreements and mature AWS adoption
-* 🏢 Complex multi-account organizations requiring sophisticated governance
-* 🤖 Heavy integration with AWS AI/ML services (SageMaker, Bedrock)
-* 🛠️ Strong preference for mature third-party ecosystem and tooling
-
-==== Choose Azure Enterprise-Scale When:
-* 🏢 Microsoft-centric technology stack (Office 365, Azure AD, Teams)
-* 🔄 Hybrid cloud requirements with extensive on-premises integration
-* 🤖 Strong focus on Azure AI services and Power Platform integration
-* 💰 Existing Azure enterprise agreements and committed spend
-
-==== Choose GCP Organization When:
-* 💰 Cost optimization is primary strategic concern (lowest overall TCO)
-* 📊 Heavy emphasis on analytics and AI/ML workloads (BigQuery, Vertex AI)
-* ☁️ Cloud-native approach with minimal legacy infrastructure
-* 🚀 Startup or scale-up environment prioritizing operational efficiency
-
-== 🚀 Implementation Roadmap
-
-=== 📋 Pre-Deployment Assessment
-
-==== Landing Zone Readiness Checklist
-* ☐ Cloud governance framework established (Control Tower/Enterprise-Scale/Organization)
-* ☐ Network architecture designed with hub-and-spoke topology
-* ☐ Security and compliance policies defined and implemented
-* ☐ Multi-account/subscription/project structure established
-* ☐ Identity and access management configured
-* ☐ Monitoring and logging infrastructure operational
-
-==== ProximaDB Integration Planning
-* ☐ Workload assessment and engine selection (SST vs VIPER vs Multi-Engine)
-* ☐ Data migration strategy and timeline developed
-* ☐ Performance benchmarking and success criteria established
-* ☐ Cost optimization opportunities identified and prioritized
-* ☐ Stakeholder alignment on ROI expectations and timeline
-
-=== 📅 Migration Timeline
-
-==== Phase 1: Landing Zone Preparation (Weeks 1-2)
-* ✅ Validate landing zone readiness and optimization opportunities
-* 🌐 Configure ProximaDB-specific network routing (Gateway/Service Endpoints)
-* 📊 Establish monitoring, security, and compliance baselines
-* 🚀 Deploy ProximaDB in designated production account/subscription/project
-
-==== Phase 2: Pilot Workload Migration (Weeks 3-6)
-* 🧪 Migrate representative subset of production workload
-* ✅ Validate performance, cost, and integration assumptions
-* ⚙️ Fine-tune configuration based on actual usage patterns
-* 📝 Document lessons learned and optimization opportunities
-
-==== Phase 3: Production Rollout (Weeks 7-12)
-* 📈 Gradual migration of full production workload
-* 📊 Monitor and optimize performance, costs, and business metrics
-* 🚀 Implement advanced features (tiered storage, query optimization)
-* 🎯 Achieve target ROI milestones and success criteria
-
-==== Phase 4: Optimization & Scale (Months 4-6)
-* 📊 Analyze usage patterns for additional optimization opportunities
-* ⚙️ Implement multi-engine strategies for mixed workloads
-* 📈 Plan for business growth and additional use cases
-* 📝 Document ROI achievement and business impact
-
-=== 📊 Success Metrics & KPIs
-
-==== Technical Metrics
-* ⚡ *Query response time improvement*: Target 40-60% faster
-* 💾 *Storage cost reduction*: Target 80-85% 
-* 🖥️ *Compute efficiency improvement*: Target 60-70% reduction
-* 🔗 *API call optimization*: Target 85-95% reduction
-
-==== Business Metrics
-* 💰 *Total cost of ownership reduction*: Target 75-85%
-* 🛠️ *Infrastructure operational overhead*: Target 50-70% reduction
-* 🚀 *Time to deploy new capabilities*: Target 40-60% faster
-* 📈 *Business agility and scalability*: Qualitative assessment
-
-==== Financial Metrics
-* 💰 *ROI achievement timeline*: Target 1-3 months payback
-* 📊 *Annual cost savings realization*: Target $200K-400K+ for large deployments
-* 🔄 *Infrastructure budget reallocation*: Enable strategic initiatives
-* 🚀 *Business value creation*: Improved customer experience, operational efficiency
-
-== 📋 Appendix D: On-Premise Deployment Configurations
-
-=== Traditional Disk Storage (HDD/SSD)
-
-==== Optimization Profile
-* **Target**: IOPS optimization for spinning disks
-* **Block Size**: 512KB for optimal disk head movement
-* **Compression**: ZSTD for better compression with limited I/O
-
-==== Configuration Template
-[source,toml]
-----
-# config/on-premise-disk.toml
-[sst]
-block_size_kb = 512               # IOPS optimization
-compression_algorithm = "zstd"    # Better compression
-compression_level = 3             # Balanced CPU usage
-
-[memory]
-memtable_size_mb = 64            # Conservative memory
-write_buffer_count = 4           # Moderate parallelism
-
-[performance]
-read_threads = 4                 # Match disk spindle count
-write_threads = 2                # Reduce contention
-----
-
-=== High-Performance NVMe Storage
-
-==== Optimization Profile
-* **Target**: Maximum throughput on NVMe
-* **Block Size**: 1024KB for bandwidth optimization
-* **Compression**: LZ4 for minimal CPU overhead
-
-==== Configuration Template
-[source,toml]
-----
-# config/on-premise-nvme.toml
-[sst]
-block_size_kb = 1024             # Throughput optimization
-compression_algorithm = "lz4"    # Speed priority
-compression_level = 1            # Minimal overhead
-
-[memory]
-memtable_size_mb = 256           # Leverage memory
-write_buffer_count = 8           # High parallelism
-
-[performance]
-read_threads = 16                # Maximize queue depth
-write_threads = 8                # High parallelism
-----
-
-== 📋 Appendix E: AWS Technical Configurations
-
-=== EBS gp3 Optimization
-
-==== Storage Characteristics
-* **IOPS Limit**: 16,000 IOPS
-* **Throughput**: 1,000 MB/s
-* **Optimal I/O**: 256KB blocks
-* **Cost**: $0.08/GB-month
-
-==== Optimized Configuration
-[source,toml]
-----
-# config/aws-ebs-gp3.toml
-[sst]
-block_size_kb = 256              # Match optimal I/O size
-compression_algorithm = "zstd"   # Graviton optimized
-compression_level = 3            # Balanced
-
-[aws]
-ebs_type = "gp3"
-iops = 16000                     # Maximum IOPS
-throughput = 1000                # Maximum MB/s
-
-[performance]
-io_queue_depth = 32              # EBS queue depth
-batch_size = 1000                # API efficiency
-----
-
-=== S3 Integration
-
-==== Storage Characteristics
-* **API Cost**: $0.0004 per 1000 GET requests
-* **Optimal Block**: 4-8MB for API efficiency
-* **Transfer Cost**: $0.09/GB egress
-
-==== Optimized Configuration
-[source,toml]
-----
-# config/aws-s3.toml
-[sst]
-block_size_kb = 4096             # Minimize API calls
-compression_algorithm = "zstd"   # Maximum compression
-compression_level = 6            # Storage optimization
-
-[aws_s3]
-storage_class = "STANDARD_IA"    # Cost optimization
-multipart_threshold = "8MB"      # Large objects
-transfer_acceleration = true     # Global performance
-
-[tiering]
-hot_tier_days = 7                # EBS retention
-warm_tier_days = 30              # S3 Standard
-cold_tier_transition = "GLACIER" # Long-term archive
-----
-
-== 📋 Appendix F: Azure Technical Configurations
-
-=== Premium SSD v2 Optimization
-
-==== Storage Characteristics
-* **IOPS**: Up to 80,000 (customizable)
-* **Throughput**: Up to 1,200 MB/s
-* **Pricing**: Pay per IOPS/throughput
-* **Advantage**: Independent IOPS/throughput scaling
-
-==== Optimized Configuration
-[source,toml]
-----
-# config/azure-premium-ssd-v2.toml
-[sst]
-block_size_kb = 512              # Balance IOPS/throughput
-compression_algorithm = "zstd"   # Azure optimized
-compression_level = 3            # Balanced
-
-[azure]
-disk_type = "PremiumV2_LRS"
-disk_iops = 80000                # Custom IOPS
-disk_throughput_mbps = 1200      # Custom throughput
-
-[performance]
-io_concurrency = 64              # Parallel I/O
-write_batch_size = 2000          # Batch efficiency
-----
-
-=== Blob Storage Integration
-
-==== Storage Characteristics
-* **Hot Tier**: $0.0184/GB-month
-* **Cool Tier**: $0.01/GB-month
-* **Archive**: $0.00099/GB-month
-
-==== Optimized Configuration
-[source,toml]
-----
-# config/azure-blob.toml
-[sst]
-block_size_kb = 8192             # Large block efficiency
-compression_algorithm = "brotli" # Best compression
-compression_level = 6            # Storage optimization
-
-[azure_blob]
-tier = "Cool"                    # Cost optimization
-redundancy = "ZRS"               # Storage redundancy only
-
-[tiering]
-hot_retention_days = 30          # Premium SSD
-archive_after_days = 365         # Archive tier
-lifecycle_management = true      # Automatic transitions
-----
-
-== 📋 Appendix G: GCP Technical Configurations
-
-=== Persistent Disk Extreme
-
-==== Storage Characteristics
-* **IOPS**: Up to 120,000
-* **Throughput**: Up to 4,000 MB/s
-* **Cost**: $0.125/GB-month + IOPS
-* **Minimum Size**: 500GB for max performance
-
-==== Optimized Configuration
-[source,toml]
-----
-# config/gcp-pd-extreme.toml
-[sst]
-block_size_kb = 256              # Maximum IOPS
-compression_algorithm = "snappy" # Google optimized
-compression_level = 1            # Speed priority
-
-[gcp]
-disk_type = "pd-extreme"
-provisioned_iops = 120000        # Maximum IOPS
-disk_size_gb = 1000              # Performance tier
-
-[performance]
-io_threads = 32                  # High parallelism
-queue_depth = 64                 # Maximum queue
-----
-
-=== Cloud Storage Integration
-
-==== Storage Characteristics
-* **Standard**: $0.020/GB-month
-* **Nearline**: $0.010/GB-month (30-day minimum)
-* **Coldline**: $0.004/GB-month (90-day minimum)
-* **Archive**: $0.0012/GB-month (365-day minimum)
-
-==== Optimized Configuration
-[source,toml]
-----
-# config/gcp-cloud-storage.toml
-[sst]
-block_size_kb = 2048             # Cost/performance balance
-compression_algorithm = "zstd"   # High compression
-compression_level = 9            # Maximum compression
-
-[gcp_storage]
-bucket_class = "STANDARD"        # With autoclass
-autoclass = true                 # Automatic optimization
-
-[tiering]
-nearline_after_days = 30         # Nearline transition
-coldline_after_days = 90         # Coldline transition
-archive_after_days = 365         # Archive transition
-----
-
-== 📋 Appendix H: Deployment Flexibility
-
-=== Current Architecture
-ProximaDB is designed as a high-performance single-server solution with vertical scalability:
-
-* **Single Instance**: Optimized for powerful single-node deployments
-* **Vertical Scaling**: Scale up with more CPU, memory, and faster storage
-* **No Complexity**: No distributed system overhead or coordination costs
-* **Predictable Performance**: Consistent sub-millisecond latencies
-
-=== Deployment Options
-You can deploy ProximaDB on any cloud provider or on-premise:
-
-* **AWS**: EC2 instances with EBS or instance storage
-* **Azure**: Virtual Machines with Premium SSD
-* **GCP**: Compute Engine with Persistent Disk
-* **On-Premise**: Bare metal or virtualized servers
-
-=== Server Sizing Guidelines
-
-[cols="2,2,2,2,2", options="header"]
-|===
-| Vector Count | QPS Required | AWS Instance | Azure Instance | GCP Instance
-
-| *1-5M vectors*
-| 100-500 QPS
-| m7i.xlarge
-| D4s_v5
-| c3-standard-4
-
-| *5-10M vectors*
-| 500-1000 QPS
-| m7i.2xlarge
-| D8s_v5
-| c3-standard-8
-
-| *10-25M vectors*
-| 1000-1500 QPS
-| m7i.4xlarge
-| D16s_v5
-| c3-standard-16
-
-| *25-50M vectors*
-| 1500-2000 QPS
-| m7i.8xlarge
-| D32s_v5
-| c3-standard-32
-
-| *50-100M vectors*
-| 2000+ QPS
-| m7i.12xlarge
-| D48s_v5
-| c3-highmem-44
-|===
-
-=== Future Roadmap
-[NOTE]
-====
-**Distributed clustering features are planned for future releases**, including:
-* Multi-node clusters for horizontal scaling
-* Cross-region replication for disaster recovery
-* Read replicas for query distribution
-* Active-active configurations for high availability
-
-Current version focuses on single-server performance optimization.
-====
-
-'''
-
-[.text-center]
-_Contact ProximaDB sales engineering for customized landing zone integration assessment and deployment planning._
-
-[IMPORTANT]
-.IMPORTANT DISCLAIMERS AND LEGAL NOTICE
-====
-*The cost calculations, performance metrics, savings projections, and ROI estimates presented in this document are hypothetical examples for illustrative purposes only and do not constitute guarantees, warranties, or commitments of any kind. These figures are based on theoretical models and assumptions that may not reflect real-world conditions.*
-
-*ACTUAL RESULTS MAY VARY SIGNIFICANTLY* and will depend on numerous factors including but not limited to: your specific use case, data volume and characteristics, query patterns and complexity, existing infrastructure, deployment architecture, configuration choices, operational practices, cloud provider pricing, network topology, security requirements, compliance needs, and scale of deployment.
-
-*NO WARRANTIES*: ProximaDB makes no representations or warranties, express or implied, regarding the accuracy, completeness, or reliability of any cost savings, performance improvements, or ROI projections contained herein. All estimates are subject to change without notice.
-
-*INDEPENDENT VERIFICATION REQUIRED*: Before making any business decisions based on information in this document, you should conduct your own independent analysis, testing, and validation using your actual workloads and requirements.
-
-*CONSULT PROFESSIONALS*: For binding cost projections, performance guarantees, or contractual commitments, please contact ProximaDB sales engineering for a comprehensive assessment tailored to your specific requirements and environment.
-====
-
-[.text-center]
-See also: link:../developer/architecture.adoc[Technical Architecture] | link:../user/getting_started.adoc[Getting Started Guide] | link:use_cases.adoc[Industry Use Cases]
+== Quick Start ROI
+
+=== Small Business (<10M vectors)
+* **Current cost**: $2,000/month
+* **ProximaDB cost**: $500/month
+* **Monthly savings**: $1,500
+* **Annual ROI**: 900%
+
+=== Enterprise (>100M vectors)
+* **Current cost**: $25,000/month
+* **ProximaDB cost**: $6,000/month
+* **Monthly savings**: $19,000
+* **Annual ROI**: 380%
+
+== Next Steps
+
+1. **Calculate Your Savings**: Use the calculator above
+2. **Request Demo**: See ProximaDB in action
+3. **Start Trial**: Test with your data
+4. **Contact Sales**: Get custom pricing
+
+---
+**Version 0.1.4** | Contact: singhvjd@gmail.com
