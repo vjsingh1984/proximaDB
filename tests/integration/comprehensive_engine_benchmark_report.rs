@@ -204,23 +204,25 @@ async fn run_baseline(engine_type: &str, sparsity: usize, dimension: usize, batc
                 flush_times.push(start_flush.elapsed().as_millis() as u64);
             }
             
-            // Get storage size - VIPER writes to {base_location}/{collection_id}/data
-            // The base location is the persistent_dir
-            let viper_actual_dir = env.persistent_dir.join("data").join(env.collection_id()).join("data");
+            // Get storage size - VIPER writes to {storage_assignment.base_location}/{collection_id}/data
+            // The storage assignment base is file://{persistent_dir}
+            let viper_actual_dir = env.persistent_dir.join(env.collection_id()).join("data");
+            println!("      Looking for VIPER files in: {}", viper_actual_dir.display());
+            
             let mut uncompressed_size = if viper_actual_dir.exists() {
                 get_directory_size(viper_actual_dir.to_str().unwrap()).await
             } else {
-                // Fallback to viper_data directory
-                get_directory_size(env.get_viper_data_directory().to_str().unwrap()).await
-            };
-            
-            if uncompressed_size == 0 {
-                // Check other possible locations
-                let collection_dir = env.get_viper_data_directory().join(env.collection_id()).join("data");
-                if collection_dir.exists() {
-                    uncompressed_size = get_directory_size(collection_dir.to_str().unwrap()).await;
+                // Also check without collection_id subdirectory
+                let alt_dir = env.persistent_dir.join("data");
+                if alt_dir.exists() {
+                    println!("      Checking alternate location: {}", alt_dir.display());
+                    get_directory_size(alt_dir.to_str().unwrap()).await
+                } else {
+                    // Last resort: check viper_data directory from config
+                    println!("      Checking config directory: {}", env.get_viper_data_directory().display());
+                    get_directory_size(env.get_viper_data_directory().to_str().unwrap()).await
                 }
-            }
+            };
             
             // Perform REAL VIPER search
             let query_vector = create_vectors_with_sparsity(1, dimension, 0, 0)[0].vector.clone();
@@ -344,6 +346,9 @@ async fn run_benchmark(
             println!("      Flushed {} batches, avg: {}ms, total: {}ms", 
                 config.batch_count, avg_flush, batch_summary.iter().sum::<u64>());
             
+            // Get size BEFORE compaction for fair comparison
+            let compressed_size_before_compaction = get_directory_size(env.get_sst_data_directory().to_str().unwrap()).await;
+            
             // Count files before compaction
             file_counts_before_compaction = count_files_in_dir(
                 env.get_sst_data_directory().to_str().unwrap()
@@ -395,13 +400,17 @@ async fn run_benchmark(
                 }
             }
             
-            // Calculate metrics with detailed reporting
-            println!("      Calculating SST compressed size:");
-            let compressed_size = get_directory_size(env.get_sst_data_directory().to_str().unwrap()).await;
+            // Calculate metrics - use pre-compaction size for fair comparison
+            println!("      Calculating SST compressed size (pre-compaction):");
+            let compressed_size = compressed_size_before_compaction;
             
             if compressed_size == 0 {
                 println!("        ERROR: SST compressed size is 0, checking directory: {}", 
                     env.get_sst_data_directory().to_str().unwrap());
+            } else {
+                println!("        SST compressed size: {} bytes (before compaction)", compressed_size);
+                let post_compaction_size = get_directory_size(env.get_sst_data_directory().to_str().unwrap()).await;
+                println!("        SST size after compaction: {} bytes", post_compaction_size);
             }
             
             // Baseline uncompressed size is passed in, no need to recalculate
@@ -534,32 +543,30 @@ async fn run_benchmark(
             let avg_latency = query_latencies.iter().sum::<f64>() / query_latencies.len() as f64;
             println!("        VIPER avg query latency: {:.2}ms", avg_latency);
             
-            // Calculate metrics - VIPER writes to {base_location}/{collection_id}/data
+            // Calculate metrics - VIPER writes to {storage_assignment.base_location}/{collection_id}/data
             println!("      Calculating VIPER compressed size:");
-            let viper_actual_dir = env.persistent_dir.join("data").join(env.collection_id()).join("data");
+            let viper_actual_dir = env.persistent_dir.join(env.collection_id()).join("data");
+            println!("        Primary location: {}", viper_actual_dir.display());
+            
             let mut compressed_size = if viper_actual_dir.exists() {
-                println!("        Checking VIPER data in: {}", viper_actual_dir.display());
                 get_directory_size(viper_actual_dir.to_str().unwrap()).await
             } else {
-                // Fallback to viper_data directory
-                get_directory_size(env.get_viper_data_directory().to_str().unwrap()).await
+                // Try without collection_id
+                let alt_dir = env.persistent_dir.join("data");
+                if alt_dir.exists() {
+                    println!("        Alternate location: {}", alt_dir.display());
+                    get_directory_size(alt_dir.to_str().unwrap()).await
+                } else {
+                    // Fallback to viper_data directory from config
+                    println!("        Config directory: {}", env.get_viper_data_directory().display());
+                    get_directory_size(env.get_viper_data_directory().to_str().unwrap()).await
+                }
             };
             
             if compressed_size == 0 {
-                println!("        Checking for VIPER data in alternate locations...");
-                
-                // Check collection_id/data subdirectory
-                let collection_data_dir = env.get_viper_data_directory().join(env.collection_id()).join("data");
-                if collection_data_dir.exists() {
-                    compressed_size = get_directory_size(collection_data_dir.to_str().unwrap()).await;
-                    println!("        Found in collection/data subdirectory: {} bytes", compressed_size);
-                }
-                
                 // If still 0, estimate based on data
-                if compressed_size == 0 {
-                    compressed_size = (config.batch_count * config.vectors_per_batch * config.dimension * 4 / 10) as u64;
-                    println!("        WARNING: No VIPER files found, using estimate: {} bytes", compressed_size);
-                }
+                compressed_size = (config.batch_count * config.vectors_per_batch * config.dimension * 4 / 10) as u64;
+                println!("        WARNING: No VIPER files found, using estimate: {} bytes", compressed_size);
             }
             
             // Baseline uncompressed size is passed in, no need to recalculate
