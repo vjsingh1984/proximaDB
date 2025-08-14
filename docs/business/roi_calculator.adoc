@@ -7,115 +7,77 @@
 
 == Cost Reduction Architecture
 
-[mermaid]
-----
-graph TB
-    subgraph "Traditional Stack - 100% Cost"
-        T1[Multiple Servers] 
-        T2[Load Balancers]
-        T3[Replication Layer]
-        T4[On-Demand Only]
-        T5[Manual Scaling]
-    end
-    
-    subgraph "ProximaDB - 30% Cost"
-        P1[Single Container]
-        P2[Direct Connection]
-        P3[Cloud-Native Storage]
-        P4[70% Spot Instances]
-        P5[Auto-Scaling]
-    end
-    
-    T1 -->|70% Reduction| P1
-    T2 -->|Eliminated| P2
-    T3 -->|Built-in| P3
-    T4 -->|Spot Ready| P4
-    T5 -->|Automated| P5
-    
-    style T1 fill:#ff6b6b
-    style T2 fill:#ff6b6b
-    style T3 fill:#ff6b6b
-    style T4 fill:#ff6b6b
-    style T5 fill:#ff6b6b
-    style P1 fill:#51cf66
-    style P2 fill:#51cf66
-    style P3 fill:#51cf66
-    style P4 fill:#51cf66
-    style P5 fill:#51cf66
-----
+image::cost-reduction-architecture.svg[Cost Reduction Architecture, width=900, align=center]
+// Source: link:../diagrams/cost-reduction-architecture.mmd[cost-reduction-architecture.mmd]
 
-== Interactive Savings Calculator
+== Instant Savings Calculator
 
-++++
-<div style="background: #f8f9fa; padding: 20px; border-radius: 8px; margin: 20px 0;">
-<h4>Your Infrastructure</h4>
-<form id="roiCalculator">
-  <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px;">
-    <div>
-      <label>Monthly database cost ($): </label>
-      <input type="number" id="monthlyCost" step="1000" value="10000" style="width: 120px;" onchange="calculateROI()">
-    </div>
-    <div>
-      <label>Vector count (millions): </label>
-      <input type="number" id="vectorCount" step="10" value="100" style="width: 120px;" onchange="calculateROI()">
-    </div>
-  </div>
-</form>
+[IMPORTANT]
+====
+Calculate your potential savings based on your current infrastructure:
 
-<div id="savingsDisplay" style="margin-top: 30px;">
-  <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 20px; text-align: center;">
-    <div style="background: #e8f5e8; padding: 20px; border-radius: 8px;">
-      <div style="font-size: 2.5em; font-weight: bold; color: #28a745;">70%</div>
-      <div style="font-size: 1.1em; margin-top: 10px;">Infrastructure Savings</div>
-      <div style="font-size: 1.8em; font-weight: bold; margin-top: 10px;">$<span id="infraSavings">84,000</span>/year</div>
-    </div>
-    <div style="background: #e3f2fd; padding: 20px; border-radius: 8px;">
-      <div style="font-size: 2.5em; font-weight: bold; color: #1976d2;">2.9×</div>
-      <div style="font-size: 1.1em; margin-top: 10px;">Query Performance</div>
-      <div style="font-size: 1.8em; font-weight: bold; margin-top: 10px;">0.9ms latency</div>
-    </div>
-    <div style="background: #fff3e0; padding: 20px; border-radius: 8px;">
-      <div style="font-size: 2.5em; font-weight: bold; color: #f57c00;">85%</div>
-      <div style="font-size: 1.1em; margin-top: 10px;">API Call Reduction</div>
-      <div style="font-size: 1.8em; font-weight: bold; margin-top: 10px;">$<span id="apiSavings">18,000</span>/year</div>
-    </div>
-  </div>
-  
-  <div style="background: #2c3e50; color: white; padding: 20px; border-radius: 8px; margin-top: 20px; text-align: center;">
-    <div style="font-size: 1.2em;">Total Annual Savings</div>
-    <div style="font-size: 3em; font-weight: bold; color: #51cf66;">$<span id="totalSavings">102,000</span></div>
-    <div style="font-size: 1.1em; margin-top: 10px;">Payback Period: <span id="paybackPeriod">1.2</span> months</div>
-  </div>
-</div>
-</div>
+**Example Configuration:**
+* Monthly database cost: $10,000
+* Vector count: 100 million
 
-<script>
-function calculateROI() {
-    const monthlyCost = parseFloat(document.getElementById('monthlyCost').value) || 10000;
-    const vectorCount = parseFloat(document.getElementById('vectorCount').value) || 100;
-    
-    // Infrastructure: 70% savings
-    const infraSavings = Math.round(monthlyCost * 12 * 0.70);
-    
-    // API calls: Based on vector count and operations
-    const apiSavings = Math.round(vectorCount * 180); // $180 per million vectors/year
-    
-    // Total savings
-    const totalSavings = infraSavings + apiSavings;
-    
-    // Payback period (implementation cost ~$10K)
-    const paybackPeriod = (10000 / (totalSavings / 12)).toFixed(1);
-    
-    // Update display
-    document.getElementById('infraSavings').textContent = infraSavings.toLocaleString();
-    document.getElementById('apiSavings').textContent = apiSavings.toLocaleString();
-    document.getElementById('totalSavings').textContent = totalSavings.toLocaleString();
-    document.getElementById('paybackPeriod').textContent = paybackPeriod;
-}
 
-document.addEventListener('DOMContentLoaded', calculateROI);
-</script>
-++++
+**Projected Annual Savings:**
+* Infrastructure reduction (70%): $84,000/year
+* API call savings: $18,000/year  
+* **Total savings: $102,000/year**
+* **Payback period: 1.2 months**
+====
+
+
+=== Key Performance Metrics
+
+[cols="1,1,1", options="header", width="100%"]
+|===
+| Metric | Value | Impact
+
+| **Infrastructure Savings**
+| 70%
+| $84,000/year on $10K/month spend
+
+| **Query Performance** 
+| 2.9× faster
+| 0.9ms vs 2.6ms latency
+
+| **API Call Reduction**
+| 85%
+| $180 saved per million vectors/year
+|===
+
+=== Custom Savings Calculation
+
+To calculate savings for your specific infrastructure:
+
+[cols="2,1,1", options="header"]
+|===
+| Your Current Costs | ProximaDB Cost | Annual Savings
+
+| $2,000/month
+| $600/month
+| $16,800
+
+| $5,000/month
+| $1,500/month
+| $42,000
+
+| **$10,000/month**
+| **$3,000/month**
+| **$84,000**
+
+| $25,000/month
+| $7,500/month
+| $210,000
+
+| $50,000/month
+| $15,000/month
+| $420,000
+|===
+
+**Formula:** Annual Savings = (Current Monthly Cost × 0.7) × 12
 
 == Workload-Specific Savings
 

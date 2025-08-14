@@ -1,0 +1,33 @@
+graph TB
+    subgraph "Traditional Stack - 100% Cost"
+        T1[Multiple Servers]
+        T2[Load Balancers]
+        T3[Replication Layer]
+        T4[On-Demand Only]
+        T5[Manual Scaling]
+    end
+
+    subgraph "ProximaDB - 30% Cost"
+        P1[Single Container]
+        P2[Direct Connection]
+        P3[Cloud-Native Storage]
+        P4[70% Spot Instances]
+        P5[Auto-Scaling]
+    end
+
+    T1 -->|70% Reduction| P1
+    T2 -->|Eliminated| P2
+    T3 -->|Built-in| P3
+    T4 -->|Spot Ready| P4
+    T5 -->|Automated| P5
+
+    style T1 fill:#ff6b6b
+    style T2 fill:#ff6b6b
+    style T3 fill:#ff6b6b
+    style T4 fill:#ff6b6b
+    style T5 fill:#ff6b6b
+    style P1 fill:#51cf66
+    style P2 fill:#51cf66
+    style P3 fill:#51cf66
+    style P4 fill:#51cf66
+    style P5 fill:#51cf66
