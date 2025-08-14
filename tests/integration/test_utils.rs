@@ -126,6 +126,62 @@ impl IsolatedTestEnvironment {
         ).await
     }
     
+    /// Get the expected data directory path where SST files are written
+    pub fn get_data_directory(&self) -> PathBuf {
+        // SST writes to {base_location}/{collection_id}/data
+        // Since base_location is parent of persistent_dir, files are in persistent_dir/data
+        self.persistent_dir.join("data")
+    }
+    
+    /// Ensure data directory exists for SST operations
+    pub async fn ensure_data_directory(&self) -> Result<PathBuf> {
+        let data_dir = self.get_data_directory();
+        tokio::fs::create_dir_all(&data_dir).await?;
+        Ok(data_dir)
+    }
+    
+    /// Unified test setup for SST operations with consistent paths and configuration
+    /// Returns (flush_params, expected_data_dir, collection_config)
+    pub async fn setup_sst_test(&self, vectors: Vec<VectorRecord>) -> Result<(FlushParameters, PathBuf, proximadb::proto::proximadb::Collection)> {
+        // Ensure data directory exists
+        let data_dir = self.ensure_data_directory().await?;
+        
+        // Create collection config with proper storage assignment
+        let collection_config = self.create_test_collection();
+        
+        // Create flush parameters
+        let flush_params = FlushParameters {
+            collection_id: Some(self.collection_id.clone()),
+            vector_records: vectors,
+            force: true,
+            synchronous: true,
+            collection_config: Some(collection_config.clone()),
+            ..Default::default()
+        };
+        
+        Ok((flush_params, data_dir, collection_config))
+    }
+    
+    /// Check if SST files exist in the expected location
+    pub async fn verify_sst_files_exist(&self) -> Result<Vec<std::fs::DirEntry>> {
+        let data_dir = self.get_data_directory();
+        if !data_dir.exists() {
+            return Err(anyhow::anyhow!("Data directory doesn't exist: {}", data_dir.display()));
+        }
+        
+        let entries = std::fs::read_dir(&data_dir)?;
+        let sst_files: Vec<_> = entries
+            .filter_map(|e| e.ok())
+            .filter(|e| e.path().extension().map_or(false, |ext| ext == "sst"))
+            .collect();
+            
+        if sst_files.is_empty() {
+            return Err(anyhow::anyhow!("No SST files found in: {}", data_dir.display()));
+        }
+        
+        Ok(sst_files)
+    }
+    
     /// Create a test collection with embedded storage assignment
     pub fn create_test_collection(&self) -> proximadb::proto::proximadb::Collection {
         use proximadb::proto::proximadb::{Collection, CollectionConfig, StorageAssignment, CollectionStats, DistanceMetric, StorageEngine};

@@ -143,7 +143,7 @@ async fn create_direct_vector_service(config: &WalOptimizationTestConfig) -> Res
     // Create test SST engine  
     let sst_config = SstConfig {
         data_directory: temp_path.to_string(),
-        block_size_mb: 3,
+        block_size_kb: 3072,
         cache_size_mb: 64,
         max_levels: 7,
         level_count: 7,

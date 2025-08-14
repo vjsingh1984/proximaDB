@@ -45,10 +45,10 @@ graph TB
     EndUser --> QueryOps
     
     %% Inter-Module Dependencies
-    VectorOps -.-> CollectionMgmt : requires
-    VectorOps -.-> StorageOps : uses
-    QueryOps -.-> VectorOps : includes
-    StorageOps -.-> SystemAdmin : monitored by
+    VectorOps -.-> CollectionMgmt
+    VectorOps -.-> StorageOps
+    QueryOps -.-> VectorOps
+    StorageOps -.-> SystemAdmin
     
     %% Styling
     classDef actorStyle fill:#e3f2fd,stroke:#1976d2,stroke-width:3px

@@ -3,11 +3,19 @@
 :toclevels: 2
 :imagesdir: diagrams/images
 
-image::business-overview.svg[ProximaDB Business Overview, align=center, width=900]
+image::business-overview-abstract.svg[ProximaDB Business Overview, align=center, width=900]
 
 **Enterprise vector database with hierarchical SST architecture, unified compression, and zero-copy operations.**
 
-image::proximadb-architecture-consolidated.svg[ProximaDB Technical Architecture, align=center, width=900]
+**Technical Architecture Overview**
+
+[cols="1,1", frame=none, grid=none]
+|===
+| image::system-data-flow-abstract.svg[Data Flow, width=400] +
+_**Vector Pipeline**: Zero-conversion data flow_
+| image::service-interactions-abstract.svg[Services, width=400] +
+_**Service Architecture**: Microservice coordination_
+|===
 
 _For detailed architecture diagrams:_
 * link:diagrams/business-architecture-consolidated.mmd[Business Architecture Hub] | link:diagrams/proximadb-architecture-consolidated.mmd[Technical Architecture Hub]
@@ -40,7 +48,7 @@ link:compression_guide.adoc[Compression]
 
 == Key Capabilities
 
-image::business-competitive-advantages.svg[ProximaDB Competitive Advantages, width=900]
+image::competitive-advantages-abstract.svg[ProximaDB Competitive Advantages, width=900]
 _Technology leadership, market differentiators, and performance edge_
 
 [cols="2,1,1", options="header"]
@@ -102,8 +110,8 @@ _Technology leadership, market differentiators, and performance edge_
 
 === Key Diagrams
 * link:diagrams/index.adoc[**Complete Diagrams Guide**] - Modular visual documentation
-* link:diagrams/images/business-overview.svg[Business Overview] - Value proposition and core benefits
-* link:diagrams/images/usecase-module-overview.svg[System Capabilities] - What you can build with ProximaDB
+* link:diagrams/images/business-overview-abstract.svg[Business Overview] - Value proposition and core benefits
+* link:diagrams/images/module-integration-abstract.svg[System Capabilities] - What you can build with ProximaDB
 
 == Quick Examples
 

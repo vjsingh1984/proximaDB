@@ -6,89 +6,37 @@
 //! - Compaction with compressed data
 //! - Search on compressed SST files
 //! - Configuration-based compression control
+//!
+//! Refactored to use unified test utilities for consistent path handling and configuration.
 
+use crate::common::unified_test_utils::{UnifiedTestEnvironment, operations};
 use proximadb::core::{SstConfig, VectorRecord};
 use proximadb::storage::engines::sst::{
     SstStorage, DataBlock, DataBlockCompressionConfig
 };
-use proximadb::proto::proximadb::MetadataItem;
+use proximadb::proto::proximadb::{MetadataItem, StorageEngine};
 use proximadb::core::search::{SearchParams, FilterExpression};
 use proximadb::storage::traits::UnifiedStorageEngine;
 use proximadb::storage::transaction_coordinator::TransactionCoordinator;
 use proximadb::storage::persistence::filesystem::FilesystemFactory;
 use proximadb::compute::distance_computation::UnifiedDistanceCompute;
-use std::sync::{Arc, Once};
-use tokio::sync::RwLock;
+use std::sync::Arc;
 use tempfile::TempDir;
 use tracing::{info, debug};
 
-static HARDWARE_INIT: Once = Once::new();
-
-/// Setup hardware capabilities for tests
-fn setup_hardware_capabilities() {
-    HARDWARE_INIT.call_once(|| {
-        let _ = proximadb::core::hardware_capabilities::initialize_hardware_capabilities_default();
-    });
+/// Create test SST configuration with compression using unified environment
+fn create_test_config_with_compression(env: &UnifiedTestEnvironment, enable_compression: bool) -> SstConfig {
+    let mut config = env.sst_config.clone();
+    config.compression = if enable_compression { "zstd".to_string() } else { "none".to_string() };
+    config.compression_level = 3;
+    config.block_size_kb = 4096; // 4MB for optimal ZSTD compression
+    config
 }
 
-/// Create test SST configuration with compression
-fn create_test_config(temp_dir: &TempDir, enable_compression: bool) -> SstConfig {
-    SstConfig {
-        level_count: 3,
-        compaction_threshold: 3,
-        block_size_kb: 4096, // 4MB for optimal ZSTD compression
-        compaction_strategy: "leveled".to_string(),
-        compression: if enable_compression { "zstd".to_string() } else { "none".to_string() },
-        compression_level: 3,
-        bloom_filter_config: None, // Disable for these tests
-        cache_size_mb: 64,
-        max_files_per_level: 10,
-        level_size_multiplier: 10.0,
-        max_levels: 3,
-        background_thread_count: 2,
-        data_directory: temp_dir.path().to_str().unwrap().to_string(),
-        mmap_enabled: false,
-        prefetch_enabled: false,
-        prefetch_size_kb: 64,
-        decompression_cache_config: None,
-    }
-}
+// Collection creation now handled by UnifiedTestEnvironment
 
-/// Create test collection with storage assignment
-fn create_test_collection_with_storage(collection_id: &str, base_path: &str) -> proximadb::proto::proximadb::Collection {
-    use proximadb::proto::proximadb::{Collection, CollectionConfig, StorageAssignment, CollectionStats, DistanceMetric, StorageEngine};
-    
-    let storage_assignment = StorageAssignment {
-        base_location: format!("file://{}", base_path),
-        assigned_at: chrono::Utc::now().timestamp_millis(),
-    };
-    
-    let config = CollectionConfig {
-        name: collection_id.to_string(),
-        dimension: 512,
-        distance_metric: DistanceMetric::Cosine as i32,
-        storage_engine: StorageEngine::Sst as i32,
-        ..Default::default()
-    };
-    
-    let stats = CollectionStats {
-        vector_count: 0,
-        index_size_bytes: 0,
-        data_size_bytes: 0,
-    };
-    
-    Collection {
-        id: collection_id.to_string(),
-        config: Some(config),
-        stats: Some(stats),
-        created_at: chrono::Utc::now().timestamp_millis(),
-        updated_at: chrono::Utc::now().timestamp_millis(),
-        storage_assignment: Some(storage_assignment),
-    }
-}
-
-/// Create test vector records
-fn create_test_vectors(count: usize, dimension: usize, prefix: &str) -> Vec<VectorRecord> {
+/// Create test vectors with compression-friendly patterns
+fn create_compressible_test_vectors(env: &UnifiedTestEnvironment, count: usize, dimension: usize, prefix: &str) -> Vec<VectorRecord> {
     (0..count).map(|i| {
         let mut vector = vec![0.0; dimension];
         // Create highly compressible pattern - many repeated values
@@ -99,10 +47,12 @@ fn create_test_vectors(count: usize, dimension: usize, prefix: &str) -> Vec<Vect
             vector[j] = if (j / block_size) % 2 == 0 { block_value } else { 0.0 };
         }
         
-        VectorRecord {
-            id: Some(format!("{}_{}", prefix, i)),
+        env.create_test_vector_record(
+            format!("{}_{}", prefix, i),
             vector,
-            metadata: vec![
+            (1000 + i) as u32,
+            None,
+            vec![
                 MetadataItem {
                     key: "category".to_string(),
                     value: Some(proximadb::proto::proximadb::metadata_item::Value::StringValue(
@@ -115,26 +65,22 @@ fn create_test_vectors(count: usize, dimension: usize, prefix: &str) -> Vec<Vect
                         i as f64
                     )),
                 },
-            ],
-            timestamp: (1000 + i) as u32,
-            updated_at: Some((1000 + i) as u32),
-            expires_at: None,
-            version: Some(1),
-            rank: None,
-            score: None,
-            distance: None,
-        }
+            ]
+        )
     }).collect()
 }
 
+/// Test SST DataBlock ZSTD compression and decompression roundtrip
+/// 
+/// Validates that SST DataBlocks can be compressed with ZSTD, achieve reasonable
+/// compression ratios, and can be decompressed back to identical data.
 #[tokio::test]
-async fn test_sst_datablock_compression() -> anyhow::Result<()> {
-    setup_hardware_capabilities();
-    let temp_dir = TempDir::new().unwrap();
-    let config = create_test_config(&temp_dir, true);
+async fn test_sst_datablock_zstd_compression_roundtrip() -> anyhow::Result<()> {
+    let env = UnifiedTestEnvironment::new().await?;
+    let config = create_test_config_with_compression(&env, true);
     
     // Create DataBlock with test records
-    let vectors = create_test_vectors(100, 512, "test");
+    let vectors = create_compressible_test_vectors(&env, 100, 512, "test");
     let sst_records: Vec<_> = vectors.into_iter()
         .map(|v| proximadb::storage::engines::sst::SstRecord::from_vector_record(v))
         .collect();
@@ -167,8 +113,12 @@ async fn test_sst_datablock_compression() -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Test SST engine flush with compression creates compressed SSTable files
+/// 
+/// Validates that when compression is enabled, the SST engine creates compressed
+/// SSTable files that can be searched normally while using less disk space.
 #[tokio::test]
-async fn test_sst_flush_with_compression() -> anyhow::Result<()> {
+async fn test_sst_engine_flush_with_compression_integration() -> anyhow::Result<()> {
     setup_hardware_capabilities();
     let temp_dir = TempDir::new().unwrap();
     let config = Arc::new(create_test_config(&temp_dir, true));
@@ -176,6 +126,11 @@ async fn test_sst_flush_with_compression() -> anyhow::Result<()> {
     // Setup storage engine
     let filesystem = Arc::new(FilesystemFactory::new(Default::default()).await?);
     let distance_compute = Arc::new(UnifiedDistanceCompute::new(proximadb::compute::distance_computation::DistanceMetric::Cosine));
+    
+    // Create metadata and storage directories
+    tokio::fs::create_dir_all(temp_dir.path().join("metadata")).await?;
+    tokio::fs::create_dir_all(temp_dir.path().join("storage")).await?;
+    
     let metadata_url = format!("file://{}/metadata", temp_dir.path().display());
     let storage_url = format!("file://{}/storage", temp_dir.path().display());
     
@@ -236,8 +191,12 @@ async fn test_sst_flush_with_compression() -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Test SST compaction preserves compression and maintains data integrity
+/// 
+/// Validates that compaction of compressed SST files maintains compression settings,
+/// preserves all data integrity, and results in searchable compacted files.
 #[tokio::test]
-async fn test_sst_compaction_with_compression() -> anyhow::Result<()> {
+async fn test_sst_compaction_preserves_compression_integrity() -> anyhow::Result<()> {
     setup_hardware_capabilities();
     let temp_dir = TempDir::new().unwrap();
     let config = Arc::new(create_test_config(&temp_dir, true));
@@ -249,6 +208,11 @@ async fn test_sst_compaction_with_compression() -> anyhow::Result<()> {
     
     let filesystem = Arc::new(FilesystemFactory::new(Default::default()).await?);
     let distance_compute = Arc::new(UnifiedDistanceCompute::new(proximadb::compute::distance_computation::DistanceMetric::Cosine));
+    
+    // Create metadata and storage directories
+    tokio::fs::create_dir_all(temp_dir.path().join("metadata")).await?;
+    tokio::fs::create_dir_all(temp_dir.path().join("storage")).await?;
+    
     let metadata_url = format!("file://{}/metadata", temp_dir.path().display());
     let storage_url = format!("file://{}/storage", temp_dir.path().display());
     
@@ -330,6 +294,11 @@ async fn test_sst_search_compressed_blocks() -> anyhow::Result<()> {
     
     let filesystem = Arc::new(FilesystemFactory::new(Default::default()).await?);
     let distance_compute = Arc::new(UnifiedDistanceCompute::new(proximadb::compute::distance_computation::DistanceMetric::Cosine));
+    
+    // Create metadata and storage directories
+    tokio::fs::create_dir_all(temp_dir.path().join("metadata")).await?;
+    tokio::fs::create_dir_all(temp_dir.path().join("storage")).await?;
+    
     let metadata_url = format!("file://{}/metadata", temp_dir.path().display());
     let storage_url = format!("file://{}/storage", temp_dir.path().display());
     

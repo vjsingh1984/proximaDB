@@ -35,10 +35,10 @@ graph TB
     Application --> MetadataFiltering
     
     %% Use Case Dependencies
-    InsertVectors -.-> BulkOperations : extends
-    SearchVectors -.-> VectorAnalytics : extends
-    SearchVectors -.-> MetadataFiltering : includes
-    UpdateVectors -.-> InsertVectors : includes
+    InsertVectors -.-> BulkOperations
+    SearchVectors -.-> VectorAnalytics
+    SearchVectors -.-> MetadataFiltering
+    UpdateVectors -.-> InsertVectors
     
     %% Styling
     classDef actorStyle fill:#e3f2fd,stroke:#1976d2,stroke-width:2px

@@ -61,7 +61,7 @@ use rand::Rng;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
 use std::path::PathBuf;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info, warn, trace};
 use std::sync::Arc;
 
 /// Common SST filename generation utilities
@@ -873,7 +873,7 @@ impl DataBlockCompressionConfig {
             // For other algorithms, we'll use Zstd as fallback for now since 
             // core::serialization only supports these three
             "snappy" | "gzip" | "brotli" | "deflate" | "zlib" | "bzip2" | "xz" | "lzo" | "lz4hc" | "lzma" => {
-                tracing::debug!("Mapping {} to Zstd for core serialization", config.compression);
+                debug!("Mapping {} to Zstd for core serialization", config.compression);
                 CompressionAlgorithm::Zstd
             },
             _ => CompressionAlgorithm::None,
@@ -1228,7 +1228,7 @@ impl DataBlock {
                     result.write_all(&(raw_data.len() as u32).to_le_bytes())?; // Original size
                     result.write_all(&compressed)?;
                     
-                    tracing::debug!(
+                    debug!(
                         "✅ DataBlock {} compressed with {:?}: {} → {} bytes ({:.1}% ratio)",
                         self.block_id, compression_algo,
                         raw_data.len(), compressed.len(), compression_ratio * 100.0
@@ -1585,13 +1585,19 @@ impl SstStorage {
     
     /// Get the collection storage URL from parameters
     fn get_collection_storage_url_from_params(params: &FlushParameters) -> Result<String> {
+        debug!("🔍 SST FLUSH: Determining storage URL");
+        info!("   - Has collection_config: {}", params.collection_config.is_some());
+        
         // Extract storage location from collection config in parameters
         if let Some(ref collection) = params.collection_config {
+            info!("   - Has storage_assignment: {}", collection.storage_assignment.is_some());
             if let Some(ref assignment) = collection.storage_assignment {
+                info!("   - Base location: {}", assignment.base_location);
+                info!("   - Collection ID: {:?}", params.collection_id);
                 let storage_url = format!("{}/{}/data", 
                     assignment.base_location,
                     params.collection_id.as_ref().unwrap_or(&"default".to_string()));
-                debug!("🔍 SST: Using storage URL from params: {}", storage_url);
+                debug!("🔍 SST FLUSH: Using storage URL from params: {}", storage_url);
                 return Ok(storage_url);
             }
         }
@@ -1599,7 +1605,15 @@ impl SstStorage {
         // Fallback to default if not provided
         let collection_id = params.collection_id.as_ref()
             .ok_or_else(|| anyhow::anyhow!("Collection ID required for SST operations"))?;
-        let storage_url = format!("file:///data/{}/data", collection_id);
+        
+        // For tests, use temp directory; for production, use /var/lib/proximadb
+        let base_path = if cfg!(test) {
+            format!("/tmp/proximadb_integration_tests/{}", collection_id)
+        } else {
+            format!("/var/lib/proximadb/{}", collection_id)
+        };
+        
+        let storage_url = format!("file://{}/data", base_path);
         debug!("🔍 SST: Using default storage URL: {}", storage_url);
         Ok(storage_url)
     }
@@ -1706,13 +1720,13 @@ impl SstStorage {
         let record_count = vector_records.len();
         let batch_count = params.batch_ids.len();
         
-        info!("🔄 SST FLUSH: Processing {} vectors from {} batches", record_count, batch_count);
+        debug!("🔍 SST FLUSH: Processing {} vectors from {} batches", record_count, batch_count);
         
         // Scope the sorting to ensure immediate deallocation
         let sorted_records_iter = {
             // For small datasets or single batch, use simple Vec + sort
             if record_count < 10000 || batch_count <= 1 {
-                info!("🔄 SST FLUSH: Using single-sort strategy (small dataset or single batch)");
+                debug!("🔍 SST FLUSH: Using single-sort strategy (small dataset or single batch)");
                 
                 let mut unsorted_records = Vec::with_capacity(record_count);
                 
@@ -1740,7 +1754,7 @@ impl SstStorage {
                 
             } else {
                 // For larger multi-batch datasets, use batch-aware sorting
-                info!("🔄 SST FLUSH: Using multi-batch sort strategy ({} batches)", batch_count);
+                debug!("🔍 SST FLUSH: Using multi-batch sort strategy ({} batches)", batch_count);
                 
                 // Group vectors by their order (simulating batch grouping)
                 // Since we don't have direct batch_id in VectorRecord, group by chunks
@@ -1880,8 +1894,11 @@ impl SstStorage {
         
         let final_url = format!("{}/{}", collection_storage_url.trim_end_matches('/'), sst_filename);
         let (sst_url, data_len) = (final_url, file_size);
-        debug!("💾 SST: SSTable written to URL: {} (collection_storage_url: {}, filename: {})", 
-               sst_url, collection_storage_url, sst_filename);
+        debug!("🔍 SST FLUSH: SSTable written");
+        info!("   - Final URL: {}", sst_url);
+        info!("   - Collection storage URL: {}", collection_storage_url);
+        info!("   - Filename: {}", sst_filename);
+        info!("   - File size: {} bytes", data_len);
 
         info!(
             "✅ SST: Flushed {} vectors to SSTable: {}",
@@ -1895,23 +1912,23 @@ impl SstStorage {
         // Trigger compaction if manager is available
         if let Some(_compaction_manager) = &self.compaction_manager {
             // Extract block size from collection config if available
-            let block_size_mb = params.collection_config.as_ref()
+            let block_size_kb = params.collection_config.as_ref()
                 .and_then(|c| c.config.as_ref())
                 .and_then(|cfg| cfg.sst_config.as_ref())
-                .and_then(|sst| sst.block_size_mb);
+                .and_then(|sst| sst.block_size_kb);
             
             let _task = CompactionTask {
                 level: 0, // Start at level 0
                 input_files: vec![std::path::PathBuf::from(sst_url.clone())],
                 output_file: std::path::PathBuf::from(format!("{}.compacted", sst_url)),
                 priority: CompactionPriority::Medium,
-                block_size_mb,
+                block_size_kb,
                 compression_config: params.collection_config.as_ref()
                     .and_then(|c| c.config.as_ref())
                     .and_then(|cfg| cfg.compression.clone()),
             };
             // For now, just log that we would trigger compaction
-            tracing::debug!(
+            debug!(
                 "Would trigger compaction for collection: {}",
                 collection_id
             );
@@ -1977,6 +1994,16 @@ impl UnifiedStorageEngine for SstStorage {
 
     /// SST-specific flush implementation - Extract records from WAL vector record batches
     async fn do_flush(&self, params: &FlushParameters) -> Result<FlushResult> {
+        info!("🚀 SST FLUSH START");
+        info!("   - Collection ID: {:?}", params.collection_id);
+        info!("   - Vector count: {}", params.vector_records.len());
+        info!("   - Has collection_config: {}", params.collection_config.is_some());
+        if let Some(config) = &params.collection_config {
+            info!("   - Has storage_assignment: {}", config.storage_assignment.is_some());
+            if let Some(assignment) = &config.storage_assignment {
+                info!("   - Storage base_location: {}", assignment.base_location);
+            }
+        }
         info!("🔄 SST: Starting do_flush with WAL vector record batch extraction");
 
         let collection_id = params
@@ -2114,7 +2141,7 @@ impl UnifiedStorageEngine for SstStorage {
         let collection_id = params.collection_id.as_ref()
             .ok_or_else(|| anyhow::anyhow!("Collection ID required for SST compaction"))?;
 
-        tracing::info!(
+        info!(
             "🗜️ SST COMPACTION START: Collection {} (force: {}, priority: {:?})",
             collection_id,
             params.force,
@@ -2138,11 +2165,21 @@ impl UnifiedStorageEngine for SstStorage {
         // SST-specific compaction: Level-based SSTable merging
         if let Some(compaction_manager) = &self.compaction_manager {
             // Get storage location from collection config - skip if not provided
+            debug!("🔍 SST COMPACTION: Checking collection_config for storage assignment");
+            debug!("   - Has collection_config: {}", params.collection_config.is_some());
+            if let Some(config) = params.collection_config.as_ref() {
+                debug!("   - Has storage_assignment: {}", config.storage_assignment.is_some());
+                if let Some(assignment) = &config.storage_assignment {
+                    debug!("   - Storage base_location: {}", assignment.base_location);
+                }
+            }
+            
             let storage_location = match params.collection_config.as_ref()
                 .and_then(|c| c.storage_assignment.as_ref()) {
                 Some(assignment) => assignment.base_location.clone(),
                 None => {
                     error!("❌ SST: No storage assignment found for collection {}. Skipping compaction!", collection_id);
+                    error!("   - collection_config present: {}", params.collection_config.is_some());
                     // Return early with failure result
                     result.success = false;
                     result.collections_affected = vec![collection_id.to_string()];
@@ -2154,7 +2191,7 @@ impl UnifiedStorageEngine for SstStorage {
             };
                 
             let collection_storage_url = format!("{}/{}/data", storage_location, collection_id);
-            tracing::debug!(
+            info!(
                 "🔄 SST COMPACTION: Checking for compaction needs in {}",
                 collection_storage_url
             );
@@ -2162,16 +2199,23 @@ impl UnifiedStorageEngine for SstStorage {
             let collection_dir = std::path::PathBuf::from(
                 collection_storage_url.strip_prefix("file://").unwrap_or(&collection_storage_url)
             );
+            
+            debug!("🔍 SST COMPACTION: Collection directory path: {}", collection_dir.display());
+            info!("   - Directory exists: {}", collection_dir.exists());
 
             // Check if compaction is needed
             if let Some(task) = compaction_manager
                 .check_compaction_needed(collection_id, &collection_dir)
                 .await?
             {
-                tracing::info!(
+                info!(
                     "🔄 SST COMPACTION: Executing synchronous compaction for collection {} level {}",
                     collection_id, task.level
                 );
+                info!("   - Input files: {}", task.input_files.len());
+                for (idx, file) in task.input_files.iter().enumerate() {
+                    debug!("     - File {}: {}", idx + 1, file.display());
+                }
 
                 // Execute compaction synchronously to capture vector tracking
                 let compaction_manager = compaction::CompactionManager::with_atomic_coordinator(
@@ -2210,7 +2254,7 @@ impl UnifiedStorageEngine for SstStorage {
                 // Note: We don't store the actual merged vectors in metrics to avoid memory bloat
                 // The compaction process has already updated the storage with the merged data
 
-                tracing::info!(
+                info!(
                     "✅ SST COMPACTION: Completed for collection {} (deleted: {}, merged: {}, bytes written: {})",
                     collection_id, 
                     result.entries_removed, 
@@ -2218,11 +2262,13 @@ impl UnifiedStorageEngine for SstStorage {
                     enhanced_stats.base_stats.bytes_written
                 );
             } else {
-                tracing::debug!("📊 SST COMPACTION: No compaction needed for collection {}", collection_id);
+                debug!("🔍 SST COMPACTION: No compaction needed for collection {}", collection_id);
+                info!("   - Files below threshold or no files found");
                 result.success = true; // No compaction needed is still successful
+                result.collections_affected.push(collection_id.to_string());
             }
         } else {
-            tracing::warn!("⚠️ SST COMPACTION: No compaction manager available");
+            warn!("⚠️ SST COMPACTION: No compaction manager available");
             result.success = false;
         }
 
@@ -2232,7 +2278,7 @@ impl UnifiedStorageEngine for SstStorage {
 
     /// Retrieve vector by ID from SST storage (Pure SSTable lookup with bloom filter optimization)
     async fn get_vector_by_id(&self, collection_id: &str, vector_id: &str) -> Result<Option<crate::core::VectorRecord>> {
-        tracing::debug!("🔍 SST: Looking up vector {} in collection {} using manifest", vector_id, collection_id);
+        debug!("🔍 SST: Looking up vector {} in collection {} using manifest", vector_id, collection_id);
 
         // Note: In a real implementation, we'd get the storage location from a metadata service
         // For now, we'll just log and return None if we can't determine the location
@@ -2243,7 +2289,7 @@ impl UnifiedStorageEngine for SstStorage {
         let overlapping_files: Vec<String> = vec![];
         
         if overlapping_files.is_empty() {
-            tracing::debug!("📂 SST: No SSTable files overlap with key {}", vector_id);
+            debug!("📂 SST: No SSTable files overlap with key {}", vector_id);
             return Ok(None);
         }
         
@@ -2267,25 +2313,25 @@ impl UnifiedStorageEngine for SstStorage {
                 // Check bloom filter first
                 if reader.might_contain_key(&file_path, vector_id).await {
                     bloom_filter_hits += 1;
-                    tracing::trace!("🌸 SST: Bloom filter hit for {} in {}", vector_id, filename);
+                    trace!("🌸 SST: Bloom filter hit for {} in {}", vector_id, filename);
                     
                     // Actually search the SSTable
                     if let Ok(Some(record)) = reader.get_vector(&file_path, vector_id).await {
-                        tracing::debug!(
+                        debug!(
                             "✅ SST: Found vector {} in SSTable {} (checked {}/{} SSTables, {} bloom hits)",
                             vector_id, filename, bloom_filter_hits, sstables_checked, bloom_filter_hits
                         );
                         return Ok(Some(record));
                     }
                 } else {
-                    tracing::trace!("🌸 SST: Bloom filter miss for {} in {} - skipping", vector_id, filename);
+                    trace!("🌸 SST: Bloom filter miss for {} in {} - skipping", vector_id, filename);
                 }
             } else {
-                tracing::warn!("⚠️ Failed to load metadata for SSTable {}", filename);
+                warn!("⚠️ Failed to load metadata for SSTable {}", filename);
             }
         }
 
-        tracing::debug!(
+        debug!(
             "❌ SST: Vector {} not found in collection {} (checked {} SSTables, {} bloom hits)",
             vector_id, collection_id, sstables_checked, bloom_filter_hits
         );
@@ -2504,7 +2550,7 @@ impl SstStorage {
             let chunk_time = chunk_start.elapsed().as_micros() as u64;
             batch_stats.chunk_times.push(chunk_time);
             
-            tracing::debug!(
+            debug!(
                 "📦 SST CHUNK {}: Processed {} records, {} matches in {}μs",
                 chunk_idx,
                 chunk.len(),
@@ -2551,16 +2597,16 @@ impl SstStorage {
     ) -> Result<FlushResult> {
         let flush_start = std::time::Instant::now();
 
-        tracing::info!(
+        info!(
             "🗂️ SST SSTABLE FLUSH: Processing {} records",
             sst_records.len()
         );
         
         // DEBUG: Log record details
         if sst_records.is_empty() {
-            tracing::warn!("🔍 DEBUG SST: No records to flush - returning early!");
+            warn!("🔍 DEBUG SST: No records to flush - returning early!");
         } else {
-            tracing::info!("🔍 DEBUG SST: First record: id={}", 
+            info!("🔍 DEBUG SST: First record: id={}", 
                 sst_records[0].id);
         }
 
@@ -2569,7 +2615,7 @@ impl SstStorage {
         let mut sorted_records = sst_records;
         sorted_records.sort_by(|a, b| a.id.cmp(&b.id));
         let sorting_time = sorting_start.elapsed().as_millis() as u64;
-        tracing::debug!(
+        debug!(
             "📊 SST STAGE 1: Sorted {} records in {}ms",
             sorted_records.len(),
             sorting_time
@@ -2580,7 +2626,7 @@ impl SstStorage {
         let level_partitions = self.partition_records_by_level(&sorted_records).await?;
         let partitioning_time = partitioning_start.elapsed().as_millis() as u64;
         let num_levels = level_partitions.len();
-        tracing::debug!(
+        debug!(
             "🏗️ SST STAGE 2: Partitioned into {} levels in {}ms",
             num_levels,
             partitioning_time
@@ -2655,7 +2701,7 @@ impl SstStorage {
                     // For append-only vectors (empty IDs), use a unique key
                     let unique_key = format!("__append_only_seq_{}", append_only_counter);
                     append_only_counter += 1;
-                    info!("🔍 SST FLUSH: Append-only vector detected in level {}, using key='{}'", level, unique_key);
+                    debug!("🔍 SST FLUSH: Append-only vector detected in level {}, using key='{}'", level, unique_key);
                     unique_key
                 } else {
                     record.id.clone()
@@ -2696,7 +2742,7 @@ impl SstStorage {
                 warn!("⚠️ SST: Compacted SSTable file is empty: {}", sst_path.display());
             }
 
-            tracing::debug!(
+            debug!(
                 "💾 SST STAGE 3: Level {} SSTable {} written - {} records, {} bytes",
                 level,
                 sst_filename,
@@ -2913,7 +2959,7 @@ impl SstStorage {
             1.0
         };
 
-        tracing::info!(
+        info!(
             "🚀 SST ENGINE-OPTIMIZED SSTABLE: Level {} serialized - {} records, {} bytes, {:.2}x compression, {}ms",
             level, records.len(), sstable_data.len(), compression_ratio, serialization_time
         );
@@ -2927,7 +2973,7 @@ impl SstStorage {
         sstable_paths: &[std::path::PathBuf],
         flushed_records: &[SstRecord],
     ) -> Result<()> {
-        tracing::info!(
+        info!(
             "📊 SST METADATA: Updating manifest for {} SSTables, {} records",
             sstable_paths.len(),
             flushed_records.len()
@@ -2976,7 +3022,7 @@ impl SstStorage {
         let compaction_needed = level0_files >= self.config.compaction_threshold as usize;
 
         if compaction_needed {
-            tracing::debug!(
+            debug!(
                 "🗜️ SST COMPACTION: Threshold exceeded - {} Level 0 files (threshold: {})",
                 level0_files,
                 self.config.compaction_threshold
@@ -3016,7 +3062,7 @@ impl SstStorage {
         &self,
         vector_records: &[VectorRecord],
     ) -> Result<Vec<u8>> {
-        tracing::info!(
+        info!(
             "📦 SST: Serializing {} vector records to row-based SSTable format",
             vector_records.len()
         );
@@ -3027,15 +3073,15 @@ impl SstStorage {
 
         for (index, record) in vector_records.iter().enumerate() {
             // DEBUG: Log the vector ID being converted
-            info!("🔍 DEBUG SST FLUSH: Converting vector {} with id={:?}", index, record.id);
+            debug!("🔍 SST FLUSH: Converting vector {} with id={:?}", index, record.id);
             let mut sst_record = SstRecord::from_vector_record(record.clone());
-            info!("🔍 DEBUG SST FLUSH: SstRecord has id='{}'", sst_record.id);
+            debug!("🔍 SST FLUSH: SstRecord has id='{}'", sst_record.id);
             sst_record.sequence_number = sequence_start + index as u64;
             sst_record.level = 0; // New records start at level 0
             sst_records.push(sst_record);
         }
 
-        tracing::debug!(
+        debug!(
             "🔄 SST: Converted {} vector records to row-based SST records",
             sst_records.len()
         );
@@ -3250,7 +3296,7 @@ impl SstStorage {
             blocks.push(DataBlock::new(block_id, current_block_records));
         }
 
-        tracing::debug!(
+        debug!(
             "📦 SST BLOCK ORGANIZATION: {} records organized into {} blocks (avg block size: {}KB)",
             records.len(),
             blocks.len(),
@@ -3309,7 +3355,7 @@ impl SstStorage {
             compressed_blocks.push(final_data);
         }
 
-        tracing::debug!(
+        debug!(
             "🗜️ SST COMPRESSION: {} blocks processed, {} index entries created",
             data_blocks.len(),
             index_entries.len()

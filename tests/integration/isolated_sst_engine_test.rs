@@ -2,58 +2,40 @@
 //! 
 //! Tests SST storage engine functionality with completely isolated environments
 //! to ensure reliable testing without cross-test contamination.
+//!
+//! This module has been refactored to use the unified test utilities for consistent
+//! and reliable test infrastructure across all ProximaDB test modules.
 
 use anyhow::Result;
 use tracing::{debug, error, info, warn};
 use std::collections::{HashMap, HashSet};
 
-use super::test_utils::{IsolatedTestEnvironment, MultiEnvironmentTest};
+use crate::common::unified_test_utils::{UnifiedTestEnvironment, MultiUnifiedEnvironmentTest, operations};
 use proximadb::core::search::{FilterExpression, ComparisonOperator};
 use proximadb::core::VectorRecord;
 use proximadb::compute::distance_computation::DistanceMetric;
 use proximadb::storage::traits::{FlushParameters, CompactionParameters, UnifiedStorageEngine};
+use proximadb::proto::proximadb::StorageEngine;
 
+/// Test SST engine basic vector insert, flush and search in isolated environment
+/// 
+/// Validates core SST functionality (insert, flush, search) works correctly
+/// in a completely isolated test environment using unified test utilities.
 #[tokio::test]
-async fn test_isolated_sst_basic_operations() -> Result<()> {
-    // Initialize hardware capabilities
-    let _ = proximadb::core::hardware_capabilities::initialize_hardware_capabilities_default();
-    let env = IsolatedTestEnvironment::new().await?;
+async fn test_isolated_sst_vector_insert_flush_search() -> Result<()> {
+    let env = UnifiedTestEnvironment::new().await?;
     let engine = env.create_sst_engine().await?;
     
-    // Create test vectors
+    // Create test vectors using unified utilities
     let vectors = env.create_test_vectors(10);
     debug!("📝 Created {} test vectors for collection: {}", vectors.len(), env.collection_id());
     
-    // Insert and flush vectors
-    let collection_config = env.create_test_collection();
-    let flush_params = FlushParameters {
-        collection_id: Some(env.collection_id().to_string()),
-        vector_records: vectors,
-        force: true,
-        synchronous: true,
-        collection_config: Some(collection_config),
-        ..Default::default()
-    };
+    // Use unified SST test setup
+    operations::insert_and_flush_sst(&engine, &env, vectors).await?;
     
-    let result = engine.do_flush(&flush_params).await?;
-    assert!(result.success, "Flush should succeed");
-    
-    // Search without filters
+    // Search using unified utilities
     let query_vector = env.create_query_vector();
-    // Storage URL: SST creates {base_location}/{collection_id}/data
-    // Since base_location is parent of persistent_dir, the actual path is persistent_dir/data
-    let storage_url = format!("file://{}/data", env.persistent_dir.to_str().unwrap());
-    info!("🔍 Using storage URL for search: {}", storage_url);
-    let results = engine.search_vectors_unified(
-        env.collection_id(),
-        &storage_url,
-        &query_vector,
-        5,
-        &DistanceMetric::Cosine,
-        None,
-        true,
-        true
-    ).await?;
+    let results = operations::search_vectors_sst(&engine, &env, &query_vector, 5).await?;
     
     // Verify results
     debug!("🔍 Search returned {} results", results.len());
@@ -77,26 +59,18 @@ async fn test_isolated_sst_basic_operations() -> Result<()> {
     Ok(())
 }
 
+/// Test SST engine metadata-based filtering and search in isolated environment
+/// 
+/// Validates that SST engine can filter search results based on vector metadata
+/// using various comparison operators in an isolated test environment.
 #[tokio::test]
-async fn test_isolated_sst_metadata_filtering() -> Result<()> {
-    // Initialize hardware capabilities
-    let _ = proximadb::core::hardware_capabilities::initialize_hardware_capabilities_default();
-    let env = IsolatedTestEnvironment::new().await?;
+async fn test_isolated_sst_metadata_based_filtering() -> Result<()> {
+    let env = UnifiedTestEnvironment::new().await?;
     let engine = env.create_sst_engine().await?;
     
-    // Create test vectors with diverse metadata
+    // Create test vectors with diverse metadata using unified utilities
     let vectors = env.create_test_vectors(15);
-    let collection_config = env.create_test_collection();
-    let flush_params = FlushParameters {
-        collection_id: Some(env.collection_id().to_string()),
-        vector_records: vectors,
-        force: true,
-        synchronous: true,
-        collection_config: Some(collection_config),
-        ..Default::default()
-    };
-    let result = engine.do_flush(&flush_params).await?;
-    assert!(result.success, "Flush should succeed");
+    operations::insert_and_flush_sst(&engine, &env, vectors).await?;
     
     // Test metadata filter: category = "A"
     let filter = FilterExpression::Comparison {
@@ -105,8 +79,7 @@ async fn test_isolated_sst_metadata_filtering() -> Result<()> {
         value: serde_json::Value::String("A".to_string()),
     };
     
-    // Storage URL: SST creates {base_location}/{collection_id}/data
-    // Since base_location is parent of persistent_dir, the actual path is persistent_dir/data
+    // Use unified storage URL construction
     let storage_url = format!("file://{}/data", env.persistent_dir.to_str().unwrap());
     info!("🔍 Using storage URL for filtered search: {}", storage_url);
     let filtered_results = engine.search_vectors_unified(
@@ -153,8 +126,12 @@ async fn test_isolated_sst_metadata_filtering() -> Result<()> {
     Ok(())
 }
 
+/// Test SST engine multi-batch flush and compaction in isolated environment
+/// 
+/// Validates that multiple flush operations create SST files that can be compacted
+/// together while maintaining data integrity and search consistency.
 #[tokio::test]
-async fn test_isolated_sst_flush_and_compaction() -> Result<()> {
+async fn test_isolated_sst_multi_batch_flush_compaction() -> Result<()> {
     // Initialize hardware capabilities
     let _ = proximadb::core::hardware_capabilities::initialize_hardware_capabilities_default();
     let env = IsolatedTestEnvironment::new().await?;
@@ -370,8 +347,12 @@ async fn test_isolated_sst_flush_and_compaction() -> Result<()> {
     Ok(())
 }
 
+/// Test SST engine handles concurrent read operations safely
+/// 
+/// Validates that multiple concurrent search operations can be performed safely
+/// on the same SST engine without data corruption or race conditions.
 #[tokio::test]
-async fn test_isolated_sst_concurrent_operations() -> Result<()> {
+async fn test_isolated_sst_concurrent_read_operations() -> Result<()> {
     // Initialize hardware capabilities
     let _ = proximadb::core::hardware_capabilities::initialize_hardware_capabilities_default();
     let env = IsolatedTestEnvironment::new().await?;
@@ -473,8 +454,12 @@ async fn test_isolated_sst_concurrent_operations() -> Result<()> {
     Ok(())
 }
 
+/// Test SST engine data persistence across restarts in isolated environment
+/// 
+/// Validates that vectors written to SST files persist across engine restarts
+/// and can be recovered and searched correctly after system restart.
 #[tokio::test]
-async fn test_isolated_sst_recovery_persistence() -> Result<()> {
+async fn test_isolated_sst_data_persistence_across_restarts() -> Result<()> {
     // Initialize hardware capabilities
     let _ = proximadb::core::hardware_capabilities::initialize_hardware_capabilities_default();
     let env = IsolatedTestEnvironment::new().await?;
@@ -537,8 +522,12 @@ async fn test_isolated_sst_recovery_persistence() -> Result<()> {
     Ok(())
 }
 
+/// Test SST engine properly isolates data between multiple collections
+/// 
+/// Validates that multiple collections using the same SST engine maintain
+/// proper data isolation and cannot access each other's vectors.
 #[tokio::test]
-async fn test_isolated_multi_collection_isolation() -> Result<()> {
+async fn test_isolated_sst_multi_collection_data_isolation() -> Result<()> {
     // Initialize hardware capabilities
     let _ = proximadb::core::hardware_capabilities::initialize_hardware_capabilities_default();
     // Create multiple isolated environments
@@ -571,7 +560,9 @@ async fn test_isolated_multi_collection_isolation() -> Result<()> {
                i, env.collection_id(), result.entries_flushed, result.files_created);
         
         // Verify files exist
-        let data_path = env.persistent_dir.join(env.collection_id()).join("data");
+        // SST writes to {base_location}/{collection_id}/data
+        // Since base_location is parent of persistent_dir, files are in persistent_dir/data
+        let data_path = env.persistent_dir.join("data");
         if data_path.exists() {
             let entries = std::fs::read_dir(&data_path)?;
             let sst_files: Vec<_> = entries
@@ -629,8 +620,12 @@ async fn test_isolated_multi_collection_isolation() -> Result<()> {
     Ok(())
 }
 
+/// Test SST engine supports multiple distance metrics correctly
+/// 
+/// Validates that SST engine can perform similarity search using different
+/// distance metrics (cosine, euclidean, dot product) with correct ranking.
 #[tokio::test]
-async fn test_isolated_sst_distance_metrics() -> Result<()> {
+async fn test_isolated_sst_multiple_distance_metrics() -> Result<()> {
     // Initialize hardware capabilities
     let _ = proximadb::core::hardware_capabilities::initialize_hardware_capabilities_default();
     let env = IsolatedTestEnvironment::new().await?;
@@ -738,8 +733,12 @@ async fn test_isolated_sst_distance_metrics() -> Result<()> {
     Ok(())
 }
 
+/// Test SST engine performance and correctness with large vector datasets
+/// 
+/// Validates that SST engine can handle large datasets (10K+ vectors) efficiently
+/// while maintaining search accuracy and reasonable performance characteristics.
 #[tokio::test]
-async fn test_isolated_sst_large_dataset() -> Result<()> {
+async fn test_isolated_sst_large_dataset_performance() -> Result<()> {
     // Initialize hardware capabilities
     let _ = proximadb::core::hardware_capabilities::initialize_hardware_capabilities_default();
     let env = IsolatedTestEnvironment::new().await?;

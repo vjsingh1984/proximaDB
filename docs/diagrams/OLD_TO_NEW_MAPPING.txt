@@ -1,0 +1,102 @@
+# Old to New Diagram Mapping (for AsciiDoc updates)
+# Format: old_name.svg → new_name.svg
+
+# MONOLITHIC → OVERVIEW (Reference only, replace with modular in docs)
+business-architecture-consolidated.svg → business-architecture-overview.svg
+proximadb-architecture-consolidated.svg → technical-architecture-overview.svg
+compression-architecture-consolidated.svg → compression-architecture-overview.svg
+query-flow-complete.svg → query-processing-overview.svg
+
+# USE CASE DIAGRAMS
+usecase-vector-operations.svg → vector-operations-usecase.svg
+usecase-module-overview.svg → module-integration-usecase.svg
+usecase-collection-management.svg → collection-management-usecase.svg
+proximadb-use-cases.svg → business-applications-usecase.svg
+
+# ACTIVITY DIAGRAMS
+vector-insert-workflow.svg → vector-insert-activity.svg
+vector-search-workflow.svg → vector-search-workflow-activity.svg
+collection-management-workflow.svg → collection-management-activity.svg
+vector-search-activity.svg → vector-search-activity.svg
+
+# SEQUENCE DIAGRAMS
+initialization-sequence.svg → system-initialization-sequence.svg
+sst_viper_search_sequence.svg → storage-engine-search-sequence.svg
+search_orchestration_swimlanes.svg → search-orchestration-sequence.svg
+vector-insert-sequence.svg → vector-insert-sequence.svg
+
+# STATE DIAGRAMS
+vector-lifecycle-state.svg → vector-lifecycle-state.svg
+
+# CLASS DIAGRAMS
+proximadb-core-classes.svg → core-components-class.svg
+class-module-overview.svg → module-structure-class.svg
+class-vector-operations-module.svg → vector-operations-class.svg
+class-storage-module.svg → storage-components-class.svg
+storage-engine-classes.svg → storage-engine-class.svg
+
+# ARCHITECTURE DIAGRAMS
+technical-storage-architecture.svg → storage-components-architecture.svg
+technical-cache-architecture.svg → cache-system-architecture.svg
+hierarchical-sst-architecture.svg → sst-hierarchical-architecture.svg
+security-architecture.svg → security-components-architecture.svg
+multi-tenancy-architecture.svg → multi-tenant-architecture.svg
+distributed-architecture.svg → distributed-system-architecture.svg
+bloom-filter-architecture.svg → bloom-filter-architecture.svg
+axis-tiering-architecture.svg → axis-tiering-architecture.svg
+sql-acceleration-architecture.svg → sql-acceleration-architecture.svg
+
+# SERVICE DIAGRAMS
+service-interactions.svg → service-interactions-service.svg
+service-interactions-unified.svg → unified-service-interactions-service.svg
+vector-operations-service.svg → vector-operations-service.svg
+
+# DATA FLOW DIAGRAMS
+technical-data-flow.svg → system-data-flow.svg
+axis-tiering-search-flow.svg → axis-search-flow.svg
+comprehensive_search_flow.svg → comprehensive-search-flow.svg
+
+# STRATEGY/PATTERN DIAGRAMS
+write-ahead-log-strategy-pattern.svg → wal-strategy-pattern.svg
+engine-quantization-strategy.svg → quantization-strategy-pattern.svg
+compression-decision-tree.svg → compression-decision-pattern.svg
+
+# FORMAT/DETAIL DIAGRAMS
+sst1-format.svg → sst-format-detail.svg
+sst-adaptive-precision-detail.svg → sst-precision-detail.svg
+sst-sorting-architecture.svg → sst-sorting-detail.svg
+
+# SYSTEM INTEGRATION DIAGRAMS
+unified-handlers-architecture.svg → api-handlers-integration.svg
+unified-parquet-reader-architecture.svg → parquet-reader-integration.svg
+unified_quantization_system.svg → quantization-system-integration.svg
+test-infrastructure-flow.svg → test-infrastructure-integration.svg
+two-stage-search.svg → two-stage-search-integration.svg
+
+# DEPLOYMENT DIAGRAMS
+proximadb-deployment.svg → system-deployment.svg
+deployment-architecture.svg → production-deployment.svg
+aws-landing-zone.svg → aws-deployment.svg
+azure-landing-zone.svg → azure-deployment.svg
+gcp-landing-zone.svg → gcp-deployment.svg
+axis-multi-az-architecture.svg → multi-az-deployment.svg
+multi_disk_architecture.svg → multi-disk-deployment.svg
+
+# CAPABILITY/FEATURE DIAGRAMS
+business-capabilities.svg → business-capabilities-capability.svg
+technical-hardware-acceleration.svg → hardware-acceleration-capability.svg
+technical-api-protocols.svg → api-protocols-capability.svg
+technical-index-algorithms.svg → index-algorithms-capability.svg
+chunking-strategies.svg → text-chunking-capability.svg
+
+# BUSINESS/MARKET DIAGRAMS
+business-overview.svg → business-overview-business.svg
+business-use-cases.svg → business-applications-business.svg
+business-competitive-advantages.svg → competitive-advantages-business.svg
+business-roi-metrics.svg → roi-metrics-business.svg
+
+# MODULE/COMPONENT DIAGRAMS
+module-interactions-overview.svg → module-interactions-module.svg
+
+# TECHNICAL ARCHITECTURE DIAGRAMS
+technical-architecture-unified.svg → unified-technical-architecture.svg

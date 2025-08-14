@@ -126,6 +126,9 @@ classDiagram
     classDef coordinatorClass fill:#f3e5f5,stroke:#7b1fa2,stroke-width:3px,color:#1e293b
     
     class StorageEngine interfaceClass
-    class ViperEngine,SstEngine engineClass
-    class WriteAheadLog,Memtable,CompressionEngine componentClass
+    class ViperEngine engineClass
+    class SstEngine engineClass
+    class WriteAheadLog componentClass
+    class Memtable componentClass
+    class CompressionEngine componentClass
     class StorageCoordinator coordinatorClass

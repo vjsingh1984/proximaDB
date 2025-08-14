@@ -4,7 +4,7 @@ graph TB
     %% Unified Technical Architecture - Consolidates multiple architecture views
     
     %% Client Layer
-    subgraph ClientLayer["🌐 Client Layer"]
+    subgraph ClientLayer["Client Layer"]
         Python["Python SDK<br/>proximadb-python<br/>✅ IMPLEMENTED"]
         Rust["Rust SDK<br/>Native server integration<br/>✅ IMPLEMENTED"]
         REST["REST API<br/>:5678"]
@@ -12,14 +12,14 @@ graph TB
     end
     
     %% API Gateway & Service Layer  
-    subgraph ServiceLayer["⚡ Service Layer"]
+    subgraph ServiceLayer["Service Layer"]
         VOS["VectorOperationsService<br/>40-60% latency reduction<br/>Direct memtable access"]
         Router["Intelligent Router<br/>Collection-aware<br/>Protocol selection"]
         Handlers["Unified Handlers<br/>Proto ↔ JSON conversion<br/>Validation & routing"]
     end
     
     %% Query Processing & Optimization
-    subgraph QueryLayer["🎯 Query Processing"]
+    subgraph QueryLayer["Query Processing"]
         QueryPlanner["Query Planner<br/>Compression-aware<br/>Hardware-optimized"]
         SqlEngine["SQL Engine<br/>VECTOR_SIMILARITY support<br/>GPU/SIMD acceleration"]
         BloomFilter["Bloom Filters<br/>95% scan reduction<br/>3-stage filtering"]
@@ -27,7 +27,7 @@ graph TB
     end
     
     %% Storage Engines with Enhanced Architecture
-    subgraph StorageLayer["💾 Storage Engines"]
+    subgraph StorageLayer["Storage Engines"]
         direction TB
         VIPER["VIPER Engine<br/>Columnar format<br/>Analytics-optimized<br/>Dual storage FP32+Quantized"]
         SST["SST Engine<br/>Row format<br/>OLTP-optimized<br/>Hierarchical SST architecture"]
@@ -41,7 +41,7 @@ graph TB
     end
     
     %% Unified Compression & Quantization
-    subgraph CompressionLayer["🗜️ Unified Compression"]
+    subgraph CompressionLayer["Unified Compression"]
         CompEngine["Compression Module<br/>src/core/compression/mod.rs<br/>13 algorithms, context-aware"]
         QuantEngine["Quantization Engine<br/>INT8/PQ8/PQ4<br/>Two-stage search"]
         
@@ -52,35 +52,35 @@ graph TB
     end
     
     %% Hardware Acceleration
-    subgraph HardwareLayer["🚀 Hardware Acceleration"]
+    subgraph HardwareLayer["Hardware Acceleration"]
         SIMD["SIMD/AVX-512<br/>Vector operations<br/>Auto-detection"]
         GPU["GPU Support<br/>CUDA/ROCm/MPS<br/>Optional acceleration"]
         Memory["Memory Management<br/>Zero-copy operations<br/>Buffer reuse"]
     end
     
     %% AXIS Tiering System
-    subgraph TieringLayer["📊 AXIS Tiering"] 
+    subgraph TieringLayer["AXIS Tiering"]
         TierManager["Tier Manager<br/>Hot→Warm→Cold<br/>Auto-migration"]
         StorageTiers["Storage Tiers<br/>Memory→NVMe→SSD→S3<br/>Cost-optimized"]
         AccessTracker["Access Pattern Tracker<br/>Heat scoring<br/>Migration triggers"]
     end
     
     %% Indexing Algorithms
-    subgraph IndexingLayer["🔍 Index Algorithms"]
+    subgraph IndexingLayer["Index Algorithms"]
         HNSW["HNSW<br/>Graph-based<br/>High recall"]
         IVF["IVF<br/>Clustering<br/>Scalable search"]
         LSH["LSH<br/>Hash-based<br/>Fast approximate"]
     end
     
     %% Transaction & Recovery
-    subgraph TransactionLayer["🔄 ACID & Recovery"]
+    subgraph TransactionLayer["ACID & Recovery"]
         TxCoord["Transaction Coordinator<br/>ACID operations<br/>Multi-backend consistency"]
         Recovery["Recovery Manager<br/>WAL replay<br/>Point-in-time recovery"]
         Staging["Staging Operations<br/>Atomic writes<br/>Rollback support"]
     end
     
     %% Monitoring & Observability
-    subgraph ObservabilityLayer["📈 Observability"]
+    subgraph ObservabilityLayer["Observability"]
         Metrics["Metrics Collector<br/>OpenTelemetry<br/>Real-time statistics"]
         Tracing["Distributed Tracing<br/>Performance analysis<br/>Request flow tracking"]
         Health["Health Monitoring<br/>Service status<br/>Resource utilization"]
@@ -167,14 +167,39 @@ graph TB
     classDef monitorClass fill:#f3f4f6,stroke:#6b7280,stroke-width:2px,color:#1e293b
     classDef sstClass fill:#fff7ed,stroke:#ea580c,stroke-width:2px,color:#1e293b
     
-    class Python,Rust,REST,GRPC clientClass
-    class VOS,Router,Handlers serviceClass
-    class QueryPlanner,SqlEngine,BloomFilter,CacheOrchestrator queryClass
-    class VIPER,SST,WAL storageClass
-    class CompEngine,QuantEngine,CS1,CS2 compressionClass
-    class SIMD,GPU,Memory hardwareClass
-    class TierManager,StorageTiers,AccessTracker tieringClass
-    class HNSW,IVF,LSH indexClass
-    class TxCoord,Recovery,Staging txClass
-    class Metrics,Tracing,Health monitorClass
-    class HSST1,HSST2,HSST3 sstClass
+    class Python clientClass
+    class Rust clientClass
+    class REST clientClass
+    class GRPC clientClass
+    class VOS serviceClass
+    class Router serviceClass
+    class Handlers serviceClass
+    class QueryPlanner queryClass
+    class SqlEngine queryClass
+    class BloomFilter queryClass
+    class CacheOrchestrator queryClass
+    class VIPER storageClass
+    class SST storageClass
+    class WAL storageClass
+    class CompEngine compressionClass
+    class QuantEngine compressionClass
+    class CS1 compressionClass
+    class CS2 compressionClass
+    class SIMD hardwareClass
+    class GPU hardwareClass
+    class Memory hardwareClass
+    class TierManager tieringClass
+    class StorageTiers tieringClass
+    class AccessTracker tieringClass
+    class HNSW indexClass
+    class IVF indexClass
+    class LSH indexClass
+    class TxCoord txClass
+    class Recovery txClass
+    class Staging txClass
+    class Metrics monitorClass
+    class Tracing monitorClass
+    class Health monitorClass
+    class HSST1 sstClass
+    class HSST2 sstClass
+    class HSST3 sstClass

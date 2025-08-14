@@ -41,11 +41,11 @@ graph TB
     System --> PerformMaintenance
     
     %% Use Case Dependencies
-    CreateCollection -.-> StorageAssignment : includes
-    CreateCollection -.-> CompressionConfig : includes
-    ConfigureCollection -.-> IndexConfiguration : extends
-    DeleteCollection -.-> BackupRestore : includes
-    MonitorHealth -.-> PerformMaintenance : triggers
+    CreateCollection -.-> StorageAssignment
+    CreateCollection -.-> CompressionConfig
+    ConfigureCollection -.-> IndexConfiguration
+    DeleteCollection -.-> BackupRestore
+    MonitorHealth -.-> PerformMaintenance
     
     %% Styling
     classDef actorStyle fill:#e3f2fd,stroke:#1976d2,stroke-width:2px

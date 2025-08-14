@@ -5,6 +5,9 @@ use tracing::{debug, error, info, warn};
 
 pub mod test_assignments;
 
+// Unified test utilities for all ProximaDB components  
+pub mod unified_test_utils;
+
 // Global test counter to ensure unique collection IDs
 static TEST_COUNTER: AtomicU64 = AtomicU64::new(0);
 static INIT: Once = Once::new();

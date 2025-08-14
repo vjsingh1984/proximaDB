@@ -37,7 +37,7 @@ class TestCompressionConfig:
         assert config.enable_quantization is False
         assert config.quantization_type is None
         assert config.normalization_method is None
-        assert config.block_size_mb is None
+        assert config.block_size_kb is None
         assert config.dynamic_block_sizing is False
     
     def test_compression_config_viper_optimized(self):
@@ -61,13 +61,13 @@ class TestCompressionConfig:
         config = CompressionConfig(
             algorithm=CompressionAlgorithm.ZSTD,
             level=6,
-            block_size_mb=16,
+            block_size_kb=16384,
             dynamic_block_sizing=True
         )
         
         assert config.algorithm == CompressionAlgorithm.ZSTD
         assert config.level == 6
-        assert config.block_size_mb == 16
+        assert config.block_size_kb == 16384
         assert config.dynamic_block_sizing is True
     
     def test_compression_algorithm_enum(self):
@@ -108,15 +108,15 @@ class TestCompressionConfig:
     def test_block_size_validation(self):
         """Test SST block size validation"""
         # Valid sizes
-        config = CompressionConfig(block_size_mb=8)
-        assert config.block_size_mb == 8
+        config = CompressionConfig(block_size_kb=8192)
+        assert config.block_size_kb == 8192
         
         # Invalid sizes should raise ValueError
         with pytest.raises(ValueError, match="SST block size must be between 1-32 MB"):
-            CompressionConfig(block_size_mb=0)
+            CompressionConfig(block_size_kb=128)
         
         with pytest.raises(ValueError, match="SST block size must be between 1-32 MB"):
-            CompressionConfig(block_size_mb=50)
+            CompressionConfig(block_size_kb=32768)
 
 
 class TestCollectionConfigWithCompression:
@@ -158,7 +158,7 @@ class TestCollectionConfigWithCompression:
         compression = CompressionConfig(
             algorithm=CompressionAlgorithm.LZ4,
             level=1,
-            block_size_mb=16,
+            block_size_kb=16384,
             dynamic_block_sizing=True
         )
         
@@ -169,7 +169,7 @@ class TestCollectionConfigWithCompression:
             compression=compression
         )
         
-        assert collection_config.compression.block_size_mb == 16
+        assert collection_config.compression.block_size_kb == 16384
         assert collection_config.compression.dynamic_block_sizing is True
     
     def test_collection_config_serialization(self):
@@ -197,10 +197,10 @@ class TestCollectionConfigWithCompression:
         compression = CompressionConfig(
             algorithm=CompressionAlgorithm.ZSTD,
             enable_quantization=True,
-            block_size_mb=8  # SST setting on VIPER
+            block_size_kb=8192  # SST setting on VIPER
         )
         
-        with pytest.warns(UserWarning, match="block_size_mb is ignored by VIPER engine"):
+        with pytest.warns(UserWarning, match="block_size_kb is ignored by VIPER engine"):
             collection_config = CollectionConfig(
                 name="warning_test",
                 dimension=384,
@@ -274,7 +274,7 @@ class TestCompressionIntegrationScenarios:
         compression = CompressionConfig(
             algorithm=CompressionAlgorithm.ZSTD,
             level=6,
-            block_size_mb=16,
+            block_size_kb=16384,
             adaptive=True
         )
         
@@ -292,7 +292,7 @@ class TestCompressionIntegrationScenarios:
         mock_client.create_collection.assert_called_once()
         call_args = mock_client.create_collection.call_args[0][0]
         assert call_args.compression.algorithm == CompressionAlgorithm.ZSTD
-        assert call_args.compression.block_size_mb == 16
+        assert call_args.compression.block_size_kb == 16384
     
     def test_unified_compression_viper_scenario(self, mock_client):
         """Test VIPER storage with unified compression config"""

@@ -952,7 +952,10 @@ impl CompactionManager {
     ) -> Result<HashMap<u8, Vec<PathBuf>>> {
         let mut files_by_level = HashMap::new();
 
+        debug!("🔍 COMPACTION: Looking for SST files in: {}", collection_dir.display());
+        
         if !collection_dir.exists() {
+            warn!("⚠️ COMPACTION: Directory does not exist: {}", collection_dir.display());
             return Ok(files_by_level);
         }
 
@@ -970,21 +973,33 @@ impl CompactionManager {
             .await
             .map_err(|e| crate::core::StorageError::DiskIO(std::io::Error::new(std::io::ErrorKind::Other, e.to_string())))?;
 
+        debug!("🔍 COMPACTION: Found {} entries in directory", entries.len());
+        
         for entry in entries {
+            debug!("🔍 COMPACTION: Checking entry: {} (is_dir: {})", entry.name, entry.metadata.is_directory);
+            
             if !entry.metadata.is_directory {
                 if let Some(filename) = std::path::Path::new(&entry.name).file_name().and_then(|f| f.to_str()) {
+                    debug!("🔍 COMPACTION: Checking if SST file: {}", filename);
+                    
                     if super::SstFilenameGenerator::is_sst_file(filename) {
                         // Parse level from filename using centralized utility
                         let level = super::SstFilenameGenerator::parse_level_from_filename(filename).unwrap_or(0);
                         
+                        debug!("✅ COMPACTION: Found SST file: {} at level {}", filename, level);
                         
                         let path = PathBuf::from(&entry.url);
                         files_by_level.entry(level).or_insert_with(Vec::new).push(path);
+                    } else {
+                        debug!("❌ COMPACTION: Not an SST file: {}", filename);
                     }
                 }
             }
         }
 
+        debug!("📊 COMPACTION: Found SST files by level: {:?}", 
+               files_by_level.iter().map(|(level, files)| (*level, files.len())).collect::<Vec<_>>());
+        
         Ok(files_by_level)
     }
 

@@ -1,0 +1,139 @@
+# Final Diagram Mapping: Old to New (Refined Classification)
+# Three-tier system: abstract | detail-modular | detail-monolithic
+
+# ==========================================
+# ABSTRACT DIAGRAMS (High-level overviews)
+# ==========================================
+
+# Business Overview
+business-architecture-consolidated.svg → business-architecture-abstract.svg
+business-overview.svg → business-overview-abstract.svg
+business-capabilities.svg → business-capabilities-abstract.svg
+business-competitive-advantages.svg → competitive-advantages-abstract.svg
+business-use-cases.svg → business-applications-abstract.svg
+business-roi-metrics.svg → roi-metrics-abstract.svg
+
+# Technical Overview  
+proximadb-architecture-consolidated.svg → technical-architecture-abstract.svg
+compression-architecture-consolidated.svg → compression-architecture-abstract.svg
+query-flow-complete.svg → query-processing-abstract.svg
+
+# System Architecture (Abstract)
+technical-storage-architecture.svg → storage-components-abstract.svg
+technical-cache-architecture.svg → cache-system-abstract.svg
+bloom-filter-architecture.svg → bloom-filter-abstract.svg
+axis-tiering-architecture.svg → axis-tiering-abstract.svg
+security-architecture.svg → security-components-abstract.svg
+multi-tenancy-architecture.svg → multi-tenant-abstract.svg
+distributed-architecture.svg → distributed-system-abstract.svg
+sql-acceleration-architecture.svg → sql-acceleration-abstract.svg
+
+# Service Overview (Abstract)
+service-interactions.svg → service-interactions-abstract.svg
+vector-operations-service.svg → vector-operations-abstract.svg
+
+# Data Flow (Abstract)
+technical-data-flow.svg → system-data-flow-abstract.svg
+axis-tiering-search-flow.svg → axis-search-abstract.svg
+
+# Capabilities (Abstract)
+technical-hardware-acceleration.svg → hardware-acceleration-abstract.svg
+technical-api-protocols.svg → api-protocols-abstract.svg
+technical-index-algorithms.svg → index-algorithms-abstract.svg
+chunking-strategies.svg → text-chunking-abstract.svg
+
+# Sequences (Abstract)
+vector-insert-sequence.svg → vector-insert-abstract.svg
+vector-lifecycle-state.svg → vector-lifecycle-abstract.svg
+
+# Classes (Abstract)
+proximadb-core-classes.svg → core-components-abstract.svg
+class-module-overview.svg → module-structure-abstract.svg
+storage-engine-classes.svg → storage-engine-abstract.svg
+
+# Activities (Abstract)
+collection-management-workflow.svg → collection-management-abstract.svg
+vector-insert-workflow.svg → vector-insert-abstract.svg
+vector-search-activity.svg → vector-search-abstract.svg
+vector-search-workflow.svg → vector-search-workflow-abstract.svg
+
+# Use Cases (Abstract)
+usecase-vector-operations.svg → vector-operations-abstract.svg
+usecase-collection-management.svg → collection-management-abstract.svg
+usecase-module-overview.svg → module-integration-abstract.svg
+proximadb-use-cases.svg → business-applications-abstract.svg
+
+# Patterns (Abstract)
+compression-decision-tree.svg → compression-decision-abstract.svg
+engine-quantization-strategy.svg → quantization-strategy-abstract.svg
+write-ahead-log-strategy-pattern.svg → wal-strategy-abstract.svg
+
+# Modules (Abstract)
+module-interactions-overview.svg → module-interactions-abstract.svg
+
+# Deployment (Abstract - only system overview)
+proximadb-deployment.svg → system-deployment-abstract.svg
+
+# ==========================================
+# DETAIL-MODULAR DIAGRAMS (Component-focused)
+# ==========================================
+
+# Architecture Components (Modular)
+hierarchical-sst-architecture.svg → sst-hierarchical-detail-modular.svg
+
+# Class Details (Modular)
+class-storage-module.svg → storage-components-detail-modular.svg
+class-vector-operations-module.svg → vector-operations-detail-modular.svg
+
+# Integration Details (Modular)
+unified-handlers-architecture.svg → api-handlers-detail-modular.svg
+unified-parquet-reader-architecture.svg → parquet-reader-detail-modular.svg
+unified_quantization_system.svg → quantization-system-detail-modular.svg
+test-infrastructure-flow.svg → test-infrastructure-detail-modular.svg
+two-stage-search.svg → two-stage-search-detail-modular.svg
+
+# Sequence Details (Modular)
+sst_viper_search_sequence.svg → storage-engine-search-detail-modular.svg
+
+# Deployment Details (Modular - cloud-specific)
+aws-landing-zone.svg → aws-deployment-detail-modular.svg
+azure-landing-zone.svg → azure-deployment-detail-modular.svg
+gcp-landing-zone.svg → gcp-deployment-detail-modular.svg
+axis-multi-az-architecture.svg → multi-az-deployment-detail-modular.svg
+multi_disk_architecture.svg → multi-disk-deployment-detail-modular.svg
+deployment-architecture.svg → production-deployment-detail-modular.svg
+
+# Format Details (Modular)
+sst1-format.svg → sst-format-detail-modular.svg
+sst-adaptive-precision-detail.svg → sst-precision-detail-modular.svg
+sst-sorting-architecture.svg → sst-sorting-detail-modular.svg
+
+# ==========================================
+# DETAIL-MONOLITHIC DIAGRAMS (Comprehensive)
+# ==========================================
+
+# Service Interactions (Monolithic)
+service-interactions-unified.svg → service-interactions-detail-monolithic.svg
+
+# Technical Architecture (Monolithic)  
+technical-architecture-unified.svg → technical-architecture-detail-monolithic.svg
+
+# Search Flow (Monolithic)
+comprehensive_search_flow.svg → search-flow-detail-monolithic.svg
+
+# Sequence Details (Monolithic)
+initialization-sequence.svg → system-initialization-detail-monolithic.svg
+search_orchestration_swimlanes.svg → search-orchestration-detail-monolithic.svg
+
+# ==========================================
+# USAGE GUIDELINES FOR DOCUMENTATION
+# ==========================================
+
+# ABSTRACT: Use for introductions, executive summaries, getting started guides
+# DETAIL-MODULAR: Use for focused technical documentation on specific components  
+# DETAIL-MONOLITHIC: Use for comprehensive system understanding, troubleshooting guides
+
+# Examples:
+# Introduction page: technical-architecture-abstract.svg
+# Storage engine docs: storage-components-detail-modular.svg  
+# System administration: technical-architecture-detail-monolithic.svg

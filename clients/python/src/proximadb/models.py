@@ -357,9 +357,9 @@ class CompressionConfig(BaseModel):
     )
     
     # SST-specific block sizing (proto fields 8-9)
-    block_size_mb: Optional[int] = Field(
+    block_size_kb: Optional[int] = Field(
         default=None,
-        description="SST block size in MB (4-16). Ignored by VIPER engine."
+        description="SST block size in KB (256-16384). Ignored by VIPER engine."
     )
     dynamic_block_sizing: bool = Field(
         default=False,
@@ -398,11 +398,11 @@ class CompressionConfig(BaseModel):
                 raise ValueError(f"Normalization method must be one of: {', '.join(valid_methods)}")
         return v
     
-    @field_validator('block_size_mb')
+    @field_validator('block_size_kb')
     def validate_block_size(cls, v):
         """Validate SST block size is within acceptable range"""
-        if v is not None and (v < 1 or v > 32):
-            raise ValueError("SST block size must be between 1-32 MB")
+        if v is not None and (v < 256 or v > 16384):
+            raise ValueError("SST block size must be between 256-16384 KB")
         return v
     
 
@@ -592,10 +592,10 @@ class CollectionConfig(BaseModel):
         
         if engine == StorageEngine.VIPER:
             # VIPER engine: quantization features are valid
-            if self.compression.block_size_mb is not None:
+            if self.compression.block_size_kb is not None:
                 import warnings
                 warnings.warn(
-                    "block_size_mb is ignored by VIPER engine (only applies to SST engine)",
+                    "block_size_kb is ignored by VIPER engine (only applies to SST engine)",
                     UserWarning, stacklevel=2
                 )
             
@@ -621,8 +621,8 @@ class CollectionConfig(BaseModel):
                 )
             
             # Apply SST-optimized defaults
-            if self.compression.block_size_mb is None:
-                self.compression.block_size_mb = 8  # Reasonable default for SST
+            if self.compression.block_size_kb is None:
+                self.compression.block_size_kb = 8192  # Reasonable default for SST
         
         # Validate algorithm-level compatibility
         if self.compression.level is not None:

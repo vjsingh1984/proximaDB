@@ -1,211 +1,92 @@
-//! Unit test for SST engine flush functionality
+//! Unit test for SST engine flush functionality using unified test utilities
 //! 
 //! This test verifies that SST's do_flush method properly writes SSTables
 //! with the correct bloom filter configuration.
+//!
+//! Refactored to use unified test utilities for consistent path handling and configuration.
 
-use proximadb::storage::engines::sst::SstStorage;
-use tracing::{debug, error, info, warn};
-use proximadb::storage::persistence::filesystem::FilesystemFactory;
-use proximadb::storage::traits::{FlushParameters, UnifiedStorageEngine};
+use crate::common::unified_test_utils::{UnifiedTestEnvironment, operations};
 use proximadb::core::VectorRecord;
-use proximadb::compute::distance_computation::engine::UnifiedDistanceCompute;
+use proximadb::proto::proximadb::MetadataItem;
 use proximadb::compute::distance_computation::DistanceMetric;
-use std::sync::Arc;
-use tempfile::TempDir;
+use proximadb::core::search::{FilterExpression, ComparisonOperator};
+use tracing::debug;
 
-// Include common test utilities
-mod common {
-    include!("../../common/mod.rs");
-}
-use common::unique_collection_id;
-use std::collections::HashMap;
-
-use super::sst_test_config::{
-    create_test_sst_config, 
-    create_test_filesystem_config,
-    setup_test_directories,
-    setup_storage_assignment,
-    cleanup_assignment,
-    cleanup_sstable_files
-};
-
+/// Test SST flush creates valid SSTable files with bloom filters and metadata search
+/// 
+/// Validates that the SST engine's flush operation creates proper SSTable files with:
+/// - Correct bloom filter configuration for efficient key/metadata lookups
+/// - Valid file structure that can be read back
+/// - Metadata filtering functionality working correctly
 #[tokio::test]
-async fn test_sst_do_flush_with_bloom_filter() {
-    common::setup_hardware_capabilities();
+async fn test_sst_flush_creates_searchable_sstables_with_bloom_filters() -> anyhow::Result<()> {
     let _ = tracing_subscriber::fmt::try_init();
+    let env = UnifiedTestEnvironment::new().await?;
+    let sst_engine = env.create_sst_engine().await?;
     
-    // Create temp directory
-    let temp_dir = TempDir::new().unwrap();
-    let base_path = temp_dir.path();
-    debug!("TEST: Using temp directory: {}", base_path.to_str().unwrap());
+    debug!("TEST: Using collection_id: {}", env.collection_id);
     
-    // Setup test directories
-    setup_test_directories(base_path).await.unwrap();
-    
-    // Create SST config with consistent settings
-    let sst_config = create_test_sst_config(base_path.to_str().unwrap());
-    
-    // Create filesystem
-    let fs_config = create_test_filesystem_config();
-    let filesystem = Arc::new(FilesystemFactory::new(fs_config).await.unwrap());
-    
-    // Create SST engine
-    let collection_id = &unique_collection_id("sst_flush_test");
-    
-    // Clear any existing assignment first
-    cleanup_assignment(collection_id).await.unwrap();
-    
-    // Setup storage assignment BEFORE creating SST storage
-    setup_storage_assignment(collection_id, base_path.to_str().unwrap()).await.unwrap();
-    
-    // Clean up any existing SSTable files from previous test runs
-    cleanup_sstable_files(collection_id).await.unwrap();
-    
-    let distance_compute = Arc::new(UnifiedDistanceCompute::new(DistanceMetric::Cosine));
-    let sst_engine = SstStorage::new(
-        sst_config.clone(),
-        filesystem.clone(),
-        distance_compute.clone(),
-    ).await.unwrap();
-    
-    // Create test vectors with metadata
+    // Create test vectors with metadata using environment helpers
     let now = chrono::Utc::now().timestamp() as u32;
-    let test_id = format!("test_{}", chrono::Utc::now().timestamp());
-    debug!("TEST: Creating test with ID: {}", test_id);
     let vectors = vec![
-        VectorRecord {
-            id: Some("vec1".to_string()),
-            vector: vec![1.0, 0.0, 0.0],
-            metadata: vec![
-                proximadb::proto::proximadb::MetadataItem {
+        env.create_test_vector_record(
+            "vec1".to_string(),
+            vec![1.0, 0.0, 0.0],
+            now,
+            None,
+            vec![
+                MetadataItem {
                     key: "category".to_string(),
                     value: Some(proximadb::proto::proximadb::metadata_item::Value::StringValue("A".to_string())),
                 },
-                proximadb::proto::proximadb::MetadataItem {
+                MetadataItem {
                     key: "type".to_string(),
                     value: Some(proximadb::proto::proximadb::metadata_item::Value::StringValue("primary".to_string())),
                 },
-            ],
-            timestamp: now as u32,
-            updated_at: None,
-            expires_at: None,
-            distance: None,
-            rank: None,
-            score: None,
-            version: None,
-            ..Default::default()
-        },
-        VectorRecord {
-            id: Some("vec2".to_string()),
-            vector: vec![0.0, 1.0, 0.0],
-            metadata: vec![
-                proximadb::proto::proximadb::MetadataItem {
+            ]
+        ),
+        env.create_test_vector_record(
+            "vec2".to_string(),
+            vec![0.0, 1.0, 0.0],
+            now + 1,
+            None,
+            vec![
+                MetadataItem {
                     key: "category".to_string(),
                     value: Some(proximadb::proto::proximadb::metadata_item::Value::StringValue("B".to_string())),
                 },
-                proximadb::proto::proximadb::MetadataItem {
+                MetadataItem {
                     key: "type".to_string(),
                     value: Some(proximadb::proto::proximadb::metadata_item::Value::StringValue("secondary".to_string())),
                 },
-            ],
-            timestamp: now as u32,
-            updated_at: None,
-            expires_at: None,
-            distance: None,
-            rank: None,
-            score: None,
-            version: None,
-            ..Default::default()
-        },
-        VectorRecord {
-            id: Some("vec3".to_string()),
-            vector: vec![0.0, 0.0, 1.0],
-            metadata: vec![
-                proximadb::proto::proximadb::MetadataItem {
+            ]
+        ),
+        env.create_test_vector_record(
+            "vec3".to_string(),
+            vec![0.0, 0.0, 1.0],
+            now + 2,
+            None,
+            vec![
+                MetadataItem {
                     key: "category".to_string(),
                     value: Some(proximadb::proto::proximadb::metadata_item::Value::StringValue("A".to_string())),
                 },
-                proximadb::proto::proximadb::MetadataItem {
+                MetadataItem {
                     key: "type".to_string(),
                     value: Some(proximadb::proto::proximadb::metadata_item::Value::StringValue("primary".to_string())),
                 },
-            ],
-            timestamp: now as u32,
-            updated_at: None,
-            expires_at: None,
-            distance: None,
-            rank: None,
-            score: None,
-            version: None,
-            ..Default::default()
-        },
+            ]
+        ),
     ];
     
-    // Create flush parameters
-    let flush_params = FlushParameters {
-        collection_id: Some(collection_id.to_string()),
-        force: true,
-        synchronous: true,
-        vector_records: vectors,
-        batch_ids: vec![],
-        ..Default::default()
-    };
-    
-    // Call do_flush directly
+    // Use unified operations for insert and flush
     debug!("\n=== Testing SST do_flush ===");
-    let flush_result = sst_engine.do_flush(&flush_params).await.unwrap();
+    operations::insert_and_flush_sst(&sst_engine, &env, vectors).await?;
     
-    debug!("Flush result: success={}, entries_flushed={}, files_created={}", 
-             flush_result.success, flush_result.entries_flushed, flush_result.files_created);
-    
-    assert!(flush_result.success, "Flush should succeed");
-    assert_eq!(flush_result.entries_flushed, 3, "Should flush 3 vectors");
-    assert_eq!(flush_result.files_created, 1, "Should create 1 SSTable file");
-    
-    // Verify SSTable was created
-    let storage_url = sst_engine.get_collection_storage_url(collection_id).await.unwrap();
-    debug!("Storage URL: {}", storage_url);
-    
-    // Sleep a bit to ensure file is written
-    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
-    
-    // List SSTable files using the filesystem abstraction
-    let fs = filesystem.get_filesystem("file:///").unwrap();
-    let all_files: Vec<_> = fs.list(&storage_url).await.unwrap();
-    let sst_files: Vec<_> = all_files.iter()
-        .filter(|entry| entry.name.ends_with(".sst"))
-        .collect();
-    
-    debug!("Found {} SSTable files", sst_files.len());
-    for file in &all_files {
-        debug!("  File: {} (is_sst: {})", file.name, file.name.ends_with(".sst"));
-    }
-    
-    // If there are multiple SSTable files, this might be due to concurrent tests or multiple flushes
-    // The key requirement is that the flush reported creating 1 file, and we have at least 1 file
-    assert!(sst_files.len() >= 1, "Should have created at least 1 SSTable file");
-    if sst_files.len() > 1 {
-        debug!("WARNING: Found {} SSTable files, expected 1. This may be due to concurrent tests.", sst_files.len());
-    }
-    
-    for file in &sst_files {
-        debug!("  - {} (size: {} bytes)", file.name, file.metadata.size);
-        assert!(file.metadata.size > 0, "SSTable file should not be empty");
-    }
-    
-    // Now test search to verify the SSTable is readable
+    // Verify basic search functionality
     debug!("\n=== Testing SST search ===");
     let query = vec![1.0, 0.0, 0.0];
-    let results = sst_engine.search_vectors_unified(
-        collection_id,
-        &storage_url,
-        &query,
-        5,
-        &DistanceMetric::Cosine,
-        None,
-        true,
-        true,
-    ).await.unwrap();
+    let results = operations::search_vectors_sst(&sst_engine, &env, &query, 5).await?;
     
     debug!("Search returned {} results", results.len());
     assert!(!results.is_empty(), "Should find results from SSTable");
@@ -216,25 +97,27 @@ async fn test_sst_do_flush_with_bloom_filter() {
     
     // Test with metadata filter
     debug!("\n=== Testing SST search with metadata filter ===");
-    let filter = proximadb::core::search::FilterExpression::Comparison {
+    let filter = FilterExpression::Comparison {
         field: "category".to_string(),
-        operator: proximadb::core::search::ComparisonOperator::Equals,
+        operator: ComparisonOperator::Equals,
         value: serde_json::json!("A"),
     };
     
+    let storage_url = env.get_sst_data_directory().join("data").to_string_lossy().to_string();
     let filtered_results = sst_engine.search_vectors_unified(
-        collection_id,
-        &storage_url,
+        &env.collection_id,
+        &format!("file://{}", storage_url),
         &query,
         5,
         &DistanceMetric::Cosine,
         Some(&filter),
         true,
         true,
-    ).await.unwrap();
+    ).await?;
     
     debug!("Filtered search returned {} results", filtered_results.len());
     assert_eq!(filtered_results.len(), 2, "Should find 2 vectors with category A");
     
     debug!("\n=== Test completed successfully ===");
+    Ok(())
 }

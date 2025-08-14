@@ -4,8 +4,6 @@ graph TB
     %% Client Layer
     subgraph ClientLayer["🌐 Client Layer"]
         Python["Python SDK<br/>proximadb-python"]
-        Go["Go SDK<br/>proximadb-go"]
-        Java["Java SDK<br/>proximadb-java"]
         REST["REST API<br/>:5678"]
         GRPC["gRPC API<br/>:5679"]
     end
@@ -64,8 +62,7 @@ graph TB
     
     %% Connections - Request Flow
     Python --> REST
-    Go --> GRPC
-    Java --> REST
+    Python --> GRPC
     
     REST --> VOS
     GRPC --> VOS
@@ -118,7 +115,7 @@ graph TB
     classDef indexClass fill:#fef2f2,stroke:#b91c1c,stroke-width:2px,color:#1e293b
     classDef monitorClass fill:#f3f4f6,stroke:#6b7280,stroke-width:2px,color:#1e293b
     
-    class Python,Go,Java,REST,GRPC clientClass
+    class Python,REST,GRPC clientClass
     class VOS,Router apiClass
     class QueryPlanner,BloomFilter,CacheOrchestrator queryClass
     class VIPER,SST,WAL storageClass

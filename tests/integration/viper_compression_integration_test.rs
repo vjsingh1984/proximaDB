@@ -7,25 +7,12 @@
 //! - Compaction with compressed columnar data
 //! - Search on compressed VIPER files
 //! - Configuration-based compression control
+//!
+//! Refactored to use unified test utilities for consistent path handling and configuration.
 
-// Inline test assignment helper - no longer needed with embedded storage_assignment
-async fn setup_test_assignment(_collection_id: &str) -> anyhow::Result<()> {
-    // Assignment service removed - collections now embed storage_assignment
-    // Storage assignment happens when creating collection via CollectionConfig
-    Ok(())
-}
+use crate::common::unified_test_utils::{UnifiedTestEnvironment, operations};
 
-// Helper to create metadata store with temp directory
-fn create_metadata_store_config(temp_dir: &tempfile::TempDir) -> proximadb::storage::metadata::store::MetadataStoreConfig {
-    proximadb::storage::metadata::store::MetadataStoreConfig {
-        metadata_base_dir: temp_dir.path().join("metadata"),
-        metadata_storage_urls: vec![format!("file://{}/metadata", temp_dir.path().display())],
-        enable_atomic_operations: true,
-        cache_config: Default::default(),
-        backup_config: None,
-        replication_config: None,
-    }
-}
+// Metadata store configuration now handled by UnifiedTestEnvironment
 
 // Helper function to find parquet files recursively
 fn find_parquet_files_recursive(dir: &str) -> Vec<std::path::PathBuf> {
@@ -68,70 +55,18 @@ use arrow_array::{Array, BinaryArray, RecordBatch};
 use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
 use std::fs::File;
 
-/// Ensure required test directories exist - inline helper
-fn ensure_test_directories() {
-    let directories = vec![
-        "./data/metadata",
-        "./data/metadata/current", 
-        "./data/metadata/__staging",
-        "./data/metadata/archive",
-        "./test_metadata",
-        "./test_metadata/current",
-        "./test_metadata/current/__staging", 
-        "./test_metadata/__staging",
-        "./test_metadata/archive",
-        "./test_metadata/staging",
-    ];
-    
-    for dir in directories {
-        std::fs::create_dir_all(dir).ok();
-    }
+// Directory setup now handled by UnifiedTestEnvironment
+
+/// Create test VIPER configuration with compression using unified environment
+fn create_test_viper_config_with_compression(env: &UnifiedTestEnvironment, enable_compression: bool) -> proximadb::core::config::ViperConfig {
+    let mut config = env.viper_config.clone();
+    config.compression = if enable_compression { "zstd".to_string() } else { "none".to_string() };
+    config.compression_level = 3;
+    config.row_group_size = 50_000;
+    config
 }
 
-/// Create test VIPER configuration with compression
-fn create_test_config(temp_dir: &TempDir, enable_compression: bool) -> proximadb::core::config::ViperConfig {
-    proximadb::core::config::ViperConfig {
-        row_group_size: 50_000,
-        compression: if enable_compression { "zstd".to_string() } else { "none".to_string() },
-        compression_level: 3,
-        enable_statistics: true,
-        data_directory: temp_dir.path().to_str().unwrap().to_string(),
-        cache_size_mb: 256,
-    }
-}
-
-/// Helper to create test collection with storage assignment
-fn create_test_collection_with_storage(collection_id: &str, base_path: &str) -> proximadb::proto::proximadb::Collection {
-    use proximadb::proto::proximadb::{Collection, CollectionConfig, StorageAssignment, CollectionStats, DistanceMetric, StorageEngine};
-    
-    let storage_assignment = StorageAssignment {
-        base_location: format!("file://{}", base_path),
-        assigned_at: chrono::Utc::now().timestamp_millis(),
-    };
-    
-    let config = CollectionConfig {
-        name: collection_id.to_string(),
-        dimension: 512,
-        distance_metric: DistanceMetric::Cosine as i32,
-        storage_engine: StorageEngine::Viper as i32,
-        ..Default::default()
-    };
-    
-    let stats = CollectionStats {
-        vector_count: 0,
-        index_size_bytes: 0,
-        data_size_bytes: 0,
-    };
-    
-    Collection {
-        id: collection_id.to_string(),
-        config: Some(config),
-        stats: Some(stats),
-        created_at: chrono::Utc::now().timestamp_millis(),
-        updated_at: chrono::Utc::now().timestamp_millis(),
-        storage_assignment: Some(storage_assignment),
-    }
-}
+// Collection creation now handled by UnifiedTestEnvironment::create_test_collection_for_engine(StorageEngine::Viper)
 
 /// Create test vector records with patterns optimized for compression testing
 fn create_test_vectors(count: usize, dimension: usize, prefix: &str) -> Vec<VectorRecord> {
@@ -279,8 +214,14 @@ async fn test_viper_binary_array_optimization() {
     assert_eq!(recovered[0], vectors[0].vector[0]);
 }
 
+/// Test VIPER engine flush creates compressed Parquet files with ZSTD
+/// 
+/// Validates that VIPER engine flush operations create Parquet files with ZSTD compression,
+/// achieve reasonable compression ratios, and maintain searchable columnar structure.
+/// 
+/// ⚠️  NOTE: This test still uses old pattern - needs refactoring to unified utilities
 #[tokio::test]
-async fn test_viper_flush_with_compression() -> anyhow::Result<()> {
+async fn test_viper_engine_flush_creates_compressed_parquet_files() -> anyhow::Result<()> {
     // Initialize hardware capabilities
     let _ = proximadb::core::hardware_capabilities::initialize_hardware_capabilities_default();
     // Ensure required test directories exist
@@ -471,8 +412,14 @@ async fn test_viper_search_compressed_data() -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Test VIPER compaction merges compressed Parquet files efficiently
+/// 
+/// Validates that VIPER compaction can merge multiple compressed Parquet files
+/// into fewer files while maintaining compression and data integrity.
+/// 
+/// ⚠️  NOTE: This test still uses old pattern - needs refactoring to unified utilities
 #[tokio::test]
-async fn test_viper_compaction_with_compression() -> anyhow::Result<()> {
+async fn test_viper_compaction_merges_compressed_parquet_efficiently() -> anyhow::Result<()> {
     // Initialize hardware capabilities
     let _ = proximadb::core::hardware_capabilities::initialize_hardware_capabilities_default();
     // Ensure required test directories exist

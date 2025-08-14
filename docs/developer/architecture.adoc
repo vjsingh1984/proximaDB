@@ -12,7 +12,14 @@
 **Result**: A system where vectors flow natively without conversion overhead, storage engines optimize for vector workloads, and hardware acceleration is automatic.
 
 [.text-center]
-image::proximadb-architecture-consolidated.svg[ProximaDB Architecture, width=900]
+**Core Architecture Components**
+
+.Vector Data Pipeline
+image::system-data-flow-abstract.svg[Data Flow Architecture, width=450]
+
+.Storage Engine Architecture  
+image::storage-components-abstract.svg[Storage Architecture, width=450]
+
 _Zero-conversion vector pipeline with dual storage engines and automatic hardware acceleration_
 
 === Why This Architecture Matters
@@ -146,7 +153,7 @@ match capabilities {
 
 == System Initialization
 
-image::initialization-sequence.svg[Initialization Sequence, width=900]
+image::system-initialization-detail-monolithic.svg[Initialization Sequence, width=900]
 _Complete startup sequence showing service creation, dependency injection, and recovery phases_
 
 The initialization follows a careful sequence to avoid circular dependencies:
@@ -157,12 +164,12 @@ The initialization follows a careful sequence to avoid circular dependencies:
 
 == Storage Architecture
 
-image::technical-storage-architecture.svg[Storage Architecture, width=900]
+image::storage-components-abstract.svg[Storage Architecture, width=900]
 _Complete storage architecture with write path, engines, compression, and tiering_
 
 === Bloom Filter Optimization
 
-image::bloom-filter-architecture.svg[Bloom Filter Architecture, width=900]
+image::bloom-filter-abstract.svg[Bloom Filter Architecture, width=900]
 _CompositeBloomFilter providing 95% metadata scan reduction in WAL search operations_
 
 === Storage Engines
@@ -178,6 +185,32 @@ _CompositeBloomFilter providing 95% metadata scan reduction in WAL search operat
 | Columnar (PAR1)
 | Analytics, batch >10K, compression
 |===
+
+==== Storage URL Architecture
+
+**Key Principle**: Stateless storage engines with explicit parameter passing.
+
+Storage engines maintain no state or service dependencies. All operations require explicit storage URL parameters:
+
+[source,rust]
+----
+async fn search_vectors_unified(
+    &self,
+    collection_id: &str,
+    storage_url: &str,  // Explicit storage location
+    query_vector: &[f32],
+    k: usize,
+    distance_metric: &DistanceMetric,
+    filter_expression: Option<&FilterExpression>,
+    include_vectors: bool,
+    include_metadata: bool,
+) -> Result<Vec<SearchResult>>
+----
+
+**Service Layer Orchestration**:
+- `VectorOperationsService` obtains storage URLs from `CollectionService`
+- No circular dependencies between engines and services
+- Clean separation of concerns with explicit parameter flow
 
 === Tiered Storage
 ```
@@ -202,17 +235,17 @@ Memory (bincode) → NVMe (SST/VIPER) → HDD → S3/Cloud
 
 == Core Services
 
-image::business-capabilities.svg[ProximaDB Technical Capabilities, width=900]
+image::business-capabilities-abstract.svg[ProximaDB Technical Capabilities, width=900]
 _Detailed breakdown of core capabilities, advanced features, and enterprise functionality_
 
 === Service Interactions
 
-image::service-interactions.svg[Service Interactions, width=900]
+image::service-interactions-abstract.svg[Service Interactions, width=900]
 _Sequence diagram showing request flow through services_
 
 === VectorOperationsService Architecture
 
-image::vector-operations-service.svg[VectorOperationsService Architecture, width=900]
+image::vector-operations-abstract.svg[VectorOperationsService Architecture, width=900]
 _Direct memtable access pattern providing 40-60% latency reduction_
 
 === VectorOperationsService
@@ -238,7 +271,7 @@ _Direct memtable access pattern providing 40-60% latency reduction_
 === Hardware Capabilities
 **Location**: `/src/core/hardware_capabilities.rs`
 
-image::technical-hardware-acceleration.svg[Hardware Acceleration, width=900]
+image::hardware-acceleration-abstract.svg[Hardware Acceleration, width=900]
 _Hardware detection and compute acceleration strategy_
 
 ```rust
@@ -249,7 +282,13 @@ let caps = get_hardware_capabilities();
 
 == Compression System
 
-image::compression-architecture-consolidated.svg[Compression Architecture, width=800]
+**Modular Compression Components**
+
+.Compression Decision Flow
+image::compression-decision-abstract.svg[Compression Decision Tree, width=400]
+
+.Unified Quantization System  
+image::quantization-system-detail-modular.svg[Compression Pipeline, width=400]
 
 [NOTE]
 ====
@@ -294,7 +333,7 @@ client.create_collection("analytics", compression=config)
 
 === Compression Decision Tree
 
-image::compression-decision-tree.svg[Compression Decision Tree, width=900]
+_Compression selection flow shown above in modular architecture section_
 _Decision flow for selecting optimal compression settings based on workload_
 
 === Two-Stage Search with Compression Integration
@@ -310,12 +349,12 @@ _Decision flow for selecting optimal compression settings based on workload_
 
 === Write-Ahead Log Pattern
 
-image::write-ahead-log-strategy-pattern.svg[WAL Strategy Pattern, width=900]
+image::wal-strategy-abstract.svg[WAL Strategy Pattern, width=900]
 _Strategy pattern implementation for WAL serialization formats_
 
 == Indexing (AXIS)
 
-image::technical-index-algorithms.svg[Index Algorithms, width=900]
+image::index-algorithms-abstract.svg[Index Algorithms, width=900]
 _All supported index algorithms with characteristics_
 
 === Supported Algorithms
@@ -404,7 +443,7 @@ The VIPER engine leverages columnar storage for different optimizations:
 
 == Cache System
 
-image::technical-cache-architecture.svg[Cache Architecture, width=900]
+image::cache-system-abstract.svg[Cache Architecture, width=900]
 _Unified cache architecture with engine integration_
 
 === Unified Cache Integration

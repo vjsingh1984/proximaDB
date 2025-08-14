@@ -259,8 +259,12 @@ fn should_replace_record(existing_version: u32, existing_ts: u32, new_version: u
     }
 }
 
+/// Test MVCC version resolution logic used during SST compaction
+/// 
+/// Validates the logic for determining which record version should be kept
+/// when multiple versions of the same record exist during compaction.
 #[test]
-fn test_sst_compaction_logic() {
+fn test_mvcc_version_resolution_logic_for_compaction() {
     // Test with ID - higher version wins
     assert!(should_replace_record(1, 100, 2, 200, true));
     assert!(!should_replace_record(2, 200, 1, 100, true));

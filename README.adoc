@@ -60,7 +60,7 @@ toc::[]
 **Our Solution**: The only platform that creates new revenue while cutting costs.
 
 [.text-center]
-image::business-roi-metrics.svg[Business Impact, align=center, width=800]
+image::roi-metrics-abstract.svg[Business Impact, align=center, width=800]
 
 [cols="2,2,3", options="header"]
 |===
@@ -266,7 +266,7 @@ Based on our architecture and benchmarks, organizations can expect:
 
 == 🏗️ Architecture & Technology
 
-image::business-capabilities.svg[Capabilities Overview, align=center, width=900]
+image::business-capabilities-abstract.svg[Capabilities Overview, align=center, width=900]
 
 === Technical Highlights
 
