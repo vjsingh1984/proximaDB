@@ -7,6 +7,8 @@
 :sectanchors:
 :sectlinks:
 
+image::business-overview-abstract.svg[ProximaDB Business Overview, width=900]
+
 [.lead]
 *Estimate potential return on investment with ProximaDB's multi-engine architecture and enterprise landing zone deployment strategies.*
 

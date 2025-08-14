@@ -47,12 +47,7 @@ classDiagram
     UnifiedHandlers --> VectorOperationsServiceImpl : shares logic
     
     %% Browser-independent styling with explicit colors
-    classDef serverStyle fill:#e8f4fd,stroke:#1565c0,stroke-width:3px,color:#000000
-    classDef handlerStyle fill:#e8f5e8,stroke:#2e7d32,stroke-width:3px,color:#000000
-    classDef coordinatorStyle fill:#ffebee,stroke:#d32f2f,stroke-width:3px,color:#000000
-    
-    class RestServer serverStyle
-    class GrpcServer serverStyle
-    class UnifiedHandlers handlerStyle
-    class VectorOperationsServiceImpl handlerStyle
-    class NetworkCoordinator coordinatorStyle
+    classDef default fill:#ffffff,stroke:#374151,stroke-width:2px,color:#000000
+    classDef server fill:#e8f4fd,stroke:#1565c0,stroke-width:2px,color:#000000
+    classDef handler fill:#e8f5e8,stroke:#2e7d32,stroke-width:2px,color:#000000
+    classDef coordinator fill:#ffebee,stroke:#d32f2f,stroke-width:2px,color:#000000

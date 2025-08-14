@@ -98,19 +98,8 @@ classDiagram
     note for BincodeSerializationStrategy "High-Performance Scenarios\nMaximum throughput\nRust-native serialization\nNo schema evolution"
     
     %% Clear Styling with High Contrast
-    classDef managerStyle fill:#e3f2fd,stroke:#1976d2,stroke-width:3px,color:#000000
-    classDef strategyStyle fill:#ffebee,stroke:#d32f2f,stroke-width:3px,color:#000000
-    classDef traitStyle fill:#f5f5f5,stroke:#424242,stroke-width:3px,color:#000000
-    classDef coordinatorStyle fill:#e8f5e8,stroke:#388e3c,stroke-width:3px,color:#000000
-    classDef dataStyle fill:#fff3e0,stroke:#f57c00,stroke-width:3px,color:#000000
-    
-    %% Apply Clear Styling
-    class WriteAheadLogManager managerStyle
-    class ProtoSerializationStrategy strategyStyle
-    class AvroSerializationStrategy strategyStyle
-    class BincodeSerializationStrategy strategyStyle
-    class SerializationStrategy traitStyle
-    class BatchSyncCoordinator coordinatorStyle
-    class FlushCoordinator coordinatorStyle
-    class VectorBatch dataStyle
-    class BatchMetadata dataStyle
+    classDef default fill:#ffffff,stroke:#374151,stroke-width:2px,color:#000000
+    classDef interface fill:#f5f5f5,stroke:#424242,stroke-width:3px,color:#000000
+    classDef implementation fill:#ffebee,stroke:#d32f2f,stroke-width:2px,color:#000000
+    classDef coordinator fill:#e8f5e8,stroke:#388e3c,stroke-width:2px,color:#000000
+    classDef data fill:#fff3e0,stroke:#f57c00,stroke-width:2px,color:#000000

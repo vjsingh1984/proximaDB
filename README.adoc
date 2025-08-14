@@ -5,6 +5,8 @@
 
 image:https://img.shields.io/badge/tests-2704%20passing-brightgreen[Tests] image:https://img.shields.io/badge/performance-5K%20vec%2Fs-blue[Performance] image:https://img.shields.io/badge/compression-50--75%25-orange[Compression] image:https://img.shields.io/badge/license-Apache%202.0-blue[License]
 
+image::business-overview-abstract.svg[ProximaDB Business Overview, width=900]
+
 [.lead]
 **The Only AI Platform That Creates New Revenue Streams**
 
