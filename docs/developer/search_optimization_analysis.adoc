@@ -1,320 +1,192 @@
 = Search Optimization Analysis
 :toc: left
-:toclevels: 3
+:toclevels: 2
 :imagesdir: ../diagrams/images
 
-== Executive Summary
+**Index eviction handling, search fidelity, and filtering strategies.**
 
-This document provides a comprehensive analysis of ProximaDB's search architecture, focusing on index eviction handling, search fidelity guarantees, and optimal filtering strategies.
+== Search Fidelity Guarantee
 
-== Index Eviction & Search Fidelity
+ProximaDB ensures 100% search fidelity through multi-layered fallback:
 
-=== Current Implementation
-
-ProximaDB guarantees 100% search fidelity through a multi-layered fallback strategy that ensures no data is ever missed, even when indexes are evicted from memory.
-
-==== Fidelity Guarantee Architecture
-[source]
-----
+```
 VectorOperationsService.search():
-├── WAL.search()        → Always executed (unflushed data)
-├── Index.search()      → Conditional (if in memory)
-├── Storage.search()    → Always executed (fallback)
-└── Merge & Dedupe     → Combines all results
-----
+├── WAL.search()        → Always (unflushed data)
+├── Index.search()      → If available
+├── Storage.search()    → Fallback
+└── Merge & Dedupe     → Combined results
+```
 
-==== Key Mechanisms
-1. **Persistent Bloom Filters**: Survive index eviction, provide 95% scan reduction
-2. **Fallback to Raw Storage**: Automatic when indexes unavailable
-3. **Statistics-Based Pruning**: Min/max metadata in SST index blocks
-4. **Smart Caching**: IndexNodeCache keeps hot nodes in memory
+=== Key Mechanisms
+* **Persistent Bloom Filters**: 95% scan reduction, survive eviction
+* **Automatic Fallback**: Seamless switch to raw storage
+* **Statistics Pruning**: Min/max metadata in SST blocks
+* **Smart Caching**: Hot nodes stay in IndexNodeCache
 
 === Memory Pressure Handling
 
-When memory pressure occurs:
-
 [cols="1,2,2", options="header"]
 |===
-| Component | Eviction Behavior | Fidelity Impact
+| Component | Eviction | Fidelity Impact
 
-| HNSW Graph
-| Evicts cold nodes first
-| Falls back to IVF or brute force
-
-| IVF Posting Lists
-| Evicts by LRU
-| Falls back to centroid scan
-
-| Bloom Filters
-| Never evicted (tiny size)
-| No impact - always available
-
-| Query Cache
-| Evicts by TTL/LRU
-| No impact - regenerates
+| HNSW Graph | Cold nodes first | Falls back to IVF
+| IVF Lists | LRU eviction | Falls back to centroid scan
+| Bloom Filters | Never (tiny) | Always available
+| Query Cache | TTL/LRU | Regenerates as needed
 |===
 
-== Filtering Strategy Analysis
+== Filtering Strategy
 
-=== Distance vs Metadata Filtering Tradeoffs
-
-[cols="2,3,3", options="header"]
-|===
-| Metric | Distance-Based (Indexes) | Metadata-Based (Filters)
-
-| **Time Complexity**
-| O(log N) for HNSW, O(√N) for IVF
-| O(1) for bloom, O(log B) for index
-
-| **Space Complexity**
-| O(M×N) graph storage
-| O(N/8) bloom filter
-
-| **Accuracy**
-| 95-99% recall (approximate)
-| 100% precision (exact)
-
-| **I/O Pattern**
-| Random access (bad for HDD)
-| Sequential scan (good for HDD)
-
-| **Cache Efficiency**
-| Poor - large working set
-| Excellent - compact filters
-
-| **Parallelization**
-| Limited by graph structure
-| Embarrassingly parallel
-|===
-
-=== Optimal Filtering Order
-
-==== Recommendation: Metadata-First Strategy
-
-[source]
-----
-Optimized Pipeline:
-1. Metadata Filtering (Bloom + Statistics)
-   └── Reduces search space by 95%
-2. Distance-Based Search (on reduced set)
-   └── 10-20x faster on smaller dataset
-3. Fine-grained Reranking (top-k only)
-   └── High precision on final candidates
-----
-
-==== Rationale
-
-1. **Cost Efficiency**: Metadata filtering is 100-1000x cheaper than distance computation
-2. **Cache Optimization**: Smaller working set after filtering improves cache hits
-3. **I/O Reduction**: Eliminates majority of disk reads before expensive operations
-4. **Parallelizable**: Metadata filters can process files independently
-
-=== Performance Impact Analysis
-
-[source]
-----
-Baseline (Distance-First):
-├── Load 1M vectors into index: 10GB memory
-├── Search 1M vectors: 100ms
-├── Filter by metadata: 50ms
-└── Total: 150ms, 10GB memory
-
-Optimized (Metadata-First):
-├── Apply bloom filter: 1ms
-├── Load 50K filtered vectors: 500MB memory
-├── Search 50K vectors: 5ms
-└── Total: 6ms, 500MB memory (25x faster, 20x less memory)
-----
-
-== Index Persistence Strategy
-
-=== Recommendation: Intelligent Tiered Storage
-
-==== Tier Architecture
-[source]
-----
-Memory Tier (10-20% of indexes):
-├── HNSW top-layer nodes
-├── IVF all centroids (small, critical)
-├── Active query cache
-└── Bloom filters (always)
-
-NVMe Tier (60-70% of indexes):
-├── HNSW middle layers
-├── IVF hot posting lists
-├── Recent PQ codes
-└── Compressed index blocks
-
-HDD/Cloud Tier (remaining):
-├── HNSW bottom layers
-├── IVF cold posting lists
-├── Historical indexes
-└── Archived data
-----
-
-==== Benefits vs Pure Memory
+=== Distance vs Metadata Tradeoffs
 
 [cols="2,2,2", options="header"]
 |===
-| Metric | All-Memory | Tiered Storage
+| Aspect | Distance-Based | Metadata-Based
 
-| **Cost**
-| $1000/TB/month
-| $200/TB/month (80% reduction)
-
-| **Restart Time**
-| Rebuild: 30-60 min
-| Load: 2-5 min (10x faster)
-
-| **Memory Usage**
-| 100% of index size
-| 10-20% of index size
-
-| **Query Latency**
-| 1ms p50, 5ms p99
-| 2ms p50, 10ms p99 (acceptable)
-
-| **Scalability**
-| Limited by RAM
-| Unlimited (disk-based)
+| Time Complexity | O(log N) HNSW | O(1) bloom filter
+| Space | O(M×N) graph | O(N/8) filter
+| Accuracy | 95-99% recall | 100% precision
+| I/O Pattern | Random access | Sequential scan
+| Cache Efficiency | Poor | Excellent
+| Parallelization | Limited | Embarrassingly parallel
 |===
 
-== Implementation Strategy
+=== Optimal Pipeline: Metadata-First
 
-=== Phase 1: Foundation (Week 1-2)
-1. Implement tiered index storage with async loading
-2. Add bloom filter persistence layer
-3. Create fallback detection and routing
+```
+┌─────────────────────────────────────────────────────────┐
+│                    Query Request                         │
+│                  (1M vectors to search)                  │
+└────────────────────┬────────────────────────────────────┘
+                     ▼
+┌─────────────────────────────────────────────────────────┐
+│  Stage 1: Metadata Filtering                            │
+│  ┌──────────────────────────────────────┐              │
+│  │ Bloom Filter (O(1)) → 95% reduction   │              │
+│  │ 1M vectors → 50K candidates           │              │
+│  └──────────────────────────────────────┘              │
+└────────────────────┬────────────────────────────────────┘
+                     ▼
+┌─────────────────────────────────────────────────────────┐
+│  Stage 2: Distance Search                               │
+│  ┌──────────────────────────────────────┐              │
+│  │ Vector Search on 50K (not 1M)        │              │
+│  │ 10-20x faster on reduced set         │              │
+│  └──────────────────────────────────────┘              │
+└────────────────────┬────────────────────────────────────┘
+                     ▼
+┌─────────────────────────────────────────────────────────┐
+│  Stage 3: Precision Reranking                           │
+│  ┌──────────────────────────────────────┐              │
+│  │ Top-K refinement (e.g., K=100)       │              │
+│  │ High-precision distance calculation  │              │
+│  └──────────────────────────────────────┘              │
+└────────────────────┬────────────────────────────────────┘
+                     ▼
+                 [Results]
+```
 
-=== Phase 2: Optimization (Week 3-4)
-1. Implement metadata-first filtering pipeline
-2. Add statistics-based pruning
-3. Optimize cache allocation strategy
+**Performance Comparison:**
+```
+Distance-First: 150ms, 10GB RAM
+Metadata-First: 6ms, 500MB RAM
+Result: 25x faster, 20x less memory
+```
 
-=== Phase 3: Production Hardening (Week 5-6)
-1. Add monitoring and metrics
-2. Implement adaptive tier promotion/demotion
-3. Performance testing and tuning
+== Tiered Index Storage
+
+=== Architecture
+```
+Memory (10-20%):
+├── HNSW top layers
+├── IVF centroids
+├── Query cache
+└── Bloom filters
+
+NVMe (60-70%):
+├── HNSW middle layers
+├── Hot posting lists
+└── Compressed blocks
+
+HDD/Cloud (remainder):
+├── HNSW bottom layers
+├── Cold posting lists
+└── Archived indexes
+```
+
+=== Benefits vs All-Memory
+
+[cols="2,2,2", options="header"]
+|===
+| Metric | All-Memory | Tiered
+
+| Cost | $1000/TB/month | $200/TB/month
+| Restart | 30-60 min rebuild | 2-5 min load
+| Memory | 100% of index | 10-20% of index
+| Latency p99 | 5ms | 10ms
+| Scalability | RAM-limited | Unlimited
+|===
+
+== Implementation Recommendations
+
+=== Priority 1: Metadata-First Pipeline
+* Implement bloom filter layer
+* Add statistics-based pruning
+* Optimize filter evaluation order
+
+=== Priority 2: Tiered Storage
+* Async index loading
+* Adaptive tier promotion
+* Cold index eviction
+
+=== Priority 3: Production Hardening
+* Monitoring metrics
+* Performance testing
+* Adaptive caching
 
 == Design Patterns
 
-=== Fallback Chain Pattern
-[source,rust]
-----
-async fn search_with_fallback(&self, query: Query) -> Result<Vec<SearchResult>> {
-    // Try index first (fast path)
-    if let Some(index) = self.index_cache.get(&query.collection) {
-        if let Ok(results) = index.search(&query).await {
-            return Ok(results);
-        }
+=== Lazy Index Loading
+```rust
+pub async fn search_with_lazy_index() {
+    if !index.in_memory() {
+        // Use bloom + storage
+        return storage_search();
     }
-    
-    // Fallback to filtered scan (medium path)
-    if let Some(bloom) = self.bloom_cache.get(&query.collection) {
-        let candidates = bloom.filter_candidates(&query.metadata_filter)?;
-        return self.storage.search_filtered(candidates, &query).await;
-    }
-    
-    // Final fallback to full scan (slow path)
-    self.storage.search_full(&query).await
+    // Use index
+    return index_search();
 }
-----
+```
 
-=== Adaptive Filtering Pattern
-[source,rust]
-----
-async fn optimize_filter_order(&self, query: Query) -> FilterPlan {
-    let metadata_selectivity = self.estimate_metadata_selectivity(&query);
-    let distance_selectivity = self.estimate_distance_selectivity(&query);
-    
-    if metadata_selectivity < 0.1 {  // Very selective metadata
-        FilterPlan::MetadataFirst
-    } else if distance_selectivity < 0.01 {  // Very selective distance
-        FilterPlan::DistanceFirst  
-    } else {
-        FilterPlan::Hybrid  // Interleave both
-    }
+=== Adaptive Filtering
+```rust
+pub fn optimize_filter_order(filters: Vec<Filter>) {
+    filters.sort_by_key(|f| f.selectivity());
+    // Apply most selective first
 }
-----
+```
 
-== Performance Benchmarks
+== Monitoring
 
-=== Filtering Order Impact
+```prometheus
+# Index eviction rate
+proximadb_index_evictions_total
 
-[cols="3,1,1,1", options="header"]
-|===
-| Strategy | Latency (p50) | Latency (p99) | Memory
+# Fallback usage
+proximadb_fallback_searches_total
 
-| Distance-First
-| 100ms
-| 500ms
-| 10GB
+# Filter effectiveness
+proximadb_filter_reduction_ratio
 
-| Metadata-First
-| 10ms
-| 50ms
-| 1GB
+# Memory pressure
+proximadb_index_memory_pressure
+```
 
-| Adaptive Hybrid
-| 8ms
-| 40ms
-| 2GB
-|===
+== Related Documentation
 
-=== Index Eviction Impact
-
-[cols="3,2,2,2", options="header"]
-|===
-| Index State | Search Latency | Recall | Memory
-
-| Fully Loaded
-| 1ms
-| 99.9%
-| 10GB
-
-| 50% Evicted
-| 5ms
-| 99.9%
-| 5GB
-
-| 90% Evicted
-| 20ms
-| 99.9%
-| 1GB
-
-| Fully Evicted (Fallback)
-| 100ms
-| 100%
-| 100MB
-|===
-
-== Recommendations Summary
-
-=== High Priority
-1. **Implement metadata-first filtering** - 25x performance gain
-2. **Add tiered index storage** - 80% cost reduction
-3. **Persist bloom filters** - Survive restarts
-
-=== Medium Priority
-1. **Adaptive filter ordering** - Additional 20% gain
-2. **Smart index eviction** - Better memory utilization
-3. **Parallel metadata filtering** - Scale with cores
-
-=== Low Priority
-1. **Query result caching** - Reduce repeated work
-2. **Index prefetching** - Predictive loading
-3. **Compression for cold indexes** - Storage savings
-
-== Conclusion
-
-ProximaDB's architecture already provides strong search fidelity guarantees through its fallback mechanisms. The proposed optimizations focus on:
-
-1. **Metadata-first filtering** for 25x performance improvement
-2. **Tiered index storage** for 80% cost reduction
-3. **Intelligent eviction** maintaining 99.9% recall even under memory pressure
-
-These changes maintain 100% search fidelity while dramatically improving performance and reducing operational costs.
+* link:technical_reference.adoc[Technical Reference]
+* link:architecture.adoc[Architecture Overview]
+* link:../performance_reference.adoc[Performance Guide]
 
 ---
-_Last Updated: 2025-08-11_
-_Status: Analysis Complete, Ready for Implementation_
+**Version 0.1.4** | Last Updated: 2025-01

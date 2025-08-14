@@ -1,220 +1,195 @@
 = Multi-Disk Configuration Guide
 :toc: left
+:toclevels: 2
 :imagesdir: ../diagrams/images
 
-ProximaDB's multi-disk persistence system for enhanced performance, scalability, and fault tolerance.
+**Multi-disk persistence for performance, scalability, and fault tolerance.**
 
-image::multi-disk-deployment-detail-modular.svg[Multi-Disk Architecture,800,600]
+image::multi-disk-deployment-detail-modular.svg[Multi-Disk Architecture, width=800]
 
-== Architecture Benefits
+== Key Benefits
 
-* **Parallel I/O Operations**: Concurrent read/write across multiple disks
-* **Load Distribution**: Weighted collection assignment across storage locations
-* **Fault Tolerance**: Disk failure isolation with automatic recovery
-* **Multi-Cloud Support**: AWS S3, Azure Blob, Google Cloud Storage
-* **Hybrid Deployments**: Local high-performance with cloud backup
+* **Parallel I/O**: Concurrent operations across disks
+* **Load Distribution**: Weighted collection assignment
+* **Fault Tolerance**: Disk failure isolation
+* **Multi-Cloud**: AWS S3, Azure Blob, GCS support
+* **Hybrid Deployment**: Local + cloud backup
 
-== Storage Assignment Model
+== Storage Assignment
 
 === Collection-Level Assignment
-Each collection is assigned to a single storage location at creation time:
-
-1. **Automatic Assignment**: System selects location based on configured strategy
-2. **User-Specified**: Collection can request specific location via `storage_location` parameter
-3. **Unified Storage**: All collection data (WAL, data, indexes) stored together
+Each collection assigned to one storage location at creation:
+* **Automatic**: System selects based on strategy
+* **User-Specified**: Via `storage_location` parameter
+* **Unified**: WAL, data, indexes stored together
 
 === Directory Structure
-Once assigned, a collection's data is organized as:
 ```
-{base_url}/{collection_id}/
-├── wal/          # Write-ahead logs
-├── data/         # SSTable or Parquet files
-└── indexes/      # Index structures
+Collection Assignment Flow:
+┌──────────────────────────────────────────────────────┐
+│              New Collection Created                   │
+│                 "my_collection"                       │
+└───────────────────┬──────────────────────────────────┘
+                    ▼
+┌──────────────────────────────────────────────────────┐
+│          Assignment Strategy (Weighted)               │
+│  ┌────────────┬────────────┬────────────┐          │
+│  │  Disk1: 3  │  Disk2: 2  │  Disk3: 1  │          │
+│  │   (50%)    │   (33%)    │   (17%)    │          │
+│  └────────────┴────────────┴────────────┘          │
+└───────────────────┬──────────────────────────────────┘
+                    ▼
+              [Selected: Disk1]
+                    ▼
+┌──────────────────────────────────────────────────────┐
+│              Final Storage Layout                     │
+│                                                       │
+│  /data/disk1/proximadb/my_collection/                │
+│  ├── wal/          # Write-ahead logs                │
+│  ├── data/         # SSTable or Parquet files        │
+│  └── indexes/      # Index structures                │
+└──────────────────────────────────────────────────────┘
 ```
 
-Example for collection `abc123` on disk1:
-```
-file:///data/disk1/proximadb/abc123/
-├── wal/
-├── data/
-└── indexes/
-```
-
-=== Assignment Strategies
-
-* **Random**: Equal probability selection
-* **Weighted**: Selection based on configured weights
-* **Hash**: Consistent hashing of collection ID
-* **RoundRobin**: Sequential assignment
-* **Tagged**: Match collection requirements to storage tags
-
-== Core Configuration
+== Configuration
 
 === Basic Multi-Disk Setup
-
-[source,toml]
-----
+```toml
 [storage]
-# Single metadata URL for consistency (on fastest disk)
 metadata_url = "file:///data/disk1/metadata"
 
-# Multiple storage locations for collections
-# Each collection gets assigned one location at creation time
-# The location hosts: {base_url}/{collection_id}/{wal,data,indexes}/
 [[storage.storage_locations]]
-url = "file:///data/disk1/proximadb"  # Fast NVMe disk
-weight = 3  # Higher weight = higher probability of selection
-tags = ["fast", "nvme", "primary"]
+url = "file:///data/disk1/proximadb"  # NVMe
+weight = 3  # Higher = more likely
+tags = ["fast", "nvme"]
 
 [[storage.storage_locations]]
-url = "file:///data/disk2/proximadb"  # Secondary SSD
-weight = 2  # Medium weight
-tags = ["ssd", "secondary"]
+url = "file:///data/disk2/proximadb"  # SSD
+weight = 2
+tags = ["ssd"]
 
 [[storage.storage_locations]]
-url = "file:///data/disk3/proximadb"  # Capacity HDD
-weight = 1  # Lower weight
-tags = ["hdd", "capacity", "archive"]
+url = "file:///data/disk3/proximadb"  # HDD
+weight = 1
+tags = ["capacity"]
 
-# Assignment configuration
 [storage.assignment_config]
-strategy = "weighted"  # Options: "random", "weighted", "hash", "roundrobin"
-affinity = true       # Keep WAL/data/indexes together per collection
+strategy = "weighted"  # random|weighted|hash|roundrobin
+affinity = true       # Keep collection data together
+```
 
-# WAL configuration (applies to all collections)
-[storage.wal_config]
-memory_flush_size_bytes = 16777216  # 16MB
-global_flush_threshold = 536870912  # 512MB
-write_buffer_size_mb = 8192         # 8GB global write buffer
-sync_mode = "sync"                  # Options: "sync", "async", "none"
+=== Cloud Storage
+```toml
+# AWS S3
+[[storage.storage_locations]]
+url = "s3://bucket/prefix"
+weight = 1
+aws_use_iam_role = true
 
-# Storage engine settings
-mmap_enabled = true
-cache_size_mb = 512
-bloom_filter_bits = 10
-----
+# Azure Blob
+[[storage.storage_locations]]
+url = "adls://account.dfs.core.windows.net/container"
+use_managed_identity = true
 
-=== Configuration Options
-
-**Disk Types:**
-* `NvmeSsd`: Highest performance (max_iops = 100000)
-* `SataSsd`: High performance (max_iops = 50000)  
-* `Hdd`: High capacity (max_iops = 1000)
-* `NetworkStorage`: Cloud storage (latency_ms = 5.0)
-
-== Cloud Storage Configuration
-
-image::production-deployment-detail-modular.svg[Deployment Architecture, align=center, width=900]
-_link:../diagrams/deployment-architecture.mmd[View source diagram]_
-
-=== Supported Providers
-
-**AWS S3:**
-* URL: `s3://bucket-name/prefix`
-* Authentication: IAM roles, use_iam_role = true
-
-**Azure Blob:**
-* URL: `adls://account.dfs.core.windows.net/container/prefix`  
-* Authentication: Managed Identity, use_managed_identity = true
-
-**Google Cloud:**
-* URL: `gcs://bucket-name/prefix`
-* Authentication: Workload Identity, use_workload_identity = true
+# Google Cloud
+[[storage.storage_locations]]
+url = "gcs://bucket/prefix"
+use_workload_identity = true
+```
 
 == Deployment Scenarios
 
-=== Development Environment
+=== Development
 ```toml
-[storage]
-metadata_url = "file:///tmp/proximadb/metadata"
-
 [[storage.storage_locations]]
 url = "file:///tmp/proximadb/storage"
 weight = 1
-tags = ["dev", "local"]
 ```
 
 === Production On-Premises
 ```toml
-[storage]
-metadata_url = "file:///mnt/nvme1/proximadb/metadata"
-
 [[storage.storage_locations]]
 url = "file:///mnt/nvme1/proximadb"
 weight = 3
-tags = ["nvme", "fast", "primary"]
-
-[[storage.storage_locations]]
-url = "file:///mnt/nvme2/proximadb"
-weight = 3
-tags = ["nvme", "fast", "secondary"]
+tags = ["nvme", "primary"]
 
 [[storage.storage_locations]]
 url = "file:///mnt/sata1/proximadb"
 weight = 1
-tags = ["sata", "capacity", "archive"]
+tags = ["capacity", "archive"]
 ```
 
-=== Hybrid Cloud Deployment  
+=== Hybrid Cloud
 ```toml
-[storage]
-metadata_url = "file:///mnt/nvme1/metadata"
-
 [[storage.storage_locations]]
 url = "file:///mnt/nvme1/proximadb"
-weight = 5  # Prefer local for hot data
-tags = ["local", "nvme", "hot"]
+weight = 5  # Prefer local
+tags = ["local", "hot"]
 
 [[storage.storage_locations]]
 url = "s3://proximadb-storage/collections"
-weight = 1  # Use cloud for cold data
-tags = ["cloud", "s3", "cold"]
-
-# Cloud authentication
-[storage.cloud_auth]
-aws_use_iam_role = true
-aws_region = "us-west-2"
+weight = 1  # Cloud for cold
+tags = ["cloud", "cold"]
 ```
 
 == Performance Tuning
 
-* **NVMe Optimization**: Use max_iops = 1000000 for high-performance disks
-* **Network Storage**: Use latency_ms = 5.0, conservative capacity settings
-* **Capacity Management**: Adjust warning_threshold_percent based on disk type (95% for NVMe, 80% for network)
+=== Disk Types
+* **NvmeSsd**: 100K IOPS max
+* **SataSsd**: 50K IOPS max
+* **Hdd**: 1K IOPS max
+* **NetworkStorage**: 5ms latency
 
-== Monitoring and Maintenance
+=== Optimization Tips
+* NVMe: Set max_iops = 1000000
+* Network: Use conservative capacity
+* Thresholds: 95% NVMe, 80% network
 
-=== Health Check Commands
+== Monitoring
+
 ```bash
-# Server health and storage usage
+# Health check
 curl http://localhost:5678/health
 curl http://localhost:5678/admin/storage/usage
 
-# Check disk usage across all configured disks  
-for disk in /data/disk1 /data/disk2 /data/disk3; do
-  echo "=== $disk ==="
+# Disk usage
+for disk in /data/disk1 /data/disk2; do
   df -h $disk
 done
+
+# I/O statistics
+iostat -x 1
 ```
 
 == Troubleshooting
 
 === Common Issues
-
-* **Permission Problems**: Verify directory permissions with `ls -la /data/disk*/storage`
-* **URL Configuration Errors**: Use correct format `file:///data/disk1/storage` (not `file://data/disk1/storage`)
-* **Disk Failure Recovery**: Replace disk at same mount point, service auto-discovers new layout
-* **Performance Issues**: Use `iostat`, `iotop` to identify I/O bottlenecks
+* **Permissions**: Check with `ls -la`
+* **URL Format**: Use `file:///` (three slashes)
+* **Disk Failure**: Replace at same mount point
+* **Performance**: Use `iostat`, `iotop`
 
 == Best Practices
 
-* **Configuration**: Use consistent path conventions, separate configs for environments, version control
-* **Operations**: Regular SMART checks, capacity planning, recovery testing, performance baselines
-* **Security**: Enable disk/cloud encryption, proper file system permissions, audit logging
+* Use consistent path conventions
+* Separate configs per environment
+* Regular SMART checks
+* Capacity planning (80% max)
+* Enable encryption
+* Test recovery procedures
 
-== URL Schemes Reference
+== URL Schemes
 
-* **Local Filesystem**: `file:///path/to/directory`
-* **AWS S3**: `s3://bucket-name/prefix`
-* **Azure Blob**: `adls://account.dfs.core.windows.net/container/prefix`
-* **Google Cloud**: `gcs://bucket-name/prefix`
+* **Local**: `file:///path/to/directory`
+* **AWS S3**: `s3://bucket/prefix`
+* **Azure**: `adls://account.dfs.core.windows.net/container`
+* **GCS**: `gcs://bucket/prefix`
+
+== Related Documentation
+
+* link:configuration_reference.adoc[Configuration Reference]
+* link:../deployment_quick_reference.adoc[Deployment Guide]
+* link:../performance_reference.adoc[Performance Tuning]
+
+---
+**Version 0.1.4** | Last Updated: 2025-01

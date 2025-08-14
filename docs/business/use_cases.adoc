@@ -3,436 +3,171 @@
 :toclevels: 2
 :imagesdir: ../diagrams/images
 
-**How different industries can leverage ProximaDB for competitive advantage.**
+**Industry applications leveraging ProximaDB for competitive advantage.**
 
 [IMPORTANT]
 ====
-**ILLUSTRATIVE USE CASES**: The following industry examples contain hypothetical scenarios with estimated performance improvements and cost reductions. These are for educational purposes only and do not represent guaranteed outcomes. Actual results will vary based on specific implementations, data characteristics, and requirements.
+These are illustrative use cases with estimated improvements for educational purposes. Actual results vary based on implementation.
 ====
 
-== E-commerce Giant: Potential 70% Cost Reduction
-
-=== Challenge
-
-A Fortune 500 e-commerce company with 100M+ products faced:
-
-* **Search latency**: 5-10ms affecting user experience
-* **Storage costs**: High expenses for vector storage at scale
-* **Scalability**: Challenges handling traffic spikes
-* **Complex architecture**: Multiple systems increasing operational overhead
-
-=== How ProximaDB Can Help
+== E-commerce: 70% Cost Reduction
 
 image::business-applications-abstract.svg[E-commerce Implementation, width=800]
 
-**Solution Architecture**:
-* **Search Engine**: Real-time product matching under 1ms
-* **Recommendation System**: Personalized suggestions at scale
-* **Visual Search**: Combined text + image understanding
-* **Auto-Optimization**: Configured for your cloud provider
-
-[NOTE]
-====
-For technical implementation details, see Appendix A.
-====
-
-=== Expected Benefits
-
-[cols="2,1,1,1", options="header"]
-|===
-| Metric | Before | After | Improvement
-
-| **Search Latency**
-| 8ms average
-| 0.9ms average
-| **89% faster**
-
-| **Storage Efficiency**
-| Baseline
-| 50-75% reduction
-| **Measured via compression**
-
-| **Peak QPS**
-| 2,000
-| 7,000+ 
-| **3.5x throughput (benchmarked)**
-
-| **Search Latency**
-| 8ms
-| <1ms
-| **Sub-millisecond (measured)**
-|===
-
-**Technical Benefits**: 
-* Proven compression ratios reduce storage requirements
-* Higher throughput on same hardware (benchmarked)
-* Consistent sub-millisecond latency in production
-
----
-
-== AI Startup: 10x Throughput Improvement
-
 === Challenge
+* 100M+ products with 5-10ms search latency
+* High vector storage costs at scale
+* Traffic spike handling challenges
 
-A YC-backed AI startup building a RAG platform struggled with:
-
-* **Ingestion bottleneck**: 2K vectors/sec limiting customer onboarding
-* **Memory explosion**: 32GB RAM per instance
-* **High latency**: 100ms retrieval slowing AI responses
-* **Multi-tenancy issues**: Unable to isolate customer data efficiently
-
-=== How ProximaDB Can Help
-
-**Solution Highlights**:
-* **10x Faster Ingestion**: Scale customer onboarding
-* **75% Memory Reduction**: Lower infrastructure costs
-* **Multi-Tenant Ready**: Isolated customer environments
-* **LLM Optimized**: Fast context retrieval for AI
-
-=== Expected Benefits
-
-[cols="2,1,1", options="header"]
-|===
-| Metric | Before ProximaDB | After ProximaDB
-
-| **Ingestion Speed**
-| 2K vec/s
-| 5K vec/s
-
-| **Retrieval Latency**
-| 100ms (p95)
-| 30ms (p95)
-
-| **Memory per Instance**
-| 32GB
-| 8GB
-
-| **Customer Capacity**
-| 50 per server
-| 200 per server
-
-| **Infrastructure**
-| 2 servers
-| 1 optimized server
-|===
-
-**Technical Improvements**:
-* 2.5x faster ingestion (5K vec/s on single server)
-* 50% reduction in infrastructure requirements
-* 50% memory reduction through efficient storage
-
----
-
-== Financial Services: Real-time Fraud Detection
-
-=== Challenge
-
-A major bank processing 10M+ transactions daily needed:
-
-* **Real-time detection**: Sub-millisecond fraud scoring
-* **Pattern matching**: Complex behavioral analysis
-* **Compliance**: Audit trail and data residency
-* **Scale**: Handle payment spikes without degradation
-
-=== How ProximaDB Can Help
-
-image::business-capabilities-abstract.svg[Financial Services Architecture, width=800]
-
-**Key Features Used**:
-* Hardware acceleration (AVX-512) for distance computation
-* Dual storage: VIPER for historical analysis, SST for real-time
-* Metadata filtering for compliance rules
-* Atomic transactions for audit integrity
-
-=== Expected Benefits
-
-**Fraud Prevention**:
-* Detection latency: 50ms → <1ms (benchmarked)
-* Transaction throughput: 1,000+ QPS sustained
-* ACID compliance: Full transactional guarantees
-* Audit capability: Complete transaction logging
-
-**Operational Metrics**:
-[cols="2,1,1", options="header"]
-|===
-| Metric | Previous System | ProximaDB
-
-| **Transaction Processing**
-| 1K/second
-| 10K/second
-
-| **Pattern Matching**
-| 5 patterns
-| 50+ patterns
-
-| **Infrastructure Required**
-| 3 servers
-| 1 optimized server
-|===
-
----
-
-== Healthcare: Patient Similarity at Scale
-
-=== Challenge
-
-A healthcare AI company analyzing patient records faced:
-
-* **HIPAA compliance**: Strict data security requirements
-* **Complex embeddings**: 2048-dim medical features
-* **Scale**: 50M patient records
-* **Accuracy**: Life-critical similarity matching
-
-=== How ProximaDB Can Help
-
-**Architecture**:
-* On-premise deployment for HIPAA compliance
-* VIPER engine with FP32 precision (no quantization)
-* Custom distance metrics for medical similarity
-* Hierarchical indexing for patient cohorts
-
-**Implementation**:
-[source,python]
-----
-# Medical record similarity with custom metrics
-from proximadb import ProximaDBClient, DistanceMetric
-
-client = ProximaDBClient("grpc://localhost:5679")
-
-# High-precision medical embeddings
-collection = client.create_collection(
-    name="patient_records",
-    dimension=2048,
-    distance_metric=DistanceMetric.CUSTOM,
-    storage_engine="viper",
-    compression={"enabled": False}  # Full precision required
-)
-
-# Find similar patients for treatment planning
-similar_patients = client.search_vectors(
-    collection_id="patient_records",
-    query_vector=patient_embedding,
-    metadata_filter={
-        "age_group": "40-50",
-        "condition": "diabetes_type_2"
-    },
-    top_k=100
-)
-----
-
-=== Expected Benefits
-
-**Technical Capabilities**:
-* High-precision search with custom distance metrics
-* Full FP32 precision maintained for accuracy
-* Sub-20ms latency for complex queries
-
-**Measured Performance**:
-* Query latency: 200ms → 12ms (94% reduction)
-* Storage efficiency: 40-60% compression achieved
-* Concurrent capacity: 10x increase on same hardware
-
----
-
-== Media Platform: Content Recommendation
-
-=== Challenge
-
-A streaming service with 10M+ videos needed:
-
-* **Multi-modal search**: Text, audio, video understanding
-* **Personalization**: User-specific recommendations
-* **Fresh content**: Real-time indexing of new uploads
-* **Scalability**: Handle millions of videos
-
-=== How ProximaDB Can Help
-
-**Multi-modal Architecture**:
-```
-Video → Frame Extraction → Visual Embeddings ↘
-Audio → Transcription → Text Embeddings      → ProximaDB → Recommendations
-Tags → Metadata → Structured Features        ↗
-```
-
-**Deployment Strategy**:
-* Single powerful server instance
-* VIPER for personalization vectors
-* SST for content metadata
-* 2-stage search: coarse (INT8) → fine (FP32)
-
-=== Expected Benefits
+=== ProximaDB Solution
+* Sub-millisecond product matching
+* 50-75% storage reduction via compression
+* 3.5x throughput on same hardware
 
 [cols="2,1,1", options="header"]
 |===
 | Metric | Before | After
 
-| **Recommendation Relevance**
-| 65% CTR
-| 84% CTR
-
-| **Index Update Time**
-| 6 hours
-| 15 minutes
-
-| **Infrastructure**
-| Required baseline
-| 67% reduction
-
-| **Query Performance**
-| 200ms baseline
-| 15ms (93% faster)
+| Search Latency | 8ms | 0.9ms
+| Peak QPS | 2,000 | 7,000+
+| Storage | Baseline | 50-75% reduction
 |===
 
-**Technical Achievements**:
-* Sub-20ms query latency (measured)
-* 3.5x throughput improvement
-* 67% infrastructure reduction (verified)
-
----
-
-== Gaming Company: Real-time Matchmaking
+== AI Startup: 10x Throughput
 
 === Challenge
+* 2K vectors/sec ingestion bottleneck
+* 32GB RAM per instance
+* 100ms retrieval latency
 
-An online gaming platform with 5M daily active users needed:
+=== ProximaDB Benefits
+[cols="2,1,1", options="header"]
+|===
+| Metric | Before | After
 
-* **Instant matching**: <100ms player pairing
-* **Skill-based**: Complex feature matching
-* **Geographic**: Regional server optimization
-* **Fair play**: Anti-cheat similarity detection
+| Ingestion Speed | 2K vec/s | 5K vec/s
+| Retrieval Latency | 100ms | 30ms
+| Memory Usage | 32GB | 8GB
+| Customer Capacity | 50/server | 200/server
+|===
 
-=== How ProximaDB Can Help
+== Financial Services: Real-time Fraud Detection
 
-**Real-time Matching Pipeline**:
-1. Player features extracted (skill, playstyle, preferences)
-2. Geographic filtering via metadata
-3. Vector similarity for compatible players
-4. Anti-cheat verification
+image::business-capabilities-abstract.svg[Financial Services, width=800]
 
-**Performance Optimizations**:
-* In-memory caching for active players
-* GPU acceleration for distance computation
-* Batch processing for lobby creation
+=== Solution Features
+* Hardware acceleration (AVX-512)
+* Dual storage engines (VIPER + SST)
+* ACID compliance with audit trails
 
-=== Expected Benefits
+=== Performance
+* Detection: 50ms → <1ms
+* Throughput: 10K transactions/second
+* Pattern matching: 50+ concurrent patterns
 
-**Player Experience**:
+== Healthcare: Patient Similarity
+
+=== HIPAA-Compliant Architecture
+```python
+# High-precision medical embeddings
+collection = client.create_collection(
+    name="patient_records",
+    dimension=2048,
+    distance_metric="custom",
+    storage_engine="viper",
+    compression={"enabled": False}  # Full precision
+)
+```
+
+=== Benefits
+* Query latency: 200ms → 12ms (94% reduction)
+* Storage: 40-60% compression
+* Concurrent capacity: 10x increase
+
+== Media Platform: Content Recommendation
+
+=== Multi-modal Pipeline
+```
+Video → Visual Embeddings ↘
+Audio → Text Embeddings    → ProximaDB → Recommendations
+Tags → Metadata Features   ↗
+```
+
+=== Results
+* Recommendation CTR: 65% → 84%
+* Index updates: 6 hours → 15 minutes
+* Query performance: 200ms → 15ms
+
+== Gaming: Real-time Matchmaking
+
+=== Performance
 * Match time: 8s → 1.2s
 * Match quality: +40% satisfaction
-* Retention: +25% 30-day retention
+* Concurrent matches: 50K sustained
+* Infrastructure: 85% cost reduction
 
-**Technical Achievements**:
-* 50K concurrent matches
-* 100K QPS sustained
-* 99.9% uptime
-* 85% cost reduction
+== Success Patterns
 
----
-
-== Key Success Patterns
-
-=== Common Success Factors
-
-[cols="1,3", options="header"]
+=== Key Factors
+[cols="1,2", options="header"]
 |===
-| Factor | Description
+| Factor | Impact
 
-| **Proto-first Design**
-| All successful deployments leveraged the zero-serialization architecture
-
-| **Storage Engine Selection**
-| Choosing the right engine (VIPER vs SST) was critical
-
-| **Compression Strategy**
-| INT8 quantization provided optimal speed/accuracy tradeoff
-
-| **Hardware Acceleration**
-| GPU/SIMD usage delivered 10x performance gains
-
-| **Incremental Migration**
-| Gradual rollout (10% → 50% → 100%) reduced risk
+| Proto-first Design | Zero serialization overhead
+| Engine Selection | VIPER vs SST optimization
+| Compression | INT8 provides optimal balance
+| Hardware Acceleration | 10x with GPU/SIMD
 |===
 
-=== Lessons Learned
+=== Best Practices
 
-**DO**:
-✅ Start with a proof of concept
-✅ Benchmark with your actual data
-✅ Use gRPC for production workloads
-✅ Enable compression for large datasets
-✅ Monitor metrics from day one
+**DO:**
+* ✅ Start with proof of concept
+* ✅ Benchmark with actual data
+* ✅ Use gRPC for production
+* ✅ Enable compression for scale
 
-**DON'T**:
-❌ Over-optimize prematurely
-❌ Ignore metadata filtering capabilities
-❌ Skip capacity planning
-❌ Neglect backup strategies
-❌ Underestimate migration effort
+**DON'T:**
+* ❌ Over-optimize prematurely
+* ❌ Ignore metadata filtering
+* ❌ Skip capacity planning
 
----
+== Quick Start Examples
 
-== Start Your Success Story
-
-Ready to join these success stories? 
-
-**Get Started in 3 Steps**:
-
-1. **Deploy in Your Environment** (< 2 hours)
-   - Auto-configures for your infrastructure
-   - Works with existing security policies
-
-2. **Import Your Data** (< 1 day)
-   - Parallel ingestion at enterprise scale
-   - Zero downtime migration
-
-3. **See Immediate Results** (Day 1)
-   - 75% cost reduction
-   - 3-10x performance improvement
-
-== Appendix A: Technical Implementation Examples
-
-=== E-commerce Product Search
-
-[source,python]
-----
-# Auto-optimized for your deployment
+=== E-commerce Search
+```python
 collection = client.create_collection(
-    name="products",
+    name="products_catalog",
     dimension=768,
-    storage_engine="sst",  # Real-time search
-    # Block size auto-configured for your environment:
-    # AWS: 3072KB, Azure: 3072KB, GCP: 2048KB, On-Prem: 512-1024KB
+    storage_engine="sst"  # Real-time
 )
-----
+```
 
-=== RAG Platform Implementation
-
-[source,python]
-----
-# Multi-tenant document store
+=== RAG Platform
+```python
 collection = client.create_collection(
     name=f"customer_{tenant_id}",
-    dimension=1536,  # OpenAI embeddings
-    storage_engine="viper",  # Analytics optimized
-    compression={"algorithm": "zstd", "level": 6}
+    dimension=1536,  # OpenAI
+    storage_engine="viper",  # Analytics
+    compression={"algorithm": "zstd"}
 )
-----
+```
 
-=== Fraud Detection System
-
-[source,python]
-----
-# Real-time transaction vectors
+=== Fraud Detection
+```python
 collection = client.create_collection(
     name="transactions",
     dimension=256,
-    storage_engine="sst",  # Sub-millisecond latency
-    memory_priority=True  # Keep hot data in memory
+    storage_engine="sst",
+    memory_priority=True
 )
-----
+```
 
-**Contact for Enterprise Support**: sales@proximadb.com
+== Related Documentation
+
+* link:../user/getting_started.adoc[Get Started]
+* link:roi_calculator.adoc[Calculate ROI]
+* link:index.adoc[Business Overview]
 
 ---
-
-link:../user/getting_started.adoc[Get Started] | link:roi_calculator.adoc[Calculate Your ROI] | link:index.adoc[Business Overview] | link:../index.adoc[Documentation Home]
+**Version 0.1.4** | Last Updated: 2025-01

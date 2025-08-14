@@ -1,398 +1,157 @@
-= ProximaDB Documentation & Diagram Ecosystem Snapshot
+= ProximaDB Documentation Map
 :toc: left
-:toclevels: 3
-:last-update-label: Snapshot Date
-:last-update: 2025-08-14
+:toclevels: 2
+:last-update: 2025-01-14
 
-**Complete documentation and visual ecosystem overview following comprehensive reorganization.**
+**Complete documentation and diagram organization reference.**
 
-== 📊 Executive Summary
+== Summary
 
-[cols="2,1,3", options="header"]
+[cols="2,1,2", options="header"]
 |===
 | Component | Count | Status
 
-| **Total Documentation Files**
-| 17 files
-| ✅ Consolidated & streamlined
-
-| **Total Diagram Files**  
-| 62 diagrams
-| ✅ Three-tier classification complete
-
-| **Documentation Reduction**
-| 62% smaller
-| ✅ Improved maintainability
-
-| **Diagram Organization**
-| 100% classified
-| ✅ Crystal clear abstraction levels
+| Documentation Files | 17 | ✅ Streamlined 62%
+| Diagram Files | 62 | ✅ Three-tier classified
+| Diagram Organization | 100% | ✅ Clear abstraction levels
 |===
 
-**Key Achievement**: Professional documentation ecosystem with zero ambiguity, optimal usability, and maximum maintainability.
-
-== 📂 Documentation Architecture
-
-=== 🏗️ File Structure Overview
+== Documentation Structure
 
 ```
 docs/
-├── index.adoc                          # Documentation hub & navigation
-├── compression_guide.adoc              # SDK-driven compression configuration  
-├── performance_reference.adoc          # Benchmarks & optimization guide
-├── enterprise_features.adoc            # Enterprise roadmap & features
-├── user/                              # End-user documentation (4 files)
-│   ├── getting_started.adoc           # Quick installation & setup
-│   ├── user_guide.adoc                # Complete usage guide (79% reduction)
-│   ├── api_reference.adoc             # REST/gRPC API documentation
-│   └── semantic_search_guide.adoc     # RAG & embeddings integration
-├── developer/                         # Developer resources (4 files)
-│   ├── architecture.adoc              # System architecture overview
-│   ├── developer_guide.adoc           # Contributing guide (67% reduction)
-│   ├── technical_reference.adoc       # Implementation details
-│   └── magic_bytes_architecture.adoc  # File format detection
-├── admin/                             # Operations (1 file)
-│   └── multi_disk_guide.adoc          # Multi-cloud deployment
-└── diagrams/                          # Visual documentation (62 diagrams)
-    ├── index.adoc                     # Diagram organization guide
-    ├── *.mmd                          # 62 MermaidJS source files
-    └── images/*.svg                   # 62 generated SVG files
+├── index.adoc                      # Hub & navigation
+├── compression_guide.adoc          # Compression guide
+├── performance_reference.adoc      # Performance metrics
+├── user/                          # User docs (4)
+│   ├── getting_started.adoc
+│   ├── user_guide.adoc
+│   ├── api_reference.adoc
+│   └── semantic_search_guide.adoc
+├── developer/                     # Developer docs (6)
+│   ├── architecture.adoc
+│   ├── developer_guide.adoc
+│   ├── technical_reference.adoc
+│   ├── storage_engines.adoc
+│   ├── hierarchical_sst_implementation.adoc
+│   └── magic_bytes_architecture.adoc
+├── admin/                        # Admin docs (2)
+│   ├── configuration_reference.adoc
+│   └── multi_disk_guide.adoc
+├── business/                     # Business docs (3)
+│   ├── index.adoc
+│   ├── use_cases.adoc
+│   └── roi_calculator.adoc
+└── diagrams/                     # Visual docs (62)
+    ├── *.mmd                     # Mermaid sources
+    └── images/*.svg              # Generated SVGs
 ```
 
-=== 🎯 Audience-Based Organization
-
-[cols="1,2,1,2", options="header"]
-|===
-| Audience | Files | Entry Point | Navigation Path
-
-| **Business Leaders**
-| 3 core files
-| `index.adoc`
-| → `enterprise_features.adoc` → Business diagrams
-
-| **New Users**
-| 4 user files
-| `user/getting_started.adoc`
-| → `user/user_guide.adoc` → `user/api_reference.adoc`
-
-| **Developers**
-| 4 developer files
-| `developer/architecture.adoc`
-| → `developer/developer_guide.adoc` → `developer/technical_reference.adoc`
-
-| **DevOps/Admins**
-| 3 ops files
-| `admin/multi_disk_guide.adoc`
-| → `performance_reference.adoc` → `compression_guide.adoc`
-|===
-
-== 🎨 Three-Tier Diagram Classification System
-
-=== 📊 Classification Overview
-
-[cols="1,1,2,2,1", options="header"]
-|===
-| Abstraction Level | Count | Purpose | Audience | Usage
-
-| **🔹 ABSTRACT**
-| 39 diagrams
-| High-level overviews, simplified views
-| Business, new developers, introductions
-| Getting started, executive summaries
-
-| **🔧 DETAIL-MODULAR**
-| 18 diagrams
-| Component-focused, single responsibility
-| Developers working on specific modules
-| Focused technical work
-
-| **🏢 DETAIL-MONOLITHIC**
-| 5 diagrams
-| Comprehensive system views
-| Advanced developers, troubleshooting
-| Complete system understanding
-|===
-
-=== 🏗️ Naming Convention
-
-**Format**: `[component]-[type]-[abstraction-level].mmd`
-
-**Examples**:
-* `technical-architecture-abstract.mmd` (high-level system overview)
-* `storage-components-detail-modular.mmd` (focused on storage only)
-* `service-interactions-detail-monolithic.mmd` (complete service flow)
-
-=== 📂 Diagram Categories by Type
-
-==== Business & Overview (15 diagrams)
-```
-business-overview-abstract.mmd
-business-capabilities-abstract.mmd
-business-applications-abstract.mmd
-competitive-advantages-abstract.mmd
-roi-metrics-abstract.mmd
-technical-architecture-abstract.mmd
-compression-architecture-abstract.mmd
-query-processing-abstract.mmd
-system-deployment-abstract.mmd
-...
-```
-
-==== Technical Architecture (12 diagrams)
-```
-storage-components-abstract.mmd
-cache-system-abstract.mmd
-security-components-abstract.mmd
-distributed-system-abstract.mmd
-service-interactions-abstract.mmd
-vector-operations-abstract.mmd
-...
-```
-
-==== Component Details (18 diagrams)
-```
-sst-hierarchical-detail-modular.mmd
-api-handlers-detail-modular.mmd
-quantization-system-detail-modular.mmd
-aws-deployment-detail-modular.mmd
-parquet-reader-detail-modular.mmd
-...
-```
-
-==== System Comprehensive (5 diagrams)
-```
-technical-architecture-detail-monolithic.mmd
-service-interactions-detail-monolithic.mmd
-search-flow-detail-monolithic.mmd
-system-initialization-detail-monolithic.mmd
-search-orchestration-detail-monolithic.mmd
-```
-
-==== Flows & Patterns (12 diagrams)
-```
-system-data-flow-abstract.mmd
-axis-search-abstract.mmd
-compression-decision-abstract.mmd
-quantization-strategy-abstract.mmd
-wal-strategy-abstract.mmd
-...
-```
-
-== 🚀 Usage Guidelines
-
-=== 📖 Documentation Selection Strategy
-
-[cols="2,2,3", options="header"]
-|===
-| Documentation Need | Recommended Files | Diagram Level
-
-| **Quick Start**
-| `getting_started.adoc` + `user_guide.adoc`
-| Abstract diagrams
-
-| **Architecture Understanding**
-| `architecture.adoc` + `technical_reference.adoc`
-| Abstract → Detail-modular progression
-
-| **Component Development**
-| `developer_guide.adoc` + specific sections
-| Detail-modular diagrams
-
-| **System Troubleshooting**
-| `technical_reference.adoc` + performance docs
-| Detail-monolithic diagrams
-
-| **Production Deployment**
-| `multi_disk_guide.adoc` + `performance_reference.adoc`
-| Detail-modular deployment diagrams
-|===
-
-=== 🎯 Diagram Selection Strategy
+== Audience Navigation
 
 [cols="1,2,2", options="header"]
 |===
-| Use Case | Abstraction Level | Examples
+| Audience | Entry Point | Path
 
-| **Introductions**
-| Abstract
-| `technical-architecture-abstract.svg`
-
-| **Executive Presentations**
-| Abstract
-| `business-overview-abstract.svg`
-
-| **Component Documentation**
-| Detail-modular
-| `storage-components-detail-modular.svg`
-
-| **Troubleshooting Guides**
-| Abstract + Detail-modular
-| `service-interactions-abstract.svg` + relevant modular components
-
-| **Progressive Learning**
-| Abstract → Detail-modular
-| Architecture overview → Component-focused implementation
+| New Users | `user/getting_started.adoc` | → user_guide → api_reference
+| Developers | `developer/architecture.adoc` | → developer_guide → technical_reference
+| DevOps | `admin/configuration_reference.adoc` | → multi_disk_guide → performance
+| Business | `business/index.adoc` | → use_cases → roi_calculator
 |===
 
-== 📈 Quality Metrics & Standards
+== Diagram Classification
 
-=== ✅ Documentation Quality Standards
+=== Three Abstraction Levels
 
-[cols="2,1,2", options="header"]
+[cols="1,1,2,1", options="header"]
 |===
-| Quality Metric | Status | Implementation
+| Level | Count | Purpose | Audience
 
-| **Content Reduction**
-| 62% smaller
-| Eliminated redundancy, improved conciseness
-
-| **Link Consistency**
-| 100% verified
-| All internal references updated and tested
-
-| **Professional Presentation**
-| Enterprise-ready
-| Consistent formatting, clear hierarchy
-
-| **Audience Alignment**
-| Optimized
-| Content matches audience needs perfectly
+| 🔹 **ABSTRACT** | 39 | High-level overviews | Business, new users
+| 🔧 **DETAIL-MODULAR** | 18 | Component-specific | Module developers
+| 🏢 **DETAIL-MONOLITHIC** | 5 | Complete system views | Advanced developers
 |===
 
-=== ✅ Diagram Quality Standards
+=== Naming Convention
+`[component]-[type]-[abstraction].mmd`
 
-[cols="2,1,2", options="header"]
+Examples:
+* `technical-architecture-abstract.mmd`
+* `storage-components-detail-modular.mmd`
+* `service-interactions-detail-monolithic.mmd`
+
+== Diagram Categories
+
+=== Business (15)
+* business-overview-abstract
+* business-capabilities-abstract
+* business-applications-abstract
+* competitive-advantages-abstract
+* roi-metrics-abstract
+
+=== Architecture (12)
+* technical-architecture-abstract
+* storage-components-abstract
+* cache-system-abstract
+* security-components-abstract
+* distributed-system-abstract
+
+=== Component Details (18)
+* sst-hierarchical-detail-modular
+* api-handlers-detail-modular
+* quantization-system-detail-modular
+* parquet-reader-detail-modular
+* viper-write-path-detail-modular
+
+=== System Views (5)
+* technical-architecture-detail-monolithic
+* service-interactions-detail-monolithic
+* search-flow-detail-monolithic
+* system-initialization-detail-monolithic
+* search-orchestration-detail-monolithic
+
+=== Flows (12)
+* system-data-flow-abstract
+* axis-search-abstract
+* compression-decision-abstract
+* wal-strategy-abstract
+* search-orchestration-swimlanes
+
+== Usage Guidelines
+
+=== Quick Reference
+
+[cols="2,2,1", options="header"]
 |===
-| Quality Metric | Status | Implementation
+| Need | Documentation | Diagrams
 
-| **Naming Consistency**
-| 100% compliant
-| Semantic naming with clear abstraction levels
-
-| **Visual Consistency**
-| Standardized
-| Unified theme, transparent backgrounds
-
-| **Abstraction Clarity**
-| Crystal clear
-| No ambiguity about diagram purpose/scope
-
-| **Usage Guidance**
-| Complete
-| Clear guidelines for when to use each level
-|===
-
-== 🔄 Maintenance & Evolution
-
-=== 📅 Regular Maintenance Schedule
-
-[cols="1,2,2", options="header"]
-|===
-| Frequency | Task | Responsibility
-
-| **Monthly**
-| Update performance metrics and benchmarks
-| DevOps/Engineering
-
-| **Quarterly**
-| Review diagram accuracy against codebase
-| Technical Writing/Engineering
-
-| **Per Release**
-| Update API documentation and feature lists
-| Product/Engineering
-
-| **As Needed**
-| Add new diagrams following classification system
-| Technical Writing
-|===
-
-=== 🛠️ Adding New Content Guidelines
-
-==== New Documentation Files
-1. **Identify target audience** (user/developer/admin)
-2. **Place in appropriate directory** following structure
-3. **Update navigation** in relevant index files
-4. **Follow content standards** (conciseness, clarity, professional tone)
-
-==== New Diagrams
-1. **Determine abstraction level** (abstract/detail-modular/detail-monolithic)
-2. **Follow naming convention** `[component]-[type]-[abstraction-level].mmd`
-3. **Create focused content** (single responsibility principle)
-4. **Update diagram index** with appropriate categorization
-
-=== 🎯 Future Evolution Roadmap
-
-==== Short Term (Next 3 months)
-* [ ] Update all AsciiDoc files with new diagram references
-* [ ] Verify all diagram links work correctly
-* [ ] Create diagram usage examples in documentation
-
-==== Medium Term (Next 6 months)
-* [ ] Automated diagram generation pipeline
-* [ ] Integration with documentation build process
-* [ ] Performance metrics dashboard integration
-
-==== Long Term (Next year)
-* [ ] Interactive diagram exploration
-* [ ] Multi-language documentation support
-* [ ] Advanced diagram filtering and search
-
-== 🏆 Achievement Summary
-
-=== 📊 Before vs After Comparison
-
-[cols="1,2,2", options="header"]
-|===
-| Aspect | Before | After
-
-| **Documentation Structure**
-| 51 files, redundant content
-| 17 files, streamlined content
-
-| **Diagram Organization**
-| Inconsistent naming, unclear purpose
-| 62 diagrams, three-tier classification
-
-| **User Experience**
-| Complex navigation, information overload
-| Clear paths, progressive disclosure
-
-| **Maintenance Overhead**
-| High redundancy, frequent updates
-| Low redundancy, focused updates
-
-| **Professional Presentation**
-| Mixed quality, inconsistent style
-| Enterprise-ready, uniform quality
+| Quick Start | getting_started.adoc | Abstract only
+| Architecture | architecture.adoc | Abstract → Modular
+| Component Dev | developer_guide.adoc | Detail-modular
+| Debugging | technical_reference.adoc | Detail-monolithic
+| Performance | performance_reference.adoc | Abstract metrics
 |===
 
-=== 🎉 Key Accomplishments
+=== Documentation Strategy
 
-1. **✅ Complete Documentation Streamlining**
-   - 62% content reduction while preserving all functionality
-   - Clear audience-based organization
-   - Professional enterprise presentation
+1. **Start Simple**: Begin with abstract diagrams
+2. **Dive Deep**: Move to detail-modular for specific work
+3. **Full Context**: Use detail-monolithic for debugging
+4. **Cross-Reference**: Links between related docs
 
-2. **✅ Revolutionary Diagram Classification**
-   - Three-tier abstraction system (abstract/detail-modular/detail-monolithic)
-   - 62 diagrams perfectly classified and renamed
-   - Crystal clear usage guidelines
+== Maintenance
 
-3. **✅ Zero Ambiguity Achievement**
-   - Every file has clear purpose and audience
-   - Every diagram has clear abstraction level and scope
-   - Every link and reference verified and functional
+=== Update Process
+1. Edit `.mmd` source files
+2. Run `npx mmdc -i file.mmd -o images/file.svg`
+3. Update relevant `.adoc` documentation
+4. Verify cross-references
 
-4. **✅ Maximum Maintainability**
-   - Reduced redundancy eliminates sync issues
-   - Clear structure makes updates straightforward
-   - Automated processes reduce manual overhead
+=== Quality Checks
+* Version consistency (0.1.4)
+* Collection names (8+ characters)
+* Block sizes in KB not MB
+* Theme consistency in SVGs
 
 ---
-
-**The ProximaDB documentation and diagram ecosystem is now professionally organized for maximum clarity, usability, and maintainability.** 
-
-This snapshot represents a complete transformation from scattered, redundant content to a cohesive, professional documentation system that serves all audiences effectively while minimizing maintenance overhead.
-
-*Document Status: Complete and Current as of 2025-08-14*
+**Version 0.1.4** | Last Updated: 2025-01

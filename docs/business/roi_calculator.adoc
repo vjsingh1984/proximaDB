@@ -81,17 +81,42 @@ ProximaDB enables new revenue streams beyond cost savings:
 **Storage Optimization**
 * Compression: 50-80% reduction
 * Tiering: 85% reduction in hot storage needs
-* **Savings**: `Current Storage Cost × 0.75`
+* **Current Cost**: 100% (baseline)
+* **New Cost with ProximaDB**: 25% of current
+* **Your Savings**: 75% reduction
 
 **Compute Optimization**
 * Hardware acceleration: 4-10x speedup
 * Efficient algorithms: 40-60% less CPU
-* **Savings**: `Current Compute Cost × 0.70`
+* **Current Cost**: 100% (baseline)
+* **New Cost with ProximaDB**: 30% of current
+* **Your Savings**: 70% reduction
 
 **Network Optimization**
 * Intelligent filtering: 85% fewer API calls
 * Compression: 60% less bandwidth
-* **Savings**: `Current Network Cost × 0.80`
+* **Current Cost**: 100% (baseline)
+* **New Cost with ProximaDB**: 20% of current
+* **Your Savings**: 80% reduction
+
+**Overall Impact**
+```
+Current Cost vs ProximaDB Cost:
+
+Current:  ████████████████████████████████████████ 100%
+ProximaDB: ███████████                              25-30%
+           └─────────────────────────────────────┘
+                    70-75% SAVINGS
+
+Breakdown by Category:
+┌──────────────┬─────────────┬──────────────┬────────────┐
+│   Category   │ Current (%) │ ProximaDB (%)│ Savings (%)│
+├──────────────┼─────────────┼──────────────┼────────────┤
+│ Storage      │    100%     │     25%      │    75%     │
+│ Compute      │    100%     │     30%      │    70%     │
+│ Network      │    100%     │     20%      │    80%     │
+└──────────────┴─────────────┴──────────────┴────────────┘
+```
 
 === Payback Period
 
@@ -161,11 +186,11 @@ ProximaDB enables new revenue streams beyond cost savings:
 
 [cols="2,1,1", options="header"]
 |===
-| Current Solution | Migration Cost | Annual Savings
+| Current Solution Category | Migration Cost | Annual Savings
 
-| Pinecone | $5,000 | $120,000
-| Weaviate | $3,000 | $80,000
-| Milvus | $4,000 | $60,000
+| Managed Cloud (Best-in-class) | $5,000 | $120,000
+| Open Source Hosted | $3,000 | $80,000
+| Self-Hosted OSS | $4,000 | $60,000
 | Custom Build | $10,000 | $150,000
 |===
 
