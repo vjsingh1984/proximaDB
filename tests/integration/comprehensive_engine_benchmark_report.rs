@@ -123,7 +123,7 @@ async fn run_baseline(engine_type: &str, sparsity: usize, dimension: usize, batc
         "SST" => {
             let engine = env.create_sst_engine().await?;
             
-            // Insert all batches
+            // Insert all batches WITHOUT compression (baseline)
             for batch_id in 0..batch_count {
                 let vectors = create_vectors_with_sparsity(
                     vectors_per_batch,
@@ -132,8 +132,19 @@ async fn run_baseline(engine_type: &str, sparsity: usize, dimension: usize, batc
                     batch_id
                 );
                 
+                // Use NO compression for baseline
+                let flush_params = operations::build_sst_flush_params_with_compression(
+                    &env,
+                    vectors,
+                    "none",
+                    0,
+                ).await?;
+                
                 let start_flush = Instant::now();
-                operations::insert_and_flush_sst(&engine, &env, vectors).await?;
+                let flush_result = engine.do_flush(&flush_params).await?;
+                if !flush_result.success {
+                    return Err(anyhow::anyhow!("SST baseline flush failed"));
+                }
                 flush_times.push(start_flush.elapsed().as_millis() as u64);
             }
             
@@ -193,11 +204,18 @@ async fn run_baseline(engine_type: &str, sparsity: usize, dimension: usize, batc
                 flush_times.push(start_flush.elapsed().as_millis() as u64);
             }
             
-            // Get storage size
-            let mut uncompressed_size = get_directory_size(env.get_viper_data_directory().to_str().unwrap()).await;
+            // Get storage size - VIPER writes to {base_location}/{collection_id}/data
+            let viper_actual_dir = env.base_path.join("data").join(env.collection_id()).join("data");
+            let mut uncompressed_size = if viper_actual_dir.exists() {
+                get_directory_size(viper_actual_dir.to_str().unwrap()).await
+            } else {
+                // Fallback to viper_data directory
+                get_directory_size(env.get_viper_data_directory().to_str().unwrap()).await
+            };
+            
             if uncompressed_size == 0 {
-                // Check subdirectories
-                let collection_dir = env.get_viper_data_directory().join(env.collection_id());
+                // Check other possible locations
+                let collection_dir = env.get_viper_data_directory().join(env.collection_id()).join("data");
                 if collection_dir.exists() {
                     uncompressed_size = get_directory_size(collection_dir.to_str().unwrap()).await;
                 }
@@ -290,7 +308,7 @@ async fn run_benchmark(
         "SST" => {
             let engine = env.create_sst_engine().await?;
             
-            // Process multiple batches
+            // Process multiple batches WITH COMPRESSION
             let mut batch_summary = Vec::new();
             for batch_id in 0..config.batch_count {
                 let vectors = create_vectors_with_sparsity(
@@ -300,13 +318,21 @@ async fn run_benchmark(
                     batch_id
                 );
                 
-                // Insert using unified helpers
-                let start_flush = Instant::now();
-                operations::insert_and_flush_sst(
-                    &engine,
+                // Build flush params with compression
+                let flush_params = operations::build_sst_flush_params_with_compression(
                     &env,
-                    vectors
+                    vectors,
+                    &config.algorithm,
+                    config.level,
                 ).await?;
+                
+                // Flush with compression
+                let start_flush = Instant::now();
+                let flush_result = engine.do_flush(&flush_params).await?;
+                if !flush_result.success {
+                    return Err(anyhow::anyhow!("SST flush failed"));
+                }
+                
                 let flush_time = start_flush.elapsed().as_millis() as u64;
                 flush_times.push(flush_time);
                 batch_summary.push(flush_time);
@@ -507,27 +533,25 @@ async fn run_benchmark(
             let avg_latency = query_latencies.iter().sum::<f64>() / query_latencies.len() as f64;
             println!("        VIPER avg query latency: {:.2}ms", avg_latency);
             
-            // Calculate metrics with detailed reporting
+            // Calculate metrics - VIPER writes to {base_location}/{collection_id}/data
             println!("      Calculating VIPER compressed size:");
-            let mut compressed_size = get_directory_size(env.get_viper_data_directory().to_str().unwrap()).await;
+            let viper_actual_dir = env.base_path.join("data").join(env.collection_id()).join("data");
+            let mut compressed_size = if viper_actual_dir.exists() {
+                println!("        Checking VIPER data in: {}", viper_actual_dir.display());
+                get_directory_size(viper_actual_dir.to_str().unwrap()).await
+            } else {
+                // Fallback to viper_data directory
+                get_directory_size(env.get_viper_data_directory().to_str().unwrap()).await
+            };
             
             if compressed_size == 0 {
-                println!("        Checking for VIPER data in subdirectories...");
+                println!("        Checking for VIPER data in alternate locations...");
                 
-                // VIPER might store files in collection-specific subdirectory
-                let collection_dir = env.get_viper_data_directory().join(env.collection_id());
-                if collection_dir.exists() {
-                    compressed_size = get_directory_size(collection_dir.to_str().unwrap()).await;
-                    println!("        Found collection subdirectory with size: {} bytes", compressed_size);
-                }
-                
-                // Also check for parquet subdirectory
-                if compressed_size == 0 {
-                    let parquet_dir = env.get_viper_data_directory().join("parquet");
-                    if parquet_dir.exists() {
-                        compressed_size = get_directory_size(parquet_dir.to_str().unwrap()).await;
-                        println!("        Found parquet subdirectory with size: {} bytes", compressed_size);
-                    }
+                // Check collection_id/data subdirectory
+                let collection_data_dir = env.get_viper_data_directory().join(env.collection_id()).join("data");
+                if collection_data_dir.exists() {
+                    compressed_size = get_directory_size(collection_data_dir.to_str().unwrap()).await;
+                    println!("        Found in collection/data subdirectory: {} bytes", compressed_size);
                 }
                 
                 // If still 0, estimate based on data
