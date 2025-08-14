@@ -53,7 +53,7 @@ Beyond category creation, ProximaDB's *intelligent multi-engine architecture* de
 |===
 | 💰 | *Potential 81-86% total cost reduction* across compute, storage, and network infrastructure^*^
 | ⚡ | *Estimated 1-3 month payback period* for typical enterprise deployments^*^
-| 📈 | *Projected $200,000-400,000 annual savings* for large-scale applications (100M+ vectors)^*^
+| 📈 | *Projected $30,000-50,000 annual savings* for enterprise applications (10M vectors)^*^
 | 🏢 | *Enterprise landing zone compliant* - deploys within existing governance frameworks
 |===
 
@@ -74,7 +74,7 @@ _^*^Based on theoretical models and assumptions. Actual results will vary signif
 | 🌐 | *Query Bandwidth*: Potential 60-85% reduction in network traffic through intelligent filtering^*^
 | ⚡ | *Latency Improvement*: Potential 2-5× faster response times (SST: 2-3×, VIPER: 3-5× for analytics)^*^
 | 🛡️ | *Noisy Neighbor Isolation*: Dedicated engine resources designed to reduce cross-workload interference^*^
-| 📊 | *Concurrent Query Capacity*: Potential 3-7× higher throughput (1,770 QPS vs 842 QPS baseline)^*^
+| 📊 | *Query Capacity*: 1,000-1,500 QPS on single optimized server^*^
 |===
 
 [.small]
@@ -86,11 +86,11 @@ _^*^Performance improvements are theoretical projections based on internal testi
 * 🔸 *Hybrid Deployment*: Intelligent workload routing for 75-85% total cost reduction
 * 🔸 *Automatic Optimization*: AXIS tiering adapts to changing access patterns
 
-==== Enterprise Integration
-* ✅ Seamless deployment in AWS Control Tower, Azure Landing Zones, GCP Organization hierarchy
-* ✅ Leverages existing network hubs (Transit Gateway, Virtual WAN, Cloud Router)
-* ✅ Optimized routing eliminates data egress charges within landing zone
-* ✅ Built-in compliance with enterprise security and governance policies
+==== Deployment Simplicity
+* ✅ Single-server architecture eliminates distributed system complexity
+* ✅ Vertical scaling: Just upgrade instance size as needed
+* ✅ Deploys on any cloud provider or on-premise hardware
+* ✅ No coordination overhead, no consensus protocols, no replica management
 
 ==== Projected Financial Returns (Illustrative Examples)
 
@@ -362,7 +362,7 @@ Built-in monitoring: $4,500
 
 [cols="2,2,2,1,2", options="header"]
 |===
-| Workload Distribution | Recommended Strategy | Annual Cost (100M vectors) | Cost Reduction | Best For
+| Workload Distribution | Recommended Strategy | Annual Cost (10M vectors) | Cost Reduction | Best For
 
 | *90% Transactional* +
 10% Analytics
@@ -496,7 +496,7 @@ For detailed technical specifications and deployment-specific configurations, se
 | Enterprise platforms, growth scenarios
 |===
 
-=== Large Deployment (100M vectors, $625,000 baseline cost)
+=== Enterprise Deployment (10M vectors, single server)
 
 [cols="2,2,2,2,3", options="header"]
 |===
@@ -619,46 +619,46 @@ image::aws-landing-zone.svg[AWS Control Tower Landing Zone with ProximaDB,width=
 * 🔗 *Interface Endpoints*: $7.20/month + $0.01/GB for comprehensive AWS service access
 * 🔒 *Cross-Account Security*: Centralized security groups and NACLs via Control Tower
 
-==== 💰 Cost Analysis for AWS Landing Zone (100TB Dataset)
+==== 💰 Cost Analysis for AWS Infrastructure (10M vectors, 1000 QPS workload)
 
 [cols="3,2,2,2", options="header"]
 |===
 | AWS Infrastructure Component | Traditional Vector DB | ProximaDB Optimized | Enterprise Savings
 
 | *🖥️ Compute Resources*
-| 8× m7i.2xlarge for vector ops +
-$2,304/mo
-| 3× m7i.2xlarge (optimized) +
+| 3× m7i.2xlarge traditional DB +
 $864/mo
-| *$1,440/mo (62%)*
+| 1× m7i.4xlarge ProximaDB +
+$576/mo
+| *$288/mo (33%)*
 
 | *🌐 Network Transfer*
-| Cross-AZ transfers: $200/mo +
-API Gateway: $130/mo +
-Load balancer: $108/mo
-| Reduced transfers: $60/mo +
-Direct gRPC: $0/mo +
-Internal routing: $108/mo
-| *$270/mo (62%)*
+| API Gateway: $130/mo +
+Load balancer: $108/mo +
+Data transfer: $100/mo
+| Direct gRPC: $0/mo +
+Single instance: $25/mo +
+Batch transfers: $30/mo
+| *$283/mo (84%)*
 
 | *💾 Storage & I/O*
 | S3 Standard: $2,300/mo +
 EBS gp3: $800/mo +
 API calls: $500/mo
 | S3 with compression: $575/mo +
-EBS optimized: $240/mo +
+EBS gp3: $400/mo +
 Batch APIs: $25/mo
-| *$2,760/mo (77%)*
+| *$2,600/mo (72%)*
 
 | *📊 Total Monthly*
-| *$5,342/mo*
-| *$1,872/mo*
-| *$3,470/mo (65%)*
+| *$4,802/mo*
+| *$1,631/mo*
+| *$3,171/mo (66%)*
 
 | *💰 Annual Savings*
-| N/A
-| N/A
-| *$56,400*
+| *$57,624/year*
+| *$19,572/year*
+| *$38,052/year saved*
 |===
 
 ==== ✨ AWS-Specific Landing Zone Advantages
@@ -689,46 +689,46 @@ image::azure-landing-zone.svg[Azure Enterprise-Scale Landing Zone with ProximaDB
 * 🔗 *Private Endpoints*: $7.20/month + $0.01/GB for comprehensive PaaS connectivity
 * 🔒 *Cross-Subscription Security*: Centralized network security groups and Azure Firewall
 
-==== 💰 Cost Analysis for Azure Infrastructure (100TB Dataset)
+==== 💰 Cost Analysis for Azure Infrastructure (10M vectors, 1000 QPS workload)
 
 [cols="3,2,2,2", options="header"]
 |===
 | Azure Infrastructure Component | Traditional Vector DB | ProximaDB Optimized | Enterprise Savings
 
-| *🖥️ Multi-Subscription Compute*
-| 8× D8s_v5 across subscriptions +
-$2,208/mo
-| 3× D8s_v5 optimized +
+| *🖥️ Compute Resources*
+| 3× D8s_v5 traditional DB +
 $828/mo
-| *$1,380/mo (62%)*
+| 1× D16s_v5 ProximaDB +
+$552/mo
+| *$276/mo (33%)*
 
-| *🌐 Virtual WAN Architecture*
-| VWAN Hub: $175/mo +
-Data processing: $200/mo +
-Private endpoints: $130/mo
-| VWAN Hub: $175/mo +
-Optimized processing: $60/mo +
-Free Service endpoints: $0/mo
-| *$270/mo (53%)*
+| *🌐 Network Transfer*
+| Application Gateway: $175/mo +
+Load balancer: $100/mo +
+Data transfer: $125/mo
+| Direct gRPC: $0/mo +
+Single instance: $25/mo +
+Batch transfers: $35/mo
+| *$340/mo (85%)*
 
-| *💾 Storage & APIs*
-| Blob: $1,840/mo +
+| *💾 Storage & I/O*
+| Blob Standard: $1,840/mo +
 Premium SSD: $1,200/mo +
 API operations: $650/mo
-| Blob: $276/mo +
-Premium SSD: $360/mo +
-Reduced APIs: $33/mo
-| *$3,021/mo (82%)*
+| Blob with compression: $460/mo +
+Premium SSD: $400/mo +
+Batch APIs: $33/mo
+| *$2,797/mo (76%)*
 
 | *📊 Total Monthly*
-| *$7,253/mo*
-| *$1,642/mo*
-| *$5,611/mo (77%)*
+| *$4,918/mo*
+| *$1,505/mo*
+| *$3,413/mo (69%)*
 
 | *💰 Annual Savings*
-| N/A
-| N/A
-| *$67,332*
+| *$59,016/year*
+| *$18,060/year*
+| *$40,956/year saved*
 |===
 
 ==== ✨ Azure-Specific Landing Zone Advantages
@@ -759,46 +759,46 @@ image::gcp-landing-zone.svg[GCP Organization Landing Zone with ProximaDB,width=9
 * 🔗 *Private Google Access*: FREE routing for GCS, BigQuery, and major services
 * 🔗 *Private Service Connect*: $7.20/month + $0.01/GB for comprehensive API access
 
-==== 💰 Cost Analysis for GCP Infrastructure (100TB Dataset)
+==== 💰 Cost Analysis for GCP Infrastructure (10M vectors, 1000 QPS workload)
 
 [cols="3,2,2,2", options="header"]
 |===
 | GCP Infrastructure Component | Traditional Vector DB | ProximaDB Optimized | Enterprise Savings
 
 | *🖥️ Compute Resources*
-| 8× c3-standard-8 across projects +
-$2,048/mo
-| 3× c3-standard-8 optimized +
+| 3× c3-standard-8 traditional DB +
 $768/mo
-| *$1,280/mo (62%)*
+| 1× c3-standard-16 ProximaDB +
+$512/mo
+| *$256/mo (33%)*
 
 | *🌐 Network Transfer*
-| Intra-region transfers: $100/mo +
-Load balancer: $130/mo +
-API Gateway: $54/mo
-| Reduced transfers: $30/mo +
-Direct gRPC: $0/mo +
-Internal routing: $36/mo
-| *$218/mo (77%)*
+| Load balancer: $130/mo +
+API Gateway: $54/mo +
+Data transfer: $90/mo
+| Direct gRPC: $0/mo +
+Single instance: $20/mo +
+Batch transfers: $25/mo
+| *$229/mo (83%)*
 
 | *💾 Storage & I/O*
 | Cloud Storage Standard: $2,000/mo +
 Persistent Disk pd-balanced: $1,700/mo +
 API operations: $500/mo
 | Cloud Storage with compression: $500/mo +
-Persistent Disk optimized: $510/mo +
+Persistent Disk pd-ssd: $340/mo +
 Batch APIs: $25/mo
-| *$3,165/mo (76%)*
+| *$3,335/mo (79%)*
 
 | *📊 Total Monthly*
-| *$5,482/mo*
-| *$1,819/mo*
-| *$3,663/mo (67%)*
+| *$5,242/mo*
+| *$1,422/mo*
+| *$3,820/mo (73%)*
 
 | *💰 Annual Savings*
-| N/A
-| N/A
-| *$59,196*
+| *$62,904/year*
+| *$17,064/year*
+| *$45,840/year saved*
 |===
 
 ==== ✨ GCP-Specific Landing Zone Advantages
@@ -1173,6 +1173,43 @@ You can deploy ProximaDB on any cloud provider or on-premise:
 * **Azure**: Virtual Machines with Premium SSD
 * **GCP**: Compute Engine with Persistent Disk
 * **On-Premise**: Bare metal or virtualized servers
+
+=== Server Sizing Guidelines
+
+[cols="2,2,2,2,2", options="header"]
+|===
+| Vector Count | QPS Required | AWS Instance | Azure Instance | GCP Instance
+
+| *1-5M vectors*
+| 100-500 QPS
+| m7i.xlarge
+| D4s_v5
+| c3-standard-4
+
+| *5-10M vectors*
+| 500-1000 QPS
+| m7i.2xlarge
+| D8s_v5
+| c3-standard-8
+
+| *10-25M vectors*
+| 1000-1500 QPS
+| m7i.4xlarge
+| D16s_v5
+| c3-standard-16
+
+| *25-50M vectors*
+| 1500-2000 QPS
+| m7i.8xlarge
+| D32s_v5
+| c3-standard-32
+
+| *50-100M vectors*
+| 2000+ QPS
+| m7i.12xlarge
+| D48s_v5
+| c3-highmem-44
+|===
 
 === Future Roadmap
 [NOTE]
