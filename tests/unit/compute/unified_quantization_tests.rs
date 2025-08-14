@@ -1,7 +1,7 @@
 //! Unified Quantization Tests
 //!
 //! Tests for the unified quantization system that provides storage-agnostic
-//! quantization across VIPER and LSM engines.
+//! quantization across VIPER and SST engines.
 
 use proximadb::compute::{
     UnifiedQuantizationEngine, UnifiedQuantizationLevel, UnifiedDistanceCompute,

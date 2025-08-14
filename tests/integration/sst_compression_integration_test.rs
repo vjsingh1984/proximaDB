@@ -193,6 +193,11 @@ async fn test_sst_flush_with_compression() -> anyhow::Result<()> {
     // Flush vectors
     let vectors = create_test_vectors(1000, 256, "flush_test");
     let base_path = temp_dir.path().to_str().unwrap();
+    
+    // Create collection data directory as SST writes to {base_path}/{collection_id}/data
+    let collection_data_dir = temp_dir.path().join("test_collection").join("data");
+    tokio::fs::create_dir_all(&collection_data_dir).await?;
+    
     let collection_config = create_test_collection_with_storage("test_collection", base_path);
     let flush_params = proximadb::storage::traits::FlushParameters {
         collection_id: Some("test_collection".to_string()),
@@ -261,6 +266,11 @@ async fn test_sst_compaction_with_compression() -> anyhow::Result<()> {
     
     // Create multiple SST files to trigger compaction
     let base_path = temp_dir.path().to_str().unwrap();
+    
+    // Create collection data directory as SST writes to {base_path}/{collection_id}/data
+    let collection_data_dir = temp_dir.path().join("test_compaction").join("data");
+    tokio::fs::create_dir_all(&collection_data_dir).await?;
+    
     for batch in 0..3 {
         let vectors = create_test_vectors(500, 128, &format!("batch_{}", batch));
         let collection_config = create_test_collection_with_storage("test_compaction", base_path);
@@ -384,6 +394,11 @@ async fn test_sst_search_compressed_blocks() -> anyhow::Result<()> {
     
     // Flush all vectors
     let base_path = temp_dir.path().to_str().unwrap();
+    
+    // Create collection data directory as SST writes to {base_path}/{collection_id}/data
+    let collection_data_dir = temp_dir.path().join("test_search").join("data");
+    tokio::fs::create_dir_all(&collection_data_dir).await?;
+    
     let collection_config = create_test_collection_with_storage("test_search", base_path);
     let flush_params = proximadb::storage::traits::FlushParameters {
         collection_id: Some("test_search".to_string()),
@@ -480,6 +495,11 @@ async fn test_compression_algorithm_vs_disabled() -> anyhow::Result<()> {
     ).await?;
     
     let base_path = temp_dir_compressed.path().to_str().unwrap();
+    
+    // Create collection data directory
+    let collection_data_dir = temp_dir_compressed.path().join("compressed_test").join("data");
+    tokio::fs::create_dir_all(&collection_data_dir).await?;
+    
     let collection_config = create_test_collection_with_storage("compressed_test", base_path);
     let flush_params = proximadb::storage::traits::FlushParameters {
         collection_id: Some("compressed_test".to_string()),
@@ -501,6 +521,11 @@ async fn test_compression_algorithm_vs_disabled() -> anyhow::Result<()> {
     ).await?;
     
     let base_path_uncompressed = temp_dir_uncompressed.path().to_str().unwrap();
+    
+    // Create collection data directory
+    let collection_data_dir = temp_dir_uncompressed.path().join("uncompressed_test").join("data");
+    tokio::fs::create_dir_all(&collection_data_dir).await?;
+    
     let collection_config = create_test_collection_with_storage("uncompressed_test", base_path_uncompressed);
     let flush_params = proximadb::storage::traits::FlushParameters {
         collection_id: Some("uncompressed_test".to_string()),

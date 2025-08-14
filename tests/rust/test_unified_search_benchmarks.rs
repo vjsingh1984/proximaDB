@@ -83,7 +83,7 @@ impl UnifiedSearchBenchmark {
             global_memtable,
             collection_service.clone(),
             None, // viper_engine
-            None, // lsm_engine
+            None, // sst_engine
             filesystem_factory,
         ));
         
@@ -286,7 +286,7 @@ impl UnifiedSearchBenchmark {
                     false, // include_vectors
                     false, // include_metadata
                 ),
-                self.direct_service.search_lsm_engine_enhanced(
+                self.direct_service.search_sst_engine_enhanced(
                     collection_id,
                     &query_vector,
                     k,

@@ -12,10 +12,10 @@ use proximadb::storage::engines::viper::engine::ViperEngine;
 use proximadb::storage::memtable::core::MemtableConfig;
 use proximadb::storage::persistence::filesystem::FilesystemFactory;
 
-/// Test LSM engine expired record deletion through the full pipeline:
+/// Test SST engine expired record deletion through the full pipeline:
 /// WAL → Flush → Compaction → Physical deletion
 #[tokio::test]
-async fn test_lsm_expired_record_full_pipeline() -> Result<()> {
+async fn test_sst_expired_record_full_pipeline() -> Result<()> {
     let temp_dir = tempfile::tempdir()?;
     let data_dir = temp_dir.path().to_path_buf();
     

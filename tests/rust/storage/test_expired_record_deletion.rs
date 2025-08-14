@@ -10,7 +10,7 @@ use proximadb::storage::engines::sst::mod::SstRecord;
 use proximadb::core::SstConfig;
 
 #[tokio::test]
-async fn test_lsm_expired_record_deletion() -> Result<()> {
+async fn test_sst_expired_record_deletion() -> Result<()> {
     let temp_dir = tempfile::tempdir()?;
     let data_dir = temp_dir.path().to_path_buf();
     

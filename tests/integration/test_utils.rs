@@ -130,8 +130,9 @@ impl IsolatedTestEnvironment {
     pub fn create_test_collection(&self) -> proximadb::proto::proximadb::Collection {
         use proximadb::proto::proximadb::{Collection, CollectionConfig, StorageAssignment, CollectionStats, DistanceMetric, StorageEngine};
         
-        // FIXED: Use persistent_dir instead of temp_dir for storage assignment
-        let base_path = self.persistent_dir.to_str().unwrap();
+        // Use parent of persistent_dir as base_location
+        // SST will append {collection_id}/data to this path
+        let base_path = self.persistent_dir.parent().unwrap().to_str().unwrap();
         let storage_assignment = StorageAssignment {
             base_location: format!("file://{}", base_path),
             assigned_at: chrono::Utc::now().timestamp_millis(),

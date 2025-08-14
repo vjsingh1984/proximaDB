@@ -28,7 +28,7 @@ use super::sst_test_config::{
 };
 
 #[tokio::test]
-async fn test_lsm_atomic_flush_creates_staging_directory() {
+async fn test_sst_atomic_flush_creates_staging_directory() {
     common::setup_hardware_capabilities();
     let temp_dir = TempDir::new().unwrap();
     let base_path = temp_dir.path();
@@ -161,7 +161,7 @@ async fn test_lsm_atomic_flush_creates_staging_directory() {
 }
 
 #[tokio::test]
-async fn test_lsm_atomic_flush_rollback_on_failure() {
+async fn test_sst_atomic_flush_rollback_on_failure() {
     common::setup_hardware_capabilities();
     let temp_dir = TempDir::new().unwrap();
     let base_path = temp_dir.path();
@@ -247,7 +247,7 @@ async fn test_lsm_atomic_flush_rollback_on_failure() {
 }
 
 #[tokio::test]
-async fn test_lsm_atomic_compaction_with_staging() {
+async fn test_sst_atomic_compaction_with_staging() {
     common::setup_hardware_capabilities();
     let temp_dir = TempDir::new().unwrap();
     let base_path = temp_dir.path();
@@ -382,7 +382,7 @@ async fn test_lsm_atomic_compaction_with_staging() {
 }
 
 #[tokio::test]
-async fn test_lsm_sequential_flush_within_collection() {
+async fn test_sst_sequential_flush_within_collection() {
     common::setup_hardware_capabilities();
     // This test models real-world behavior where flushes within a collection
     // are sequential (triggered by threshold), not concurrent

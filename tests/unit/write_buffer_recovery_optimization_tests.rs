@@ -154,13 +154,13 @@ mod recovery_tests {
         
         // Mock storage engines
         let viper_engine = create_mock_viper_engine().await?;
-        let lsm_engine = create_mock_lsm_engine().await?;
+        let sst_engine = create_mock_sst_engine().await?;
         
         // Create VectorOperationsService and trigger recovery
         let service = VectorOperationsService::new(
             wal_config,
             viper_engine,
-            lsm_engine,
+            sst_engine,
         ).await?;
         
         // Recovery should have happened during initialization
@@ -199,13 +199,13 @@ mod recovery_tests {
         };
         
         let viper_engine = create_mock_viper_engine().await?;
-        let lsm_engine = create_mock_lsm_engine().await?;
+        let sst_engine = create_mock_sst_engine().await?;
         
         // Recovery should skip corrupted file but process valid ones
         let service = VectorOperationsService::new(
             wal_config,
             viper_engine,
-            lsm_engine,
+            sst_engine,
         ).await?;
         
         // Valid file should be cleaned up
@@ -270,14 +270,14 @@ mod recovery_tests {
         };
         
         let viper_engine = create_mock_viper_engine().await?;
-        let lsm_engine = create_mock_lsm_engine().await?;
+        let sst_engine = create_mock_sst_engine().await?;
         
         // Measure recovery time
         let start = std::time::Instant::now();
         let service = VectorOperationsService::new(
             wal_config,
             viper_engine,
-            lsm_engine,
+            sst_engine,
         ).await?;
         let recovery_time = start.elapsed();
         
@@ -335,13 +335,13 @@ mod recovery_tests {
         };
         
         let viper_engine = create_mock_viper_engine().await?;
-        let lsm_engine = create_mock_lsm_engine().await?;
+        let sst_engine = create_mock_sst_engine().await?;
         
         // Should recover from all directories
         let service = VectorOperationsService::new(
             wal_config,
             viper_engine,
-            lsm_engine,
+            sst_engine,
         ).await?;
         
         // Verify all directories were processed
@@ -390,8 +390,8 @@ async fn create_mock_viper_engine() -> Result<Arc<ViperEngine>> {
     Ok(Arc::new(engine))
 }
 
-/// Helper to create mock LSM engine for testing  
-async fn create_mock_lsm_engine() -> Result<Arc<LsmTree>> {
+/// Helper to create mock SST engine for testing  
+async fn create_mock_sst_engine() -> Result<Arc<LsmTree>> {
     use proximadb::storage::engines::sst::{SstConfig, LsmTree};
     
     let mut config = SstConfig::default();

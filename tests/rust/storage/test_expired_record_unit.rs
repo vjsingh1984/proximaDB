@@ -10,7 +10,7 @@ use proximadb::storage::engines::sst::SstRecord;
 
 /// Unit test for LSM compaction expired record deletion logic
 #[tokio::test]
-async fn test_lsm_compaction_expired_deletion_unit() -> Result<()> {
+async fn test_sst_compaction_expired_deletion_unit() -> Result<()> {
     // Create test data with controlled timestamps
     let current_time = Utc::now().timestamp() as u32;
     let expired_time = current_time - (5 * 60 * 60); // 5 hours ago

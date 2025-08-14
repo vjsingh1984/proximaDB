@@ -140,8 +140,8 @@ async fn create_direct_vector_service(config: &WalOptimizationTestConfig) -> Res
         filesystem_factory.clone()
     ).await?);
     
-    // Create test LSM engine  
-    let lsm_config = SstConfig {
+    // Create test SST engine  
+    let sst_config = SstConfig {
         data_directory: temp_path.to_string(),
         block_size_mb: 3,
         cache_size_mb: 64,
@@ -166,8 +166,8 @@ async fn create_direct_vector_service(config: &WalOptimizationTestConfig) -> Res
         prefetch_size_kb: 64,
     };
     let distance_compute = Arc::new(proximadb::compute::distance_computation::UnifiedDistanceCompute::new(proximadb::compute::distance_computation::DistanceMetric::Cosine));
-    let lsm_engine = Arc::new(SstStorage::new(
-        lsm_config, 
+    let sst_engine = Arc::new(SstStorage::new(
+        sst_config, 
         filesystem_factory,
         distance_compute
     ).await?);
@@ -176,7 +176,7 @@ async fn create_direct_vector_service(config: &WalOptimizationTestConfig) -> Res
     VectorOperationsService::new(
         wal_config,
         viper_engine,
-        lsm_engine,
+        sst_engine,
     ).await
 }
 

@@ -15,7 +15,7 @@ use proximadb::storage::persistence::write_ahead_log::background_manager::Backgr
 use proximadb::storage::persistence::write_ahead_log::config::WALConfig;
 
 /// Helper function to create test LSM records
-fn create_test_lsm_records(collection_id: &str, count: usize) -> Vec<SstRecord> {
+fn create_test_sst_records(collection_id: &str, count: usize) -> Vec<SstRecord> {
     let now = chrono::Utc::now().timestamp_millis();
     
     (0..count)
@@ -90,9 +90,9 @@ async fn test_compaction_trigger_conditions() -> Result<()> {
     };
     
     // Create test records
-    let records_file1 = create_test_lsm_records(collection_id, 100);
-    let records_file2 = create_test_lsm_records(collection_id, 150);
-    let records_file3 = create_test_lsm_records(collection_id, 200);
+    let records_file1 = create_test_sst_records(collection_id, 100);
+    let records_file2 = create_test_sst_records(collection_id, 150);
+    let records_file3 = create_test_sst_records(collection_id, 200);
     
     // Create SST files
     let sst_file1 = collection_dir.join("sst_1.sst");
@@ -142,7 +142,7 @@ async fn test_compaction_priority_levels() -> Result<()> {
     };
     
     // Create test records
-    let records = create_test_lsm_records(collection_id, 100);
+    let records = create_test_sst_records(collection_id, 100);
     let input_file = collection_dir.join("input.sst");
     create_test_sst_file(&input_file, &records).await?;
     
@@ -348,7 +348,7 @@ async fn test_compaction_level_configuration() -> Result<()> {
         assert!(config.memtable_size_mb > 0);
         
         // Test compaction with different levels
-        let records = create_test_lsm_records(collection_id, 100);
+        let records = create_test_sst_records(collection_id, 100);
         let input_file = collection_dir.join(format!("input_level_{}.sst", level_count));
         create_test_sst_file(&input_file, &records).await?;
         
@@ -388,7 +388,7 @@ async fn test_compaction_performance_metrics() -> Result<()> {
     };
     
     // Create larger dataset for performance testing
-    let large_records = create_test_lsm_records(collection_id, 5000);
+    let large_records = create_test_sst_records(collection_id, 5000);
     let input_file = collection_dir.join("large_input.sst");
     create_test_sst_file(&input_file, &large_records).await?;
     

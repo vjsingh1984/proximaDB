@@ -295,7 +295,7 @@ async fn test_compaction_operations() {
     setup_hardware_capabilities();
     let (direct_service, collection_service, filesystem, _temp_dir) = create_test_setup().await;
     
-    // Create test collection with LSM engine for compaction testing
+    // Create test collection with SST engine for compaction testing
     let config = CollectionConfig {
         name: "compaction_test_collection".to_string(),
         dimension: 128,
@@ -350,8 +350,8 @@ async fn test_compaction_operations() {
     
     assert!(pre_compaction_results.vectors.len() > 0);
     
-    // Create LSM engine for compaction testing
-    let lsm_config = proximadb::core::SstConfig {
+    // Create SST engine for compaction testing
+    let sst_config = proximadb::core::SstConfig {
         memtable_size_mb: 1,
         level_count: 7,
         compaction_threshold: 2,
@@ -374,10 +374,10 @@ async fn test_compaction_operations() {
         ..Default::default()
     };
     
-    let lsm_engine = LsmEngine::new(lsm_config, filesystem.clone()).await.unwrap();
+    let sst_engine = LsmEngine::new(sst_config, filesystem.clone()).await.unwrap();
     
     // Trigger compaction
-    lsm_engine.compact_collection("compaction_test_collection").await.unwrap();
+    sst_engine.compact_collection("compaction_test_collection").await.unwrap();
     
     // Verify all data is still searchable after compaction
     let post_compaction_results = direct_service
@@ -419,7 +419,7 @@ async fn test_cross_engine_consistency() {
                 optimization_hints: None,
             };
     
-    let lsm_config = CollectionConfig {
+    let sst_config = CollectionConfig {
         name: "lsm_consistency_test".to_string(),
         dimension: 128,
         distance_metric: DistanceMetric::Cosine as i32,
@@ -431,7 +431,7 @@ async fn test_cross_engine_consistency() {
             };
     
     collection_service.create_collection(&viper_config).await.unwrap();
-    collection_service.create_collection(&lsm_config).await.unwrap();
+    collection_service.create_collection(&sst_config).await.unwrap();
     
     // Insert identical data to both engines
     let vectors = create_test_vectors("consistency_test", 200);

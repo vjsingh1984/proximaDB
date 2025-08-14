@@ -363,10 +363,13 @@ async fn test_viper_flush_with_compression() -> anyhow::Result<()> {
     info!("Flushed {} records", flush_result.entries_flushed);
     
     // Verify compression by reading Parquet file from actual storage location
-    // Assignment service removed - use temp dir directly
-    let data_path = format!("/tmp/proximadb_test_test_collection");
+    // Create collection data directory as VIPER writes to {base_path}/{collection_id}/data
+    let collection_data_dir = temp_dir.path().join("test_collection").join("data");
+    tokio::fs::create_dir_all(&collection_data_dir).await?;
     
-    let parquet_files = find_parquet_files_recursive(&data_path);
+    // Look for parquet files in the temp directory where they were actually written
+    let data_path = temp_dir.path().to_str().unwrap();
+    let parquet_files = find_parquet_files_recursive(data_path);
     
     assert!(!parquet_files.is_empty());
     
@@ -533,10 +536,13 @@ async fn test_viper_compaction_with_compression() -> anyhow::Result<()> {
     }
     
     // Get file count before compaction
-    // Assignment service removed - use temp dir directly
-    let storage_path = format!("/tmp/proximadb_test_compaction_test");
+    // Create collection data directory as VIPER writes to {base_path}/{collection_id}/data
+    let collection_data_dir = temp_dir.path().join("compaction_test").join("data");
+    tokio::fs::create_dir_all(&collection_data_dir).await?;
     
-    let files_before = find_parquet_files_recursive(&storage_path);
+    // Look for parquet files in the temp directory where they were actually written
+    let storage_path = temp_dir.path().to_str().unwrap();
+    let files_before = find_parquet_files_recursive(storage_path);
     
     info!("Files before compaction: {}", files_before.len());
     assert!(files_before.len() >= 5);
@@ -550,7 +556,7 @@ async fn test_viper_compaction_with_compression() -> anyhow::Result<()> {
     assert!(compaction_result.success);
     
     // Get file count after compaction
-    let files_after = find_parquet_files_recursive(&storage_path);
+    let files_after = find_parquet_files_recursive(storage_path);
     
     info!("Files after compaction: {}", files_after.len());
     
@@ -634,10 +640,13 @@ async fn test_compression_algorithms_comparison() -> anyhow::Result<()> {
         let duration = start.elapsed();
         
         // Get file size
-        // Assignment service removed - use temp dir directly
-        let storage_path = format!("/tmp/proximadb_test_algo_test");
+        // Create collection data directory as VIPER writes to {base_path}/{collection_id}/data
+        let collection_data_dir = temp_dir.path().join("algo_test").join("data");
+        tokio::fs::create_dir_all(&collection_data_dir).await?;
         
-        let parquet_files = find_parquet_files_recursive(&storage_path);
+        // Look for parquet files in the temp directory where they were actually written
+        let storage_path = temp_dir.path().to_str().unwrap();
+        let parquet_files = find_parquet_files_recursive(storage_path);
         let total_size: u64 = parquet_files.iter()
             .map(|path| std::fs::metadata(path).unwrap().len())
             .sum();
@@ -729,10 +738,13 @@ async fn test_compression_algorithm_vs_disabled() -> anyhow::Result<()> {
         engine.do_flush(&flush_params).await?;
         
         // Get total file size
-        // Assignment service removed - use temp dir directly
-        let storage_path = format!("/tmp/proximadb_test_compression_test");
+        // Create collection data directory as VIPER writes to {base_path}/{collection_id}/data
+        let collection_data_dir = temp_dir.path().join("compression_test").join("data");
+        tokio::fs::create_dir_all(&collection_data_dir).await?;
         
-        let parquet_files = find_parquet_files_recursive(&storage_path);
+        // Look for parquet files in the temp directory where they were actually written
+        let storage_path = temp_dir.path().to_str().unwrap();
+        let parquet_files = find_parquet_files_recursive(storage_path);
         let total_size: u64 = parquet_files.iter()
             .map(|path| std::fs::metadata(path).unwrap().len())
             .sum();

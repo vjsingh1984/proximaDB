@@ -32,7 +32,7 @@ mod common {
 use common::unique_collection_id;
 
 #[tokio::test]
-async fn test_lsm_collection_with_proper_routing() {
+async fn test_sst_collection_with_proper_routing() {
     common::setup_hardware_capabilities();
     let _ = tracing_subscriber::fmt::try_init();
     
@@ -87,7 +87,7 @@ async fn test_lsm_collection_with_proper_routing() {
     );
     
     // Create collection with LSM storage engine
-    let collection_name = &unique_collection_id("test_lsm_collection");
+    let collection_name = &unique_collection_id("test_sst_collection");
     let collection_config = CollectionConfig {
         name: collection_name.to_string(),
         dimension: 3,
@@ -121,10 +121,10 @@ async fn test_lsm_collection_with_proper_routing() {
         filesystem.clone()
     ).await.unwrap());
     
-    // Create LSM engine with bloom filter config
-    let mut lsm_config = SstConfig::default();
-    lsm_config.data_directory = format!("{}/lsm", base_path);
-    lsm_config.bloom_filter_config = Some(proximadb::core::config::BloomFilterConfig {
+    // Create SST engine with bloom filter config
+    let mut sst_config = SstConfig::default();
+    sst_config.data_directory = format!("{}/lsm", base_path);
+    sst_config.bloom_filter_config = Some(proximadb::core::config::BloomFilterConfig {
         bits_per_key: 10,
         enabled: true,
         ..Default::default()
@@ -133,8 +133,8 @@ async fn test_lsm_collection_with_proper_routing() {
     // Create distance compute for SST storage
     let distance_compute = Arc::new(UnifiedDistanceCompute::new(proximadb::compute::distance_computation::DistanceMetric::Cosine));
     
-    let lsm_engine = Arc::new(
-        SstStorage::new(lsm_config, filesystem.clone(), distance_compute.clone())
+    let sst_engine = Arc::new(
+        SstStorage::new(sst_config, filesystem.clone(), distance_compute.clone())
             .await
             .unwrap()
     );
@@ -142,7 +142,7 @@ async fn test_lsm_collection_with_proper_routing() {
     // Create flush coordinator and register engines
     let flush_coordinator = Arc::new(WALFlushCoordinator::new());
     flush_coordinator.register_storage_engine("VIPER", viper_engine.clone()).await;
-    flush_coordinator.register_storage_engine("LSM", lsm_engine.clone()).await;
+    flush_coordinator.register_storage_engine("LSM", sst_engine.clone()).await;
     
     // Create WAL config
     let mut wal_config = WALConfig::default();
@@ -163,7 +163,7 @@ async fn test_lsm_collection_with_proper_routing() {
         VectorOperationsService::with_collection_service(
             wal_config,
             viper_engine.clone(),
-            lsm_engine.clone(),
+            sst_engine.clone(),
             collection_service.clone(),
         )
         .await
@@ -276,7 +276,7 @@ async fn test_lsm_collection_with_proper_routing() {
     debug!("Flushed collection to {} engine", storage_engine);
     
     // Verify SSTable was created in LSM
-    let storage_url = lsm_engine.get_collection_storage_url(&collection_id).await.unwrap();
+    let storage_url = sst_engine.get_collection_storage_url(&collection_id).await.unwrap();
     debug!("LSM storage URL: {}", storage_url);
     
     // Check the storage location

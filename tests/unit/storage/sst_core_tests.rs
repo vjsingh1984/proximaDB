@@ -29,7 +29,7 @@ use super::sst_test_config::{
 
 /// Test basic SST operations: insert, flush, search
 #[tokio::test]
-async fn test_lsm_basic_operations() {
+async fn test_sst_basic_operations() {
     common::setup_hardware_capabilities();
     let temp_dir = TempDir::new().unwrap();
     let base_path = temp_dir.path();
@@ -281,7 +281,7 @@ async fn test_lsm_basic_operations() {
 
 /// Test SST compaction
 #[tokio::test]
-async fn test_lsm_compaction() {
+async fn test_sst_compaction() {
     common::setup_hardware_capabilities();
     let temp_dir = TempDir::new().unwrap();
     let base_path = temp_dir.path();
@@ -366,7 +366,7 @@ async fn test_lsm_compaction() {
 
 /// Test SST recovery after restart
 #[tokio::test]
-async fn test_lsm_recovery() {
+async fn test_sst_recovery() {
     common::setup_hardware_capabilities();
     let temp_dir = TempDir::new().unwrap();
     let base_path = temp_dir.path();

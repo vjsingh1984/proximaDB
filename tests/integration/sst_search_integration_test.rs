@@ -1,8 +1,8 @@
-//! Integration test for LSM engine search functionality
+//! Integration test for SST engine search functionality
 //!
-//! Tests the complete pipeline: VectorOperationsService -> WAL + Memtable -> Flush -> LSM SSTable -> Search
+//! Tests the complete pipeline: VectorOperationsService -> WAL + Memtable -> Flush -> SST storage -> Search
 //! 
-//! LSM engine is purely SSTable-based storage with:
+//! SST engine is purely SSTable-based storage with:
 //! - Headers with metadata
 //! - Bloom filters for efficient key/metadata lookups  
 //! - Data blocks with vectors
@@ -46,7 +46,7 @@ fn create_test_wal_config(base_path: &str) -> WALConfig {
 }
 
 /// Helper to create test LSM configuration
-fn create_test_lsm_config(base_path: &str) -> SstConfig {
+fn create_test_sst_config(base_path: &str) -> SstConfig {
     SstConfig {
         compaction_threshold: 2,              // Compact after 2 files
         data_directory: format!("{}/sst", base_path),
@@ -94,7 +94,7 @@ fn create_test_collection_with_assignment(collection_id: &str, base_path: &str) 
 }
 
 #[tokio::test]
-async fn test_lsm_search_with_flush() {
+async fn test_sst_search_with_flush() {
     common::setup_hardware_capabilities();
     let _ = tracing_subscriber::fmt::try_init();
     
@@ -103,14 +103,14 @@ async fn test_lsm_search_with_flush() {
     let base_path = temp_dir.path().to_str().unwrap();
     
     // Create directory structure for the collection
-    let collection_id = &unique_collection_id("test_lsm_collection");
+    let collection_id = &unique_collection_id("test_sst_collection");
     // WAL writer creates nested structure: base/collection_id/wal/collection_id/logs/
     let wal_path = format!("{}/{}/wal/{}/logs_dir", base_path, collection_id, collection_id);
     std::fs::create_dir_all(&wal_path).unwrap();
     
     // TODO: Once VectorOperationsService has access to collection service,
     // we should create a collection with LSM storage engine specified.
-    // For now, we'll manually flush to LSM engine.
+    // For now, we'll manually flush to SST engine.
     
     // Assignment service removed - collections now embed storage_assignment
     
@@ -128,14 +128,14 @@ async fn test_lsm_search_with_flush() {
         filesystem.clone()
     ).await.unwrap());
     
-    let lsm_config = create_test_lsm_config(base_path);
+    let sst_config = create_test_sst_config(base_path);
     
     // Create distance compute for SST storage
     let distance_compute = Arc::new(UnifiedDistanceCompute::new(DistanceMetric::Cosine));
     
     // Reuse the same collection_id that was assigned storage
-    let lsm_engine = Arc::new(
-        SstStorage::new(lsm_config.clone(), filesystem.clone(), distance_compute.clone())
+    let sst_engine = Arc::new(
+        SstStorage::new(sst_config.clone(), filesystem.clone(), distance_compute.clone())
             .await
             .unwrap()
     );
@@ -145,7 +145,7 @@ async fn test_lsm_search_with_flush() {
     let direct_service = VectorOperationsService::new(
         wal_config,
         viper_engine,
-        lsm_engine.clone()
+        sst_engine.clone()
     ).await.unwrap();
     
     // Phase 1: Insert vectors (goes to WAL + memtable)
@@ -192,7 +192,7 @@ async fn test_lsm_search_with_flush() {
     debug!("Inserted {} vectors", result.entries_written);
     
     // Phase 2: Since VectorOperationsService defaults to VIPER, we'll directly flush to LSM
-    debug!("\nPhase 2: Directly flushing vectors to LSM SSTables");
+    debug!("\nPhase 2: Directly flushing vectors to SST storages");
     
     // Get all vectors from debug method and convert to core VectorRecords
     let unflushed_proto_vectors = direct_service.debug_list_all_unflushed_vectors(collection_id).await.unwrap();
@@ -232,7 +232,7 @@ async fn test_lsm_search_with_flush() {
     };
     
     // Directly flush to LSM
-    match lsm_engine.do_flush(&flush_params).await {
+    match sst_engine.do_flush(&flush_params).await {
         Ok(result) => {
             debug!("Direct LSM flush result: success={}, entries_flushed={}, files_created={}", 
                 result.success, result.entries_flushed, result.files_created);
@@ -245,16 +245,16 @@ async fn test_lsm_search_with_flush() {
     // Give it a bit more time for the flush to complete
     tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
     
-    // Phase 3: Search from LSM SSTables
-    debug!("\nPhase 3: Searching from LSM SSTables");
+    // Phase 3: Search from SST storages
+    debug!("\nPhase 3: Searching from SST storages");
     
-    // Check where LSM engine expects to find SSTables
-    let lsm_data_dir = &lsm_config.data_directory;
+    // Check where SST engine expects to find SSTables
+    let lsm_data_dir = &sst_config.data_directory;
     debug!("LSM data directory: {}", lsm_data_dir);
     
-    // Get the actual storage URL from assignment service
-    let storage_url = lsm_engine.get_collection_storage_url(collection_id).await.unwrap();
-    debug!("Collection storage URL from assignment: {}", storage_url);
+    // Storage URL is based on the collection's storage assignment
+    let storage_url = format!("file://{}/{}/data", base_path, collection_id);
+    debug!("Collection storage URL: {}", storage_url);
     
     // Check the actual storage location for SSTable files
     let actual_storage_path = storage_url.strip_prefix("file://").unwrap_or(&storage_url);
@@ -277,7 +277,7 @@ async fn test_lsm_search_with_flush() {
     // Test 1: Basic search without filters
     let query = vec![1.0, 0.0, 0.0];
     let storage_url = format!("file://{}/{}/data", base_path, collection_id);
-    let results = lsm_engine.search_vectors_unified(
+    let results = sst_engine.search_vectors_unified(
         collection_id,
         &storage_url,
         &query,
@@ -302,7 +302,7 @@ async fn test_lsm_search_with_flush() {
         value: serde_json::Value::String("A".to_string()),
     };
     
-    let filtered_results = lsm_engine.search_vectors_unified(
+    let filtered_results = sst_engine.search_vectors_unified(
         collection_id,
         &storage_url,
         &query,
@@ -337,7 +337,7 @@ async fn test_lsm_search_with_flush() {
         },
     ]);
     
-    let complex_results = lsm_engine.search_vectors_unified(
+    let complex_results = sst_engine.search_vectors_unified(
         collection_id,
         &storage_url,
         &vec![0.5, 0.5, 0.0],
@@ -354,11 +354,11 @@ async fn test_lsm_search_with_flush() {
         assert_eq!(result.metadata.get("type"), Some(&serde_json::Value::String("secondary".to_string())));
     }
     
-    debug!("✅ All LSM SSTable search tests passed!");
+    debug!("✅ All SST storage search tests passed!");
 }
 
 #[tokio::test]
-async fn test_lsm_compaction_and_search() {
+async fn test_sst_compaction_and_search() {
     common::setup_hardware_capabilities();
     let _ = tracing_subscriber::fmt::try_init();
     
@@ -384,14 +384,14 @@ async fn test_lsm_compaction_and_search() {
         filesystem.clone()
     ).await.unwrap());
     
-    let lsm_config = create_test_lsm_config(base_path);
+    let sst_config = create_test_sst_config(base_path);
     
     // Create distance compute for SST storage
     let distance_compute = Arc::new(UnifiedDistanceCompute::new(DistanceMetric::Cosine));
     
     // Reuse the same collection_id that was assigned storage
-    let lsm_engine = Arc::new(
-        SstStorage::new(lsm_config.clone(), filesystem.clone(), distance_compute.clone())
+    let sst_engine = Arc::new(
+        SstStorage::new(sst_config.clone(), filesystem.clone(), distance_compute.clone())
             .await
             .unwrap()
     );
@@ -400,7 +400,7 @@ async fn test_lsm_compaction_and_search() {
     let direct_service = VectorOperationsService::new(
         wal_config,
         viper_engine,
-        lsm_engine.clone()
+        sst_engine.clone()
     ).await.unwrap();
     
     // Insert multiple batches to create multiple SSTables
@@ -442,7 +442,7 @@ async fn test_lsm_compaction_and_search() {
         };
         
         // Directly flush to LSM
-        match lsm_engine.do_flush(&flush_params).await {
+        match sst_engine.do_flush(&flush_params).await {
             Ok(result) => {
                 debug!("Batch {} LSM flush result: success={}, entries_flushed={}, files_created={}", 
                     batch_num, result.success, result.entries_flushed, result.files_created);
@@ -457,7 +457,7 @@ async fn test_lsm_compaction_and_search() {
     }
     
     // Check how many SSTable files were created
-    let storage_url = lsm_engine.get_collection_storage_url(collection_id).await.unwrap();
+    let storage_url = sst_engine.get_collection_storage_url(collection_id).await.unwrap();
     let storage_path = storage_url.strip_prefix("file://").unwrap_or(&storage_url);
     debug!("Checking for SSTable files in: {}", storage_path);
     
@@ -493,7 +493,7 @@ async fn test_lsm_compaction_and_search() {
     
     // Search for all vectors (we inserted 4 batches x 25 = 100 vectors)
     let storage_url = format!("file://{}/{}/data", base_path, collection_id);
-    let results = lsm_engine.search_vectors_unified(
+    let results = sst_engine.search_vectors_unified(
         collection_id,
         &storage_url,
         &vec![0.0, 0.0, 0.0],
@@ -529,7 +529,7 @@ async fn test_lsm_compaction_and_search() {
 }
 
 #[tokio::test] 
-async fn test_lsm_bloom_filter_efficiency() {
+async fn test_sst_bloom_filter_efficiency() {
     common::setup_hardware_capabilities();
     let _ = tracing_subscriber::fmt::try_init();
     
@@ -559,12 +559,12 @@ async fn test_lsm_bloom_filter_efficiency() {
         filesystem.clone()
     ).await.unwrap());
     
-    let lsm_config = create_test_lsm_config(base_path);
+    let sst_config = create_test_sst_config(base_path);
     // Reuse the same collection_id that was assigned storage
     
     let distance_compute = Arc::new(UnifiedDistanceCompute::new(DistanceMetric::Cosine));
-    let lsm_engine = Arc::new(
-        SstStorage::new(lsm_config.clone(), filesystem.clone(), distance_compute.clone())
+    let sst_engine = Arc::new(
+        SstStorage::new(sst_config.clone(), filesystem.clone(), distance_compute.clone())
             .await
             .unwrap()
     );
@@ -573,7 +573,7 @@ async fn test_lsm_bloom_filter_efficiency() {
     let direct_service = VectorOperationsService::new(
         wal_config,
         viper_engine,
-        lsm_engine.clone()
+        sst_engine.clone()
     ).await.unwrap();
     
     // Insert vectors with specific metadata patterns
@@ -676,7 +676,7 @@ async fn test_lsm_bloom_filter_efficiency() {
     };
     
     // Directly flush to LSM
-    let flush_result = lsm_engine.do_flush(&flush_params).await.unwrap();
+    let flush_result = sst_engine.do_flush(&flush_params).await.unwrap();
     debug!("LSM flush result: success={}, entries_flushed={}, files_created={}", 
         flush_result.success, flush_result.entries_flushed, flush_result.files_created);
     
@@ -692,7 +692,7 @@ async fn test_lsm_bloom_filter_efficiency() {
     
     let start = std::time::Instant::now();
     let storage_url = format!("file://{}/{}/data", base_path, collection_id);
-    let results = lsm_engine.search_vectors_unified(
+    let results = sst_engine.search_vectors_unified(
         collection_id,
         &storage_url,
         &vec![0.0, 0.0, 0.0],
@@ -709,7 +709,7 @@ async fn test_lsm_bloom_filter_efficiency() {
     
     // First test without filters to see if data is loaded
     debug!("Testing search without filters");
-    let all_results = lsm_engine.search_vectors_unified(
+    let all_results = sst_engine.search_vectors_unified(
         collection_id,
         &storage_url,
         &vec![5.0, 0.0, 0.0],
@@ -729,7 +729,7 @@ async fn test_lsm_bloom_filter_efficiency() {
         value: serde_json::Value::String("RARE_CATEGORY_XYZ".to_string()),
     };
     
-    let results = lsm_engine.search_vectors_unified(
+    let results = sst_engine.search_vectors_unified(
         collection_id,
         &storage_url,
         &vec![5.0, 0.0, 0.0],
@@ -744,7 +744,7 @@ async fn test_lsm_bloom_filter_efficiency() {
     
     if all_results.is_empty() {
         // Let's check if the SSTable file was properly written
-        let storage_url = lsm_engine.get_collection_storage_url(collection_id).await.unwrap();
+        let storage_url = sst_engine.get_collection_storage_url(collection_id).await.unwrap();
         let storage_path = storage_url.strip_prefix("file://").unwrap_or(&storage_url);
         
         // List SSTable files

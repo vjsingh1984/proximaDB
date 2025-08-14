@@ -30,7 +30,7 @@ use super::sst_test_config::{
 };
 
 #[tokio::test]
-async fn test_lsm_do_flush_with_bloom_filter() {
+async fn test_sst_do_flush_with_bloom_filter() {
     common::setup_hardware_capabilities();
     let _ = tracing_subscriber::fmt::try_init();
     
@@ -62,7 +62,7 @@ async fn test_lsm_do_flush_with_bloom_filter() {
     cleanup_sstable_files(collection_id).await.unwrap();
     
     let distance_compute = Arc::new(UnifiedDistanceCompute::new(DistanceMetric::Cosine));
-    let lsm_engine = SstStorage::new(
+    let sst_engine = SstStorage::new(
         sst_config.clone(),
         filesystem.clone(),
         distance_compute.clone(),
@@ -153,7 +153,7 @@ async fn test_lsm_do_flush_with_bloom_filter() {
     
     // Call do_flush directly
     debug!("\n=== Testing SST do_flush ===");
-    let flush_result = lsm_engine.do_flush(&flush_params).await.unwrap();
+    let flush_result = sst_engine.do_flush(&flush_params).await.unwrap();
     
     debug!("Flush result: success={}, entries_flushed={}, files_created={}", 
              flush_result.success, flush_result.entries_flushed, flush_result.files_created);
@@ -163,7 +163,7 @@ async fn test_lsm_do_flush_with_bloom_filter() {
     assert_eq!(flush_result.files_created, 1, "Should create 1 SSTable file");
     
     // Verify SSTable was created
-    let storage_url = lsm_engine.get_collection_storage_url(collection_id).await.unwrap();
+    let storage_url = sst_engine.get_collection_storage_url(collection_id).await.unwrap();
     debug!("Storage URL: {}", storage_url);
     
     // Sleep a bit to ensure file is written
@@ -196,7 +196,7 @@ async fn test_lsm_do_flush_with_bloom_filter() {
     // Now test search to verify the SSTable is readable
     debug!("\n=== Testing SST search ===");
     let query = vec![1.0, 0.0, 0.0];
-    let results = lsm_engine.search_vectors_unified(
+    let results = sst_engine.search_vectors_unified(
         collection_id,
         &storage_url,
         &query,
@@ -222,7 +222,7 @@ async fn test_lsm_do_flush_with_bloom_filter() {
         value: serde_json::json!("A"),
     };
     
-    let filtered_results = lsm_engine.search_vectors_unified(
+    let filtered_results = sst_engine.search_vectors_unified(
         collection_id,
         &storage_url,
         &query,
