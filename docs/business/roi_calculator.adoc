@@ -178,21 +178,44 @@ To calculate savings for your specific infrastructure:
 
 **Premium Features Enabled by Performance**:
 
+[NOTE]
+====
+**How Premium Revenue Works:**
+
+When your application responds in 0.9ms instead of 2.6ms, you can offer premium features that weren't possible before:
+
+* **Real-time personalization** - Update recommendations instantly as users browse
+* **Live search suggestions** - Show results as users type, not after they submit
+* **Interactive filtering** - Apply complex filters without page refreshes
+* **AI-powered features** - Enable ChatGPT-like experiences in your product
+
+These performance improvements allow you to charge premium pricing:
+
+**Example Calculation for 100K users:**
+* 100,000 users × $5/month extra = $500,000/month
+* $500,000/month × 12 months = $6,000,000/year
+
+The faster your product, the more users are willing to pay for premium features.
+====
+
 [cols="2,1,1", options="header"]
 |===
 | User Base | Premium Revenue/User | Annual Opportunity
 
 | 100K users
-| +$5/month
+| +$5/month extra
 | $6M/year
+(100K × $5 × 12)
 
 | 1M users
-| +$8/month
+| +$8/month extra
 | $96M/year
+(1M × $8 × 12)
 
 | 10M users
-| +$12/month
+| +$12/month extra
 | $1.4B/year
+(10M × $12 × 12)
 |===
 
 Sub-millisecond latency enables real-time personalization features that justify premium pricing.
