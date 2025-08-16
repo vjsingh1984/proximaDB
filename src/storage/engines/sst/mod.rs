@@ -56,6 +56,7 @@ use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
 use crate::compute::quantization::unified::{UnifiedQuantizationEngine, CodebookStore, InMemoryCodebookStore};
 use crate::core::search::UnifiedSearchEngine;
 use crate::proto::proximadb::MetadataItem;
+use crate::query::unified_query_optimizer::UnifiedMetadataFilter;
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 use chrono::Utc;
@@ -2856,14 +2857,14 @@ impl SstStorage {
             let mut append_only_counter = 0u64;
             
             for record in &level_records {
-                let key = if record.id.is_empty() {
+                let key = if record.id.as_ref().map_or(true, |id| id.is_empty()) {
                     // For append-only vectors (empty IDs), use a unique key
                     let unique_key = format!("__append_only_seq_{}", append_only_counter);
                     append_only_counter += 1;
                     debug!("🔍 SST FLUSH: Append-only vector detected in level {}, using key='{}'", level, unique_key);
                     unique_key
                 } else {
-                    record.id.clone()
+                    record.id.clone().unwrap_or_default()
                 };
                 entries.insert(key, record.clone());
             }
@@ -3042,8 +3043,8 @@ impl SstStorage {
             version: 1, // Version 1 for initial implementation
             level,
             entry_count: records.len() as u64,
-            min_key: records.first().map(|r| r.id.clone()).unwrap_or_default(),
-            max_key: records.last().map(|r| r.id.clone()).unwrap_or_default(),
+            min_key: records.first().map(|r| r.id.clone().unwrap_or_default()).unwrap_or_default(),
+            max_key: records.last().map(|r| r.id.clone().unwrap_or_default()).unwrap_or_default(),
             created_at: Utc::now().timestamp(),
             
             // Compression configuration
@@ -3641,6 +3642,42 @@ impl SstStorage {
         }
         
         Ok(result)
+    }
+
+    // TODO: Missing methods needed by VectorOperationsService - implement properly
+    pub async fn configure_scan_filter(&self, _collection_id: &str, _filter: &UnifiedMetadataFilter) -> Result<()> {
+        // TODO: Implement scan filter configuration
+        Ok(())
+    }
+
+    pub async fn configure_index_filter(&self, _collection_id: &str, _index: &str, _filter: &UnifiedMetadataFilter) -> Result<()> {
+        // TODO: Implement index filter configuration  
+        Ok(())
+    }
+
+    pub async fn get_collection(&self, _collection_id: &str) -> Result<Collection> {
+        // TODO: Implement collection retrieval
+        use crate::proto::proximadb::Collection;
+        Ok(Collection {
+            id: _collection_id.to_string(),
+            name: _collection_id.to_string(),
+            ..Default::default()
+        })
+    }
+
+    pub async fn list_collection_files(&self, _collection_id: &str) -> Result<Vec<String>> {
+        // TODO: Implement file listing
+        Ok(vec![])
+    }
+
+    pub fn get_collection_stats(&self, _collection_id: &str) -> Result<serde_json::Value> {
+        // TODO: Implement stats collection
+        Ok(serde_json::json!({"vector_count": 0}))
+    }
+
+    pub fn get_collection_metadata(&self, _collection_id: &str) -> Result<serde_json::Value> {
+        // TODO: Implement metadata retrieval
+        Ok(serde_json::json!({}))
     }
 
 }

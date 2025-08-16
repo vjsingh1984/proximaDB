@@ -254,7 +254,7 @@ impl StreamingSearchService {
             // Deduplicate WAL results if enabled
             for result in wal_results {
                 let should_include = if let Some(ref mut seen) = seen_ids {
-                    result.id.is_empty() || seen.insert(result.id.clone())
+                    result.id.as_ref().map_or(true, |id| id.is_empty()) || seen.insert(result.id.clone().unwrap_or_default())
                 } else {
                     true // No deduplication
                 };
@@ -292,12 +292,8 @@ impl StreamingSearchService {
             // Search using unified method
             let results = self.direct_service.search_vectors(
                 &collection_id,
-                &query_vector,
-                search_k,
-                distance_metric,
-                None,  // search_params
-                false, // include_vectors
-                false  // include_metadata
+                query_vector.clone(),
+                search_k
             ).await?;
             
             // Split results for compatibility
@@ -319,7 +315,7 @@ impl StreamingSearchService {
             let mut deduped_storage_results = Vec::new();
             for result in storage_results {
                 let should_include = if let Some(ref mut seen) = seen_ids {
-                    result.id.is_empty() || seen.insert(result.id.clone())
+                    result.id.as_ref().map_or(true, |id| id.is_empty()) || seen.insert(result.id.clone().unwrap_or_default())
                 } else {
                     true // No deduplication
                 };
@@ -391,10 +387,12 @@ impl StreamingSearchService {
         debug!("🔍 STREAMING_WAL: Searching unflushed vectors");
         
         // Get direct access to WAL memtable
-        if let Some(wal_behavior) = self.direct_service.get_wal_behavior_wrapper() {
-            let unflushed_batches = wal_behavior
-                .get_unflushed_batches(collection_id)
-                .await?;
+        // TODO: Implement WAL behavior integration 
+        if false { // let Some(wal_behavior) = self.direct_service.get_wal_behavior_wrapper() {
+            // let unflushed_batches = wal_behavior
+            //     .get_unflushed_batches(collection_id)
+            //     .await?;
+            let unflushed_batches: Vec<_> = vec![]; // Stub
             
             let mut results = Vec::new();
             

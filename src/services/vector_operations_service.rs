@@ -60,9 +60,14 @@ impl VectorOperationsService {
         
         // Create unified context (combines what used to be two separate contexts)
         let search_params = crate::core::search::SearchParams {
+            query_vectors: Some(vec![query_vector]),
             top_k: Some(top_k),
-            distance_threshold: None,
-            include_metadata: true,
+            distance_metric: None, // TODO: Add distance_metric parameter if needed
+            filter_expression: None,
+            accuracy_threshold: None,
+            include_expired: Some(false),
+            timeout_ms: None,
+            enable_two_stage: None,
         };
         
         let context = UnifiedQueryContext {

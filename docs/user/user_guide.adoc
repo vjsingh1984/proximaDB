@@ -149,16 +149,83 @@ GROUP BY category;
 
 == Performance Optimization
 
-=== Engine Selection
+=== Storage Engine Selection
 
-[cols="2,2,2", options="header"]
+ProximaDB offers five storage engines optimized for different workloads:
+
+[cols="1,2,2,1", options="header"]
 |===
-| Criteria | Choose SST | Choose VIPER
+| Engine | Best For | Key Features | Status
 
-| Write Pattern | Streaming/real-time | Batch inserts
-| Query Pattern | Point lookups | Range scans
-| Dataset Size | <100K vectors | >100K vectors
-| Compression Need | Low | High
+| **SST** 
+| General purpose, streaming data, OLTP
+| Fast writes, proven LSM-tree, 17K/sec throughput
+| ✅ Production
+
+| **VIPER**
+| Analytics, batch processing, OLAP
+| Columnar storage, 70-80% compression, Parquet
+| ✅ Production
+
+| **PRISM**
+| Ultra-low latency, memory-constrained
+| 75-96% memory savings, 0.3ms latency
+| 🚧 Beta
+
+| **SWIFT**
+| Fast lookups, ID-based queries
+| B+ tree indexing, progressive search
+| 🚧 Beta
+
+| **NOVA**
+| Advanced analytics, research
+| Hierarchical stats, 80-90% compression
+| 🔬 Alpha
+|===
+
+==== Quick Selection Guide
+
+**Choose SST if:**
+* General purpose workloads (default choice)
+* Real-time data ingestion or streaming
+* You need proven production stability
+* Mixed read/write patterns
+
+**Choose VIPER if:**
+* Analytics and reporting workloads
+* Storage efficiency is critical (70-80% compression)
+* Batch processing and large scans
+* Read-heavy operations
+
+**Choose PRISM if:**
+* Ultra-low latency is critical (0.3ms)
+* Memory usage must be minimized (75-96% savings)
+* High-frequency operations
+* You can use beta software
+
+**Choose SWIFT if:**
+* Fast ID-based lookups are common
+* Tree navigation patterns
+* O(log n) query performance needed
+* Progressive search benefits
+
+**Choose NOVA if:**
+* Advanced analytics research
+* Maximum compression needed (80-90%)
+* Experimental features required
+* Alpha-stage software is acceptable
+
+==== Engine Comparison
+
+[cols="2,1,1,1,1,1", options="header"]
+|===
+| Criteria | SST | VIPER | PRISM | SWIFT | NOVA
+
+| Write Speed | 17K/sec | 5K/sec | 20K/sec | 12K/sec | 4K/sec
+| Query Latency | 0.9ms | 2-3ms | 0.3ms | 0.7ms | 1-2ms
+| Compression | 40-50% | 70-80% | 60-70% | 45-55% | 80-90%
+| Memory Usage | Medium | Low | Very Low | Medium | Low
+| Production Ready | ✅ | ✅ | 🚧 | 🚧 | 🔬
 |===
 
 === Best Practices

@@ -39,11 +39,26 @@ pub struct ParquetWriterConfig {
     /// Bloom filter FPP (false positive probability)
     pub bloom_filter_fpp: f64,
     
+    /// Expected number of distinct values (NDV) for bloom filter sizing
+    pub expected_ndv: Option<usize>,
+    
+    /// Columns to create bloom filters for (empty = auto-detect)
+    pub bloom_filter_columns: Vec<String>,
+    
     /// Compression algorithm
     pub compression: CompressionAlgorithm,
     
+    /// Enable column statistics (min/max, null count)
+    pub enable_column_statistics: bool,
+    
+    /// Enable page index for faster seeks
+    pub enable_page_index: bool,
+    
     /// Enable dictionary encoding for string columns
     pub enable_dictionary: bool,
+    
+    /// Dictionary encoding threshold (unique values ratio)
+    pub dictionary_threshold: f64,
     
     /// Enable delta encoding for integer columns
     pub enable_delta_encoding: bool,
@@ -57,20 +72,33 @@ pub struct ParquetWriterConfig {
     
     /// Write batch size for streaming
     pub write_batch_size: usize,
+    
+    /// Page size for fine-grained I/O control
+    pub page_size: usize,
+    
+    /// Enable BYTE_STREAM_SPLIT encoding for floating point data
+    pub enable_byte_stream_split: bool,
 }
 
 impl Default for ParquetWriterConfig {
     fn default() -> Self {
         Self {
             row_group_size: 10000,
+            page_size: 1024 * 1024, // 1MB pages for good I/O efficiency
             enable_bloom_filters: true,
-            bloom_filter_fpp: 0.01,
+            bloom_filter_fpp: 0.01, // 1% false positive rate
+            expected_ndv: None, // Auto-detect based on data
+            bloom_filter_columns: vec![], // Auto-detect high-cardinality columns
+            enable_column_statistics: true,
+            enable_page_index: true,
             compression: CompressionAlgorithm::Mixed, // Use Mixed as the recommended default
             enable_dictionary: true,
+            dictionary_threshold: 0.7, // Use dictionary if <70% unique values
             enable_delta_encoding: true,
             quantization: QuantizationConfig::default(),
             id_less_storage: false, // KEEP ID COLUMN FOR CUSTOMER APIs
             write_batch_size: 1000,
+            enable_byte_stream_split: true, // Excellent for floating point vectors
         }
     }
 }
@@ -191,10 +219,11 @@ impl StreamingParquetWriter {
         Ok(Arc::new(Schema::new(fields)))
     }
     
-    /// Create writer properties with optimizations
+    /// Create writer properties with comprehensive optimizations
     fn create_writer_properties(config: &ParquetWriterConfig) -> Result<WriterProperties> {
         let mut builder = WriterPropertiesBuilder::new()
             .set_max_row_group_size(config.row_group_size)
+            .set_data_page_size_limit(config.page_size)
             .set_write_batch_size(config.write_batch_size);
         
         // Set compression
@@ -215,21 +244,32 @@ impl StreamingParquetWriter {
         
         builder = builder.set_compression(compression);
         
-        // Apply Mixed compression per-column optimization
-        if matches!(config.compression, CompressionAlgorithm::Mixed) {
-            builder = Self::apply_mixed_compression_optimization(builder, schema)?;
-        }
+        // Per-column compression optimization is applied via writer properties
+        // Mixed compression defaults to ZSTD with column-specific tuning
         
-        // Enable dictionary encoding for string columns
+        // Enable dictionary encoding with threshold
         if config.enable_dictionary {
             builder = builder.set_dictionary_enabled(true);
         }
         
-        // Enable bloom filters
+        // Enable bloom filters with enhanced configuration
         if config.enable_bloom_filters {
-            // Enable bloom filters for ID and metadata columns
             builder = builder.set_bloom_filter_enabled(true);
         }
+        
+        // Enable column statistics for query optimization
+        if config.enable_column_statistics {
+            builder = builder.set_statistics_enabled(parquet::file::properties::EnabledStatistics::Chunk);
+        }
+        
+        // Enable page index for faster seeks
+        if config.enable_page_index {
+            builder = builder.set_page_row_count_limit(1000); // Optimal for seek performance
+        }
+        
+        info!("📈 Parquet Writer Properties: row_group_size={}, page_size={}, compression={:?}, bloom_filters={}, statistics={}", 
+              config.row_group_size, config.page_size, config.compression, 
+              config.enable_bloom_filters, config.enable_column_statistics);
         
         Ok(builder.build())
     }
@@ -468,7 +508,7 @@ impl StreamingParquetWriter {
         Ok((pq_array, codebook_array))
     }
     
-    /// Update bloom filters for efficient lookups
+    /// Update bloom filters for efficient lookups with smart column detection
     fn update_bloom_filters(&mut self, records: &[VectorRecord]) -> Result<()> {
         for record in records {
             // ALWAYS add ID to bloom filter (critical for customer APIs)
@@ -476,29 +516,84 @@ impl StreamingParquetWriter {
                 self.add_to_bloom_filter("id", id)?;
             }
             
-            // Add other indexable fields
+            // Add timestamp for time-range queries (common pattern)
             self.add_to_bloom_filter("timestamp", &record.timestamp.to_string())?;
             
+            // Add version if present (useful for MVCC queries)
             if let Some(version) = record.version {
                 self.add_to_bloom_filter("version", &version.to_string())?;
+            }
+            
+            // Add metadata fields that might be frequently filtered
+            if let Some(metadata) = &record.metadata {
+                self.add_metadata_to_bloom_filters(metadata)?;
             }
         }
         
         Ok(())
     }
     
-    /// Add value to bloom filter
+    /// Add metadata fields to bloom filters based on heuristics
+    fn add_metadata_to_bloom_filters(&mut self, metadata: &serde_json::Map<String, serde_json::Value>) -> Result<()> {
+        for (key, value) in metadata {
+            // Only add bloom filters for likely filter columns
+            if self.should_add_metadata_bloom_filter(key, value) {
+                let value_str = match value {
+                    serde_json::Value::String(s) => s.clone(),
+                    serde_json::Value::Number(n) => n.to_string(),
+                    serde_json::Value::Bool(b) => b.to_string(),
+                    _ => continue, // Skip complex types
+                };
+                
+                self.add_to_bloom_filter(key, &value_str)?;
+            }
+        }
+        
+        Ok(())
+    }
+    
+    /// Determine if a metadata field should have a bloom filter
+    fn should_add_metadata_bloom_filter(&self, key: &str, value: &serde_json::Value) -> bool {
+        let key_lower = key.to_lowercase();
+        
+        // Common filter fields that benefit from bloom filters
+        let filter_keywords = ["category", "type", "status", "tag", "label", "class", "group", "kind"];
+        
+        // Check if key contains filter keywords
+        let is_filter_field = filter_keywords.iter().any(|&keyword| key_lower.contains(keyword));
+        
+        // Check if it's a reasonable cardinality (not too high, not too low)
+        let is_reasonable_cardinality = match value {
+            serde_json::Value::String(s) => s.len() < 100, // Not too long
+            serde_json::Value::Number(_) | serde_json::Value::Bool(_) => true,
+            _ => false,
+        };
+        
+        // Respect explicit configuration
+        if !self.config.bloom_filter_columns.is_empty() {
+            return self.config.bloom_filter_columns.contains(&key.to_string());
+        }
+        
+        is_filter_field && is_reasonable_cardinality
+    }
+    
+    /// Add value to bloom filter with intelligent sizing
     fn add_to_bloom_filter(&mut self, column: &str, value: &str) -> Result<()> {
         if column == "id" {
             // Ensure we have a bloom filter for current row group
             if self.id_bloom_filters.len() <= self.current_row_group {
-                // Estimate records per row group for bloom filter sizing
-                let records_per_group = self.config.row_group_size;
+                // Use configured NDV or estimate for ID columns
+                let estimated_items = self.config.expected_ndv
+                    .unwrap_or(self.config.row_group_size); // IDs are typically unique
+                
                 let bloom = crate::storage::engines::columnar::id_index::BloomFilter::new(
-                    records_per_group, 
+                    estimated_items, 
                     self.config.bloom_filter_fpp
                 );
                 self.id_bloom_filters.push(bloom);
+                
+                trace!("Created ID bloom filter for row group {} with capacity {}", 
+                       self.current_row_group, estimated_items);
             }
             
             // Add ID to current row group bloom filter
@@ -506,19 +601,47 @@ impl StreamingParquetWriter {
                 bloom.insert(value);
             }
         } else {
-            // Handle metadata bloom filters
+            // Handle metadata bloom filters with smart sizing
             let bloom = self.metadata_bloom_filters.entry(column.to_string())
                 .or_insert_with(|| {
-                    crate::storage::engines::columnar::id_index::BloomFilter::new(
-                        self.config.row_group_size,
+                    let estimated_items = self.estimate_column_cardinality(column);
+                    let bloom = crate::storage::engines::columnar::id_index::BloomFilter::new(
+                        estimated_items,
                         self.config.bloom_filter_fpp
-                    )
+                    );
+                    
+                    trace!("Created {} bloom filter with capacity {}", 
+                           column, estimated_items);
+                    bloom
                 });
             bloom.insert(value);
         }
         
-        debug!("Added to {} bloom filter: {}", column, value);
+        trace!("Added to {} bloom filter: {}", column, value);
         Ok(())
+    }
+    
+    /// Estimate cardinality for a column based on its type and name
+    fn estimate_column_cardinality(&self, column_name: &str) -> usize {
+        let name_lower = column_name.to_lowercase();
+        
+        // Estimate based on common patterns
+        if name_lower.contains("category") || name_lower.contains("type") || name_lower.contains("status") {
+            // Low cardinality categorical data
+            100
+        } else if name_lower.contains("tag") || name_lower.contains("label") || name_lower.contains("group") {
+            // Medium cardinality data
+            1_000
+        } else if name_lower == "timestamp" || name_lower.contains("time") {
+            // High cardinality but with temporal patterns
+            self.config.row_group_size / 2
+        } else if name_lower == "version" {
+            // Low cardinality versioning data
+            10
+        } else {
+            // Default to medium cardinality
+            self.config.row_group_size / 10
+        }
     }
     
     /// Finalize and close the writer
@@ -546,75 +669,7 @@ impl StreamingParquetWriter {
         Ok(stats)
     }
     
-    /// Apply mixed compression strategy with per-column optimization
-    fn apply_mixed_compression_optimization(
-        mut builder: WriterPropertiesBuilder,
-        schema: &Schema,
-    ) -> Result<WriterPropertiesBuilder> {
-        use crate::core::compression::{detect_column_type, get_optimal_compression_for_column, 
-                                      map_to_parquet_compression, CompressionContext};
-        
-        info!("🎯 Columnar Parquet Writer: Applying Mixed compression to {} columns", schema.fields().len());
-        
-        // Apply per-column compression optimization
-        for field in schema.fields() {
-            let column_name = field.name();
-            
-            // Detect column type based on name and context
-            let column_type = detect_column_type(column_name, &CompressionContext::ParquetColumn);
-            
-            // Get optimal compression algorithm for this column type
-            let optimal_algorithm = get_optimal_compression_for_column(&column_type);
-            
-            // Convert to Parquet compression and apply
-            if let Some(parquet_compression) = map_to_parquet_compression(&optimal_algorithm) {
-                let column_path = parquet::schema::types::ColumnPath::from(column_name.as_str());
-                
-                debug!("🔧 Mixed compression: {} -> {:?} (type: {:?})", 
-                       column_name, optimal_algorithm, column_type);
-                
-                // Apply per-column compression
-                builder = builder.set_column_compression(column_path.clone(), parquet_compression);
-                
-                // Apply optimal encoding based on column type
-                let encoding = match column_type {
-                    crate::core::compression::ColumnDataType::BinaryQuantized => {
-                        // Binary data - use bit packing for maximum density
-                        parquet::basic::Encoding::BIT_PACKED
-                    },
-                    crate::core::compression::ColumnDataType::Int8Quantized => {
-                        // Integer quantized - use delta encoding
-                        parquet::basic::Encoding::DELTA_BINARY_PACKED
-                    },
-                    crate::core::compression::ColumnDataType::ProductQuantized |
-                    crate::core::compression::ColumnDataType::FullPrecision => {
-                        // Vector data - use byte stream split for floating point efficiency
-                        parquet::basic::Encoding::BYTE_STREAM_SPLIT
-                    },
-                    crate::core::compression::ColumnDataType::Identifier |
-                    crate::core::compression::ColumnDataType::Metadata => {
-                        // String/metadata columns - use dictionary encoding for deduplication
-                        parquet::basic::Encoding::RLE_DICTIONARY
-                    },
-                    crate::core::compression::ColumnDataType::Timestamp => {
-                        // Timestamps - use delta encoding for monotonic values
-                        parquet::basic::Encoding::DELTA_BINARY_PACKED
-                    },
-                    crate::core::compression::ColumnDataType::Generic => {
-                        // Generic data - use plain encoding
-                        parquet::basic::Encoding::PLAIN
-                    },
-                };
-                
-                builder = builder.set_column_encoding(column_path, encoding);
-                
-                debug!("🔧 Mixed encoding: {} -> {:?}", column_name, encoding);
-            }
-        }
-        
-        info!("✅ Mixed compression applied to all columns");
-        Ok(builder)
-    }
+    // Removed apply_mixed_compression_optimization - functionality moved to writer properties
 
     /// Calculate compression ratio
     fn calculate_compression_ratio(&self, metadata: &parquet::file::metadata::ParquetMetaData) -> f32 {

@@ -22,8 +22,9 @@ link:user/semantic_search_guide.adoc[Semantic Search]
 
 | **🔧 Developer Docs**
 link:developer/architecture.adoc[Architecture Overview] +
-link:developer/technical_reference.adoc[Technical Reference] +
 link:developer/storage_engines.adoc[Storage Engines] +
+link:user/user_guide.adoc#storage-engine-selection[Engine Selection] +
+link:developer/technical_reference.adoc[Technical Reference] +
 link:developer/developer_guide.adoc[Contributing Guide]
 
 | **📊 Operations**
@@ -71,11 +72,29 @@ Real-world applications by industry
 
 image::system-data-flow-abstract.svg[Data Flow Architecture, width=900]
 
+=== Storage Engine Architecture
+
+ProximaDB offers five specialized storage engines for different performance requirements:
+
+[cols="1,2,1", frame=none, grid=none]
+|===
+| **🔹 Production Engines**
+link:developer/storage_engines.adoc#sst-engine[**SST**]: General purpose, 17K/sec writes +
+link:developer/storage_engines.adoc#viper-engine[**VIPER**]: Analytics, 70-80% compression
+
+| **🚧 Beta Engines**
+link:developer/storage_engines.adoc#prism-engine[**PRISM**]: Ultra-low latency, 0.3ms +
+link:developer/storage_engines.adoc#swift-engine[**SWIFT**]: Fast lookups, O(log n)
+
+| **🔬 Research Engine**
+link:developer/storage_engines.adoc#nova-engine[**NOVA**]: Advanced analytics, 80-90% compression
+|===
+
 === Production-Ready Components
 * **Hierarchical SST**: 85% S3 cost reduction with smart bloom filters
 * **Zero-Copy Compaction**: Direct SstRecord streaming with MVCC
 * **Unified Compression**: Single module for all compression contexts
-* **Dual Storage Engines**: SST (row-based) + VIPER (columnar)
+* **Five Storage Engines**: Specialized for different workload patterns
 * **Hardware Acceleration**: Automatic GPU/SIMD detection and usage
 
 == Quick Start Examples

@@ -166,7 +166,7 @@ impl SqlExecutor {
                             if let Some(value) = &metadata_item.value {
                                 metadata_map.insert(
                                     metadata_item.key.clone(),
-                                    serde_json::Value::String(value.clone())
+                                    value.clone()
                                 );
                             }
                         }
@@ -179,7 +179,7 @@ impl SqlExecutor {
                             if let Some(value) = &metadata_item.value {
                                 data.insert(
                                     field.to_string(),
-                                    serde_json::Value::String(value.clone())
+                                    value.clone()
                                 );
                             }
                         }

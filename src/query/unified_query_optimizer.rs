@@ -786,6 +786,20 @@ pub struct QuantizationStrategy {
     pub candidate_multiplier: usize,
 }
 
+/// Performance estimate for query execution
+#[derive(Debug, Clone)]
+pub struct PerformanceEstimate {
+    pub expected_latency_ms: f64,
+    pub expected_throughput_ops_per_sec: f64,
+    pub confidence_score: f64,
+}
+
+/// Fallback strategies configuration
+#[derive(Debug, Clone)]
+pub struct FallbackStrategies {
+    pub fallback_strategies: Vec<String>,
+}
+
 // ================================================================================
 // MIGRATION HELPERS
 // ================================================================================
@@ -820,7 +834,9 @@ pub fn migrate_universal_filter(old: &crate::storage::engines::common::metadata_
             allow_parallel: true,
         },
     }
-    
+}
+
+impl UnifiedQueryOptimizer {
     /// Analyze query components (stub implementation)
     fn analyze_query_components(&self, _context: &UnifiedQueryContext<'_>) -> Result<QueryAnalysis> {
         Ok(QueryAnalysis {

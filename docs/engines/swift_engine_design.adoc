@@ -1,0 +1,587 @@
+= SWIFT Engine Design
+:toc: left
+:toclevels: 2
+
+**Storage With Instant Fast Traversal**
+
+SWIFT is a dual-mode storage engine that provides instant vector navigation through optimized tree structures while maintaining compatibility with traditional scanning approaches.
+
+== Executive Summary
+
+=== Key Innovation
+
+SWIFT combines the write performance of LSM-tree storage (SST) with tree-based navigation capabilities, enabling O(log n) ID-based lookups and progressive search refinement.
+
+=== Value Proposition
+
+* **Instant ID Lookups**: O(log n) B+ tree navigation
+* **Dual-Mode Operation**: Index-driven and index-free modes
+* **Progressive Search**: Binary → INT8 → PQ → Full precision pipeline
+* **Zero-Overhead Integration**: Seamless AXIS compatibility
+* **Memory Efficiency**: Smart caching and tree traversal
+
+== Architecture Overview
+
+=== Core Components
+
+[source,rust]
+----
+pub struct SwiftEngine {
+    // LSM-tree foundation (from SST)
+    lsm_tree: LsmTreeStorage,
+    
+    // B+ tree for instant navigation
+    navigation_tree: BPlusTree<VectorId, VectorLocation>,
+    
+    // Progressive search system
+    progressive_search: ProgressiveSearchEngine,
+    
+    // Dual-mode coordinator
+    mode_coordinator: DualModeCoordinator,
+    
+    // Tree maintenance system
+    tree_maintenance: TreeMaintenanceSystem,
+}
+----
+
+=== Tree-Based Navigation Architecture
+
+SWIFT implements a sophisticated B+ tree structure for instant vector access:
+
+[source,rust]
+----
+pub struct BPlusTree<K, V> {
+    root: NodeId,
+    node_cache: LruCache<NodeId, TreeNode<K, V>>,
+    leaf_cache: LruCache<NodeId, LeafNode<K, V>>,
+    metadata: TreeMetadata,
+}
+
+pub struct TreeNode<K, V> {
+    keys: Vec<K>,
+    children: Vec<NodeId>,
+    level: u16,
+    modification_time: Timestamp,
+}
+
+pub struct LeafNode<K, V> {
+    entries: Vec<(K, V)>,
+    next_leaf: Option<NodeId>,
+    prev_leaf: Option<NodeId>,
+    modification_time: Timestamp,
+}
+
+pub struct VectorLocation {
+    sstable_id: SstableId,
+    block_id: BlockId,
+    record_offset: u32,
+    vector_size: u32,
+    quantization_level: QuantizationLevel,
+}
+----
+
+=== Dual-Mode Operation
+
+SWIFT operates in two complementary modes:
+
+**Index-Driven Mode:**
+* Uses B+ tree for direct vector access
+* O(log n) lookup complexity
+* Ideal for ID-based queries
+* Minimal I/O for targeted access
+
+**Index-Free Mode:**
+* Traditional SST scanning approach
+* O(n) scanning with bloom filters
+* Ideal for range queries and analytics
+* Compatible with existing SST operations
+
+[source,rust]
+----
+impl SwiftEngine {
+    async fn search_vectors(&self, query: &VectorQuery) -> Result<Vec<SearchResult>> {
+        match self.select_search_mode(query).await? {
+            SearchMode::IndexDriven => {
+                self.index_driven_search(query).await
+            },
+            SearchMode::IndexFree => {
+                self.index_free_search(query).await
+            },
+            SearchMode::Hybrid => {
+                self.hybrid_search(query).await
+            },
+        }
+    }
+    
+    async fn select_search_mode(&self, query: &VectorQuery) -> Result<SearchMode> {
+        let cost_estimator = &self.mode_coordinator.cost_estimator;
+        
+        let index_cost = cost_estimator.estimate_index_driven_cost(query).await?;
+        let scan_cost = cost_estimator.estimate_scan_cost(query).await?;
+        
+        if index_cost < scan_cost * 0.5 {
+            SearchMode::IndexDriven
+        } else if scan_cost < index_cost * 0.5 {
+            SearchMode::IndexFree  
+        } else {
+            SearchMode::Hybrid
+        }
+    }
+}
+----
+
+== Progressive Search Implementation
+
+=== Four-Stage Progressive Refinement
+
+SWIFT implements a sophisticated progressive search that balances speed and accuracy:
+
+[source,rust]
+----
+impl ProgressiveSearchEngine {
+    async fn progressive_search(
+        &self,
+        query: &VectorQuery,
+    ) -> Result<Vec<SearchResult>> {
+        // Stage 1: Binary filtering (1 bit per dimension)
+        let binary_candidates = self.binary_filter_stage(query).await?;
+        
+        // Early termination for small candidate sets
+        if binary_candidates.len() <= query.k * 2 {
+            return self.load_full_vectors(binary_candidates, query).await;
+        }
+        
+        // Stage 2: INT8 quantization (8 bits per dimension)
+        let int8_candidates = self.int8_refinement_stage(
+            binary_candidates, 
+            query
+        ).await?;
+        
+        if int8_candidates.len() <= query.k * 5 {
+            return self.load_full_vectors(int8_candidates, query).await;
+        }
+        
+        // Stage 3: Product quantization (32 bytes typical)
+        let pq_candidates = self.pq_ranking_stage(
+            int8_candidates, 
+            query
+        ).await?;
+        
+        // Stage 4: Full precision reranking
+        let top_candidates = pq_candidates.into_iter()
+            .take(query.k * 3)
+            .collect();
+            
+        self.full_precision_rerank(top_candidates, query).await
+    }
+    
+    async fn binary_filter_stage(
+        &self, 
+        query: &VectorQuery
+    ) -> Result<CandidateSet> {
+        let binary_query = self.create_binary_sketch(&query.vector);
+        let mut candidates = CandidateSet::new();
+        
+        // Use tree navigation for targeted access
+        let leaf_nodes = self.tree.find_relevant_leaves(&binary_query).await?;
+        
+        for leaf in leaf_nodes {
+            let vectors = self.load_leaf_vectors(leaf).await?;
+            
+            for (id, binary_sketch) in vectors {
+                let hamming_distance = simd_hamming(binary_query, binary_sketch);
+                
+                if hamming_distance < query.dimension() * 0.3 {
+                    candidates.insert(id, hamming_distance as f32);
+                }
+            }
+        }
+        
+        Ok(candidates)
+    }
+}
+----
+
+=== Adaptive Quantization Levels
+
+SWIFT adapts quantization based on query requirements and data characteristics:
+
+[source,rust]
+----
+pub struct AdaptiveQuantization {
+    level_selector: QuantizationLevelSelector,
+    performance_monitor: PerformanceMonitor,
+    cost_benefit_analyzer: CostBenefitAnalyzer,
+}
+
+impl AdaptiveQuantization {
+    fn select_quantization_level(
+        &self,
+        query: &VectorQuery,
+        data_characteristics: &DataCharacteristics,
+    ) -> QuantizationLevel {
+        let accuracy_requirement = query.accuracy_threshold.unwrap_or(0.95);
+        let latency_budget = query.max_latency_ms.unwrap_or(100);
+        
+        match (accuracy_requirement, latency_budget, data_characteristics.density) {
+            (acc, lat, _) if acc < 0.8 && lat < 10 => QuantizationLevel::Binary,
+            (acc, lat, DataDensity::Dense) if acc < 0.95 && lat < 50 => QuantizationLevel::INT8,
+            (acc, lat, DataDensity::Sparse) if acc < 0.98 && lat < 100 => QuantizationLevel::PQ8,
+            _ => QuantizationLevel::FullPrecision,
+        }
+    }
+}
+----
+
+== Tree Operations
+
+=== Fast Prefix Searches
+
+SWIFT excels at prefix-based searches through its B+ tree structure:
+
+[source,rust]
+----
+impl BPlusTree<VectorId, VectorLocation> {
+    async fn prefix_search(
+        &self, 
+        prefix: &str
+    ) -> Result<Vec<(VectorId, VectorLocation)>> {
+        // Navigate to first matching leaf
+        let start_leaf = self.find_first_matching_leaf(prefix).await?;
+        
+        let mut results = Vec::new();
+        let mut current_leaf = Some(start_leaf);
+        
+        // Scan leaves until prefix no longer matches
+        while let Some(leaf_id) = current_leaf {
+            let leaf = self.load_leaf(leaf_id).await?;
+            
+            for (id, location) in &leaf.entries {
+                if id.starts_with(prefix) {
+                    results.push((id.clone(), location.clone()));
+                } else if !results.is_empty() {
+                    // No longer matching, we're done
+                    return Ok(results);
+                }
+            }
+            
+            current_leaf = leaf.next_leaf;
+        }
+        
+        Ok(results)
+    }
+    
+    async fn range_query(
+        &self,
+        start_key: &VectorId,
+        end_key: &VectorId,
+    ) -> Result<Vec<(VectorId, VectorLocation)>> {
+        let start_leaf = self.find_leaf_for_key(start_key).await?;
+        let end_leaf = self.find_leaf_for_key(end_key).await?;
+        
+        let mut results = Vec::new();
+        let mut current_leaf = Some(start_leaf);
+        
+        while let Some(leaf_id) = current_leaf {
+            let leaf = self.load_leaf(leaf_id).await?;
+            
+            for (id, location) in &leaf.entries {
+                if id >= start_key && id <= end_key {
+                    results.push((id.clone(), location.clone()));
+                }
+            }
+            
+            if leaf_id == end_leaf {
+                break;
+            }
+            
+            current_leaf = leaf.next_leaf;
+        }
+        
+        Ok(results)
+    }
+}
+----
+
+=== Batch Tree Operations
+
+For efficiency, SWIFT supports batch operations on the tree:
+
+[source,rust]
+----
+impl TreeMaintenanceSystem {
+    async fn batch_insert(
+        &self,
+        entries: Vec<(VectorId, VectorLocation)>,
+    ) -> Result<()> {
+        // Sort entries for optimal tree insertion
+        let mut sorted_entries = entries;
+        sorted_entries.sort_by(|a, b| a.0.cmp(&b.0));
+        
+        // Group by target leaf for batch insertion
+        let leaf_groups = self.group_by_target_leaf(&sorted_entries).await?;
+        
+        for (leaf_id, leaf_entries) in leaf_groups {
+            self.batch_insert_into_leaf(leaf_id, leaf_entries).await?;
+        }
+        
+        // Rebalance affected subtrees
+        self.rebalance_affected_subtrees().await?;
+        
+        Ok(())
+    }
+    
+    async fn automatic_rebalancing(&self) -> Result<()> {
+        // Monitor tree balance metrics
+        let balance_metrics = self.analyze_tree_balance().await?;
+        
+        if balance_metrics.requires_rebalancing() {
+            let rebalance_plan = self.create_rebalance_plan(&balance_metrics).await?;
+            self.execute_rebalance_plan(rebalance_plan).await?;
+        }
+        
+        Ok(())
+    }
+}
+----
+
+== Memory Management
+
+=== Cache-Friendly Access Patterns
+
+SWIFT optimizes memory usage through intelligent caching:
+
+[source,rust]
+----
+pub struct SwiftCacheManager {
+    tree_node_cache: AdaptiveLruCache<NodeId, TreeNode>,
+    vector_cache: QuantizationAwareCache,
+    access_pattern_tracker: AccessPatternTracker,
+}
+
+impl SwiftCacheManager {
+    fn optimize_cache_placement(&self, access_pattern: &AccessPattern) {
+        match access_pattern {
+            AccessPattern::Sequential => {
+                // Prefetch next leaf nodes
+                self.prefetch_sequential_leaves();
+            },
+            AccessPattern::Random => {
+                // Optimize for individual lookups
+                self.optimize_random_access();
+            },
+            AccessPattern::Clustered => {
+                // Cache entire subtrees
+                self.cache_cluster_subtrees();
+            },
+        }
+    }
+    
+    async fn memory_pressure_management(&self) -> Result<()> {
+        let memory_usage = self.get_current_memory_usage().await?;
+        
+        if memory_usage > self.memory_threshold {
+            // Evict least useful quantization levels first
+            self.evict_low_value_quantizations().await?;
+            
+            // Then evict cold tree nodes
+            self.evict_cold_tree_nodes().await?;
+            
+            // Finally, reduce vector cache if needed
+            self.shrink_vector_cache().await?;
+        }
+        
+        Ok(())
+    }
+}
+----
+
+== Performance Characteristics
+
+=== Benchmark Expectations
+
+[cols="2,1,1,1", options="header"]
+|===
+| Operation Type | SST | VIPER | SWIFT
+
+| Single ID Lookup
+| 10ms (scan)
+| 15ms (scan)
+| 0.1ms (tree)
+
+| Prefix Search (1000 results)
+| 100ms
+| 80ms
+| 2ms
+
+| Range Query (10K results)
+| 200ms
+| 50ms
+| 20ms
+
+| K-NN Search (K=10)
+| 100ms
+| 150ms
+| 15ms
+
+| Batch Lookup (100 IDs)
+| 500ms
+| 600ms
+| 5ms
+
+| Tree Maintenance Overhead
+| 0%
+| 0%
+| 2-5%
+|===
+
+=== Memory Usage Patterns
+
+SWIFT's memory usage scales efficiently:
+
+* **Tree Structure**: O(log n) height, minimal memory overhead
+* **Cache Usage**: Adaptive based on access patterns  
+* **Quantization Levels**: Progressive loading reduces memory pressure
+* **Batch Operations**: Temporary spikes during maintenance
+
+== Configuration
+
+[source,toml]
+----
+[storage.swift]
+enabled = true
+
+# Tree configuration
+[storage.swift.tree]
+node_size = 4096            # Bytes per tree node
+cache_size_mb = 256         # Tree node cache size
+rebalance_threshold = 0.75  # When to trigger rebalancing
+batch_insert_size = 1000    # Vectors per batch
+
+# Progressive search
+[storage.swift.progressive_search]
+enable_binary_filter = true
+binary_threshold = 0.3      # Hamming distance threshold
+int8_threshold = 0.9        # Accuracy threshold for INT8
+pq_threshold = 0.95         # Accuracy threshold for PQ
+candidate_multiplier = 3    # How many candidates to keep per stage
+
+# Dual-mode operation
+[storage.swift.dual_mode]
+cost_threshold = 0.5        # When to prefer index vs scan
+hybrid_enabled = true       # Allow hybrid queries
+performance_monitoring = true
+
+# Memory management
+[storage.swift.memory]
+vector_cache_mb = 512
+quantization_cache_mb = 128
+access_pattern_tracking = true
+memory_pressure_threshold = 0.8
+----
+
+== Use Cases
+
+=== Ideal Workloads
+
+**ID-Heavy Applications:**
+* User profile lookups
+* Recommendation systems
+* Real-time personalization
+* Session-based searches
+
+**Navigation-Intensive Workloads:**
+* Hierarchical data exploration
+* Multi-step search refinement
+* Interactive data discovery
+* Progressive result loading
+
+**Mixed Access Patterns:**
+* Applications with both point queries and analytics
+* Systems requiring both speed and flexibility
+* Workloads with varying latency requirements
+
+=== Performance Scenarios
+
+[source,rust]
+----
+// Scenario 1: User recommendation lookup
+let user_vectors = swift_engine.lookup_by_prefix("user_").await?;
+let recommendations = swift_engine.progressive_search(
+    &VectorQuery::new()
+        .with_vector(user_embedding)
+        .with_k(10)
+        .with_accuracy_threshold(0.95)
+).await?;
+
+// Scenario 2: Batch user processing  
+let user_batch = vec!["user_001", "user_002", "user_003"];
+let batch_results = swift_engine.batch_lookup(user_batch).await?;
+
+// Scenario 3: Range-based analytics
+let time_range_results = swift_engine.range_query(
+    "2024-01-01",
+    "2024-01-31"
+).await?;
+----
+
+== Migration Strategy
+
+=== From SST to SWIFT
+
+[source,rust]
+----
+impl MigrationManager {
+    async fn migrate_sst_to_swift(
+        &self,
+        sst_engine: &SstStorage,
+        swift_engine: &SwiftEngine,
+    ) -> Result<()> {
+        // Phase 1: Copy all SST data
+        let all_vectors = sst_engine.export_all_vectors().await?;
+        
+        // Phase 2: Build tree structure
+        let tree_entries = all_vectors.into_iter()
+            .map(|record| (record.id, record.location))
+            .collect();
+            
+        swift_engine.build_navigation_tree(tree_entries).await?;
+        
+        // Phase 3: Generate quantization levels
+        swift_engine.build_progressive_quantization().await?;
+        
+        // Phase 4: Validate migration
+        self.validate_migration(sst_engine, swift_engine).await?;
+        
+        Ok(())
+    }
+}
+----
+
+== Future Enhancements
+
+=== Planned Features
+
+**Q1 2025:**
+* Learned tree structures
+* Adaptive quantization selection
+* Cross-engine query optimization
+
+**Q2 2025:**
+* Distributed tree navigation
+* Multi-dimensional tree indexes
+* Advanced prefetching strategies
+
+**Q3 2025:**
+* Neural tree balancing
+* Quantum-inspired search acceleration
+* Real-time tree optimization
+
+== Conclusion
+
+SWIFT represents a significant advancement in vector storage by combining tree-based navigation with progressive quantization. Its dual-mode operation provides the flexibility to handle diverse workload patterns while maintaining excellent performance for ID-based and navigation-heavy applications.
+
+The engine's progressive search capabilities ensure that applications can balance speed and accuracy based on their specific requirements, while the tree structure enables instant access patterns that traditional scanning approaches cannot match.
+
+---
+**Version 0.1.4** | **Status: Beta** | **Target: Fast Lookups & Navigation**

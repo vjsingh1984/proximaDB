@@ -563,49 +563,44 @@ impl AxisEventLogConsumer {
                     
                     let mut file_vector_count = 0;
                     
-                    for sst_record in records {
+                    for vector_record in records {
                         // Check if we should extract this record based on mode
                         let should_extract = match extraction_mode {
                             ExtractionMode::Fp32Only => {
                                 // Only extract if we have FP32 data
-                                !sst_record.vector.is_empty()
+                                !vector_record.vector.is_empty()
                             }
                             ExtractionMode::QuantizedOnly => {
                                 // Only extract if we have quantized data
-                                !sst_record.quantized_vector.is_empty()
+                                vector_record.quantized_vector.as_ref().map_or(false, |v| !v.is_empty())
                             }
                             ExtractionMode::Both => {
                                 // Extract if we have either type
-                                !sst_record.vector.is_empty() || !sst_record.quantized_vector.is_empty()
+                                !vector_record.vector.is_empty() || vector_record.quantized_vector.as_ref().map_or(false, |v| !v.is_empty())
                             }
                         };
                         
                         if should_extract {
-                            // Convert SstRecord to proto VectorRecord
-                            let vector_record = crate::proto::proximadb::VectorRecord {
-                                id: Some(sst_record.id.clone()),
+                            // Use the vector_record directly (it's already a VectorRecord)
+                            let output_vector_record = crate::proto::proximadb::VectorRecord {
+                                id: vector_record.id.clone(),
                                 vector: match extraction_mode {
                                     ExtractionMode::QuantizedOnly => vec![],
-                                    _ => sst_record.vector.clone(),
+                                    _ => vector_record.vector.clone(),
                                 },
-                                metadata: sst_record.metadata.iter()
-                                    .map(|(k, v)| crate::proto::proximadb::MetadataItem {
-                                        key: k.clone(),
-                                        value: Some(crate::proto::proximadb::metadata_item::Value::StringValue(v.clone())),
-                                    })
-                                    .collect(),
-                                timestamp: sst_record.timestamp,
-                                updated_at: sst_record.updated_at,
-                                expires_at: sst_record.expires_at,
-                                version: Some(sst_record.version),
+                                metadata: vector_record.metadata.clone(),
+                                timestamp: vector_record.timestamp,
+                                updated_at: vector_record.updated_at,
+                                expires_at: vector_record.expires_at,
+                                version: vector_record.version,
                                 quantized_vector: if matches!(extraction_mode, ExtractionMode::QuantizedOnly | ExtractionMode::Both) {
-                                    Some(sst_record.quantized_vector.clone())
+                                    vector_record.quantized_vector.clone()
                                 } else {
                                     None
                                 },
                             };
                             
-                            all_vectors.push(vector_record);
+                            all_vectors.push(output_vector_record);
                             file_vector_count += 1;
                         }
                     }
@@ -631,126 +626,127 @@ impl AxisEventLogConsumer {
                     let file_start = std::time::Instant::now();
                     
                     // Read the Parquet file
-                    let fs = filesystem.get_filesystem(file_path)?;
+                    let fs = filesystem_factory.get_filesystem(file_path)?;
                     let file_data = fs.read(file_path).await
                         .map_err(|e| {
                             error!("[AXIS Consumer] Failed to read Parquet file {}: {}", file_path, e);
                             e
                         })?;
                     
-                    let parquet_bytes = bytes::Bytes::from(file_data);
-                    let builder = arrow::parquet::arrow::async_reader::ParquetRecordBatchStreamBuilder::new(parquet_bytes)?;
-                    let mut reader = builder.build()?;
+                    // Arrow crates disabled - commenting out parquet processing
+                    // let parquet_bytes = bytes::Bytes::from(file_data);
+                    // let builder = arrow::parquet::arrow::async_reader::ParquetRecordBatchStreamBuilder::new(parquet_bytes)?;
+                    // let mut reader = builder.build()?;
                     
                     let mut file_vector_count = 0;
                     
+                    // TODO: Re-enable when arrow crates are restored
                     // Process each record batch
-                    while let Some(batch_result) = reader.next() {
-                        let batch = batch_result?;
-                        
-                        // Extract columns we need
-                        // Arrow disabled - commenting out array operations
-                        // let id_array = batch.column_by_name("id")
-                        //     .and_then(|col| col.as_any().downcast_ref::<StringArray>());
-                        
-                        let vector_array = batch.column_by_name("vector");
-                        let quantized_array = batch.column_by_name("quantized_vector");
-                        
-                        // let version_array = batch.column_by_name("version")
-                        //     .and_then(|col| col.as_any().downcast_ref::<Int64Array>());
-                        
-                        // let timestamp_array = batch.column_by_name("timestamp")
-                        //     .and_then(|col| col.as_any().downcast_ref::<Int64Array>());
-                        
-                        // Process each row in the batch
-                        // TODO: Restore Arrow processing when enabled
-                        /*
-                        for row_idx in 0..batch.num_rows() {
-                            // Extract ID
-                            let id = id_array
-                                .and_then(|arr| {
-                                    if arr.is_null(row_idx) {
-                                        None
-                                    } else {
-                                        Some(arr.value(row_idx).to_string())
-                                    }
-                                })
-                                .unwrap_or_else(|| format!("row_{}", row_idx));
-                        */
-                            
-                            /*
-                            // Check extraction mode
-                            let has_fp32 = vector_array.is_some() && !vector_array.unwrap().is_null(row_idx);
-                            let has_quantized = quantized_array.is_some() && !quantized_array.unwrap().is_null(row_idx);
-                            
-                            let should_extract = match extraction_mode {
-                                ExtractionMode::Fp32Only => has_fp32,
-                                ExtractionMode::QuantizedOnly => has_quantized,
-                                ExtractionMode::Both => has_fp32 || has_quantized,
-                            };
-                            
-                            if should_extract {
-                                // Extract vector data based on mode
-                                let vector = if extraction_mode != ExtractionMode::QuantizedOnly && has_fp32 {
-                                    // Extract FP32 vector from List<Float32> column
-                                    // Arrow disabled - using stub check
-                                    // if let Some(list_array) = vector_array
-                                    //     .and_then(|col| col.as_any().downcast_ref::<arrow_array::ListArray>()) {
-                                    if false { // Stub condition since Arrow is disabled
-                                        if !list_array.is_null(row_idx) {
-                                            let values = list_array.value(row_idx);
-                                            if let Some(float_array) = values.as_any().downcast_ref::<Float32Array>() {
-                                                (0..float_array.len())
-                                                    .map(|i| float_array.value(i))
-                                                    .collect()
-                                            } else {
-                                                vec![]
-                                            }
-                                        } else {
-                                            vec![]
-                                        }
-                                    } else {
-                                        vec![]
-                                    }
-                                } else {
-                                    vec![]
-                                };
-                                
-                                // Create VectorRecord
-                                let vector_record = crate::proto::proximadb::VectorRecord {
-                                    id: Some(id),
-                                    vector,
-                                    metadata: vec![], // Metadata extraction would be more complex
-                                    version: version_array
-                                        .and_then(|arr| {
-                                            if arr.is_null(row_idx) {
-                                                None
-                                            } else {
-                                                Some(arr.value(row_idx) as u32)
-                                            }
-                                        }),
-                                    timestamp: timestamp_array
-                                        .and_then(|arr| {
-                                            if arr.is_null(row_idx) {
-                                                None
-                                            } else {
-                                                Some(arr.value(row_idx) as u32)
-                                            }
-                                        })
-                                        .unwrap_or(0),
-                                    updated_at: None,
-                                    expires_at: None,
-                                    rank: None,
-                                    score: None,
-                                    distance: None,
-                                };
-                                
-                                all_vectors.push(vector_record);
-                                file_vector_count += 1;
-                            }
-                        }
-                        */
-                    }
+                    // while let Some(batch_result) = reader.next() {
+//                         let batch = batch_result?;
+//                         
+//                         // Extract columns we need
+//                         // Arrow disabled - commenting out array operations
+//                         // let id_array = batch.column_by_name("id")
+//                         //     .and_then(|col| col.as_any().downcast_ref::<StringArray>());
+//                         
+//                         let vector_array = batch.column_by_name("vector");
+//                         let quantized_array = batch.column_by_name("quantized_vector");
+//                         
+//                         // let version_array = batch.column_by_name("version")
+//                         //     .and_then(|col| col.as_any().downcast_ref::<Int64Array>());
+//                         
+//                         // let timestamp_array = batch.column_by_name("timestamp")
+//                         //     .and_then(|col| col.as_any().downcast_ref::<Int64Array>());
+//                         
+//                         // Process each row in the batch
+//                         // TODO: Restore Arrow processing when enabled
+//                         /*
+//                         for row_idx in 0..batch.num_rows() {
+//                             // Extract ID
+//                             let id = id_array
+//                                 .and_then(|arr| {
+//                                     if arr.is_null(row_idx) {
+//                                         None
+//                                     } else {
+//                                         Some(arr.value(row_idx).to_string())
+//                                     }
+//                                 })
+//                                 .unwrap_or_else(|| format!("row_{}", row_idx));
+//                         */
+//                             
+//                             /*
+//                             // Check extraction mode
+//                             let has_fp32 = vector_array.is_some() && !vector_array.unwrap().is_null(row_idx);
+//                             let has_quantized = quantized_array.is_some() && !quantized_array.unwrap().is_null(row_idx);
+//                             
+//                             let should_extract = match extraction_mode {
+//                                 ExtractionMode::Fp32Only => has_fp32,
+//                                 ExtractionMode::QuantizedOnly => has_quantized,
+//                                 ExtractionMode::Both => has_fp32 || has_quantized,
+//                             };
+//                             
+//                             if should_extract {
+//                                 // Extract vector data based on mode
+//                                 let vector = if extraction_mode != ExtractionMode::QuantizedOnly && has_fp32 {
+//                                     // Extract FP32 vector from List<Float32> column
+//                                     // Arrow disabled - using stub check
+//                                     // if let Some(list_array) = vector_array
+//                                     //     .and_then(|col| col.as_any().downcast_ref::<arrow_array::ListArray>()) {
+//                                     if false { // Stub condition since Arrow is disabled
+//                                         if !list_array.is_null(row_idx) {
+//                                             let values = list_array.value(row_idx);
+//                                             if let Some(float_array) = values.as_any().downcast_ref::<Float32Array>() {
+//                                                 (0..float_array.len())
+//                                                     .map(|i| float_array.value(i))
+//                                                     .collect()
+//                                             } else {
+//                                                 vec![]
+//                                             }
+//                                         } else {
+//                                             vec![]
+//                                         }
+//                                     } else {
+//                                         vec![]
+//                                     }
+//                                 } else {
+//                                     vec![]
+//                                 };
+//                                 
+//                                 // Create VectorRecord
+//                                 let vector_record = crate::proto::proximadb::VectorRecord {
+//                                     id: Some(id),
+//                                     vector,
+//                                     metadata: vec![], // Metadata extraction would be more complex
+//                                     version: version_array
+//                                         .and_then(|arr| {
+//                                             if arr.is_null(row_idx) {
+//                                                 None
+//                                             } else {
+//                                                 Some(arr.value(row_idx) as u32)
+//                                             }
+//                                         }),
+//                                     timestamp: timestamp_array
+//                                         .and_then(|arr| {
+//                                             if arr.is_null(row_idx) {
+//                                                 None
+//                                             } else {
+//                                                 Some(arr.value(row_idx) as u32)
+//                                             }
+//                                         })
+//                                         .unwrap_or(0),
+//                                     updated_at: None,
+//                                     expires_at: None,
+//                                     rank: None,
+//                                     score: None,
+//                                     distance: None,
+//                                 };
+//                                 
+//                                 all_vectors.push(vector_record);
+//                                 file_vector_count += 1;
+//                             }
+                        // }
+                    // End of disabled arrow processing block
                     
                     let file_duration = file_start.elapsed();
                     debug!(

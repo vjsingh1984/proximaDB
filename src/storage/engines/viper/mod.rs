@@ -65,6 +65,7 @@ pub use types::{
 pub use schema::SchemaManager;
 pub use compaction::CompactionManager;
 pub use flush::FlushManager;
+pub use flush_eventlog_integration::ViperFlushHandler;
 pub use engine::ViperEngine;
 // pub use clustering_models::{ClusteringModelManager, EfficientClusteringModel, ClusteringStats}; // Moved to AXIS
 

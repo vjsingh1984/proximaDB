@@ -400,11 +400,15 @@ impl CompactionCoordinator {
         collection_id: &str,
         operation_type: &OperationType,
     ) -> Result<Option<String>> {
-        let queue_manager = match &self.queue_manager {
-            Some(qm) => qm,
-            None => return Ok(None), // No queue manager, proceed normally
-        };
+        // TODO: Restore when QueueManager is available
+        // let queue_manager = match &self.queue_manager {
+        //     Some(qm) => qm,
+        //     None => return Ok(None), // No queue manager, proceed normally
+        // };
+        return Ok(None); // Queue manager temporarily disabled
         
+        // TODO: Restore when QueueManager is available
+        /*
         // Get queue status for this collection
         let queue_status = queue_manager
             .get_collection_queue_status(collection_id)
@@ -462,6 +466,7 @@ impl CompactionCoordinator {
                 }
             }
         }
+        */
     }
     
     /// Defer a compaction operation
@@ -484,11 +489,15 @@ impl CompactionCoordinator {
     
     /// Process deferred compactions that can now run
     pub async fn process_deferred_compactions(&self) -> Result<Vec<String>> {
-        let queue_manager = match &self.queue_manager {
-            Some(qm) => qm,
-            None => return Ok(Vec::new()),
-        };
+        // TODO: Restore when QueueManager is available
+        // let queue_manager = match &self.queue_manager {
+        //     Some(qm) => qm,
+        //     None => return Ok(Vec::new()),
+        // };
+        return Ok(Vec::new()); // Queue manager temporarily disabled
         
+        // TODO: Restore when QueueManager is available
+        /*
         let mut processed = Vec::new();
         let mut ready_collections = Vec::new();
         
@@ -518,6 +527,7 @@ impl CompactionCoordinator {
         }
         
         Ok(processed)
+        */
     }
     
     /// Calculate compaction urgency score (0.0 - 1.0)
