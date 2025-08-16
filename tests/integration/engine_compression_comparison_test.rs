@@ -16,6 +16,7 @@ use tracing::info;
 use proximadb::core::VectorRecord;
 use proximadb::storage::traits::{FlushParameters, UnifiedStorageEngine};
 use proximadb::proto::proximadb::CompressionAlgorithm as ProtoCompressionAlgorithm;
+use proximadb::StorageEngine;
 use std::time::Instant;
 
 /// Create dense vectors (similar to ML embeddings)
@@ -61,14 +62,24 @@ async fn test_engine_compression(
     let env_uncompressed = UnifiedTestEnvironment::new().await?;
     let start = Instant::now();
     
+    // Get dimension from vectors
+    let dimension = if !vectors.is_empty() { vectors[0].vector.len() } else { 128 };
+    
     match engine_type {
         "SST" => {
             let engine = env_uncompressed.create_sst_engine().await?;
-            let flush_params = common::unified_test_utils::operations::build_sst_flush_params_with_compression(
+            
+            // Create collection config once with no compression (block_size_kb defaults to 2MB)
+            let collection_uncompressed = env_uncompressed.create_test_collection_with_settings(
+                StorageEngine::Sst,
+                dimension as i32,
+                None, // No compression, uses default 2MB blocks
+            );
+            
+            let flush_params = common::unified_test_utils::operations::build_sst_flush_params_with_collection(
                 &env_uncompressed,
                 vectors.clone(),
-                "none",
-                0,
+                collection_uncompressed,
             ).await?;
             
             // Insert vectors directly (simulating memtable)
@@ -91,11 +102,23 @@ async fn test_engine_compression(
                 _ => ProtoCompressionAlgorithm::CompressionNone as i32,
             };
             
-            let flush_params = common::unified_test_utils::operations::build_sst_flush_params_with_compression(
+            // Create collection config once with compression
+            let compression_config = proximadb::proto::proximadb::CompressionConfig {
+                algorithm: algorithm_enum,
+                level: Some(level),
+                block_size_kb: Some(2048), // 2MB blocks for SST
+                ..Default::default()
+            };
+            let collection_compressed = env_compressed.create_test_collection_with_settings(
+                StorageEngine::Sst,
+                dimension as i32,
+                Some(compression_config),
+            );
+            
+            let flush_params = common::unified_test_utils::operations::build_sst_flush_params_with_collection(
                 &env_compressed,
                 vectors.clone(),
-                algorithm,
-                level,
+                collection_compressed,
             ).await?;
             
             for batch in vectors.chunks(100) {
@@ -269,8 +292,8 @@ async fn test_engine_compression_comparison() -> Result<()> {
         .collect();
     
     if !sst_dense.is_empty() && !viper_dense.is_empty() {
-        let sst_best = sst_dense.iter().min_by(|a, b| a.5.partial_cmp(&b.5).unwrap()).unwrap();
-        let viper_best = viper_dense.iter().min_by(|a, b| a.5.partial_cmp(&b.5).unwrap()).unwrap();
+        let sst_best = sst_dense.iter().min_by(|a, b| a.5.partial_cmp(&b.5).unwrap_or(std::cmp::Ordering::Equal)).unwrap();
+        let viper_best = viper_dense.iter().min_by(|a, b| a.5.partial_cmp(&b.5).unwrap_or(std::cmp::Ordering::Equal)).unwrap();
         
         info!("Dense Data:");
         info!("  SST best: {} with ratio {:.3} ({}% reduction)", 
@@ -288,8 +311,8 @@ async fn test_engine_compression_comparison() -> Result<()> {
         .collect();
     
     if !sst_sparse.is_empty() && !viper_sparse.is_empty() {
-        let sst_best = sst_sparse.iter().min_by(|a, b| a.5.partial_cmp(&b.5).unwrap()).unwrap();
-        let viper_best = viper_sparse.iter().min_by(|a, b| a.5.partial_cmp(&b.5).unwrap()).unwrap();
+        let sst_best = sst_sparse.iter().min_by(|a, b| a.5.partial_cmp(&b.5).unwrap_or(std::cmp::Ordering::Equal)).unwrap();
+        let viper_best = viper_sparse.iter().min_by(|a, b| a.5.partial_cmp(&b.5).unwrap_or(std::cmp::Ordering::Equal)).unwrap();
         
         info!("\nSparse Data:");
         info!("  SST best: {} with ratio {:.3} ({}% reduction)",

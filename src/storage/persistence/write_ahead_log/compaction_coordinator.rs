@@ -18,7 +18,8 @@ use std::sync::Arc;
 use tokio::sync::{RwLock, Mutex};
 use tracing::{debug, info, warn};
 
-use crate::storage::engines::viper::ViperEngine;
+// Temporarily disabled due to arrow-arith compilation conflicts - TODO: Re-enable when resolved
+// use crate::storage::engines::viper::ViperEngine;
 use crate::storage::engines::sst::SstStorage;
 use crate::storage::traits::FlushResult;
 use crate::index::axis::AxisManager;
@@ -38,7 +39,8 @@ pub struct CompactionCoordinator {
     collection_states: Arc<RwLock<HashMap<String, CollectionCompactionState>>>,
     
     /// Storage engines for compaction
-    viper_engine: Arc<ViperEngine>,
+    // TODO: Restore when ViperEngine is available
+    // viper_engine: Arc<ViperEngine>,
     sst_engine: Arc<SstStorage>,
     
     /// Compaction configuration
@@ -193,7 +195,8 @@ pub struct CompactionResult {
 impl CompactionCoordinator {
     /// Create new compaction coordinator
     pub fn new(
-        viper_engine: Arc<ViperEngine>,
+        // TODO: Restore when ViperEngine is available
+    // viper_engine: Arc<ViperEngine>,
         sst_engine: Arc<SstStorage>,
         config: Option<CompactionConfig>,
         axis_manager: Option<Arc<AxisManager>>,
@@ -209,7 +212,8 @@ impl CompactionCoordinator {
         
         Self {
             collection_states: Arc::new(RwLock::new(HashMap::new())),
-            viper_engine,
+            // TODO: Restore when ViperEngine is available
+            // viper_engine,
             sst_engine,
             config,
             active_compactions: Arc::new(Mutex::new(HashMap::new())),

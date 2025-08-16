@@ -15,6 +15,7 @@ use proximadb::storage::traits::UnifiedStorageEngine;
 use proximadb::compute::distance_computation::UnifiedDistanceCompute;
 use proximadb::storage::persistence::filesystem::FilesystemFactory;
 use std::sync::Arc;
+use std::collections::HashMap;
 use tracing::{info, debug};
 
 /// Test compression on sparse data (should compress very well)
@@ -56,8 +57,26 @@ async fn test_compression_sparse_data() -> anyhow::Result<()> {
         distance_compute.clone()
     ).await?;
     
-    // Flush compressed sparse data
-    let flush_params = operations::build_flush_params(&base_env, vectors.clone(), StorageEngine::Sst).await?;
+    // Flush compressed sparse data with compression config
+    let mut flush_params = operations::build_flush_params(&base_env, vectors.clone(), StorageEngine::Sst).await?;
+    
+    // Add compression config to the collection config
+    if let Some(ref mut collection) = flush_params.collection_config {
+        if let Some(ref mut config) = collection.config {
+            config.compression = Some(proximadb::proto::proximadb::CompressionConfig {
+                algorithm: proximadb::proto::proximadb::CompressionAlgorithm::CompressionZstd as i32,
+                level: Some(3),
+                adaptive: false,
+                min_ratio: None,
+                enable_quantization: false,
+                quantization_type: None,
+                normalization_method: None,
+                block_size_kb: None,  // Use default from config
+                dynamic_block_sizing: None,  // Use default from config
+            });
+        }
+    }
+    
     let compressed_result = compressed_engine.do_flush(&flush_params).await?;
     assert!(compressed_result.success);
     
@@ -78,7 +97,9 @@ async fn test_compression_sparse_data() -> anyhow::Result<()> {
         distance_compute
     ).await?;
     
-    let uncompressed_result = uncompressed_engine.do_flush(&flush_params).await?;
+    // Create fresh flush params for uncompressed (don't reuse the modified compressed ones)
+    let flush_params_uncompressed = operations::build_flush_params(&base_env, vectors, StorageEngine::Sst).await?;
+    let uncompressed_result = uncompressed_engine.do_flush(&flush_params_uncompressed).await?;
     assert!(uncompressed_result.success);
     
     let uncompressed_size = get_directory_size(base_env.get_sst_data_directory().as_path()).await;
@@ -86,14 +107,24 @@ async fn test_compression_sparse_data() -> anyhow::Result<()> {
     info!("SPARSE DATA compression results:");
     info!("  Compressed: {} bytes", compressed_size);
     info!("  Uncompressed: {} bytes", uncompressed_size);
-    if uncompressed_size > 0 {
-        let ratio = compressed_size as f64 / uncompressed_size as f64;
-        info!("  Compression ratio: {:.3} ({}% reduction)", ratio, ((1.0 - ratio) * 100.0) as i32);
-    }
+    
+    let ratio = if uncompressed_size > 0 {
+        compressed_size as f64 / uncompressed_size as f64
+    } else {
+        1.0
+    };
+    
+    info!("  Compression ratio: {:.3} ({}% reduction)", ratio, ((1.0 - ratio) * 100.0) as i32);
+    
+    // Verify compression actually happened
+    assert!(compressed_size < uncompressed_size,
+        "Compressed size ({}) should be less than uncompressed size ({})", 
+        compressed_size, uncompressed_size);
     
     // Sparse data should compress well (at least 30% reduction expected)
     assert!(compressed_size < uncompressed_size * 70 / 100,
-        "Sparse data should compress by at least 30%. Got {} vs {}", compressed_size, uncompressed_size);
+        "Sparse data should compress by at least 30%. Got {} vs {} (ratio: {:.3})", 
+        compressed_size, uncompressed_size, ratio);
     
     Ok(())
 }
@@ -137,8 +168,26 @@ async fn test_compression_dense_data() -> anyhow::Result<()> {
         distance_compute.clone()
     ).await?;
     
-    // Flush compressed dense data
-    let flush_params = operations::build_flush_params(&base_env, vectors.clone(), StorageEngine::Sst).await?;
+    // Flush compressed dense data with compression config
+    let mut flush_params = operations::build_flush_params(&base_env, vectors.clone(), StorageEngine::Sst).await?;
+    
+    // Add compression config to the collection config
+    if let Some(ref mut collection) = flush_params.collection_config {
+        if let Some(ref mut config) = collection.config {
+            config.compression = Some(proximadb::proto::proximadb::CompressionConfig {
+                algorithm: proximadb::proto::proximadb::CompressionAlgorithm::CompressionZstd as i32,
+                level: Some(3),
+                adaptive: false,
+                min_ratio: None,
+                enable_quantization: false,
+                quantization_type: None,
+                normalization_method: None,
+                block_size_kb: None,  // Use default from config
+                dynamic_block_sizing: None,  // Use default from config
+            });
+        }
+    }
+    
     let compressed_result = compressed_engine.do_flush(&flush_params).await?;
     assert!(compressed_result.success);
     
@@ -159,7 +208,9 @@ async fn test_compression_dense_data() -> anyhow::Result<()> {
         distance_compute
     ).await?;
     
-    let uncompressed_result = uncompressed_engine.do_flush(&flush_params).await?;
+    // Create fresh flush params for uncompressed (don't reuse the modified compressed ones)
+    let flush_params_uncompressed = operations::build_flush_params(&base_env, vectors, StorageEngine::Sst).await?;
+    let uncompressed_result = uncompressed_engine.do_flush(&flush_params_uncompressed).await?;
     assert!(uncompressed_result.success);
     
     let uncompressed_size = get_directory_size(base_env.get_sst_data_directory().as_path()).await;

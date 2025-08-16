@@ -23,6 +23,8 @@ use crate::storage::persistence::filesystem::{
     FilesystemFactory
 };
 use crate::storage::transaction_coordinator::{TransactionCoordinator, StagingConfig, TransactionStageType};
+use crate::storage::common::*;
+use crate::storage::common::compaction_utils::{CompactionFileDiscovery, StorageEngineType as CompactionEngineType};
 
 use super::schema::SchemaManager;
 
@@ -54,6 +56,62 @@ pub struct FileMetadata {
     pub row_count: u64,
     /// Average row size in bytes
     pub avg_row_size: f64,
+    /// File level (0 = fresh flush, higher = more compacted)
+    pub level: u32,
+    /// File creation timestamp (for ordering within levels)
+    pub timestamp: u64,
+}
+
+/// VIPER filename generator with level-based naming
+pub struct ViperFilenameGenerator;
+
+impl ViperFilenameGenerator {
+    /// Generate a level-based filename for VIPER Parquet files
+    /// Format: level{L}_{timestamp}_{random}.parquet
+    /// Example: level0_1755201181793_4277988561.parquet
+    pub fn generate_filename(level: u32) -> String {
+        let timestamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis();
+        let random_id = rand::random::<u32>();
+        format!("level{}_{}_{}.parquet", level, timestamp, random_id)
+    }
+    
+    /// Parse level from VIPER filename
+    /// Returns level 0 for files that don't follow the naming convention
+    pub fn parse_level_from_filename(filename: &str) -> u32 {
+        if let Some(captures) = regex::Regex::new(r"^level(\d+)_").unwrap().captures(filename) {
+            captures.get(1).unwrap().as_str().parse().unwrap_or(0)
+        } else {
+            0 // Treat legacy files as level 0
+        }
+    }
+    
+    /// Check if filename follows VIPER level-based convention
+    pub fn is_level_based_filename(filename: &str) -> bool {
+        filename.starts_with("level") && filename.ends_with(".parquet")
+    }
+    
+    /// Parse timestamp from filename for ordering
+    pub fn parse_timestamp_from_filename(filename: &str) -> u64 {
+        if let Some(captures) = regex::Regex::new(r"level\d+_(\d+)_").unwrap().captures(filename) {
+            captures.get(1).unwrap().as_str().parse().unwrap_or(0)
+        } else {
+            0
+        }
+    }
+}
+
+/// Level-based compaction task
+#[derive(Debug, Clone)]
+pub struct LevelBasedCompactionTask {
+    /// Source level being compacted
+    pub level: u32,
+    /// Input files for compaction
+    pub input_files: Vec<String>,
+    /// Target level for output files
+    pub target_level: u32,
 }
 
 /// Compaction plan based on file analysis
@@ -89,9 +147,14 @@ pub struct CompactionManager {
     /// Atomic coordinator for ACID operations
     atomic_coordinator: Arc<TransactionCoordinator>,
     
-    // 🔴 UNUSED FIELD - Metrics module is unused
-    // /// Optional metrics updater for non-critical metrics
-    // metrics_updater: Option<Arc<dyn InternalMetricsUpdater>>,
+    /// New compaction orchestrator
+    compaction_orchestrator: Option<Arc<CompactionOrchestrator>>,
+    
+    /// Compaction configuration (from server config)
+    compaction_config: crate::core::config::CompactionConfig,
+    
+    /// Optional metrics updater for non-critical metrics
+    metrics_updater: Option<Arc<dyn crate::metrics::InternalMetricsUpdater>>,
 }
 
 impl std::fmt::Debug for CompactionManager {
@@ -101,7 +164,8 @@ impl std::fmt::Debug for CompactionManager {
             .field("collection_service", &self.collection_service)
             .field("filesystem_factory", &self.filesystem_factory)
             .field("atomic_coordinator", &self.atomic_coordinator)
-            // .field("metrics_updater", &self.metrics_updater.is_some())  // 🔴 UNUSED
+            .field("compaction_config", &self.compaction_config)
+            .field("metrics_updater", &self.metrics_updater.is_some())
             .finish()
     }
 }
@@ -110,7 +174,11 @@ impl CompactionManager {
     pub async fn new(
         collection_service: Arc<RwLock<Option<Arc<crate::services::collection_service::CollectionService>>>>,
         filesystem_factory: Arc<FilesystemFactory>,
+        compaction_config: Option<crate::core::config::CompactionConfig>,
     ) -> Result<Self> {
+        // Use provided config or defaults
+        let compaction_config = compaction_config.unwrap_or_else(crate::core::config::CompactionConfig::default);
+        
         // Create atomic coordinator
         let atomic_coordinator = Arc::new(
             TransactionCoordinator::new(filesystem_factory.clone(), None)
@@ -118,20 +186,137 @@ impl CompactionManager {
                 .context("Failed to create atomic coordinator")?
         );
         
+        // Initialize new compaction orchestrator with server configuration
+        let orchestrator_config = CompactionConfig {
+            level0_threshold: compaction_config.l0_file_threshold,
+            level_threshold: (compaction_config.l0_file_threshold as f64 * compaction_config.level_multiplier) as usize,
+            max_level: compaction_config.max_levels as u32,
+            max_concurrent_per_collection: 1,
+            global_max_concurrent: 3,
+            operation_timeout: std::time::Duration::from_secs(1800), // 30 minutes for VIPER
+        };
+        
+        let orchestrator = Some(Arc::new(CompactionOrchestrator::new(
+            filesystem_factory.clone(),
+            orchestrator_config,
+        )));
+        
         Ok(Self {
             schema_manager: SchemaManager::new(),
             collection_service,
             filesystem_factory,
             atomic_coordinator,
-            // metrics_updater: None, // Will be set via set_metrics_updater  // 🔴 UNUSED
+            compaction_orchestrator: orchestrator,
+            compaction_config,
+            metrics_updater: None, // Will be set via set_metrics_updater
         })
     }
     
-    // 🔴 UNUSED METHOD - Metrics module is unused
-    // /// Set the metrics updater (optional, for non-critical metrics)
-    // pub fn set_metrics_updater(&mut self, updater: Arc<dyn InternalMetricsUpdater>) {
-    //     self.metrics_updater = Some(updater);
-    // }
+    /// Set the metrics updater (optional, for non-critical metrics)
+    pub fn set_metrics_updater(&mut self, updater: Arc<dyn crate::metrics::InternalMetricsUpdater>) {
+        self.metrics_updater = Some(updater);
+    }
+
+    /// Discover files organized by level for level-based compaction
+    async fn get_parquet_files_by_level(&self, collection_id: &str, collection_config: Option<&crate::proto::proximadb::Collection>) -> Result<std::collections::HashMap<u32, Vec<FileMetadata>>> {
+        use std::collections::HashMap;
+        
+        // Use provided collection config or return empty if not available
+        let collection = match collection_config {
+            Some(col) => col,
+            None => {
+                return Ok(HashMap::new());
+            }
+        };
+        
+        let storage_assignment = match &collection.storage_assignment {
+            Some(assignment) => assignment,
+            None => {
+                return Ok(HashMap::new());
+            }
+        };
+        
+        let data_url = format!("{}/{}/data", storage_assignment.base_location, collection_id);
+        info!("🔍 VIPER: Looking for parquet files in data directory: {}", data_url);
+        
+        let fs = self.filesystem_factory.get_filesystem(&data_url)?;
+        let mut files_by_level: HashMap<u32, Vec<FileMetadata>> = HashMap::new();
+        
+        if fs.exists(&data_url).await? {
+            let entries = fs.list(&data_url).await?;
+            info!("📋 VIPER: Found {} entries in data directory", entries.len());
+            
+            for entry in entries {
+                debug!("🔍 VIPER: Checking entry: {} (is_dir: {})", entry.name, entry.metadata.is_directory);
+                
+                // Skip staging directories
+                if entry.name.starts_with("__") {
+                    debug!("⏭️ VIPER: Skipping staging directory/file: {}", entry.name);
+                    continue;
+                }
+                
+                if !entry.metadata.is_directory && entry.name.ends_with(".parquet") {
+                    let level = ViperFilenameGenerator::parse_level_from_filename(&entry.name);
+                    let timestamp = ViperFilenameGenerator::parse_timestamp_from_filename(&entry.name);
+                    
+                    debug!("✅ VIPER: Found Parquet file: {} at level {}", entry.name, level);
+                    
+                    let file_metadata = FileMetadata {
+                        path: entry.url.clone(),
+                        size_bytes: entry.metadata.size,
+                        row_count: 0, // Will be populated later if needed
+                        avg_row_size: 0.0,
+                        level,
+                        timestamp,
+                    };
+                    
+                    files_by_level.entry(level).or_insert_with(Vec::new).push(file_metadata);
+                }
+            }
+        } else {
+            info!("⚠️ VIPER: Data directory does not exist: {}", data_url);
+        }
+        
+        info!("🔍 VIPER: Files by level: {:?}", 
+              files_by_level.iter().map(|(k, v)| (k, v.len())).collect::<Vec<_>>());
+        
+        Ok(files_by_level)
+    }
+    
+    /// Check if level-based compaction is needed and return the task
+    async fn check_level_based_compaction_needed(&self, collection_id: &str, collection_config: Option<&crate::proto::proximadb::Collection>) -> Result<Option<LevelBasedCompactionTask>> {
+        // Use provided collection config or return None if not available
+        let collection = match collection_config {
+            Some(col) => col,
+            None => return Ok(None),
+        };
+        
+        let storage_assignment = match &collection.storage_assignment {
+            Some(assignment) => assignment,
+            None => return Ok(None),
+        };
+        
+        let data_url = format!("{}/{}/data", storage_assignment.base_location, collection_id);
+        debug!("🔍 VIPER LEVEL-BASED: Delegating to unified framework for collection {}", collection_id);
+        
+        // Use stored VIPER compaction config
+        let task_info = CompactionTaskBuilder::check_and_build_compaction_task(
+            collection_id,
+            &data_url,
+            "parquet",
+            CompactionEngineType::VIPER,
+            &self.compaction_config,
+            self.filesystem_factory.clone(),
+        ).await?;
+        
+        Ok(task_info.map(|info| {
+            LevelBasedCompactionTask {
+                level: info.source_level,
+                input_files: info.input_files,
+                target_level: info.target_level,
+            }
+        }))
+    }
 
     /// Discover files that can be compacted for a collection
     async fn discover_compactable_files(&self, collection_id: &str, collection_config: Option<&crate::proto::proximadb::Collection>) -> Result<Vec<String>> {
@@ -152,40 +337,23 @@ impl CompactionManager {
         };
         
         let data_url = format!("{}/{}/data", storage_assignment.base_location, collection_id);
-        info!("🔍 Looking for parquet files in data directory: {}", data_url);
+        debug!("🔍 VIPER COMPACTION: Delegating to unified framework for collection {} in {}", collection_id, data_url);
         
-        // Get filesystem for the data directory
-        let fs = self.filesystem_factory.get_filesystem(&data_url)?;
+        // Use unified compaction task builder to get all compactable files
+        let compactable_files = CompactionTaskBuilder::get_all_compactable_files(
+            collection_id,
+            &data_url,
+            "parquet",
+            CompactionEngineType::VIPER,
+            self.filesystem_factory.clone(),
+        ).await?;
         
-        // List all .parquet files in the collection's data directory
-        let mut parquet_files = Vec::new();
+        debug!(
+            "📋 VIPER COMPACTION: Unified framework returned {} compactable files for collection {}",
+            compactable_files.len(), collection_id
+        );
         
-        if fs.exists(&data_url).await? {
-            info!("📂 Data directory exists, listing contents...");
-            let entries = fs.list(&data_url).await?;
-            info!("📋 Found {} entries in data directory", entries.len());
-            
-            for entry in entries {
-                info!("📄 Entry: {} (directory: {}, url: {})", 
-                      entry.name, entry.metadata.is_directory, entry.url);
-                
-                if !entry.metadata.is_directory && entry.url.ends_with(".parquet") {
-                    info!("✅ Found parquet file: {}", entry.url);
-                    parquet_files.push(entry.url);
-                } else if entry.url.ends_with(".parquet") {
-                    info!("❌ Skipped directory ending with .parquet: {}", entry.url);
-                } else {
-                    info!("❌ Skipped non-parquet file: {}", entry.url);
-                }
-            }
-        } else {
-            warn!("⚠️ Data directory does not exist: {}", data_url);
-        }
-        
-        info!("🔍 Discovered {} parquet files for compaction in collection {}", 
-              parquet_files.len(), collection_id);
-        
-        Ok(parquet_files)
+        Ok(compactable_files)
     }
 
     /// Analyze candidate files and create a compaction plan
@@ -244,6 +412,11 @@ impl CompactionManager {
                 size_bytes: file_size,
                 row_count,
                 avg_row_size,
+                level: 0, // Default to level 0 for now, will be updated when unified framework is applied
+                timestamp: std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_millis() as u64,
             });
         }
         
@@ -290,6 +463,13 @@ impl CompactionManager {
         input_files: Vec<String>,
         collection_config: Option<&crate::proto::proximadb::Collection>,
     ) -> Result<ViperCompactionResult> {
+        // Note: Files are already filtered in discover_compactable_files
+        // Only AXIS-ready files reach this point
+        debug!(
+            "🔧 VIPER COMPACTION: Starting compaction with {} pre-filtered files for collection {}",
+            input_files.len(), collection_id
+        );
+        
         // Extract vector dimensions for efficient capacity planning
         let vector_dimensions = collection_config
             .as_ref()
@@ -761,7 +941,75 @@ impl CompactionManager {
             // Build Parquet data for this file
             let mut parquet_data = Vec::new();
             {
-                let mut writer = ArrowWriter::try_new(&mut parquet_data, schema.clone(), None)
+                debug!("🔍 VIPER COMPACTION: Creating ArrowWriter with compression");
+                debug!("📊 VIPER COMPACTION PATH ANALYSIS:");
+                debug!("   - Input: Streaming Parquet files from multiple sources");
+                debug!("   - Processing: Merge → MVCC resolution → Quantize → Columnar layout");
+                debug!("   - Output: Consolidated Parquet files with optimized layout");
+                debug!("   - Quantization: Collection config passed to writer");
+                debug!("   - Compression: Collection config drives Parquet compression");
+                
+                // Extract compression configuration from collection metadata
+                let writer_props = if let Some(ref collection) = collection_config {
+                    if let Some(ref config) = collection.config {
+                        if let Some(ref compression) = config.compression {
+                            use crate::proto::proximadb::CompressionAlgorithm;
+                            use parquet::file::properties::WriterProperties;
+                            
+                            debug!("   ✅ Found compression config: algorithm={}, level={:?}",
+                                compression.algorithm, compression.level);
+                            
+                            // Convert proto compression to Parquet compression
+                            let parquet_compression = match CompressionAlgorithm::try_from(compression.algorithm) {
+                                Ok(CompressionAlgorithm::CompressionZstd) => {
+                                    let level = compression.level.unwrap_or(3);
+                                    parquet::basic::Compression::ZSTD(
+                                        parquet::basic::ZstdLevel::try_new(level)?
+                                    )
+                                }
+                                Ok(CompressionAlgorithm::CompressionLz4) => {
+                                    parquet::basic::Compression::LZ4
+                                }
+                                Ok(CompressionAlgorithm::CompressionSnappy) => {
+                                    parquet::basic::Compression::SNAPPY
+                                }
+                                Ok(CompressionAlgorithm::CompressionGzip) => {
+                                    let level = compression.level.unwrap_or(6) as u32;
+                                    parquet::basic::Compression::GZIP(
+                                        parquet::basic::GzipLevel::try_new(level)?
+                                    )
+                                }
+                                Ok(CompressionAlgorithm::CompressionBrotli) => {
+                                    let level = compression.level.unwrap_or(6) as u32;
+                                    parquet::basic::Compression::BROTLI(
+                                        parquet::basic::BrotliLevel::try_new(level)?
+                                    )
+                                }
+                                _ => {
+                                    debug!("   ⚠️ Unknown or unsupported compression algorithm: {:?}, using UNCOMPRESSED", compression.algorithm);
+                                    parquet::basic::Compression::UNCOMPRESSED
+                                }
+                            };
+                            
+                            debug!("   Selected Parquet compression: {:?}", parquet_compression);
+                            
+                            Some(WriterProperties::builder()
+                                .set_compression(parquet_compression)
+                                .build())
+                        } else {
+                            debug!("   ⚠️ No compression config in collection");
+                            None
+                        }
+                    } else {
+                        debug!("   ⚠️ No config field in collection");
+                        None
+                    }
+                } else {
+                    debug!("   ⚠️ No collection_config provided");
+                    None
+                };
+                
+                let mut writer = ArrowWriter::try_new(&mut parquet_data, schema.clone(), writer_props)
                     .with_context(|| format!("Failed to create Arrow writer for file {}", file_idx))?;
                 
                 // Extract row data from records for this file
@@ -780,12 +1028,26 @@ impl CompactionManager {
                 writer.close()?;
             }
             
-            // Generate output filename for this file
-            let output_filename = format!("compacted_{}_{}_{:03}.parquet", 
-                collection_id, 
-                timestamp_base,
-                file_idx
-            );
+            // Generate output filename using unified compactor format
+            // Determine target level based on source level
+            use crate::storage::common::compaction_orchestrator::FilenameCodec;
+            let codec = FilenameCodec::new();
+            
+            // If compacting L0 files, output goes to L1
+            // If compacting L1 files, output goes to L2, etc.
+            let source_level = input_files.iter()
+                .filter_map(|f| {
+                    // Extract filename from full path
+                    f.rsplit('/').next()
+                        .map(|filename| codec.parse_level(filename))
+                })
+                .max()
+                .unwrap_or(0);
+            let target_level = (source_level + 1).min(7); // Max level is typically 7
+            
+            let output_filename = codec.generate(target_level, "parquet");
+            
+            info!("📊 Compacting from L{} to L{}", source_level, target_level);
             
             info!("📝 Writing compacted file {} to staging: {} ({:.2}MB)", 
                  file_idx + 1, output_filename, parquet_data.len() as f64 / (1024.0 * 1024.0));
@@ -891,30 +1153,51 @@ impl CompactionManager {
             input_files.len()
         );
         
-        // 🔴 UNUSED METRICS - Metrics module is unused
-        // // Record compaction metrics (non-blocking, failure-tolerant)
-        // if let Some(ref metrics_updater) = self.metrics_updater {
-        //     let compaction_update = CompactionMetricsUpdate {
-        //         files_before: input_files.len() as i32,
-        //         files_after: output_files.len() as i32,
-        //         bytes_before: total_bytes_read as i64,
-        //         bytes_after: total_bytes_written as i64,
-        //         duration_ms: 0, // TODO: Track actual duration
-        //         timestamp: chrono::Utc::now().timestamp_millis(),
-        //     };
-        //     
-        //     // Fire and forget - never block compaction operation
-        //     metrics_updater.record_compaction(collection_id, compaction_update).await;
-        // }
+        // Record compaction metrics (non-blocking, failure-tolerant)
+        if let Some(ref metrics_updater) = self.metrics_updater {
+            let compaction_update = crate::metrics::CompactionMetricsUpdate {
+                files_before: input_files.len() as i32,
+                files_after: output_files.len() as i32,
+                bytes_before: total_bytes_read as i64,
+                bytes_after: total_bytes_written as i64,
+                duration_ms: 0, // TODO: Track actual duration
+                timestamp: chrono::Utc::now().timestamp_millis(),
+            };
+            
+            // Fire and forget - never block compaction operation
+            metrics_updater.record_compaction(collection_id, compaction_update).await;
+        }
         
-        Ok(ViperCompactionResult {
-            input_files: discovered_input_files,
-            output_files,
+        let result = ViperCompactionResult {
+            input_files: discovered_input_files.clone(),
+            output_files: output_files.clone(),
             entries_processed: total_records_processed as u64,
             entries_removed: expired_records_count as u64,
             bytes_read: total_bytes_read,
             bytes_written: total_bytes_written,
-        })
+        };
+        
+        // Notify EventLog about successful compaction
+        if !output_files.is_empty() {
+            let flush_handler = crate::storage::engines::viper::flush_eventlog_integration::ViperFlushHandler::new();
+            flush_handler.notify_compaction_complete(
+                collection_id,
+                output_files.clone(),
+                total_records_processed,
+            );
+            
+            // Clean up old files from EventLog tracking
+            if let Err(e) = flush_handler.cleanup_compacted_files(
+                collection_id,
+                discovered_input_files.clone(),
+            ).await {
+                warn!("Failed to cleanup compacted files from EventLog: {}", e);
+            }
+            
+            info!("📨 Notified EventLog about VIPER compaction completion for collection {}", collection_id);
+        }
+        
+        Ok(result)
     }
 
 
@@ -1196,12 +1479,16 @@ mod tests {
                 size_bytes: 10 * 1024 * 1024, // 10MB
                 row_count: 1000,
                 avg_row_size: 10240.0,
+                level: 0,
+                timestamp: 1000,
             },
             FileMetadata {
                 path: "file2.parquet".to_string(),
                 size_bytes: 20 * 1024 * 1024, // 20MB
                 row_count: 2000,
                 avg_row_size: 10240.0,
+                level: 0,
+                timestamp: 2000,
             },
         ];
         
@@ -1229,12 +1516,16 @@ mod tests {
                 size_bytes: 150 * 1024 * 1024, // 150MB
                 row_count: 15000,
                 avg_row_size: 10240.0,
+                level: 1,
+                timestamp: 3000,
             },
             FileMetadata {
                 path: "large2.parquet".to_string(),
                 size_bytes: 150 * 1024 * 1024, // 150MB
                 row_count: 15000,
                 avg_row_size: 10240.0,
+                level: 1,
+                timestamp: 4000,
             },
         ];
         

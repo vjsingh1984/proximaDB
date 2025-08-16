@@ -55,9 +55,8 @@ pub struct BackgroundMaintenanceManager {
     collection_status: Arc<RwLock<HashMap<String, BackgroundTaskStatus>>>,
     stats: Arc<Mutex<BackgroundMaintenanceStats>>,
     storage_engines: Arc<RwLock<HashMap<String, Arc<dyn UnifiedStorageEngine>>>>,
-    // 🔴 UNUSED FIELD - Metrics module is unused
-    // /// Metrics updater for tracking compaction operations
-    // metrics_updater: Option<Arc<dyn InternalMetricsUpdater>>,
+    /// Metrics updater for tracking compaction operations
+    metrics_updater: Option<Arc<dyn InternalMetricsUpdater>>,
 }
 
 impl BackgroundMaintenanceManager {
@@ -68,7 +67,7 @@ impl BackgroundMaintenanceManager {
             collection_status: Arc::new(RwLock::new(HashMap::new())),
             stats: Arc::new(Mutex::new(BackgroundMaintenanceStats::default())),
             storage_engines: Arc::new(RwLock::new(HashMap::new())),
-            // metrics_updater: None,  // 🔴 UNUSED
+            metrics_updater: None,  // Set via set_metrics_updater for dependency injection
         }
     }
 
@@ -84,12 +83,11 @@ impl BackgroundMaintenanceManager {
         Ok(())
     }
     
-    // 🔴 UNUSED METHOD - Metrics module is unused
-    // /// Set metrics updater for tracking compaction operations
-    // pub fn set_metrics_updater(&mut self, updater: Arc<dyn InternalMetricsUpdater>) {
-    //     self.metrics_updater = Some(updater);
-    //     info!("🔗 BackgroundManager: Metrics updater registered for compaction tracking");
-    // }
+    /// Set metrics updater for tracking compaction operations
+    pub fn set_metrics_updater(&mut self, updater: Arc<dyn InternalMetricsUpdater>) {
+        self.metrics_updater = Some(updater);
+        info!("🔗 BackgroundManager: Metrics updater registered for compaction tracking");
+    }
 
     /// 🚀 OPTIMIZED: Context-based compaction that eliminates collection service calls
     pub async fn execute_compaction_with_context(

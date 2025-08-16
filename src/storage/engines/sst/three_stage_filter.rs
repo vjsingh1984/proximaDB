@@ -556,6 +556,13 @@ mod tests {
                 metadata_stats: crate::storage::engines::sst::DataBlockMetadata::default(),
                 block_bloom_filter: None,
                 has_deletes: false,
+                // Quantization is always part of SST blocks
+                quantized_section: crate::storage::engines::sst::QuantizedSection {
+                    pq_codes: vec![],
+                    binary_sketches: vec![],
+                    int8_vectors: None,
+                    int8_params: None,
+                },
             },
         ]
     }

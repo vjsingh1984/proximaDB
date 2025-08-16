@@ -44,6 +44,17 @@ use super::utilities::ViperUtilities;
 use super::unified_search_engine::ViperUnifiedSearchEngine;
 use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
 use super::types::CollectionMetadata;
+use anyhow::Context;
+use std::collections::HashMap as StdHashMap;
+
+// MIGRATION: Import universal quantization adapter
+use crate::storage::engines::common::{
+    UniversalQuantizationAdapter, UniversalQuantizationConfig,
+    quantization_common::{
+        ProgressiveQuantizationStage, UniversalQuantizationLevel,
+        BinaryThresholdStrategy, CodebookStrategy,
+    },
+};
 
 /// VIPER Engine - Main coordination point for the modular VIPER storage engine
 #[derive(Debug)]
@@ -121,6 +132,56 @@ impl ViperEngine {
     async fn new_internal(config: ViperEngineConfig, core_config: crate::core::config::ViperConfig, filesystem: Arc<FilesystemFactory>) -> Result<Self> {
         let collection_service = Arc::new(RwLock::new(None));
         
+        // MIGRATION: Initialize universal quantization adapter (REQUIRED)
+        let quantization_adapter = Arc::new(
+            UniversalQuantizationAdapter::new()
+                .context("Failed to initialize universal quantization adapter")?
+        );
+        
+        // Configure quantization for columnar storage
+        let mut quant_config = UniversalQuantizationConfig::default();
+        quant_config.enabled = true;
+        
+        // VIPER-specific quantization stages for columnar data
+        quant_config.stages = vec![
+            ProgressiveQuantizationStage {
+                level: UniversalQuantizationLevel::Binary {
+                    threshold_strategy: BinaryThresholdStrategy::Adaptive,
+                },
+                candidate_reduction: 0.8, // Filter 80% using binary
+                quality_threshold: 0.3,
+            },
+            ProgressiveQuantizationStage {
+                level: UniversalQuantizationLevel::Int8 {
+                    scale_strategy: crate::storage::engines::common::quantization_common::ScaleStrategy::PerDimensionMinMax,
+                    zero_point_strategy: crate::storage::engines::common::quantization_common::ZeroPointStrategy::Symmetric,
+                },
+                candidate_reduction: 0.5, // Further reduce using INT8
+                quality_threshold: 0.85,
+            },
+            ProgressiveQuantizationStage {
+                level: UniversalQuantizationLevel::ProductQuantization {
+                    segments: 96, // Default for high-dimensional vectors
+                    bits_per_segment: 8,
+                    codebook_strategy: CodebookStrategy::KMeans,
+                },
+                candidate_reduction: 0.0, // Keep all for final ranking
+                quality_threshold: 0.95,
+            },
+        ];
+        
+        // Add VIPER-specific engine overrides
+        quant_config.engine_overrides.insert(
+            "viper_columnar_optimization".to_string(),
+            serde_json::json!(true)
+        );
+        quant_config.engine_overrides.insert(
+            "viper_parquet_encoding".to_string(),
+            serde_json::json!("bit_packed")
+        );
+        
+        quantization_adapter.set_default_config(quant_config);
+        
         // ML clustering moved to AXIS
         // let ml_clustering_engine = MLClusteringEngine::new(super::ml_clustering::KMeansConfig::default());
         
@@ -155,6 +216,7 @@ impl ViperEngine {
             )),
             stats: Arc::new(RwLock::new(EngineStats::default())),
             collections: Arc::new(RwLock::new(HashMap::new())),
+            quantization_adapter,
         })
     }
     
@@ -785,6 +847,22 @@ impl UnifiedStorageEngine for ViperEngine {
         let collection_id = params.collection_id.as_ref()
             .ok_or_else(|| anyhow::anyhow!("Collection ID required for VIPER flush"))?;
         
+        debug!("🔍 VIPER DO_FLUSH: Checking compression configuration");
+        if let Some(ref collection_config) = params.collection_config {
+            if let Some(ref config) = collection_config.config {
+                if let Some(ref compression) = config.compression {
+                    debug!("   ✅ Found compression in collection_config: algorithm={}, level={:?}",
+                        compression.algorithm, compression.level);
+                } else {
+                    debug!("   ⚠️ No compression config in collection_config");
+                }
+            } else {
+                debug!("   ⚠️ No config field in collection");
+            }
+        } else {
+            debug!("   ⚠️ No collection_config in params");
+        }
+        
         debug!("Starting flush for collection {} with {} vectors", 
               collection_id, params.vector_records.len());
         info!("🚿 VIPER Engine: Starting flush for collection {} with {} vectors", 
@@ -824,6 +902,17 @@ impl UnifiedStorageEngine for ViperEngine {
             serde_json::Value::String("VIPER".to_string())
         );
         
+        // Step 3: Notify EventLog for async AXIS indexing (synchronous acknowledgment)
+        let flush_handler = crate::storage::engines::viper::flush_eventlog_integration::ViperFlushHandler::new();
+        let file_paths = vec![parquet_path.to_string_lossy().to_string()];
+        
+        if let Err(e) = flush_handler.notify_flush_complete(params, file_paths, &params.vector_records).await {
+            // Log but don't fail the flush - EventLog notification is best-effort
+            warn!("⚠️ VIPER: Failed to notify EventLog for AXIS indexing: {}", e);
+        } else {
+            info!("✅ VIPER: Successfully notified EventLog for AXIS indexing");
+        }
+        
         Ok(flush_result)
     }
     
@@ -832,6 +921,22 @@ impl UnifiedStorageEngine for ViperEngine {
         
         debug!("🗜️ VIPER do_compact called with params: collection_id={:?}, force={}, synchronous={}, timeout_ms={:?}", 
                params.collection_id, params.force, params.synchronous, params.timeout_ms);
+        
+        debug!("🔍 VIPER DO_COMPACT: Checking compression configuration");
+        if let Some(ref collection_config) = params.collection_config {
+            if let Some(ref config) = collection_config.config {
+                if let Some(ref compression) = config.compression {
+                    debug!("   ✅ Found compression in collection_config: algorithm={}, level={:?}",
+                        compression.algorithm, compression.level);
+                } else {
+                    debug!("   ⚠️ No compression config in collection_config");
+                }
+            } else {
+                debug!("   ⚠️ No config field in collection");
+            }
+        } else {
+            debug!("   ⚠️ No collection_config in params");
+        }
         
         let collection_id = params.collection_id.as_ref()
             .ok_or_else(|| anyhow::anyhow!("Collection ID required for VIPER compaction"))?;

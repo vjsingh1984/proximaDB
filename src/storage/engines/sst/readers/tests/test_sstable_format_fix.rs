@@ -59,7 +59,7 @@ async fn test_sstable_format_with_bloom_filter() {
     // Write records using streaming approach for production consistency
     let record_count = records.len();
     let sorted_records_iter = records.into_iter(); // BTreeMap already sorted by key
-    writer.write_sorted_records(sorted_records_iter, record_count).await.unwrap();
+    writer.write_sorted_vector_records(sorted_records_iter, record_count).await.unwrap();
     
     // Read SSTable metadata (this will test bloom filter reading)
     let reader = UnifiedSstableReader::new(filesystem.clone());

@@ -7,7 +7,7 @@ use crate::proto::proximadb::{SearchResult as ProtoSearchResult, MetadataItem};
 impl From<NativeSearchResult> for ProtoSearchResult {
     fn from(native: NativeSearchResult) -> Self {
         ProtoSearchResult {
-            id: Some(native.id),
+            id: native.id,
             score: native.score,
             vector: native.vector.unwrap_or_default(),
             metadata: native.metadata
@@ -31,7 +31,11 @@ impl From<NativeSearchResult> for ProtoSearchResult {
                     }
                 })
                 .collect(),
-            rank: native.rank.map(|r| r as i32),
+            rank: native.rank.map(|r| r as i32).unwrap_or(0),
+            distance: native.distance.unwrap_or(0.0),
+            version: None,
+            timestamp: None,
+            collection_id: None,
         }
     }
 }
@@ -39,7 +43,7 @@ impl From<NativeSearchResult> for ProtoSearchResult {
 impl From<&NativeSearchResult> for ProtoSearchResult {
     fn from(native: &NativeSearchResult) -> Self {
         ProtoSearchResult {
-            id: Some(native.id.clone()),
+            id: native.id.clone(),
             score: native.score,
             vector: native.vector.clone().unwrap_or_default(),
             metadata: native.metadata
@@ -63,7 +67,11 @@ impl From<&NativeSearchResult> for ProtoSearchResult {
                     }
                 })
                 .collect(),
-            rank: native.rank.map(|r| r as i32),
+            rank: native.rank.map(|r| r as i32).unwrap_or(0),
+            distance: native.distance.unwrap_or(0.0),
+            version: None,
+            timestamp: None,
+            collection_id: None,
         }
     }
 }

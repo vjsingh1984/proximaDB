@@ -493,9 +493,7 @@ impl MetadataWriteAheadLogManager {
                 updated_at: Some(current_time_secs),
                 expires_at: Some(current_time_secs.saturating_sub(1)), // Mark as expired (logical delete)
                 version: Some(1),
-                rank: None,
-                score: None,
-                distance: None,
+                quantized_vector: None,
             
         };
 

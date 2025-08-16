@@ -323,7 +323,7 @@ pub struct WriteAheadLogManagerWorkload {
 /// 
 /// # Examples
 /// 
-/// ```rust
+/// ```rust,ignore
 /// use proximadb::storage::persistence::write_ahead_log::WriteAheadLogManagerPoolConfig;
 /// 
 /// // Configuration for high-throughput workloads

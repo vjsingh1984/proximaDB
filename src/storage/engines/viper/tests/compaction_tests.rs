@@ -186,6 +186,23 @@ async fn test_insert_flush_compact_flow() {
     debug!("  ✅ Compaction complete: {} entries processed, {} input files -> {} output files",
              compact_result.entries_processed, compact_result.input_files, compact_result.output_files);
     
+    // CRITICAL: Verify compaction doesn't duplicate data
+    // We inserted 40 vectors total (4 batches × 10 vectors)
+    let expected_entries = 40u64;
+    assert!(
+        compact_result.entries_processed <= expected_entries,
+        "❌ Compaction processed {} entries but we only inserted {}! This indicates data duplication.",
+        compact_result.entries_processed, expected_entries
+    );
+    
+    // Allow up to 20% overhead for versioning/metadata/deduplication
+    let max_allowed = (expected_entries as f64 * 1.2) as u64;
+    assert!(
+        compact_result.entries_processed <= max_allowed,
+        "❌ Compaction processed {} entries, exceeding 20% threshold of {} (max allowed: {})",
+        compact_result.entries_processed, expected_entries, max_allowed
+    );
+    
     // List files after compaction
     debug!("\n📂 Files after compaction:");
     let mut compacted_file_url = None;
@@ -338,6 +355,23 @@ async fn test_basic_compaction() {
              result.success, result.entries_processed, result.input_files, result.output_files);
     
     assert!(result.success);
+    
+    // CRITICAL: Verify compaction doesn't duplicate data
+    // We inserted 4 batches × 10 vectors = 40 vectors total
+    let expected_entries = 40u64;
+    assert!(
+        result.entries_processed <= expected_entries,
+        "❌ Compaction processed {} entries but we only inserted {}! This indicates data duplication.",
+        result.entries_processed, expected_entries
+    );
+    
+    // Allow up to 20% overhead for versioning/metadata/deduplication
+    let max_allowed = (expected_entries as f64 * 1.2) as u64;
+    assert!(
+        result.entries_processed <= max_allowed,
+        "❌ Compaction processed {} entries, exceeding 20% threshold of {} (max allowed: {})",
+        result.entries_processed, expected_entries, max_allowed
+    );
     // For now, let's check if files were processed instead of entries
     assert!(result.input_files > 0, "Expected input files to be processed, got {}", result.input_files);
     

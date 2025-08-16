@@ -309,9 +309,10 @@ impl StreamingSearchService {
             storage_results.extend(viper_results);
             storage_results.extend(lsm_results);
             
-            // Sort by score descending
+            // Sort by timestamp descending (placeholder for score-based sorting)
+            // TODO: Use proper search result structure with scores
             storage_results.sort_by(|a, b| {
-                b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal)
+                b.timestamp.cmp(&a.timestamp)
             });
             
             // Deduplicate storage results against WAL results if enabled

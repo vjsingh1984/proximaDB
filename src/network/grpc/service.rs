@@ -1189,13 +1189,11 @@ impl ProximaDb for ProximaDbGrpcService {
                 .unwrap_or(&vec![])
                 .iter()
                 .map(|result| SearchResult {
-                    id: Some(
-                        result
-                            .get("id")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("")
-                            .to_string(),
-                    ),
+                    id: result
+                        .get("id")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string(),
                     score: result.get("score").and_then(|v| v.as_f64()).unwrap_or(0.0) as f32,
                     vector: if include_vectors {
                         result
@@ -1240,7 +1238,11 @@ impl ProximaDb for ProximaDbGrpcService {
                     } else {
                         vec![]
                     },
-                    rank: None,
+                    rank: 0, // Default rank value
+                    distance: result.get("distance").and_then(|v| v.as_f64()).unwrap_or(0.0) as f32,
+                    version: result.get("version").and_then(|v| v.as_u64()).map(|v| v as u32),
+                    timestamp: result.get("timestamp").and_then(|v| v.as_u64()).map(|v| v as u32),
+                    collection_id: result.get("collection_id").and_then(|v| v.as_str()).map(|s| s.to_string()),
                 })
                 .collect();
 

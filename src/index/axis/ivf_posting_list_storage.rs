@@ -180,8 +180,8 @@ impl PostingListStorage {
                             )),
                         },
                     ];
-                    records.insert(id.clone(), crate::storage::engines::sst::SstRecord {
-                        id,
+                    records.insert(id.clone(), crate::core::VectorRecord {
+                        id: Some(id),
                         vector,
                         metadata,
                         timestamp: std::time::SystemTime::now()
@@ -191,15 +191,13 @@ impl PostingListStorage {
                         updated_at: None,
                         expires_at: None,
                         version: None,
-                        is_tombstone: false,
-                        sequence_number: 0,
-                        level: 0,
+                        quantized_vector: None,
                     });
                 }
                 
                 // Write records using streaming approach for production consistency
                 let record_count = records.len();
-                let sorted_records_iter = records.into_iter(); // BTreeMap already sorted by key
+                let sorted_records_iter = records.into_iter().map(|(_, record)| record); // Extract values from BTreeMap
                 writer.write_sorted_records(sorted_records_iter, record_count).await?;
                 debug!("Stored posting list {} to SST at {}", cluster_id, path);
                 Ok(())

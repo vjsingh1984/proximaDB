@@ -20,6 +20,8 @@ pub enum StorageEngineStrategy {
     Viper,
     /// LSM: Log-Structured Merge Tree (Alternative for comparison)
     Lsm,
+    /// PRISM: Progressive Retrieval through Indexed Storage Management (Memory-optimized)
+    Prism,
     /// Hybrid: Uses VIPER for vectors, LSM for metadata (Future)
     Hybrid,
 }
@@ -627,6 +629,45 @@ pub trait UnifiedStorageEngine: Send + Sync {
         }
 
         Ok(())
+    }
+    
+    // =============================================================================
+    // ADDITIONAL ENGINE OPERATIONS - Default implementations provided
+    // =============================================================================
+    
+    /// Optimize engine performance for a specific collection
+    async fn optimize(&self, _collection_id: &str) -> Result<()> {
+        // Default implementation: no-op
+        tracing::debug!("Engine {} optimize operation (no-op)", self.engine_name());
+        Ok(())
+    }
+    
+    /// Get detailed engine statistics
+    async fn get_statistics(&self) -> Result<EngineStatistics> {
+        // Default implementation: return basic statistics
+        Ok(EngineStatistics {
+            engine_name: self.engine_name().to_string(),
+            engine_version: self.engine_version().to_string(),
+            strategy: self.strategy(),
+            collections_count: 0,
+            total_vectors: 0,
+            total_storage_bytes: 0,
+            memory_usage_bytes: 0,
+            last_flush: None,
+            last_compaction: None,
+            background_tasks_active: 0,
+        })
+    }
+    
+    /// Check if engine supports a specific feature
+    fn supports_feature(&self, feature: &str) -> bool {
+        // Default implementation: check common features
+        match feature {
+            "collection_level_operations" => self.supports_collection_level_operations(),
+            "atomic_operations" => self.supports_atomic_operations(),
+            "background_operations" => self.supports_background_operations(),
+            _ => false,
+        }
     }
 }
 

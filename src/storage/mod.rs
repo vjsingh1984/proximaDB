@@ -7,6 +7,9 @@ pub mod traits;
 pub mod types;
 pub mod validation;
 
+// Common reusable components
+pub mod common;
+
 // Background operation context (optimization)
 pub mod background_flush_context;
 
@@ -27,6 +30,8 @@ pub mod engine;
 // Unified memtable system
 pub mod memtable;
 pub mod metadata;
+// Quantization support for storage engines
+pub mod quantization;
 // Storage optimization utilities
 pub mod optimization;
 // Strategy module for collection lifecycle configuration
@@ -51,7 +56,9 @@ pub use traits::{
 };
 
 // Engine exports
-pub use engines::{sst::SstStorage, viper::ViperEngine};
+pub use engines::sst::SstStorage;
+// Temporarily disabled due to arrow-arith compilation conflicts - TODO: Re-enable when resolved
+// pub use engines::viper::ViperEngine;
 
 // Persistence exports
 pub use persistence::{DiskManager, FilesystemConfig, FilesystemFactory};

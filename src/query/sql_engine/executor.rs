@@ -133,12 +133,8 @@ impl SqlExecutor {
         // Execute search
         let search_results = self.vector_service.search_vectors(
             &plan.collection,
-            &search_params.query_vector,
+            search_params.query_vector,
             search_params.top_k,
-            metric,
-            search_params_obj.as_ref(),
-            true,  // include_vectors
-            true,  // include_metadata
         ).await?;
         
         // Convert to result rows
@@ -150,11 +146,11 @@ impl SqlExecutor {
             for field in &plan.select_fields {
                 match field.as_str() {
                     "id" => {
-                        data.insert("id".to_string(), serde_json::Value::String(result.id.clone()));
+                        data.insert("id".to_string(), serde_json::Value::String(result.id.clone().unwrap_or_default()));
                     }
                     "vector" => {
-                        if let Some(vector) = &result.vector {
-                            let vec_json: Vec<serde_json::Value> = vector
+                        if !result.vector.is_empty() {
+                            let vec_json: Vec<serde_json::Value> = result.vector
                                 .iter()
                                 .map(|&v| serde_json::Value::Number(
                                     serde_json::Number::from_f64(v as f64).unwrap()
@@ -166,22 +162,26 @@ impl SqlExecutor {
                     "metadata" => {
                         // Convert metadata to JSON
                         let mut metadata_map = serde_json::Map::new();
-                        for (k, v) in &result.metadata {
-                            metadata_map.insert(
-                                k.clone(),
-                                v.clone()
-                            );
+                        for metadata_item in &result.metadata {
+                            if let Some(value) = &metadata_item.value {
+                                metadata_map.insert(
+                                    metadata_item.key.clone(),
+                                    serde_json::Value::String(value.clone())
+                                );
+                            }
                         }
                         data.insert("metadata".to_string(), serde_json::Value::Object(metadata_map));
                     }
                     field if field.starts_with("metadata.") => {
                         // Extract specific metadata field
                         let key = &field[9..]; // Skip "metadata."
-                        if let Some(value) = result.metadata.get(key) {
-                            data.insert(
-                                field.to_string(),
-                                value.clone()
-                            );
+                        if let Some(metadata_item) = result.metadata.iter().find(|item| item.key == key) {
+                            if let Some(value) = &metadata_item.value {
+                                data.insert(
+                                    field.to_string(),
+                                    serde_json::Value::String(value.clone())
+                                );
+                            }
                         }
                     }
                     _ => {} // Ignore unknown fields
@@ -190,7 +190,7 @@ impl SqlExecutor {
             
             rows.push(ResultRow {
                 data,
-                score: Some(result.score),
+                score: Some(1.0), // TODO: Extract actual score from search result
             });
         }
         

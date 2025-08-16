@@ -281,8 +281,8 @@ impl<T: IndexData> UniversalIndexStorage<T> {
                 let _value = bincode::serialize(&data)?;
                 // Note: SstableWriter doesn't have add method, need to use write_sorted_records
                 let mut records = std::collections::BTreeMap::new();
-                records.insert(id.to_string(), crate::storage::engines::sst::SstRecord {
-                    id: id.to_string(),
+                records.insert(id.to_string(), crate::core::VectorRecord {
+                    id: Some(id.to_string()),
                     vector: vec![],  // Empty vector for index data
                     metadata: vec![],
                     timestamp: std::time::SystemTime::now()
@@ -292,13 +292,11 @@ impl<T: IndexData> UniversalIndexStorage<T> {
                     updated_at: None,
                     expires_at: None,
                     version: None,
-                    is_tombstone: false,
-                    sequence_number: 0,
-                    level: 0,
+                    quantized_vector: None,
                 });
                 // Write records using streaming approach for production consistency
                 let record_count = records.len();
-                let sorted_records_iter = records.into_iter(); // BTreeMap already sorted by key
+                let sorted_records_iter = records.into_iter().map(|(_, record)| record); // Extract values from BTreeMap
                 writer.write_sorted_records(sorted_records_iter, record_count).await?;
             }
             StorageEngine::VIPER => {
@@ -418,8 +416,8 @@ impl<T: IndexData> UniversalIndexStorage<T> {
                 let value = bincode::serialize(&data)?;
                 let mut records = std::collections::BTreeMap::new();
                 // Create a dummy SstRecord with serialized data as the vector
-                let record = crate::storage::engines::sst::SstRecord {
-                    id: id.to_string(),
+                let record = crate::core::VectorRecord {
+                    id: Some(id.to_string()),
                     vector: vec![], // Empty vector since we're storing serialized data
                     metadata: vec![
                         crate::proto::proximadb::MetadataItem {
@@ -433,14 +431,12 @@ impl<T: IndexData> UniversalIndexStorage<T> {
                     updated_at: None,
                     expires_at: None,
                     version: None,
-                    is_tombstone: false,
-                    sequence_number: 0,
-                    level: 0,
+                    quantized_vector: None,
                 };
                 records.insert(id.to_string(), record);
                 // Write records using streaming approach for production consistency
                 let record_count = records.len();
-                let sorted_records_iter = records.into_iter(); // BTreeMap already sorted by key
+                let sorted_records_iter = records.into_iter().map(|(_, record)| record); // Extract values from BTreeMap
                 writer.write_sorted_records(sorted_records_iter, record_count).await?;
             }
             StorageEngine::VIPER => {

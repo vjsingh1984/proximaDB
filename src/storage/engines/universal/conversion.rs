@@ -1,0 +1,497 @@
+//! Format Conversion for Universal Adapter
+//!
+//! This module provides conversion utilities between different storage formats
+//! and quantization formats used by storage engines.
+
+use anyhow::Result;
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use tracing::{debug, trace, warn};
+
+/// Storage formats supported by the universal adapter
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum StorageFormat {
+    /// 32-bit floating point format
+    FP32,
+    
+    /// 16-bit floating point format
+    FP16,
+    
+    /// INT8 quantized format
+    QuantizedINT8 { scale: f32, zero_point: i32 },
+    
+    /// Product Quantization format
+    QuantizedPQ { segments: usize, bits: usize },
+    
+    /// Binary format (1 bit per dimension)
+    Binary,
+    
+    /// Custom format with metadata
+    Custom { format_name: String, metadata: HashMap<String, String> },
+}
+
+/// Quantization formats for computation
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum QuantizedFormat {
+    /// INT8 quantization
+    INT8 { scale: f32, zero_point: i32 },
+    
+    /// Product Quantization
+    PQ { segments: usize, bits: usize, codebook: Option<Vec<Vec<Vec<f32>>>> },
+    
+    /// Binary quantization
+    Binary { threshold: f32 },
+    
+    /// Scalar quantization
+    Scalar { min_value: f32, max_value: f32, levels: usize },
+}
+
+/// Compression formats for storage
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum CompressionFormat {
+    /// No compression
+    None,
+    
+    /// ZSTD compression
+    ZSTD { level: i32 },
+    
+    /// LZ4 compression
+    LZ4,
+    
+    /// Snappy compression
+    Snappy,
+    
+    /// Custom compression
+    Custom { algorithm: String, parameters: HashMap<String, String> },
+}
+
+/// Format converter for storage and quantization formats
+#[derive(Debug)]
+pub struct FormatConverter {
+    /// Conversion cache for frequently used conversions
+    conversion_cache: HashMap<String, Vec<u8>>,
+    
+    /// Conversion statistics
+    conversion_stats: ConversionStatistics,
+}
+
+/// Statistics for format conversions
+#[derive(Debug, Clone, Default)]
+pub struct ConversionStatistics {
+    /// Total conversions performed
+    pub total_conversions: u64,
+    
+    /// Conversions per format
+    pub conversions_per_format: HashMap<String, u64>,
+    
+    /// Average conversion time in microseconds
+    pub average_conversion_time_us: u64,
+    
+    /// Cache hit rate
+    pub cache_hit_rate: f32,
+    
+    /// Total conversion time
+    pub total_conversion_time_us: u64,
+}
+
+/// Error types for format conversion
+#[derive(Debug, thiserror::Error)]
+pub enum ConversionError {
+    #[error("Unsupported conversion from {from} to {to}")]
+    UnsupportedConversion { from: String, to: String },
+    
+    #[error("Invalid format parameters: {0}")]
+    InvalidParameters(String),
+    
+    #[error("Data size mismatch: expected {expected}, got {actual}")]
+    DataSizeMismatch { expected: usize, actual: usize },
+    
+    #[error("Quantization error: {0}")]
+    QuantizationError(String),
+    
+    #[error("Compression error: {0}")]
+    CompressionError(String),
+    
+    #[error("Internal conversion error: {0}")]
+    Internal(String),
+}
+
+/// Result type for conversion operations
+pub type ConversionResult<T> = Result<T, ConversionError>;
+
+impl FormatConverter {
+    /// Create a new format converter
+    pub async fn new() -> ConversionResult<Self> {
+        Ok(Self {
+            conversion_cache: HashMap::new(),
+            conversion_stats: ConversionStatistics::default(),
+        })
+    }
+    
+    /// Convert data to INT8 format
+    pub async fn to_int8(&self, data: &[u8]) -> ConversionResult<Vec<i8>> {
+        let start_time = std::time::Instant::now();
+        
+        trace!("Converting {} bytes to INT8 format", data.len());
+        
+        // Convert based on input format detection
+        let result = if data.len() % 4 == 0 {
+            // Assume FP32 input
+            self.fp32_to_int8(data).await?
+        } else {
+            // Assume already in some quantized format
+            data.iter().map(|&b| b as i8).collect()
+        };
+        
+        let conversion_time = start_time.elapsed().as_micros() as u64;
+        debug!("INT8 conversion completed in {}μs", conversion_time);
+        
+        Ok(result)
+    }
+    
+    /// Convert data to PQ format
+    pub async fn to_pq(&self, data: &[u8], segments: usize, bits: usize) -> ConversionResult<Vec<u8>> {
+        let start_time = std::time::Instant::now();
+        
+        trace!("Converting {} bytes to PQ format (segments: {}, bits: {})", data.len(), segments, bits);
+        
+        // Convert to float first if needed
+        let float_data = if data.len() % 4 == 0 {
+            self.bytes_to_fp32(data)?
+        } else {
+            return Err(ConversionError::InvalidParameters(
+                "PQ conversion requires FP32 input data".to_string()
+            ));
+        };
+        
+        // Perform PQ quantization
+        let pq_codes = self.quantize_to_pq(&float_data, segments, bits).await?;
+        
+        let conversion_time = start_time.elapsed().as_micros() as u64;
+        debug!("PQ conversion completed in {}μs", conversion_time);
+        
+        Ok(pq_codes)
+    }
+    
+    /// Convert data to binary format
+    pub async fn to_binary(&self, data: &[u8]) -> ConversionResult<Vec<u8>> {
+        let start_time = std::time::Instant::now();
+        
+        trace!("Converting {} bytes to binary format", data.len());
+        
+        // Convert to float first
+        let float_data = if data.len() % 4 == 0 {
+            self.bytes_to_fp32(data)?
+        } else {
+            return Err(ConversionError::InvalidParameters(
+                "Binary conversion requires FP32 input data".to_string()
+            ));
+        };
+        
+        // Convert to binary using threshold
+        let binary_data = self.quantize_to_binary(&float_data, 0.0).await?;
+        
+        let conversion_time = start_time.elapsed().as_micros() as u64;
+        debug!("Binary conversion completed in {}μs", conversion_time);
+        
+        Ok(binary_data)
+    }
+    
+    /// Convert between storage formats
+    pub async fn convert_storage_format(
+        &self,
+        data: &[u8],
+        from_format: &StorageFormat,
+        to_format: &StorageFormat,
+    ) -> ConversionResult<Vec<u8>> {
+        let start_time = std::time::Instant::now();
+        
+        trace!("Converting from {:?} to {:?}", from_format, to_format);
+        
+        if from_format == to_format {
+            return Ok(data.to_vec());
+        }
+        
+        let result = match (from_format, to_format) {
+            (StorageFormat::FP32, StorageFormat::QuantizedINT8 { scale, zero_point }) => {
+                let float_data = self.bytes_to_fp32(data)?;
+                let int8_data = self.fp32_to_int8_with_params(&float_data, *scale, *zero_point)?;
+                int8_data.into_iter().map(|i| i as u8).collect()
+            },
+            
+            (StorageFormat::FP32, StorageFormat::QuantizedPQ { segments, bits }) => {
+                let float_data = self.bytes_to_fp32(data)?;
+                self.quantize_to_pq(&float_data, *segments, *bits).await?
+            },
+            
+            (StorageFormat::FP32, StorageFormat::Binary) => {
+                let float_data = self.bytes_to_fp32(data)?;
+                self.quantize_to_binary(&float_data, 0.0).await?
+            },
+            
+            (StorageFormat::QuantizedINT8 { scale, zero_point }, StorageFormat::FP32) => {
+                let int8_data: Vec<i8> = data.iter().map(|&b| b as i8).collect();
+                let float_data = self.int8_to_fp32(&int8_data, *scale, *zero_point)?;
+                self.fp32_to_bytes(&float_data)?
+            },
+            
+            _ => {
+                return Err(ConversionError::UnsupportedConversion {
+                    from: format!("{:?}", from_format),
+                    to: format!("{:?}", to_format),
+                });
+            },
+        };
+        
+        let conversion_time = start_time.elapsed().as_micros() as u64;
+        debug!("Storage format conversion completed in {}μs", conversion_time);
+        
+        Ok(result)
+    }
+    
+    /// Compress data using specified format
+    pub async fn compress_data(
+        &self,
+        data: &[u8],
+        format: &CompressionFormat,
+    ) -> ConversionResult<Vec<u8>> {
+        let start_time = std::time::Instant::now();
+        
+        trace!("Compressing {} bytes using {:?}", data.len(), format);
+        
+        let result = match format {
+            CompressionFormat::None => data.to_vec(),
+            
+            CompressionFormat::ZSTD { level } => {
+                self.compress_zstd(data, *level).await?
+            },
+            
+            CompressionFormat::LZ4 => {
+                self.compress_lz4(data).await?
+            },
+            
+            CompressionFormat::Snappy => {
+                self.compress_snappy(data).await?
+            },
+            
+            CompressionFormat::Custom { algorithm, parameters: _ } => {
+                warn!("Custom compression algorithm '{}' not implemented, using no compression", algorithm);
+                data.to_vec()
+            },
+        };
+        
+        let compression_time = start_time.elapsed().as_micros() as u64;
+        debug!("Compression completed in {}μs, ratio: {:.2}", 
+               compression_time, data.len() as f32 / result.len() as f32);
+        
+        Ok(result)
+    }
+    
+    /// Decompress data using specified format
+    pub async fn decompress_data(
+        &self,
+        data: &[u8],
+        format: &CompressionFormat,
+    ) -> ConversionResult<Vec<u8>> {
+        let start_time = std::time::Instant::now();
+        
+        trace!("Decompressing {} bytes using {:?}", data.len(), format);
+        
+        let result = match format {
+            CompressionFormat::None => data.to_vec(),
+            
+            CompressionFormat::ZSTD { level: _ } => {
+                self.decompress_zstd(data).await?
+            },
+            
+            CompressionFormat::LZ4 => {
+                self.decompress_lz4(data).await?
+            },
+            
+            CompressionFormat::Snappy => {
+                self.decompress_snappy(data).await?
+            },
+            
+            CompressionFormat::Custom { algorithm, parameters: _ } => {
+                warn!("Custom compression algorithm '{}' not implemented", algorithm);
+                return Err(ConversionError::CompressionError(
+                    format!("Unsupported compression algorithm: {}", algorithm)
+                ));
+            },
+        };
+        
+        let decompression_time = start_time.elapsed().as_micros() as u64;
+        debug!("Decompression completed in {}μs", decompression_time);
+        
+        Ok(result)
+    }
+    
+    /// Get conversion statistics
+    pub fn get_statistics(&self) -> &ConversionStatistics {
+        &self.conversion_stats
+    }
+    
+    // Private helper methods for specific conversions
+    
+    async fn fp32_to_int8(&self, data: &[u8]) -> ConversionResult<Vec<i8>> {
+        let float_data = self.bytes_to_fp32(data)?;
+        
+        // Calculate scale and zero point for quantization
+        let min_val = float_data.iter().fold(f32::INFINITY, |a, &b| a.min(b));
+        let max_val = float_data.iter().fold(f32::NEG_INFINITY, |a, &b| a.max(b));
+        
+        let scale = if max_val > min_val {
+            (max_val - min_val) / 255.0
+        } else {
+            1.0
+        };
+        let zero_point = (-min_val / scale).round() as i32 - 128;
+        
+        self.fp32_to_int8_with_params(&float_data, scale, zero_point)
+    }
+    
+    fn fp32_to_int8_with_params(&self, data: &[f32], scale: f32, zero_point: i32) -> ConversionResult<Vec<i8>> {
+        let result = data.iter()
+            .map(|&value| {
+                let quantized = (value / scale + zero_point as f32).round();
+                quantized.clamp(-128.0, 127.0) as i8
+            })
+            .collect();
+        
+        Ok(result)
+    }
+    
+    fn int8_to_fp32(&self, data: &[i8], scale: f32, zero_point: i32) -> ConversionResult<Vec<f32>> {
+        let result = data.iter()
+            .map(|&value| (value as f32 - zero_point as f32) * scale)
+            .collect();
+        
+        Ok(result)
+    }
+    
+    async fn quantize_to_pq(&self, data: &[f32], segments: usize, bits: usize) -> ConversionResult<Vec<u8>> {
+        if data.len() % segments != 0 {
+            return Err(ConversionError::InvalidParameters(
+                format!("Vector dimension {} not divisible by segments {}", data.len(), segments)
+            ));
+        }
+        
+        let segment_size = data.len() / segments;
+        let centroids_per_segment = 1 << bits;
+        let mut result = Vec::with_capacity(segments);
+        
+        // Simplified PQ quantization (in practice, this would use trained codebooks)
+        for segment_idx in 0..segments {
+            let segment_start = segment_idx * segment_size;
+            let segment_end = segment_start + segment_size;
+            let segment = &data[segment_start..segment_end];
+            
+            // Simple quantization: map to centroid index based on mean value
+            let mean = segment.iter().sum::<f32>() / segment.len() as f32;
+            let quantized_index = ((mean + 1.0) / 2.0 * centroids_per_segment as f32)
+                .clamp(0.0, (centroids_per_segment - 1) as f32) as u8;
+            
+            result.push(quantized_index);
+        }
+        
+        Ok(result)
+    }
+    
+    async fn quantize_to_binary(&self, data: &[f32], threshold: f32) -> ConversionResult<Vec<u8>> {
+        let mut result = Vec::new();
+        
+        for chunk in data.chunks(8) {
+            let mut byte = 0u8;
+            for (i, &value) in chunk.iter().enumerate() {
+                if value > threshold {
+                    byte |= 1 << i;
+                }
+            }
+            result.push(byte);
+        }
+        
+        Ok(result)
+    }
+    
+    fn bytes_to_fp32(&self, data: &[u8]) -> ConversionResult<Vec<f32>> {
+        if data.len() % 4 != 0 {
+            return Err(ConversionError::DataSizeMismatch {
+                expected: data.len() - (data.len() % 4),
+                actual: data.len(),
+            });
+        }
+        
+        let mut result = Vec::new();
+        for chunk in data.chunks(4) {
+            let bytes = [chunk[0], chunk[1], chunk[2], chunk[3]];
+            result.push(f32::from_le_bytes(bytes));
+        }
+        
+        Ok(result)
+    }
+    
+    fn fp32_to_bytes(&self, data: &[f32]) -> ConversionResult<Vec<u8>> {
+        let mut result = Vec::new();
+        for &value in data {
+            result.extend_from_slice(&value.to_le_bytes());
+        }
+        Ok(result)
+    }
+    
+    // Compression implementations (simplified - in practice would use proper libraries)
+    
+    async fn compress_zstd(&self, data: &[u8], _level: i32) -> ConversionResult<Vec<u8>> {
+        // Simplified ZSTD compression simulation
+        // In practice, would use zstd crate
+        Ok(data.to_vec()) // Placeholder
+    }
+    
+    async fn decompress_zstd(&self, data: &[u8]) -> ConversionResult<Vec<u8>> {
+        // Simplified ZSTD decompression simulation
+        Ok(data.to_vec()) // Placeholder
+    }
+    
+    async fn compress_lz4(&self, data: &[u8]) -> ConversionResult<Vec<u8>> {
+        // Simplified LZ4 compression simulation
+        Ok(data.to_vec()) // Placeholder
+    }
+    
+    async fn decompress_lz4(&self, data: &[u8]) -> ConversionResult<Vec<u8>> {
+        // Simplified LZ4 decompression simulation
+        Ok(data.to_vec()) // Placeholder
+    }
+    
+    async fn compress_snappy(&self, data: &[u8]) -> ConversionResult<Vec<u8>> {
+        // Simplified Snappy compression simulation
+        Ok(data.to_vec()) // Placeholder
+    }
+    
+    async fn decompress_snappy(&self, data: &[u8]) -> ConversionResult<Vec<u8>> {
+        // Simplified Snappy decompression simulation
+        Ok(data.to_vec()) // Placeholder
+    }
+}
+
+impl StorageFormat {
+    /// Get the expected data size per vector for this format
+    pub fn data_size_per_vector(&self, dimension: usize) -> usize {
+        match self {
+            StorageFormat::FP32 => dimension * 4,
+            StorageFormat::FP16 => dimension * 2,
+            StorageFormat::QuantizedINT8 { .. } => dimension,
+            StorageFormat::QuantizedPQ { segments, .. } => *segments,
+            StorageFormat::Binary => (dimension + 7) / 8,
+            StorageFormat::Custom { .. } => dimension * 4, // Default assumption
+        }
+    }
+    
+    /// Check if this format supports hardware acceleration
+    pub fn supports_hardware_acceleration(&self) -> bool {
+        match self {
+            StorageFormat::FP32 => true,
+            StorageFormat::QuantizedINT8 { .. } => true,
+            StorageFormat::Binary => true,
+            _ => false,
+        }
+    }
+}

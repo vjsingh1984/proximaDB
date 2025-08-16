@@ -394,7 +394,7 @@ impl SharedServices {
         debug!("🔧 SharedServices::new - Creating SST engine...");
         let sst_engine = Arc::new(
             crate::storage::engines::sst::SstStorage::new(
-                storage_config.sst_config.clone(),
+                storage_config.sst_config.clone().unwrap_or_default(),
                 filesystem_factory.clone(),
                 Arc::new(crate::compute::distance_computation::engine::UnifiedDistanceCompute::default()),
             ).await?
@@ -404,7 +404,7 @@ impl SharedServices {
         // Create VectorOperationsService with optimized architecture
         debug!("🔧 SharedServices::new - About to create VectorOperationsService...");
         let vector_operations_service = Arc::new(
-            VectorOperationsService::new(wal_config, viper_engine, sst_engine).await?
+            VectorOperationsService::new(sst_engine)
         );
         
         info!("✅ SharedServices: VectorOperationsService created successfully - 40-60% performance boost enabled");

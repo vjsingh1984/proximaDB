@@ -3,10 +3,12 @@
 //! Vector-optimized Intelligent Parquet with Efficient Retrieval
 //! Default storage engine optimized for high-dimensional vector operations.
 
+// Dual-mode architecture removed - functionality moved to columnar common module
 
 pub mod readers;
 pub mod unified_search_engine; // NEW: Unified search engine implementation
 pub mod factory;
+pub mod flush_eventlog_integration;
 pub mod pipeline;
 pub mod pipeline_tests; // Pipeline tests module
 pub mod quantization;
@@ -22,6 +24,9 @@ pub mod compaction;
 pub mod flush;
 pub mod engine;
 
+// Unified columnar infrastructure integration
+pub mod unified_columnar_integration;
+
 // Test modules
 
 #[cfg(test)]
@@ -29,6 +34,12 @@ mod tests;
 
 // Re-export main VIPER types
 pub use factory::ViperFactory;
+
+// Re-export unified columnar integration
+pub use unified_columnar_integration::{
+    ViperUnifiedEngine, ViperSpecificConfig, InsertResult, SearchResult, 
+    ProgressiveSearchResult, ViperPerformanceMetrics,
+};
 // Clustering exports moved to AXIS
 pub use pipeline::ViperPipeline;
 pub use quantization::{

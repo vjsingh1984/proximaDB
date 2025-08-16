@@ -48,6 +48,9 @@ pub struct SearchParams {
     /// Hint to enable/disable cluster optimization
     pub enable_clustering_hint: Option<bool>,
     
+    /// Runtime optimization hints for search strategy selection
+    pub runtime_hints: Option<crate::query::unified_search_optimizer::SearchHints>,
+    
     /// Hint to enable/disable metadata filtering optimization
     pub enable_metadata_filtering_hint: Option<bool>,
     

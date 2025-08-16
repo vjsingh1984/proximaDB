@@ -13,6 +13,7 @@ pub mod adaptive_engine;
 pub mod analyzer;
 pub mod annoy_index;
 pub mod clustering;
+pub mod zero_overhead_vector;  // Zero-overhead vector storage - the ultimate optimization
 pub mod hnsw_index;
 pub mod index_factory;
 pub mod ivf_unified;    // Unified IVF implementation
@@ -23,6 +24,9 @@ pub use ivf_unified as ivf_index;
 pub mod lsh_index;
 pub mod manager;
 pub mod memory_tracker;  // AXIS index memory residency tracking
+pub mod eventlog;         // Event log queue for async indexing
+pub mod eventlog_consumer; // AXIS consumer for processing EventLog events
+pub mod flush_integration; // Integration with storage flush operations
 pub mod collection_state; // Collection-level tier state management
 pub mod tiering_manager;  // Intelligent tiering orchestration
 pub mod pattern_analyzer;  // AXIS-specific heat scoring and pattern analysis

@@ -146,6 +146,18 @@ impl CollectionService {
                 start_time.elapsed().as_micros() as i64,
             ));
         }
+        
+        // Validate quantization configuration
+        if let Some(quant_config) = &enriched_config.quantization_config {
+            if quant_config.enabled {
+                info!(
+                    "⚠️ Collection '{}' has quantization enabled. All vectors MUST have unique IDs for tracking quantized representations",
+                    config.name
+                );
+                // Note: We don't fail here, but log a warning. The actual validation happens during insert
+                // This allows collections to be created with quantization enabled, but enforces IDs at insert time
+            }
+        }
 
         // Check if collection already exists
         if let Some(_) = self

@@ -391,9 +391,7 @@ impl VectorBatchRequestBuilder {
             updated_at: Some(chrono::Utc::now().timestamp() as u32),
             version: Some(1),
             expires_at: json.get("expires_at").and_then(|v| v.as_i64()).map(|v| v as u32),
-            rank: None,
-            score: None,
-            distance: None,
+            quantized_vector: None,
         
         })
     }

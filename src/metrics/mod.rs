@@ -34,6 +34,7 @@ pub use aggregator::{MetricsAggregationEngine, AggregationWindow};
 pub use compression::{CompressionMetrics, CompressionMetricsTracker, CompressionResult, DecompressionResult};
 pub use cache::{CacheMetricsSnapshot, CacheMetricsCollector, CacheOptimizationHints};
 pub use exporters::{MetricsExporter, ExportFormat, PrometheusExporter, JsonExporter};
+pub use collectors::{UnifiedMetricsCollector, EngineMetricsCollector, EngineStatistics, EngineComparison};
 
 // Re-export common types for compatibility
 pub use exporters::{SystemMetrics, MetricsSnapshot};

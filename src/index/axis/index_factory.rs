@@ -21,10 +21,12 @@
 
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
-use std::sync::Arc;
+// Removed unused imports
+// use std::collections::HashMap;
+// use std::sync::Arc;
 
 use crate::compute::distance_computation::DistanceMetric;
-use crate::core::VectorRecord;
+// VectorRecord eliminated from AXIS - zero-overhead storage only
 // use crate::index::axis::hnsw_integration::{AxisHnswConfig, PartitionedHnswIndex};
 use crate::index::axis::annoy_index::{AxisAnnoyConfig, AxisAnnoyIndex};
 use crate::index::axis::ivf_unified::{UnifiedIvfConfig, UnifiedIvfIndex};
@@ -32,17 +34,18 @@ use crate::index::axis::lsh_index::{AxisLshConfig, AxisLshIndex};
 use crate::index::axis::types::IndexAlgorithm;
 
 /// Trait for vector indexes that can be used by AXIS
+/// Clean design: No VectorRecord, just raw vector data
 #[async_trait]
 pub trait AxisVectorIndex: Send + Sync {
-    /// Add a vector to the index
-    async fn add(&self, id: String, vector: Arc<VectorRecord>) -> Result<()>;
+    /// Add a vector to the index - just ID and raw data
+    async fn add(&self, id: String, vector_data: Vec<f32>) -> Result<()>;
     
-    /// Search for nearest neighbors
+    /// Search for nearest neighbors with optional metadata filter
     async fn search(
         &self,
         query: &[f32],
         top_k: usize,
-        filter: Option<&(dyn for<'a> Fn(&'a VectorRecord) -> bool + Send + Sync)>,
+        filter: Option<&std::collections::HashMap<String, String>>,
     ) -> Result<Vec<(String, f32)>>;
     
     /// Remove a vector from the index

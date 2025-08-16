@@ -632,7 +632,7 @@ mod edge_tests {
         }
         let record_count = records.len();
         let sorted_records_iter = records.into_iter();
-        writer.write_sorted_records(sorted_records_iter, record_count).await.unwrap();
+        writer.write_sorted_vector_records(sorted_records_iter, record_count).await.unwrap();
         
         // Create reader and context
         let reader = Arc::new(UnifiedSstableReader::new(filesystem));

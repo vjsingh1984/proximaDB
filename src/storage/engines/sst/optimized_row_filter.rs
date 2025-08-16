@@ -7,9 +7,9 @@ use std::collections::HashMap;
 use anyhow::Result;
 use tracing::{debug, info};
 
-use crate::core::VectorRecord;
+use crate::core::VectorRecord;  // OPTIMIZED: Direct VectorRecord usage
 use crate::core::search::FilterExpression;
-use crate::storage::engines::sst::{SstRecord, DataBlock};
+use crate::storage::engines::sst::DataBlock;  // OPTIMIZED: Removed SstRecord import (DataBlock now contains VectorRecord)
 
 /// Fast in-memory filter evaluator for row-oriented SST data
 pub struct SSTRowFilterEvaluator {
@@ -24,25 +24,27 @@ impl SSTRowFilterEvaluator {
         }
     }
     
-    /// Fast filter evaluation on already-loaded SST records
+    /// Fast filter evaluation on already-loaded VectorRecords
     /// 
     /// This is optimal for SST because:
     /// 1. Data is already in memory (row-oriented blocks read in full)
     /// 2. No I/O savings from predicate pushdown
-    /// 3. Fast metadata field access from SstRecord/VectorRecord
+    /// 3. Fast metadata field access from VectorRecord
     /// 4. Can filter entire blocks in memory efficiently
     pub fn filter_records_fast(
         &mut self,
-        records: &[SstRecord],
+        records: &[VectorRecord],
         filter_expr: &FilterExpression,
     ) -> Result<Vec<usize>> {
         let mut qualifying_indices = Vec::new();
         
-        info!("SST Row Filter: Evaluating {} records in memory", records.len());
+        info!("SST Row Filter: Evaluating {} VectorRecords in memory", records.len());
         
         for (index, record) in records.iter().enumerate() {
-            // Convert metadata once and cache if needed
-            let metadata_map = self.get_or_convert_metadata(&record.id, &record.metadata)?;
+            // Use record ID or index as cache key
+            let formatted_key = format!("idx_{}", index);
+            let cache_key = record.id.as_deref().unwrap_or(&formatted_key);
+            let metadata_map = self.get_or_convert_vector_metadata(cache_key, &record.metadata)?;
             
             // Fast filter evaluation using centralized logic
             if self.evaluate_filter_fast(filter_expr, &metadata_map) {
@@ -50,7 +52,7 @@ impl SSTRowFilterEvaluator {
             }
         }
         
-        debug!("SST Row Filter: {} out of {} records qualify", 
+        debug!("SST Row Filter: {} out of {} VectorRecords qualify", 
                qualifying_indices.len(), records.len());
         
         Ok(qualifying_indices)

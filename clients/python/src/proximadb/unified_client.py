@@ -720,7 +720,31 @@ class ProximaDBClient:
         """Insert vectors into a collection
         
         Supports both new API (VectorRecord objects) and old API (separate vectors/ids/metadata)
+        
+        Note: For quantized collections, all vectors MUST have unique IDs to track
+        quantized representations across storage and indexes.
         """
+        # Check if collection has quantization enabled
+        try:
+            collection = self.get_collection(collection_id)
+            if collection and hasattr(collection, 'config'):
+                config = collection.config
+                if hasattr(config, 'quantization_config') and config.quantization_config:
+                    if hasattr(config.quantization_config, 'enabled') and config.quantization_config.enabled:
+                        # Quantization is enabled - validate IDs
+                        needs_id_validation = True
+                        logger.info(f"Collection '{collection_id}' has quantization enabled - validating vector IDs")
+                    else:
+                        needs_id_validation = False
+                else:
+                    needs_id_validation = False
+            else:
+                needs_id_validation = False
+        except Exception as e:
+            # If we can't check, proceed without validation
+            logger.debug(f"Could not check quantization status for collection {collection_id}: {e}")
+            needs_id_validation = False
+        
         # Handle backward compatibility: convert old API to new API
         if vectors is not None:
             # Handle numpy arrays first
@@ -749,6 +773,17 @@ class ProximaDBClient:
         # Handle numpy arrays and other array-like objects
         if records is None or (hasattr(records, '__len__') and len(records) == 0) or (not hasattr(records, '__len__') and not records):
             raise ValueError("Either 'records' or 'vectors' must be provided")
+        
+        # Validate IDs for quantized collections
+        if needs_id_validation:
+            for i, record in enumerate(records):
+                if not record.id or record.id.strip() == "":
+                    raise ValueError(
+                        f"Vector at index {i} missing ID. "
+                        f"Collection '{collection_id}' has quantization enabled. "
+                        f"All vectors MUST have unique IDs for tracking quantized representations."
+                    )
+            logger.debug(f"✅ ID validation passed for {len(records)} vectors in quantized collection {collection_id}")
         
         # Estimate data size for routing
         data_size_hint = len(records) * len(records[0].vector) * 4 if records and records[0].vector else 1000  # Rough estimate

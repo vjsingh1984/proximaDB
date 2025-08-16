@@ -12,7 +12,7 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::{debug, info};
 
-use super::{DataBlock, SstRecord};
+use super::DataBlock;  // OPTIMIZED: Removed SstRecord import (DataBlock now contains VectorRecord)
 
 /// Cache key for decompressed blocks
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
@@ -403,10 +403,10 @@ impl DecompressionCache {
 
     /// Calculate the size of a data block
     fn calculate_block_size(block: &DataBlock) -> usize {
-        // Estimate based on records in the block
+        // Estimate based on VectorRecords in the block
         block.records.iter().map(|r| {
-            std::mem::size_of::<SstRecord>() +
-            r.id.len() +
+            std::mem::size_of::<crate::core::VectorRecord>() +
+            r.id.as_ref().map(|s| s.len()).unwrap_or(0) +
             r.vector.len() * std::mem::size_of::<f32>() +
             r.metadata.iter().map(|m| m.key.len() + 8).sum::<usize>() // Rough metadata size
         }).sum()
@@ -603,21 +603,19 @@ mod tests {
                 block_offset: 0,
             };
             
-            // Create a large block with 500 records, each with 256-dim vectors
+            // Create a large block with 500 VectorRecords, each with 256-dim vectors
             // This should be approximately 500 * (256 * 4 + overhead) = ~512KB per block
             let mut records = vec![];
             for j in 0..500 {
-                records.push(SstRecord {
-                    id: format!("id_long_name_for_testing_{}", j),
+                records.push(crate::core::VectorRecord {
+                    id: Some(format!("id_long_name_for_testing_{}", j)),
                     vector: vec![0.0; 256], // 256-dim vector = 1KB per vector
                     metadata: vec![],
                     timestamp: 0,
                     updated_at: None,
                     expires_at: None,
-                    version: None,
-                    is_tombstone: false,
-                    sequence_number: 0,
-                    level: 0,
+                    version: Some(1),
+                    quantized_vector: None,
                 });
             }
             

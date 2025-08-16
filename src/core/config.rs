@@ -111,11 +111,15 @@ pub struct StorageConfig {
 
     /// Storage engine configurations
     pub mmap_enabled: bool,
-    pub sst_config: SstConfig,
+    pub sst_config: Option<SstConfig>,
     pub viper_config: Option<ViperConfig>,
     pub cache_size_mb: u64,
     // bloom_filter_bits removed - use bloom_filter_config instead
     pub bloom_filter_config: Option<BloomFilterConfig>,
+    
+    /// Common compaction configuration (can be overridden per engine)
+    #[serde(default)]
+    pub compaction_config: CompactionConfig,
 
     /// Filesystem optimization settings
     pub filesystem_config: FilesystemOptimizationConfig,
@@ -335,11 +339,12 @@ impl Default for StorageConfig {
             assignment_config: AssignmentConfig::default(),
             wal_config: WriteBufferUserConfig::default(),
             mmap_enabled: true,
-            sst_config: SstConfig::default(),
+            sst_config: Some(SstConfig::default()),
             viper_config: Some(ViperConfig::default()),
             cache_size_mb: 2048,
             // Use unified bloom filter config
             bloom_filter_config: Some(BloomFilterConfig::default()),
+            compaction_config: CompactionConfig::default(),
             filesystem_config: FilesystemOptimizationConfig::default(),
         }
     }
@@ -407,13 +412,65 @@ impl WriteBufferUserConfig {
     }
 }
 
+/// Common compaction configuration shared across engines
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CompactionConfig {
+    /// L0 file count threshold for compaction (default: 5)
+    #[serde(default = "default_l0_file_threshold")]
+    pub l0_file_threshold: usize,
+    
+    /// L0 size threshold in MB for compaction (default: 256MB)
+    #[serde(default = "default_l0_size_threshold_mb")]
+    pub l0_size_threshold_mb: usize,
+    
+    /// Multiplier for higher level thresholds (default: 2.0)
+    #[serde(default = "default_level_multiplier")]
+    pub level_multiplier: f64,
+    
+    /// Maximum number of levels (default: 7)
+    #[serde(default = "default_max_levels")]
+    pub max_levels: u8,
+    
+    /// Compaction strategy: "count", "size", or "hybrid" (default: "hybrid")
+    #[serde(default = "default_compaction_strategy")]
+    pub strategy: String,
+    
+    /// Target output file size in MB for size-based compaction (default: 128MB)
+    #[serde(default = "default_target_file_size_mb")]
+    pub target_file_size_mb: usize,
+}
+
+fn default_l0_file_threshold() -> usize { 5 }
+fn default_l0_size_threshold_mb() -> usize { 256 }
+fn default_level_multiplier() -> f64 { 2.0 }
+fn default_max_levels() -> u8 { 7 }
+fn default_compaction_strategy() -> String { "hybrid".to_string() }
+fn default_target_file_size_mb() -> usize { 128 }
+
+impl Default for CompactionConfig {
+    fn default() -> Self {
+        Self {
+            l0_file_threshold: default_l0_file_threshold(),
+            l0_size_threshold_mb: default_l0_size_threshold_mb(),
+            level_multiplier: default_level_multiplier(),
+            max_levels: default_max_levels(),
+            strategy: default_compaction_strategy(),
+            target_file_size_mb: default_target_file_size_mb(),
+        }
+    }
+}
+
 /// SST (Sorted String Table) engine configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SstConfig {
     /// Number of levels in the SST tree
     pub level_count: u8,
-    /// Minimum files before compaction triggers
+    /// Minimum files before compaction triggers (DEPRECATED - use compaction_config)
     pub compaction_threshold: u32,
+    
+    /// Compaction configuration (overrides common config if specified)
+    #[serde(default)]
+    pub compaction_config: Option<CompactionConfig>,
     /// SSTable block size in KB. Configurable from TOML, defaults to 1MB.
     /// 
     /// **Performance Guidelines:**
@@ -480,6 +537,10 @@ pub struct ViperConfig {
     pub data_directory: String,
     /// Cache size for columnar data in MB
     pub cache_size_mb: u64,
+    
+    /// Compaction configuration (overrides common config if specified)
+    #[serde(default)]
+    pub compaction_config: Option<CompactionConfig>,
 }
 
 impl Default for ViperConfig {
@@ -491,6 +552,7 @@ impl Default for ViperConfig {
             enable_statistics: true,
             data_directory: "./data/viper_data".to_string(),
             cache_size_mb: 512,
+            compaction_config: None,  // Use common config by default
         }
     }
 }
@@ -509,10 +571,11 @@ impl Default for SstConfig {
         Self {
             level_count: 7,
             compaction_threshold: 5,
+            compaction_config: None,  // Use common config by default
             block_size_kb: 2048, // 2MB default (2048 KB) - optimal balance for disk IOPS and cloud storage
             compaction_strategy: "leveled".to_string(),
-            compression: "zstd".to_string(),  // ZSTD for better compression
-            compression_level: 3,  // Balanced speed/compression
+            compression: "none".to_string(),  // No compression for server default
+            compression_level: 0,  // No compression level
             bloom_filter_config: Some(BloomFilterConfig::default()),
             cache_size_mb: 128,
             max_files_per_level: 10,
@@ -587,6 +650,26 @@ impl SstConfig {
     /// Get block size in bytes for internal use
     pub fn block_size_bytes(&self) -> usize {
         (self.block_size_kb as usize) * 1024
+    }
+    
+    /// Create test-specific SST configuration with smaller block sizes for quantization testing
+    /// This helps demonstrate quantization clustering with smaller blocks while keeping
+    /// server default at 2048KB for production performance
+    pub fn test_config_256kb() -> Self {
+        let mut config = Self::default();
+        config.block_size_kb = 256; // Small blocks for quantization clustering tests
+        config.compression = "zstd".to_string(); // Zstd compression for tests
+        config.compression_level = 3; // Balanced compression level
+        config
+    }
+    
+    /// Create test-specific SST configuration with 512KB blocks
+    pub fn test_config_512kb() -> Self {
+        let mut config = Self::default();
+        config.block_size_kb = 512;
+        config.compression = "zstd".to_string(); // Zstd compression for tests
+        config.compression_level = 3; // Balanced compression level
+        config
     }
 }
 

@@ -33,8 +33,8 @@ mod tests {
         assert_eq!(config.block_size_kb, 2048); // 2MB blocks (default)
         assert_eq!(config.block_size_bytes(), 2048 * 1024);
         
-        // Test compression
-        assert_eq!(config.compression, "zstd");
+        // Test compression - server default is none (no compression)
+        assert_eq!(config.compression, "none");
     }
     
     #[test]

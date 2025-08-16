@@ -13,6 +13,9 @@ use std::time::{Duration, Instant};
 use tokio::sync::RwLock;
 use chrono::Timelike;
 
+// Import row-based common DataBlock
+use crate::storage::engines::row_based::block_structures::RowBasedDataBlock as DataBlock;
+
 // Define types locally to avoid circular dependencies
 /// Cache key for block caching
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
@@ -20,14 +23,6 @@ pub struct BlockCacheKey {
     pub file_path: String,
     pub block_id: u32,
     pub block_index: usize,
-}
-
-/// Data block placeholder
-#[derive(Debug)]
-pub struct DataBlock {
-    pub data: Vec<u8>,
-    pub block_id: u32,
-    pub checksum: u32,
 }
 
 /// Predictive prefetcher for SSTable blocks

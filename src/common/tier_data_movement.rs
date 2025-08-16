@@ -31,7 +31,8 @@ use crate::common::tier_policy_engine::StorageTier;
 use crate::proto::proximadb::VectorRecord;
 use crate::storage::engines::sst::readers::unified_sstable_reader::UnifiedSstableReader;
 use crate::storage::engines::sst::sstable_writer::SstableWriter;
-use crate::storage::engines::viper::readers::unified_parquet_reader::UnifiedParquetReader;
+// Temporarily disabled due to arrow-arith compilation conflicts - TODO: Re-enable when resolved
+// use crate::storage::engines::viper::readers::unified_parquet_reader::UnifiedParquetReader;
 // use crate::storage::engines::viper::flush::ViperFlushOperation; // TODO: Import correct flush module
 
 /// Data format used by each tier
@@ -300,8 +301,8 @@ impl TierDataMovement {
                 }
             }).collect();
             
-            records.insert(id.clone(), crate::storage::engines::sst::SstRecord {
-                id,
+            records.insert(id.clone(), crate::core::VectorRecord {
+                id: Some(id),
                 vector: vector.vector.clone(),
                 metadata,
                 timestamp: std::time::SystemTime::now()
@@ -311,15 +312,13 @@ impl TierDataMovement {
                 updated_at: None,
                 expires_at: None,
                 version: vector.version,
-                is_tombstone: false,
-                sequence_number: 0,
-                level: 0,
+                quantized_vector: None,
             });
         }
         
         // Write records using streaming approach for production consistency
         let record_count = records.len();
-        let sorted_records_iter = records.into_iter(); // BTreeMap already sorted by key
+        let sorted_records_iter = records.into_iter().map(|(_, record)| record); // Extract just the VectorRecord
         writer.write_sorted_records(sorted_records_iter, record_count).await?;
         Ok(total_bytes)
     }
@@ -341,19 +340,19 @@ impl TierDataMovement {
                 .await
                 .map_err(|e| anyhow!("Failed to create filesystem: {}", e))?
         );
-        let reader = UnifiedParquetReader::new(filesystem);
+        // TODO: Re-enable when UnifiedParquetReader is available
+        // let reader = UnifiedParquetReader::new(filesystem);
         let mut vectors = Vec::new();
         
-        // Note: UnifiedParquetReader doesn't have get_vector method for individual vectors
-        // It's designed for bulk reading. For now, read all vectors and filter
-        let all_vectors = reader.read_all_vectors(&path, &["id", "vector", "metadata"]).await?;
-        for vector in all_vectors {
-            if let Some(ref vec_id) = vector.id {
-                if ids.contains(vec_id) {
-                    vectors.push(vector);
-                }
-            }
-        }
+        // TODO: Implement VIPER reading when UnifiedParquetReader is restored
+        // let all_vectors = reader.read_all_vectors(&path, &["id", "vector", "metadata"]).await?;
+        // for vector in all_vectors {
+        //     if let Some(ref vec_id) = vector.id {
+        //         if ids.contains(vec_id) {
+        //             vectors.push(vector);
+        //         }
+        //     }
+        // }
         
         Ok(vectors)
     }

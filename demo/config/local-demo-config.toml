@@ -29,7 +29,7 @@ memory_flush_size_bytes = 16777216
 compression = "zstd"
 compression_enabled = true
 compression_level = 3
-compaction_threshold = 5
+compaction_threshold = 5  # Deprecated - use compaction_config
 write_buffer_size_mb = 8192
 block_size_kb = 2048  # 2MB default
 
@@ -42,6 +42,15 @@ enable_prefetch = true  # Background prefetching
 prefetch_threshold = 2  # More aggressive prefetching
 ttl_seconds = 0     # No expiration for maximum performance
 invalidation_check_interval_seconds = 30  # More frequent checks
+
+# Compaction configuration (applies to all engines unless overridden)
+[storage.compaction_config]
+l0_file_threshold = 5          # Compact when 5+ files in L0
+l0_size_threshold_mb = 256     # Or when L0 exceeds 256MB
+level_multiplier = 2.0          # Double thresholds per level
+max_levels = 7                  # Support up to 7 levels
+strategy = "hybrid"             # Use both count and size thresholds
+target_file_size_mb = 128       # Create 128MB output files
 
 [storage.viper_config]
 row_group_size = 100000  # Optimized for analytics workloads

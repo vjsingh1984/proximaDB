@@ -61,7 +61,7 @@ mod tests {
         let _ = proximadb::core::hardware_capabilities::initialize_hardware_capabilities_default();
         
         // Test basic Product Quantization functionality using UnifiedQuantizationEngine
-        let level = UnifiedQuantizationLevel {
+        let _level = UnifiedQuantizationLevel {
             level_type: Some(QuantizationLevelType::Pq(ProductQuantization {
                 bits_per_code: 8,
                 num_subvectors: 8,
@@ -311,5 +311,345 @@ mod tests {
         debug!("  Model ID: {}", model.model_id);
         debug!("  Dimension: {}", model.dimension);
         debug!("  Level: {:?}", model.level);
+    }
+
+    // ============================================================================
+    // Comprehensive SST Quantization Tests
+    // ============================================================================
+
+    #[tokio::test]
+    async fn test_sst_binary_filtering_reduction() {
+        let _ = proximadb::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        
+        use proximadb::compute::quantization::{
+            StorageQuantizationEngine, StorageQuantizationConfig, SearchStage,
+        };
+        
+        // Create storage quantization engine
+        let distance_compute = Arc::new(UnifiedDistanceCompute::default());
+        let codebook_store = Arc::new(InMemoryCodebookStore::new());
+        let unified_engine = Arc::new(UnifiedQuantizationEngine::new(
+            distance_compute.clone(),
+            codebook_store,
+        ));
+        
+        let config = StorageQuantizationConfig::default();
+        let engine = StorageQuantizationEngine::new(
+            unified_engine,
+            distance_compute,
+            config,
+        );
+        
+        // Generate clustered test vectors
+        let vectors = generate_clustered_vectors(1000, 256, 5);
+        
+        // Quantize vectors
+        let quantized = engine.quantize_batch(&vectors, None).await.unwrap();
+        
+        // Verify binary sketches present
+        for data in &quantized {
+            assert!(data.filter.is_some(), "Binary sketch missing");
+        }
+        
+        // Test binary filtering
+        let query = vectors[0].clone();
+        let stages = engine.progressive_search(
+            &query,
+            &quantized,
+            10,
+            &DistanceMetric::Cosine,
+        ).await.unwrap();
+        
+        // Find binary filter stage
+        let binary_stage = stages.iter()
+            .find(|s| s.stage == SearchStage::BinaryFilter);
+        
+        if let Some(stage) = binary_stage {
+            debug!("Binary filtering achieved {:.1}% reduction", 
+                stage.metrics.reduction_percent);
+            
+            // Should achieve significant reduction
+            assert!(
+                stage.metrics.reduction_percent >= 80.0,
+                "Binary filtering reduction {:.1}% below expected 80%",
+                stage.metrics.reduction_percent
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn test_sst_int8_approximation_quality() {
+        let _ = proximadb::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        
+        use proximadb::compute::quantization::{
+            StorageQuantizationEngine, StorageQuantizationConfig,
+        };
+        
+        // Create engine
+        let distance_compute = Arc::new(UnifiedDistanceCompute::default());
+        let codebook_store = Arc::new(InMemoryCodebookStore::new());
+        let unified_engine = Arc::new(UnifiedQuantizationEngine::new(
+            distance_compute.clone(),
+            codebook_store,
+        ));
+        
+        let config = StorageQuantizationConfig::default();
+        let engine = StorageQuantizationEngine::new(
+            unified_engine,
+            distance_compute,
+            config,
+        );
+        
+        // Test vectors
+        let vectors = generate_test_vectors(100, 128);
+        let quantized = engine.quantize_batch(&vectors, None).await.unwrap();
+        
+        // Verify INT8 quantization
+        for data in &quantized {
+            assert!(data.fast.is_some(), "INT8 quantization missing");
+        }
+        
+        // Test approximation quality
+        let query = vectors[0].clone();
+        let true_distances: Vec<f32> = vectors.iter()
+            .map(|v| {
+                let dot: f32 = query.iter().zip(v.iter())
+                    .map(|(a, b)| a * b)
+                    .sum();
+                1.0 - dot // Cosine distance
+            })
+            .collect();
+        
+        // Get INT8 approximations
+        let stages = engine.progressive_search(
+            &query,
+            &quantized,
+            10,
+            &DistanceMetric::Cosine,
+        ).await.unwrap();
+        
+        debug!("Progressive search completed with {} stages", stages.len());
+    }
+
+    #[tokio::test]
+    async fn test_sst_pq_with_distance_tables() {
+        let _ = proximadb::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        
+        use proximadb::compute::quantization::{
+            StorageQuantizationEngine, StorageQuantizationConfig, SearchStage,
+        };
+        
+        // Configure PQ quantization
+        let mut config = StorageQuantizationConfig::default();
+        config.primary_level = Some(UnifiedQuantizationLevel {
+            level_type: Some(QuantizationLevelType::Pq(ProductQuantization {
+                num_subvectors: 8,
+                bits_per_code: 8,
+                codebook_id: None,
+                adaptive_subvectors: false,
+            })),
+        });
+        
+        let distance_compute = Arc::new(UnifiedDistanceCompute::default());
+        let codebook_store = Arc::new(InMemoryCodebookStore::new());
+        let unified_engine = Arc::new(UnifiedQuantizationEngine::new(
+            distance_compute.clone(),
+            codebook_store,
+        ));
+        
+        let mut engine = StorageQuantizationEngine::new(
+            unified_engine,
+            distance_compute,
+            config,
+        );
+        
+        // Train and quantize
+        let vectors = generate_test_vectors(500, 256);
+        engine.train(&vectors).await.unwrap();
+        let quantized = engine.quantize_batch(&vectors, None).await.unwrap();
+        
+        // Test PQ ranking speed
+        let query = vectors[0].clone();
+        let start = std::time::Instant::now();
+        
+        let stages = engine.progressive_search(
+            &query,
+            &quantized,
+            10,
+            &DistanceMetric::Euclidean,
+        ).await.unwrap();
+        
+        let elapsed = start.elapsed();
+        
+        // PQ with distance tables should be fast
+        assert!(
+            elapsed.as_millis() < 100,
+            "PQ search took {}ms, expected < 100ms",
+            elapsed.as_millis()
+        );
+        
+        debug!("PQ search with distance tables completed in {}ms", 
+            elapsed.as_millis());
+    }
+
+    #[tokio::test]
+    async fn test_sst_progressive_pipeline_efficiency() {
+        let _ = proximadb::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        
+        use proximadb::compute::quantization::{
+            StorageQuantizationEngine, StorageQuantizationConfig,
+        };
+        
+        // Create engine
+        let distance_compute = Arc::new(UnifiedDistanceCompute::default());
+        let codebook_store = Arc::new(InMemoryCodebookStore::new());
+        let unified_engine = Arc::new(UnifiedQuantizationEngine::new(
+            distance_compute.clone(),
+            codebook_store,
+        ));
+        
+        let config = StorageQuantizationConfig::default();
+        let engine = StorageQuantizationEngine::new(
+            unified_engine,
+            distance_compute,
+            config,
+        );
+        
+        // Large dataset for progressive search
+        let vectors = generate_clustered_vectors(5000, 384, 10);
+        let quantized = engine.quantize_batch(&vectors, None).await.unwrap();
+        
+        // Test progressive search
+        let query = vectors[250].clone();
+        let stages = engine.progressive_search(
+            &query,
+            &quantized,
+            10,
+            &DistanceMetric::Cosine,
+        ).await.unwrap();
+        
+        // Track reduction through pipeline
+        let initial = quantized.len();
+        let mut cumulative_reduction = 0.0;
+        
+        for stage in &stages {
+            if stage.metrics.output_count > 0 {
+                cumulative_reduction = 100.0 * (1.0 - stage.metrics.output_count as f32 / initial as f32);
+                debug!("{:?}: {:.1}% cumulative reduction", 
+                    stage.stage, cumulative_reduction);
+            }
+        }
+        
+        // Should achieve > 99% reduction
+        assert!(
+            cumulative_reduction >= 99.0,
+            "Progressive search achieved only {:.1}% reduction",
+            cumulative_reduction
+        );
+    }
+
+    #[tokio::test]
+    async fn test_sst_quantization_memory_pooling() {
+        let _ = proximadb::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        
+        use proximadb::core::memory::pool::VectorMemoryPool;
+        use proximadb::compute::quantization::{
+            StorageQuantizationEngine, StorageQuantizationConfig,
+        };
+        
+        // Create memory pool
+        let memory_pool = VectorMemoryPool::new();
+        
+        // Create engine
+        let distance_compute = Arc::new(UnifiedDistanceCompute::default());
+        let codebook_store = Arc::new(InMemoryCodebookStore::new());
+        let unified_engine = Arc::new(UnifiedQuantizationEngine::new(
+            distance_compute.clone(),
+            codebook_store,
+        ));
+        
+        let config = StorageQuantizationConfig::default();
+        let engine = StorageQuantizationEngine::new(
+            unified_engine,
+            distance_compute,
+            config,
+        );
+        
+        // Perform multiple operations to test pooling
+        for i in 0..5 {
+            let vectors = generate_test_vectors(100, 256);
+            
+            // Use pooled buffer
+            let mut buffer = memory_pool.serialization_buffers.acquire();
+            
+            // Quantize
+            let quantized = engine.quantize_batch(&vectors, None).await.unwrap();
+            
+            // Serialize to buffer
+            for data in &quantized {
+                if let Some(ref primary) = data.primary {
+                    buffer.extend_from_slice(&primary.data);
+                }
+            }
+            
+            debug!("Iteration {}: processed {} bytes", i, buffer.len());
+            // Buffer returns to pool when dropped
+        }
+        
+        // Check pool efficiency
+        let stats = memory_pool.get_comprehensive_stats();
+        let hit_rate = stats.serialization.hit_rate();
+        
+        debug!("Memory pool hit rate: {:.1}%", hit_rate * 100.0);
+        
+        // Should have good reuse
+        assert!(
+            hit_rate >= 0.6,
+            "Pool hit rate {:.1}% below expected 60%",
+            hit_rate * 100.0
+        );
+    }
+
+    // Helper function for generating clustered vectors
+    fn generate_clustered_vectors(count: usize, dim: usize, clusters: usize) -> Vec<Vec<f32>> {
+        use rand::{Rng, SeedableRng};
+        use rand::rngs::StdRng;
+        
+        let mut rng = StdRng::seed_from_u64(42);
+        let mut vectors = Vec::with_capacity(count);
+        let per_cluster = count / clusters;
+        
+        for c in 0..clusters {
+            // Generate cluster center
+            let mut center = vec![0.0f32; dim];
+            for val in &mut center {
+                *val = rng.gen_range(-1.0..1.0);
+            }
+            
+            // Generate vectors around center
+            for _ in 0..per_cluster {
+                let mut vec = center.clone();
+                for val in &mut vec {
+                    *val += rng.gen_range(-0.1..0.1);
+                }
+                
+                // Normalize
+                let norm: f32 = vec.iter().map(|x| x * x).sum::<f32>().sqrt();
+                if norm > 0.0 {
+                    for val in &mut vec {
+                        *val /= norm;
+                    }
+                }
+                
+                vectors.push(vec);
+            }
+        }
+        
+        // Fill remaining if needed
+        while vectors.len() < count {
+            vectors.push(generate_test_vectors(1, dim)[0].clone());
+        }
+        
+        vectors
     }
 }

@@ -39,10 +39,11 @@ use tracing::{debug, info};
 
 use crate::compute::distance_computation::DistanceMetric;
 use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
-use crate::core::VectorRecord;
+// VectorRecord eliminated - using ZeroOverheadVector for optimal memory
+use crate::index::axis::zero_overhead_vector::{ZeroOverheadCollection, CollectionConfig};
 use crate::index::axis::index_factory::{AxisVectorIndex, IndexStats};
 use crate::index::axis::types::IndexAlgorithm;
-use crate::index::axis::utils::{IndexVectorStore, AtomicStats, validation, memory};
+use crate::index::axis::utils::{AtomicStats, validation, memory};
 
 /// Configuration for AXIS Annoy index
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -260,7 +261,7 @@ impl AnnoyTree {
         query: &[f32],
         _k: usize,
         candidates: &mut Vec<(String, f32)>,
-        vectors: &HashMap<String, Arc<VectorRecord>>,
+        vectors: &ZeroOverheadCollection,
         distance_compute: &UnifiedDistanceCompute,
         nodes_to_search: usize,
         collection_id: Option<&str>,
@@ -291,9 +292,11 @@ impl AnnoyTree {
                             id
                         };
                         
-                        if let Some(record) = vectors.get(actual_id) {
-                            let distance_result = distance_compute.calculate_distance(query, &record.vector, &distance_compute.system_default());
-                            candidates.push((actual_id.to_string(), distance_result.rank_value));
+                        if let Some(view) = vectors.get(actual_id) {
+                            if let Some(vector_data) = view.as_f32() {
+                                let distance_result = distance_compute.calculate_distance(query, vector_data, &distance_compute.system_default());
+                                candidates.push((actual_id.to_string(), distance_result.rank_value));
+                            }
                         }
                     }
                 }
@@ -328,8 +331,8 @@ pub struct AxisAnnoyIndex {
     /// Configuration
     config: AxisAnnoyConfig,
     
-    /// USING UTILS: Standardized vector storage
-    vectors: IndexVectorStore,
+    /// Zero-overhead vector storage - optimal memory use!
+    vectors: Arc<RwLock<ZeroOverheadCollection>>,
     
     /// USING UTILS: Performance statistics
     stats: AtomicStats,
@@ -379,8 +382,11 @@ impl AxisAnnoyIndex {
         Ok(Self {
             collection_id,
             config,
-            // USING UTILS: Standardized vector storage
-            vectors: IndexVectorStore::new(dimension),
+            // Zero-overhead storage with collection config
+            vectors: Arc::new(RwLock::new(ZeroOverheadCollection::with_capacity(
+                CollectionConfig::fp32(dimension),
+                1024,
+            ))),
             // USING UTILS: Performance statistics
             stats: AtomicStats::new(),
             
@@ -399,7 +405,8 @@ impl AxisAnnoyIndex {
             return Err(anyhow!("Index is already built"));
         }
         
-        if self.vectors.is_empty() {
+        let vectors = self.vectors.read().unwrap();
+        if vectors.is_empty() {
             // Mark as built even for empty index
             self.is_built.store(true, Ordering::Relaxed);
             return Ok(());
@@ -409,25 +416,28 @@ impl AxisAnnoyIndex {
         info!(
             "Building Annoy index with {} trees for {} vectors in collection '{}'",
             self.config.n_trees,
-            self.vectors.len(),
+            vectors.len(),
             coll_str
         );
 
-        // USING UTILS: Prepare vector data from IndexVectorStore
-        // If collection_id is set, prefix vector IDs for partitioning
-        let vector_data: Vec<(String, Vec<f32>)> = self.vectors.keys()
-            .into_iter()
-            .filter_map(|id| {
-                self.vectors.get(&id).map(|record| {
+        // Prepare vector data from zero-overhead collection
+        let vector_data: Vec<(String, Vec<f32>)> = {
+            let mut data = Vec::new();
+            for i in 0..vectors.len() {
+                if let Some(view) = vectors.get_by_index(i) {
+                    let id = view.id();
                     let prefixed_id = if let Some(ref coll_id) = self.collection_id {
                         format!("{}:{}", coll_id, id)
                     } else {
-                        id
+                        id.to_string()
                     };
-                    (prefixed_id, record.vector.clone())
-                })
-            })
-            .collect();
+                    if let Some(vector) = view.as_f32() {
+                        data.push((prefixed_id, vector.to_vec()));
+                    }
+                }
+            }
+            data
+        };
 
         // Build trees in parallel
         let mut trees = Vec::new();
@@ -436,7 +446,7 @@ impl AxisAnnoyIndex {
         for tree_idx in 0..self.config.n_trees {
             debug!("Building tree {}/{}", tree_idx + 1, self.config.n_trees);
             
-            let mut tree = AnnoyTree::new(self.vectors.dimension());
+            let mut tree = AnnoyTree::new(vectors.config().dimension);
             let tree_seed = rng.gen();
             let mut tree_rng = ChaCha20Rng::seed_from_u64(tree_seed);
             
@@ -477,7 +487,10 @@ impl AxisAnnoyIndex {
         };
 
         AnnoyStats {
-            vector_count: self.vectors.len(),
+            vector_count: {
+                let vectors = self.vectors.read().unwrap();
+                vectors.len()
+            },
             tree_count: trees.len(),
             total_nodes,
             avg_tree_depth,
@@ -513,7 +526,7 @@ impl AxisAnnoyIndex {
 
 #[async_trait]
 impl AxisVectorIndex for AxisAnnoyIndex {
-    async fn add(&self, id: String, vector: Arc<VectorRecord>) -> Result<()> {
+    async fn add(&self, id: String, vector_data: Vec<f32>) -> Result<()> {
         let start = std::time::Instant::now();
         
         // Check if already built (lock-free atomic read)
@@ -524,7 +537,10 @@ impl AxisVectorIndex for AxisAnnoyIndex {
 
         // USING UTILS: Validate vector ID and insert with automatic validation
         validation::validate_vector_id(&id)?;
-        self.vectors.insert(id, vector)?;
+        
+        // Insert vector into zero-overhead collection
+        let mut vectors = self.vectors.write().unwrap();
+        vectors.insert(id, vector_data)?;
         
         // USING UTILS: Record successful operation
         self.stats.record_success(start.elapsed().as_micros() as u64);
@@ -535,7 +551,7 @@ impl AxisVectorIndex for AxisAnnoyIndex {
         &self,
         query: &[f32],
         top_k: usize,
-        filter: Option<&(dyn for<'a> Fn(&'a VectorRecord) -> bool + Send + Sync)>,
+        filter: Option<&HashMap<String, String>>,  // Metadata filter at storage layer
     ) -> Result<Vec<(String, f32)>> {
         let start = std::time::Instant::now();
         
@@ -549,12 +565,13 @@ impl AxisVectorIndex for AxisAnnoyIndex {
         let k = validation::validate_k(top_k, 10000)?;
         
         // Validate query dimension against stored dimension
-        if query.len() != self.vectors.dimension() {
+        let vectors = self.vectors.read().unwrap();
+        if query.len() != vectors.config().dimension {
             self.stats.record_failure(start.elapsed().as_micros() as u64);
             return Err(anyhow!(
                 "Query dimension {} doesn't match index dimension {}",
                 query.len(),
-                self.vectors.dimension()
+                vectors.config().dimension
             ));
         }
 
@@ -562,41 +579,25 @@ impl AxisVectorIndex for AxisAnnoyIndex {
         let trees = self.trees.read().unwrap();
         
         // Return empty results for empty index (valid case)
-        if self.vectors.is_empty() {
+        if vectors.is_empty() {
             self.stats.record_success(start.elapsed().as_micros() as u64);
             return Ok(vec![]);
         }
 
         // Determine number of nodes to search
-        let search_k = self.get_search_k(self.vectors.len());
+        let search_k = self.get_search_k(vectors.len());
         let nodes_per_tree = search_k / self.config.n_trees;
 
         // Collect candidates from all trees
         let mut all_candidates = Vec::new();
         
-        // Create a temporary HashMap for tree search compatibility
-        // When collection_id is set, use prefixed keys for partitioning
-        let vector_map: HashMap<String, Arc<VectorRecord>> = self.vectors.keys()
-            .into_iter()
-            .filter_map(|key| {
-                self.vectors.get(&key).map(|v| {
-                    let map_key = if let Some(ref _coll_id) = self.collection_id {
-                        // Use original key for map (tree will handle prefixing)
-                        key.clone()
-                    } else {
-                        key
-                    };
-                    (map_key, v)
-                })
-            })
-            .collect();
-        
+        // Search each tree
         for tree in trees.iter() {
             tree.search(
                 query,
                 k,
                 &mut all_candidates,
-                &vector_map,
+                &vectors,
                 &self.distance_compute,
                 nodes_per_tree,
                 self.collection_id.as_deref(),
@@ -604,12 +605,10 @@ impl AxisVectorIndex for AxisAnnoyIndex {
         }
 
         // Apply filter if provided
-        if let Some(filter_fn) = filter {
-            all_candidates.retain(|(id, _)| {
-                self.vectors.get(id)
-                    .map(|record| filter_fn(&record))
-                    .unwrap_or(false)
-            });
+        // Note: Metadata filtering should be done at storage layer
+        // AXIS indexes only handle similarity search
+        if filter.is_some() {
+            debug!("Metadata filtering should be applied at storage layer, not in AXIS index");
         }
 
         // Sort by distance and take top k
@@ -630,8 +629,11 @@ impl AxisVectorIndex for AxisAnnoyIndex {
     }
 
     fn stats(&self) -> IndexStats {
-        // USING UTILS: Get standardized memory usage
-        let vector_memory = self.vectors.memory_usage();
+        // Get memory usage from zero-overhead collection
+        let vector_memory = {
+            let vectors = self.vectors.read().unwrap();
+            vectors.memory_usage()
+        };
         let trees = self.trees.read().unwrap();
         let tree_memory = memory::vec_memory::<AnnoyTree>(trees.len()) 
             + trees.iter().map(|tree| tree.estimate_memory()).sum::<usize>();
@@ -639,7 +641,10 @@ impl AxisVectorIndex for AxisAnnoyIndex {
         let total_memory = std::mem::size_of::<Self>() + vector_memory + tree_memory;
 
         IndexStats {
-            vector_count: self.vectors.len(),
+            vector_count: {
+                let vectors = self.vectors.read().unwrap();
+                vectors.len()
+            },
             memory_usage_bytes: total_memory,
             index_type: "Annoy".to_string(),
         }

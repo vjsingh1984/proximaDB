@@ -134,7 +134,7 @@ impl VectorSearchEngine {
     ) -> Result<()> {
         if let Some(index) = &self.axis_index {
             for (id, record) in vectors {
-                index.add(id, record).await?;
+                index.add(id, record.vector.clone()).await?;
             }
             Ok(())
         } else if matches!(self.algorithm, SearchAlgorithm::BruteForce) {
@@ -149,7 +149,7 @@ impl VectorSearchEngine {
         &self,
         query: &[f32],
         k: usize,
-        filter: Option<&(dyn for<'a> Fn(&'a crate::core::VectorRecord) -> bool + Send + Sync)>,
+        filter: Option<&std::collections::HashMap<String, String>>,
     ) -> Result<Vec<(String, f32)>> {
         if let Some(index) = &self.axis_index {
             index.search(query, k, filter).await

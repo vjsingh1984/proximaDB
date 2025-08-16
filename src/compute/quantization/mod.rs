@@ -3,7 +3,9 @@
 //! Provides unified quantization APIs that work across all storage engines.
 //! Includes support for various quantization levels and hardware acceleration.
 
+pub mod types;
 pub mod unified;
+pub mod storage_engine;
 
 pub use unified::{
     UnifiedQuantizationLevel, QuantizationLevelType,
@@ -12,4 +14,9 @@ pub use unified::{
     UnifiedQuantizationEngine, CodebookStore, Codebook, 
     TrainingConfig, CodebookData, QuantizedVector, 
     QuantizationMetadata, InMemoryCodebookStore
+};
+
+pub use storage_engine::{
+    StorageQuantizationEngine, StorageQuantizationConfig, 
+    StorageQuantizedData, SearchStage
 };

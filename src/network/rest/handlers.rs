@@ -18,6 +18,7 @@
 //! Proto-aligned API structure for consistency with gRPC
 
 use anyhow::Result;
+use crate::storage::engines::StorageEngineCompatibility;
 use axum::{
     extract::{Json, Path, State, Query},
     http::StatusCode,
@@ -31,22 +32,15 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::api_handlers::{UnifiedHandlers, conversions};
-use crate::core::search::SearchResult;
+use crate::proto::proximadb::SearchVectorRecord;
 
 use crate::proto::proximadb::{
-    OperationMetrics, IndexConfig, QuantizationConfig, QuantizationLevel,
+    OperationMetrics, IndexConfig, QuantizationConfig,
     CollectionConfig, IndexingAlgorithm, IndexUpdateMode, StorageEngine,
-    DistanceMetric, FilterableDataType, StorageEngineCompatibility,
+    DistanceMetric, FilterableDataType,
     vector_operation_response::ResultPayload,
-    quantization_level::LevelType,
-    NoQuantization, UniformQuantization, ProductQuantization,
-    ScalarQuantization, BinaryQuantization, CustomQuantization,
     HnswConfig, IvfConfig, FlatConfig, PqConfig, AnnoyConfig, LshConfig,
-    StorageQuantizationConfig as ProtoStorageQuantizationConfig,
-    IndexQuantizationConfig as ProtoIndexQuantizationConfig,
-    SearchQuantizationConfig as ProtoSearchQuantizationConfig,
-    QuantizationValidation as ProtoQuantizationValidation,
-    IndexQuantizationStrategy, FilterableColumnSpec,
+    FilterableColumnSpec,
     CollectionRequest, CollectionOperation, VectorRecord, VectorBatchRequest,
     Collection as ProtoCollection, RandomProjectionType
 };
@@ -457,7 +451,7 @@ pub struct VectorOperationResponse {
     pub success: bool,
     pub operation: String,
     pub metrics: RestOperationMetrics,
-    pub results: Option<Vec<SearchResult>>,
+    pub results: Option<Vec<SearchVectorRecord>>,
     pub vector_ids: Vec<String>,
     pub error_message: Option<String>,
     pub error_code: Option<String>,
@@ -475,7 +469,7 @@ pub struct RestOperationMetrics {
     pub index_update_time_us: i64,
 }
 
-// SearchResult now imported from crate::core::search::SearchResult - unified type
+// SearchVectorRecord now imported from proto definitions - aligned with gRPC
 
 /// API response wrapper
 #[derive(Debug, Serialize)]
@@ -587,27 +581,14 @@ pub async fn health_check(
     State(state): State<AppState>,
 ) -> Result<JsonResponse<ApiResponse<HashMap<String, serde_json::Value>>>, StatusCode> {
     match state.unified_handlers.vector_operations_service.health_check().await {
-        Ok(health_bytes) => {
-            match serde_json::from_slice::<serde_json::Value>(&health_bytes) {
-                Ok(health_data) => {
-                    let mut response_data = HashMap::new();
-                    response_data.insert("status".to_string(), json!("healthy"));
-                    response_data.insert("service".to_string(), json!("proximadb-rest"));
-                    response_data.insert("version".to_string(), json!(env!("CARGO_PKG_VERSION")));
-                    response_data.insert("vector_service".to_string(), health_data);
-                    
-                    Ok(JsonResponse(ApiResponse::success(response_data)))
-                }
-                Err(_) => {
-                    let mut response_data = HashMap::new();
-                    response_data.insert("status".to_string(), json!("degraded"));
-                    response_data.insert("service".to_string(), json!("proximadb-rest"));
-                    response_data.insert("version".to_string(), json!(env!("CARGO_PKG_VERSION")));
-                    response_data.insert("error".to_string(), json!("Failed to parse health data"));
-                    
-                    Ok(JsonResponse(ApiResponse::success(response_data)))
-                }
-            }
+        Ok(health_data) => {
+            let mut response_data = HashMap::new();
+            response_data.insert("status".to_string(), json!("healthy"));
+            response_data.insert("service".to_string(), json!("proximadb-rest"));
+            response_data.insert("version".to_string(), json!(env!("CARGO_PKG_VERSION")));
+            response_data.insert("vector_service".to_string(), health_data);
+            
+            Ok(JsonResponse(ApiResponse::success(response_data)))
         }
         Err(e) => {
             let mut response_data = HashMap::new();
@@ -772,26 +753,16 @@ pub async fn vector_search(
         match result_payload {
             ResultPayload::CompactResults(compact) => {
                 compact.results.into_iter()
-                    .map(|r| SearchResult {
-                        id: r.id.clone().unwrap_or_default(),
-                        vector_id: r.id,
+                    .map(|r| SearchVectorRecord {
+                        id: r.id.clone(),
+                        vector: r.vector,
+                        metadata: r.metadata,
+                        rank: r.rank,
                         score: r.score,
-                        distance: None,
-                        rank: r.rank.map(|v| v as u16),
-                        vector: if r.vector.is_empty() { None } else { Some(r.vector) },
-                        metadata: if r.metadata.is_empty() { 
-                            std::collections::HashMap::new() 
-                        } else { 
-                            crate::core::proto_metadata_helper::proto_metadata_to_json(&r.metadata)
-                        },
-                        debug_info: None,
-                        semantic_distance: None,
-                        quantization_info: None,
-                        version: None,
-                        timestamp: None,
-                        engine_stats: None,
-                        index_path: None,
-                        created_at: None,
+                        distance: r.distance,
+                        version: r.version,
+                        timestamp: r.timestamp,
+                        collection_id: r.collection_id,
                     })
                     .collect()
             }
@@ -853,14 +824,14 @@ pub async fn get_vector(
                 if let Some(ResultPayload::CompactResults(results)) = response.result_payload {
                     if let Some(result) = results.results.first() {
                         let vector_response = VectorGetResponse {
-                            id: result.id.clone().unwrap_or_default(),
+                            id: result.id.clone(),
                             collection_id: collection_id.clone(),
                             vector: if include_vector { Some(result.vector.clone()) } else { None },
                             metadata: if include_metadata { 
                                 Some(crate::core::proto_metadata_helper::proto_metadata_to_json(&result.metadata))
                             } else { None },
                             score: Some(result.score),
-                            rank: result.rank.map(|r| r as i32),
+                            rank: Some(result.rank),
                         };
                         Ok(Json(vector_response))
                     } else {
@@ -1120,98 +1091,40 @@ fn convert_index_config_to_proto(config: IndexConfiguration) -> IndexConfig {
     }
 }
 
-/// Convert quantization config to proto
+/// Convert quantization config to proto (simplified)
 fn convert_quantization_config_to_proto(config: RestQuantizationConfig) -> QuantizationConfig {
+    // The proto has been simplified - map from complex REST structure to simple proto
+    let method = if let Some(sq) = &config.storage_quantization {
+        // Try to infer method from the level type in storage config
+        match sq.level.as_str() {
+            "pq" | "pq4" | "pq8" => crate::proto::proximadb::quantization_config::Method::ProductQuantization,
+            "int8" | "scalar" => crate::proto::proximadb::quantization_config::Method::ScalarQuantization,
+            "binary" => crate::proto::proximadb::quantization_config::Method::BinaryQuantization,
+            _ => crate::proto::proximadb::quantization_config::Method::Adaptive,
+        }
+    } else {
+        crate::proto::proximadb::quantization_config::Method::Adaptive
+    };
     
     QuantizationConfig {
         enabled: config.enabled,
-        storage_quantization: config.storage_quantization.map(|sq| {
-            ProtoStorageQuantizationConfig {
-                enabled: sq.enabled,
-                level: Some(convert_quantization_level_to_proto(sq.level)),
-                codebook_id: sq.codebook_id,
-                progressive_quantization: sq.progressive_quantization,
-                storage_compatibility: match sq.storage_compatibility.as_str() {
-                    "viper_only" => StorageEngineCompatibility::ViperOnly as i32,
-                    "all_engines" => StorageEngineCompatibility::AllEngines as i32,
-                    "lsm_and_viper" => StorageEngineCompatibility::LsmAndViper as i32,
-                    _ => StorageEngineCompatibility::ViperOnly as i32,
-                },
-            }
-        }),
-        index_quantization: config.index_quantization.map(|iq| {
-            ProtoIndexQuantizationConfig {
-                enabled: iq.enabled,
-                strategies: iq.strategies.into_iter().map(|s| {
-                    IndexQuantizationStrategy {
-                        index_name: s.index_name,
-                        level: Some(convert_quantization_level_to_proto(s.level)),
-                        build_async: s.build_async,
-                        codebook_id: s.codebook_id,
-                    }
-                }).collect(),
-                auto_select_strategy: iq.auto_select_strategy,
-            }
-        }),
-        search_quantization: config.search_quantization.map(|sq| {
-            ProtoSearchQuantizationConfig {
-                enabled: sq.enabled,
-                default_level: Some(convert_quantization_level_to_proto(sq.default_level)),
-                adaptive_precision: sq.adaptive_precision,
-                accuracy_threshold: sq.accuracy_threshold,
-                candidate_multiplier: sq.candidate_multiplier,
-            }
-        }),
-        compression_ratio_target: config.compression_ratio_target.unwrap_or(1.0),
-        validation: config.validation.map(|v| {
-            ProtoQuantizationValidation {
-                accuracy_threshold: v.accuracy_threshold,
-                validation_sample_size: v.validation_sample_size,
-                enable_quality_monitoring: v.enable_quality_monitoring,
-                retraining_threshold: v.retraining_threshold,
-            }
-        }),
+        method: Some(method as i32),
+        // Extract PQ settings from storage config if available
+        num_subvectors: config.storage_quantization.as_ref()
+            .and_then(|_| Some(16)), // Default to 16 subvectors
+        bits_per_subvector: config.storage_quantization.as_ref()
+            .and_then(|sq| match sq.level.as_str() {
+                "pq4" => Some(4),
+                "pq8" => Some(8),
+                _ => Some(8),
+            }),
+        training_sample_size: Some(10000),
+        quality_threshold: Some(0.95),
+        enable_progressive_search: Some(true),
+        binary_filter_threshold: Some(0.3),
     }
 }
 
-/// Convert quantization level to proto
-fn convert_quantization_level_to_proto(level: RestQuantizationLevel) -> QuantizationLevel {
-    let level_type = match level.level_type.as_str() {
-        "none" => Some(LevelType::None(NoQuantization {})),
-        "uniform" => Some(LevelType::Uniform(UniformQuantization {
-            bits: level.bits.unwrap_or(8),
-            scale: level.scale,
-            offset: level.offset,
-        })),
-        "pq" => Some(LevelType::Pq(ProductQuantization {
-            bits_per_code: level.bits_per_code.unwrap_or(8),
-            num_subvectors: level.num_subvectors.unwrap_or(8),
-            codebook_id: level.codebook_id,
-            adaptive_subvectors: false,
-        })),
-        "scalar" => Some(LevelType::Scalar(ScalarQuantization {
-            bits: level.bits.unwrap_or(8),
-            scale: level.scale.unwrap_or(1.0),
-            offset: level.offset.unwrap_or(0.0),
-            clamp_values: false,
-        })),
-        "binary" => Some(LevelType::Binary(BinaryQuantization {
-            threshold: level.threshold,
-            sign_based: level.sign_based.unwrap_or(false),
-        })),
-        "custom" => Some(LevelType::Custom(CustomQuantization {
-            type_id: level.type_id.unwrap_or_default(),
-            bits_per_element: level.bits_per_element.unwrap_or(8),
-            config: level.config.unwrap_or_default()
-                .into_iter()
-                .map(|(k, v)| (k, v))
-                .collect(),
-        })),
-        _ => Some(LevelType::None(NoQuantization {})),
-    };
-    
-    QuantizationLevel { level_type }
-}
 
 /// Convert REST config to proto config
 fn convert_to_proto_config(config: RestCollectionConfig) -> Result<CollectionConfig, StatusCode> {
@@ -1386,7 +1299,8 @@ fn convert_quantization_config_from_proto(config: QuantizationConfig) -> RestQua
         enabled: config.enabled,
         storage_quantization: config.storage_quantization.map(|sq| StorageQuantizationConfig {
             enabled: sq.enabled,
-            level: sq.level.map(convert_quantization_level_from_proto).unwrap_or(RestQuantizationLevel {
+            // TODO: Restore when convert_quantization_level_from_proto is available
+            level: RestQuantizationLevel {
                 level_type: "none".to_string(),
                 bits: None,
                 scale: None,
@@ -1401,7 +1315,7 @@ fn convert_quantization_config_from_proto(config: QuantizationConfig) -> RestQua
                 type_id: None,
                 bits_per_element: None,
                 config: None,
-            }),
+            },
             codebook_id: sq.codebook_id,
             progressive_quantization: sq.progressive_quantization,
             storage_compatibility: match sq.storage_compatibility {
@@ -1415,7 +1329,7 @@ fn convert_quantization_config_from_proto(config: QuantizationConfig) -> RestQua
             enabled: iq.enabled,
             strategies: iq.strategies.into_iter().map(|s| RestIndexQuantizationStrategy {
                 index_name: s.index_name,
-                level: s.level.map(convert_quantization_level_from_proto).unwrap_or(RestQuantizationLevel {
+                level: RestQuantizationLevel { // s.level.map(convert_quantization_level_from_proto).unwrap_or(RestQuantizationLevel {
                     level_type: "none".to_string(),
                     bits: None,
                     scale: None,
@@ -1430,7 +1344,7 @@ fn convert_quantization_config_from_proto(config: QuantizationConfig) -> RestQua
                     type_id: None,
                     bits_per_element: None,
                     config: None,
-                }),
+                },
                 build_async: s.build_async,
                 codebook_id: s.codebook_id,
             }).collect(),
@@ -1438,7 +1352,7 @@ fn convert_quantization_config_from_proto(config: QuantizationConfig) -> RestQua
         }),
         search_quantization: config.search_quantization.map(|sq| SearchQuantizationConfig {
             enabled: sq.enabled,
-            default_level: sq.default_level.map(convert_quantization_level_from_proto).unwrap_or(RestQuantizationLevel {
+            default_level: RestQuantizationLevel { // sq.default_level.map(convert_quantization_level_from_proto).unwrap_or(RestQuantizationLevel {
                 level_type: "none".to_string(),
                 bits: None,
                 scale: None,
@@ -1453,7 +1367,7 @@ fn convert_quantization_config_from_proto(config: QuantizationConfig) -> RestQua
                 type_id: None,
                 bits_per_element: None,
                 config: None,
-            }),
+            },
             adaptive_precision: sq.adaptive_precision,
             accuracy_threshold: sq.accuracy_threshold,
             candidate_multiplier: sq.candidate_multiplier,
@@ -1469,7 +1383,8 @@ fn convert_quantization_config_from_proto(config: QuantizationConfig) -> RestQua
 }
 
 /// Convert quantization level from proto
-fn convert_quantization_level_from_proto(level: QuantizationLevel) -> RestQuantizationLevel {
+// TODO: Restore when QuantizationLevel and LevelType are available
+/* fn convert_quantization_level_from_proto(level: QuantizationLevel) -> RestQuantizationLevel {
     
     match level.level_type {
         Some(LevelType::None(_)) => RestQuantizationLevel {
@@ -1585,7 +1500,7 @@ fn convert_quantization_level_from_proto(level: QuantizationLevel) -> RestQuanti
             config: None,
         },
     }
-}
+} */
 
 /// Convert proto collection to REST collection
 fn convert_from_proto_collection(proto: ProtoCollection) -> Collection {
@@ -1837,9 +1752,7 @@ pub async fn delete_vectors(
             updated_at: Some((current_time / 1000) as u32),
             expires_at: Some((current_time / 1000) as u32), // Mark for deletion (convert ms to seconds)
             version: Some(1),
-            distance: Some(0.0),
-            rank: Some(0),
-            score: Some(0.0),
+            quantized_vector: None,
         
         })
         .collect();

@@ -97,39 +97,21 @@ impl SchemaManager {
         if let Some(ref collection) = collection_config {
             if let Some(quant_config) = collection.config.as_ref().and_then(|c| c.quantization_config.as_ref()) {
                 // Use proto quantization config directly
-                // Check quantization type from proto oneof
-                // Check storage quantization config
-                let quant_type = if let Some(storage_quant) = &quant_config.storage_quantization {
-                    if let Some(level) = &storage_quant.level {
-                        match &level.level_type {
-                            Some(crate::proto::proximadb::quantization_level::LevelType::Pq(_)) => "pq",
-                            Some(crate::proto::proximadb::quantization_level::LevelType::Scalar(_)) => "sq",
-                            Some(crate::proto::proximadb::quantization_level::LevelType::Binary(_)) => "binary",
-                            _ => "pq", // default
-                        }
-                    } else {
-                        "pq" // default
-                    }
-                } else {
-                    "pq" // default  
+                // Check quantization type from simplified proto
+                let quant_type = match quant_config.method() {
+                    crate::proto::proximadb::quantization_config::Method::ProductQuantization => "pq",
+                    crate::proto::proximadb::quantization_config::Method::ScalarQuantization => "sq",
+                    crate::proto::proximadb::quantization_config::Method::BinaryQuantization => "binary",
+                    crate::proto::proximadb::quantization_config::Method::Adaptive => "pq", // default to PQ for adaptive
                 };
                 
                 match quant_type {
                     "pq" | "pq4" | "pq8" => {
                         // Product Quantization - use FixedSizeBinary for better performance
-                        let (subvectors, bits) = if let Some(storage_quant) = &quant_config.storage_quantization {
-                            if let Some(level) = &storage_quant.level {
-                                if let Some(crate::proto::proximadb::quantization_level::LevelType::Pq(pq)) = &level.level_type {
-                                    (pq.num_subvectors, pq.bits_per_code)
-                                } else {
-                                    (16, 8) // defaults
-                                }
-                            } else {
-                                (16, 8) // defaults
-                            }
-                        } else {
-                            (16, 8) // defaults
-                        };
+                        let (subvectors, bits) = (
+                            quant_config.num_subvectors.unwrap_or(16) as u32,
+                            quant_config.bits_per_subvector.unwrap_or(8) as u32,
+                        );
                         let pq_size = subvectors * (bits / 8);
                         
                         schema_fields.push(Field::new(

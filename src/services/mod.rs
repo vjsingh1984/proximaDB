@@ -7,9 +7,7 @@
 
 pub mod collection_service;
 pub mod vector_operations_service;
-// 🔴 UNUSED SERVICES - Never imported or used
-// pub mod migration;
-// pub mod storage_path_service;
+pub mod event_log_service;
 pub mod streaming_search;
 
 #[cfg(test)]
@@ -22,4 +20,5 @@ mod vector_operations_service_tests;
 
 pub use collection_service::CollectionService;
 pub use vector_operations_service::VectorOperationsService;
+pub use event_log_service::{EventLogService, EventLogStats};
 pub use streaming_search::{StreamingSearchService, StreamingSearchConfig, SearchResultStream};

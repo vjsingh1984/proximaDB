@@ -59,9 +59,7 @@ pub fn avro_to_proto(avro_record: &AvroVectorRecord, _collection_id: &str) -> Pr
         updated_at: avro_record.updated_at.map(|v| (v / 1_000_000) as u32),
         expires_at: avro_record.expires_at.map(|v| (v / 1_000_000) as u32),
         version: avro_record.version.map(|v| v as u32),
-        rank: None,
-        score: None,
-        distance: None,
+        quantized_vector: None,
     }
 }
 

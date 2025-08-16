@@ -8,10 +8,12 @@ use anyhow::Result;
 pub mod system;
 pub mod storage;
 pub mod query;
+pub mod engine;
 
 pub use system::SystemMetricsCollector;
 pub use storage::StorageMetricsCollector;
 pub use query::QueryMetricsCollector;
+pub use engine::{EngineMetricsCollector, EngineStatistics, EngineComparison, OperationTimer};
 
 /// Trait for all metrics collectors
 #[async_trait::async_trait]

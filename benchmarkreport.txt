@@ -1,0 +1,958 @@
+test integration::comprehensive_engine_benchmark_report::test_generate_comprehensive_benchmark_report ... 
+🚀 GENERATING COMPREHENSIVE BENCHMARK REPORT
+====================================================================================================
+
+📊 Pre-generating randomized vector sets for each sparsity level...
+  - Generating 1000 vectors with 10% sparsity (including 10 query vectors)
+    Query vectors injected at positions: [90, 180, 270, 360, 450]
+  - Generating 1000 vectors with 30% sparsity (including 10 query vectors)
+    Query vectors injected at positions: [90, 180, 270, 360, 450]
+  - Generating 1000 vectors with 50% sparsity (including 10 query vectors)
+    Query vectors injected at positions: [90, 180, 270, 360, 450]
+  - Generating 1000 vectors with 70% sparsity (including 10 query vectors)
+    Query vectors injected at positions: [90, 180, 270, 360, 450]
+  - Generating 1000 vectors with 90% sparsity (including 10 query vectors)
+    Query vectors injected at positions: [90, 180, 270, 360, 450]
+✅ Vector generation complete
+
+
+📊 Total benchmarks to run: 60
+   Sparsity levels: [10, 30, 50, 70, 90]
+   Batch count: 5, Vectors per batch: 200, Dimension: 1536
+   Estimated time: 20 minutes
+
+
+📊 PHASE 1: Running baseline tests (no compression)
+============================================================
+
+  Sparsity 10%:
+    Running BASELINE SST with 10% sparsity (no compression)
+      SST Baseline: 10 results, 27.81ms latency, 5376256 bytes
+    ✅ SST baseline: 10 results
+    Running BASELINE VIPER with 10% sparsity (no compression)
+      Looking for VIPER files in: /tmp/proximadb_unified_tests/unified_test_5cd2745d29714ba2815f44f3d7611a9d/unified_test_5cd2745d29714ba2815f44f3d7611a9d/data
+      Checking alternate location: /tmp/proximadb_unified_tests/unified_test_5cd2745d29714ba2815f44f3d7611a9d/data
+      VIPER Baseline: 10 results, 9.11ms latency, 9052589 bytes
+    ✅ VIPER baseline: 10 results
+    ✅ SST/VIPER consistency: 100.0% match
+
+  Sparsity 30%:
+    Running BASELINE SST with 30% sparsity (no compression)
+      SST Baseline: 10 results, 26.43ms latency, 4549516 bytes
+    ✅ SST baseline: 10 results
+    Running BASELINE VIPER with 30% sparsity (no compression)
+      Looking for VIPER files in: /tmp/proximadb_unified_tests/unified_test_da22531e29ad4b138b8a3820a18d387f/unified_test_da22531e29ad4b138b8a3820a18d387f/data
+      Checking alternate location: /tmp/proximadb_unified_tests/unified_test_da22531e29ad4b138b8a3820a18d387f/data
+      VIPER Baseline: 10 results, 8.56ms latency, 7779913 bytes
+    ✅ VIPER baseline: 10 results
+    ✅ SST/VIPER consistency: 100.0% match
+
+  Sparsity 50%:
+    Running BASELINE SST with 50% sparsity (no compression)
+      SST Baseline: 10 results, 26.16ms latency, 3567998 bytes
+    ✅ SST baseline: 10 results
+    Running BASELINE VIPER with 50% sparsity (no compression)
+      Looking for VIPER files in: /tmp/proximadb_unified_tests/unified_test_7eaacdb793e64d2fadc8d1e771294db6/unified_test_7eaacdb793e64d2fadc8d1e771294db6/data
+      Checking alternate location: /tmp/proximadb_unified_tests/unified_test_7eaacdb793e64d2fadc8d1e771294db6/data
+      VIPER Baseline: 10 results, 8.38ms latency, 6551019 bytes
+    ✅ VIPER baseline: 10 results
+    ✅ SST/VIPER consistency: 100.0% match
+
+  Sparsity 70%:
+    Running BASELINE SST with 70% sparsity (no compression)
+      SST Baseline: 10 results, 23.71ms latency, 2352778 bytes
+    ✅ SST baseline: 10 results
+    Running BASELINE VIPER with 70% sparsity (no compression)
+      Looking for VIPER files in: /tmp/proximadb_unified_tests/unified_test_b6af9fd7a1104657a5ee5e43e46820c8/unified_test_b6af9fd7a1104657a5ee5e43e46820c8/data
+      Checking alternate location: /tmp/proximadb_unified_tests/unified_test_b6af9fd7a1104657a5ee5e43e46820c8/data
+      VIPER Baseline: 10 results, 8.57ms latency, 4968356 bytes
+    ✅ VIPER baseline: 10 results
+    ✅ SST/VIPER consistency: 100.0% match
+
+  Sparsity 90%:
+    Running BASELINE SST with 90% sparsity (no compression)
+      SST Baseline: 10 results, 21.58ms latency, 958733 bytes
+    ✅ SST baseline: 10 results
+    Running BASELINE VIPER with 90% sparsity (no compression)
+      Looking for VIPER files in: /tmp/proximadb_unified_tests/unified_test_b339b13959444acc9d9e6b647a23784e/unified_test_b339b13959444acc9d9e6b647a23784e/data
+      Checking alternate location: /tmp/proximadb_unified_tests/unified_test_b339b13959444acc9d9e6b647a23784e/data
+      VIPER Baseline: 10 results, 8.80ms latency, 2327449 bytes
+    ✅ VIPER baseline: 10 results
+    ✅ SST/VIPER consistency: 100.0% match
+
+📊 PHASE 2: Running compression benchmarks
+============================================================
+
+━━━━━ SPARSITY LEVEL: 10% ━━━━━
+    [1/60] SST with 10% sparsity, lz4 level 1 (baseline size: 5250 KB)
+      Flushed 5 SST batches, avg: 40ms, total: 204ms
+      📦 Pre-compaction: 5 files, 5250 KB (5376256 bytes)
+      🗜️ BLOCK COMPRESSION: 5376256 bytes vs 5376256 bytes baseline (0.0% savings)
+        🔧 SST: Starting compaction for collection unified_test_75cc021054424c05a41436365277ac77
+        🔧 SST: Compaction params - force: true, collection_id: Some("unified_test_75cc021054424c05a41436365277ac77")
+        🔧 SST: Compaction result - success: true, entries_processed: 1000, files merged: 5
+      Compaction: 5 input files → 1 output files, 1000 entries processed
+        SST search: 10 results in 16.41ms (full scan, 1000 total records)
+      📦 Post-compaction: 1 files, 5248 KB (5374569 bytes)
+      🔄 Compaction efficiency: 0.0% size reduction, 1:1 file reduction
+        SST compression: 5376256 bytes vs 5376256 bytes baseline (0.0% savings)
+        After compaction: 1 files, 5374569 bytes
+    ✅ Compression: 0.0%, Accuracy: 100.0%, Query: 16.05ms
+    [2/60] VIPER with 10% sparsity, lz4 level 1 (baseline size: 8840 KB)
+      Flushed 5 VIPER batches, avg: 25ms, total: 126ms
+      VIPER storage location: file:///tmp/proximadb_unified_tests/unified_test_55e2ca916cc64e41aed1a147eedcb974/data
+      VIPER Compaction: 5 input files → 1 output files, 1000 entries
+        VIPER search: 10 results in 12.65ms (expected 1000 total records)
+        VIPER avg query latency: 10.08ms
+      Calculating VIPER compressed size:
+        Primary location: /tmp/proximadb_unified_tests/unified_test_55e2ca916cc64e41aed1a147eedcb974/unified_test_55e2ca916cc64e41aed1a147eedcb974/data
+        Alternate location: /tmp/proximadb_unified_tests/unified_test_55e2ca916cc64e41aed1a147eedcb974/data
+        VIPER compression result: 6604822 bytes vs baseline 9052589 bytes (-27.0%)
+      🔍 DEBUG: VIPER Search after compaction:
+        Collection ID: unified_test_55e2ca916cc64e41aed1a147eedcb974
+        Storage URL for search: file:///tmp/proximadb_unified_tests/unified_test_55e2ca916cc64e41aed1a147eedcb974/data
+        Files at search location:
+          - L1_20250815T025151_828cc004.parquet
+        Search returned 10 results
+    ✅ Compression: 27.0%, Accuracy: 100.0%, Query: 9.67ms
+    [3/60] SST with 10% sparsity, snappy level 0 (baseline size: 5250 KB)
+      Flushed 5 SST batches, avg: 41ms, total: 206ms
+      📦 Pre-compaction: 5 files, 5250 KB (5376256 bytes)
+      🗜️ BLOCK COMPRESSION: 5376256 bytes vs 5376256 bytes baseline (0.0% savings)
+        🔧 SST: Starting compaction for collection unified_test_663fd81bed874f3ea50e33da75395a46
+        🔧 SST: Compaction params - force: true, collection_id: Some("unified_test_663fd81bed874f3ea50e33da75395a46")
+        🔧 SST: Compaction result - success: true, entries_processed: 1000, files merged: 5
+      Compaction: 5 input files → 1 output files, 1000 entries processed
+        SST search: 10 results in 16.80ms (full scan, 1000 total records)
+      📦 Post-compaction: 1 files, 5248 KB (5374569 bytes)
+      🔄 Compaction efficiency: 0.0% size reduction, 1:1 file reduction
+        SST compression: 5376256 bytes vs 5376256 bytes baseline (0.0% savings)
+        After compaction: 1 files, 5374569 bytes
+    ✅ Compression: 0.0%, Accuracy: 100.0%, Query: 16.15ms
+    [4/60] VIPER with 10% sparsity, snappy level 0 (baseline size: 8840 KB)
+      Flushed 5 VIPER batches, avg: 22ms, total: 112ms
+      VIPER storage location: file:///tmp/proximadb_unified_tests/unified_test_d73579dc88844b3695b427216a72203f/data
+      VIPER Compaction: 5 input files → 1 output files, 1000 entries
+        VIPER search: 10 results in 10.29ms (expected 1000 total records)
+        VIPER avg query latency: 10.08ms
+      Calculating VIPER compressed size:
+        Primary location: /tmp/proximadb_unified_tests/unified_test_d73579dc88844b3695b427216a72203f/unified_test_d73579dc88844b3695b427216a72203f/data
+        Alternate location: /tmp/proximadb_unified_tests/unified_test_d73579dc88844b3695b427216a72203f/data
+        VIPER compression result: 6542160 bytes vs baseline 9052589 bytes (-27.7%)
+      🔍 DEBUG: VIPER Search after compaction:
+        Collection ID: unified_test_d73579dc88844b3695b427216a72203f
+        Storage URL for search: file:///tmp/proximadb_unified_tests/unified_test_d73579dc88844b3695b427216a72203f/data
+        Files at search location:
+          - L1_20250815T025152_6d01adea.parquet
+        Search returned 10 results
+    ✅ Compression: 27.7%, Accuracy: 100.0%, Query: 10.05ms
+    [5/60] SST with 10% sparsity, zstd level 3 (baseline size: 5250 KB)
+      Flushed 5 SST batches, avg: 42ms, total: 211ms
+      📦 Pre-compaction: 5 files, 5250 KB (5376256 bytes)
+      🗜️ BLOCK COMPRESSION: 5376256 bytes vs 5376256 bytes baseline (0.0% savings)
+        🔧 SST: Starting compaction for collection unified_test_81de52f9ebb74fb68c75691f04c246d9
+        🔧 SST: Compaction params - force: true, collection_id: Some("unified_test_81de52f9ebb74fb68c75691f04c246d9")
+        🔧 SST: Compaction result - success: true, entries_processed: 1000, files merged: 5
+      Compaction: 5 input files → 1 output files, 1000 entries processed
+        SST search: 10 results in 16.22ms (full scan, 1000 total records)
+      📦 Post-compaction: 1 files, 5248 KB (5374569 bytes)
+      🔄 Compaction efficiency: 0.0% size reduction, 1:1 file reduction
+        SST compression: 5376256 bytes vs 5376256 bytes baseline (0.0% savings)
+        After compaction: 1 files, 5374569 bytes
+    ✅ Compression: 0.0%, Accuracy: 100.0%, Query: 16.10ms
+    [6/60] VIPER with 10% sparsity, zstd level 3 (baseline size: 8840 KB)
+      Flushed 5 VIPER batches, avg: 25ms, total: 128ms
+      VIPER storage location: file:///tmp/proximadb_unified_tests/unified_test_c686d79978aa4f95a94d1a53e637951e/data
+      VIPER Compaction: 5 input files → 1 output files, 1000 entries
+        VIPER search: 10 results in 13.49ms (expected 1000 total records)
+        VIPER avg query latency: 13.43ms
+      Calculating VIPER compressed size:
+        Primary location: /tmp/proximadb_unified_tests/unified_test_c686d79978aa4f95a94d1a53e637951e/unified_test_c686d79978aa4f95a94d1a53e637951e/data
+        Alternate location: /tmp/proximadb_unified_tests/unified_test_c686d79978aa4f95a94d1a53e637951e/data
+        VIPER compression result: 5830908 bytes vs baseline 9052589 bytes (-35.6%)
+      🔍 DEBUG: VIPER Search after compaction:
+        Collection ID: unified_test_c686d79978aa4f95a94d1a53e637951e
+        Storage URL for search: file:///tmp/proximadb_unified_tests/unified_test_c686d79978aa4f95a94d1a53e637951e/data
+        Files at search location:
+          - L1_20250815T025153_25ef5b20.parquet
+        Search returned 10 results
+    ✅ Compression: 35.6%, Accuracy: 100.0%, Query: 13.49ms
+    [7/60] SST with 10% sparsity, zstd level 6 (baseline size: 5250 KB)
+      Flushed 5 SST batches, avg: 43ms, total: 215ms
+      📦 Pre-compaction: 5 files, 5250 KB (5376256 bytes)
+      🗜️ BLOCK COMPRESSION: 5376256 bytes vs 5376256 bytes baseline (0.0% savings)
+        🔧 SST: Starting compaction for collection unified_test_bdaef314ce054b478de0a2583f1d132c
+        🔧 SST: Compaction params - force: true, collection_id: Some("unified_test_bdaef314ce054b478de0a2583f1d132c")
+        🔧 SST: Compaction result - success: true, entries_processed: 1000, files merged: 5
+      Compaction: 5 input files → 1 output files, 1000 entries processed
+        SST search: 10 results in 17.17ms (full scan, 1000 total records)
+      📦 Post-compaction: 1 files, 5248 KB (5374569 bytes)
+      🔄 Compaction efficiency: 0.0% size reduction, 1:1 file reduction
+        SST compression: 5376256 bytes vs 5376256 bytes baseline (0.0% savings)
+        After compaction: 1 files, 5374569 bytes
+    ✅ Compression: 0.0%, Accuracy: 100.0%, Query: 16.39ms
+    [8/60] VIPER with 10% sparsity, zstd level 6 (baseline size: 8840 KB)
+      Flushed 5 VIPER batches, avg: 28ms, total: 142ms
+      VIPER storage location: file:///tmp/proximadb_unified_tests/unified_test_45f55ffea99f4e8e91512728b366c930/data
+      VIPER Compaction: 5 input files → 1 output files, 1000 entries
+        VIPER search: 10 results in 12.78ms (expected 1000 total records)
+        VIPER avg query latency: 12.28ms
+      Calculating VIPER compressed size:
+        Primary location: /tmp/proximadb_unified_tests/unified_test_45f55ffea99f4e8e91512728b366c930/unified_test_45f55ffea99f4e8e91512728b366c930/data
+        Alternate location: /tmp/proximadb_unified_tests/unified_test_45f55ffea99f4e8e91512728b366c930/data
+        VIPER compression result: 5823380 bytes vs baseline 9052589 bytes (-35.7%)
+      🔍 DEBUG: VIPER Search after compaction:
+        Collection ID: unified_test_45f55ffea99f4e8e91512728b366c930
+        Storage URL for search: file:///tmp/proximadb_unified_tests/unified_test_45f55ffea99f4e8e91512728b366c930/data
+        Files at search location:
+          - L1_20250815T025154_b3467e22.parquet
+        Search returned 10 results
+    ✅ Compression: 35.7%, Accuracy: 100.0%, Query: 12.14ms
+    [9/60] SST with 10% sparsity, gzip level 6 (baseline size: 5250 KB)
+      Flushed 5 SST batches, avg: 57ms, total: 289ms
+      📦 Pre-compaction: 5 files, 5250 KB (5376256 bytes)
+      🗜️ BLOCK COMPRESSION: 5376256 bytes vs 5376256 bytes baseline (0.0% savings)
+        🔧 SST: Starting compaction for collection unified_test_8a33137fb57b4495900f19f8e1a41bcb
+        🔧 SST: Compaction params - force: true, collection_id: Some("unified_test_8a33137fb57b4495900f19f8e1a41bcb")
+        🔧 SST: Compaction result - success: true, entries_processed: 1000, files merged: 5
+      Compaction: 5 input files → 1 output files, 1000 entries processed
+        SST search: 10 results in 16.84ms (full scan, 1000 total records)
+      📦 Post-compaction: 1 files, 5248 KB (5374569 bytes)
+      🔄 Compaction efficiency: 0.0% size reduction, 1:1 file reduction
+        SST compression: 5376256 bytes vs 5376256 bytes baseline (0.0% savings)
+        After compaction: 1 files, 5374569 bytes
+    ✅ Compression: 0.0%, Accuracy: 100.0%, Query: 16.38ms
+
+📊 PHASE SUMMARY - 10% SPARSITY
+------------------------------------------------------------
+  📈 Configurations tested: 9
+  💾 Average compression savings: 14.0%
+  ⏱️  Average P50 latency: 14.05ms
+  🏆 Best compression: VIPER zstd L6 - 35.7% savings
+  ⚡ Best latency: VIPER lz4 - 9.67ms P50
+  📊 SST avg savings: 0.0% | VIPER avg savings: 31.5%
+  🔄 Avg compaction reduction: 0.9:1 files
+
+━━━━━ SPARSITY LEVEL: 30% ━━━━━
+    [10/60] SST with 30% sparsity, lz4 level 1 (baseline size: 4442 KB)
+      Flushed 5 SST batches, avg: 33ms, total: 168ms
+      📦 Pre-compaction: 5 files, 4442 KB (4549516 bytes)
+      🗜️ BLOCK COMPRESSION: 4549516 bytes vs 4549516 bytes baseline (0.0% savings)
+        🔧 SST: Starting compaction for collection unified_test_5d38786ec16248f9a0c2e24da5fe9d57
+        🔧 SST: Compaction params - force: true, collection_id: Some("unified_test_5d38786ec16248f9a0c2e24da5fe9d57")
+        🔧 SST: Compaction result - success: true, entries_processed: 1000, files merged: 5
+      Compaction: 5 input files → 1 output files, 1000 entries processed
+        SST search: 10 results in 17.07ms (full scan, 1000 total records)
+      📦 Post-compaction: 1 files, 4441 KB (4547829 bytes)
+      🔄 Compaction efficiency: 0.0% size reduction, 1:1 file reduction
+        SST compression: 4549516 bytes vs 4549516 bytes baseline (0.0% savings)
+        After compaction: 1 files, 4547829 bytes
+    ✅ Compression: 0.0%, Accuracy: 100.0%, Query: 16.81ms
+    [11/60] VIPER with 30% sparsity, lz4 level 1 (baseline size: 7597 KB)
+      Flushed 5 VIPER batches, avg: 20ms, total: 104ms
+      VIPER storage location: file:///tmp/proximadb_unified_tests/unified_test_77747abe9959496f92fbab43a29f1196/data
+      VIPER Compaction: 5 input files → 1 output files, 1000 entries
+        VIPER search: 10 results in 12.64ms (expected 1000 total records)
+        VIPER avg query latency: 10.43ms
+      Calculating VIPER compressed size:
+        Primary location: /tmp/proximadb_unified_tests/unified_test_77747abe9959496f92fbab43a29f1196/unified_test_77747abe9959496f92fbab43a29f1196/data
+        Alternate location: /tmp/proximadb_unified_tests/unified_test_77747abe9959496f92fbab43a29f1196/data
+        VIPER compression result: 5830132 bytes vs baseline 7779913 bytes (-25.1%)
+      🔍 DEBUG: VIPER Search after compaction:
+        Collection ID: unified_test_77747abe9959496f92fbab43a29f1196
+        Storage URL for search: file:///tmp/proximadb_unified_tests/unified_test_77747abe9959496f92fbab43a29f1196/data
+        Files at search location:
+          - L1_20250815T025155_bbcc78c7.parquet
+        Search returned 10 results
+    ✅ Compression: 25.1%, Accuracy: 100.0%, Query: 10.27ms
+    [12/60] SST with 30% sparsity, snappy level 0 (baseline size: 4442 KB)
+      Flushed 5 SST batches, avg: 34ms, total: 172ms
+      📦 Pre-compaction: 5 files, 4442 KB (4549516 bytes)
+      🗜️ BLOCK COMPRESSION: 4549516 bytes vs 4549516 bytes baseline (0.0% savings)
+        🔧 SST: Starting compaction for collection unified_test_0009ae8b8f944b458bbff144704d7f77
+        🔧 SST: Compaction params - force: true, collection_id: Some("unified_test_0009ae8b8f944b458bbff144704d7f77")
+        🔧 SST: Compaction result - success: true, entries_processed: 1000, files merged: 5
+      Compaction: 5 input files → 1 output files, 1000 entries processed
+        SST search: 10 results in 17.46ms (full scan, 1000 total records)
+      📦 Post-compaction: 1 files, 4441 KB (4547829 bytes)
+      🔄 Compaction efficiency: 0.0% size reduction, 1:1 file reduction
+        SST compression: 4549516 bytes vs 4549516 bytes baseline (0.0% savings)
+        After compaction: 1 files, 4547829 bytes
+    ✅ Compression: 0.0%, Accuracy: 100.0%, Query: 16.86ms
+    [13/60] VIPER with 30% sparsity, snappy level 0 (baseline size: 7597 KB)
+      Flushed 5 VIPER batches, avg: 21ms, total: 105ms
+      VIPER storage location: file:///tmp/proximadb_unified_tests/unified_test_01ea6350db2b4359849c93bedcf5f7dc/data
+      VIPER Compaction: 5 input files → 1 output files, 1000 entries
+        VIPER search: 10 results in 11.35ms (expected 1000 total records)
+        VIPER avg query latency: 10.63ms
+      Calculating VIPER compressed size:
+        Primary location: /tmp/proximadb_unified_tests/unified_test_01ea6350db2b4359849c93bedcf5f7dc/unified_test_01ea6350db2b4359849c93bedcf5f7dc/data
+        Alternate location: /tmp/proximadb_unified_tests/unified_test_01ea6350db2b4359849c93bedcf5f7dc/data
+        VIPER compression result: 5680788 bytes vs baseline 7779913 bytes (-27.0%)
+      🔍 DEBUG: VIPER Search after compaction:
+        Collection ID: unified_test_01ea6350db2b4359849c93bedcf5f7dc
+        Storage URL for search: file:///tmp/proximadb_unified_tests/unified_test_01ea6350db2b4359849c93bedcf5f7dc/data
+        Files at search location:
+          - L1_20250815T025156_24fc15bf.parquet
+        Search returned 10 results
+    ✅ Compression: 27.0%, Accuracy: 100.0%, Query: 10.49ms
+    [14/60] SST with 30% sparsity, zstd level 3 (baseline size: 4442 KB)
+      Flushed 5 SST batches, avg: 35ms, total: 176ms
+      📦 Pre-compaction: 5 files, 4442 KB (4549516 bytes)
+      🗜️ BLOCK COMPRESSION: 4549516 bytes vs 4549516 bytes baseline (0.0% savings)
+        🔧 SST: Starting compaction for collection unified_test_0caf629dbad24bbd88edca5582ca5b19
+        🔧 SST: Compaction params - force: true, collection_id: Some("unified_test_0caf629dbad24bbd88edca5582ca5b19")
+        🔧 SST: Compaction result - success: true, entries_processed: 1000, files merged: 5
+      Compaction: 5 input files → 1 output files, 1000 entries processed
+        SST search: 10 results in 17.22ms (full scan, 1000 total records)
+      📦 Post-compaction: 1 files, 4441 KB (4547829 bytes)
+      🔄 Compaction efficiency: 0.0% size reduction, 1:1 file reduction
+        SST compression: 4549516 bytes vs 4549516 bytes baseline (0.0% savings)
+        After compaction: 1 files, 4547829 bytes
+    ✅ Compression: 0.0%, Accuracy: 100.0%, Query: 17.69ms
+    [15/60] VIPER with 30% sparsity, zstd level 3 (baseline size: 7597 KB)
+      Flushed 5 VIPER batches, avg: 23ms, total: 119ms
+      VIPER storage location: file:///tmp/proximadb_unified_tests/unified_test_adecebc23eb142b69586d0facd10eec1/data
+      VIPER Compaction: 5 input files → 1 output files, 1000 entries
+        VIPER search: 10 results in 13.09ms (expected 1000 total records)
+        VIPER avg query latency: 13.18ms
+      Calculating VIPER compressed size:
+        Primary location: /tmp/proximadb_unified_tests/unified_test_adecebc23eb142b69586d0facd10eec1/unified_test_adecebc23eb142b69586d0facd10eec1/data
+        Alternate location: /tmp/proximadb_unified_tests/unified_test_adecebc23eb142b69586d0facd10eec1/data
+        VIPER compression result: 4964772 bytes vs baseline 7779913 bytes (-36.2%)
+      🔍 DEBUG: VIPER Search after compaction:
+        Collection ID: unified_test_adecebc23eb142b69586d0facd10eec1
+        Storage URL for search: file:///tmp/proximadb_unified_tests/unified_test_adecebc23eb142b69586d0facd10eec1/data
+        Files at search location:
+          - L1_20250815T025157_b054bfbb.parquet
+        Search returned 10 results
+    ✅ Compression: 36.2%, Accuracy: 100.0%, Query: 13.09ms
+    [16/60] SST with 30% sparsity, zstd level 6 (baseline size: 4442 KB)
+      Flushed 5 SST batches, avg: 35ms, total: 175ms
+      📦 Pre-compaction: 5 files, 4442 KB (4549516 bytes)
+      🗜️ BLOCK COMPRESSION: 4549516 bytes vs 4549516 bytes baseline (0.0% savings)
+        🔧 SST: Starting compaction for collection unified_test_e1545b48b4b94efe8756d39372fe0868
+        🔧 SST: Compaction params - force: true, collection_id: Some("unified_test_e1545b48b4b94efe8756d39372fe0868")
+        🔧 SST: Compaction result - success: true, entries_processed: 1000, files merged: 5
+      Compaction: 5 input files → 1 output files, 1000 entries processed
+        SST search: 10 results in 16.86ms (full scan, 1000 total records)
+      📦 Post-compaction: 1 files, 4441 KB (4547829 bytes)
+      🔄 Compaction efficiency: 0.0% size reduction, 1:1 file reduction
+        SST compression: 4549516 bytes vs 4549516 bytes baseline (0.0% savings)
+        After compaction: 1 files, 4547829 bytes
+    ✅ Compression: 0.0%, Accuracy: 100.0%, Query: 16.87ms
+    [17/60] VIPER with 30% sparsity, zstd level 6 (baseline size: 7597 KB)
+      Flushed 5 VIPER batches, avg: 28ms, total: 141ms
+      VIPER storage location: file:///tmp/proximadb_unified_tests/unified_test_bc0336c31c25442295082525ba4d6006/data
+      VIPER Compaction: 5 input files → 1 output files, 1000 entries
+        VIPER search: 10 results in 12.79ms (expected 1000 total records)
+        VIPER avg query latency: 12.64ms
+      Calculating VIPER compressed size:
+        Primary location: /tmp/proximadb_unified_tests/unified_test_bc0336c31c25442295082525ba4d6006/unified_test_bc0336c31c25442295082525ba4d6006/data
+        Alternate location: /tmp/proximadb_unified_tests/unified_test_bc0336c31c25442295082525ba4d6006/data
+        VIPER compression result: 4951068 bytes vs baseline 7779913 bytes (-36.4%)
+      🔍 DEBUG: VIPER Search after compaction:
+        Collection ID: unified_test_bc0336c31c25442295082525ba4d6006
+        Storage URL for search: file:///tmp/proximadb_unified_tests/unified_test_bc0336c31c25442295082525ba4d6006/data
+        Files at search location:
+          - L1_20250815T025158_6afbb4a6.parquet
+        Search returned 10 results
+    ✅ Compression: 36.4%, Accuracy: 100.0%, Query: 12.55ms
+    [18/60] SST with 30% sparsity, gzip level 6 (baseline size: 4442 KB)
+      Flushed 5 SST batches, avg: 48ms, total: 242ms
+      📦 Pre-compaction: 5 files, 4442 KB (4549516 bytes)
+      🗜️ BLOCK COMPRESSION: 4549516 bytes vs 4549516 bytes baseline (0.0% savings)
+        🔧 SST: Starting compaction for collection unified_test_a1f5f0f592204f73969f53360b525164
+        🔧 SST: Compaction params - force: true, collection_id: Some("unified_test_a1f5f0f592204f73969f53360b525164")
+        🔧 SST: Compaction result - success: true, entries_processed: 1000, files merged: 5
+      Compaction: 5 input files → 1 output files, 1000 entries processed
+        SST search: 10 results in 16.82ms (full scan, 1000 total records)
+      📦 Post-compaction: 1 files, 4441 KB (4547829 bytes)
+      🔄 Compaction efficiency: 0.0% size reduction, 1:1 file reduction
+        SST compression: 4549516 bytes vs 4549516 bytes baseline (0.0% savings)
+        After compaction: 1 files, 4547829 bytes
+    ✅ Compression: 0.0%, Accuracy: 100.0%, Query: 16.43ms
+
+📊 PHASE SUMMARY - 30% SPARSITY
+------------------------------------------------------------
+  📈 Configurations tested: 9
+  💾 Average compression savings: 13.8%
+  ⏱️  Average P50 latency: 14.56ms
+  🏆 Best compression: VIPER zstd L6 - 36.4% savings
+  ⚡ Best latency: VIPER lz4 - 10.27ms P50
+  📊 SST avg savings: 0.0% | VIPER avg savings: 31.1%
+  🔄 Avg compaction reduction: 0.9:1 files
+
+━━━━━ SPARSITY LEVEL: 50% ━━━━━
+    [19/60] SST with 50% sparsity, lz4 level 1 (baseline size: 3484 KB)
+      Flushed 5 SST batches, avg: 39ms, total: 196ms
+      📦 Pre-compaction: 5 files, 3484 KB (3567998 bytes)
+      🗜️ BLOCK COMPRESSION: 3567998 bytes vs 3567998 bytes baseline (0.0% savings)
+        🔧 SST: Starting compaction for collection unified_test_6255c669558144e2b5ee6c3105ef76df
+        🔧 SST: Compaction params - force: true, collection_id: Some("unified_test_6255c669558144e2b5ee6c3105ef76df")
+        🔧 SST: Compaction result - success: true, entries_processed: 1000, files merged: 5
+      Compaction: 5 input files → 1 output files, 1000 entries processed
+        SST search: 10 results in 17.32ms (full scan, 1000 total records)
+      📦 Post-compaction: 1 files, 3482 KB (3566308 bytes)
+      🔄 Compaction efficiency: 0.0% size reduction, 1:1 file reduction
+        SST compression: 3567998 bytes vs 3567998 bytes baseline (0.0% savings)
+        After compaction: 1 files, 3566308 bytes
+    ✅ Compression: 0.0%, Accuracy: 100.0%, Query: 16.79ms
+    [20/60] VIPER with 50% sparsity, lz4 level 1 (baseline size: 6397 KB)
+      Flushed 5 VIPER batches, avg: 21ms, total: 106ms
+      VIPER storage location: file:///tmp/proximadb_unified_tests/unified_test_8c50e47c870641cd894846944ff1f990/data
+      VIPER Compaction: 5 input files → 1 output files, 1000 entries
+        VIPER search: 10 results in 10.19ms (expected 1000 total records)
+        VIPER avg query latency: 9.61ms
+      Calculating VIPER compressed size:
+        Primary location: /tmp/proximadb_unified_tests/unified_test_8c50e47c870641cd894846944ff1f990/unified_test_8c50e47c870641cd894846944ff1f990/data
+        Alternate location: /tmp/proximadb_unified_tests/unified_test_8c50e47c870641cd894846944ff1f990/data
+        VIPER compression result: 4733804 bytes vs baseline 6551019 bytes (-27.7%)
+      🔍 DEBUG: VIPER Search after compaction:
+        Collection ID: unified_test_8c50e47c870641cd894846944ff1f990
+        Storage URL for search: file:///tmp/proximadb_unified_tests/unified_test_8c50e47c870641cd894846944ff1f990/data
+        Files at search location:
+          - L1_20250815T025159_3f8d0cbc.parquet
+        Search returned 10 results
+    ✅ Compression: 27.7%, Accuracy: 100.0%, Query: 9.50ms
+    [21/60] SST with 50% sparsity, snappy level 0 (baseline size: 3484 KB)
+      Flushed 5 SST batches, avg: 39ms, total: 196ms
+      📦 Pre-compaction: 5 files, 3484 KB (3567998 bytes)
+      🗜️ BLOCK COMPRESSION: 3567998 bytes vs 3567998 bytes baseline (0.0% savings)
+        🔧 SST: Starting compaction for collection unified_test_7d5a2ddeecf440c7a00f9084e2fc3280
+        🔧 SST: Compaction params - force: true, collection_id: Some("unified_test_7d5a2ddeecf440c7a00f9084e2fc3280")
+        🔧 SST: Compaction result - success: true, entries_processed: 1000, files merged: 5
+      Compaction: 5 input files → 1 output files, 1000 entries processed
+        SST search: 10 results in 18.31ms (full scan, 1000 total records)
+      📦 Post-compaction: 1 files, 3482 KB (3566308 bytes)
+      🔄 Compaction efficiency: 0.0% size reduction, 1:1 file reduction
+        SST compression: 3567998 bytes vs 3567998 bytes baseline (0.0% savings)
+        After compaction: 1 files, 3566308 bytes
+    ✅ Compression: 0.0%, Accuracy: 100.0%, Query: 17.74ms
+    [22/60] VIPER with 50% sparsity, snappy level 0 (baseline size: 6397 KB)
+      Flushed 5 VIPER batches, avg: 21ms, total: 106ms
+      VIPER storage location: file:///tmp/proximadb_unified_tests/unified_test_400d805106b64523a2f433d84faa5ead/data
+      VIPER Compaction: 5 input files → 1 output files, 1000 entries
+        VIPER search: 10 results in 10.45ms (expected 1000 total records)
+        VIPER avg query latency: 10.71ms
+      Calculating VIPER compressed size:
+        Primary location: /tmp/proximadb_unified_tests/unified_test_400d805106b64523a2f433d84faa5ead/unified_test_400d805106b64523a2f433d84faa5ead/data
+        Alternate location: /tmp/proximadb_unified_tests/unified_test_400d805106b64523a2f433d84faa5ead/data
+        VIPER compression result: 4642564 bytes vs baseline 6551019 bytes (-29.1%)
+      🔍 DEBUG: VIPER Search after compaction:
+        Collection ID: unified_test_400d805106b64523a2f433d84faa5ead
+        Storage URL for search: file:///tmp/proximadb_unified_tests/unified_test_400d805106b64523a2f433d84faa5ead/data
+        Files at search location:
+          - L1_20250815T025200_27c58d61.parquet
+        Search returned 10 results
+    ✅ Compression: 29.1%, Accuracy: 100.0%, Query: 10.45ms
+    [23/60] SST with 50% sparsity, zstd level 3 (baseline size: 3484 KB)
+      Flushed 5 SST batches, avg: 42ms, total: 212ms
+      📦 Pre-compaction: 5 files, 3484 KB (3567998 bytes)
+      🗜️ BLOCK COMPRESSION: 3567998 bytes vs 3567998 bytes baseline (0.0% savings)
+        🔧 SST: Starting compaction for collection unified_test_97e3e499e6504dbb94afe69014d54698
+        🔧 SST: Compaction params - force: true, collection_id: Some("unified_test_97e3e499e6504dbb94afe69014d54698")
+        🔧 SST: Compaction result - success: true, entries_processed: 1000, files merged: 5
+      Compaction: 5 input files → 1 output files, 1000 entries processed
+        SST search: 10 results in 17.85ms (full scan, 1000 total records)
+      📦 Post-compaction: 1 files, 3482 KB (3566308 bytes)
+      🔄 Compaction efficiency: 0.0% size reduction, 1:1 file reduction
+        SST compression: 3567998 bytes vs 3567998 bytes baseline (0.0% savings)
+        After compaction: 1 files, 3566308 bytes
+    ✅ Compression: 0.0%, Accuracy: 100.0%, Query: 16.98ms
+    [24/60] VIPER with 50% sparsity, zstd level 3 (baseline size: 6397 KB)
+      Flushed 5 VIPER batches, avg: 22ms, total: 113ms
+      VIPER storage location: file:///tmp/proximadb_unified_tests/unified_test_768ddfdf36d146e8aa55ff9b4a1f7bb4/data
+      VIPER Compaction: 5 input files → 1 output files, 1000 entries
+        VIPER search: 10 results in 12.32ms (expected 1000 total records)
+        VIPER avg query latency: 12.13ms
+      Calculating VIPER compressed size:
+        Primary location: /tmp/proximadb_unified_tests/unified_test_768ddfdf36d146e8aa55ff9b4a1f7bb4/unified_test_768ddfdf36d146e8aa55ff9b4a1f7bb4/data
+        Alternate location: /tmp/proximadb_unified_tests/unified_test_768ddfdf36d146e8aa55ff9b4a1f7bb4/data
+        VIPER compression result: 3918466 bytes vs baseline 6551019 bytes (-40.2%)
+      🔍 DEBUG: VIPER Search after compaction:
+        Collection ID: unified_test_768ddfdf36d146e8aa55ff9b4a1f7bb4
+        Storage URL for search: file:///tmp/proximadb_unified_tests/unified_test_768ddfdf36d146e8aa55ff9b4a1f7bb4/data
+        Files at search location:
+          - L1_20250815T025201_2d937371.parquet
+        Search returned 10 results
+    ✅ Compression: 40.2%, Accuracy: 100.0%, Query: 12.07ms
+    [25/60] SST with 50% sparsity, zstd level 6 (baseline size: 3484 KB)
+      Flushed 5 SST batches, avg: 41ms, total: 207ms
+      📦 Pre-compaction: 5 files, 3484 KB (3567998 bytes)
+      🗜️ BLOCK COMPRESSION: 3567998 bytes vs 3567998 bytes baseline (0.0% savings)
+        🔧 SST: Starting compaction for collection unified_test_c9ed07b437aa42749cef7890ccf9dd99
+        🔧 SST: Compaction params - force: true, collection_id: Some("unified_test_c9ed07b437aa42749cef7890ccf9dd99")
+        🔧 SST: Compaction result - success: true, entries_processed: 1000, files merged: 5
+      Compaction: 5 input files → 1 output files, 1000 entries processed
+        SST search: 10 results in 17.21ms (full scan, 1000 total records)
+      📦 Post-compaction: 1 files, 3482 KB (3566308 bytes)
+      🔄 Compaction efficiency: 0.0% size reduction, 1:1 file reduction
+        SST compression: 3567998 bytes vs 3567998 bytes baseline (0.0% savings)
+        After compaction: 1 files, 3566308 bytes
+    ✅ Compression: 0.0%, Accuracy: 100.0%, Query: 16.94ms
+    [26/60] VIPER with 50% sparsity, zstd level 6 (baseline size: 6397 KB)
+      Flushed 5 VIPER batches, avg: 26ms, total: 130ms
+      VIPER storage location: file:///tmp/proximadb_unified_tests/unified_test_530346e2c85a43efbcb2b3732f4215ab/data
+      VIPER Compaction: 5 input files → 1 output files, 1000 entries
+        VIPER search: 10 results in 11.98ms (expected 1000 total records)
+        VIPER avg query latency: 11.84ms
+      Calculating VIPER compressed size:
+        Primary location: /tmp/proximadb_unified_tests/unified_test_530346e2c85a43efbcb2b3732f4215ab/unified_test_530346e2c85a43efbcb2b3732f4215ab/data
+        Alternate location: /tmp/proximadb_unified_tests/unified_test_530346e2c85a43efbcb2b3732f4215ab/data
+        VIPER compression result: 3876941 bytes vs baseline 6551019 bytes (-40.8%)
+      🔍 DEBUG: VIPER Search after compaction:
+        Collection ID: unified_test_530346e2c85a43efbcb2b3732f4215ab
+        Storage URL for search: file:///tmp/proximadb_unified_tests/unified_test_530346e2c85a43efbcb2b3732f4215ab/data
+        Files at search location:
+          - L1_20250815T025202_a3fd22a3.parquet
+        Search returned 10 results
+    ✅ Compression: 40.8%, Accuracy: 100.0%, Query: 11.80ms
+    [27/60] SST with 50% sparsity, gzip level 6 (baseline size: 3484 KB)
+      Flushed 5 SST batches, avg: 50ms, total: 252ms
+      📦 Pre-compaction: 5 files, 3484 KB (3567998 bytes)
+      🗜️ BLOCK COMPRESSION: 3567998 bytes vs 3567998 bytes baseline (0.0% savings)
+        🔧 SST: Starting compaction for collection unified_test_656a0d80c2b248f4aeab03707edf5a91
+        🔧 SST: Compaction params - force: true, collection_id: Some("unified_test_656a0d80c2b248f4aeab03707edf5a91")
+        🔧 SST: Compaction result - success: true, entries_processed: 1000, files merged: 5
+      Compaction: 5 input files → 1 output files, 1000 entries processed
+        SST search: 10 results in 17.56ms (full scan, 1000 total records)
+      📦 Post-compaction: 1 files, 3482 KB (3566308 bytes)
+      🔄 Compaction efficiency: 0.0% size reduction, 1:1 file reduction
+        SST compression: 3567998 bytes vs 3567998 bytes baseline (0.0% savings)
+        After compaction: 1 files, 3566308 bytes
+    ✅ Compression: 0.0%, Accuracy: 100.0%, Query: 17.48ms
+
+📊 PHASE SUMMARY - 50% SPARSITY
+------------------------------------------------------------
+  📈 Configurations tested: 9
+  💾 Average compression savings: 15.3%
+  ⏱️  Average P50 latency: 14.42ms
+  🏆 Best compression: VIPER zstd L6 - 40.8% savings
+  ⚡ Best latency: VIPER lz4 - 9.50ms P50
+  📊 SST avg savings: 0.0% | VIPER avg savings: 34.5%
+  🔄 Avg compaction reduction: 0.8:1 files
+
+━━━━━ SPARSITY LEVEL: 70% ━━━━━
+    [28/60] SST with 70% sparsity, lz4 level 1 (baseline size: 2297 KB)
+      Flushed 5 SST batches, avg: 62ms, total: 313ms
+      📦 Pre-compaction: 5 files, 2297 KB (2352778 bytes)
+      🗜️ BLOCK COMPRESSION: 2352778 bytes vs 2352778 bytes baseline (0.0% savings)
+        🔧 SST: Starting compaction for collection unified_test_901663310a754e3580dca47d794e45d8
+        🔧 SST: Compaction params - force: true, collection_id: Some("unified_test_901663310a754e3580dca47d794e45d8")
+        🔧 SST: Compaction result - success: true, entries_processed: 1000, files merged: 5
+      Compaction: 5 input files → 1 output files, 1000 entries processed
+        SST search: 10 results in 12.30ms (full scan, 1000 total records)
+      📦 Post-compaction: 1 files, 2295 KB (2350790 bytes)
+      🔄 Compaction efficiency: 0.1% size reduction, 1:1 file reduction
+        SST compression: 2352778 bytes vs 2352778 bytes baseline (0.0% savings)
+        After compaction: 1 files, 2350790 bytes
+    ✅ Compression: 0.0%, Accuracy: 100.0%, Query: 12.04ms
+    [29/60] VIPER with 70% sparsity, lz4 level 1 (baseline size: 4851 KB)
+      Flushed 5 VIPER batches, avg: 19ms, total: 95ms
+      VIPER storage location: file:///tmp/proximadb_unified_tests/unified_test_9438837c053b499881a1d1e72c164e59/data
+      VIPER Compaction: 5 input files → 1 output files, 1000 entries
+        VIPER search: 10 results in 9.81ms (expected 1000 total records)
+        VIPER avg query latency: 9.73ms
+      Calculating VIPER compressed size:
+        Primary location: /tmp/proximadb_unified_tests/unified_test_9438837c053b499881a1d1e72c164e59/unified_test_9438837c053b499881a1d1e72c164e59/data
+        Alternate location: /tmp/proximadb_unified_tests/unified_test_9438837c053b499881a1d1e72c164e59/data
+        VIPER compression result: 3412572 bytes vs baseline 4968356 bytes (-31.3%)
+      🔍 DEBUG: VIPER Search after compaction:
+        Collection ID: unified_test_9438837c053b499881a1d1e72c164e59
+        Storage URL for search: file:///tmp/proximadb_unified_tests/unified_test_9438837c053b499881a1d1e72c164e59/data
+        Files at search location:
+          - L1_20250815T025204_baff13b8.parquet
+        Search returned 10 results
+    ✅ Compression: 31.3%, Accuracy: 100.0%, Query: 9.59ms
+    [30/60] SST with 70% sparsity, snappy level 0 (baseline size: 2297 KB)
+      Flushed 5 SST batches, avg: 62ms, total: 313ms
+      📦 Pre-compaction: 5 files, 2297 KB (2352778 bytes)
+      🗜️ BLOCK COMPRESSION: 2352778 bytes vs 2352778 bytes baseline (0.0% savings)
+        🔧 SST: Starting compaction for collection unified_test_7bf778bfa4304135bb8fc88cdfc8a512
+        🔧 SST: Compaction params - force: true, collection_id: Some("unified_test_7bf778bfa4304135bb8fc88cdfc8a512")
+        🔧 SST: Compaction result - success: true, entries_processed: 1000, files merged: 5
+      Compaction: 5 input files → 1 output files, 1000 entries processed
+        SST search: 10 results in 12.53ms (full scan, 1000 total records)
+      📦 Post-compaction: 1 files, 2295 KB (2350790 bytes)
+      🔄 Compaction efficiency: 0.1% size reduction, 1:1 file reduction
+        SST compression: 2352778 bytes vs 2352778 bytes baseline (0.0% savings)
+        After compaction: 1 files, 2350790 bytes
+    ✅ Compression: 0.0%, Accuracy: 100.0%, Query: 11.90ms
+    [31/60] VIPER with 70% sparsity, snappy level 0 (baseline size: 4851 KB)
+      Flushed 5 VIPER batches, avg: 18ms, total: 91ms
+      VIPER storage location: file:///tmp/proximadb_unified_tests/unified_test_1b77ef50db7046949537932e3914e3ac/data
+      VIPER Compaction: 5 input files → 1 output files, 1000 entries
+        VIPER search: 10 results in 10.51ms (expected 1000 total records)
+        VIPER avg query latency: 10.20ms
+      Calculating VIPER compressed size:
+        Primary location: /tmp/proximadb_unified_tests/unified_test_1b77ef50db7046949537932e3914e3ac/unified_test_1b77ef50db7046949537932e3914e3ac/data
+        Alternate location: /tmp/proximadb_unified_tests/unified_test_1b77ef50db7046949537932e3914e3ac/data
+        VIPER compression result: 3369671 bytes vs baseline 4968356 bytes (-32.2%)
+      🔍 DEBUG: VIPER Search after compaction:
+        Collection ID: unified_test_1b77ef50db7046949537932e3914e3ac
+        Storage URL for search: file:///tmp/proximadb_unified_tests/unified_test_1b77ef50db7046949537932e3914e3ac/data
+        Files at search location:
+          - L1_20250815T025205_ccea0d2f.parquet
+        Search returned 10 results
+    ✅ Compression: 32.2%, Accuracy: 100.0%, Query: 10.16ms
+    [32/60] SST with 70% sparsity, zstd level 3 (baseline size: 2297 KB)
+      Flushed 5 SST batches, avg: 64ms, total: 320ms
+      📦 Pre-compaction: 5 files, 2297 KB (2352778 bytes)
+      🗜️ BLOCK COMPRESSION: 2352778 bytes vs 2352778 bytes baseline (0.0% savings)
+        🔧 SST: Starting compaction for collection unified_test_67725633132c4305b447e6349d1c59dc
+        🔧 SST: Compaction params - force: true, collection_id: Some("unified_test_67725633132c4305b447e6349d1c59dc")
+        🔧 SST: Compaction result - success: true, entries_processed: 1000, files merged: 5
+      Compaction: 5 input files → 1 output files, 1000 entries processed
+        SST search: 10 results in 12.61ms (full scan, 1000 total records)
+      📦 Post-compaction: 1 files, 2295 KB (2350790 bytes)
+      🔄 Compaction efficiency: 0.1% size reduction, 1:1 file reduction
+        SST compression: 2352778 bytes vs 2352778 bytes baseline (0.0% savings)
+        After compaction: 1 files, 2350790 bytes
+    ✅ Compression: 0.0%, Accuracy: 100.0%, Query: 12.26ms
+    [33/60] VIPER with 70% sparsity, zstd level 3 (baseline size: 4851 KB)
+      Flushed 5 VIPER batches, avg: 19ms, total: 99ms
+      VIPER storage location: file:///tmp/proximadb_unified_tests/unified_test_366e03ee938448799f8b32e136e335a8/data
+      VIPER Compaction: 5 input files → 1 output files, 1000 entries
+        VIPER search: 10 results in 11.52ms (expected 1000 total records)
+        VIPER avg query latency: 11.61ms
+      Calculating VIPER compressed size:
+        Primary location: /tmp/proximadb_unified_tests/unified_test_366e03ee938448799f8b32e136e335a8/unified_test_366e03ee938448799f8b32e136e335a8/data
+        Alternate location: /tmp/proximadb_unified_tests/unified_test_366e03ee938448799f8b32e136e335a8/data
+        VIPER compression result: 2749230 bytes vs baseline 4968356 bytes (-44.7%)
+      🔍 DEBUG: VIPER Search after compaction:
+        Collection ID: unified_test_366e03ee938448799f8b32e136e335a8
+        Storage URL for search: file:///tmp/proximadb_unified_tests/unified_test_366e03ee938448799f8b32e136e335a8/data
+        Files at search location:
+          - L1_20250815T025206_c9d88266.parquet
+        Search returned 10 results
+    ✅ Compression: 44.7%, Accuracy: 100.0%, Query: 11.67ms
+    [34/60] SST with 70% sparsity, zstd level 6 (baseline size: 2297 KB)
+      Flushed 5 SST batches, avg: 64ms, total: 323ms
+      📦 Pre-compaction: 5 files, 2297 KB (2352778 bytes)
+      🗜️ BLOCK COMPRESSION: 2352778 bytes vs 2352778 bytes baseline (0.0% savings)
+        🔧 SST: Starting compaction for collection unified_test_760612695c2844c0ab1e44a0a983fff9
+        🔧 SST: Compaction params - force: true, collection_id: Some("unified_test_760612695c2844c0ab1e44a0a983fff9")
+        🔧 SST: Compaction result - success: true, entries_processed: 1000, files merged: 5
+      Compaction: 5 input files → 1 output files, 1000 entries processed
+        SST search: 10 results in 12.75ms (full scan, 1000 total records)
+      📦 Post-compaction: 1 files, 2295 KB (2350790 bytes)
+      🔄 Compaction efficiency: 0.1% size reduction, 1:1 file reduction
+        SST compression: 2352778 bytes vs 2352778 bytes baseline (0.0% savings)
+        After compaction: 1 files, 2350790 bytes
+    ✅ Compression: 0.0%, Accuracy: 100.0%, Query: 12.53ms
+    [35/60] VIPER with 70% sparsity, zstd level 6 (baseline size: 4851 KB)
+      Flushed 5 VIPER batches, avg: 23ms, total: 118ms
+      VIPER storage location: file:///tmp/proximadb_unified_tests/unified_test_7976dcb9462a475da22bddbeb9128f6c/data
+      VIPER Compaction: 5 input files → 1 output files, 1000 entries
+        VIPER search: 10 results in 11.08ms (expected 1000 total records)
+        VIPER avg query latency: 11.24ms
+      Calculating VIPER compressed size:
+        Primary location: /tmp/proximadb_unified_tests/unified_test_7976dcb9462a475da22bddbeb9128f6c/unified_test_7976dcb9462a475da22bddbeb9128f6c/data
+        Alternate location: /tmp/proximadb_unified_tests/unified_test_7976dcb9462a475da22bddbeb9128f6c/data
+        VIPER compression result: 2695517 bytes vs baseline 4968356 bytes (-45.7%)
+      🔍 DEBUG: VIPER Search after compaction:
+        Collection ID: unified_test_7976dcb9462a475da22bddbeb9128f6c
+        Storage URL for search: file:///tmp/proximadb_unified_tests/unified_test_7976dcb9462a475da22bddbeb9128f6c/data
+        Files at search location:
+          - L1_20250815T025207_c42df62f.parquet
+        Search returned 10 results
+    ✅ Compression: 45.7%, Accuracy: 100.0%, Query: 11.09ms
+    [36/60] SST with 70% sparsity, gzip level 6 (baseline size: 2297 KB)
+      Flushed 5 SST batches, avg: 70ms, total: 354ms
+      📦 Pre-compaction: 5 files, 2297 KB (2352778 bytes)
+      🗜️ BLOCK COMPRESSION: 2352778 bytes vs 2352778 bytes baseline (0.0% savings)
+        🔧 SST: Starting compaction for collection unified_test_fe7a4754b1d14cb09100829f7604a887
+        🔧 SST: Compaction params - force: true, collection_id: Some("unified_test_fe7a4754b1d14cb09100829f7604a887")
+        🔧 SST: Compaction result - success: true, entries_processed: 1000, files merged: 5
+      Compaction: 5 input files → 1 output files, 1000 entries processed
+        SST search: 10 results in 12.80ms (full scan, 1000 total records)
+      📦 Post-compaction: 1 files, 2295 KB (2350790 bytes)
+      🔄 Compaction efficiency: 0.1% size reduction, 1:1 file reduction
+        SST compression: 2352778 bytes vs 2352778 bytes baseline (0.0% savings)
+        After compaction: 1 files, 2350790 bytes
+    ✅ Compression: 0.0%, Accuracy: 100.0%, Query: 12.41ms
+
+📊 PHASE SUMMARY - 70% SPARSITY
+------------------------------------------------------------
+  📈 Configurations tested: 9
+  💾 Average compression savings: 17.1%
+  ⏱️  Average P50 latency: 11.52ms
+  🏆 Best compression: VIPER zstd L6 - 45.7% savings
+  ⚡ Best latency: VIPER lz4 - 9.59ms P50
+  📊 SST avg savings: 0.0% | VIPER avg savings: 38.5%
+  🔄 Avg compaction reduction: 0.8:1 files
+
+━━━━━ SPARSITY LEVEL: 90% ━━━━━
+    [37/60] SST with 90% sparsity, lz4 level 1 (baseline size: 936 KB)
+      Flushed 5 SST batches, avg: 47ms, total: 235ms
+      📦 Pre-compaction: 5 files, 898 KB (919969 bytes)
+      🗜️ BLOCK COMPRESSION: 919969 bytes vs 958733 bytes baseline (4.0% savings)
+        🔧 SST: Starting compaction for collection unified_test_48514d7e08904064bc038178eae10733
+        🔧 SST: Compaction params - force: true, collection_id: Some("unified_test_48514d7e08904064bc038178eae10733")
+        🔧 SST: Compaction result - success: true, entries_processed: 1000, files merged: 5
+      Compaction: 5 input files → 1 output files, 1000 entries processed
+        SST search: 10 results in 10.09ms (full scan, 1000 total records)
+      📦 Post-compaction: 1 files, 886 KB (908062 bytes)
+      🔄 Compaction efficiency: 1.3% size reduction, 1:1 file reduction
+        SST compression: 919969 bytes vs 958733 bytes baseline (4.0% savings)
+        After compaction: 1 files, 908062 bytes
+    ✅ Compression: 4.0%, Accuracy: 100.0%, Query: 9.47ms
+    [38/60] VIPER with 90% sparsity, lz4 level 1 (baseline size: 2272 KB)
+      Flushed 5 VIPER batches, avg: 15ms, total: 75ms
+      VIPER storage location: file:///tmp/proximadb_unified_tests/unified_test_3dd30d64ab824ecfba8dbaad63d9dce2/data
+      VIPER Compaction: 5 input files → 1 output files, 1000 entries
+        VIPER search: 10 results in 10.49ms (expected 1000 total records)
+        VIPER avg query latency: 9.94ms
+      Calculating VIPER compressed size:
+        Primary location: /tmp/proximadb_unified_tests/unified_test_3dd30d64ab824ecfba8dbaad63d9dce2/unified_test_3dd30d64ab824ecfba8dbaad63d9dce2/data
+        Alternate location: /tmp/proximadb_unified_tests/unified_test_3dd30d64ab824ecfba8dbaad63d9dce2/data
+        VIPER compression result: 1495012 bytes vs baseline 2327449 bytes (-35.8%)
+      🔍 DEBUG: VIPER Search after compaction:
+        Collection ID: unified_test_3dd30d64ab824ecfba8dbaad63d9dce2
+        Storage URL for search: file:///tmp/proximadb_unified_tests/unified_test_3dd30d64ab824ecfba8dbaad63d9dce2/data
+        Files at search location:
+          - L1_20250815T025209_9ff598ef.parquet
+        Search returned 10 results
+    ✅ Compression: 35.8%, Accuracy: 100.0%, Query: 9.80ms
+    [39/60] SST with 90% sparsity, snappy level 0 (baseline size: 936 KB)
+      Flushed 5 SST batches, avg: 46ms, total: 231ms
+      📦 Pre-compaction: 5 files, 936 KB (958733 bytes)
+      🗜️ BLOCK COMPRESSION: 958733 bytes vs 958733 bytes baseline (0.0% savings)
+        🔧 SST: Starting compaction for collection unified_test_0d51bb387c7146bd9933a978333b6651
+        🔧 SST: Compaction params - force: true, collection_id: Some("unified_test_0d51bb387c7146bd9933a978333b6651")
+        🔧 SST: Compaction result - success: true, entries_processed: 1000, files merged: 5
+      Compaction: 5 input files → 1 output files, 1000 entries processed
+        SST search: 10 results in 10.13ms (full scan, 1000 total records)
+      📦 Post-compaction: 1 files, 934 KB (956745 bytes)
+      🔄 Compaction efficiency: 0.2% size reduction, 1:1 file reduction
+        SST compression: 958733 bytes vs 958733 bytes baseline (0.0% savings)
+        After compaction: 1 files, 956745 bytes
+    ✅ Compression: 0.0%, Accuracy: 100.0%, Query: 9.86ms
+    [40/60] VIPER with 90% sparsity, snappy level 0 (baseline size: 2272 KB)
+      Flushed 5 VIPER batches, avg: 14ms, total: 72ms
+      VIPER storage location: file:///tmp/proximadb_unified_tests/unified_test_ccdc963d07d34a03a25b85dae656c5ef/data
+      VIPER Compaction: 5 input files → 1 output files, 1000 entries
+        VIPER search: 10 results in 10.53ms (expected 1000 total records)
+        VIPER avg query latency: 10.37ms
+      Calculating VIPER compressed size:
+        Primary location: /tmp/proximadb_unified_tests/unified_test_ccdc963d07d34a03a25b85dae656c5ef/unified_test_ccdc963d07d34a03a25b85dae656c5ef/data
+        Alternate location: /tmp/proximadb_unified_tests/unified_test_ccdc963d07d34a03a25b85dae656c5ef/data
+        VIPER compression result: 1479810 bytes vs baseline 2327449 bytes (-36.4%)
+      🔍 DEBUG: VIPER Search after compaction:
+        Collection ID: unified_test_ccdc963d07d34a03a25b85dae656c5ef
+        Storage URL for search: file:///tmp/proximadb_unified_tests/unified_test_ccdc963d07d34a03a25b85dae656c5ef/data
+        Files at search location:
+          - L1_20250815T025210_7ee68a8a.parquet
+        Search returned 10 results
+    ✅ Compression: 36.4%, Accuracy: 100.0%, Query: 10.30ms
+    [41/60] SST with 90% sparsity, zstd level 3 (baseline size: 936 KB)
+      Flushed 5 SST batches, avg: 47ms, total: 239ms
+      📦 Pre-compaction: 5 files, 856 KB (877331 bytes)
+      🗜️ BLOCK COMPRESSION: 877331 bytes vs 958733 bytes baseline (8.5% savings)
+        🔧 SST: Starting compaction for collection unified_test_35d6fc9130e34bb5b354a09373cb1345
+        🔧 SST: Compaction params - force: true, collection_id: Some("unified_test_35d6fc9130e34bb5b354a09373cb1345")
+        🔧 SST: Compaction result - success: true, entries_processed: 1000, files merged: 5
+      Compaction: 5 input files → 1 output files, 1000 entries processed
+        SST search: 10 results in 10.57ms (full scan, 1000 total records)
+      📦 Post-compaction: 1 files, 854 KB (874800 bytes)
+      🔄 Compaction efficiency: 0.3% size reduction, 1:1 file reduction
+        SST compression: 877331 bytes vs 958733 bytes baseline (8.5% savings)
+        After compaction: 1 files, 874800 bytes
+    ✅ Compression: 8.5%, Accuracy: 100.0%, Query: 10.41ms
+    [42/60] VIPER with 90% sparsity, zstd level 3 (baseline size: 2272 KB)
+      Flushed 5 VIPER batches, avg: 15ms, total: 78ms
+      VIPER storage location: file:///tmp/proximadb_unified_tests/unified_test_e1724caf582f4a34b0e201c3992bca05/data
+      VIPER Compaction: 5 input files → 1 output files, 1000 entries
+        VIPER search: 10 results in 11.32ms (expected 1000 total records)
+        VIPER avg query latency: 10.85ms
+      Calculating VIPER compressed size:
+        Primary location: /tmp/proximadb_unified_tests/unified_test_e1724caf582f4a34b0e201c3992bca05/unified_test_e1724caf582f4a34b0e201c3992bca05/data
+        Alternate location: /tmp/proximadb_unified_tests/unified_test_e1724caf582f4a34b0e201c3992bca05/data
+        VIPER compression result: 1154130 bytes vs baseline 2327449 bytes (-50.4%)
+      🔍 DEBUG: VIPER Search after compaction:
+        Collection ID: unified_test_e1724caf582f4a34b0e201c3992bca05
+        Storage URL for search: file:///tmp/proximadb_unified_tests/unified_test_e1724caf582f4a34b0e201c3992bca05/data
+        Files at search location:
+          - L1_20250815T025211_afa7b9d8.parquet
+        Search returned 10 results
+    ✅ Compression: 50.4%, Accuracy: 100.0%, Query: 10.82ms
+    [43/60] SST with 90% sparsity, zstd level 6 (baseline size: 936 KB)
+      Flushed 5 SST batches, avg: 47ms, total: 238ms
+      📦 Pre-compaction: 5 files, 851 KB (871552 bytes)
+      🗜️ BLOCK COMPRESSION: 871552 bytes vs 958733 bytes baseline (9.1% savings)
+        🔧 SST: Starting compaction for collection unified_test_0d700affaef74fb1941e48140dfc5db6
+        🔧 SST: Compaction params - force: true, collection_id: Some("unified_test_0d700affaef74fb1941e48140dfc5db6")
+        🔧 SST: Compaction result - success: true, entries_processed: 1000, files merged: 5
+      Compaction: 5 input files → 1 output files, 1000 entries processed
+        SST search: 10 results in 10.50ms (full scan, 1000 total records)
+      📦 Post-compaction: 1 files, 846 KB (866914 bytes)
+      🔄 Compaction efficiency: 0.5% size reduction, 1:1 file reduction
+        SST compression: 871552 bytes vs 958733 bytes baseline (9.1% savings)
+        After compaction: 1 files, 866914 bytes
+    ✅ Compression: 9.1%, Accuracy: 100.0%, Query: 10.64ms
+    [44/60] VIPER with 90% sparsity, zstd level 6 (baseline size: 2272 KB)
+      Flushed 5 VIPER batches, avg: 17ms, total: 87ms
+      VIPER storage location: file:///tmp/proximadb_unified_tests/unified_test_74bf481b0c73467b871b3a438086766a/data
+      VIPER Compaction: 5 input files → 1 output files, 1000 entries
+        VIPER search: 10 results in 11.28ms (expected 1000 total records)
+        VIPER avg query latency: 10.75ms
+      Calculating VIPER compressed size:
+        Primary location: /tmp/proximadb_unified_tests/unified_test_74bf481b0c73467b871b3a438086766a/unified_test_74bf481b0c73467b871b3a438086766a/data
+        Alternate location: /tmp/proximadb_unified_tests/unified_test_74bf481b0c73467b871b3a438086766a/data
+        VIPER compression result: 1111142 bytes vs baseline 2327449 bytes (-52.3%)
+      🔍 DEBUG: VIPER Search after compaction:
+        Collection ID: unified_test_74bf481b0c73467b871b3a438086766a
+        Storage URL for search: file:///tmp/proximadb_unified_tests/unified_test_74bf481b0c73467b871b3a438086766a/data
+        Files at search location:
+          - L1_20250815T025212_f9cc01a4.parquet
+        Search returned 10 results
+    ✅ Compression: 52.3%, Accuracy: 100.0%, Query: 10.80ms
+    [45/60] SST with 90% sparsity, gzip level 6 (baseline size: 936 KB)
+      Flushed 5 SST batches, avg: 49ms, total: 247ms
+      📦 Pre-compaction: 5 files, 858 KB (878879 bytes)
+      🗜️ BLOCK COMPRESSION: 878879 bytes vs 958733 bytes baseline (8.3% savings)
+        🔧 SST: Starting compaction for collection unified_test_1e8b349fcdbb412f94afc740e61011b8
+        🔧 SST: Compaction params - force: true, collection_id: Some("unified_test_1e8b349fcdbb412f94afc740e61011b8")
+        🔧 SST: Compaction result - success: true, entries_processed: 1000, files merged: 5
+      Compaction: 5 input files → 1 output files, 1000 entries processed
+        SST search: 10 results in 12.40ms (full scan, 1000 total records)
+      📦 Post-compaction: 1 files, 855 KB (876109 bytes)
+      🔄 Compaction efficiency: 0.3% size reduction, 1:1 file reduction
+        SST compression: 878879 bytes vs 958733 bytes baseline (8.3% savings)
+        After compaction: 1 files, 876109 bytes
+    ✅ Compression: 8.3%, Accuracy: 100.0%, Query: 11.69ms
+
+📊 PHASE SUMMARY - 90% SPARSITY
+------------------------------------------------------------
+  📈 Configurations tested: 9
+  💾 Average compression savings: 22.8%
+  ⏱️  Average P50 latency: 10.42ms
+  🏆 Best compression: VIPER zstd L6 - 52.3% savings
+  ⚡ Best latency: SST lz4 - 9.47ms P50
+  📊 SST avg savings: 6.0% | VIPER avg savings: 43.7%
+  🔄 Avg compaction reduction: 0.8:1 files
+
+🏁 FINAL COMPREHENSIVE REPORT
+====================================================================================================
+
+═══ COMPRESSION EFFECTIVENESS BY SPARSITY ═══
+┌──────────┬─────────────────────────────┬─────────────────────────────┐
+│ Sparsity │ SST Best (algo, savings%)  │ VIPER Best (algo, savings%)│
+├──────────┼─────────────────────────────┼─────────────────────────────┤
+│      10% │ gzip    L6:   0.0%       │ zstd    L6:  35.7%      │
+│      30% │ gzip    L6:   0.0%       │ zstd    L6:  36.4%      │
+│      50% │ gzip    L6:   0.0%       │ zstd    L6:  40.8%      │
+│      70% │ gzip    L6:   0.0%       │ zstd    L6:  45.7%      │
+│      90% │ zstd    L6:   9.1%       │ zstd    L6:  52.3%      │
+└──────────┴─────────────────────────────┴─────────────────────────────┘
+
+═══ COMPACTION EFFICIENCY (5 BATCHES) ═══
+┌────────┬──────────┬────────┬───────┬──────────┬──────────┬──────────┬──────────┬──────────┬──────────┐
+│ Engine │ Sparsity │ Algo   │ Level │ Size(KB) │ Comp(KB) │ Ratio    │ Savings% │ Time(ms) │ Files    │
+├────────┼──────────┼────────┼───────┼──────────┼──────────┼──────────┼──────────┼──────────┼──────────┤
+│ SST    │      10% │ lz4    │     1 │   5250.2 │   5250.2 │    1.000 │      0.0 │      219 │  5->1    │
+│ VIPER  │      10% │ zstd   │     6 │   8840.4 │   5686.9 │    0.643 │     35.7 │      280 │  5->1    │
+│ SST    │      30% │ lz4    │     1 │   4442.9 │   4442.9 │    1.000 │      0.0 │      165 │  5->1    │
+│ VIPER  │      30% │ zstd   │     6 │   7597.6 │   4835.0 │    0.636 │     36.4 │      245 │  5->1    │
+│ SST    │      50% │ lz4    │     1 │   3484.4 │   3484.4 │    1.000 │      0.0 │      196 │  5->1    │
+│ VIPER  │      50% │ zstd   │     6 │   6397.5 │   3786.1 │    0.592 │     40.8 │      241 │  5->1    │
+│ SST    │      70% │ lz4    │     1 │   2297.6 │   2297.6 │    1.000 │      0.0 │      307 │  5->1    │
+│ VIPER  │      70% │ zstd   │     6 │   4851.9 │   2632.3 │    0.543 │     45.7 │      230 │  5->1    │
+│ SST    │      90% │ zstd   │     6 │    936.3 │    851.1 │    0.909 │      9.1 │      230 │  5->1    │
+│ VIPER  │      90% │ zstd   │     6 │   2272.9 │   1085.1 │    0.477 │     52.3 │      228 │  5->1    │
+└────────┴──────────┴────────┴───────┴──────────┴──────────┴──────────┴──────────┴──────────┴──────────┘
+
+═══ LATENCY IMPACT ANALYSIS ═══
+┌────────┬──────────┬────────┬────────┬──────────┬───────────┬──────────┬──────────┐
+│ Engine │ Sparsity │ Algo   │ Level  │ P50(ms)  │ vs Base % │ P99(ms)  │ vs Base % │
+├────────┼──────────┼────────┼────────┼──────────┼───────────┼──────────┼──────────┤
+│ SST    │      10% │ zstd   │     6  │    16.39 │    -41.1% │    17.17 │   -38.3% │
+│ VIPER  │      10% │ zstd   │     3  │    13.49 │    +48.0% │    13.80 │   +51.4% │
+│ SST    │      30% │ zstd   │     3  │    17.69 │    -33.1% │    19.05 │   -27.9% │
+│ VIPER  │      30% │ zstd   │     3  │    13.09 │    +53.0% │    14.38 │   +68.0% │
+│ SST    │      50% │ snappy │     0  │    17.74 │    -32.2% │    18.31 │   -30.0% │
+│ VIPER  │      50% │ zstd   │     3  │    12.07 │    +44.1% │    13.34 │   +59.1% │
+│ SST    │      70% │ zstd   │     6  │    12.53 │    -47.1% │    12.79 │   -46.1% │
+│ VIPER  │      70% │ zstd   │     3  │    11.67 │    +36.2% │    12.36 │   +44.2% │
+│ SST    │      90% │ gzip   │     6  │    11.69 │    -45.8% │    12.40 │   -42.5% │
+│ VIPER  │      90% │ zstd   │     3  │    10.82 │    +22.9% │    11.51 │   +30.9% │
+└────────┴──────────┴────────┴────────┴──────────┴───────────┴──────────┴──────────┘
+Legend: 🟢 ≤5% impact, 🟡 5-10% impact, 🔴 >10% impact
+
+═══ QUERY PERFORMANCE COMPARISON ═══
+┌────────┬──────────┬────────┬──────────┬──────────┬──────────┬────────┐
+│ Engine │ Sparsity │ Algo   │ P50 (ms) │ P99 (ms) │ QPS      │ Winner │
+├────────┼──────────┼────────┼──────────┼──────────┼──────────┼────────┤
+│ SST    │      10% │ lz4    │    16.05 │    16.41 │       62 │        │
+│ VIPER  │      10% │ lz4    │     9.67 │    12.65 │       99 │ VIPER  │
+├────────┼──────────┼────────┼──────────┼──────────┼──────────┼────────┤
+│ SST    │      30% │ gzip   │    16.43 │    16.82 │       61 │        │
+│ VIPER  │      30% │ lz4    │    10.27 │    12.64 │       96 │ VIPER  │
+├────────┼──────────┼────────┼──────────┼──────────┼──────────┼────────┤
+│ SST    │      50% │ lz4    │    16.79 │    17.32 │       60 │        │
+│ VIPER  │      50% │ lz4    │     9.50 │    10.76 │      104 │ VIPER  │
+├────────┼──────────┼────────┼──────────┼──────────┼──────────┼────────┤
+│ SST    │      70% │ snappy │    11.90 │    12.53 │       84 │        │
+│ VIPER  │      70% │ lz4    │     9.59 │    10.64 │      103 │ VIPER  │
+├────────┼──────────┼────────┼──────────┼──────────┼──────────┼────────┤
+│ SST    │      90% │ lz4    │     9.47 │    10.09 │      106 │        │
+│ VIPER  │      90% │ lz4    │     9.80 │    10.64 │      101 │ SST    │
+├────────┼──────────┼────────┼──────────┼──────────┼──────────┼────────┤
+└────────┴──────────┴────────┴──────────┴──────────┴──────────┴────────┘
+
+═══ RECOMMENDATIONS BY USE CASE ═══
+┌─────────────────────────┬────────┬─────────────────────────────────┐
+│ Use Case                │ Engine │ Configuration                   │
+├─────────────────────────┼────────┼─────────────────────────────────┤
+│ Sparse Vectors (90%)    │ VIPER  │ zstd L6: 52.3% savings         │
+│ Low Latency (<1ms)      │ SST    │ lz4: 9.47ms P50 latency       │
+│ Maximum Compression     │ VIPER  │ zstd L6: 52.3% savings         │
+│ Fast Compaction         │ SST    │ lz4: 165ms for 5 files         │
+└─────────────────────────┴────────┴─────────────────────────────────┘
+
+🎯 FINAL SUMMARY
+====================================================================================================
+📊 OVERALL STATISTICS:
+  Total configurations tested: 45
+  Average compression savings: 16.6%
+  Average P50 latency: 12.99ms
+  Average throughput: 80 QPS
+  Average accuracy: 100.0%
+
+🔄 COMPACTION STATISTICS:
+  Tests with compaction: 45
+  Average compaction time: 230ms
+  Average file reduction: 0.8:1
+
+⚔️ ENGINE COMPARISON:
+  SST   - Avg compression: 1.2%, Avg latency: 14.60ms
+  VIPER - Avg compression: 35.9%, Avg latency: 10.99ms
+  🏆 VIPER wins on compression by 34.7%
+  🏆 VIPER wins on latency by 3.60ms
+
+═══ PERFORMANCE RECOMMENDATIONS ═══
+🏗️ SST ENGINE:
+  ❌ RECOMMENDATION: Disable compression for SST
+     - Average compression savings: 1.2% (minimal)
+     - Average latency impact: -42.4%
+     - Reason: Block-level compression ineffective on already dense data
+     - Better: Use VIPER for compression or focus on query optimization
+
+📊 VIPER ENGINE:
+  ⚠️ RECOMMENDATION: Selective compression for VIPER
+     - Average compression savings: 35.9%
+     - Average latency impact: +26.7%
+
+🎯 SPARSITY-BASED RECOMMENDATIONS:
+  ⚠️ 10% sparsity: Consider use case (14.0% savings, -12.3% latency)
+  ⚠️ 30% sparsity: Consider use case (13.8% savings, -4.2% latency)
+  ✅ 50% sparsity: Use compression (15.3% savings, -5.4% latency)
+  ✅ 70% sparsity: Use compression (17.1% savings, -16.2% latency)
+  ✅ 90% sparsity: Use compression (22.8% savings, -20.5% latency)
+
+📁 CSV report saved to: /tmp/proximadb_benchmark_results.csv
+
+🎉 COMPREHENSIVE BENCHMARK REPORT COMPLETE!
+ok
+

@@ -252,21 +252,12 @@ impl BackgroundFlushContext {
         
         // Parse quantization config if present
         let quantization_config = config.quantization_config.as_ref().map(|qc| {
-            // Extract quantization type from the QuantizationLevel oneof field
-            let quantization_type = if let Some(ref storage_quant) = qc.storage_quantization {
-                if let Some(ref level) = storage_quant.level {
-                    match level.level_type {
-                        Some(crate::proto::proximadb::quantization_level::LevelType::Pq(_)) => "product",
-                        Some(crate::proto::proximadb::quantization_level::LevelType::Scalar(_)) => "scalar", 
-                        Some(crate::proto::proximadb::quantization_level::LevelType::Binary(_)) => "binary",
-                        Some(crate::proto::proximadb::quantization_level::LevelType::Uniform(_)) => "uniform",
-                        _ => "product", // Default fallback
-                    }
-                } else {
-                    "product" // Default if no level specified
-                }
-            } else {
-                "product" // Default if no storage quantization
+            // Extract quantization type from the simplified QuantizationConfig
+            let quantization_type = match qc.method() {
+                crate::proto::proximadb::quantization_config::Method::ProductQuantization => "product",
+                crate::proto::proximadb::quantization_config::Method::ScalarQuantization => "scalar",
+                crate::proto::proximadb::quantization_config::Method::BinaryQuantization => "binary",
+                crate::proto::proximadb::quantization_config::Method::Adaptive => "adaptive",
             };
             
             QuantizationConfig {

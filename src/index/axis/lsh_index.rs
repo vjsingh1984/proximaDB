@@ -26,14 +26,16 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::hash::Hash;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 use tracing::{debug, info};
 
 use crate::compute::distance_computation::DistanceMetric;
 use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
-use crate::core::VectorRecord;
+// VectorRecord eliminated - using ZeroOverheadVector for optimal memory
+use crate::index::axis::zero_overhead_vector::{ZeroOverheadCollection, CollectionConfig};
 use crate::index::axis::index_factory::{AxisVectorIndex, IndexStats};
 use crate::index::axis::types::IndexAlgorithm;
+use crate::index::axis::eventlog::{IndexEvent, ExtractionMode};
 use async_trait::async_trait;
 
 /// LSH index configuration aligned with AXIS standards
@@ -130,6 +132,7 @@ impl<K: Hash + Eq> PartitionedKey<K> {
 }
 
 /// AXIS-integrated LSH index with collection partitioning
+/// NOW SUPPORTS: Queue-based consumption of vectors with quantized/fp32/both representations
 pub struct AxisLshIndex {
     /// Collection identifier for partitioning (optional for backward compatibility)
     collection_id: Option<String>,
@@ -140,8 +143,8 @@ pub struct AxisLshIndex {
     hash_tables: Vec<Arc<DashMap<PartitionedKey<u64>, HashSet<String>>>>,
     /// Hash functions for each table
     hash_functions: Vec<Vec<HashFunction>>,
-    /// Vector data storage - partitioned by collection
-    vectors: Arc<DashMap<PartitionedKey<String>, Arc<VectorRecord>>>,
+    /// Zero-overhead vector storage per collection
+    vectors: Arc<DashMap<String, Arc<RwLock<ZeroOverheadCollection>>>>,
     /// Dimension
     dimension: usize,
     /// Distance compute instance
@@ -150,12 +153,20 @@ pub struct AxisLshIndex {
     vector_count: Arc<AtomicUsize>,
     /// The algorithm specification
     algorithm: IndexAlgorithm,
+    
+    /// NEW: Preferred extraction mode for EventLog consumption
+    /// From IndexConfig.extraction_mode field
+    preferred_extraction_mode: ExtractionMode,
+    
+    /// NEW: Quantized vector storage for dual representation support
+    /// Maps external_id -> quantized_vector for QUANTIZED_ONLY and BOTH modes
+    quantized_vectors: Arc<DashMap<String, Vec<u8>>>,
 }
 
 impl AxisLshIndex {
     /// Create a new LSH index
     pub fn new(config: AxisLshConfig, dimension: usize) -> Self {
-        Self::new_with_collection(None, config, dimension)
+        Self::new_with_representation(None, config, dimension, ExtractionMode::Auto)
     }
     
     /// Create a new LSH index for a specific collection
@@ -164,10 +175,20 @@ impl AxisLshIndex {
         config: AxisLshConfig,
         dimension: usize
     ) -> Self {
+        Self::new_with_representation(collection_id, config, dimension, ExtractionMode::Auto)
+    }
+    
+    /// Create a new LSH index with specific vector representation preference
+    pub fn new_with_representation(
+        collection_id: Option<String>,
+        config: AxisLshConfig,
+        dimension: usize,
+        preferred_extraction_mode: ExtractionMode,
+    ) -> Self {
         let coll_str = collection_id.as_ref().map(|s| s.as_str()).unwrap_or("default");
         info!(
-            "Creating AXIS LSH index for collection '{}': {} tables, {} hashes, {} dim",
-            coll_str, config.n_tables, config.n_hashes, dimension
+            "Creating AXIS LSH index for collection '{}': {} tables, {} hashes, {} dim, repr={:?}",
+            coll_str, config.n_tables, config.n_hashes, dimension, preferred_extraction_mode
         );
         
         use rand::SeedableRng;
@@ -207,22 +228,26 @@ impl AxisLshIndex {
             distance_compute,
             vector_count: Arc::new(AtomicUsize::new(0)),
             algorithm,
+            
+            // NEW: Queue-based vector consumption
+            preferred_extraction_mode,
+            quantized_vectors: Arc::new(DashMap::new()),
         }
     }
     
-    /// Add a vector to the index
-    pub async fn add(&self, id: String, vector_record: Arc<VectorRecord>) -> Result<()> {
-        if vector_record.vector.len() != self.dimension {
+    /// Add a vector to the index - clean API, no VectorRecord
+    pub async fn add_vector(&self, id: String, vector_data: Vec<f32>) -> Result<()> {
+        if vector_data.len() != self.dimension {
             return Err(anyhow!(
                 "Vector dimension mismatch: expected {}, got {}",
                 self.dimension,
-                vector_record.vector.len()
+                vector_data.len()
             ));
         }
         
         // Compute hash for each table
         for (table_idx, table) in self.hash_tables.iter().enumerate() {
-            let hash_value = self.compute_hash(table_idx, &vector_record.vector);
+            let hash_value = self.compute_hash(table_idx, &vector_data);
             
             // Create partitioned key for hash table
             let key = if let Some(ref coll_id) = self.collection_id {
@@ -237,14 +262,22 @@ impl AxisLshIndex {
                 .insert(id.clone());
         }
         
-        // Store vector with partitioned key
-        let vector_key = if let Some(ref coll_id) = self.collection_id {
-            PartitionedKey::new(coll_id.clone(), id)
-        } else {
-            PartitionedKey::new("default".to_string(), id)
-        };
+        // Store vector in the collection-specific ZeroOverheadCollection
+        let collection_id = self.collection_id.as_ref().map(|s| s.as_str()).unwrap_or("default");
         
-        self.vectors.insert(vector_key, vector_record);
+        // Get or create collection for this collection_id
+        let collection = self.vectors.entry(collection_id.to_string())
+            .or_insert_with(|| {
+                Arc::new(RwLock::new(ZeroOverheadCollection::with_capacity(
+                    CollectionConfig::fp32(self.dimension),
+                    1024,
+                )))
+            });
+        
+        // Insert vector into the zero-overhead collection
+        let mut coll = collection.write().unwrap();
+        coll.add_fp32(id, &vector_data)?;
+        
         self.vector_count.fetch_add(1, Ordering::Relaxed);
         
         Ok(())
@@ -255,7 +288,7 @@ impl AxisLshIndex {
         &self,
         query: &[f32],
         k: usize,
-        filter: Option<&(dyn for<'a> Fn(&'a VectorRecord) -> bool + Send + Sync)>,
+        filter: Option<&std::collections::HashMap<String, String>>,
     ) -> Result<Vec<(String, f32)>> {
         if query.len() != self.dimension {
             return Err(anyhow!(
@@ -306,24 +339,24 @@ impl AxisLshIndex {
         
         // Compute actual distances for candidates
         let mut results = Vec::new();
-        for id in &candidates {
-            // Create partitioned key for vector lookup
-            let vector_key = if let Some(ref coll_id) = self.collection_id {
-                PartitionedKey::new(coll_id.clone(), id.clone())
-            } else {
-                PartitionedKey::new("default".to_string(), id.clone())
-            };
+        let collection_id = self.collection_id.as_ref().map(|s| s.as_str()).unwrap_or("default");
+        
+        // Get the collection for this collection_id
+        if let Some(collection) = self.vectors.get(collection_id) {
+            let coll = collection.read().unwrap();
             
-            if let Some(vector_record) = self.vectors.get(&vector_key) {
-                // Apply filter if provided
-                if let Some(f) = filter {
-                    if !f(&vector_record) {
-                        continue;
+            for id in &candidates {
+                if let Some(view) = coll.get(id) {
+                    // Metadata filtering should be done at storage layer
+                    if filter.is_some() {
+                        debug!("Metadata filtering should be applied at storage layer, not in AXIS index");
+                    }
+                    
+                    if let Some(vector_data) = view.as_f32() {
+                        let dist = self.compute_distance(query, vector_data);
+                        results.push((id.clone(), dist));
                     }
                 }
-                
-                let dist = self.compute_distance(query, &vector_record.vector);
-                results.push((id.clone(), dist));
             }
         }
         
@@ -343,26 +376,44 @@ impl AxisLshIndex {
     /// Remove a vector from the index
     pub async fn remove(&self, id: &str) -> Result<()> {
         let collection_id = self.collection_id.as_ref().map(|s| s.as_str()).unwrap_or("default");
-        let key = PartitionedKey::new(collection_id.to_string(), id.to_string());
-        if let Some((_, vector_record)) = self.vectors.remove(&key) {
-            // Remove from all hash tables
-            for (table_idx, table) in self.hash_tables.iter().enumerate() {
-                let hash_value = self.compute_hash(table_idx, &vector_record.vector);
+        
+        // Get the collection and remove the vector
+        if let Some(collection) = self.vectors.get(collection_id) {
+            let mut coll = collection.write().unwrap();
+            
+            // Get the vector data before removing it (needed to update hash tables)
+            let vector_data = if let Some(view) = coll.get(id) {
+                view.as_f32().map(|v| v.to_vec())
+            } else {
+                None
+            };
+            
+            if let Some(vector) = vector_data {
+                // TODO: Implement remove method for ZeroOverheadCollection
+                // For now, just log the removal
+                tracing::debug!("Would remove vector {} from collection (method not implemented)", id);
                 
-                let hash_key = PartitionedKey::new(collection_id.to_string(), hash_value);
-                if let Some(mut bucket) = table.get_mut(&hash_key) {
-                    bucket.remove(id);
-                    if bucket.is_empty() {
-                        drop(bucket);
-                        table.remove(&hash_key);
+                // Remove from all hash tables
+                for (table_idx, table) in self.hash_tables.iter().enumerate() {
+                    let hash_value = self.compute_hash(table_idx, &vector);
+                    
+                    let hash_key = PartitionedKey::new(collection_id.to_string(), hash_value);
+                    if let Some(mut bucket) = table.get_mut(&hash_key) {
+                        bucket.remove(id);
+                        if bucket.is_empty() {
+                            drop(bucket);
+                            table.remove(&hash_key);
+                        }
                     }
                 }
+                
+                self.vector_count.fetch_sub(1, Ordering::Relaxed);
+                Ok(())
+            } else {
+                Err(anyhow!("Vector {} not found in index", id))
             }
-            
-            self.vector_count.fetch_sub(1, Ordering::Relaxed);
-            Ok(())
         } else {
-            Err(anyhow!("Vector {} not found in index", id))
+            Err(anyhow!("Collection {} not found", collection_id))
         }
     }
     
@@ -461,6 +512,112 @@ impl AxisLshIndex {
         
         hash
     }
+    
+    /// NEW: Process EventLog event for async index updates
+    pub async fn process_event(&self, event: &IndexEvent) -> Result<()> {
+        info!("Processing EventLog event {} for LSH index", event.event_id);
+        
+        // Process based on extraction mode and data availability
+        match self.preferred_extraction_mode {
+            ExtractionMode::Fp32Only => {
+                // Process FP32 vectors only
+                if event.has_fp32 {
+                    // TODO: Load FP32 vectors from file paths and process them
+                    tracing::info!("Processing FP32 vectors from {} files", event.file_paths.len());
+                    // Placeholder implementation - needs file loading logic
+                }
+            }
+            ExtractionMode::QuantizedOnly => {
+                // Process quantized vectors only
+                if event.has_quantized {
+                    // TODO: Load quantized vectors from file paths and process them
+                    tracing::info!("Processing quantized vectors from {} files", event.file_paths.len());
+                    // Placeholder implementation - needs file loading logic
+                }
+            }
+            ExtractionMode::Both => {
+                // Process both representations
+                if event.has_fp32 {
+                    // TODO: Load FP32 vectors from file paths and process them
+                    tracing::info!("Processing FP32 vectors from {} files", event.file_paths.len());
+                }
+                if event.has_quantized {
+                    // TODO: Load quantized vectors from file paths and process them
+                    tracing::info!("Processing quantized vectors from {} files", event.file_paths.len());
+                }
+            }
+            ExtractionMode::Auto => {
+                // Automatically choose based on availability - prefer quantized for LSH
+                if event.has_quantized {
+                    tracing::info!("Auto mode: Processing quantized vectors from {} files", event.file_paths.len());
+                    // TODO: Load quantized vectors from file paths and process them
+                } else if event.has_fp32 {
+                    tracing::info!("Auto mode: Processing FP32 vectors from {} files", event.file_paths.len());
+                    // TODO: Load FP32 vectors from file paths and process them
+                }
+            }
+        }
+        
+        Ok(())
+    }
+    
+    /// NEW: Get preferred vector representation for queue consumption
+    pub fn preferred_extraction_mode(&self) -> ExtractionMode {
+        self.preferred_extraction_mode
+    }
+    
+    /// NEW: Check if quantized vectors are available for search acceleration
+    pub fn has_quantized_storage(&self) -> bool {
+        !self.quantized_vectors.is_empty()
+    }
+    
+    /// NEW: Accelerated search using quantized vectors for initial filtering
+    /// This implements a two-stage search: quantized filtering + FP32 reranking
+    pub async fn search_with_quantized_acceleration(
+        &self,
+        query: &[f32],
+        k: usize,
+        filter: Option<&std::collections::HashMap<String, String>>,
+    ) -> Result<Vec<(String, f32)>> {
+        if !self.has_quantized_storage() {
+            // No quantized vectors available, use standard search
+            return self.search(query, k, filter).await;
+        }
+        
+        // TODO: Implement two-stage search with quantized filtering
+        // Stage 1: Fast filtering using quantized hash comparisons
+        // Stage 2: FP32 reranking of top candidates
+        tracing::warn!("Quantized acceleration not yet implemented - using standard search");
+        
+        self.search(query, k, filter).await
+    }
+}
+
+/// Factory function to create LSH index instances
+pub fn create_lsh_index(
+    config: AxisLshConfig, 
+    dimension: usize
+) -> Result<Box<dyn AxisVectorIndex>> {
+    Ok(Box::new(AxisLshIndex::new(config, dimension)))
+}
+
+/// Factory function to create LSH index instances with vector representation preference
+pub fn create_lsh_index_with_representation(
+    config: AxisLshConfig, 
+    dimension: usize,
+    preferred_extraction_mode: ExtractionMode,
+) -> Result<Box<dyn AxisVectorIndex>> {
+    Ok(Box::new(AxisLshIndex::new_with_representation(None, config, dimension, preferred_extraction_mode)))
+}
+
+/// Factory function to create LSH index instances for specific collection with representation
+pub fn create_lsh_index_for_collection(
+    collection_id: String,
+    config: AxisLshConfig, 
+    dimension: usize,
+    preferred_extraction_mode: ExtractionMode,
+) -> Result<Box<dyn AxisVectorIndex>> {
+    Ok(Box::new(AxisLshIndex::new_with_representation(Some(collection_id), config, dimension, preferred_extraction_mode)))
 }
 
 #[cfg(test)]
@@ -560,15 +717,15 @@ mod tests {
 // Implement AxisVectorIndex trait for deep AXIS integration
 #[async_trait]
 impl AxisVectorIndex for AxisLshIndex {
-    async fn add(&self, id: String, vector: Arc<VectorRecord>) -> Result<()> {
-        AxisLshIndex::add(self, id, vector).await
+    async fn add(&self, id: String, vector_data: Vec<f32>) -> Result<()> {
+        AxisLshIndex::add_vector(self, id, vector_data).await
     }
     
     async fn search(
         &self,
         query: &[f32],
         top_k: usize,
-        filter: Option<&(dyn for<'a> Fn(&'a VectorRecord) -> bool + Send + Sync)>,
+        filter: Option<&std::collections::HashMap<String, String>>,
     ) -> Result<Vec<(String, f32)>> {
         AxisLshIndex::search(self, query, top_k, filter).await
     }

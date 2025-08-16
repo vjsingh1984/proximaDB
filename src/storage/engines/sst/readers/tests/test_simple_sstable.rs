@@ -51,7 +51,7 @@ async fn test_simple_sstable_write_read() {
     // Write records using streaming approach for production consistency
     let record_count = records.len();
     let sorted_records_iter = records.into_iter(); // BTreeMap already sorted by key
-    writer.write_sorted_records(sorted_records_iter, record_count).await.unwrap();
+    writer.write_sorted_vector_records(sorted_records_iter, record_count).await.unwrap();
     debug!("✓ SSTable written successfully");
     
     // Read the file directly

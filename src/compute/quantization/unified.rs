@@ -19,85 +19,15 @@ use tracing::debug;
 use crate::compute::distance_computation::core::DistanceMetric;
 use crate::compute::distance_computation::engine::{UnifiedDistanceCompute, SimilarityResult, MetricProperties};
 
-// Use proto types as the single source of truth
-pub use crate::proto::proximadb::{
-    QuantizationLevel as UnifiedQuantizationLevel,
-    quantization_level::LevelType as QuantizationLevelType,
+// Use internal types (Release 1 - no legacy proto compatibility)
+pub use super::types::{
+    UnifiedQuantizationLevel,
+    QuantizationLevelType,
     NoQuantization, UniformQuantization, ProductQuantization, 
     ScalarQuantization, BinaryQuantization, CustomQuantization
 };
 
-impl UnifiedQuantizationLevel {
-    /// Create a PQ8 configuration (common case)
-    pub fn pq8(num_subvectors: u8) -> Self {
-        Self {
-            level_type: Some(QuantizationLevelType::Pq(ProductQuantization {
-                bits_per_code: 8,
-                num_subvectors: num_subvectors as i32,
-                codebook_id: None,
-                adaptive_subvectors: false,
-            })),
-        }
-    }
-    
-    /// Create a PQ4 configuration (higher compression)
-    pub fn pq4(num_subvectors: u8) -> Self {
-        Self {
-            level_type: Some(QuantizationLevelType::Pq(ProductQuantization {
-                bits_per_code: 4,
-                num_subvectors: num_subvectors as i32,
-                codebook_id: None,
-                adaptive_subvectors: false,
-            })),
-        }
-    }
-    
-    /// Create INT8 scalar quantization
-    pub fn int8() -> Self {
-        Self {
-            level_type: Some(QuantizationLevelType::Scalar(ScalarQuantization {
-                bits: 8,
-                scale: 1.0,
-                offset: 0.0,
-                clamp_values: true,
-            })),
-        }
-    }
-    
-    /// Get the number of bytes required per vector
-    pub fn bytes_per_vector(&self, dimension: usize) -> usize {
-        match &self.level_type {
-            None | Some(QuantizationLevelType::None(_)) => dimension * 4, // FP32
-            
-            Some(QuantizationLevelType::Uniform(u)) => {
-                (dimension * (u.bits as usize) + 7) / 8
-            }
-            
-            Some(QuantizationLevelType::Pq(pq)) => {
-                (pq.num_subvectors as usize) * ((pq.bits_per_code as usize + 7) / 8)
-            }
-            
-            Some(QuantizationLevelType::Scalar(s)) => {
-                dimension * ((s.bits as usize) / 8)
-            }
-            
-            Some(QuantizationLevelType::Binary(_)) => {
-                (dimension + 7) / 8
-            }
-            
-            Some(QuantizationLevelType::Custom(c)) => {
-                (dimension * (c.bits_per_element as usize) + 7) / 8
-            }
-        }
-    }
-    
-    /// Calculate compression ratio compared to FP32
-    pub fn compression_ratio(&self, dimension: usize) -> f32 {
-        let fp32_bytes = dimension * 4;
-        let compressed_bytes = self.bytes_per_vector(dimension);
-        fp32_bytes as f32 / compressed_bytes.max(1) as f32
-    }
-}
+// Implementation is in types.rs to maintain single source of truth
 
 /// Unified quantization engine that works across storage engines
 pub struct UnifiedQuantizationEngine {
@@ -904,18 +834,18 @@ impl UnifiedQuantizationEngine {
         
         // Check if both have the same variant
         let same_type = match (query_type, data_type) {
-            (Some(crate::proto::proximadb::quantization_level::LevelType::None(_)), 
-             Some(crate::proto::proximadb::quantization_level::LevelType::None(_))) => true,
-            (Some(crate::proto::proximadb::quantization_level::LevelType::Uniform(_)), 
-             Some(crate::proto::proximadb::quantization_level::LevelType::Uniform(_))) => true,
-            (Some(crate::proto::proximadb::quantization_level::LevelType::Pq(_)), 
-             Some(crate::proto::proximadb::quantization_level::LevelType::Pq(_))) => true,
-            (Some(crate::proto::proximadb::quantization_level::LevelType::Scalar(_)), 
-             Some(crate::proto::proximadb::quantization_level::LevelType::Scalar(_))) => true,
-            (Some(crate::proto::proximadb::quantization_level::LevelType::Binary(_)), 
-             Some(crate::proto::proximadb::quantization_level::LevelType::Binary(_))) => true,
-            (Some(crate::proto::proximadb::quantization_level::LevelType::Custom(_)), 
-             Some(crate::proto::proximadb::quantization_level::LevelType::Custom(_))) => true,
+            (Some(QuantizationLevelType::None(_)), 
+             Some(QuantizationLevelType::None(_))) => true,
+            (Some(QuantizationLevelType::Uniform(_)), 
+             Some(QuantizationLevelType::Uniform(_))) => true,
+            (Some(QuantizationLevelType::Pq(_)), 
+             Some(QuantizationLevelType::Pq(_))) => true,
+            (Some(QuantizationLevelType::Scalar(_)), 
+             Some(QuantizationLevelType::Scalar(_))) => true,
+            (Some(QuantizationLevelType::Binary(_)), 
+             Some(QuantizationLevelType::Binary(_))) => true,
+            (Some(QuantizationLevelType::Custom(_)), 
+             Some(QuantizationLevelType::Custom(_))) => true,
             _ => false,
         };
         

@@ -16,6 +16,7 @@ use tracing::info;
 use proximadb::core::VectorRecord;
 use proximadb::storage::traits::{FlushParameters, UnifiedStorageEngine};
 use proximadb::proto::proximadb::CompressionAlgorithm as ProtoCompressionAlgorithm;
+use proximadb::StorageEngine;
 use std::time::Instant;
 use std::collections::HashMap;
 
@@ -71,17 +72,28 @@ async fn benchmark_configuration(
 ) -> Result<BenchmarkResult> {
     let env = UnifiedTestEnvironment::new().await?;
     
+    // Get dimension from vectors
+    let dimension = if !vectors.is_empty() { vectors[0].vector.len() } else { 128 };
+    
     // Track uncompressed size first
     let uncompressed_size = {
         let env_uncompressed = UnifiedTestEnvironment::new().await?;
+        
         match engine_type {
             "SST" => {
                 let engine = env_uncompressed.create_sst_engine().await?;
-                let flush_params = common::unified_test_utils::operations::build_sst_flush_params_with_compression(
+                
+                // Create collection config once with no compression (block_size_kb defaults to 2MB)
+                let collection_uncompressed = env_uncompressed.create_test_collection_with_settings(
+                    StorageEngine::Sst,
+                    dimension as i32,
+                    None, // No compression, uses default 2MB blocks
+                );
+                
+                let flush_params = common::unified_test_utils::operations::build_sst_flush_params_with_collection(
                     &env_uncompressed,
                     vectors.clone(),
-                    "none",
-                    0,
+                    collection_uncompressed,
                 ).await?;
                 
                 // Simulate inserting vectors - do single flush with all vectors
@@ -129,18 +141,23 @@ async fn benchmark_configuration(
                 _ => ProtoCompressionAlgorithm::CompressionNone,
             } as i32;
             
-            let algorithm_str = match algorithm {
-                "zstd" => "zstd",
-                "lz4" => "lz4",
-                "snappy" => "snappy",
-                _ => "none",
+            // Create collection config once with compression
+            let compression_config = proximadb::proto::proximadb::CompressionConfig {
+                algorithm: algorithm_enum,
+                level: Some(level),
+                block_size_kb: Some(2048), // 2MB blocks for SST
+                ..Default::default()
             };
+            let collection_compressed = env.create_test_collection_with_settings(
+                StorageEngine::Sst,
+                dimension as i32,
+                Some(compression_config),
+            );
             
-            let flush_params = common::unified_test_utils::operations::build_sst_flush_params_with_compression(
+            let flush_params = common::unified_test_utils::operations::build_sst_flush_params_with_collection(
                 &env,
                 vectors.clone(),
-                algorithm_str,
-                level,
+                collection_compressed,
             ).await?;
             
             // Insert and flush - do single flush with all vectors

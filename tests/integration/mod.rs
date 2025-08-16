@@ -94,4 +94,10 @@ pub mod comprehensive_engine_benchmark_report;
 // Early termination optimization tests
 pub mod early_termination_test;
 
+// Quantization statistics tests
+pub mod quantization_stats_test;
+
+// Quantization with block sizes test
+pub mod sst_quantization_blocks_test;
+
 // Middleware integration tests are at this level since they cross-cut concerns

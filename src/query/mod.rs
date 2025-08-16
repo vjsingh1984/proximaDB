@@ -1,7 +1,75 @@
 pub mod sql_engine;
 pub mod vector_search;
-pub mod compression_aware_planner;
-pub mod unified_query_planner;
+pub mod unified_query_optimizer; // Consolidated optimizer (merged metadata filtering + search optimization)
+
+// Stub module for compatibility with legacy code
+pub mod unified_search_optimizer {
+    use serde::{Deserialize, Serialize};
+    
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    pub enum OptimizationGoal {
+        Speed,
+        Memory,
+        Recall,
+        Latency,
+        Balanced,
+    }
+    
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    pub struct SearchHints {
+        /// Primary optimization goal
+        pub goal: OptimizationGoal,
+        
+        /// Minimum acceptable recall (0.0-1.0)
+        pub recall_threshold: Option<f32>,
+        
+        /// Maximum memory budget in MB
+        pub memory_budget_mb: Option<usize>,
+        
+        /// Maximum latency budget in milliseconds
+        pub latency_budget_ms: Option<u64>,
+    }
+    
+    impl Default for SearchHints {
+        fn default() -> Self {
+            Self {
+                goal: OptimizationGoal::Balanced,
+                recall_threshold: Some(0.9),
+                memory_budget_mb: None,
+                latency_budget_ms: None,
+            }
+        }
+    }
+}
+
+// Stub module for consolidated query optimizer
+pub mod unified_query_optimizer_consolidated {
+    use serde::{Deserialize, Serialize};
+    
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    pub struct QueryOptimizerConfig {
+        pub enable_optimization: bool,
+        pub cache_size: usize,
+    }
+    
+    impl Default for QueryOptimizerConfig {
+        fn default() -> Self {
+            Self {
+                enable_optimization: true,
+                cache_size: 1000,
+            }
+        }
+    }
+    
+    #[derive(Debug, Clone)]
+    pub struct ConsolidatedOptimizer;
+    
+    impl ConsolidatedOptimizer {
+        pub fn new() -> Self {
+            Self
+        }
+    }
+}
 
 use crate::storage::StorageEngine;
 use crate::services::VectorOperationsService;

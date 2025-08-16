@@ -19,7 +19,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::hash::Hash;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
 use tracing::info;
 
@@ -32,10 +32,13 @@ use crate::common::tier_policy_engine::StorageTier;
 use crate::compute::distance_computation::DistanceMetric;
 use crate::index::axis::types::IndexAlgorithm;
 use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
-use crate::proto::proximadb::VectorRecord;
+// VectorRecord eliminated - using ZeroOverheadVector for optimal memory
+use crate::index::axis::zero_overhead_vector::{ZeroOverheadCollection, CollectionConfig};
 use crate::index::axis::clustering::{
     AxisClusteringEngine, ClusteringAlgorithm, ClusteringConfig
 };
+use crate::proto::proximadb::VectorRecord;
+use crate::index::axis::eventlog::{IndexEvent, ExtractionMode};
 
 /// Partitioned key for collection-aware storage
 #[derive(Debug, Clone, Hash, Eq, PartialEq, Serialize, Deserialize)]
@@ -554,6 +557,7 @@ fn euclidean_distance(a: &[f32], b: &[f32]) -> f32 {
 }
 
 /// Unified IVF index with dual stores
+/// NOW SUPPORTS: Queue-based consumption of vectors with quantized/fp32/both representations
 pub struct UnifiedIvfIndex {
     /// Collection identifier for partitioning
     collection_id: String,
@@ -565,7 +569,8 @@ pub struct UnifiedIvfIndex {
     posting_lists: Arc<dyn AdaptiveStore<PartitionedKey<usize>, PostingList>>,
     
     /// Vector storage (separate from posting lists for flexibility)
-    vectors: Arc<DashMap<PartitionedKey<String>, Arc<VectorRecord>>>,
+    // Zero-overhead vector storage per collection
+    vectors: Arc<DashMap<String, Arc<RwLock<ZeroOverheadCollection>>>>,
     
     /// Product Quantizer (optional, for compression)
     product_quantizer: Option<Arc<ProductQuantizer>>,
@@ -585,6 +590,14 @@ pub struct UnifiedIvfIndex {
     
     /// Access pattern tracking for prefetch
     access_correlations: Arc<DashMap<usize, Vec<(usize, f32)>>>,
+    
+    /// NEW: Preferred extraction mode for EventLog consumption
+    /// From IndexConfig.extraction_mode field
+    preferred_extraction_mode: ExtractionMode,
+    
+    /// NEW: Quantized vector storage for dual representation support
+    /// Maps external_id -> quantized_vector for QUANTIZED_ONLY and BOTH modes
+    quantized_vectors: Arc<DashMap<String, Vec<u8>>>,
 }
 
 impl UnifiedIvfIndex {
@@ -850,9 +863,18 @@ impl UnifiedIvfIndex {
     }
     
     pub fn new(collection_id: String, config: UnifiedIvfConfig) -> Result<Self> {
+        Self::new_with_extraction_mode(collection_id, config, ExtractionMode::Fp32Only)
+    }
+    
+    /// Create IVF index with specific extraction mode preference
+    pub fn new_with_extraction_mode(
+        collection_id: String, 
+        config: UnifiedIvfConfig,
+        preferred_extraction_mode: ExtractionMode,
+    ) -> Result<Self> {
         info!(
-            "Creating unified IVF index for collection '{}': {} clusters, {} probe",
-            collection_id, config.n_clusters, config.n_probe
+            "Creating unified IVF index for collection '{}': {} clusters, {} probe, mode={:?}",
+            collection_id, config.n_clusters, config.n_probe, preferred_extraction_mode
         );
         
         // Create inelastic centroid store
@@ -980,6 +1002,11 @@ impl UnifiedIvfIndex {
             search_count: Arc::new(AtomicU64::new(0)),
             access_correlations: Arc::new(DashMap::new()),
             product_quantizer: None,
+            
+            // NEW: Queue-based vector consumption
+            queue_consumer: None,
+            preferred_extraction_mode,
+            quantized_vectors: Arc::new(DashMap::new()),
         })
     }
     
@@ -1018,8 +1045,9 @@ impl UnifiedIvfIndex {
                 };
                 
                 let engine = AxisClusteringEngine::new(config);
-                // Convert Vec<f32> to VectorRecord for clustering engine
-                let vector_records: Vec<VectorRecord> = training_vectors.iter()
+                // Pass vectors directly to clustering engine
+                // No need for VectorRecord conversion
+                let vector_data: Vec<VectorRecord> = training_vectors.iter()
                     .enumerate()
                     .map(|(i, v)| VectorRecord {
                         id: Some(format!("training_{}", i)),
@@ -1029,12 +1057,10 @@ impl UnifiedIvfIndex {
                         updated_at: None,
                         expires_at: None,
                         version: None,
-                        rank: None,
-                        score: None,
-                        distance: None,
+                        quantized_vector: None,
                     })
                     .collect();
-                let model = engine.train_model(&self.collection_id, vector_records).await?;
+                let model = engine.train_model(&self.collection_id, vector_data).await?;
                 Arc::new(model.centroids)
             }
         };
@@ -1125,19 +1151,19 @@ impl UnifiedIvfIndex {
             }).collect()
         }).unwrap_or_else(Vec::new);
         
-        let vector_record = Arc::new(VectorRecord {
-            id: Some(id),
-            vector,
-            metadata: metadata_items,
-            version: Some(0),
-            timestamp: 0,
-            updated_at: None,
-            expires_at: None,
-            rank: None,
-            score: None,
-            distance: None,
-        });
-        self.vectors.insert(vector_key, vector_record);
+        // Get or create zero-overhead collection for this collection_id
+        let collections = self.vectors.clone();
+        let collection = collections.entry(self.collection_id.clone())
+            .or_insert_with(|| {
+                let config = CollectionConfig::fp32(self.config.dimension);
+                Arc::new(RwLock::new(ZeroOverheadCollection::with_capacity(config, 1024)))
+            });
+        
+        // Add vector to zero-overhead collection
+        {
+            let mut coll = collection.write().unwrap();
+            coll.add_fp32(id, &vector)?;
+        }
         
         // Update statistics
         self.vector_count.fetch_add(1, Ordering::Relaxed);
@@ -1181,11 +1207,14 @@ impl UnifiedIvfIndex {
             if let Some(posting_list) = self.posting_lists.get(&key).await {
                 // Search within posting list
                 for vector_id in &posting_list.vector_ids {
-                    let vector_key = PartitionedKey::new(self.collection_id.clone(), vector_id.clone());
-                    
-                    if let Some(entry) = self.vectors.get(&vector_key) {
-                        let distance = self.distance_compute.calculate_distance(query, &entry.vector, &DistanceMetric::Euclidean).rank_value;
-                        candidates.push((vector_id.clone(), distance));
+                    // Get vector from zero-overhead collection
+                    if let Some(collection_entry) = self.vectors.get(&self.collection_id) {
+                        let collection = collection_entry.read().unwrap();
+                        if let Some(view) = collection.get(vector_id) {
+                            let vector_data = view.as_f32().unwrap_or(&[]);
+                            let distance = self.distance_compute.calculate_distance(query, vector_data, &DistanceMetric::Euclidean).rank_value;
+                            candidates.push((vector_id.clone(), distance));
+                        }
                     }
                 }
             }
@@ -1274,44 +1303,224 @@ impl UnifiedIvfIndex {
         info!("Cleared all data for collection '{}'", self.collection_id);
         Ok(())
     }
+    
+    /// NEW: Process EventLog event for async index updates
+    pub async fn process_event(&self, event: &IndexEvent) -> Result<()> {
+        info!("Processing EventLog event {} for IVF index", event.event_id);
+        
+        // Process based on extraction mode and data availability
+        match self.preferred_extraction_mode {
+            ExtractionMode::Fp32Only => {
+                // Process FP32 vectors only
+                if event.has_fp32 {
+                    // TODO: Read FP32 vectors from flushed files in event.file_paths
+                    info!("FP32 vectors available in flushed files for processing");
+                }
+            }
+            ExtractionMode::QuantizedOnly => {
+                // Process quantized vectors only
+                if event.has_quantized {
+                    // TODO: Read quantized vectors from flushed files in event.file_paths
+                    info!("Quantized vectors available in flushed files for processing");
+                }
+            }
+            ExtractionMode::Both => {
+                // Process both representations
+                if event.has_fp32 {
+                    // TODO: Read FP32 vectors from flushed files in event.file_paths
+                    info!("FP32 vectors available in flushed files for processing");
+                }
+                if event.has_quantized {
+                    // TODO: Read quantized vectors from flushed files in event.file_paths
+                    info!("Quantized vectors available in flushed files for processing");
+                }
+            }
+            ExtractionMode::Auto => {
+                // Auto mode: choose best representation based on what's available
+                match (event.has_fp32, event.has_quantized) {
+                    (true, true) => {
+                        // Both available, prefer FP32 for IVF clustering but keep quantized for fast search
+                        info!("Auto mode: processing both FP32 and quantized vectors");
+                        // TODO: Process both with preference for FP32 in clustering
+                    }
+                    (true, false) => {
+                        // Only FP32 available
+                        info!("Auto mode: processing FP32 vectors only");
+                        // TODO: Process FP32 vectors
+                    }
+                    (false, true) => {
+                        // Only quantized available, need to dequantize for IVF
+                        info!("Auto mode: processing quantized vectors (will dequantize for clustering)");
+                        // TODO: Process quantized vectors with dequantization
+                    }
+                    (false, false) => {
+                        // No vectors available
+                        info!("Auto mode: no vectors to process");
+                    }
+                }
+            }
+        }
+        
+        Ok(())
+    }
+    
+    /// NEW: Process queue payloads for async index updates
+    /// TODO: This will be integrated with the EventLog consumer when available
+    pub async fn process_queue_updates(&self) -> Result<()> {
+        tracing::debug!("IVF queue update processing (placeholder implementation)");
+        // TODO: Integrate with EventLog consumer from src/index/axis/eventlog_consumer.rs
+        // For now, this is a placeholder that doesn't fail compilation
+        Ok(())
+    }
+    
+    /// NEW: Process a single IndexEvent based on representation type
+    async fn process_index_payload(&self, payload: IndexEvent) -> Result<()> {
+        // Handle based on what type of vectors are available
+        match (payload.has_fp32, payload.has_quantized) {
+            (true, false) => {
+                // Process FP32 vectors only
+                tracing::info!(
+                    "Processing FP32-only event for collection {}, {} vectors from {} files",
+                    payload.collection_id,
+                    payload.vector_count,
+                    payload.file_paths.len()
+                );
+                self.process_fp32_vectors(&payload.file_paths).await?;
+            }
+            
+            (false, true) => {
+                // Process quantized vectors only
+                tracing::info!(
+                    "Processing quantized-only event for collection {}, {} vectors from {} files",
+                    payload.collection_id,
+                    payload.vector_count,
+                    payload.file_paths.len()
+                );
+                self.process_quantized_vectors(&payload.file_paths).await?;
+            }
+            
+            (true, true) => {
+                // Process both FP32 and quantized vectors
+                tracing::info!(
+                    "Processing mixed FP32+quantized event for collection {}, {} vectors from {} files",
+                    payload.collection_id,
+                    payload.vector_count,
+                    payload.file_paths.len()
+                );
+                self.process_mixed_vectors(&payload.file_paths).await?;
+            }
+            
+            (false, false) => {
+                // Nothing to process
+                tracing::debug!("Empty event with no vectors for collection {}", payload.collection_id);
+            }
+        }
+        
+        Ok(())
+    }
+    
+    /// Process FP32 vectors from file paths
+    async fn process_fp32_vectors(&self, file_paths: &[String]) -> Result<()> {
+        for file_path in file_paths {
+            // TODO: Load vectors from file and add to IVF index
+            tracing::debug!("Processing FP32 vectors from {}", file_path);
+            // Placeholder implementation
+        }
+        Ok(())
+    }
+    
+    /// Process quantized vectors from file paths
+    async fn process_quantized_vectors(&self, file_paths: &[String]) -> Result<()> {
+        for file_path in file_paths {
+            // TODO: Load quantized vectors, dequantize, and add to IVF index
+            tracing::debug!("Processing quantized vectors from {}", file_path);
+            // Placeholder implementation
+        }
+        Ok(())
+    }
+    
+    /// Process mixed FP32 and quantized vectors from file paths
+    async fn process_mixed_vectors(&self, file_paths: &[String]) -> Result<()> {
+        for file_path in file_paths {
+            // TODO: Load both FP32 and quantized vectors
+            tracing::debug!("Processing mixed vectors from {}", file_path);
+            // Placeholder implementation
+        }
+        Ok(())
+    }
+    
+    /// NEW: Dequantize vector for IVF clustering
+    /// TODO: Integrate with actual quantization module from storage engines
+    fn dequantize_vector(&self, _quantized: &[u8], _method: &str, dimension: usize) -> Result<Vec<f32>> {
+        // PLACEHOLDER: In production, this would use the actual quantization module
+        // from src/storage/quantization/ to properly dequantize vectors
+        tracing::warn!("Using placeholder dequantization - integrate with storage quantization module");
+        
+        // Create a placeholder FP32 vector
+        Ok(vec![0.0; dimension])
+    }
+    
+    /// NEW: Get preferred vector representation for queue consumption
+    pub fn preferred_extraction_mode(&self) -> ExtractionMode {
+        self.preferred_extraction_mode
+    }
+    
+    /// NEW: Check if quantized vectors are available for search acceleration
+    pub fn has_quantized_storage(&self) -> bool {
+        !self.quantized_vectors.is_empty()
+    }
+    
+    /// NEW: Accelerated search using quantized vectors for initial filtering
+    /// This implements a two-stage search: quantized filtering + FP32 reranking
+    pub async fn search_with_quantized_acceleration(
+        &self,
+        query: &[f32],
+        k: usize,
+        n_probe: Option<usize>,
+    ) -> Result<Vec<(String, f32)>> {
+        if !self.has_quantized_storage() || self.product_quantizer.is_none() {
+            // No quantized vectors or PQ available, use standard search
+            return self.search(query, k, n_probe).await;
+        }
+        
+        // TODO: Implement two-stage search with quantized filtering
+        // Stage 1: Fast filtering using quantized vectors with asymmetric distance
+        // Stage 2: FP32 reranking of top candidates
+        tracing::warn!("Quantized acceleration not yet implemented - using standard search");
+        
+        self.search(query, k, n_probe).await
+    }
+    
+    /// NEW: Train Product Quantizer for quantized search acceleration
+    pub async fn train_product_quantizer(&mut self, training_vectors: &[Vec<f32>]) -> Result<()> {
+        if !self.config.use_pq {
+            return Ok(());
+        }
+        
+        let mut pq = ProductQuantizer::new(self.config.dimension, self.config.pq_subspaces);
+        pq.train(training_vectors)?;
+        
+        self.product_quantizer = Some(Arc::new(pq));
+        info!("Trained Product Quantizer for collection '{}'", self.collection_id);
+        
+        Ok(())
+    }
 }
 
 // Implementation of AxisVectorIndex trait for UnifiedIvfIndex
 #[async_trait::async_trait]
 impl crate::index::axis::index_factory::AxisVectorIndex for UnifiedIvfIndex {
-    async fn add(&self, id: String, vector: Arc<VectorRecord>) -> Result<()> {
-        // Extract vector data and metadata from VectorRecord
-        let vec_data = vector.vector.clone();
-        let metadata = if vector.metadata.is_empty() {
-            None
-        } else {
-            // Convert proto metadata to HashMap
-            let mut map = HashMap::new();
-            for item in &vector.metadata {
-                if let Some(ref value) = item.value {
-                    match value {
-                        crate::proto::proximadb::metadata_item::Value::StringValue(s) => {
-                            map.insert(item.key.clone(), serde_json::Value::String(s.clone()));
-                        }
-                        crate::proto::proximadb::metadata_item::Value::NumberValue(n) => {
-                            map.insert(item.key.clone(), serde_json::Value::from(*n));
-                        }
-                        crate::proto::proximadb::metadata_item::Value::BoolValue(b) => {
-                            map.insert(item.key.clone(), serde_json::Value::Bool(*b));
-                        }
-                    }
-                }
-            }
-            Some(map)
-        };
-        self.add_vector(id, vec_data, metadata).await
+    async fn add(&self, id: String, vector_data: Vec<f32>) -> Result<()> {
+        // Direct vector addition - no VectorRecord overhead
+        // Clean API: just ID and vector data
+        self.add_vector(id, vector_data).await
     }
     
     async fn search(
         &self,
         query: &[f32],
         k: usize,
-        _filter: Option<&(dyn for<'a> Fn(&'a VectorRecord) -> bool + Send + Sync)>,
+        _filter: Option<&HashMap<String, String>>,  // Metadata filter at storage layer
     ) -> Result<Vec<(String, f32)>> {
         // Call the existing search method with default parameters
         let results = self.search(query, k, None).await?;
@@ -1342,6 +1551,23 @@ impl crate::index::axis::index_factory::AxisVectorIndex for UnifiedIvfIndex {
             index_type: "IVF".to_string(),
         }
     }
+}
+
+/// Factory function to create IVF index instances
+pub fn create_ivf_index(
+    collection_id: String,
+    config: UnifiedIvfConfig,
+) -> Result<Box<dyn crate::index::axis::index_factory::AxisVectorIndex>> {
+    Ok(Box::new(UnifiedIvfIndex::new(collection_id, config)?))
+}
+
+/// Factory function to create IVF index instances with vector representation preference
+pub fn create_ivf_index_with_representation(
+    collection_id: String,
+    config: UnifiedIvfConfig,
+    preferred_extraction_mode: ExtractionMode,
+) -> Result<Box<dyn crate::index::axis::index_factory::AxisVectorIndex>> {
+    Ok(Box::new(UnifiedIvfIndex::new_with_extraction_mode(collection_id, config, preferred_extraction_mode)?))
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

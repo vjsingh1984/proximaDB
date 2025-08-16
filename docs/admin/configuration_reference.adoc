@@ -196,6 +196,47 @@ storage_class = "STANDARD_IA"
 | row_group_size | 100000 | Parquet row group size
 |===
 
+=== [compaction] - Compaction Configuration
+
+[cols="1,1,3", options="header"]
+|===
+| Parameter | Default | Description
+
+| l0_file_threshold | 5 | Files in L0 before compaction
+| l0_size_threshold_mb | 256 | MB in L0 before compaction
+| level_multiplier | 2.0 | Threshold multiplier per level
+| max_levels | 7 | Maximum compaction levels
+| strategy | "hybrid" | Compaction strategy (count, size, hybrid)
+| target_file_size_mb | 128 | Target output file size in MB
+|===
+
+**Compaction Strategy Details:**
+
+* **count**: Triggers when file count exceeds threshold
+* **size**: Triggers when total size exceeds threshold
+* **hybrid**: Triggers when either count OR size exceeds threshold (recommended)
+
+**Example Compaction Configuration:**
+[source,toml]
+----
+[storage.compaction_config]
+l0_file_threshold = 5          # Compact when 5+ files in L0
+l0_size_threshold_mb = 256     # Or when L0 exceeds 256MB
+level_multiplier = 2.0          # L1: 10 files/512MB, L2: 20 files/1GB
+max_levels = 7                  # Support up to 7 levels
+strategy = "hybrid"             # Use both count and size thresholds
+target_file_size_mb = 128       # Create 128MB output files
+
+# Engine-specific overrides (optional)
+[storage.sst_config.compaction_config]
+l0_file_threshold = 10          # SST can handle more small files
+target_file_size_mb = 64        # Smaller files for faster reads
+
+[storage.viper_config.compaction_config]
+l0_size_threshold_mb = 512     # VIPER prefers batching more data
+target_file_size_mb = 256       # Larger files for analytics
+|===
+
 == Advanced Configuration
 
 === [tiering] - AXIS Tiering

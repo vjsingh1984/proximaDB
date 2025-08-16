@@ -107,11 +107,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let file_appender = RollingFileAppender::new(Rotation::DAILY, "./log", "proximadb.log");
     let (non_blocking, _guard) = tracing_appender::non_blocking(file_appender);
 
-    // Create console appender for stdout
+    // Create console appender for stdout - production friendly format
     let console_layer = tracing_subscriber::fmt::layer()
-        .with_target(true)
-        .with_line_number(true)
-        .with_file(true)
+        .with_target(false)  // Cleaner output without module paths
+        .with_line_number(false)  // No line numbers in production
+        .with_file(false)  // No file names in production
+        .with_thread_ids(false)  // No thread IDs for cleaner output
+        .with_thread_names(false)  // No thread names
+        .compact()  // Use compact format for better readability
         .with_writer(std::io::stdout);
 
     // Create file appender layer
@@ -130,17 +133,33 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
     // Initialize subscriber with both console and file output - fully configurable
     // Priority: Environment variable > CLI args > TOML config > Default (INFO)
+    // Default to info level - only show info, warn, error (no debug/trace)
     let log_level = std::env::var("RUST_LOG")
         .or_else(|_| args.log_level.clone().ok_or(()))
-        .unwrap_or_else(|_| config.monitoring.log_level.clone());
+        .unwrap_or_else(|_| {
+            // If config has a log level, use it, otherwise default to info
+            if config.monitoring.log_level.is_empty() || config.monitoring.log_level == "debug" || config.monitoring.log_level == "trace" {
+                // Override debug/trace with info for production
+                "info".to_string()
+            } else {
+                config.monitoring.log_level.clone()
+            }
+        });
+    
+    // Create environment filter with ProximaDB-specific defaults
+    // This ensures we only see info and above for proximadb modules
+    let env_filter = EnvFilter::try_new(&log_level)
+        .or_else(|_| EnvFilter::try_new("proximadb=info"))
+        .unwrap_or_else(|_| EnvFilter::new("info"));
     
     tracing_subscriber::registry()
-        .with(EnvFilter::try_new(&log_level).unwrap_or_else(|_| EnvFilter::new("info")))
+        .with(env_filter)
         .with(console_layer)
         .with(file_layer)
         .init();
         
-    info!("🔧 ProximaDB starting with log level: {}", log_level);
+    info!("🚀 ProximaDB Server v{} starting", env!("CARGO_PKG_VERSION"));
+    info!("📊 Log level: {} (use RUST_LOG env or --log-level to change)", log_level);
 
     // Override with CLI arguments
     if let Some(data_dir) = args.data_dir {

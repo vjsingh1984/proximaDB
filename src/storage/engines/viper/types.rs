@@ -10,6 +10,13 @@
 use std::collections::HashMap;
 use std::time::SystemTime;
 
+// Import columnar common types to avoid duplication
+use crate::storage::engines::columnar::{
+    ColumnarFileMetadata as CollectionMetadata,
+    FilterCondition,
+    ColumnStatistics,
+};
+
 
 
 /// Filterable column configuration for server-side metadata filtering
@@ -83,15 +90,9 @@ pub enum ParquetFieldType {
     Timestamp,
 }
 
-/// Parquet compression options
-#[derive(Debug, Clone)]
-pub enum ParquetCompression {
-    None,
-    Snappy,
-    Gzip,
-    Lz4,
-    Zstd,
-}
+// CLEANUP: ParquetCompression removed - duplicate of CompressionAlgorithm
+// Use crate::core::compression::CompressionAlgorithm instead
+pub type ParquetCompression = crate::core::compression::CompressionAlgorithm;
 
 /// Processed vector record with separated filterable and extra metadata
 #[derive(Debug, Clone)]
@@ -137,25 +138,9 @@ pub struct ViperEngineConfig {
     pub search_performance_stats: SearchPerformanceStats,
 }
 
-/// Collection metadata in VIPER with quantization and clustering support
-#[derive(Debug, Clone)]
-pub struct CollectionMetadata {
-    pub collection_id: String,
-    pub vector_dimensions: usize,
-    pub distance_metric: String,
-    pub created_at: SystemTime,
-    pub updated_at: SystemTime,
-    pub total_vectors: usize,
-    pub total_size_bytes: usize,
-    pub active_clusters: Vec<ClusterId>,
-    pub quantization_enabled: bool,
-    pub quantization_config: Option<QuantizationConfig>,
-    pub partition_strategy: PartitionStrategy,
-    pub compression_stats: CompressionStats,
-    pub filterable_columns: Vec<FilterableColumn>,
-    pub schema_version: u32,
-    pub flush_size_bytes: Option<usize>,
-}
+// CLEANUP: CollectionMetadata is now imported from columnar module as type alias
+// The columnar ColumnarFileMetadata provides all necessary fields
+// Additional VIPER-specific fields can be added via composition if needed
 
 /// Compression statistics for optimization
 #[derive(Debug, Clone, Default)]
@@ -166,24 +151,9 @@ pub struct CompressionStats {
     pub compression_time_ms: u64,
 }
 
-/// Compression configuration
-#[derive(Debug, Clone)]
-pub struct CompressionConfig {
-    pub algorithm: CompressionAlgorithm,
-    pub level: u8,
-    pub dictionary_size: usize,
-    pub parallel_compression: bool,
-}
-
-/// Compression algorithms
-#[derive(Debug, Clone)]
-pub enum CompressionAlgorithm {
-    None,
-    Snappy,
-    Gzip,
-    Zstd,
-    Lz4,
-}
+// CLEANUP: CompressionConfig and CompressionAlgorithm removed
+// Use crate::core::compression::CompressionAlgorithm from unified compression module
+// Use crate::storage::engines::common::UniversalCompressionConfig for configuration
 
 /// Schema configuration
 #[derive(Debug, Clone)]

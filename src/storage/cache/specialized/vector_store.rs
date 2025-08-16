@@ -300,9 +300,7 @@ impl VectorStore {
             timestamp: chrono::Utc::now().timestamp() as u32,
             updated_at: None,
             expires_at: None,
-            rank: None,
-            score: None,
-            distance: None,
+            quantized_vector: None,
         };
         
         self.put(cache_key, block_record).await;

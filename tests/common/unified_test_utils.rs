@@ -173,6 +173,18 @@ impl UnifiedTestEnvironment {
     /// Storage engines expect: {base_location}/{collection_id}/data/
     /// So if base_location = /tmp/test, files go to /tmp/test/collection_123/data/
     pub fn create_test_collection_for_engine(&self, engine: StorageEngine) -> Collection {
+        self.create_test_collection_with_settings(engine, 3, None)
+    }
+    
+    /// Create test collection with all settings - this is the MAIN method
+    /// that should be used when you need specific compression settings
+    /// For SST: block_size_kb is part of CompressionConfig (not separate SstConfig)
+    pub fn create_test_collection_with_settings(
+        &self, 
+        engine: StorageEngine,
+        dimension: i32,
+        compression: Option<proximadb::proto::proximadb::CompressionConfig>,
+    ) -> Collection {
         // CRITICAL: base_location must point to parent directory since engines append collection_id
         let base_path = self.persistent_dir.parent().unwrap().to_str().unwrap();
         let storage_assignment = StorageAssignment {
@@ -182,9 +194,10 @@ impl UnifiedTestEnvironment {
         
         let config = CollectionConfig {
             name: self.collection_id.clone(),
-            dimension: 3,
+            dimension,
             distance_metric: DistanceMetric::Cosine as i32,
             storage_engine: engine as i32,
+            compression,
             ..Default::default()
         };
         
@@ -506,7 +519,7 @@ impl UnifiedTestEnvironment {
             compression: "none".to_string(), // No compression for faster tests
             compression_level: 0,
             enable_statistics: true,
-            data_directory: base_path.join("viper_data").to_str().unwrap().to_string(),
+            data_directory: base_path.join("data").to_str().unwrap().to_string(),
             cache_size_mb: 64,
         }
     }
@@ -579,48 +592,13 @@ pub mod operations {
         })
     }
     
-    /// Build FlushParameters for SST with custom compression
-    /// SST supports: none, zstd, lz4, snappy, gzip, brotli, bzip2, deflate, xz, zlib, lzo, lz4hc, lzma
-    pub async fn build_sst_flush_params_with_compression(
+    /// Build FlushParameters for SST with custom compression - uses provided collection config
+    pub async fn build_sst_flush_params_with_collection(
         environment: &UnifiedTestEnvironment,
         vectors: Vec<VectorRecord>,
-        compression_algo: &str,
-        compression_level: i32
+        collection: Collection,
     ) -> Result<FlushParameters> {
         environment.ensure_all_directories().await?;
-        
-        // For SST, compression is configured in the engine config, not collection config
-        // But we can pass it through collection config's compression field
-        let mut collection = environment.create_test_collection_for_engine(StorageEngine::Sst);
-        
-        // SST uses collection compression config if present
-        if let Some(ref mut config) = collection.config {
-            use proximadb::proto::proximadb::CompressionAlgorithm;
-            
-            // Map string algorithm name to enum value
-            let algorithm = match compression_algo {
-                "none" => CompressionAlgorithm::CompressionNone as i32,
-                "zstd" => CompressionAlgorithm::CompressionZstd as i32,
-                "lz4" => CompressionAlgorithm::CompressionLz4 as i32,
-                "snappy" => CompressionAlgorithm::CompressionSnappy as i32,
-                "gzip" => CompressionAlgorithm::CompressionGzip as i32,
-                "brotli" => CompressionAlgorithm::CompressionBrotli as i32,
-                "bzip2" => CompressionAlgorithm::CompressionBzip2 as i32,
-                "deflate" => CompressionAlgorithm::CompressionDeflate as i32,
-                "xz" => CompressionAlgorithm::CompressionXz as i32,
-                "zlib" => CompressionAlgorithm::CompressionZlib as i32,
-                "lzo" => CompressionAlgorithm::CompressionLzo as i32,
-                "lz4hc" => CompressionAlgorithm::CompressionLz4hc as i32,
-                "lzma" => CompressionAlgorithm::CompressionLzma as i32,
-                _ => CompressionAlgorithm::CompressionNone as i32,
-            };
-            
-            config.compression = Some(proximadb::proto::proximadb::CompressionConfig {
-                algorithm,
-                level: Some(compression_level),
-                ..Default::default()
-            });
-        }
         
         Ok(FlushParameters {
             collection_id: Some(environment.collection_id().to_string()),
@@ -631,6 +609,9 @@ pub mod operations {
             ..Default::default()
         })
     }
+    
+    // REMOVED: build_sst_flush_params_with_compression - Use build_sst_flush_params_with_collection
+    // Tests must create collection config once and reuse it for both flush and compaction
     
     /// Build FlushParameters for VIPER with custom compression
     /// VIPER/Parquet supports: none, snappy, gzip, lz4, zstd, brotli (limited by Parquet format)
@@ -766,6 +747,23 @@ pub mod operations {
             ..Default::default()
         }
     }
+    
+    /// Build CompactionParameters with provided collection config - PRODUCTION-LIKE
+    pub fn build_compaction_params_with_collection(
+        environment: &UnifiedTestEnvironment,
+        collection: Collection,
+    ) -> CompactionParameters {
+        CompactionParameters {
+            collection_id: Some(environment.collection_id().to_string()),
+            force: true,
+            synchronous: true,
+            collection_config: Some(collection),
+            ..Default::default()
+        }
+    }
+    
+    // REMOVED: build_compaction_params_with_compression - Use build_compaction_params_with_collection
+    // Tests must create collection config once and reuse it for both flush and compaction
 }
 
 /// Global utility functions for backward compatibility with existing tests
@@ -848,6 +846,155 @@ pub fn create_test_collection_with_storage(name: &str, base_location: String) ->
 pub fn create_test_config() -> proximadb::core::config::Config {
     // Use default config since struct fields may vary
     proximadb::core::config::Config::default()
+}
+
+// =============================================================================
+// FLUSH OPERATIONS WITH BLOCK STATISTICS
+// =============================================================================
+
+/// Flush parameters with detailed block statistics tracking
+pub struct FlushWithBlockStats {
+    pub params: FlushParameters,
+    pub track_blocks: bool,
+    pub compression_algo: String,
+    pub compression_level: i32,
+    pub block_size_kb: usize,
+}
+
+/// Result of flush operation with block statistics
+pub struct FlushBlockStatsResult {
+    pub success: bool,
+    pub entries_flushed: usize,
+    pub bytes_written: usize,
+    pub files_created: usize,
+    pub blocks_created: usize,
+    pub compression_ratio: f64,
+    pub vectors_per_block: Vec<usize>,
+    pub block_sizes: Vec<usize>,
+}
+
+/// Perform flush operation with block statistics tracking for SST
+/// This now uses the production SST flush path with integrated quantization
+pub async fn flush_sst_with_block_stats(
+    environment: &UnifiedTestEnvironment,
+    vectors: Vec<VectorRecord>,
+    compression_algo: &str,
+    compression_level: i32,
+    block_size_kb: usize,
+) -> Result<FlushBlockStatsResult> {
+    use proximadb::storage::engines::sst::SstStorage;
+    use proximadb::storage::traits::{UnifiedStorageEngine, FlushParameters};
+    use proximadb::proto::proximadb::{Collection, CollectionConfig, CompressionConfig};
+    
+    // Create SST config with specified block size
+    let mut sst_config = environment.sst_config.clone();
+    sst_config.block_size_kb = block_size_kb as u32;
+    sst_config.compression = compression_algo.to_string();
+    sst_config.compression_level = compression_level;
+    
+    // Create SST storage
+    let sst_storage = SstStorage::new(
+        sst_config,
+        environment.filesystem.clone(),
+        environment.distance_compute.clone(),
+    ).await?;
+    
+    // Create collection config with compression
+    let compression_config = CompressionConfig {
+        algorithm: compression_algo.to_string(),
+        level: Some(compression_level),
+        block_size: Some(block_size_kb as i32),
+        dictionary_size: None,
+        window_size: None,
+        strategy: None,
+    };
+    
+    let collection_config = Collection {
+        id: "test_collection".to_string(),
+        name: "test_collection".to_string(),
+        dimension: vectors[0].vector.len() as u32,
+        distance_metric: "cosine".to_string(),
+        storage_assignment: Some(proximadb::proto::proximadb::StorageAssignment {
+            base_location: format!("file://{}", environment.temp_dir.path().to_str().unwrap()),
+            assignment_id: "test".to_string(),
+            tier: "hot".to_string(),
+            region: "local".to_string(),
+            rack_id: None,
+            node_id: None,
+            device_id: None,
+            created_at: 0,
+            last_modified: 0,
+        }),
+        config: Some(CollectionConfig {
+            compression: Some(compression_config),
+            ..Default::default()
+        }),
+        ..Default::default()
+    };
+    
+    // Create flush parameters - production SST will handle quantization internally
+    let flush_params = FlushParameters {
+        collection_id: Some("test_collection".to_string()),
+        vector_records: vectors.clone(),
+        collection_config: Some(collection_config),
+        force: true,
+        synchronous: true,
+        ..Default::default()
+    };
+    
+    // Perform flush using production code
+    let flush_result = sst_storage.do_flush(&flush_params).await?;
+    
+    // Calculate compression ratio
+    let uncompressed_size = vectors.len() * vectors[0].vector.len() * 4; // FP32
+    let compression_ratio = if flush_result.bytes_written > 0 {
+        uncompressed_size as f64 / flush_result.bytes_written as f64
+    } else {
+        1.0
+    };
+    
+    // Extract block statistics from engine metrics
+    let blocks_created = flush_result.engine_metrics
+        .get("sstables_created")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(1) as usize;
+    
+    // Estimate vectors per block
+    let vectors_per_block = vec![vectors.len() / blocks_created.max(1); blocks_created];
+    let block_sizes = vectors_per_block.iter()
+        .map(|&count| count * vectors[0].vector.len() * 4)
+        .collect();
+    
+    Ok(FlushBlockStatsResult {
+        success: true,
+        entries_flushed: vectors.len(),
+        bytes_written: flush_result.bytes_written as usize,
+        files_created: flush_result.files_created as usize,
+        blocks_created,
+        compression_ratio,
+        vectors_per_block,
+        block_sizes,
+    })
+}
+
+/// Perform flush with PQ sorting for improved compression
+/// The production SST code now handles PQ sorting internally when quantization is enabled
+pub async fn flush_sst_with_pq_sorting(
+    environment: &UnifiedTestEnvironment,
+    vectors: Vec<VectorRecord>,
+    compression_algo: &str,
+    compression_level: i32,
+    block_size_kb: usize,
+) -> Result<FlushBlockStatsResult> {
+    // Simply use the production flush with compression enabled
+    // When compression is enabled, quantization with PQ sorting is automatically applied
+    flush_sst_with_block_stats(
+        environment,
+        vectors,
+        compression_algo,
+        compression_level,
+        block_size_kb,
+    ).await
 }
 
 #[cfg(test)]

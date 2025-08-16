@@ -78,6 +78,15 @@ pub enum CompressionAlgorithm {
     Lz4hc,
     /// LZMA compression (high ratio)
     Lzma,
+    /// Mixed compression strategy - optimal per-column compression
+    /// Uses different algorithms based on column data type:
+    /// - Binary columns: UNCOMPRESSED (fast filtering)  
+    /// - INT8 columns: SNAPPY (fast decompression)
+    /// - PQ columns: ZSTD (best ratio)
+    /// - FP32 columns: LZ4 (fast decompression for reranking)
+    /// - ID columns: GZIP (maximum compression)
+    /// - Metadata columns: BROTLI (maximum compression for cold data)
+    Mixed,
 }
 
 impl Default for CompressionAlgorithm {
@@ -245,6 +254,12 @@ impl VectorSerializationConfig {
                     encoder.write_all(bytes)?;
                     let compressed = encoder.finish()?;
                     (SerializationFormat::LzmaBytemuck, compressed)
+                }
+                CompressionAlgorithm::Mixed => {
+                    // For vector serialization, Mixed defaults to ZSTD level 3
+                    let compressed = encode_all(bytes, 3)
+                        .context("Failed to compress vector with Mixed strategy (ZSTD)")?;
+                    (SerializationFormat::ZstdBytemuck, compressed)
                 }
                 CompressionAlgorithm::None => {
                     (SerializationFormat::RawBytemuck, bytes.to_vec())

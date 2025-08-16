@@ -5,16 +5,18 @@
 
 //! Zero-copy SST Compactor using modular block reader architecture
 //! 
-//! This compactor works directly with SstRecord to avoid double conversion
+//! OPTIMIZED: This compactor works directly with VectorRecord to eliminate all conversions
 //! during compaction operations, significantly improving performance for
 //! large-scale compactions.
 
-use super::{SstRecord, SstableWriter};
+use super::SstableWriter;  // OPTIMIZED: Removed SstRecord import
+use crate::core::VectorRecord;  // OPTIMIZED: Direct VectorRecord usage
 use super::readers::unified_sstable_reader::{
     SstDirectReader, BlockIterator
 };
 use crate::storage::persistence::filesystem::{FilesystemFactory, FileSystem};
 use crate::core::search::mvcc_resolution::MvccResolver;
+use crate::storage::quantization::{SstQuantizationAdapter, sst_adapter::SimilarityCluster};
 use anyhow::Result;
 use std::collections::{BinaryHeap, HashMap};
 use std::cmp::{Ordering, Reverse};
@@ -44,7 +46,7 @@ pub struct ZeroCopyCompactionStats {
 /// Entry in the k-way merge heap
 #[derive(Debug, Clone)]
 struct MergeEntry {
-    record: SstRecord,
+    record: VectorRecord,  // OPTIMIZED: Direct VectorRecord usage
     file_index: usize,
     timestamp: u32,
 }
@@ -85,8 +87,10 @@ pub enum CompactionSortStrategy {
     ByMetadata(Vec<String>),
     /// Sort by timestamp (newest first)
     ByTimestamp,
+    /// Sort by PQ similarity for better compression and progressive search
+    ByPQSimilarity(Arc<SstQuantizationAdapter>),
     /// Custom comparator function
-    Custom(Arc<dyn Fn(&SstRecord, &SstRecord) -> Ordering + Send + Sync>),
+    Custom(Arc<dyn Fn(&VectorRecord, &VectorRecord) -> Ordering + Send + Sync>),
 }
 
 impl std::fmt::Debug for CompactionSortStrategy {
@@ -95,6 +99,7 @@ impl std::fmt::Debug for CompactionSortStrategy {
             Self::ById => write!(f, "ById"),
             Self::ByMetadata(keys) => f.debug_tuple("ByMetadata").field(keys).finish(),
             Self::ByTimestamp => write!(f, "ByTimestamp"),
+            Self::ByPQSimilarity(_) => write!(f, "ByPQSimilarity"),
             Self::Custom(_) => write!(f, "Custom(<function>)"),
         }
     }
@@ -106,7 +111,7 @@ impl Default for CompactionSortStrategy {
     }
 }
 
-/// Zero-copy SST compactor that works directly with SstRecord
+/// Zero-copy SST compactor that works directly with VectorRecord
 pub struct SstCompactor {
     filesystem_factory: Arc<FilesystemFactory>,
     mvcc_resolver: Option<Arc<MvccResolver>>,
@@ -156,8 +161,23 @@ impl SstCompactor {
         Self {
             filesystem_factory,
             mvcc_resolver,
-            block_size: 4096, // Default 4KB blocks
+            block_size: 2048 * 1024, // Default 2MB blocks (same as SST default)
             compression_threshold: 1024, // Compress blocks > 1KB
+            sort_strategy: CompactionSortStrategy::default(),
+        }
+    }
+    
+    /// Create compactor with custom block size
+    pub fn with_block_size(
+        filesystem_factory: Arc<FilesystemFactory>,
+        mvcc_resolver: Option<Arc<MvccResolver>>,
+        block_size_kb: u32,
+    ) -> Self {
+        Self {
+            filesystem_factory,
+            mvcc_resolver,
+            block_size: (block_size_kb * 1024) as usize,
+            compression_threshold: 1024,
             sort_strategy: CompactionSortStrategy::default(),
         }
     }
@@ -167,15 +187,37 @@ impl SstCompactor {
         self.sort_strategy = strategy;
         self
     }
+    
+    /// Create compactor with PQ-based sorting for better compression
+    pub fn with_pq_sorting(
+        mut self,
+        quantization_adapter: Arc<SstQuantizationAdapter>,
+    ) -> Self {
+        self.sort_strategy = CompactionSortStrategy::ByPQSimilarity(quantization_adapter);
+        self
+    }
+    
+    /// Get the current compaction sort strategy
+    pub fn sort_strategy(&self) -> &CompactionSortStrategy {
+        &self.sort_strategy
+    }
 
     /// Perform zero-copy k-way merge compaction of multiple SST files
-    /// This method reads SstRecords directly without converting to VectorRecord
+    /// This method reads VectorRecords directly without any conversion
     pub async fn compact_files(
         &self,
         input_files: Vec<String>,
         output_file: String,
         target_level: u8,
+        compression_config: Option<crate::proto::proximadb::CompressionConfig>,
     ) -> Result<ZeroCopyCompactionStats> {
+        debug!("🔍 SST_COMPACTOR: compact_files called");
+        debug!("   Input files: {:?}", input_files);
+        debug!("   Output file: {}", output_file);
+        debug!("   Target level: {}", target_level);
+        debug!("   Block size: {} KB", self.block_size / 1024);
+        debug!("   Compression config: {:?}", 
+            compression_config.as_ref().map(|c| format!("algorithm={}, level={:?}", c.algorithm, c.level)));
         let start = std::time::Instant::now();
         let mut stats = ZeroCopyCompactionStats::default();
         stats.files_compacted = input_files.len();
@@ -188,13 +230,16 @@ impl SstCompactor {
         // Use streaming approach for memory-efficient compaction
         info!("🔄 Using streaming approach for zero-copy compaction");
         let mut streaming_iterators = Vec::new();
+        let mut total_records_estimate = 0;
         for (idx, file_path) in input_files.iter().enumerate() {
-            debug!("Opening SST file {} for streaming", file_path);
+            debug!("   📂 Opening file {}: {}", idx, file_path);
             let mut direct_reader = SstDirectReader::open(self.filesystem_factory.clone(), file_path).await?;
+            // Try to get record count from header or estimate
             let iterator = direct_reader.stream_sst_records(file_path.clone()).await?;
-            debug!("Created streaming iterator for file {}", file_path);
+            debug!("   ✅ Created streaming iterator for file {}", file_path);
             streaming_iterators.push((idx, iterator));
         }
+        debug!("   📊 Starting k-way merge of {} iterators", streaming_iterators.len());
 
         // Perform streaming k-way merge
         let (merged_records, merge_stats) = self.k_way_merge(streaming_iterators).await?;
@@ -209,10 +254,12 @@ impl SstCompactor {
         stats.recommend_index_rebuild = merge_stats.recommend_index_rebuild;
         
         // Write merged records to output file
+        debug!("   📝 Writing {} merged records to output", merged_records.len());
         let writer_stats = self.write_merged_records(
             merged_records,
             &output_file,
             target_level,
+            compression_config,
         ).await?;
 
         stats.records_written = writer_stats.records_written;
@@ -224,6 +271,16 @@ impl SstCompactor {
             stats.compaction_time_ms, stats.records_written, stats.bytes_written,
             stats.deleted_vector_ids.len(), stats.updated_vector_ids.len()
         );
+        
+        // Delete input files after successful compaction
+        let fs = self.filesystem_factory.get_filesystem("file:///")?;
+        for input_file in &input_files {
+            if let Err(e) = fs.delete(input_file).await {
+                warn!("Failed to delete input file {}: {}", input_file, e);
+            } else {
+                debug!("🗑️ Deleted input file: {}", input_file);
+            }
+        }
         
         // Send AXIS update notifications if there are changes
         if !stats.deleted_vector_ids.is_empty() || !stats.updated_vector_ids.is_empty() {
@@ -238,13 +295,13 @@ impl SstCompactor {
     /// FALLBACK: This batch loading approach is kept for compatibility/testing
     async fn k_way_merge_records(
         &self,
-        file_records: Vec<(usize, Vec<SstRecord>)>,
-    ) -> Result<(Vec<SstRecord>, ZeroCopyCompactionStats)> {
+        file_records: Vec<(usize, Vec<VectorRecord>)>,
+    ) -> Result<(Vec<VectorRecord>, ZeroCopyCompactionStats)> {
         let mut heap = BinaryHeap::new();
         let mut merged_records = Vec::new();
         let mut stats = ZeroCopyCompactionStats::default();
         // Track all versions for each ID to apply MVCC rules
-        let mut id_versions: HashMap<String, Vec<SstRecord>> = HashMap::new();
+        let mut id_versions: HashMap<String, Vec<VectorRecord>> = HashMap::new();
 
         // Add all records to the heap for k-way merge
         for (file_idx, records) in file_records {
@@ -318,7 +375,7 @@ impl SstCompactor {
             
             // Find the highest continuous version
             let mut expected_version = 1u32;
-            let mut last_valid: Option<SstRecord> = None;
+            let mut last_valid: Option<VectorRecord> = None;
             
             for record in versions {
                 let version = Self::normalize_version(record.version);
@@ -347,7 +404,7 @@ impl SstCompactor {
                 }
                 
                 // Update the level to match the target compaction level
-                record.level = self.block_size as u8; // Will be set properly by caller
+                // record.level should be set by the compaction task, not block_size!
                 
                 debug!("Selected version {} for ID '{}'", selected_version, id);
                 merged_records.push(record);
@@ -389,14 +446,14 @@ impl SstCompactor {
     /// Uses streaming iterators for memory-efficient compaction
     async fn k_way_merge(
         &self,
-        iterators: Vec<(usize, BlockIterator<SstRecord>)>,
-    ) -> Result<(Vec<SstRecord>, ZeroCopyCompactionStats)> {
+        iterators: Vec<(usize, BlockIterator<VectorRecord>)>,
+    ) -> Result<(Vec<VectorRecord>, ZeroCopyCompactionStats)> {
         let mut heap = BinaryHeap::new();
         let mut merged_records = Vec::new();
         let mut stats = ZeroCopyCompactionStats::default();
         // Track all versions for each ID to apply MVCC rules
-        let mut id_versions: HashMap<String, Vec<SstRecord>> = HashMap::new();
-        let mut active_iterators: Vec<(usize, BlockIterator<SstRecord>)> = Vec::new();
+        let mut id_versions: HashMap<String, Vec<VectorRecord>> = HashMap::new();
+        let mut active_iterators: Vec<(usize, BlockIterator<VectorRecord>)> = Vec::new();
 
         // Initialize heap with first record from each iterator
         for (file_idx, mut iter) in iterators.into_iter() {
@@ -484,7 +541,7 @@ impl SstCompactor {
             
             // Find the highest continuous version
             let mut expected_version = 1u32;
-            let mut last_valid: Option<SstRecord> = None;
+            let mut last_valid: Option<VectorRecord> = None;
             
             for record in versions {
                 let version = Self::normalize_version(record.version);
@@ -513,7 +570,7 @@ impl SstCompactor {
                 }
                 
                 // Update the level to match the target compaction level
-                record.level = self.block_size as u8; // Will be set properly by caller
+                // record.level should be set by the compaction task, not block_size!
                 
                 debug!("Selected version {} for ID '{}'", selected_version, id);
                 merged_records.push(record);
@@ -553,10 +610,18 @@ impl SstCompactor {
     /// Write merged records to a new SST file
     async fn write_merged_records(
         &self,
-        mut records: Vec<SstRecord>,
+        mut records: Vec<VectorRecord>,
         output_path: &str,
         level: u8,
+        compression_config: Option<crate::proto::proximadb::CompressionConfig>,
     ) -> Result<WriterStats> {
+        debug!("🔍 SST_COMPACTOR: write_merged_records");
+        debug!("   Records to write: {}", records.len());
+        debug!("   Output path: {}", output_path);
+        debug!("   Target level: {}", level);
+        debug!("   Block size for writer: {} KB", self.block_size / 1024);
+        debug!("   Compression: {:?}",
+            compression_config.as_ref().map(|c| format!("algorithm={}, level={:?}", c.algorithm, c.level)));
         let mut stats = WriterStats::default();
         
         // CRITICAL: Sort records based on configured strategy
@@ -620,6 +685,73 @@ impl SstCompactor {
                     a.id.cmp(&b.id)
                 });
             }
+            CompactionSortStrategy::ByPQSimilarity(adapter) => {
+                info!("🎯 Applying PQ-based similarity sorting for {} records", records.len());
+                
+                // ZERO-COPY APPROACH: Extract vectors directly from VectorRecord without conversion
+                let vectors: Vec<Vec<f32>> = records
+                    .iter()
+                    .map(|sst_record| sst_record.vector.clone())
+                    .collect();
+                
+                let vector_ids: Vec<String> = records
+                    .iter()
+                    .map(|sst_record| sst_record.id.clone())
+                    .collect();
+                
+                // Quantize vectors for similarity clustering
+                let runtime = tokio::runtime::Handle::current();
+                let sorted_indices = runtime.block_on(async {
+                    // Quantize the vectors using the base quantization engine
+                    let quantized_data = adapter.base_engine()
+                        .quantize_batch(&vectors, Some(vector_ids.as_slice()))
+                        .await
+                        .map_err(|e| anyhow::anyhow!("Quantization failed: {}", e))?;
+                    
+                    // Create similarity clusters based on PQ codes for optimal compression
+                    let clusters = adapter.create_similarity_clusters(&quantized_data)
+                        .map_err(|e| anyhow::anyhow!("Clustering failed: {}", e))?;
+                    
+                    // Return sorted indices based on similarity clusters
+                    let mut sorted_indices = Vec::new();
+                    for cluster in clusters {
+                        sorted_indices.extend(cluster.indices);
+                    }
+                    
+                    Ok::<Vec<usize>, anyhow::Error>(sorted_indices)
+                }).map_err(|e| anyhow::anyhow!("PQ sorting failed: {}", e))?;
+                
+                // Reorder records based on PQ similarity clusters
+                let mut sorted_records = Vec::with_capacity(records.len());
+                for &index in &sorted_indices {
+                    if index < records.len() {
+                        let mut record = records[index].clone();
+                        record.level = level; // Update level for compaction
+                        sorted_records.push(record);
+                    }
+                }
+                
+                // Use sorted records (any remaining records that weren't clustered)
+                if sorted_records.len() < records.len() {
+                    let mut used = vec![false; records.len()];
+                    for &index in &sorted_indices {
+                        if index < used.len() {
+                            used[index] = true;
+                        }
+                    }
+                    
+                    for (i, record) in records.into_iter().enumerate() {
+                        if !used[i] {
+                            let mut record = record;
+                            record.level = level;
+                            sorted_records.push(record);
+                        }
+                    }
+                }
+                
+                records = sorted_records;
+                info!("✅ PQ-based sorting completed: {} records reordered for better compression", records.len());
+            }
             CompactionSortStrategy::Custom(comparator) => {
                 records.sort_by(|a, b| comparator(a, b));
             }
@@ -630,15 +762,29 @@ impl SstCompactor {
             records.len(), level
         );
         
-        // Create SSTable writer
-        let writer = SstableWriter::new(
-            output_path,
-            self.block_size,
-            self.filesystem_factory.clone(),
-        );
+        // Create SSTable writer with compression config
+        debug!("🔍 SST_COMPACTOR: Creating SstableWriter");
+        let writer = if let Some(ref compression) = compression_config {
+            debug!("   ✅ WITH compression: algorithm={}, level={:?}", compression.algorithm, compression.level);
+            debug!("   Block size passed to writer: {} bytes", self.block_size);
+            SstableWriter::with_compression(
+                output_path,
+                self.block_size,
+                self.filesystem_factory.clone(),
+                Some(compression.clone())
+            )
+        } else {
+            debug!("   ⚠️ NO compression - using default writer");
+            debug!("   Block size passed to writer: {} bytes", self.block_size);
+            SstableWriter::new(
+                output_path,
+                self.block_size,
+                self.filesystem_factory.clone(),
+            )
+        };
 
         // Convert records to sorted format (id, record)
-        let sorted_records: Vec<(String, SstRecord)> = records
+        let sorted_records: Vec<(String, VectorRecord)> = records
             .into_iter()
             .map(|r| {
                 let id = r.id.clone();
@@ -651,7 +797,7 @@ impl SstCompactor {
         let record_count = sorted_records.len();
         
         // Write using the streaming API
-        writer.write_sorted_records(
+        writer.write_sorted_vector_records(
             sorted_records.into_iter(),
             record_count,
         ).await?;
@@ -677,6 +823,7 @@ impl SstCompactor {
                         files.clone(),
                         output_file,
                         level + 1,
+                        None, // TODO: Pass compression config here
                     ).await?;
                     
                     all_stats.push(stats);
@@ -692,7 +839,10 @@ impl SstCompactor {
         &self,
         files_by_size: Vec<(String, u64)>,
         target_size: u64,
+        compression_config: Option<crate::proto::proximadb::CompressionConfig>,
     ) -> Result<Vec<ZeroCopyCompactionStats>> {
+        debug!("🔍 SST_COMPACTOR: compact_size_tiered with compression: {:?}",
+            compression_config.as_ref().map(|c| format!("algorithm={}, level={:?}", c.algorithm, c.level)));
         let mut all_stats = Vec::new();
         let mut current_batch = Vec::new();
         let mut current_size = 0u64;
@@ -710,6 +860,7 @@ impl SstCompactor {
                     current_batch.clone(),
                     output_file,
                     0, // Size-tiered doesn't use levels
+                    compression_config.clone(),
                 ).await?;
                 
                 all_stats.push(stats);
@@ -727,6 +878,7 @@ impl SstCompactor {
                 current_batch,
                 output_file,
                 0,
+                compression_config.clone(),
             ).await?;
             
             all_stats.push(stats);
@@ -745,6 +897,11 @@ struct WriterStats {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::compute::quantization::unified::{UnifiedQuantizationEngine, InMemoryCodebookStore};
+    use crate::compute::quantization::storage_engine::{StorageQuantizationEngine, StorageQuantizationConfig};
+    use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
+    use crate::storage::quantization::SstQuantizationAdapter;
+    use crate::storage::quantization::sst_adapter::SstQuantizationConfig;
 
     #[tokio::test]
     async fn test_k_way_merge_deduplication() {
@@ -762,5 +919,43 @@ mod tests {
     async fn test_expired_record_removal() {
         // Test that expired records are filtered during compaction
         // TODO: Implement test
+    }
+    
+    #[tokio::test]
+    async fn test_pq_based_sorting() {
+        // Initialize hardware capabilities
+        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        
+        // Create quantization infrastructure
+        let distance_compute = Arc::new(UnifiedDistanceCompute::default());
+        let codebook_store = Arc::new(InMemoryCodebookStore::new());
+        let unified_engine = Arc::new(UnifiedQuantizationEngine::new(
+            distance_compute.clone(),
+            codebook_store,
+        ));
+        
+        let base_config = StorageQuantizationConfig::default();
+        let base_engine = Arc::new(StorageQuantizationEngine::new(
+            unified_engine,
+            distance_compute,
+            base_config,
+        ));
+        
+        let sst_config = SstQuantizationConfig::default();
+        let adapter = Arc::new(SstQuantizationAdapter::new(base_engine, sst_config));
+        
+        // Create filesystem factory
+        let filesystem_factory = Arc::new(
+            crate::storage::persistence::filesystem::FilesystemFactory::new(
+                crate::storage::persistence::filesystem::FilesystemConfig::default()
+            ).await.unwrap()
+        );
+        
+        // Create compactor with PQ sorting
+        let compactor = SstCompactor::new(filesystem_factory, None)
+            .with_pq_sorting(adapter);
+        
+        // Verify that the sorting strategy is set correctly
+        assert!(matches!(compactor.sort_strategy, CompactionSortStrategy::ByPQSimilarity(_)));
     }
 }

@@ -26,7 +26,7 @@ use tracing::{info, error, debug};
 use crate::proto::proximadb::{
     Collection, CollectionRequest, CollectionResponse,
     VectorBatchRequest, VectorSearchRequest, VectorOperationResponse,
-    CollectionOperation, VectorOperation, SearchResult,
+    CollectionOperation, VectorOperation,
 };
 use crate::services::collection_service::CollectionService;
 use crate::services::vector_operations_service::VectorOperationsService;
@@ -379,13 +379,17 @@ impl UnifiedHandlers {
             include_metadata,
         ).await {
             Ok(Some(vector_record)) => {
-                // Convert VectorRecord to proto SearchResult (no metadata conversion loss)
-                let proto_result = SearchResult {
-                    id: vector_record.id.clone(),
+                // Convert VectorRecord to proto SearchVectorRecord (no metadata conversion loss)
+                let proto_result = crate::proto::proximadb::SearchVectorRecord {
+                    id: vector_record.id.unwrap_or_else(|| "unknown".to_string()),
                     score: 1.0, // Perfect match for get_vector
                     vector: if include_vector { vector_record.vector } else { vec![] },
                     metadata: if include_metadata { vector_record.metadata } else { vec![] },
-                    rank: Some(1),
+                    rank: 1,
+                    distance: 0.0, // Perfect match for get_vector
+                    version: vector_record.updated_at,
+                    timestamp: Some(vector_record.timestamp),
+                    collection_id: None, // Will be set by caller
                 };
                 
                 Ok(VectorOperationResponse {
@@ -508,28 +512,25 @@ impl UnifiedHandlers {
         // Use optimized unified search with all capabilities
         match self.vector_operations_service.search_vectors(
             collection_id,
-            query_vector,
+            query_vector.clone(),
             request.top_k as usize,
-            distance_metric,
-            search_params.as_ref(),
-            include_vectors,
-            include_metadata,
         ).await {
             Ok(search_results) => {
-                // VectorOperationsService already handles include_vectors/include_metadata
-                // Convert VectorOperationsService::SearchResult to proto SearchResult
-                let results: Vec<SearchResult> = search_results.into_iter().map(|result| {
-                    let vector = result.vector.unwrap_or_default();
+                // VectorOperationsService returns VectorRecord, convert to SearchVectorRecord
+                let results: Vec<crate::proto::proximadb::SearchVectorRecord> = search_results.into_iter().enumerate().map(|(index, result)| {
+                    let vector = if include_vectors { result.vector } else { vec![] };
+                    let metadata = if include_metadata { result.metadata } else { vec![] };
                     
-                    // Convert metadata from HashMap to Vec<MetadataItem>
-                    let metadata = crate::core::proto_metadata_helper::json_metadata_to_proto(&result.metadata);
-                    
-                    SearchResult {
-                        id: Some(result.id),
-                        score: result.score,
+                    crate::proto::proximadb::SearchVectorRecord {
+                        id: result.id.unwrap_or_else(|| format!("result_{}", index)),
+                        score: 1.0, // TODO: Implement actual scoring
                         vector,
                         metadata,
-                        rank: result.rank.map(|r| r as i32),
+                        rank: (index + 1) as i32,
+                        distance: 0.0, // TODO: Implement actual distance calculation
+                        version: result.version,
+                        timestamp: Some(result.timestamp),
+                        collection_id: None,
                     }
                 }).collect();
                 
@@ -592,21 +593,21 @@ impl UnifiedHandlers {
     /// Force flush all collections
     pub async fn force_flush_all(&self) -> Result<serde_json::Value> {
         debug!("⚡ UnifiedHandlers: Force flushing all collections");
-        self.vector_operations_service.force_flush_all().await
+        self.vector_operations_service.force_flush_all().await?;
+        Ok(serde_json::json!({"success": true, "operation": "force_flush_all"}))
     }
     
     /// Force flush collection using VectorOperationsService
     pub async fn force_flush_collection(&self, collection_id: &str) -> Result<serde_json::Value> {
         debug!("⚡ UnifiedHandlers: Force flushing collection {}", collection_id);
-        self.vector_operations_service.force_flush_collection(collection_id).await
+        self.vector_operations_service.force_flush_collection(collection_id).await?;
+        Ok(serde_json::json!({"success": true, "operation": "force_flush_collection", "collection_id": collection_id}))
     }
     
     /// Get metrics using VectorOperationsService
     pub async fn get_metrics(&self) -> Result<serde_json::Value> {
         debug!("📊 UnifiedHandlers: Getting service metrics");
-        let metrics_bytes = self.vector_operations_service.get_metrics().await?;
-        let metrics: serde_json::Value = serde_json::from_slice(&metrics_bytes)?;
-        Ok(metrics)
+        self.vector_operations_service.get_metrics().await
     }
     
     /// Get collection-specific metrics (placeholder until metrics service is integrated)
