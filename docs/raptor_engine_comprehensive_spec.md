@@ -644,25 +644,103 @@ Candidates → SIMD Distance → Filtering → Reranking → Results
 
 #### 3. Cross-Region & Edge Optimization
 
-##### CloudFront/CDN Costs by Engine
-| Engine | CF Distribution | Monthly Requests | Cache Hit Ratio | CF Cost | Origin Fetches | Total CDN Cost |
-|--------|----------------|------------------|-----------------|---------|----------------|----------------|
-| **RAPTOR** | Global | 52M | 85% | $52 | 7.8M | **$75** |
-| **VIPER** | Regional | 52M | 70% | $52 | 15.6M | **$95** |
-| **SST** | Not recommended | - | - | - | - | **$0** |
-| **NOVA** | Regional | 52M | 75% | $52 | 13M | **$85** |
-| **SWIFT** | Edge locations | 52M | 90% | $52 | 5.2M | **$65** |
-| **PRISM** | Required | 52M | 99% | $52 | 0.5M | **$55** |
+### Service Requirements Clarification
 
-##### Global Accelerator Costs
-| Engine | Accelerator | Fixed Cost | Data Processing | DDoS Protection | Total |
-|--------|-------------|------------|-----------------|-----------------|-------|
-| **RAPTOR** | Recommended | $36 | $28 | Included | **$64** |
-| **VIPER** | Optional | $36 | $21 | Included | **$57** |
-| **SST** | Not needed | - | - | - | **$0** |
-| **NOVA** | Optional | $36 | $25 | Included | **$61** |
-| **SWIFT** | Not needed | - | - | - | **$0** |
-| **PRISM** | Required | $36 | $42 | Included | **$78** |
+#### Why CloudFront/CDN is Listed (But Usually NOT Needed)
+
+**Important**: CloudFront and other edge services are **optional** for most deployments. They're only beneficial in specific scenarios:
+
+| Engine | CloudFront Actually Needed? | When It Makes Sense | Annual Cost if Used |
+|--------|----------------------------|---------------------|-------------------|
+| **RAPTOR** | **No** | Global users, >100ms latency tolerance | $900 |
+| **VIPER** | **No** | Read-heavy analytics dashboards | $1,140 |
+| **SST** | **No** | Never - write-heavy workload | $0 |
+| **NOVA** | **No** | Shared datasets across regions | $1,020 |
+| **SWIFT** | **No** | Multi-region ID lookups | $780 |
+| **PRISM** | **Maybe** | Global <5ms latency requirement | $660 |
+
+#### Actual Minimal Infrastructure Requirements
+
+##### For Standard Single-Region Deployment (What You Actually Need)
+
+| Engine | Required Services | Optional Services | Minimal Monthly Cost |
+|--------|------------------|-------------------|---------------------|
+| **RAPTOR** | EC2 + S3 + S3 Gateway Endpoint | CloudFront, Global Accelerator | **$422** |
+| **VIPER** | EC2 + S3 + S3 Gateway Endpoint | CloudFront, Intelligent Tiering | **$166** |
+| **SST** | EC2 + EBS + S3 (backup only) | None | **$287** |
+| **NOVA** | EC2 + S3 + S3 Gateway Endpoint | CloudFront, S3 Express | **$233** |
+| **SWIFT** | EC2 + EBS + S3-IA | None | **$120** |
+| **PRISM** | EC2 with Instance Store | S3 for snapshots only | **$745** |
+
+#### When Additional Services Actually Make Sense
+
+##### CloudFront (CDN)
+- **Required for**: Global read-heavy workloads with users >1000 miles from origin
+- **Not needed for**: Same-region applications, write-heavy workloads, internal APIs
+- **Cost-benefit**: Only if cache hit ratio >80% and >1M requests/month
+
+##### Global Accelerator  
+- **Required for**: Global TCP/UDP traffic requiring consistent IP addresses
+- **Not needed for**: Single-region deployments, HTTP/HTTPS traffic (use CloudFront instead)
+- **Cost-benefit**: Only for latency-critical applications with global users
+
+##### Transit Gateway (TGW)
+- **Required for**: Multi-VPC architectures, hybrid cloud connections
+- **Not needed for**: Single VPC deployments (99% of cases)
+- **Cost-benefit**: Only if connecting 3+ VPCs or on-premise networks
+
+##### NAT Gateway
+- **Required for**: Never (use S3 Gateway Endpoint instead)
+- **Alternative**: S3 Gateway Endpoint (FREE)
+- **Savings**: $45/month + $0.045/GB
+
+#### Realistic Cost Breakdown (Without Unnecessary Services)
+
+| Engine | Compute | Storage | Network | **Actual Monthly** | **Per Million Vectors** |
+|--------|---------|---------|---------|-------------------|------------------------|
+| **RAPTOR** | $362 | $60 | $23 | **$445** | **$4.45** |
+| **VIPER** | $140 | $26 | $16.50 | **$182.50** | **$1.83** |
+| **SST** | $122 | $165 | $11 | **$298** | **$2.98** |
+| **NOVA** | $181 | $52 | $20.20 | **$253.20** | **$2.53** |
+| **SWIFT** | $70 | $50 | $11 | **$131** | **$1.31** |
+| **PRISM** | $725 | $20 | $27 | **$772** | **$7.72** |
+
+#### Key Takeaways
+
+1. **You DON'T need CloudFront** unless serving global users with strict latency requirements
+2. **You DON'T need Global Accelerator** for typical vector database deployments  
+3. **You DON'T need Transit Gateway** unless connecting multiple VPCs
+4. **You DON'T need NAT Gateway** - use S3 Gateway Endpoint (free)
+5. **Most deployments only need**: EC2/EKS + S3 + S3 Gateway Endpoint
+
+#### Recommended Minimal Architecture
+
+```
+┌─────────────────────────────────────┐
+│         Your Application            │
+│              (EKS Pod)               │
+└─────────────┬───────────────────────┘
+              │
+              ▼
+┌─────────────────────────────────────┐
+│        ProximaDB Engine             │
+│         (Same Region)               │
+├─────────────────────────────────────┤
+│ • EC2/EKS Instance                  │
+│ • Local SSD or EBS                  │
+│ • S3 Gateway Endpoint (Free)        │
+└─────────────┬───────────────────────┘
+              │
+              ▼
+┌─────────────────────────────────────┐
+│      S3 Storage (Same Region)       │
+│ • Standard tier for active data     │
+│ • IA tier for older data            │
+│ • No egress charges in region       │
+└─────────────────────────────────────┘
+```
+
+Total Infrastructure Cost: **$131-$445/month** depending on engine (not $500-$1000 as shown with all optional services)
 
 ### Comprehensive Network Cost Summary (Corrected for Same-Region)
 
