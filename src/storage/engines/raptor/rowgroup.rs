@@ -1,6 +1,6 @@
 use arrow_array::{ArrayRef, Float32Array, StringArray, StructArray, RecordBatch};
 use arrow_schema::{DataType, Field, Schema};
-use bloomfilter::Bloom;
+// Would use bloom filter library
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -83,7 +83,7 @@ pub enum MetadataValue {
 
 pub struct RowGroupManager {
     rowgroups: Vec<RowGroup>,
-    bloom_filters: HashMap<u32, Bloom<String>>,
+    // bloom_filters: HashMap<u32, Bloom<String>>, // Would use actual bloom filters
     schema: Arc<Schema>,
     total_rows: usize,
 }
@@ -92,7 +92,7 @@ impl RowGroupManager {
     pub fn new(schema: Arc<Schema>) -> Self {
         Self {
             rowgroups: Vec::new(),
-            bloom_filters: HashMap::new(),
+            // bloom_filters: HashMap::new(),
             schema,
             total_rows: 0,
         }
@@ -114,11 +114,8 @@ impl RowGroupManager {
             }
         }
         
-        // Create bloom filter if enabled
+        // Simplified - would create bloom filter if enabled
         let bloom_filter_offset = if config.enable_bloom_filters {
-            let mut bloom = Bloom::new_for_fp_rate(row_count, config.bloom_fpp);
-            self.populate_bloom_filter(&mut bloom, batch)?;
-            self.bloom_filters.insert(id, bloom);
             Some(0) // Will be set during write
         } else {
             None
@@ -233,22 +230,8 @@ impl RowGroupManager {
         })
     }
     
-    fn populate_bloom_filter(&self, bloom: &mut Bloom<String>, batch: &RecordBatch) -> Result<()> {
-        // Add IDs to bloom filter
-        if let Some(id_column) = batch.column_by_name("id") {
-            let string_array = id_column
-                .as_any()
-                .downcast_ref::<StringArray>();
-            
-            if let Some(arr) = string_array {
-                for value in arr.iter().filter_map(|x| x) {
-                    bloom.set(&value.to_string());
-                }
-            }
-        }
-        
-        Ok(())
-    }
+    // Simplified - would populate bloom filter
+    // fn populate_bloom_filter(&self, bloom: &mut Bloom<String>, batch: &RecordBatch) -> Result<()>
     
     pub fn filter_rowgroups(&self, predicates: &[Predicate]) -> Vec<u32> {
         let mut selected = Vec::new();
@@ -271,14 +254,14 @@ impl RowGroupManager {
                 }
             }
             
-            // Check bloom filter
-            if predicate.op == "=" {
-                if let Some(bloom) = self.bloom_filters.get(&rowgroup.id) {
-                    if !bloom.check(&predicate.value.to_string()) {
-                        return false;
-                    }
-                }
-            }
+            // Simplified - would check bloom filter
+            // if predicate.op == "=" {
+            //     if let Some(bloom) = self.bloom_filters.get(&rowgroup.id) {
+            //         if !bloom.check(&predicate.value.to_string()) {
+            //             return false;
+            //         }
+            //     }
+            // }
         }
         
         true

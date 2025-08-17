@@ -1,7 +1,16 @@
 use anyhow::Result;
 use arrow_array::RecordBatch;
 use super::RaptorConfig;
-use crate::storage::common::VectorSearchResult;
+use std::collections::HashMap;
+
+// HNSW search result type
+#[derive(Debug, Clone)]
+pub struct HnswSearchResult {
+    pub id: String,
+    pub score: f32,
+    pub vector: Option<Vec<f32>>,
+    pub metadata: Option<HashMap<String, String>>,
+}
 
 pub struct HnswManager {
     config: RaptorConfig,
@@ -17,7 +26,7 @@ impl HnswManager {
         Ok(())
     }
     
-    pub async fn search(&self, query: &[f32], k: usize) -> Result<Vec<VectorSearchResult>> {
+    pub async fn search(&self, query: &[f32], k: usize) -> Result<Vec<HnswSearchResult>> {
         // Would perform HNSW search
         Ok(Vec::new())
     }

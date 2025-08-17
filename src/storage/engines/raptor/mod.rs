@@ -10,7 +10,6 @@ pub mod compaction;
 pub mod hnsw_manager;
 pub mod simd_ops;
 pub mod metadata;
-pub mod cloud_io;
 
 pub use config::RaptorConfig;
 pub use engine::RaptorEngine;
@@ -18,6 +17,4 @@ pub use rowgroup::{RowGroup, RowGroupManager};
 pub use writer::RaptorWriter;
 pub use reader::RaptorReader;
 
-use crate::storage::engines::UnifiedStorageEngine;
-use crate::proto::proximadb::VectorRecord;
 use anyhow::Result;

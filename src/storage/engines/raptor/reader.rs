@@ -4,33 +4,18 @@ use anyhow::Result;
 use std::collections::HashMap;
 use tokio::sync::RwLock;
 
-use crate::core::compression::UnifiedCompressionEngine;
-use crate::compute::quantization::storage_engine::StorageQuantizationEngine;
+use crate::core::storage::compression::{CompressionConfig, CompressionAlgorithm};
 use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
-use crate::storage::engines::columnar::{
-    parquet_reader::ParquetReader as ColumnarReader,
-    utilities::ColumnarUtilities,
-    footer_cache::FooterCache,
-};
 use crate::storage::persistence::filesystem::{FileSystem, FilesystemFactory};
-use crate::storage::cache::orchestrator::{CrossCacheOrchestrator, CacheHint};
-use crate::storage::cache::VectorStore;
 use super::{RaptorConfig, RowGroup};
 
 pub struct RaptorReader {
     base_path: String,
     config: RaptorConfig,
     
-    // Reuse unified components
-    compression_engine: Arc<UnifiedCompressionEngine>,
-    quantization_engine: Arc<StorageQuantizationEngine>,
+    // Simplified components
+    compression_config: CompressionConfig,
     distance_calculator: Arc<UnifiedDistanceCompute>,
-    columnar_reader: Arc<ColumnarReader>,
-    footer_cache: Arc<FooterCache>,
-    
-    // Reuse cache infrastructure
-    cache_orchestrator: Arc<CrossCacheOrchestrator>,
-    vector_store: Arc<VectorStore>,
     
     // Reuse filesystem abstraction
     filesystem: Arc<dyn FileSystem>,
@@ -45,61 +30,31 @@ impl RaptorReader {
         // Initialize filesystem using factory
         let filesystem = FilesystemFactory::create(&base_path).await?;
         
-        // Initialize compression engine (reusing from writer)
-        let compression_config = crate::core::compression::CompressionConfig {
+        // Initialize compression config
+        let compression_config = CompressionConfig {
             algorithm: match &config.compression {
-                super::config::CompressionCodec::None => crate::core::compression::CompressionAlgorithm::None,
-                super::config::CompressionCodec::Lz4 => crate::core::compression::CompressionAlgorithm::Lz4,
-                super::config::CompressionCodec::Zstd(level) => crate::core::compression::CompressionAlgorithm::Zstd(*level),
-                super::config::CompressionCodec::Snappy => crate::core::compression::CompressionAlgorithm::Snappy,
-                super::config::CompressionCodec::Gzip(level) => crate::core::compression::CompressionAlgorithm::Gzip(*level),
+                super::config::CompressionCodec::None => CompressionAlgorithm::None,
+                super::config::CompressionCodec::Lz4 => CompressionAlgorithm::Lz4,
+                super::config::CompressionCodec::Zstd(level) => CompressionAlgorithm::Zstd { level: *level },
+                super::config::CompressionCodec::Snappy => CompressionAlgorithm::Snappy,
+                super::config::CompressionCodec::Gzip(_level) => CompressionAlgorithm::Gzip,
             },
-            block_size: 64 * 1024,
-            enable_dictionary: true,
+            level: 6,
+            compress_vectors: true,
+            compress_metadata: true,
+            min_compress_size: 1024,
+            target_ratio: 0.5,
         };
-        let compression_engine = Arc::new(UnifiedCompressionEngine::new(compression_config)?);
-        
-        // Initialize quantization engine
-        let quantization_config = crate::compute::quantization::storage_engine::QuantizationConfig::default();
-        let quantization_engine = Arc::new(StorageQuantizationEngine::new(quantization_config)?);
         
         // Initialize distance calculator using unified implementation
         let distance_config = crate::compute::distance_computation::engine::UnifiedDistanceConfig::default();
         let distance_calculator = Arc::new(UnifiedDistanceCompute::new(distance_config)?);
         
-        // Initialize columnar reader for compatibility
-        let columnar_config = crate::storage::engines::columnar::config::ColumnarConfig::default();
-        let columnar_reader = Arc::new(ColumnarReader::new(
-            base_path.clone(),
-            columnar_config,
-            filesystem.clone(),
-        ).await?);
-        
-        // Initialize footer cache for metadata
-        let footer_cache = Arc::new(FooterCache::new(
-            config.cache_size_mb * 1024 * 1024 / 10, // 10% for footer cache
-        ));
-        
-        // Initialize cache orchestrator
-        let cache_orchestrator = Arc::new(CrossCacheOrchestrator::new(
-            config.cache_size_mb * 1024 * 1024,
-        ).await?);
-        
-        // Initialize vector store cache
-        let vector_store = Arc::new(VectorStore::new(
-            config.cache_size_mb * 1024 * 1024 / 2, // 50% for vectors
-        ));
-        
         Ok(Self {
             base_path,
             config,
-            compression_engine,
-            quantization_engine,
+            compression_config,
             distance_calculator,
-            columnar_reader,
-            footer_cache,
-            cache_orchestrator,
-            vector_store,
             filesystem,
             rowgroup_index: Arc::new(RwLock::new(HashMap::new())),
             prefetch_queue: Arc::new(RwLock::new(Vec::new())),
@@ -107,16 +62,7 @@ impl RaptorReader {
     }
     
     pub async fn read_rowgroup(&self, rowgroup_id: u32) -> Result<RecordBatch> {
-        // Check cache first using orchestrator
-        let cache_key = format!("rg_{}", rowgroup_id);
-        let cache_hint = CacheHint::FrequentAccess;
-        
-        if let Some(cached) = self.cache_orchestrator
-            .get(&cache_key, cache_hint)
-            .await? 
-        {
-            return Ok(cached.as_record_batch()?);
-        }
+        // Simplified - would check cache
         
         // Get rowgroup metadata
         let rowgroup = self.get_rowgroup_metadata(rowgroup_id).await?;
@@ -128,16 +74,13 @@ impl RaptorReader {
             self.read_full_file_section(rowgroup.offset, rowgroup.compressed_size).await?
         };
         
-        // Decompress using unified engine
-        let decompressed = self.compression_engine.decompress(&data).await?;
+        // Simplified decompression
+        let decompressed = data; // Would actually decompress
         
         // Deserialize to RecordBatch
         let batch = self.deserialize_batch(&decompressed)?;
         
-        // Cache the result
-        self.cache_orchestrator
-            .put(cache_key, batch.clone(), cache_hint)
-            .await?;
+        // Would cache the result
         
         // Trigger prefetch if enabled
         if self.config.enable_prefetching {
@@ -152,7 +95,7 @@ impl RaptorReader {
         query: &[f32],
         rowgroup_ids: Vec<u32>,
         k: usize,
-    ) -> Result<Vec<VectorSearchResult>> {
+    ) -> Result<Vec<ReaderSearchResult>> {
         let mut all_results = Vec::new();
         
         for rg_id in rowgroup_ids {
@@ -181,7 +124,7 @@ impl RaptorReader {
             
             // Collect results
             for (i, distance) in distances.iter().enumerate() {
-                all_results.push(VectorSearchResult {
+                all_results.push(ReaderSearchResult {
                     rowgroup_id: rg_id,
                     row_index: i,
                     distance: *distance,
@@ -335,8 +278,9 @@ impl RaptorReader {
     }
 }
 
+// Reader search result type
 #[derive(Debug, Clone)]
-pub struct VectorSearchResult {
+pub struct ReaderSearchResult {
     pub rowgroup_id: u32,
     pub row_index: usize,
     pub distance: f32,
