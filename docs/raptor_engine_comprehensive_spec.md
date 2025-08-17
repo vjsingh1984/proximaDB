@@ -325,6 +325,277 @@ Candidates → SIMD Distance → Filtering → Reranking → Results
 - **Cold Data** (60M vectors): VIPER for maximum compression
 - **Total Cost**: ~$250/month vs $400/month single-engine
 
+## Detailed Infrastructure Requirements & Cost Analysis
+
+### Complete Cost Breakdown per Engine (100M vectors, 1536 dimensions, 20 QPS)
+
+#### 1. RAPTOR Engine - Cloud-Optimized Hybrid
+**Use Case**: Real-time search with cloud storage, embedded HNSW
+
+##### Compute Requirements
+| Component | Specification | Monthly Cost | Rationale |
+|-----------|--------------|--------------|-----------|
+| **Instance** | r6i.2xlarge (AWS) | $362 | Memory for RowGroups + HNSW |
+| **vCPUs** | 8 cores @ 3.5 GHz | - | SIMD operations, parallel search |
+| **RAM** | 64 GB DDR5 | - | 40 GB active, 24 GB cache |
+| **Network** | 12.5 Gbps | $10 | High bandwidth for S3 |
+
+##### Storage Configuration
+| Tier | Type | Size | IOPS | Throughput | Monthly Cost |
+|------|------|------|------|------------|--------------|
+| **Local Cache** | Instance Store NVMe | 500 GB | 200K | 2 GB/s | Included |
+| **EBS (backup)** | gp3 | 200 GB | 16K | 1000 MB/s | $20 |
+| **S3 Primary** | S3 Express One Zone | 195 GB | Unlimited | 10 GB/s | $39 |
+| **S3 Archive** | S3 Glacier Instant | 195 GB | - | - | $0.78 |
+
+##### I/O Optimization
+- **Read Size**: 256 KB - 1 MB (optimized for RowGroups)
+- **Write Size**: 5 MB batches (compressed RowGroups)
+- **Prefetch**: 3 RowGroups ahead
+- **Cache Strategy**: LRU with 20 GB hot RowGroups
+
+##### Total Monthly Cost: **$431.78**
+- Compute: $362
+- Storage: $59.78
+- Network: $10
+
+---
+
+#### 2. VIPER Engine - Columnar Analytics
+**Use Case**: Analytics workloads, maximum compression
+
+##### Compute Requirements
+| Component | Specification | Monthly Cost | Rationale |
+|-----------|--------------|--------------|-----------|
+| **Instance** | m6i.xlarge (AWS) | $140 | Balanced compute/memory |
+| **vCPUs** | 4 cores @ 3.5 GHz | - | Column processing |
+| **RAM** | 16 GB DDR5 | - | Column buffers |
+| **Network** | 10 Gbps | $10 | Moderate bandwidth |
+
+##### Storage Configuration
+| Tier | Type | Size | IOPS | Throughput | Monthly Cost |
+|------|------|------|------|------------|--------------|
+| **Local SSD** | gp3 | 200 GB | 3K | 125 MB/s | $20 |
+| **S3 Primary** | S3 Standard | 117 GB | - | - | $2.69 |
+| **S3 Analytics** | S3 Intelligent-Tiering | 117 GB | - | - | $2.92 |
+
+##### I/O Optimization
+- **Read Size**: 1-4 MB (Parquet row groups)
+- **Write Size**: 15 MB batches (compressed)
+- **Column Projection**: Load only needed columns
+- **Dictionary Encoding**: Shared across row group
+- **Predicate Pushdown**: Filter at storage level
+
+##### Total Monthly Cost: **$175.61**
+- Compute: $140
+- Storage: $25.61
+- Network: $10
+
+---
+
+#### 3. SST Engine - Write-Optimized LSM
+**Use Case**: High-throughput ingestion, simple queries
+
+##### Compute Requirements
+| Component | Specification | Monthly Cost | Rationale |
+|-----------|--------------|--------------|-----------|
+| **Instance** | c6i.xlarge (AWS) | $122 | CPU for compaction |
+| **vCPUs** | 4 cores @ 3.5 GHz | - | LSM compaction |
+| **RAM** | 8 GB DDR5 | - | Memtable + cache |
+| **Network** | 10 Gbps | $10 | Standard bandwidth |
+
+##### Storage Configuration
+| Tier | Type | Size | IOPS | Throughput | Monthly Cost |
+|------|------|------|------|------------|--------------|
+| **System** | gp3 | 100 GB | 3K | 125 MB/s | $10 |
+| **Data** | io2 | 150 GB | 10K | 500 MB/s | $115 |
+| **S3 Backup** | S3 Standard-IA | 146 GB | - | - | $1.83 |
+| **WAL** | io2 | 50 GB | 5K | 250 MB/s | $38 |
+
+##### I/O Optimization
+- **Read Size**: 64-256 KB (SST blocks)
+- **Write Size**: 1 MB (memtable flush)
+- **Compaction I/O**: Sequential 4 MB reads/writes
+- **Bloom Filters**: 10 MB in memory
+- **Block Cache**: 2 GB LRU
+
+##### Total Monthly Cost: **$296.83**
+- Compute: $122
+- Storage: $164.83
+- Network: $10
+
+---
+
+#### 4. NOVA Engine - Advanced Columnar
+**Use Case**: Complex analytics, hierarchical statistics
+
+##### Compute Requirements
+| Component | Specification | Monthly Cost | Rationale |
+|-----------|--------------|--------------|-----------|
+| **Instance** | r6i.xlarge (AWS) | $181 | Memory for zone maps |
+| **vCPUs** | 4 cores @ 3.5 GHz | - | SIMD operations |
+| **RAM** | 32 GB DDR5 | - | Zone maps + cache |
+| **Network** | 10 Gbps | $10 | Standard bandwidth |
+
+##### Storage Configuration
+| Tier | Type | Size | IOPS | Throughput | Monthly Cost |
+|------|------|------|------|------------|--------------|
+| **Local SSD** | gp3 | 300 GB | 6K | 250 MB/s | $30 |
+| **S3 Primary** | S3 Express One Zone | 98 GB | Unlimited | 10 GB/s | $20 |
+| **S3 Analytics** | S3 Standard | 98 GB | - | - | $2.25 |
+
+##### I/O Optimization
+- **Read Size**: 4-8 MB (large row groups)
+- **Write Size**: 25 MB batches
+- **Zone Maps**: 100 MB in memory
+- **Hierarchical Stats**: 3-level pruning
+- **Progressive Quantization**: Binary → INT8 → PQ → Full
+
+##### Total Monthly Cost: **$243.25**
+- Compute: $181
+- Storage: $52.25
+- Network: $10
+
+---
+
+#### 5. SWIFT Engine - Dual-Mode SST
+**Use Case**: Fast ID lookups, AXIS integration
+
+##### Compute Requirements
+| Component | Specification | Monthly Cost | Rationale |
+|-----------|--------------|--------------|-----------|
+| **Instance** | m6i.large (AWS) | $70 | Efficient design |
+| **vCPUs** | 2 cores @ 3.5 GHz | - | ID index operations |
+| **RAM** | 8 GB DDR5 | - | B+ tree + cache |
+| **Network** | 10 Gbps | $5 | Lower bandwidth |
+
+##### Storage Configuration
+| Tier | Type | Size | IOPS | Throughput | Monthly Cost |
+|------|------|------|------|------------|--------------|
+| **System** | gp3 | 100 GB | 3K | 125 MB/s | $10 |
+| **ID Index** | io2 | 50 GB | 8K | 400 MB/s | $38 |
+| **S3 Data** | S3 Standard-IA | 146 GB | - | - | $1.83 |
+
+##### I/O Optimization
+- **Read Size**: 128-512 KB (optimized blocks)
+- **Write Size**: 1 MB batches
+- **B+ Tree Pages**: 4 KB aligned
+- **ID Index Cache**: 2 GB in memory
+- **Hierarchical Blocks**: 3-tier structure
+
+##### Total Monthly Cost: **$124.83**
+- Compute: $70
+- Storage: $49.83
+- Network: $5
+
+---
+
+#### 6. PRISM Engine - Memory-First Hierarchical
+**Use Case**: Ultra-low latency, all data in memory
+
+##### Compute Requirements
+| Component | Specification | Monthly Cost | Rationale |
+|-----------|--------------|--------------|-----------|
+| **Instance** | r6i.4xlarge (AWS) | $725 | Maximum memory |
+| **vCPUs** | 16 cores @ 3.5 GHz | - | Parallel tree ops |
+| **RAM** | 128 GB DDR5 | - | All data in memory |
+| **Network** | 25 Gbps | $20 | High bandwidth |
+
+##### Storage Configuration
+| Tier | Type | Size | IOPS | Throughput | Monthly Cost |
+|------|------|------|------|------------|--------------|
+| **Local NVMe** | Instance Store | 1.9 TB | 500K | 7 GB/s | Included |
+| **Backup EBS** | gp3 | 100 GB | 16K | 1000 MB/s | $20 |
+| **S3 Snapshot** | S3 Glacier Deep | 59 GB | - | - | $0.06 |
+| **WAL** | io2 | 100 GB | 20K | 1000 MB/s | $77 |
+
+##### I/O Optimization
+- **Read Size**: 4-16 KB (tree nodes)
+- **Write Size**: 64 KB batches
+- **Cache Lines**: 64-byte aligned
+- **Tree Fanout**: 32 children
+- **Memory Pages**: 2 MB huge pages
+- **NUMA Aware**: Pin to CPU sockets
+
+##### Total Monthly Cost: **$842.06**
+- Compute: $725
+- Storage: $97.06
+- Network: $20
+
+---
+
+### S3 Storage Tier Recommendations by Engine
+
+| Engine | Hot Data | Warm Data | Cold Data | Archive | Rationale |
+|--------|----------|-----------|-----------|---------|-----------|
+| **RAPTOR** | S3 Express One Zone | S3 Standard | S3 Standard-IA | Glacier Instant | Low latency for active RowGroups |
+| **VIPER** | S3 Standard | S3 Intelligent-Tiering | S3 Standard-IA | Glacier Flexible | Analytics with auto-tiering |
+| **SST** | EBS io2 | S3 Standard | S3 Standard-IA | Glacier Deep | Local for compaction |
+| **NOVA** | S3 Express One Zone | S3 Standard | S3 Glacier Instant | - | Fast analytics on recent data |
+| **SWIFT** | EBS io2 | S3 Standard-IA | S3 Glacier Instant | - | ID index local, data in S3 |
+| **PRISM** | Memory | Local NVMe | S3 Glacier Deep | - | Everything in memory |
+
+### Network & Data Transfer Costs
+
+| Engine | Ingress (GB/month) | Egress (GB/month) | Inter-AZ | CloudFront | Monthly Cost |
+|--------|-------------------|-------------------|----------|------------|--------------|
+| **RAPTOR** | 100 GB | 200 GB | 50 GB | Optional | $26 |
+| **VIPER** | 100 GB | 150 GB | 30 GB | Optional | $19 |
+| **SST** | 200 GB | 100 GB | 20 GB | Optional | $17 |
+| **NOVA** | 100 GB | 180 GB | 40 GB | Optional | $23 |
+| **SWIFT** | 150 GB | 100 GB | 20 GB | Optional | $16 |
+| **PRISM** | 50 GB | 300 GB | 0 GB | Required | $35 |
+
+### Additional Infrastructure Components
+
+#### Load Balancing & High Availability
+| Component | RAPTOR | VIPER | SST | NOVA | SWIFT | PRISM |
+|-----------|--------|-------|-----|------|-------|-------|
+| **ALB** | $25 | $25 | $25 | $25 | $25 | $25 |
+| **Multi-AZ** | Active-Passive | Active-Active | Active-Active | Active-Passive | Active-Active | Single AZ |
+| **Replicas** | 1 standby | 2 read replicas | 2 replicas | 1 standby | 2 replicas | None |
+| **Backup** | Daily snapshots | Weekly | Continuous | Daily | Continuous | Hourly |
+| **DR Site** | Optional | Optional | Required | Optional | Optional | Required |
+
+#### Monitoring & Observability
+| Service | Monthly Cost | Usage |
+|---------|--------------|-------|
+| **CloudWatch** | $50 | Metrics, logs, alarms |
+| **X-Ray** | $15 | Distributed tracing |
+| **Grafana** | $20 | Custom dashboards |
+| **Prometheus** | Self-hosted | Metrics collection |
+
+### Total Cost of Ownership (TCO) - 100M Vectors
+
+| Engine | Infrastructure | Storage | Network | Operations | **Total Monthly** | **Annual TCO** |
+|--------|---------------|---------|---------|------------|------------------|----------------|
+| **RAPTOR** | $362 | $60 | $26 | $110 | **$558** | **$6,696** |
+| **VIPER** | $140 | $26 | $19 | $110 | **$295** | **$3,540** |
+| **SST** | $122 | $165 | $17 | $110 | **$414** | **$4,968** |
+| **NOVA** | $181 | $52 | $23 | $110 | **$366** | **$4,392** |
+| **SWIFT** | $70 | $50 | $16 | $110 | **$246** | **$2,952** |
+| **PRISM** | $725 | $97 | $35 | $110 | **$967** | **$11,604** |
+
+### Scaling Recommendations
+
+#### Vertical Scaling Thresholds
+| Metric | Scale Up | Scale Down | Engine Impact |
+|--------|----------|------------|---------------|
+| **CPU** | >80% for 5 min | <30% for 30 min | All engines |
+| **Memory** | >85% | <40% | PRISM, RAPTOR critical |
+| **IOPS** | >90% baseline | <20% | SST, SWIFT critical |
+| **Network** | >8 Gbps | <1 Gbps | RAPTOR, NOVA affected |
+
+#### Horizontal Scaling Strategy
+| Engine | Sharding Key | Partition Strategy | Max Shards | Rebalancing |
+|--------|--------------|-------------------|------------|-------------|
+| **RAPTOR** | Collection ID | Consistent hash | 16 | Automatic |
+| **VIPER** | Time range | Range partition | 32 | Manual |
+| **SST** | Vector ID hash | Hash partition | 64 | Background |
+| **NOVA** | Metadata field | Custom | 16 | Scheduled |
+| **SWIFT** | ID prefix | Range partition | 32 | Online |
+| **PRISM** | Tree level | Hierarchical | 8 | Rebuild |
+
 ## Implementation Details
 
 ### Core Components
