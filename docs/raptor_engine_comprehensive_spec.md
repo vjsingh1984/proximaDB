@@ -150,6 +150,8 @@ Candidates → SIMD Distance → Filtering → Reranking → Results
 | **Read Latency** | 5-10ms | 10-20ms | 15-25ms | 8-15ms | 10-20ms | 1-5ms |
 | **Memory Usage** | High | Moderate | Low | Moderate | Low | Very High |
 | **Complex Metadata** | Excellent | Limited | Basic | Good | Basic | Moderate |
+| **Block/RowGroup Size** | 10K vectors | 50K vectors | 2K vectors | 100K vectors | 2K vectors | 32-64 vectors |
+| **Optimal I/O Size** | 256KB-1MB | 1-4MB | 64-256KB | 4-8MB | 128-512KB | 4-16KB |
 
 ### Use Case Optimization
 
@@ -216,6 +218,112 @@ Candidates → SIMD Distance → Filtering → Reranking → Results
 - **CPU**: SIMD-optimized, 60% reduction
 - **Network**: Range reads reduce bandwidth 70%
 - **Storage**: 45% compression ratio
+
+## Cost Analysis for 100M Vectors @ 20 QPS
+### Assumptions: OpenAI 1536-dimension embeddings, 24/7 operation
+
+### Storage Cost Breakdown (Monthly)
+
+| Engine | Raw Size | Compressed | S3 Storage | S3 API Calls | Total Storage Cost |
+|--------|----------|------------|------------|--------------|-------------------|
+| **RAPTOR** | 586 GB | 195 GB | $4.49 | $18.20 | **$22.69** |
+| **VIPER** | 586 GB | 117 GB | $2.69 | $8.40 | **$11.09** |
+| **SST** | 586 GB | 146 GB | $3.36 | $24.50 | **$27.86** |
+| **NOVA** | 586 GB | 98 GB | $2.25 | $5.60 | **$7.85** |
+| **SWIFT** | 586 GB | 146 GB | $3.36 | $21.00 | **$24.36** |
+| **PRISM** | 586 GB | 59 GB | $1.36 | $2.80 | **$4.16** |
+
+#### S3 API Call Details (Monthly @ 20 QPS)
+- **Read Operations**: ~52M requests/month
+- **List Operations**: ~1M requests/month  
+- **Write Operations**: ~100K requests/month (updates)
+
+| Engine | GET Requests | LIST Requests | PUT Requests | Total API Cost |
+|--------|-------------|---------------|--------------|----------------|
+| **RAPTOR** | $20.80 (10K blocks) | $0.50 | $0.50 | $21.80 |
+| **VIPER** | $10.40 (50K blocks) | $0.50 | $0.50 | $11.40 |
+| **SST** | $41.60 (2K blocks) | $0.50 | $0.50 | $42.60 |
+| **NOVA** | $5.20 (100K blocks) | $0.50 | $0.50 | $6.20 |
+| **SWIFT** | $41.60 (2K blocks) | $0.50 | $0.50 | $42.60 |
+| **PRISM** | $2.60 (cached) | $0.50 | $0.50 | $3.60 |
+
+### Instance Requirements & Costs (Monthly)
+
+| Engine | Instance Type | vCPUs | Memory | Storage | Monthly Cost | Rationale |
+|--------|--------------|-------|---------|---------|--------------|-----------|
+| **RAPTOR** | r6i.2xlarge | 8 | 64 GB | 500 GB NVMe | $362 | High memory for RowGroups + HNSW |
+| **VIPER** | m6i.xlarge | 4 | 16 GB | 200 GB gp3 | $140 | Columnar needs less memory |
+| **SST** | c6i.xlarge | 4 | 8 GB | 100 GB gp3 | $122 | CPU-optimized for compaction |
+| **NOVA** | r6i.xlarge | 4 | 32 GB | 300 GB gp3 | $181 | Memory for zone maps |
+| **SWIFT** | m6i.large | 2 | 8 GB | 100 GB gp3 | $70 | Efficient ID indexing |
+| **PRISM** | r6i.4xlarge | 16 | 128 GB | 1 TB NVMe | $725 | All data in memory |
+
+### Total Monthly Cost (Storage + Compute + Network)
+
+| Engine | Storage | S3 API | Instance | Network | **Total/Month** | **Cost/Million Vectors** |
+|--------|---------|--------|----------|---------|-----------------|-------------------------|
+| **RAPTOR** | $4.49 | $21.80 | $362 | $10 | **$398.29** | **$3.98** |
+| **VIPER** | $2.69 | $11.40 | $140 | $10 | **$164.09** | **$1.64** |
+| **SST** | $3.36 | $42.60 | $122 | $10 | **$177.96** | **$1.78** |
+| **NOVA** | $2.25 | $6.20 | $181 | $10 | **$199.45** | **$1.99** |
+| **SWIFT** | $3.36 | $42.60 | $70 | $10 | **$125.96** | **$1.26** |
+| **PRISM** | $1.36 | $3.60 | $725 | $10 | **$739.96** | **$7.40** |
+
+### Block/RowGroup Size Details
+
+#### RAPTOR
+- **RowGroup Size**: 10,000 vectors (15 MB uncompressed, 5 MB compressed)
+- **Superblock**: 10 RowGroups (100K vectors)
+- **I/O Pattern**: 256KB-1MB reads for cloud optimization
+- **Cache Unit**: Single RowGroup in memory
+
+#### VIPER  
+- **RowGroup Size**: 50,000 vectors (75 MB uncompressed, 15 MB compressed)
+- **Page Size**: 64KB for column chunks
+- **I/O Pattern**: 1-4MB reads for Parquet efficiency
+- **Dictionary Encoding**: Shared across RowGroup
+
+#### SST
+- **Block Size**: 2,000 vectors (3 MB uncompressed, 1 MB compressed)
+- **Superblock**: 64 blocks (128K vectors)
+- **I/O Pattern**: 64-256KB reads for LSM efficiency
+- **Bloom Filter**: Per block for fast filtering
+
+#### NOVA
+- **RowGroup Size**: 100,000 vectors (150 MB uncompressed, 25 MB compressed)
+- **SuperBlock**: 10 RowGroups (1M vectors)
+- **I/O Pattern**: 4-8MB reads for analytics
+- **Zone Maps**: Per RowGroup for pruning
+
+#### SWIFT
+- **Block Size**: 2,000 vectors (3 MB uncompressed, 1 MB compressed)
+- **Hierarchical Block**: 3-tier (Block → Superblock → File)
+- **I/O Pattern**: 128-512KB reads for ID lookups
+- **B+ Tree Pages**: 4KB for ID index
+
+#### PRISM
+- **Node Size**: 32-64 vectors (48-96 KB uncompressed, 5-10 KB compressed)
+- **Tree Fanout**: 32 children per node
+- **I/O Pattern**: 4-16KB reads for tree traversal
+- **Cache Line**: Aligned to CPU cache (64 bytes)
+
+### Cost Optimization Recommendations
+
+#### For Cost-Sensitive Deployments (<$2/M vectors)
+1. **SWIFT** ($1.26/M): Best overall value for mixed workloads
+2. **VIPER** ($1.64/M): Ideal for analytics with compression
+3. **SST** ($1.78/M): Good for write-heavy scenarios
+
+#### For Performance-Critical Deployments
+1. **PRISM** ($7.40/M): Sub-millisecond latency, 100% cache hit
+2. **RAPTOR** ($3.98/M): Cloud-optimized with embedded HNSW
+3. **NOVA** ($1.99/M): Advanced analytics with good performance
+
+#### Hybrid Deployment Strategy
+- **Hot Data** (10M vectors): PRISM for ultra-low latency
+- **Warm Data** (30M vectors): RAPTOR for balanced performance  
+- **Cold Data** (60M vectors): VIPER for maximum compression
+- **Total Cost**: ~$250/month vs $400/month single-engine
 
 ## Implementation Details
 
