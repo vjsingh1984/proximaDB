@@ -6,11 +6,9 @@
 //! The Universal Adapter provides unified distance computation across all engines.
 
 pub mod sst;
-// Temporarily disabled due to arrow-arith compilation conflicts - TODO: Re-enable when resolved
-// pub mod viper; // Re-enabled with stub types
+pub mod viper;   // Columnar storage engine with Parquet format
 pub mod swift;   // Storage With Instant Fast Traversal - dual-mode SST with ID-based lookups
-// Temporarily disabled due to arrow-arith compilation conflicts - TODO: Re-enable when resolved  
-// pub mod nova;    // Next-gen Optimized Vector Analytics - dual-mode VIPER with columnar quantization
+pub mod nova;    // Next-gen Optimized Vector Analytics - dual-mode VIPER with columnar quantization
 pub mod prism;   // Progressive Retrieval through Indexed Storage Management - memory-optimized hierarchical engine
 pub mod raptor;  // Row-Aligned Predicated Tensor Optimized Repository - cloud-optimized with embedded HNSW
 pub mod columnar; // Shared columnar storage infrastructure for NOVA and VIPER
@@ -23,11 +21,9 @@ pub mod universal; // Universal distance adapter system with PQ and INT8 optimiz
 
 // Re-export main engine types
 pub use sst::SstStorage;
-// Temporarily disabled due to arrow-arith compilation conflicts - TODO: Re-enable when resolved
-// pub use viper::ViperEngine; // Re-enabled with stub types
+pub use viper::ViperEngine;
 pub use swift::SwiftEngine;
-// Temporarily disabled due to arrow-arith compilation conflicts - TODO: Re-enable when resolved
-// pub use nova::NovaEngine;
+pub use nova::NovaEngine;
 pub use prism::PrismEngine;
 pub use raptor::RaptorEngine;
 
@@ -82,6 +78,3 @@ pub enum LevelType {
     Cold = 3,
 }
 
-// Stub implementations for disabled engines
-// Re-export the viper module and its engine
-pub mod viper;

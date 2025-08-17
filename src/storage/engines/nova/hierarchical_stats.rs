@@ -174,6 +174,7 @@ pub struct SearchCostEstimate {
     pub estimated_latency_ms: f32,
     
     /// Confidence in estimate (0.0-1.0)
+    pub confidence: f32,
 }
 
 /// Access patterns and usage statistics

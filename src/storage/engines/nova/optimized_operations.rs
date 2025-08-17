@@ -3,7 +3,8 @@
 
 use anyhow::{anyhow, Result};
 use arrow_array::{ArrayRef, Float32Array, BinaryArray};
-use arrow::compute::kernels::aggregate;
+// Arrow compute not available, would need full arrow crate
+// use arrow::compute::kernels::aggregate;
 use parquet::arrow::arrow_reader::ParquetRecordBatchReader;
 use std::sync::Arc;
 use tracing::{debug, info};
@@ -43,7 +44,8 @@ impl MmapParquetReader {
     }
 }
 
-use super::{ViperFile, SearchCandidate};
+use super::NovaFile;
+use crate::storage::engines::columnar::SearchCandidate;
 use super::columnar_search::ColumnarSearchConfig;
 
 /// Optimized VIPER operations using existing infrastructure

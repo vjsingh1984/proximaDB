@@ -4,7 +4,7 @@
 
 use anyhow::{anyhow, Result};
 use arrow_array::array::{ArrayRef, BinaryArray, Float32Array, Int8Array, UInt8Array};
-use arrow_array::datatypes::{DataType, Field};
+use arrow_schema::{DataType, Field};
 use arrow_array::record_batch::RecordBatch;
 use parquet::arrow::ArrowWriter;
 use parquet::file::properties::{WriterProperties, WriterVersion};
@@ -16,8 +16,6 @@ use crate::storage::engines::common::{
     UniversalQuantizationAdapter,
     UniversalQuantizationConfig,
     quantization_common::{
-        ProgressiveSearchResult,
-        QuantizedVector,
     },
 };
 

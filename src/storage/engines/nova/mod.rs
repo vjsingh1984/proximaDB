@@ -27,7 +27,7 @@ pub use unified_columnar_integration::{
     AdvancedSearchResult, NovaPerformanceMetrics, HierarchicalStatistics,
     ZoneMap, AdvancedSearchOptions,
 };
-pub use hierarchical_stats::{SuperBlock, EnhancedRowGroupStats, ZoneMap};
+pub use hierarchical_stats::{SuperBlock, EnhancedRowGroupStats};
 pub use streaming_processor::{StreamingRowGroupProcessor, StreamingConfig};
 pub use progressive_search::{ProgressiveColumnarSearch, ProgressiveSearchConfig};
 pub use zone_maps::{AdvancedZoneMap, CostBasedOptimizer, ZoneMapConfig};

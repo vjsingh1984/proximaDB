@@ -13,8 +13,10 @@ use tokio::sync::{Semaphore, RwLock};
 use tracing::{debug, info, warn};
 
 use crate::core::VectorRecord;
-use super::{ViperFile, ParquetLocation};
-use super::id_index::BatchIdReader;
+use super::NovaFile;
+use crate::storage::engines::columnar::ParquetLocation;
+// ID index not available in NOVA yet
+// use super::id_index::BatchIdReader;
 
 /// Configuration for batch operations
 #[derive(Debug, Clone)]

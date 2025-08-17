@@ -23,7 +23,7 @@ use crate::storage::engines::common::{
     UniversalCompressionConfig, UniversalQuantizationConfig,
     compression_common::{
         AdaptiveCompressionSettings, AdaptiveStrategy,
-        ContextAwareCompressionConfig, CompressionDataType,
+        ContextAwareCompressionConfig,
     },
     quantization_common::{
         ProgressiveQuantizationStage, UniversalQuantizationLevel,
@@ -32,7 +32,7 @@ use crate::storage::engines::common::{
 };
 
 use super::{
-    ViperFile, SearchMode, MetadataFilter,
+    NovaFile, MetadataFilter, ColumnarSearchMode as SearchMode,
     optimized_operations::OptimizedNovaOperations,
 };
 use crate::storage::engines::columnar::{
@@ -87,13 +87,6 @@ impl NovaEngine {
         compression_config.compression_level = 5; // Higher for columnar data
         compression_config.adaptive_settings = AdaptiveCompressionSettings {
             enabled: true,
-            // strategy removed -  AdaptiveStrategy::ColumnarOptimized,
-            // fallback_algorithms removed -  vec![
-                crate::core::compression::CompressionAlgorithm::Zstd,
-                crate::core::compression::CompressionAlgorithm::Lz4,
-                crate::core::compression::CompressionAlgorithm::Snappy,
-            ],
-            // performance_target removed -  Some(50), // 50ms for larger columnar blocks
         };
         compression_config.context_aware = ContextAwareCompressionConfig {
             // data_type removed -  CompressionDataType::ParquetColumn,

@@ -3,7 +3,8 @@
 
 use anyhow::{anyhow, Result};
 use arrow_array::array::{ArrayRef, Float32Array, BinaryArray, StringArray};
-use arrow_array::compute::kernels::comparison;
+// Arrow compute functions are not in arrow_array, would need arrow crate
+// For now, implement comparisons manually
 use arrow_array::record_batch::RecordBatch;
 use parquet::arrow::arrow_reader::ParquetRecordBatchReader;
 use parquet::arrow::ProjectionMask;
@@ -15,7 +16,7 @@ use tracing::{debug, info};
 
 use crate::core::VectorRecord;
 use crate::compute::distance_computation::DistanceMetric;
-use super::{ViperFile, MetadataFilter, FilterCondition};
+use super::{NovaFile, MetadataFilter, FilterCondition};
 use super::quantized_columns::{BinarySketch, Int8Vector, PQCode, DistanceTable};
 
 /// Configuration for columnar progressive search

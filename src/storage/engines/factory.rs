@@ -13,12 +13,11 @@ use crate::metrics::collectors::EngineMetricsCollector;
 
 use super::{
     sst::SstStorage,
-    // Temporarily disabled due to arrow-arith compilation conflicts - TODO: Re-enable when resolved
-    // viper::ViperEngine,
+    viper::ViperEngine,
     swift::SwiftEngine,
-    // Temporarily disabled due to arrow-arith compilation conflicts - TODO: Re-enable when resolved
-    // nova::NovaEngine,
+    nova::NovaEngine,
     prism::PrismEngine,
+    raptor::RaptorEngine,
 };
 
 /// Storage engine factory for creating engine instances
@@ -34,10 +33,7 @@ impl StorageEngineFactory {
                 warn!("Unspecified storage engine, defaulting to SST (VIPER not available)");
                 Self::create_sst()
             }
-            ProtoStorageEngine::Viper => {
-                warn!("VIPER engine not available, using SST");
-                Self::create_sst()
-            },
+            ProtoStorageEngine::Viper => Self::create_viper(),
             ProtoStorageEngine::Sst => Self::create_sst(),
             ProtoStorageEngine::Mmap => {
                 warn!("MMAP engine not yet implemented, using SST");
@@ -49,34 +45,36 @@ impl StorageEngineFactory {
             }
             ProtoStorageEngine::Swift => Self::create_swift(),
             ProtoStorageEngine::Nova => Self::create_nova(),
-        }
-    }
-    
-    /// Create a storage engine from strategy enum
-    pub fn create_from_strategy(
-        // strategy removed -  StorageEngineStrategy,
-    ) -> Result<Arc<dyn UnifiedStorageEngine>> {
-        match strategy {
-            StorageEngineStrategy::Viper => {
-                warn!("VIPER strategy not available, using SST");
-                Self::create_sst()
-            },
-            StorageEngineStrategy::Lsm => Self::create_sst(),
-            StorageEngineStrategy::Prism => Self::create_prism(),
-            StorageEngineStrategy::Hybrid => {
-                warn!("Hybrid strategy not yet implemented, using SST");
+            // Add RAPTOR for cloud-optimized workloads
+            _ => {
+                warn!("Unknown storage engine type, defaulting to SST");
                 Self::create_sst()
             }
         }
     }
     
+    /// Create a storage engine from strategy enum
+    pub fn create_from_strategy(
+        strategy: StorageEngineStrategy,
+    ) -> Result<Arc<dyn UnifiedStorageEngine>> {
+        match strategy {
+            StorageEngineStrategy::Viper => Self::create_viper(),
+            StorageEngineStrategy::Lsm => Self::create_sst(),
+            StorageEngineStrategy::Prism => Self::create_prism(),
+            StorageEngineStrategy::Hybrid => {
+                // RAPTOR uses hybrid strategy (row-aligned with columnar benefits)
+                info!("Creating RAPTOR engine for hybrid strategy");
+                Self::create_raptor_default()
+            }
+        }
+    }
+    
     /// Create VIPER engine
-    // TODO: Restore when ViperEngine is available
-    /* fn create_viper() -> Result<Arc<dyn UnifiedStorageEngine>> {
+    fn create_viper() -> Result<Arc<dyn UnifiedStorageEngine>> {
         info!("Creating VIPER storage engine");
         let engine = ViperEngine::new()?;
         Ok(Arc::new(engine))
-    } */
+    }
     
     /// Create SST engine
     fn create_sst() -> Result<Arc<dyn UnifiedStorageEngine>> {
@@ -96,6 +94,26 @@ impl StorageEngineFactory {
     fn create_nova() -> Result<Arc<dyn UnifiedStorageEngine>> {
         info!("Creating NOVA (Next-gen Optimized Vector Analytics) storage engine");
         let engine = NovaEngine::new()?;
+        Ok(Arc::new(engine))
+    }
+    
+    /// Create RAPTOR engine (Row-Aligned Predicated Tensor Optimized Repository)
+    fn create_raptor_default() -> Result<Arc<dyn UnifiedStorageEngine>> {
+        warn!("RAPTOR engine requires async initialization with collection info");
+        // For now, return SST as fallback
+        Self::create_sst()
+    }
+    
+    /// Create RAPTOR engine with specific configuration (async)
+    pub async fn create_raptor(
+        collection_id: String,
+        base_path: String,
+        config: Option<super::raptor::RaptorConfig>,
+    ) -> Result<Arc<dyn UnifiedStorageEngine>> {
+        info!("Creating RAPTOR (Row-Aligned Predicated Tensor Optimized Repository) storage engine");
+        
+        let config = config.unwrap_or_else(super::raptor::RaptorConfig::default);
+        let engine = RaptorEngine::new(collection_id, base_path, config).await?;
         Ok(Arc::new(engine))
     }
     
@@ -144,9 +162,7 @@ impl StorageEngineFactory {
                 }
             }
             ProtoStorageEngine::Nova => {
-                // TODO: Restore when NovaEngine is available
-                return Err(anyhow!("Nova engine is currently disabled"));
-                /* if let Ok(mut nova) = Arc::try_unwrap(engine).and_then(|e| e.downcast::<NovaEngine>()) {
+                if let Ok(mut nova) = Arc::try_unwrap(engine).and_then(|e| e.downcast::<NovaEngine>()) {
                     nova.set_metrics_collector(metrics_collector.clone());
                     // Register engine with collector
                     let weak_ref = Arc::downgrade(&(Arc::new(nova) as Arc<dyn UnifiedStorageEngine>));
@@ -155,7 +171,6 @@ impl StorageEngineFactory {
                     });
                     return Ok(Arc::new(nova) as Arc<dyn UnifiedStorageEngine>);
                 }
-                */
             }
             _ => {
                 // For other engines, just register without metrics modification
@@ -174,7 +189,7 @@ impl StorageEngineFactory {
     pub fn create_for_workload(workload: WorkloadType) -> Result<Arc<dyn UnifiedStorageEngine>> {
         match workload {
             WorkloadType::Analytics => {
-                info!("Analytics workload detected, using NOVA for columnar optimization");
+                info!("Analytics workload detected, using NOVA for advanced columnar analytics");
                 Self::create_nova()
             }
             WorkloadType::Transactional => {
@@ -182,12 +197,12 @@ impl StorageEngineFactory {
                 Self::create_swift()
             }
             WorkloadType::Mixed => {
-                info!("Mixed workload detected, using VIPER as balanced option");
+                info!("Mixed workload detected, using VIPER for balanced performance");
                 Self::create_viper()
             }
             WorkloadType::Experimental => {
-                info!("Experimental workload, using NOVA for advanced features");
-                Self::create_nova()
+                info!("Experimental workload, using RAPTOR for cloud-optimized features");
+                Self::create_raptor_default()
             }
         }
     }

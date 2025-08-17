@@ -531,7 +531,6 @@ impl NovaUnifiedEngine {
     /// Create NOVA-optimized configuration
     fn create_nova_optimized_config(nova_config: &NovaSpecificConfig) -> CommonColumnarConfig {
         use crate::storage::engines::columnar::{
-            NovaOptimizations, ZoneMapOptimization, StreamingProcessingConfig, AdvancedCachingConfig,
         };
         
         let mut config = CommonColumnarConfig::default();

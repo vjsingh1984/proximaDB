@@ -3991,6 +3991,7 @@ dependencies = [
  "arc-swap",
  "arrow-array",
  "arrow-data",
+ "arrow-ipc",
  "arrow-schema",
  "async-trait",
  "aws-config",

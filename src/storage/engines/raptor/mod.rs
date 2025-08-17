@@ -11,6 +11,9 @@ pub mod hnsw_manager;
 pub mod simd_ops;
 pub mod metadata;
 
+#[cfg(test)]
+mod tests;
+
 pub use config::RaptorConfig;
 pub use engine::RaptorEngine;
 pub use rowgroup::{RowGroup, RowGroupManager};

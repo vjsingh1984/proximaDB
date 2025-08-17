@@ -68,6 +68,7 @@ parquet = { version = "53.0", default-features = false, features = ["arrow", "zs
 arrow-array = { version = "53.0", default-features = false }
 arrow-schema = { version = "53.0", default-features = false }
 arrow-data = { version = "53.0", default-features = false }
+arrow-ipc = { version = "53.0", default-features = false }
 
 # Advanced compression for recovery-optimized WAL
 lz4_flex = "0.11"        # Faster LZ4 implementation
