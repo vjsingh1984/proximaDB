@@ -195,7 +195,7 @@ pub enum PrefetchStrategy {
     /// No prefetching
     None,
     /// Sequential prefetching
-    Sequential { distance: usize },
+    Sequential { similarity: usize },
     /// Pattern-based prefetching
     Pattern { pattern_buffer_size: usize },
     /// ML-driven prefetching

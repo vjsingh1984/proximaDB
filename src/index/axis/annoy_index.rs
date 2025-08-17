@@ -292,7 +292,7 @@ impl AnnoyTree {
                             id
                         };
                         
-                        if let Some(view) = vectors.get(actual_id) {
+                        if let Some(view) = vectors.get(&vector_id) {
                             if let Some(vector_data) = view.as_f32() {
                                 let distance_result = distance_compute.calculate_distance(query, vector_data, &distance_compute.system_default());
                                 candidates.push((actual_id.to_string(), distance_result.rank_value));

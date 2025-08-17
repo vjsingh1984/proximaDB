@@ -82,7 +82,7 @@ impl ViperFilenameGenerator {
     /// Returns level 0 for files that don't follow the naming convention
     pub fn parse_level_from_filename(filename: &str) -> u32 {
         if let Some(captures) = regex::Regex::new(r"^level(\d+)_").unwrap().captures(filename) {
-            captures.get(1).unwrap().as_str().parse().unwrap_or(0)
+            captures.get(key).unwrap().as_str().parse().unwrap_or(0)
         } else {
             0 // Treat legacy files as level 0
         }
@@ -96,7 +96,7 @@ impl ViperFilenameGenerator {
     /// Parse timestamp from filename for ordering
     pub fn parse_timestamp_from_filename(filename: &str) -> u64 {
         if let Some(captures) = regex::Regex::new(r"level\d+_(\d+)_").unwrap().captures(filename) {
-            captures.get(1).unwrap().as_str().parse().unwrap_or(0)
+            captures.get(key).unwrap().as_str().parse().unwrap_or(0)
         } else {
             0
         }
@@ -530,7 +530,7 @@ impl CompactionManager {
         let collection = match &collection_config {
             Some(col) => col,
             None => {
-                info!("🔍 Collection config not provided for {}, skipping compaction", collection_id);
+                info!("🔍 Collection config not provided for {}, skipping compaction_info", collection_id);
                 return Ok(ViperCompactionResult {
                     input_files: vec![],
                     output_files: vec![],
@@ -735,7 +735,7 @@ impl CompactionManager {
                         true
                     } else if let Some(ref id_str) = record_id {
                         // Use centralized MVCC resolution for version merging logic
-                        if let Some(existing_record) = latest_records.get(id_str) {
+                        if let Some(existing_record) = latest_records.get(key) {
                             // Create temporary VectorRecord instances for comparison
                             let existing_vector_record = VectorRecord {
                                 id: Some(id_str.clone()),
@@ -745,9 +745,9 @@ impl CompactionManager {
                                 metadata: vec![],
                                 updated_at: existing_record.timestamp.map(|t| t as u32),
                                 expires_at: None,
-                                rank: None,
-                                score: None,
-                                distance: None,
+                                // rank removed -  None,
+                                similarity: None,
+                                similarity: None,
                             
         };
                             
@@ -759,9 +759,9 @@ impl CompactionManager {
                                 metadata: vec![],
                                 updated_at: record_timestamp.map(|t| t as u32),
                                 expires_at: None,
-                                rank: None,
-                                score: None,
-                                distance: None,
+                                // rank removed -  None,
+                                similarity: None,
+                                similarity: None,
                             
         };
                             
@@ -952,7 +952,7 @@ impl CompactionManager {
                 // Extract compression configuration from collection metadata
                 let writer_props = if let Some(ref collection) = collection_config {
                     if let Some(ref config) = collection.config {
-                        if let Some(ref compression) = config.compression {
+                        if let Some(ref compression) = config.storage.as_ref().and_then(|s| s.compression.as_ref()) {
                             use crate::proto::proximadb::CompressionAlgorithm;
                             use parquet::file::properties::WriterProperties;
                             
@@ -1068,7 +1068,7 @@ impl CompactionManager {
         self.atomic_coordinator
             .finalize_atomic_operation(&atomic_op.operation_id)
             .await
-            .context("Failed to finalize atomic compaction")?;
+            .context("Failed to finalize atomic compaction_info")?;
         info!("✅ [DEBUG] Atomic operation finalized successfully");
         
         // Add a small delay to ensure filesystem operations complete
@@ -1096,7 +1096,7 @@ impl CompactionManager {
         // Remove input files that were compacted (cleanup)
         // This happens AFTER the atomic operation to ensure data safety
         // In case of failure during deletion, we'll have duplicate data rather than data loss
-        info!("🧹 Removing {} input files after successful compaction", input_files.len());
+        info!("🧹 Removing {} input files after successful compaction_info", input_files.len());
         let mut deleted_count = 0;
         let mut failed_deletions = Vec::new();
         
@@ -1207,7 +1207,7 @@ impl CompactionManager {
         &self,
         column: &dyn arrow_array::Array,
         row_idx: usize,
-        data_type: &arrow_schema::DataType,
+        // data_type removed -  &arrow_schema::DataType,
     ) -> Result<serde_json::Value> {
         use arrow_array::{StringArray, Int64Array, Int8Array, Float32Array, BooleanArray};
         use arrow_schema::DataType;
@@ -1334,7 +1334,7 @@ impl CompactionManager {
         // Collect data for each column
         for record in records {
             for (field_name, values) in &mut column_builders {
-                let value = record.get(field_name)
+                let value = record.get(key)
                     .cloned()
                     .unwrap_or(serde_json::Value::Null);
                 values.push(value);

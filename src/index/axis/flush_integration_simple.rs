@@ -112,7 +112,7 @@ impl SimpleFlushNotifier {
     fn detect_representations(params: &FlushParameters) -> (bool, bool) {
         // Check collection config for quantization
         let has_quantization = params.collection_config.as_ref()
-            .and_then(|c| c.quantization_config.as_ref())
+            .and_then(|c| c.quantization.as_ref())
             .map(|q| q.enabled)
             .unwrap_or(false);
         
@@ -122,7 +122,7 @@ impl SimpleFlushNotifier {
     
     fn detect_storage_engine(params: &FlushParameters) -> StorageEngineType {
         // Could check hints or config
-        if params.hints.as_ref().map(|h| h.contains("viper")).unwrap_or(false) {
+        if params.hints.as_ref().map(|h| h.contains_hash("viper")).unwrap_or(false) {
             StorageEngineType::VIPER
         } else {
             StorageEngineType::SST
@@ -130,7 +130,7 @@ impl SimpleFlushNotifier {
     }
     
     fn detect_storage_engine_from_compaction(params: &CompactionParameters) -> StorageEngineType {
-        if params.hints.as_ref().map(|h| h.contains("viper")).unwrap_or(false) {
+        if params.hints.as_ref().map(|h| h.contains_hash("viper")).unwrap_or(false) {
             StorageEngineType::VIPER
         } else {
             StorageEngineType::SST
@@ -242,7 +242,7 @@ mod tests {
         for i in 0..1000 {
             notifier.notify_flush(
                 &params,
-                vec![format!("file_{}.sst", i)],
+                vec![format!("file_{}.sstable", i)],
                 100,
             );
         }
@@ -264,7 +264,7 @@ mod tests {
         let (notifier, _service, _dir) = create_test_notifier().await;
         
         // Can compact unknown files by default
-        assert!(notifier.can_compact("test_collection", "unknown.sst").await);
+        assert!(notifier.can_compact("test_collection", "unknown.sstable").await);
         
         // After adding flush event, file shouldn't be compactable
         let mut params = FlushParameters::default();
@@ -272,7 +272,7 @@ mod tests {
         
         notifier.notify_flush(
             &params,
-            vec!["file1.sst".to_string()],
+            vec!["file1.sstable".to_string()],
             100,
         );
         
@@ -280,6 +280,6 @@ mod tests {
         tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
         
         // Now file shouldn't be compactable until indexes process it
-        assert!(!notifier.can_compact("test_collection", "file1.sst").await);
+        assert!(!notifier.can_compact("test_collection", "file1.sstable").await);
     }
 }

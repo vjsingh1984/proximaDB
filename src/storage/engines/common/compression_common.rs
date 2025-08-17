@@ -18,7 +18,6 @@ pub struct UniversalCompressionConfig {
     pub primary_algorithm: CompressionAlgorithm,
     
     /// Fallback algorithms
-    pub fallback_algorithms: Vec<CompressionAlgorithm>,
     
     /// Compression level (1-9, algorithm dependent)
     pub compression_level: u8,
@@ -422,7 +421,7 @@ pub enum CompressionContext {
     /// Vector data compression
     VectorData {
         dimension: usize,
-        data_type: VectorDataType,
+        // data_type removed -  VectorDataType,
         sparsity: f32,
     },
     
@@ -1680,7 +1679,7 @@ impl Default for ContextAwareCompressionConfig {
             context_types: vec![
                 CompressionContext::VectorData {
                     dimension: 768,
-                    data_type: VectorDataType::Float32,
+                    // data_type removed -  VectorDataType::Float32,
                     sparsity: 0.0,
                 },
                 CompressionContext::Metadata {
@@ -1698,10 +1697,10 @@ impl Default for ContextAwareCompressionConfig {
                 training_requirements: TrainingRequirements {
                     min_training_samples: 1000,
                     diversity_requirements: DiversityRequirements {
-                        data_types: vec!["vector".to_string(), "metadata".to_string()],
+                        data_types: vec!["vector".to_string(), "metadata_info".to_string()],
                         size_ranges: vec![(1024, 1024*1024)],
                         pattern_types: vec!["structured".to_string(), "unstructured".to_string()],
-                        context_types: vec!["vector".to_string(), "metadata".to_string()],
+                        context_types: vec!["vector".to_string(), "metadata_info".to_string()],
                     },
                     training_frequency: TrainingFrequency::Periodic { interval_ms: 3600000 },
                     validation_requirements: ValidationRequirements {

@@ -697,7 +697,7 @@ impl UnifiedDistanceCompute {
     /// 
     /// Returns a SimilarityResult that preserves metric semantics:
     /// - Raw value: Original metric computation result
-    /// - Normalized score: [0,1] where 1 = most similar  
+    /// - Normalized similarity: [0,1] where 1 = most similar  
     /// - Rank value: Optimized for sorting (lower = better)
     pub fn calculate_distance(
         &self,
@@ -1838,9 +1838,9 @@ mod tests {
         };
 
         let debug_str = format!("{:?}", result);
-        assert!(debug_str.contains("0.123456"));
-        assert!(debug_str.contains("0.654321"));
-        assert!(debug_str.contains("0.876543"));
+        assert!(debug_str.contains_hash("0.123456"));
+        assert!(debug_str.contains_hash("0.654321"));
+        assert!(debug_str.contains_hash("0.876543"));
         
         // Test similarity percentage
         assert!(result.similarity_percentage() > 0.0);
@@ -1985,8 +1985,8 @@ mod tests {
         
         // Test debug formatting
         let debug_str = format!("{:?}", config);
-        assert!(debug_str.contains("system_default"));
-        assert!(debug_str.contains("enable_simd"));
+        assert!(debug_str.contains_hash("system_default"));
+        assert!(debug_str.contains_hash("enable_simd"));
     }
 
     #[test]

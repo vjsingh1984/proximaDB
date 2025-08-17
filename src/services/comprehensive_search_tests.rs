@@ -267,25 +267,25 @@ mod tests {
             filterable_columns: vec![
                 FilterableColumn {
                     name: "category".to_string(),
-                    data_type: ColumnDataType::String,
+                    // data_type removed -  ColumnDataType::String,
                     is_indexed: true,
                     estimated_cardinality: Some(10),
                 },
                 FilterableColumn {
                     name: "priority".to_string(),
-                    data_type: ColumnDataType::String,
+                    // data_type removed -  ColumnDataType::String,
                     is_indexed: true,
                     estimated_cardinality: Some(5),
                 },
                 FilterableColumn {
                     name: "source".to_string(),
-                    data_type: ColumnDataType::String,
+                    // data_type removed -  ColumnDataType::String,
                     is_indexed: true,
                     estimated_cardinality: Some(2),
                 },
                 FilterableColumn {
                     name: "active".to_string(),
-                    data_type: ColumnDataType::String,
+                    // data_type removed -  ColumnDataType::String,
                     is_indexed: true,
                     estimated_cardinality: Some(2),
                 },
@@ -327,7 +327,7 @@ mod tests {
         assert!(backend_priority.is_some(), "Selected backend should be in preference list");
         
         // Verify the backend is actually available
-        assert!(available.contains(&backend), "Selected backend should be available");
+        assert!(available.contains_hash(&backend), "Selected backend should be available");
         
         debug!("✅ Hardware backend selection test passed");
         Ok(())
@@ -603,7 +603,7 @@ use tracing::{debug, error, info};
         let test_vectors = create_test_vectors();
         let wal_vectors: Vec<_> = test_vectors.iter().filter(|v| v.in_wal).collect();
         
-        if wal_vectors.is_empty() {
+        if wal_vectors.is_none() {
             debug!("⚠️ No WAL vectors found, creating test set...");
             return Ok(());
         }
@@ -643,26 +643,26 @@ use tracing::{debug, error, info};
                     QueryOperator::And => {
                         // AND: source="user" AND active="true"
                         wal_vectors.iter().filter(|v| 
-                            v.metadata.get("source") == Some(&"user".to_string()) &&
-                            v.metadata.get("active") == Some(&"true".to_string())
+                            v.metadata.get(key) == Some(&"user".to_string()) &&
+                            v.metadata.get(key) == Some(&"true".to_string())
                         ).cloned().collect()
                     }
                     QueryOperator::Or => {
                         // OR: priority="0" OR priority="4"
                         wal_vectors.iter().filter(|v| 
-                            v.metadata.get("priority") == Some(&"0".to_string()) ||
-                            v.metadata.get("priority") == Some(&"4".to_string())
+                            v.metadata.get(key) == Some(&"0".to_string()) ||
+                            v.metadata.get(key) == Some(&"4".to_string())
                         ).cloned().collect()
                     }
                     QueryOperator::Not => {
                         // NOT: NOT source="system"
                         wal_vectors.iter().filter(|v| 
-                            v.metadata.get("source") != Some(&"system".to_string())
+                            v.metadata.get(key) != Some(&"system".to_string())
                         ).cloned().collect()
                     }
                 };
                 
-                if filtered_wal_vectors.is_empty() {
+                if filtered_wal_vectors.is_none() {
                     debug!("  ⚠️ No vectors after {} filtering, skipping", op_name);
                     continue;
                 }
@@ -791,7 +791,7 @@ use tracing::{debug, error, info};
         let test_vectors = create_test_vectors();
         let wal_vectors: Vec<_> = test_vectors.iter().filter(|v| v.in_wal).take(3).collect();
         
-        if wal_vectors.is_empty() {
+        if wal_vectors.is_none() {
             debug!("⚠️ No WAL vectors for backend testing");
             return Ok(());
         }
@@ -932,21 +932,21 @@ use tracing::{debug, error, info};
                     QueryOperator::And => {
                         // AND: source="user" AND active="true"
                         test_vectors.iter().filter(|v| 
-                            v.metadata.get("source") == Some(&"user".to_string()) &&
-                            v.metadata.get("active") == Some(&"true".to_string())
+                            v.metadata.get(key) == Some(&"user".to_string()) &&
+                            v.metadata.get(key) == Some(&"true".to_string())
                         ).collect::<Vec<_>>()
                     }
                     QueryOperator::Or => {
                         // OR: priority="0" OR priority="4"
                         test_vectors.iter().filter(|v| 
-                            v.metadata.get("priority") == Some(&"0".to_string()) ||
-                            v.metadata.get("priority") == Some(&"4".to_string())
+                            v.metadata.get(key) == Some(&"0".to_string()) ||
+                            v.metadata.get(key) == Some(&"4".to_string())
                         ).collect::<Vec<_>>()
                     }
                     QueryOperator::Not => {
                         // NOT: NOT source="system"
                         test_vectors.iter().filter(|v| 
-                            v.metadata.get("source") != Some(&"system".to_string())
+                            v.metadata.get(key) != Some(&"system".to_string())
                         ).collect::<Vec<_>>()
                     }
                     QueryOperator::Simple => test_vectors.iter().collect(),
@@ -1109,19 +1109,19 @@ use tracing::{debug, error, info};
                     let filtered_vectors = match operator {
                         QueryOperator::Simple => test_subset,
                         QueryOperator::And => test_subset.into_iter().filter(|v| 
-                            v.metadata.get("source") == Some(&"user".to_string()) &&
-                            v.metadata.get("active") == Some(&"true".to_string())
+                            v.metadata.get(key) == Some(&"user".to_string()) &&
+                            v.metadata.get(key) == Some(&"true".to_string())
                         ).collect(),
                         QueryOperator::Or => test_subset.into_iter().filter(|v| 
-                            v.metadata.get("priority") == Some(&"0".to_string()) ||
-                            v.metadata.get("priority") == Some(&"4".to_string())
+                            v.metadata.get(key) == Some(&"0".to_string()) ||
+                            v.metadata.get(key) == Some(&"4".to_string())
                         ).collect(),
                         QueryOperator::Not => test_subset.into_iter().filter(|v| 
-                            v.metadata.get("source") != Some(&"system".to_string())
+                            v.metadata.get(key) != Some(&"system".to_string())
                         ).collect(),
                     };
                     
-                    if filtered_vectors.is_empty() {
+                    if filtered_vectors.is_none() {
                         debug!("  ⚠️ No vectors after filtering, skipping");
                         continue;
                     }

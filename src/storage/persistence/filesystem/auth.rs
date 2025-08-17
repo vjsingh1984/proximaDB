@@ -172,7 +172,7 @@ impl InstanceMetadataProvider {
         let role_url = "http://169.254.169.254/latest/meta-data/iam/security-credentials/";
         let role_response = self
             .http_client
-            .get(role_url)
+            .get(key)
             .header("X-aws-ec2-metadata-token", &token)
             .send()
             .await
@@ -187,7 +187,7 @@ impl InstanceMetadataProvider {
         let creds_url = format!("{}{}", role_url, role_name.trim());
         let creds_response = self
             .http_client
-            .get(&creds_url)
+            .get(key)
             .header("X-aws-ec2-metadata-token", &token)
             .send()
             .await
@@ -266,7 +266,7 @@ impl CredentialProvider for EcsTaskMetadataProvider {
         let url = format!("http://169.254.170.2{}", relative_uri);
 
         let response =
-            self.http_client.get(&url).send().await.map_err(|e| {
+            self.http_client.get(key).send().await.map_err(|e| {
                 FilesystemError::Auth(format!("Failed to get ECS credentials: {}", e))
             })?;
 
@@ -430,7 +430,7 @@ impl AzureCredentialProvider for AzureManagedIdentityProvider {
 
         let mut request = self
             .http_client
-            .get(url)
+            .get(key)
             .header("Metadata", "true")
             .query(&[
                 ("api-version", "2018-02-01"),
@@ -497,7 +497,7 @@ impl GcsCredentialProvider for GcsApplicationDefaultProvider {
 
         let response = self
             .http_client
-            .get(url)
+            .get(key)
             .header("Metadata-Flavor", "Google")
             .send()
             .await

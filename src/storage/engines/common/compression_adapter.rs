@@ -254,7 +254,7 @@ impl UniversalCompressionAdapter {
     fn select_data_driven_algorithm(
         &self,
         characteristics: &DataCharacteristics,
-        fallback_algorithms: &[CompressionAlgorithm],
+        // fallback_algorithms removed -  &[CompressionAlgorithm],
     ) -> Option<CompressionAlgorithm> {
         // High compressibility data
         if characteristics.compressibility == "high" {
@@ -278,7 +278,7 @@ impl UniversalCompressionAdapter {
     fn select_performance_driven_algorithm(
         &self,
         characteristics: &DataCharacteristics,
-        fallback_algorithms: &[CompressionAlgorithm],
+        // fallback_algorithms removed -  &[CompressionAlgorithm],
     ) -> Option<CompressionAlgorithm> {
         // For large data, favor faster algorithms
         if characteristics.size > 1024 * 1024 { // > 1MB
@@ -295,7 +295,7 @@ impl UniversalCompressionAdapter {
     fn select_hardware_driven_algorithm(
         &self,
         _characteristics: &DataCharacteristics,
-        fallback_algorithms: &[CompressionAlgorithm],
+        // fallback_algorithms removed -  &[CompressionAlgorithm],
     ) -> Option<CompressionAlgorithm> {
         // Use hardware-optimized algorithms when available
         if self.hardware.has_avx2() {
@@ -312,7 +312,7 @@ impl UniversalCompressionAdapter {
     fn select_hybrid_algorithm(
         &self,
         characteristics: &DataCharacteristics,
-        fallback_algorithms: &[CompressionAlgorithm],
+        // fallback_algorithms removed -  &[CompressionAlgorithm],
     ) -> Option<CompressionAlgorithm> {
         // Combine data, performance, and hardware considerations
         let data_score = self.score_algorithm_for_data(characteristics);
@@ -332,9 +332,9 @@ impl UniversalCompressionAdapter {
         
         for algorithm in candidates {
             let combined_score = 
-                data_score.get(&algorithm).unwrap_or(&0.0) * 0.4 +
-                perf_score.get(&algorithm).unwrap_or(&0.0) * 0.4 +
-                hw_score.get(&algorithm).unwrap_or(&0.0) * 0.2;
+                data_score.get(key).unwrap_or(&0.0) * 0.4 +
+                perf_score.get(key).unwrap_or(&0.0) * 0.4 +
+                hw_score.get(key).unwrap_or(&0.0) * 0.2;
             
             if combined_score > best_score {
                 best_score = combined_score;
@@ -537,16 +537,16 @@ mod tests {
         let config = UniversalCompressionConfig {
             enabled: true,
             primary_algorithm: CompressionAlgorithm::Zstd,
-            fallback_algorithms: vec![CompressionAlgorithm::Lz4],
+            // fallback_algorithms removed -  vec![CompressionAlgorithm::Lz4],
             compression_level: 3,
             adaptive_settings: AdaptiveCompressionSettings {
                 enabled: false,
-                strategy: AdaptiveStrategy::DataDriven,
-                fallback_algorithms: vec![CompressionAlgorithm::Snappy],
-                performance_target: None,
+                // strategy removed -  AdaptiveStrategy::DataDriven,
+                // fallback_algorithms removed -  vec![CompressionAlgorithm::Snappy],
+                // performance_target removed -  None,
             },
             context_aware: ContextAwareCompressionConfig {
-                data_type: CompressionDataType::SstBlock,
+                // data_type removed -  CompressionDataType::SstBlock,
                 size_hint: Some(1024),
                 access_pattern: None,
             },
@@ -579,16 +579,16 @@ mod tests {
         let config = UniversalCompressionConfig {
             enabled: true,
             primary_algorithm: CompressionAlgorithm::Gzip,
-            fallback_algorithms: vec![CompressionAlgorithm::Lz4],
+            // fallback_algorithms removed -  vec![CompressionAlgorithm::Lz4],
             compression_level: 3,
             adaptive_settings: AdaptiveCompressionSettings {
                 enabled: true,
-                strategy: AdaptiveStrategy::DataDriven,
-                fallback_algorithms: vec![CompressionAlgorithm::Snappy, CompressionAlgorithm::Lz4],
-                performance_target: None,
+                // strategy removed -  AdaptiveStrategy::DataDriven,
+                // fallback_algorithms removed -  vec![CompressionAlgorithm::Snappy, CompressionAlgorithm::Lz4],
+                // performance_target removed -  None,
             },
             context_aware: ContextAwareCompressionConfig {
-                data_type: CompressionDataType::VectorData,
+                // data_type removed -  CompressionDataType::VectorData,
                 size_hint: Some(2048),
                 access_pattern: None,
             },
@@ -616,7 +616,7 @@ mod tests {
         
         // Test SST block context
         let sst_context = ContextAwareCompressionConfig {
-            data_type: CompressionDataType::SstBlock,
+            // data_type removed -  CompressionDataType::SstBlock,
             size_hint: None,
             access_pattern: None,
         };
@@ -625,7 +625,7 @@ mod tests {
         
         // Test vector data context
         let vector_context = ContextAwareCompressionConfig {
-            data_type: CompressionDataType::VectorData,
+            // data_type removed -  CompressionDataType::VectorData,
             size_hint: None,
             access_pattern: None,
         };
@@ -634,7 +634,7 @@ mod tests {
         
         // Test Parquet context
         let parquet_context = ContextAwareCompressionConfig {
-            data_type: CompressionDataType::ParquetColumn,
+            // data_type removed -  CompressionDataType::ParquetColumn,
             size_hint: None,
             access_pattern: None,
         };
@@ -649,16 +649,16 @@ mod tests {
         let config = UniversalCompressionConfig {
             enabled: true,
             primary_algorithm: CompressionAlgorithm::Lz4,
-            fallback_algorithms: vec![],
+            // fallback_algorithms removed -  vec![],
             compression_level: 1,
             adaptive_settings: AdaptiveCompressionSettings {
                 enabled: false,
-                strategy: AdaptiveStrategy::PerformanceDriven,
-                fallback_algorithms: vec![],
-                performance_target: None,
+                // strategy removed -  AdaptiveStrategy::PerformanceDriven,
+                // fallback_algorithms removed -  vec![],
+                // performance_target removed -  None,
             },
             context_aware: ContextAwareCompressionConfig {
-                data_type: CompressionDataType::SstBlock,
+                // data_type removed -  CompressionDataType::SstBlock,
                 size_hint: None,
                 access_pattern: None,
             },
@@ -680,7 +680,7 @@ mod tests {
         assert_eq!(stats.total_decompressions, 5);
         assert!(stats.total_compression_time_ms > 0);
         assert!(stats.total_decompression_time_ms > 0);
-        assert_eq!(stats.algorithm_usage.get(&CompressionAlgorithm::Lz4), Some(&5));
+        assert_eq!(stats.algorithm_usage.get(key), Some(&5));
         
         // Test throughput calculation
         let throughput = stats.compression_throughput_mbps();

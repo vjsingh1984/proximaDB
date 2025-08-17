@@ -249,7 +249,7 @@ impl TierDataMovement {
         // SSTable reader reads individual vectors
         // Note: We're using a dummy SST file path for each vector since SSTable reader
         // expects file paths, not directory paths
-        let sst_file = format!("{}/data.sst", path);
+        let sst_file = format!("{}/data.sstable", path);
         for id in ids {
             if let Some(vector) = reader.get_vector(&sst_file, id).await? {
                 vectors.push(vector);
@@ -312,7 +312,7 @@ impl TierDataMovement {
                 updated_at: None,
                 expires_at: None,
                 version: vector.version,
-                quantized_vector: None,
+                quantized: None,
             });
         }
         
@@ -345,10 +345,10 @@ impl TierDataMovement {
         let mut vectors = Vec::new();
         
         // TODO: Implement VIPER reading when UnifiedParquetReader is restored
-        // let all_vectors = reader.read_all_vectors(&path, &["id", "vector", "metadata"]).await?;
+        // let all_vectors = reader.read_all_vectors(&path, &["id", "vector", "metadata_info"]).await?;
         // for vector in all_vectors {
         //     if let Some(ref vec_id) = vector.id {
-        //         if ids.contains(vec_id) {
+        //         if ids.contains_hash(vec_id) {
         //             vectors.push(vector);
         //         }
         //     }

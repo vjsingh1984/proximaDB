@@ -551,7 +551,7 @@ impl ViperQuantizationAdapter {
             
             results.push(SearchResult {
                 index: candidate_idx,
-                distance: distance.raw_value,
+                similarity: distance.raw_value,
                 vector_id: Some(format!("viper_record_{}", candidate_idx)),
             });
         }
@@ -657,7 +657,7 @@ struct SimilarityCluster {
 #[derive(Debug, Clone)]
 pub struct SearchResult {
     pub index: usize,
-    pub distance: f32,
+    pub similarity: f32,
     pub vector_id: Option<String>,
 }
 

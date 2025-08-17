@@ -78,13 +78,13 @@ mod tests {
             filterable_columns: vec![
                 FilterableColumn {
                     name: "category".to_string(),
-                    data_type: ColumnDataType::String,
+                    // data_type removed -  ColumnDataType::String,
                     is_indexed: true,
                     estimated_cardinality: Some(10),
                 },
                 FilterableColumn {
                     name: "price".to_string(),
-                    data_type: ColumnDataType::Float,
+                    // data_type removed -  ColumnDataType::Float,
                     is_indexed: false,
                     estimated_cardinality: None,
                 },
@@ -113,13 +113,13 @@ mod tests {
         }
     }
 
-    fn create_test_search_result(id: &str, score: f32) -> SearchResult {
+    fn create_test_search_result(id: &str, similarity: f32) -> SearchResult {
         SearchResult {
             id: id.to_string(),
             vector: Some(vec![0.1; 128]),
             metadata: HashMap::new(),
             score,
-            rank: None,
+            // rank removed -  None,
             semantic_distance: Some(SemanticDistance {
                 raw_value: score,
                 metric: DistanceMetric::Cosine,
@@ -179,31 +179,31 @@ mod tests {
         let columns = vec![
             FilterableColumn {
                 name: "string_col".to_string(),
-                data_type: ColumnDataType::String,
+                // data_type removed -  ColumnDataType::String,
                 is_indexed: true,
                 estimated_cardinality: Some(100),
             },
             FilterableColumn {
                 name: "int_col".to_string(),
-                data_type: ColumnDataType::Integer,
+                // data_type removed -  ColumnDataType::Integer,
                 is_indexed: false,
                 estimated_cardinality: None,
             },
             FilterableColumn {
                 name: "bool_col".to_string(),
-                data_type: ColumnDataType::Boolean,
+                // data_type removed -  ColumnDataType::Boolean,
                 is_indexed: true,
                 estimated_cardinality: Some(2),
             },
             FilterableColumn {
                 name: "datetime_col".to_string(),
-                data_type: ColumnDataType::DateTime,
+                // data_type removed -  ColumnDataType::DateTime,
                 is_indexed: true,
                 estimated_cardinality: Some(1000),
             },
             FilterableColumn {
                 name: "json_col".to_string(),
-                data_type: ColumnDataType::Json,
+                // data_type removed -  ColumnDataType::Json,
                 is_indexed: false,
                 estimated_cardinality: None,
             },
@@ -249,7 +249,7 @@ mod tests {
                 selectivity_estimate: 0.05,
             },
             OptimizationHint::UseColumnProjection {
-                columns: vec!["vector".to_string(), "metadata".to_string()],
+                columns: vec!["vector".to_string(), "metadata_info".to_string()],
             },
             OptimizationHint::UseRangeRequests {
                 chunk_size_mb: 64.0,

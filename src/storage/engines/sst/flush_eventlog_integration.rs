@@ -55,7 +55,7 @@ impl SstFlushHandler {
         
         // Detect what representations we have
         let has_quantized = params.collection_config.as_ref()
-            .and_then(|c| c.quantization_config.as_ref())
+            .and_then(|c| c.quantization.as_ref())
             .map(|q| q.enabled)
             .unwrap_or(false);
         
@@ -164,7 +164,7 @@ mod tests {
         let handler = SstFlushHandler::new();
         // Without EventLog service, compaction should be allowed
         if handler.event_log.is_none() {
-            assert!(handler.can_compact_files("test", &["file1.sst".to_string()]).await);
+            assert!(handler.can_compact_files("test", &["file1.sstable".to_string()]).await);
         }
     }
 }

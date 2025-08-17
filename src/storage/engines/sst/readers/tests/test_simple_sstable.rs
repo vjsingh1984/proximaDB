@@ -27,7 +27,7 @@ async fn test_simple_sstable_write_read() {
     let filesystem = Arc::new(FilesystemFactory::new(config).await.unwrap());
     
     // Write SSTable
-    let sstable_path = temp_path.join("test_simple.sst");
+    let sstable_path = temp_path.join("test_simple.sstable");
     let test_config = create_test_config();
     let block_size = (test_config.block_size_kb * 1024) as usize;
     let writer = SstableWriter::new(&sstable_path, block_size, filesystem.clone());

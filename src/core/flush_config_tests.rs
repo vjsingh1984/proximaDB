@@ -34,7 +34,7 @@ mod tests {
         assert_eq!(config.block_size_bytes(), 2048 * 1024);
         
         // Test compression - server default is none (no compression)
-        assert_eq!(config.compression, "none");
+        assert_eq!(config.storage.as_ref().and_then(|s| s.compression.as_ref()), "none");
     }
     
     #[test]

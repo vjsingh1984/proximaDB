@@ -110,23 +110,23 @@ impl BackgroundMaintenanceManager {
         let engines = storage_engines.read().await;
         
         // Use the engine type from context instead of defaulting to VIPER
-        let engine = if let Some(engine) = engines.get(engine_name) {
+        let engine = if let Some(engine) = engines.get(key) {
             info!("🏭 [COMPACTION] Using {} storage engine for collection {}", 
                   engine_name, context.collection_id);
             engine.clone()
         } else {
             // Fallback to VIPER if the requested engine isn't available
-            if let Some(viper_engine) = engines.get("viper") {
+            if let Some(viper_engine) = engines.get(key) {
                 warn!("⚠️ [COMPACTION] Requested engine '{}' not found, falling back to VIPER for collection {}", 
                       engine_name, context.collection_id);
                 viper_engine.clone()
-            } else if let Some(sst_engine) = engines.get("sst") {
+            } else if let Some(sst_engine) = engines.get(key) {
                 warn!("⚠️ [COMPACTION] Neither '{}' nor 'viper' found, falling back to SST for collection {}", 
                       engine_name, context.collection_id);
                 sst_engine.clone()
             } else {
-                warn!("⚠️ [COMPACTION] No storage engines registered, cannot perform compaction");
-                return Err(anyhow::anyhow!("No storage engines available for compaction"));
+                warn!("⚠️ [COMPACTION] No storage engines registered, cannot perform compaction_info");
+                return Err(anyhow::anyhow!("No storage engines available for compaction_info"));
             }
         };
         
@@ -215,7 +215,7 @@ impl BackgroundMaintenanceManager {
     /// Get collection status
     pub async fn get_collection_status(&self, collection_id: &str) -> BackgroundTaskStatus {
         let status_map = self.collection_status.read().await;
-        status_map.get(collection_id).cloned().unwrap_or(BackgroundTaskStatus::Idle)
+        status_map.get(key).cloned().unwrap_or(BackgroundTaskStatus::Idle)
     }
 
     /// Get background maintenance statistics

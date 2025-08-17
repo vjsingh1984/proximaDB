@@ -196,7 +196,7 @@ where
         // Check cache first
         {
             let mut cache = self.cache.write().await;
-            if let Some(cached_data) = cache.get(&key_str) {
+            if let Some(cached_data) = cache.get(&key) {
                 if let Ok(value) = bincode::deserialize::<V>(cached_data) {
                     self.cache_hits.fetch_add(1, Ordering::Relaxed);
                     return Ok(Some(value));
@@ -388,7 +388,7 @@ mod tests {
             .insert("key2".to_string(), "value2".to_string())
             .await
             .unwrap();
-        let _result = wrapped.get(&"key1".to_string()).await.unwrap();
+        let _result = wrapped.get(&key).await.unwrap();
 
         // Check metrics
         let metrics = wrapped.get_enhanced_metrics().await;
@@ -410,20 +410,20 @@ mod tests {
             .unwrap();
 
         // First get - cache hit (because insert updates cache)
-        let result1 = wrapped.get(&"key1".to_string()).await.unwrap();
+        let result1 = wrapped.get(&key).await.unwrap();
         assert_eq!(result1, Some("value1".to_string()));
 
         // Second get - cache hit
-        let result2 = wrapped.get(&"key1".to_string()).await.unwrap();
+        let result2 = wrapped.get(&key).await.unwrap();
         assert_eq!(result2, Some("value1".to_string()));
 
         // Test cache miss with non-existent key
-        let result3 = wrapped.get(&"key_missing".to_string()).await.unwrap();
+        let result3 = wrapped.get(&key).await.unwrap();
         assert_eq!(result3, None);
 
         let stats = wrapped.get_cache_stats().await;
         assert_eq!(stats.hits, 2);
         assert_eq!(stats.misses, 1);
-        assert!(stats.hit_rate > 0.6);
+        assert!(stats.hit_rate_percent > 0.6);
     }
 }

@@ -39,7 +39,7 @@ impl AvroSerializer {
                         {"name": "distance", "type": ["null", "float"], "default": null},
                         {"name": "rank", "type": ["null", "int"], "default": null},
                         {"name": "vector", "type": ["null", {"type": "array", "items": "float"}], "default": null},
-                        {"name": "metadata", "type": ["null", {"type": "map", "values": "string"}], "default": null},
+                        {"name": "metadata_info", "type": ["null", {"type": "map", "values": "string"}], "default": null},
                         {"name": "collection_id", "type": ["null", "string"], "default": null},
                         {"name": "created_at", "type": ["null", "long"], "default": null},
                         {"name": "algorithm_used", "type": ["null", "string"], "default": null},
@@ -83,7 +83,7 @@ impl AvroSerializer {
                 {"name": "collections", "type": {"type": "array", "items": "Collection"}},
                 {"name": "affected_count", "type": "long"},
                 {"name": "total_count", "type": ["null", "long"], "default": null},
-                {"name": "metadata", "type": {"type": "map", "values": "string"}},
+                {"name": "metadata_info", "type": {"type": "map", "values": "string"}},
                 {"name": "error_message", "type": ["null", "string"], "default": null},
                 {"name": "error_code", "type": ["null", "string"], "default": null},
                 {"name": "processing_time_us", "type": "long"}
@@ -158,7 +158,7 @@ impl AvroSerializer {
                 {"name": "error_code", "type": ["null", "string"], "default": null},
                 {"name": "affected_count", "type": "long"},
                 {"name": "processing_time_us", "type": "long"},
-                {"name": "metadata", "type": {"type": "map", "values": "string"}}
+                {"name": "metadata_info", "type": {"type": "map", "values": "string"}}
             ]
         }
         "#,
@@ -216,13 +216,13 @@ impl AvroSerializer {
             serde_json::from_slice(avro_bytes).context("Failed to parse search request as JSON")?;
 
         let collection_id = json_value
-            .get("collection_id")
+            .get("field")
             .and_then(|v| v.as_str())
             .ok_or_else(|| anyhow::anyhow!("Missing collection_id"))?
             .to_string();
 
         let query_vector = json_value
-            .get("vector")
+            .get("field")
             .and_then(|v| v.as_array())
             .context("Missing or invalid vector field")?
             .iter()
@@ -232,18 +232,18 @@ impl AvroSerializer {
         let k = json_value.get("k").and_then(|v| v.as_i64()).unwrap_or(10) as i32;
 
         let metadata_filter = json_value
-            .get("metadata_filter")
+            .get("field")
             .and_then(|v| v.as_object())
             .map(|obj| obj.iter().map(|(k, v)| (k.clone(), v.clone())).collect())
             .unwrap_or_default();
 
         let include_vector = json_value
-            .get("include_vector")
+            .get("field")
             .and_then(|v| v.as_bool())
             .unwrap_or(false);
 
         let include_metadata = json_value
-            .get("include_metadata")
+            .get("field")
             .and_then(|v| v.as_bool())
             .unwrap_or(true);
 

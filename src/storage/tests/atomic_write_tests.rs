@@ -187,9 +187,9 @@ async fn test_atomic_wal_to_storage_flow() {
             timestamp: 0,
             updated_at: None,
             expires_at: None,
-            distance: None,
-            rank: None,
-            score: None,
+            similarity: None,
+            // rank removed -  None,
+            similarity: None,
             version: None,
             ..Default::default()
         },
@@ -200,9 +200,9 @@ async fn test_atomic_wal_to_storage_flow() {
             timestamp: 0,
             updated_at: None,
             expires_at: None,
-            distance: None,
-            rank: None,
-            score: None,
+            similarity: None,
+            // rank removed -  None,
+            similarity: None,
             version: None,
             ..Default::default()
         },
@@ -326,7 +326,7 @@ async fn test_metadata_consistency_during_atomic_write() {
     ).await.unwrap();
     
     // Write metadata
-    let metadata = b"metadata";
+    let metadata = b"metadata_info";
     coordinator.write_to_staging(
         &operation.operation_id,
         "metadata.json",

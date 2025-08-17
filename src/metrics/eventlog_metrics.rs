@@ -358,7 +358,7 @@ mod tests {
         let collector = EventLogMetricsCollector::for_collection("scoped_collection");
         
         // Collection-scoped collector should work the same way
-        collector.record_event_created("scoped_collection", "compaction", "viper");
+        collector.record_event_created("scoped_collection", "compaction_info", "viper");
         collector.record_vectors_extracted("scoped_collection", "viper", "quantized_only", 50);
     }
 }

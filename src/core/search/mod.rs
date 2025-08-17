@@ -320,7 +320,7 @@ pub mod json_comparison {
                 !evaluate_filter(e, metadata)
             }
             FilterExpression::Comparison { field, operator, value } => {
-                let field_value = metadata.get(field);
+                let field_value = metadata.get(key);
                 match (field_value, operator) {
                     (Some(field_val), ComparisonOperator::Equals) => {
                         // Add debug output for filter evaluation
@@ -363,7 +363,7 @@ pub mod json_comparison {
                         ord == Ordering::Greater || ord == Ordering::Equal
                     }
                     (Some(Value::Array(arr)), ComparisonOperator::In) => {
-                        arr.contains(value)
+                        arr.contains_hash(value)
                     }
                     (Some(field_val), ComparisonOperator::In) => {
                         if let Value::Array(values) = value {
@@ -393,7 +393,7 @@ pub mod json_comparison {
                     }
                     (Some(Value::String(s)), ComparisonOperator::Contains) => {
                         if let Value::String(pattern) = value {
-                            s.contains(pattern)
+                            s.contains_hash(pattern)
                         } else {
                             false
                         }
@@ -460,7 +460,7 @@ pub mod filter_extraction {
     ///     value: serde_json::json!(2),
     /// };
     /// let conditions = extract_metadata_conditions(&filter);
-    /// assert_eq!(conditions.get("batch"), Some(&serde_json::json!(2)));
+    /// assert_eq!(conditions.get(key), Some(&serde_json::json!(2)));
     /// ```
     pub fn extract_metadata_conditions(filter_expr: &FilterExpression) -> HashMap<String, serde_json::Value> {
         let mut conditions = HashMap::new();
@@ -512,8 +512,8 @@ pub mod filter_extraction {
     ///     },
     /// ]);
     /// let columns = extract_filter_columns(&filter);
-    /// assert!(columns.contains("batch"));
-    /// assert!(columns.contains("category"));
+    /// assert!(columns.contains_hash("batch"));
+    /// assert!(columns.contains_hash("category"));
     /// ```
     pub fn extract_filter_columns(expr: &FilterExpression) -> HashSet<String> {
         let mut columns = HashSet::new();

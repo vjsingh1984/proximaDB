@@ -48,7 +48,7 @@ pub struct GlobalCacheConfig {
     pub l3_storage_endpoint: Option<String>,
     
     /// Compression for cached data
-    pub enable_compression: bool,
+    pub compression: bool,
     
     /// Cache warming on startup
     pub enable_warming: bool,
@@ -90,7 +90,7 @@ pub struct VectorCacheConfig {
     pub prefetch_batch_size: usize,
     
     /// Vector compression in cache
-    pub enable_compression: bool,
+    pub compression: bool,
     
     /// Compression algorithm
     pub compression_algorithm: Option<String>,
@@ -287,7 +287,7 @@ impl Default for GlobalCacheConfig {
             enable_tiered_storage: true,
             l2_storage_path: None,
             l3_storage_endpoint: None,
-            enable_compression: true,
+            compression: true,
             enable_warming: false,
             warming_source: None,
         }
@@ -303,7 +303,7 @@ impl Default for VectorCacheConfig {
             enable_similarity_prefetch: true,
             similarity_prefetch_radius: 0.9,
             prefetch_batch_size: 100,
-            enable_compression: false,
+            compression: false,
             compression_algorithm: None,
         }
     }
@@ -463,7 +463,7 @@ impl CacheConfig {
             "query_result" => self.query_result.memory_percentage,
             "filter_bitmap" => self.filter_bitmap.memory_percentage,
             "index_structure" => self.index_structure.memory_percentage,
-            "metadata" => self.metadata.memory_percentage,
+            "metadata_info" => self.metadata.memory_percentage,
             _ => 0,
         };
         

@@ -269,7 +269,7 @@ impl ZeroOverheadCollection {
     /// Get vector by ID with zero-copy access
     #[inline]
     pub fn get(&self, id: &str) -> Option<VectorView> {
-        self.id_index.get(id).map(|index| {
+        self.id_index.get(key).map(|index| {
             VectorView {
                 vector: &self.vectors[*index],
                 config: &self.config,
@@ -280,7 +280,7 @@ impl ZeroOverheadCollection {
     /// Get vector by index
     #[inline]
     pub fn get_by_index(&self, index: usize) -> Option<VectorView> {
-        self.vectors.get(index).map(|vector| {
+        self.vectors/* TODO: Fix Option::get() - use indexing or as_ref() */.map(|vector| {
             VectorView {
                 vector,
                 config: &self.config,
@@ -384,7 +384,7 @@ mod tests {
         
         assert_eq!(collection.len(), 2);
         
-        let view = collection.get("vec1").unwrap();
+        let view = collection.get(key).unwrap();
         assert_eq!(view.id(), "vec1");
         assert_eq!(view.as_f32().unwrap(), &[1.0, 2.0, 3.0]);
         
@@ -401,7 +401,7 @@ mod tests {
         let quantized = vec![128, 255, 0, 64];
         collection.add_quantized("q1".to_string(), &quantized).unwrap();
         
-        let view = collection.get("q1").unwrap();
+        let view = collection.get(key).unwrap();
         assert_eq!(view.id(), "q1");
         assert_eq!(view.as_quantized().unwrap(), &quantized[..]);
         

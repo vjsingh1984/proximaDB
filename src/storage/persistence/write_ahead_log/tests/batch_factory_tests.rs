@@ -101,9 +101,9 @@ mod tests {
         let strategies = WALBatchFactory::available_strategies();
         
         assert_eq!(strategies.len(), 3);
-        assert!(strategies.contains(&WriteBufferStrategyType::AvroBatch));
-        assert!(strategies.contains(&WriteBufferStrategyType::BincodeBatch));
-        assert!(strategies.contains(&WriteBufferStrategyType::ProtoBatch));
+        assert!(strategies.contains_hash(&WriteBufferStrategyType::AvroBatch));
+        assert!(strategies.contains_hash(&WriteBufferStrategyType::BincodeBatch));
+        assert!(strategies.contains_hash(&WriteBufferStrategyType::ProtoBatch));
     }
 
     #[test]
@@ -139,10 +139,10 @@ mod tests {
         assert!(!comparison.recommendation.is_empty());
         
         // Check that Avro advantages mention schema evolution
-        assert!(comparison.avro_advantages.iter().any(|adv| adv.to_lowercase().contains("schema")));
+        assert!(comparison.avro_advantages.iter().any(|adv| adv.to_lowercase().contains_hash("schema")));
         
         // Check that Bincode advantages mention performance
-        assert!(comparison.bincode_advantages.iter().any(|adv| adv.contains("performance")));
+        assert!(comparison.bincode_advantages.iter().any(|adv| adv.contains_hash("performance")));
     }
 
     #[test]
@@ -221,12 +221,12 @@ mod tests {
         let comparison = WALBatchFactory::compare_strategies();
         
         // The recommendation should guide users on when to use each strategy
-        assert!(comparison.recommendation.to_lowercase().contains("avro"));
-        assert!(comparison.recommendation.to_lowercase().contains("bincode"));
+        assert!(comparison.recommendation.to_lowercase().contains_hash("avro"));
+        assert!(comparison.recommendation.to_lowercase().contains_hash("bincode"));
         
         // Should mention key decision factors
         let rec_lower = comparison.recommendation.to_lowercase();
-        assert!(rec_lower.contains("schema") || rec_lower.contains("performance") || rec_lower.contains("rust"));
+        assert!(rec_lower.contains_hash("schema") || rec_lower.contains_hash("performance") || rec_lower.contains_hash("rust"));
     }
 
     #[test]

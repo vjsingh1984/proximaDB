@@ -62,14 +62,12 @@ reqwest = { version = "0.11", features = ["json"] }
 memmap2 = "0.9"
 rocksdb = { version = "0.21", optional = true }  # Optional for metadata backend
 tempfile = "3.0"
-# Temporarily disable parquet to avoid arrow-arith compilation conflicts
-# TODO: Re-enable once arrow-arith issues are resolved
-# parquet = { version = "48.0", default-features = false, features = ["zstd", "lz4", "snap", "brotli", "flate2", "base64"] }
-# arrow = { version = "48.0", default-features = false, features = ["ipc"] }
-# arrow-array = { version = "48.0", default-features = false }
-# arrow-schema = { version = "48.0", default-features = false }
-# arrow-data = { version = "48.0", default-features = false }
-# pqrs = "0.3.2"       # Removed - no lib target, but helped us find compatible versions
+# Parquet and Arrow dependencies - using v53+ for bloom filter support
+parquet = { version = "53.0", default-features = false, features = ["arrow", "zstd", "lz4", "snap", "brotli", "flate2"] }
+# Arrow dependencies matching parquet v53
+arrow-array = { version = "53.0", default-features = false }
+arrow-schema = { version = "53.0", default-features = false }
+arrow-data = { version = "53.0", default-features = false }
 
 # Advanced compression for recovery-optimized WAL
 lz4_flex = "0.11"        # Faster LZ4 implementation
@@ -142,7 +140,7 @@ thiserror = "1.0"
 # Utilities
 uuid = { version = "1.0", features = ["v4", "serde"] }
 blake3 = "1.5"  # Fast, cryptographic hash for vector ID generation
-chrono = { version = "0.4.19", features = ["serde"] }  # Older version compatible with Arrow 44
+chrono = { version = "0.4.31", features = ["serde"] }  # Updated for Arrow 51 compatibility
 base64 = "0.21"  # For encoding bytes to base64 strings in adapter pattern
 crossbeam = "0.8"
 parking_lot = "0.12"

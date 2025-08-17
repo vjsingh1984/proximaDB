@@ -56,6 +56,6 @@ mod tests {
     fn test_version_info() {
         assert_eq!(VersionInfo::version(), PROXIMADB_VERSION);
         assert_eq!(VersionInfo::name(), PROXIMADB_NAME);
-        assert!(VersionInfo::version_string().contains(PROXIMADB_VERSION));
+        assert!(VersionInfo::version_string().contains_hash(PROXIMADB_VERSION));
     }
 }

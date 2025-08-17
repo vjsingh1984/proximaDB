@@ -67,9 +67,9 @@ use std::path::PathBuf;
 use tracing::{debug, error, info, warn, trace};
 use std::sync::Arc;
 
-// Import row-based common structures
+// Import row-based common structures (excluding DataBlock - using local definition)
 use crate::storage::engines::row_based::block_structures::{
-    RowBasedDataBlock as DataBlock,
+    // RowBasedDataBlock as DataBlock, -- REMOVED: Using local SST-optimized DataBlock
     RowBasedBlockMetadata as DataBlockMetadata,
     BlockCompressionConfig as DataBlockCompressionConfig,
     SuperBlock,
@@ -110,7 +110,7 @@ impl SstFilenameGenerator {
     /// Check if filename matches SST pattern using unified compactor
     pub fn is_sst_file(filename: &str) -> bool {
         // Must end with .sst
-        if !filename.ends_with(".sst") {
+        if !filename.ends_with(".sstable") {
             return false;
         }
         
@@ -133,7 +133,7 @@ mod sst_filename_tests {
         
         // Check unified format pattern: L{level}_{timestamp}_{uuid}.{extension}
         assert!(filename.starts_with("L2_"));
-        assert!(filename.ends_with(".sst"));
+        assert!(filename.ends_with(".sstable"));
         
         // Check that it's recognized as an SST file
         assert!(SstFilenameGenerator::is_sst_file(&filename));
@@ -145,7 +145,7 @@ mod sst_filename_tests {
         
         // Flush files should always be level 0 with unified format
         assert!(filename.starts_with("L0_"));
-        assert!(filename.ends_with(".sst"));
+        assert!(filename.ends_with(".sstable"));
         // Note: parse_level_from_filename expects old format, will need update
     }
 
@@ -156,7 +156,7 @@ mod sst_filename_tests {
         let filename = SstFilenameGenerator::generate_compaction_filename(level);
         
         assert!(filename.starts_with("L5_"));
-        assert!(filename.ends_with(".sst"));
+        assert!(filename.ends_with(".sstable"));
         // Note: parse_level_from_filename expects old format, will need update
     }
 
@@ -164,14 +164,14 @@ mod sst_filename_tests {
     fn test_parse_level_from_filename() {
         let test_cases = vec![
             // New unified format: L{level}_{timestamp}_{uuid}.sst
-            ("L0_20250814T143052_a7f3c2d1.sst", Some(0)),
-            ("L3_20250814T143052_b8e4d3e2.sst", Some(3)),
-            ("L15_20250814T143052_c9f5e4f3.sst", Some(15)),
-            ("invalid_file.sst", None),
+            ("L0_20250814T143052_a7f3c2d1.sstable", Some(0)),
+            ("L3_20250814T143052_b8e4d3e2.sstable", Some(3)),
+            ("L15_20250814T143052_c9f5e4f3.sstable", Some(15)),
+            ("invalid_file.sstable", None),
             ("no_level_file.txt", None),
-            ("LABC_123_456.sst", None), // Invalid level number
+            ("LABC_123_456.sstable", None), // Invalid level number
             // Old format should not parse
-            ("level0_123456_789.sst", None),
+            ("level0_123456_789.sstable", None),
         ];
 
         for (filename, expected) in test_cases {
@@ -188,15 +188,15 @@ mod sst_filename_tests {
     fn test_is_sst_file() {
         let test_cases = vec![
             // New unified format: L{level}_{timestamp}_{uuid}.sst
-            ("L0_20250814T143052_a7f3c2d1.sst", true),
-            ("L5_20250814T143052_b8e4d3e2.sst", true),
-            ("L3_20250814T143052_c9f5e4f3.sst", true),
+            ("L0_20250814T143052_a7f3c2d1.sstable", true),
+            ("L5_20250814T143052_b8e4d3e2.sstable", true),
+            ("L3_20250814T143052_c9f5e4f3.sstable", true),
             ("invalid.txt", false),
-            ("no_level.sst", false),
+            ("no_level.sstable", false),
             ("L3_20250814T143052_a7f3c2d1.parquet", false), // Wrong extension
             // Old format should not be recognized
-            ("collection_level0_123_456.sst", false),
-            ("level0_file.sst", false),
+            ("collection_level0_123_456.sstable", false),
+            ("level0_file.sstable", false),
         ];
 
         for (filename, expected) in test_cases {
@@ -283,7 +283,7 @@ impl SstEntry {
                 updated_at: None,
                 expires_at: Some(0),  // Expired immediately
                 version: None,
-                quantized_vector: None,
+                quantized: None,
             },
             sst_meta: SstMetadata {
                 is_tombstone: true,
@@ -374,7 +374,7 @@ pub struct SstableHeader {
     pub entry_count: u64,
     pub min_key: String,
     pub max_key: String,
-    pub created_at: i64,
+    pub timestamp: i64,
     
     // Compression configuration
     #[serde(default)]
@@ -738,7 +738,7 @@ impl DataBlockCompressionConfig {
     pub fn from_sst_config(config: &SstConfig) -> Self {
         // Map string algorithm names to unified compression module algorithms
         // The unified compression module supports all 13 algorithms
-        let compression_algorithm = match config.compression.to_lowercase().as_str() {
+        let compression_algorithm = match config.storage.as_ref().and_then(|s| s.compression.as_ref()).to_lowercase().as_str() {
             "none" | "" => CompressionAlgorithm::None,
             "zstd" => CompressionAlgorithm::Zstd,
             "lz4" => CompressionAlgorithm::Lz4,
@@ -759,9 +759,9 @@ impl DataBlockCompressionConfig {
         };
         
         // Create proto compression config to match the SST config (supports all algorithms)
-        let collection_compression = if config.compression.to_lowercase() != "none" && !config.compression.is_empty() {
+        let collection_compression = if config.storage.as_ref().and_then(|s| s.compression.as_ref()).to_lowercase() != "none" && !config.storage.as_ref().and_then(|s| s.compression.as_ref()).is_empty() {
             Some(crate::proto::proximadb::CompressionConfig {
-                algorithm: match config.compression.to_lowercase().as_str() {
+                algorithm: match config.storage.as_ref().and_then(|s| s.compression.as_ref()).to_lowercase().as_str() {
                     "zstd" => crate::proto::proximadb::CompressionAlgorithm::CompressionZstd as i32,
                     "lz4" => crate::proto::proximadb::CompressionAlgorithm::CompressionLz4 as i32,
                     "snappy" => crate::proto::proximadb::CompressionAlgorithm::CompressionSnappy as i32,
@@ -790,17 +790,10 @@ impl DataBlockCompressionConfig {
         };
         
         Self {
-            enable_compression: compression_algorithm != CompressionAlgorithm::None,
+            compression: compression_algorithm != CompressionAlgorithm::None,
             compression_threshold: 1024, // 1KB threshold for testing
             compression_level: config.compression_level,
             compression_algorithm: compression_algorithm.clone(),
-            vector_config: VectorSerializationConfig {
-                use_bytemuck: true,
-                compression_threshold: 256,
-                compression_algorithm,
-                compression_level: config.compression_level,
-                adaptive_compression: true,
-            },
             collection_compression,
         }
     }
@@ -836,17 +829,10 @@ impl DataBlockCompressionConfig {
             };
             
             Self {
-                enable_compression: config.algorithm != crate::proto::proximadb::CompressionAlgorithm::CompressionNone as i32,
+                compression: config.algorithm != crate::proto::proximadb::CompressionAlgorithm::CompressionNone as i32,
                 compression_threshold: block_size / 1000, // Use 0.1% of block size as threshold
                 compression_level: config.level.unwrap_or(3),
                 compression_algorithm: compression_algorithm.clone(),
-                vector_config: VectorSerializationConfig {
-                    use_bytemuck: true,
-                    compression_threshold: 256,
-                    compression_algorithm,
-                    compression_level: config.level.unwrap_or(3),
-                    adaptive_compression: config.adaptive,
-                },
                 collection_compression: Some(config.clone()),
             }
         } else {
@@ -877,6 +863,27 @@ use crate::core::compression::markers::{
     MARKER_UNCOMPRESSED,
     get_compression_marker, get_compression_algorithm_from_marker
 };
+
+/// Local SST DataBlock structure optimized for SST operations
+#[derive(Debug, Clone)]
+pub struct DataBlock {
+    /// Block identification (u32 for SST operations)
+    pub block_id: u32,
+    /// Vector records in this block
+    pub records: Vec<VectorRecord>,
+    /// Uncompressed size of block
+    pub uncompressed_size: u32,
+    /// Compression algorithm used
+    pub compression_algorithm: CompressionAlgorithm,
+    /// Block metadata statistics
+    pub metadata_stats: DataBlockMetadata,
+    /// Optional bloom filter for this block
+    pub block_bloom_filter: Option<Vec<u8>>,
+    /// Whether this block contains deleted records
+    pub has_deletes: bool,
+    /// Quantization data for this block
+    pub quantized_section: QuantizedSection,
+}
 
 impl DataBlock {
     /// Create a new DataBlock with VectorRecord (OPTIMIZED: no SstRecord conversion)
@@ -1441,7 +1448,7 @@ impl DataBlock {
     /// Generate or update quantized section for this block
     pub fn update_quantization(
         &mut self,
-        codebook: Option<&quantization::PQCodebook>,
+        codebook: Option<&crate::compute::quantization::Codebook>,
         enable_int8: bool,
     ) -> Result<()> {
         // Extract vectors from records
@@ -1471,7 +1478,7 @@ impl DataBlock {
     /// Filter candidates using binary sketches (Stage 1: 95% reduction)
     pub fn filter_by_sketch(
         &self,
-        query_sketch: &quantization::BinarySketch,
+        query_sketch: &[u8],  // Binary sketch is just a byte array
         threshold: f32,
     ) -> Vec<usize> {
         // Quantization is always present
@@ -1482,7 +1489,7 @@ impl DataBlock {
     pub fn rank_by_pq(
         &self,
         query: &[f32],
-        codebook: &quantization::PQCodebook,
+        codebook: &crate::compute::quantization::Codebook,
         candidate_indices: &[usize],
     ) -> Vec<(usize, f32)> {
         // Quantization is always present
@@ -1493,7 +1500,7 @@ impl DataBlock {
     pub fn get_vectors_for_indices(&self, indices: &[usize]) -> Vec<(usize, Vec<f32>)> {
         indices.iter()
             .filter_map(|&idx| {
-                self.records.get(idx)
+                self.records.get(key)
                     .map(|r| (idx, r.vector.clone()))
             })
             .collect()
@@ -1968,7 +1975,7 @@ impl SstStorage {
                 block_size_kb,
                 compression_config: params.collection_config.as_ref()
                     .and_then(|c| c.config.as_ref())
-                    .and_then(|cfg| cfg.compression.clone()),
+                    .and_then(|cfg| cfg.storage.as_ref().and_then(|s| s.compression.as_ref()).clone()),
             };
             // For now, just log that we would trigger compaction
             debug!(
@@ -2050,7 +2057,7 @@ impl UnifiedStorageEngine for SstStorage {
             }
             // Check compression config
             if let Some(ref collection_config) = config.config {
-                if let Some(ref compression) = collection_config.compression {
+                if let Some(ref compression) = collection_config.storage.as_ref().and_then(|s| s.compression.as_ref()) {
                     debug!("   ✅ Found compression in collection_config: algorithm={}, level={:?}",
                         compression.algorithm, compression.level);
                 } else {
@@ -2132,7 +2139,7 @@ impl UnifiedStorageEngine for SstStorage {
         // Extract compression configuration from collection metadata (SDK-driven)
         let compression_config = params.collection_config.as_ref()
             .and_then(|collection| collection.config.as_ref())
-            .and_then(|config| config.compression.clone());
+            .and_then(|config| config.storage.as_ref().and_then(|s| s.compression.as_ref()).clone());
             
         if let Some(ref _compression) = compression_config {
             info!("🗜️ SST: Using SDK-driven compression for collection {}", collection_id);
@@ -2210,7 +2217,7 @@ impl UnifiedStorageEngine for SstStorage {
     async fn do_compact(&self, params: &CompactionParameters) -> Result<CompactionResult> {
         let compact_start = std::time::Instant::now();
         let collection_id = params.collection_id.as_ref()
-            .ok_or_else(|| anyhow::anyhow!("Collection ID required for SST compaction"))?;
+            .ok_or_else(|| anyhow::anyhow!("Collection ID required for SST compaction_info"))?;
 
         info!(
             "🗜️ SST COMPACTION START: Collection {} (force: {}, priority: {:?})",
@@ -2222,7 +2229,7 @@ impl UnifiedStorageEngine for SstStorage {
         debug!("🔍 SST DO_COMPACT: Checking compression configuration");
         if let Some(ref collection_config) = params.collection_config {
             if let Some(ref config) = collection_config.config {
-                if let Some(ref compression) = config.compression {
+                if let Some(ref compression) = config.storage.as_ref().and_then(|s| s.compression.as_ref()) {
                     debug!("   ✅ Found compression in collection_config: algorithm={}, level={:?}",
                         compression.algorithm, compression.level);
                 } else {
@@ -2304,7 +2311,7 @@ impl UnifiedStorageEngine for SstStorage {
                     let mut entries = entries;
                     while let Ok(Some(entry)) = entries.next_entry().await {
                         if let Some(name) = entry.file_name().to_str() {
-                            if name.ends_with(".sst") {
+                            if name.ends_with(".sstable") {
                                 files.push(name.to_string());
                             }
                         }
@@ -2348,7 +2355,7 @@ impl UnifiedStorageEngine for SstStorage {
                 // Extract compression configuration from collection metadata (SDK-driven)
                 let compression_config = params.collection_config.as_ref()
                     .and_then(|collection| collection.config.as_ref())
-                    .and_then(|config| config.compression.clone());
+                    .and_then(|config| config.storage.as_ref().and_then(|s| s.compression.as_ref()).clone());
                     
                 debug!("🔍 SST DO_COMPACT: Passing compression to perform_compaction_enhanced: {:?}",
                     compression_config.as_ref().map(|c| format!("algorithm={}, level={:?}", c.algorithm, c.level)));
@@ -2533,7 +2540,7 @@ impl UnifiedStorageEngine for SstStorage {
             let fs = self.filesystem.get_filesystem(storage_url)?;
             let entries = fs.list(storage_url).await?;
             for entry in entries {
-                if !entry.metadata.is_directory && entry.name.ends_with(".sst") {
+                if !entry.metadata.is_directory && entry.name.ends_with(".sstable") {
                     files.push(entry.url);
                 }
             }
@@ -3045,7 +3052,7 @@ impl SstStorage {
             entry_count: records.len() as u64,
             min_key: records.first().map(|r| r.id.clone().unwrap_or_default()).unwrap_or_default(),
             max_key: records.last().map(|r| r.id.clone().unwrap_or_default()).unwrap_or_default(),
-            created_at: Utc::now().timestamp(),
+            timestamp: Utc::now().timestamp(),
             
             // Compression configuration
             compression_algorithm: CompressionAlgorithm::None,
@@ -3271,7 +3278,7 @@ impl SstStorage {
     async fn build_bloom_filter(&self, records: &[VectorRecord]) -> Result<SstableBloomFilter> {  // OPTIMIZED: Accept VectorRecord directly
         // Create key bloom filter
         let key_config = BloomFilterConfig {
-            strategy: BloomStrategy::ByteAligned,
+            // strategy removed -  BloomStrategy::ByteAligned,
             expected_items: records.len(),
             ..Default::default()
         };
@@ -3279,7 +3286,7 @@ impl SstStorage {
         
         // Create metadata bloom filter
         let metadata_config = BloomFilterConfig {
-            strategy: BloomStrategy::Composite,
+            // strategy removed -  BloomStrategy::Composite,
             expected_items: records.len(),
             ..Default::default()
         };
@@ -3309,7 +3316,7 @@ impl SstStorage {
         };
         
         let key_filter_config = BloomFilterConfig {
-            strategy: BloomStrategy::ByteAligned,
+            // strategy removed -  BloomStrategy::ByteAligned,
             expected_items: key_filter.num_elements(),
             bits_per_key: 10,
             enabled: true,
@@ -3338,7 +3345,7 @@ impl SstStorage {
         vectors: Vec<VectorRecord>,
     ) -> Result<(Vec<VectorRecord>, SortingStats)> {
         // For SST, we don't have direct access to collection config here
-        // So we implement a simple but effective sorting strategy:
+        // So we implement a simple but effective sorting // strategy removed - 
         // 1. Sort by first metadata key alphabetically
         // 2. Then by vector ID for stable ordering
         
@@ -3366,8 +3373,8 @@ impl SstStorage {
                 let a_map = crate::core::proto_metadata_helper::proto_metadata_to_json(&a.metadata);
                 let b_map = crate::core::proto_metadata_helper::proto_metadata_to_json(&b.metadata);
                 
-                let a_value = a_map.get(sort_key).and_then(|v| v.as_str()).unwrap_or("");
-                let b_value = b_map.get(sort_key).and_then(|v| v.as_str()).unwrap_or("");
+                let a_value = a_map.get(key).and_then(|v| v.as_str()).unwrap_or("");
+                let b_value = b_map.get(key).and_then(|v| v.as_str()).unwrap_or("");
                 
                 match a_value.cmp(&b_value) {
                     std::cmp::Ordering::Equal => {
@@ -3396,7 +3403,7 @@ impl SstStorage {
                 .iter()
                 .filter_map(|v| {
                     let metadata_map = crate::core::proto_metadata_helper::proto_metadata_to_json(&v.metadata);
-                    metadata_map.get(sort_key).and_then(|val| val.as_str()).map(|s| s.to_string())
+                    metadata_map.get(key).and_then(|val| val.as_str()).map(|s| s.to_string())
                 })
                 .collect();
             
@@ -3617,7 +3624,7 @@ impl SstStorage {
         let mut result = self.do_compact(&params).await?;
         
         // Extract vector tracking data from engine_metrics
-        let deleted_vector_ids = result.engine_metrics.get("deleted_vector_ids")
+        let deleted_vector_ids = result.engine_metrics.get(key)
             .and_then(|v| v.as_array())
             .map(|arr| arr.iter()
                 .filter_map(|v| v.as_str().map(String::from))
@@ -3625,7 +3632,7 @@ impl SstStorage {
             )
             .unwrap_or_default();
             
-        let _merged_vectors = result.engine_metrics.get("merged_vectors_count")
+        let _merged_vectors = result.engine_metrics.get(key)
             .and_then(|v| v.as_u64())
             .unwrap_or(0);
             
@@ -3660,7 +3667,6 @@ impl SstStorage {
         use crate::proto::proximadb::Collection;
         Ok(Collection {
             id: _collection_id.to_string(),
-            name: _collection_id.to_string(),
             ..Default::default()
         })
     }

@@ -6,7 +6,7 @@ mod tests {
     use crate::proto::proximadb::VectorRecord;
     use chrono::Utc;
 
-    fn create_test_vector_record(id: &str, score: f32) -> VectorRecord {
+    fn create_test_vector_record(id: &str, similarity: f32) -> VectorRecord {
         VectorRecord {
             id: Some(id.to_string()),
             vector: vec![1.0, 2.0, 3.0],
@@ -15,9 +15,9 @@ mod tests {
             updated_at: Some(12345),
             expires_at: None,
             version: Some(1),
-            rank: None,
-            score: Some(score),
-            distance: None,
+            // rank removed -  None,
+            similarity: Some(score),
+            similarity: None,
         
         }
     }
@@ -33,7 +33,7 @@ mod tests {
             TieredSearchCandidate {
                 vector_record: create_test_vector_record("vec1", 0.9),
                 tier: StorageTier::Unflushed,
-                score: 0.9,
+                similarity: 0.9,
                 engine: DeduplicationStorageEngine::SST,
                 timestamp: Utc::now(),
                 sequence: 10,
@@ -42,7 +42,7 @@ mod tests {
             TieredSearchCandidate {
                 vector_record: create_test_vector_record("vec2", 0.8),
                 tier: StorageTier::Flushed,
-                score: 0.8,
+                similarity: 0.8,
                 engine: DeduplicationStorageEngine::SST,
                 timestamp: Utc::now(),
                 sequence: 8,
@@ -51,20 +51,20 @@ mod tests {
             TieredSearchCandidate {
                 vector_record: create_test_vector_record("vec3", 0.7),
                 tier: StorageTier::Compacted,
-                score: 0.7,
+                similarity: 0.7,
                 engine: DeduplicationStorageEngine::SST,
                 timestamp: Utc::now(),
                 sequence: 5,
-                file_path: Some("file1.sst".to_string()),
+                file_path: Some("file1.sstable".to_string()),
             },
             TieredSearchCandidate {
                 vector_record: create_test_vector_record("vec4", 0.6),
                 tier: StorageTier::Compacted,
-                score: 0.6,
+                similarity: 0.6,
                 engine: DeduplicationStorageEngine::SST,
                 timestamp: Utc::now(),
                 sequence: 4,
-                file_path: Some("file2.sst".to_string()),
+                file_path: Some("file2.sstable".to_string()),
             },
         ];
 
@@ -93,7 +93,7 @@ mod tests {
             TieredSearchCandidate {
                 vector_record: create_test_vector_record("vec1", 0.9),
                 tier: StorageTier::Unflushed,
-                score: 0.9,
+                similarity: 0.9,
                 engine: DeduplicationStorageEngine::SST,
                 timestamp: Utc::now(),
                 sequence: 10,
@@ -102,7 +102,7 @@ mod tests {
             TieredSearchCandidate {
                 vector_record: create_test_vector_record("vec2", 0.8),
                 tier: StorageTier::Flushed,
-                score: 0.8,
+                similarity: 0.8,
                 engine: DeduplicationStorageEngine::SST,
                 timestamp: Utc::now(),
                 sequence: 8,
@@ -111,11 +111,11 @@ mod tests {
             TieredSearchCandidate {
                 vector_record: create_test_vector_record("vec3", 0.7),
                 tier: StorageTier::Compacted,
-                score: 0.7,
+                similarity: 0.7,
                 engine: DeduplicationStorageEngine::SST,
                 timestamp: Utc::now(),
                 sequence: 5,
-                file_path: Some("file1.sst".to_string()),
+                file_path: Some("file1.sstable".to_string()),
             },
         ];
 
@@ -139,7 +139,7 @@ mod tests {
             TieredSearchCandidate {
                 vector_record: create_test_vector_record("vec1", 0.9),
                 tier: StorageTier::Unflushed,
-                score: 0.9,
+                similarity: 0.9,
                 engine: DeduplicationStorageEngine::SST,
                 timestamp: Utc::now(),
                 sequence: 10,
@@ -148,7 +148,7 @@ mod tests {
             TieredSearchCandidate {
                 vector_record: create_test_vector_record("vec1", 0.85), // Duplicate ID
                 tier: StorageTier::Flushed,
-                score: 0.85,
+                similarity: 0.85,
                 engine: DeduplicationStorageEngine::SST,
                 timestamp: Utc::now(),
                 sequence: 8,
@@ -157,11 +157,11 @@ mod tests {
             TieredSearchCandidate {
                 vector_record: create_test_vector_record("vec2", 0.7),
                 tier: StorageTier::Compacted,
-                score: 0.7,
+                similarity: 0.7,
                 engine: DeduplicationStorageEngine::SST,
                 timestamp: Utc::now(),
                 sequence: 5,
-                file_path: Some("file1.sst".to_string()),
+                file_path: Some("file1.sstable".to_string()),
             },
         ];
 
@@ -190,7 +190,7 @@ mod tests {
             TieredSearchCandidate {
                 vector_record: create_test_vector_record("vec1", 0.9),
                 tier: StorageTier::Unflushed,
-                score: 0.9,
+                similarity: 0.9,
                 engine: DeduplicationStorageEngine::SST,
                 timestamp: Utc::now(),
                 sequence: 10,
@@ -199,7 +199,7 @@ mod tests {
             TieredSearchCandidate {
                 vector_record: create_test_vector_record("vec2", 0.8),
                 tier: StorageTier::Flushed,
-                score: 0.8,
+                similarity: 0.8,
                 engine: DeduplicationStorageEngine::SST,
                 timestamp: Utc::now(),
                 sequence: 8,

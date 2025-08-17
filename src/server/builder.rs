@@ -173,7 +173,6 @@ pub struct IndexingConfig {
     pub default_distance_metric: DistanceMetric,
 
     /// Fallback algorithms for different scenarios
-    pub fallback_algorithms: Vec<IndexingAlgorithm>,
 
     /// Supported distance metrics
     pub supported_distance_metrics: Vec<DistanceMetric>,
@@ -202,7 +201,7 @@ impl Default for IndexingConfig {
         Self {
             default_algorithm: IndexingAlgorithm::default(),
             default_distance_metric: DistanceMetric::default(),
-            fallback_algorithms: vec![IndexingAlgorithm::IVFPQ, IndexingAlgorithm::BruteForce],
+            // fallback_algorithms removed -  vec![IndexingAlgorithm::IVFPQ, IndexingAlgorithm::BruteForce],
             supported_distance_metrics: vec![
                 DistanceMetric::Cosine,
                 DistanceMetric::Euclidean,

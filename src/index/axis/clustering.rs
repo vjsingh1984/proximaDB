@@ -15,6 +15,9 @@ use crate::compute::distance_computation::DistanceMetric;
 use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
 use crate::core::VectorRecord;
 
+// Export ClusterManager
+pub use super::cluster_manager::ClusterManager;
+
 /// Clustering configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ClusteringConfig {
@@ -282,7 +285,7 @@ impl AxisClusteringEngine {
     ) -> Result<ClusterAssignment> {
         let models = self.models.read().await;
         let model = models
-            .get(collection_id)
+            .get(key)
             .ok_or_else(|| anyhow::anyhow!("No clustering model for collection {}", collection_id))?;
 
         // Find nearest centroid
@@ -321,7 +324,7 @@ impl AxisClusteringEngine {
     ) -> Result<Vec<(u32, f32)>> {
         let models = self.models.read().await;
         let model = models
-            .get(collection_id)
+            .get(key)
             .ok_or_else(|| anyhow::anyhow!("No clustering model for collection {}", collection_id))?;
 
         // Calculate distances to all centroids
@@ -359,7 +362,7 @@ impl AxisClusteringEngine {
             .push(vector);
 
         // Check if we need to recompute
-        let pending_count = pending.get(collection_id).map(|v| v.len()).unwrap_or(0);
+        let pending_count = pending.get(key).map(|v| v.len()).unwrap_or(0);
         if pending_count >= self.config.recompute_threshold {
             // TODO: Trigger recomputation
             tracing::info!(
@@ -375,7 +378,7 @@ impl AxisClusteringEngine {
     /// Get clustering model for collection
     pub async fn get_model(&self, collection_id: &str) -> Option<ClusteringModel> {
         let models = self.models.read().await;
-        models.get(collection_id).cloned()
+        models.get(key).cloned()
     }
 
     /// Train K-Means model
@@ -695,9 +698,9 @@ use tracing::{debug, error, info};
                 updated_at: Some(0),
                 expires_at: None,
                 version: Some(1),
-                rank: None,
-                score: None,
-                distance: None,
+                // rank removed -  None,
+                similarity: None,
+                similarity: None,
             
         },
             VectorRecord {
@@ -708,9 +711,9 @@ use tracing::{debug, error, info};
                 updated_at: Some(0),
                 expires_at: None,
                 version: Some(1),
-                rank: None,
-                score: None,
-                distance: None,
+                // rank removed -  None,
+                similarity: None,
+                similarity: None,
             
         },
             VectorRecord {
@@ -721,9 +724,9 @@ use tracing::{debug, error, info};
                 updated_at: Some(0),
                 expires_at: None,
                 version: Some(1),
-                rank: None,
-                score: None,
-                distance: None,
+                // rank removed -  None,
+                similarity: None,
+                similarity: None,
             
         },
         ];

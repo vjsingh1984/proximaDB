@@ -390,14 +390,14 @@ mod tests {
         assert!(memtable.insert(2u64, "value2".to_string()).await.is_ok());
 
         assert_eq!(
-            memtable.get(&1u64).await.unwrap(),
+            memtable.get(&hash).await.unwrap(),
             Some("value1".to_string())
         );
         assert_eq!(
-            memtable.get(&2u64).await.unwrap(),
+            memtable.get(&hash).await.unwrap(),
             Some("value2".to_string())
         );
-        assert_eq!(memtable.get(&3u64).await.unwrap(), None);
+        assert_eq!(memtable.get(&hash).await.unwrap(), None);
 
         // Test size tracking
         assert!(memtable.size_bytes().await > 0);
@@ -428,7 +428,7 @@ mod tests {
             let handle = task::spawn(async move {
                 for j in 0..50 {
                     let key = (i * 50 + j) as u64;
-                    let _result = memtable_clone.get(&key).await.unwrap();
+                    let _result = memtable_clone.get(key).await.unwrap();
                 }
             });
             handles.push(handle);
@@ -481,7 +481,7 @@ mod tests {
         let old_value = memtable.update(&2u64, "updated_value2".to_string()).await;
         assert_eq!(old_value, Some("value2".to_string()));
         assert_eq!(
-            memtable.get(&2u64).await.unwrap(),
+            memtable.get(&hash).await.unwrap(),
             Some("updated_value2".to_string())
         );
     }
@@ -500,7 +500,7 @@ mod tests {
 
         // Many reads
         for _ in 0..1000 {
-            let _result = memtable.get(&42u64).await.unwrap();
+            let _result = memtable.get(&hash).await.unwrap();
         }
 
         let recommendation = memtable.tune_for_workload(WorkloadPattern::ReadHeavy).await;

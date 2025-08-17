@@ -43,7 +43,7 @@ async fn test_quantization_with_256kb_blocks() -> Result<()> {
         // Setup SST with specific block size
         let mut sst_config = SstConfig::default();
         sst_config.block_size_kb = block_size_kb;
-        sst_config.compression = "zstd".to_string();
+        sst_config.storage_config.as_ref().and_then(|s| s.compression.as_ref()) = "zstd".to_string();
         sst_config.compression_level = 3;
         
         let fs_config = FilesystemConfig {
@@ -156,7 +156,7 @@ async fn test_pq_quantization_256kb_blocks() -> Result<()> {
     
     let mut sst_config = SstConfig::default();
     sst_config.block_size_kb = 256;
-    sst_config.compression = "zstd".to_string();
+    sst_config.storage_config.as_ref().and_then(|s| s.compression.as_ref()) = "zstd".to_string();
     sst_config.compression_level = 3;
     
     info!("\n📊 Configuration:");

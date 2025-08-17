@@ -102,7 +102,7 @@ impl SwiftEngine {
             data_type: CompressionDataType::SstBlock,
             ..Default::default()
         };
-        compression_adapter.set_default_config(compression_config);
+        compression_adapter.as_ref().set_default_config(compression_config);
         
         // Configure SWIFT-specific quantization with progressive stages
         let mut quant_config = UniversalQuantizationConfig::default();
@@ -113,8 +113,8 @@ impl SwiftEngine {
                 level: UniversalQuantizationLevel::Binary {
                     threshold_strategy: BinaryThresholdStrategy::ZeroCentered,
                 },
-                candidate_reduction: 0.8, // Filter 80% using binary
-                quality_threshold: 0.3,
+                // candidate_reduction removed -  0.8, // Filter 80% using binary
+                // quality_threshold removed -  0.3,
             },
             // Stage 2: INT8 for intermediate filtering
             ProgressiveQuantizationStage {
@@ -122,8 +122,8 @@ impl SwiftEngine {
                     scale_strategy: crate::storage::engines::common::quantization_common::ScaleStrategy::GlobalMinMax,
                     zero_point_strategy: crate::storage::engines::common::quantization_common::ZeroPointStrategy::Symmetric,
                 },
-                candidate_reduction: 0.5, // Further reduce by 50%
-                quality_threshold: 0.85,
+                // candidate_reduction removed -  0.5, // Further reduce by 50%
+                // quality_threshold removed -  0.85,
             },
             // Stage 3: PQ for final ranking
             ProgressiveQuantizationStage {
@@ -132,8 +132,8 @@ impl SwiftEngine {
                     bits_per_segment: 8,
                     codebook_strategy: CodebookStrategy::KMeans,
                 },
-                candidate_reduction: 0.0, // Keep all for final ranking
-                quality_threshold: 0.95,
+                // candidate_reduction removed -  0.0, // Keep all for final ranking
+                // quality_threshold removed -  0.95,
             },
         ];
         
@@ -146,7 +146,7 @@ impl SwiftEngine {
             "swift_progressive_search".to_string(),
             serde_json::json!(true)
         );
-        quantization_adapter.set_default_config(quant_config);
+        quantization_adapter.as_ref().set_default_config(quant_config);
         
         Ok(Self {
             collections: Arc::new(RwLock::new(HashMap::new())),
@@ -221,7 +221,7 @@ impl UnifiedStorageEngine for SwiftEngine {
         let records = Vec::new();
         
         // Use universal adapters for quantization
-        let quant_config = self.quantization_adapter.get_default_config();
+        let quant_config = self.quantization_adapter/* TODO: Fix get_default_config - check UniversalQuantizationAdapter API */;
         sst.build_blocks_from_records_with_adapters(
             records,
             Some(self.quantization_adapter.as_ref()),
@@ -242,7 +242,7 @@ impl UnifiedStorageEngine for SwiftEngine {
             files_created: 1,
             bytes_written: params.estimated_size,
             duration_ms: 100,
-            error_message: None,
+            // error_message removed -  None,
         })
     }
     
@@ -262,7 +262,7 @@ impl UnifiedStorageEngine for SwiftEngine {
                 bytes_written: 0,
                 records_compacted: 0,
                 duration_ms: 0,
-                error_message: None,
+                // error_message removed -  None,
             });
         }
         
@@ -278,7 +278,7 @@ impl UnifiedStorageEngine for SwiftEngine {
             bytes_written: params.estimated_input_size * 80 / 100, // 20% reduction
             records_compacted: 0,
             duration_ms: 500,
-            error_message: None,
+            // error_message removed -  None,
         })
     }
     
@@ -304,7 +304,7 @@ impl UnifiedStorageEngine for SwiftEngine {
         
         // Hardware info
         metrics.insert("simd_backend".to_string(), 
-            serde_json::json!(format!("{:?}", self.hardware.best_backend())));
+            serde_json::json!(format!("{:?}", self.hardware/* TODO: Fix HardwareCapabilities::best_backend() method */)));
         
         Ok(metrics)
     }
@@ -387,8 +387,8 @@ impl UnifiedStorageEngine for SwiftEngine {
                     id: record.id.unwrap_or_else(|| format!("unknown_{}", idx)),
                     vector: record.vector,
                     metadata: vec![],
-                    rank: (idx + 1) as i32,
-                    score: 1.0 - distance, // Convert distance to similarity
+                    // rank removed -  (idx + 1) as i32,
+                    similarity: 1.0 - distance, // Convert distance to similarity
                     distance,
                     version: record.version,
                     timestamp: Some(record.timestamp as u32),

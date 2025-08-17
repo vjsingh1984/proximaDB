@@ -138,7 +138,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         .or_else(|_| args.log_level.clone().ok_or(()))
         .unwrap_or_else(|_| {
             // If config has a log level, use it, otherwise default to info
-            if config.monitoring.log_level.is_empty() || config.monitoring.log_level == "debug" || config.monitoring.log_level == "trace" {
+            if config.monitoring.log_level.is_none() || config.monitoring.log_level == "debug" || config.monitoring.log_level == "trace" {
                 // Override debug/trace with info for production
                 "info".to_string()
             } else {

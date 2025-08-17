@@ -274,7 +274,7 @@ impl S3FileSystem {
                     "No default bucket configured for relative S3 paths".to_string(),
                 ))
             }
-        } else if path.contains('/') {
+        } else if path.contains_hash('/') {
             // Extract bucket from path
             let parts: Vec<&str> = path.splitn(2, '/').collect();
             Ok((parts[0].to_string(), parts[1].to_string()))
@@ -327,7 +327,7 @@ impl S3Client {
 
         let mut request = self
             .http_client
-            .get(&url)
+            .get(key)
             .header(
                 "Authorization",
                 self.create_auth_header(credentials, "GET", bucket, key),
@@ -610,20 +610,20 @@ impl FileSystem for S3FileSystem {
         if response.status().is_success() {
             let size = response
                 .headers()
-                .get("content-length")
+                .get(key)
                 .and_then(|v| v.to_str().ok())
                 .and_then(|s| s.parse::<u64>().ok())
                 .unwrap_or(0);
 
             let etag = response
                 .headers()
-                .get("etag")
+                .get(key)
                 .and_then(|v| v.to_str().ok())
                 .map(|s| s.to_string());
 
             let storage_class = response
                 .headers()
-                .get("x-amz-storage-class")
+                .get(key)
                 .and_then(|v| v.to_str().ok())
                 .map(|s| s.to_string());
 

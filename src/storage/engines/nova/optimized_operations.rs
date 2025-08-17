@@ -93,7 +93,7 @@ impl OptimizedNovaOperations {
     ) -> Result<Vec<VectorRecord>> {
         info!(
             "Starting optimized columnar search with {} backend",
-            self.hardware.best_backend()
+            self.hardware/* TODO: Fix HardwareCapabilities::best_backend() method */
         );
         
         // Build projection mask for needed columns only
@@ -164,7 +164,7 @@ impl OptimizedNovaOperations {
         let mut candidates = Vec::new();
         
         // Get pooled buffer for query
-        let mut query_buffer = self.vector_pool.acquire();
+        let mut query_buffer = self.vector_pool/* TODO: Fix VectorMemoryPool::acquire() method */;
         query_buffer.extend_from_slice(query);
         
         // Process row groups in parallel
@@ -176,7 +176,7 @@ impl OptimizedNovaOperations {
                 candidates.push(SearchCandidate {
                     row_group_id: rg_idx,
                     row_offset,
-                    distance: 0.0,
+                    similarity: 0.0,
                     vector_id: None,
                 });
                 
@@ -258,7 +258,7 @@ impl OptimizedNovaOperations {
         
         let mut vectors = Vec::new();
         for _ in row_offsets {
-            let mut vec = self.vector_pool.acquire();
+            let mut vec = self.vector_pool/* TODO: Fix VectorMemoryPool::acquire() method */;
             vec.resize(768, 0.0); // Placeholder
             vectors.push(vec.to_vec());
         }
@@ -459,10 +459,10 @@ mod tests {
         
         let projection = ops.build_projection_mask(&config);
         
-        assert!(projection.contains(&"id".to_string()));
-        assert!(projection.contains(&"vector".to_string()));
-        assert!(projection.contains(&"vector_binary".to_string()));
-        assert!(projection.contains(&"vector_int8".to_string()));
-        assert!(projection.contains(&"vector_pq".to_string()));
+        assert!(projection.contains_hash(&"id".to_string()));
+        assert!(projection.contains_hash(&"vector".to_string()));
+        assert!(projection.contains_hash(&"vector_binary".to_string()));
+        assert!(projection.contains_hash(&"vector_int8".to_string()));
+        assert!(projection.contains_hash(&"vector_pq".to_string()));
     }
 }

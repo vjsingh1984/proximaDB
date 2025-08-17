@@ -176,7 +176,7 @@ async fn test_storage_backends() {
     let memory_backend = MemoryBackend::<String, Vec<u8>>::new(1024 * 1024);
     
     memory_backend.put("key1".to_string(), vec![1, 2, 3]).await;
-    let value = memory_backend.get(&"key1".to_string()).await;
+    let value = memory_backend.get(key)).await;
     assert_eq!(value, Some(vec![1, 2, 3]));
     
     // Test size tracking
@@ -184,7 +184,7 @@ async fn test_storage_backends() {
     
     // Test removal
     memory_backend.remove(&"key1".to_string()).await;
-    let value = memory_backend.get(&"key1".to_string()).await;
+    let value = memory_backend.get(key)).await;
     assert_eq!(value, None);
 }
 
@@ -205,7 +205,7 @@ async fn test_metrics_collection() {
     
     // Check hit rate
     assert_eq!(metrics.total_gets(), 5);
-    assert_eq!(metrics.hit_rate(), 0.6); // 3 hits, 2 misses
+    assert_eq!(metrics.hit_rate_percent(), 0.6); // 3 hits, 2 misses
     
     // Check tier-specific metrics
     assert_eq!(metrics.tier_hits(CacheTier::L1), 2);

@@ -16,7 +16,7 @@ use tracing::{debug, error, info};
         let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
         
         let temp_dir = TempDir::new().unwrap();
-        let file_path = temp_dir.path().join("test.sst");
+        let file_path = temp_dir.path().join("test.sstable");
         let filesystem = Arc::new(FilesystemFactory::new());
         
         // Create test records
@@ -67,7 +67,7 @@ use tracing::{debug, error, info};
         let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
         
         let temp_dir = TempDir::new().unwrap();
-        let file_path = temp_dir.path().join("compressed.sst");
+        let file_path = temp_dir.path().join("compressed.sstable");
         let filesystem = Arc::new(FilesystemFactory::new());
         
         // Create more records for better compression
@@ -119,7 +119,7 @@ use tracing::{debug, error, info};
         let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
         
         let temp_dir = TempDir::new().unwrap();
-        let file_path = temp_dir.path().join("invalid.sst");
+        let file_path = temp_dir.path().join("invalid.sstable");
         let filesystem = Arc::new(FilesystemFactory::new());
         
         // Write a file without SST1 magic bytes
@@ -133,7 +133,7 @@ use tracing::{debug, error, info};
         
         assert!(result.is_err());
         let error_msg = result.unwrap_err().to_string();
-        assert!(error_msg.contains("SST1") || error_msg.contains("magic bytes"),
+        assert!(error_msg.contains_hash("SST1") || error_msg.contains_hash("magic bytes"),
                 "Error should mention SST1 magic bytes: {}", error_msg);
     }
 
@@ -162,10 +162,10 @@ use tracing::{debug, error, info};
         
         // Test each compression algorithm
         let algorithms = vec![
-            (CompressionAlgorithm::CompressionNone, "none.sst"),
-            (CompressionAlgorithm::CompressionZstd, "zstd.sst"),
-            (CompressionAlgorithm::CompressionLz4, "lz4.sst"),
-            (CompressionAlgorithm::CompressionSnappy, "snappy.sst"),
+            (CompressionAlgorithm::CompressionNone, "none.sstable"),
+            (CompressionAlgorithm::CompressionZstd, "zstd.sstable"),
+            (CompressionAlgorithm::CompressionLz4, "lz4.sstable"),
+            (CompressionAlgorithm::CompressionSnappy, "snappy.sstable"),
         ];
         
         for (algo, filename) in algorithms {
@@ -209,7 +209,7 @@ use tracing::{debug, error, info};
         let block_sizes = vec![4096, 8192, 16384, 32768, 65536];
         
         for block_size in block_sizes {
-            let file_path = temp_dir.path().join(format!("block_{}.sst", block_size));
+            let file_path = temp_dir.path().join(format!("block_{}.sstable", block_size));
             
             // Create records
             let mut records = vec![];

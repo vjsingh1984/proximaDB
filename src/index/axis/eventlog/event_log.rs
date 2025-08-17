@@ -83,7 +83,7 @@ pub struct FileIndexingStatus {
     pub ready_for_compaction: bool,
     
     /// Creation timestamp
-    pub created_at: u64,
+    pub timestamp: u64,
 }
 
 /// Queue state for persistence
@@ -191,7 +191,7 @@ impl EventLogQueue {
                     pending_indexes: self.get_active_indexes(),
                     completed_indexes: Vec::new(),
                     ready_for_compaction: false,
-                    created_at: current_timestamp(),
+                    timestamp: current_timestamp(),
                 },
             );
         }
@@ -224,14 +224,14 @@ impl EventLogQueue {
                 if let Some(mut status) = self.file_status.get_mut(file_path) {
                     // Move from pending to completed
                     status.pending_indexes.retain(|i| i != index_name);
-                    if !status.completed_indexes.contains(&index_name.to_string()) {
+                    if !status.completed_indexes.contains_hash(&index_name.to_string()) {
                         status.completed_indexes.push(index_name.to_string());
                     }
                     
                     // Check if all indexes are done
                     if status.pending_indexes.is_empty() {
                         status.ready_for_compaction = true;
-                        info!("File {} ready for compaction", file_path);
+                        info!("File {} ready for compaction_info", file_path);
                     }
                 }
             }
@@ -247,7 +247,7 @@ impl EventLogQueue {
     /// Check if file can be compacted
     pub fn can_compact(&self, file_path: &str) -> bool {
         self.file_status
-            .get(file_path)
+            .get(key)
             .map(|s| s.ready_for_compaction)
             .unwrap_or(true) // If not tracked, allow compaction
     }
@@ -260,7 +260,7 @@ impl EventLogQueue {
         
         // Remove events for deleted files
         self.active_events.blocking_write().retain(|e| {
-            !e.file_paths.iter().any(|f| deleted_files.contains(f))
+            !e.file_paths.iter().any(|f| deleted_files.contains_hash(f))
         });
         
         // Persist changes
@@ -493,7 +493,7 @@ mod tests {
         // Add flush event
         let event = IndexEventBuilder::flush_event(
             "test_collection".to_string(),
-            vec!["file1.sst".to_string(), "file2.sst".to_string()],
+            vec!["file1.sstable".to_string(), "file2.sstable".to_string()],
             1000,
             StorageEngineType::SST,
             false,
@@ -516,7 +516,7 @@ mod tests {
         // Add event
         let event = IndexEventBuilder::flush_event(
             "test_collection".to_string(),
-            vec!["file1.sst".to_string()],
+            vec!["file1.sstable".to_string()],
             500,
             StorageEngineType::SST,
             true,
@@ -526,14 +526,14 @@ mod tests {
         queue.add_event(event.clone());
         
         // Initially not ready for compaction
-        assert!(!queue.can_compact("file1.sst"));
+        assert!(!queue.can_compact("file1.sstable"));
         
         // Mark as processed by indexes
         queue.mark_processed(&event.event_id, "hnsw");
-        assert!(!queue.can_compact("file1.sst")); // Still one pending
+        assert!(!queue.can_compact("file1.sstable")); // Still one pending
         
         queue.mark_processed(&event.event_id, "ivf");
-        assert!(queue.can_compact("file1.sst")); // Now ready
+        assert!(queue.can_compact("file1.sstable")); // Now ready
     }
     
     #[tokio::test]
@@ -543,7 +543,7 @@ mod tests {
         // Add multiple events
         let event1 = IndexEventBuilder::flush_event(
             "test_collection".to_string(),
-            vec!["file1.sst".to_string()],
+            vec!["file1.sstable".to_string()],
             100,
             StorageEngineType::SST,
             false,
@@ -552,7 +552,7 @@ mod tests {
         
         let event2 = IndexEventBuilder::flush_event(
             "test_collection".to_string(),
-            vec!["file2.sst".to_string()],
+            vec!["file2.sstable".to_string()],
             200,
             StorageEngineType::SST,
             false,
@@ -565,12 +565,12 @@ mod tests {
         assert_eq!(queue.get_pending_events().await.len(), 2);
         
         // Clean up file1 after compaction
-        queue.cleanup_compacted_files(vec!["file1.sst".to_string()]);
+        queue.cleanup_compacted_files(vec!["file1.sstable".to_string()]);
         
         // Should have only event2 remaining
         let events = queue.get_pending_events().await;
         assert_eq!(events.len(), 1);
-        assert_eq!(events[0].file_paths[0], "file2.sst");
+        assert_eq!(events[0].file_paths[0], "file2.sstable");
     }
     
     #[tokio::test]
@@ -595,7 +595,7 @@ mod tests {
             
             let event = IndexEventBuilder::flush_event(
                 "test_collection".to_string(),
-                vec!["file1.sst".to_string()],
+                vec!["file1.sstable".to_string()],
                 1000,
                 StorageEngineType::SST,
                 true,
@@ -633,7 +633,7 @@ mod tests {
         // Test different scenarios
         let event_fp32 = IndexEventBuilder::flush_event(
             "test".to_string(),
-            vec!["file.sst".to_string()],
+            vec!["file.sstable".to_string()],
             100,
             StorageEngineType::SST,
             false,
@@ -642,7 +642,7 @@ mod tests {
         
         let event_quantized = IndexEventBuilder::flush_event(
             "test".to_string(),
-            vec!["file.sst".to_string()],
+            vec!["file.sstable".to_string()],
             100,
             StorageEngineType::SST,
             true,
@@ -651,7 +651,7 @@ mod tests {
         
         let event_both = IndexEventBuilder::flush_event(
             "test".to_string(),
-            vec!["file.sst".to_string()],
+            vec!["file.sstable".to_string()],
             100,
             StorageEngineType::SST,
             true,

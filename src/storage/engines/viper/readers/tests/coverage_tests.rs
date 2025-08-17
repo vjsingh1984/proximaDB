@@ -449,7 +449,7 @@ async fn test_cache_behavior_extensive() -> Result<()> {
         let result = reader.execute_query(query).await?;
         assert_eq!(result.vectors.len(), 10);
         
-        debug!("Processed file {} with cache", i);
+        debug!("Processed file {} with cache_info", i);
     }
     
     // Query first file again - should demonstrate cache behavior

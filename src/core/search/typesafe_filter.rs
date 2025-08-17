@@ -55,7 +55,7 @@ impl TypeSafeFilterEvaluator {
                 let expected_type = self.column_types.get(field).copied().unwrap_or(FilterableDataType::FilterableString);
                 
                 // Get the actual metadata value
-                let metadata_item = metadata.get(field.as_str());
+                let metadata_item = metadata.get(field);
                 
                 match (metadata_item, operator) {
                     (Some(item), ComparisonOperator::Equals) => {
@@ -99,7 +99,7 @@ impl TypeSafeFilterEvaluator {
                     (Some(item), ComparisonOperator::Contains) => {
                         if let (Some(MetadataValue::StringValue(s)), serde_json::Value::String(pattern)) = 
                             (&item.value, value) {
-                            s.contains(pattern)
+                            s.contains_hash(pattern)
                         } else {
                             false
                         }
@@ -271,7 +271,6 @@ pub fn extract_typed_conditions(
 /// Typed condition for optimized filtering
 #[derive(Debug, Clone)]
 pub struct TypedCondition {
-    pub data_type: FilterableDataType,
     pub operator: ComparisonOperator,
     pub value: MetadataValue,
 }
@@ -325,7 +324,7 @@ mod tests {
         let columns = vec![
             FilterableColumnSpec {
                 name: "category".to_string(),
-                data_type: FilterableDataType::FilterableString as i32,
+                // data_type removed -  FilterableDataType::FilterableString as i32,
                 indexed: true,
                 supports_range: false,
                 estimated_cardinality: Some(100),
@@ -356,7 +355,7 @@ mod tests {
         let columns = vec![
             FilterableColumnSpec {
                 name: "price".to_string(),
-                data_type: FilterableDataType::FilterableFloat as i32,
+                // data_type removed -  FilterableDataType::FilterableFloat as i32,
                 indexed: true,
                 supports_range: true,
                 estimated_cardinality: None,

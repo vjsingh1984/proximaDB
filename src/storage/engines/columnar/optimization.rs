@@ -10,7 +10,7 @@ use anyhow::{anyhow, Context, Result};
 use arrow_array::{Array, ArrayRef, RecordBatch};
 use arrow_schema::Schema;
 use parquet::arrow::arrow_reader::{ParquetRecordBatchReader, ParquetRecordBatchReaderBuilder};
-use parquet::bloom_filter::BloomFilter;
+use parquet::bloom_filter::Sbbf as BloomFilter;
 use parquet::file::metadata::{ParquetMetaData, RowGroupMetaData};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -145,7 +145,7 @@ impl ColumnarOptimizer {
         // Check cache first
         {
             let cache = self.bloom_filter_cache.read();
-            if let Some(filters) = cache.get(file_path) {
+            if let Some(filters) = cache.get(&key) {
                 return Ok(filters.clone());
             }
         }
@@ -375,10 +375,10 @@ impl ColumnarOptimizer {
             if let Some(vector) = self.load_vector_at_location(&candidate).await? {
                 results.push(SearchResult {
                     id: candidate.vector_id.unwrap_or_else(|| format!("rg{}_row{}", candidate.row_group_id, candidate.row_offset)),
-                    distance: Some(candidate.distance),
-                    score: Some(1.0 - candidate.distance),
+                    similarity: Some(candidate.distance),
+                    similarity: Some(1.0 - candidate.distance),
                     vector: Some(vector.vector),
-                    metadata: vector.metadata,
+                    metadata: vector.metadata.iter().map(|m| (m.key.clone(), serde_json::Value::String(m.value.clone()))).collect(),
                 });
             }
         }
@@ -488,7 +488,7 @@ impl ColumnarOptimizer {
                 candidates.push(SearchCandidate {
                     row_group_id,
                     row_offset: row_idx as u32,
-                    distance: 1.0 - similarity,
+                    similarity: 1.0 - similarity,
                     vector_id: None, // Will be filled later if needed
                 });
             }
@@ -536,7 +536,7 @@ impl ColumnarOptimizer {
         for candidate in candidates {
             // Load full FP32 vector and compute exact distance
             if let Some(vector) = self.load_vector_at_candidate(candidate).await? {
-                let distance = self.distance_compute.compute_distance(
+                let distance = self.distance_compute.as_ref().compute_distance(
                     query_vector,
                     &vector,
                     distance_metric,

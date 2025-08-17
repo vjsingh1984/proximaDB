@@ -31,7 +31,7 @@ pub struct WALVectorBatch {
     /// Using Arc for zero-copy sharing across WAL strategies
     pub vector_records: Arc<Vec<VectorRecord>>,
     /// Batch metadata
-    pub created_at: std::time::SystemTime,
+    pub timestamp: std::time::SystemTime,
     pub total_size_bytes: usize,
     pub is_flushed: bool,
     /// Bloom filter for fast metadata filtering (skip 95%+ irrelevant batches)
@@ -43,7 +43,7 @@ impl WALVectorBatch {
     pub fn create_bloom_filter(&mut self) -> Result<()> {
         // Create bloom filter with optimal false positive rate
         let config = BloomFilterConfig {
-            strategy: BloomStrategy::ByteAligned,
+            // strategy removed -  BloomStrategy::ByteAligned,
             bits_per_key: 10, // 10 bits per key for ~1% false positive
             false_positive_rate: Some(0.01),
             expected_items: self.vector_records.len(),
@@ -135,7 +135,7 @@ impl BatchCoordinator {
 
     /// Get all unflushed batches for a collection
     fn get_unflushed_batches(&self, collection_id: &str) -> Vec<&WALVectorBatch> {
-        if let Some(collection_batches) = self.batches.get(collection_id) {
+        if let Some(collection_batches) = self.batches.get(key) {
             collection_batches
                 .values()
                 .filter(|batch| !batch.is_flushed)
@@ -286,7 +286,7 @@ impl WALBehaviorWrapper {
         let batch = WALVectorBatch {
             batch_id: crate::storage::persistence::write_ahead_log::BatchId::new(),
             vector_records: Arc::new(vector_records),
-            created_at: std::time::SystemTime::now(),
+            timestamp: std::time::SystemTime::now(),
             total_size_bytes: operation.payload_data.len(),
             is_flushed: false,
             metadata_bloom_filter: None,
@@ -469,9 +469,9 @@ impl WALBehaviorWrapper {
             let search_result = SearchResult {
                 id: vector_record.id.clone().unwrap_or_default(),
                 vector_id: vector_record.id.clone(),
-                score: similarity.rank_value,
-                distance: None, // Score is already the similarity score
-                rank: Some((rank + 1) as u16),
+                similarity: similarity.rank_value,
+                similarity: None, // Score is already the similarity score
+                // rank removed -  Some((rank + 1) as u16),
                 vector: if include_vectors { 
                     Some(vector_record.vector.clone()) 
                 } else { 
@@ -507,7 +507,7 @@ impl WALBehaviorWrapper {
                 timestamp: Some(vector_record.timestamp),
                 semantic_distance: None,
                 index_path: Some("wal_memtable".to_string()),
-                created_at: Some(chrono::Utc::now()),
+                timestamp: Some(chrono::Utc::now()),
             };
             search_results.push(search_result);
         }
@@ -557,7 +557,7 @@ impl WALBehaviorWrapper {
             .map(|batch_ref| WALVectorBatch {
                 batch_id: batch_ref.batch_id.clone(),
                 vector_records: batch_ref.vector_records.clone(), // Arc clone (pointer copy)
-                created_at: batch_ref.created_at,
+                timestamp: batch_ref.created_at,
                 total_size_bytes: batch_ref.total_size_bytes,
                 is_flushed: batch_ref.is_flushed,
                 metadata_bloom_filter: batch_ref.metadata_bloom_filter.clone(),
@@ -818,7 +818,7 @@ impl WALBehaviorWrapper {
     ) -> Result<crate::storage::persistence::write_ahead_log::WALStats> {
         let all_stats = WALBehaviorWrapper::get_stats(self).await?;
 
-        match all_stats.get(collection_id) {
+        match all_stats.get(key) {
             Some(stats) => Ok(stats.clone()),
             None => Ok(crate::storage::persistence::write_ahead_log::WALStats {
                 total_entries: 0,
@@ -947,9 +947,9 @@ mod tests {
             updated_at: Some(now as u32),
             expires_at: None,
             version: Some(1),
-            rank: None,
-            score: None,
-            distance: None,
+            // rank removed -  None,
+            similarity: None,
+            similarity: None,
         
         };
 
@@ -961,9 +961,9 @@ mod tests {
             updated_at: Some((now + 1) as u32),
             expires_at: None,
             version: Some(1),
-            rank: None,
-            score: None,
-            distance: None,
+            // rank removed -  None,
+            similarity: None,
+            similarity: None,
         
         };
 
@@ -971,7 +971,7 @@ mod tests {
         let batch1 = WALVectorBatch {
             batch_id: BatchId::new(),
             vector_records: Arc::new(vec![vector_record1]),
-            created_at: std::time::SystemTime::now(),
+            timestamp: std::time::SystemTime::now(),
             total_size_bytes: 1024,
             is_flushed: false,
             metadata_bloom_filter: None,
@@ -987,7 +987,7 @@ mod tests {
         let batch2 = WALVectorBatch {
             batch_id: BatchId::new(),
             vector_records: Arc::new(vec![vector_record2]),
-            created_at: std::time::SystemTime::now(),
+            timestamp: std::time::SystemTime::now(),
             total_size_bytes: 1024,
             is_flushed: false,
             metadata_bloom_filter: None,
@@ -1048,15 +1048,15 @@ mod tests {
                 updated_at: Some((now + i as i64) as u32),
                 expires_at: None,
                 version: Some((i + 1) as u32),
-                rank: None,
-                score: None,
-                distance: None,
+                // rank removed -  None,
+                similarity: None,
+                similarity: None,
             };
 
             let batch = WALVectorBatch {
                 batch_id: BatchId::new(),
                 vector_records: Arc::new(vec![vector_record]),
-                created_at: std::time::SystemTime::now(),
+                timestamp: std::time::SystemTime::now(),
                 total_size_bytes: 1024,
                 is_flushed: false,
             metadata_bloom_filter: None,

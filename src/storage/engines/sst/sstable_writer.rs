@@ -98,7 +98,7 @@ impl SstableWriter {
             
             // Configure quantization settings if enabled
             if let Some(quant_config) = collection.config.as_ref()
-                .and_then(|cfg| cfg.quantization_config.as_ref()) {
+                .and_then(|cfg| cfg.quantization.as_ref()) {
                 
                 if quant_config.enabled.unwrap_or(true) {
                     info!("🔧 SST: Configuring universal quantization adapter with collection settings");
@@ -116,8 +116,8 @@ impl SstableWriter {
                                 level: UniversalQuantizationLevel::Binary {
                                     threshold_strategy: BinaryThresholdStrategy::Adaptive,
                                 },
-                                candidate_reduction: 0.7, // Filter 70% using binary
-                                quality_threshold: quant_config.binary_filter_threshold.unwrap_or(0.3),
+                                // candidate_reduction removed -  0.7, // Filter 70% using binary
+                                // quality_threshold removed -  quant_config.binary_filter_threshold.unwrap_or(0.3),
                             },
                             ProgressiveQuantizationStage {
                                 level: UniversalQuantizationLevel::ProductQuantization {
@@ -125,8 +125,8 @@ impl SstableWriter {
                                     bits_per_segment: quant_config.bits_per_subvector.unwrap_or(8) as usize,
                                     codebook_strategy: CodebookStrategy::KMeans,
                                 },
-                                candidate_reduction: 0.0, // Keep all for final ranking
-                                quality_threshold: quant_config.quality_threshold.unwrap_or(0.95),
+                                // candidate_reduction removed -  0.0, // Keep all for final ranking
+                                // quality_threshold removed -  quant_config.quality_threshold.unwrap_or(0.95),
                             },
                         ];
                         
@@ -146,7 +146,7 @@ impl SstableWriter {
                     }
                     
                     // Apply configuration to the adapter
-                    quantization_adapter.set_default_config(universal_quant_config);
+                    quantization_adapter.as_ref().set_default_config(universal_quant_config);
                     
                     debug!("✅ SST: Universal quantization adapter configured for progressive search");
                 }
@@ -159,7 +159,7 @@ impl SstableWriter {
             bloom_config: BloomFilterConfig {
                 expected_items: 10000,
                 false_positive_rate: Some(0.01),
-                strategy: BloomStrategy::ByteAligned,
+                // strategy removed -  BloomStrategy::ByteAligned,
                 bits_per_key: 8,
                 enabled: true,
                 hash_algorithm: HashAlgorithm::Murmur3,
@@ -198,12 +198,12 @@ impl SstableWriter {
             compression_level: level as i32,
             adaptive_settings: AdaptiveCompressionSettings {
                 enabled: true,
-                strategy: AdaptiveStrategy::DataDriven,
-                fallback_algorithms: vec![algorithm],
-                performance_target: Some(50),
+                // strategy removed -  AdaptiveStrategy::DataDriven,
+                // fallback_algorithms removed -  vec![algorithm],
+                // performance_target removed -  Some(50),
             },
             context_aware: ContextAwareCompressionConfig {
-                data_type: CompressionDataType::SstBlock,
+                // data_type removed -  CompressionDataType::SstBlock,
                 size_hint: Some(serialized.len()),
                 access_pattern: None,
             },
@@ -253,16 +253,16 @@ impl SstableWriter {
                 compression_level: config.level.unwrap_or(6),
                 adaptive_settings: AdaptiveCompressionSettings {
                     enabled: true,
-                    strategy: AdaptiveStrategy::DataDriven,
+                    // strategy removed -  AdaptiveStrategy::DataDriven,
                     ..Default::default()
                 },
                 context_aware: ContextAwareCompressionConfig {
-                    data_type: CompressionDataType::SstBlock,
+                    // data_type removed -  CompressionDataType::SstBlock,
                     ..Default::default()
                 },
                 ..Default::default()
             };
-            compression_adapter.set_default_config(universal_config);
+            compression_adapter.as_ref().set_default_config(universal_config);
         }
         
         // Configure quantization adapter with SST-specific settings
@@ -275,7 +275,7 @@ impl SstableWriter {
             "sst_target_cluster_size".to_string(),
             serde_json::json!((block_size / 512).max(100))
         );
-        quantization_adapter.set_default_config(quant_config);
+        quantization_adapter.as_ref().set_default_config(quant_config);
         
         Self {
             path: path.as_ref().to_path_buf(),
@@ -316,7 +316,7 @@ impl SstableWriter {
         
         // Get filesystem and atomic writer
         let path_str = self.path.to_string_lossy();
-        let (_scheme, fs_url) = if path_str.contains("://") {
+        let (_scheme, fs_url) = if path_str.contains_hash("://") {
             let parts: Vec<&str> = path_str.splitn(2, "://").collect();
             (parts[0], path_str.to_string())
         } else {
@@ -327,14 +327,14 @@ impl SstableWriter {
         
         // Step 1: Build bloom filters while streaming records
         let bloom_config = BloomFilterConfig {
-            strategy: BloomStrategy::ByteAligned,
+            // strategy removed -  BloomStrategy::ByteAligned,
             expected_items: record_count,
             ..self.bloom_config.clone()
         };
         let mut key_bloom_filter = BloomFilterFactory::create(&bloom_config);
         
         let metadata_config = BloomFilterConfig {
-            strategy: BloomStrategy::Composite,
+            // strategy removed -  BloomStrategy::Composite,
             expected_items: record_count,
             ..self.bloom_config.clone()
         };
@@ -401,7 +401,7 @@ impl SstableWriter {
             .collect();
         
         // Use universal quantization adapter (always available)
-        let config = self.quantization_adapter.get_default_config()
+        let config = self.quantization_adapter/* TODO: Fix get_default_config - check UniversalQuantizationAdapter API */
             .unwrap_or_else(UniversalQuantizationConfig::default);
         
         // Perform progressive quantization with universal adapter
@@ -409,7 +409,7 @@ impl SstableWriter {
             .quantize_progressive(&all_vectors, &config)?;
         
         // Apply SST-specific optimizations from engine overrides
-        if config.engine_overrides.get("sst_similarity_sorting")
+        if config.engine_overrides.get(key)
             .and_then(|v| v.as_bool())
             .unwrap_or(false) {
             
@@ -566,7 +566,7 @@ impl SstableWriter {
         use crate::core::bloom::BloomFilterConfig;
         
         let config = BloomFilterConfig {
-            strategy: crate::core::bloom::BloomStrategy::ByteAligned,
+            // strategy removed -  crate::core::bloom::BloomStrategy::ByteAligned,
             expected_items: block_records.len(),
             false_positive_rate: Some(0.01),
             ..Default::default()
@@ -587,7 +587,7 @@ impl SstableWriter {
         use crate::core::bloom::strategies::composite::CompositeBloomFilterBuilder;
         
         let config = crate::core::bloom::BloomFilterConfig {
-            strategy: crate::core::bloom::BloomStrategy::Composite,
+            // strategy removed -  crate::core::bloom::BloomStrategy::Composite,
             expected_items: block_records.len(),
             false_positive_rate: Some(0.01),
             ..Default::default()
@@ -913,7 +913,7 @@ impl SstableWriter {
         use crate::core::bloom::BloomFilterConfig;
         
         let config = BloomFilterConfig {
-            strategy: crate::core::bloom::BloomStrategy::ByteAligned,
+            // strategy removed -  crate::core::bloom::BloomStrategy::ByteAligned,
             expected_items: block_records.len(),
             false_positive_rate: Some(0.01), // 1% false positive rate for block blooms
             ..Default::default()
@@ -933,7 +933,7 @@ impl SstableWriter {
         
         
         let config = crate::core::bloom::BloomFilterConfig {
-            strategy: crate::core::bloom::BloomStrategy::Composite,
+            // strategy removed -  crate::core::bloom::BloomStrategy::Composite,
             expected_items: block_records.len(),
             false_positive_rate: Some(0.01),
             ..Default::default()

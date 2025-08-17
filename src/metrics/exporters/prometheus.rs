@@ -79,7 +79,7 @@ impl MetricsExporter for PrometheusExporter {
         // Cache metrics
         writeln!(output, "# HELP cache_overall_hit_rate Overall cache hit rate")?;
         writeln!(output, "# TYPE cache_overall_hit_rate gauge")?;
-        writeln!(output, "cache_overall_hit_rate {}", metrics.cache.hit_rate)?;
+        writeln!(output, "cache_overall_hit_rate {}", metrics.cache.hit_rate_percent)?;
         
         writeln!(output, "# HELP cache_evictions_per_second Cache evictions per second")?;
         writeln!(output, "# TYPE cache_evictions_per_second gauge")?;
@@ -88,7 +88,7 @@ impl MetricsExporter for PrometheusExporter {
         // Compression metrics
         writeln!(output, "# HELP compression_ratio Compression ratio")?;
         writeln!(output, "# TYPE compression_ratio gauge")?;
-        writeln!(output, "compression_ratio {}", metrics.compression.compression_ratio)?;
+        writeln!(output, "compression_ratio {}", metrics.storage.as_ref().and_then(|s| s.compression.as_ref()).compression_ratio)?;
         
         Ok(output)
     }

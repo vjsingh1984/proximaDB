@@ -441,7 +441,7 @@ impl OptimizedWriteBufferWriter {
         directory_cache: &Arc<RwLock<HashMap<String, Instant>>>,
     ) -> bool {
         let cache = directory_cache.read().await;
-        if let Some(last_checked) = cache.get(logs_dir) {
+        if let Some(last_checked) = cache.get(&key) {
             // Directory cache valid for 1 hour
             last_checked.elapsed() >= Duration::from_secs(3600)
         } else {

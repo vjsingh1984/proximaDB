@@ -327,8 +327,8 @@ mod wal_config_tests {
         assert!(config.multi_disk.collection_affinity);
         
         // Verify compression defaults
-        assert!(!config.compression.compress_memory);
-        assert!(config.compression.compress_disk);
+        assert!(!config.storage_config.as_ref().and_then(|s| s.compression.as_ref()).compress_memory);
+        assert!(config.storage_config.as_ref().and_then(|s| s.compression.as_ref()).compress_disk);
         
         // Verify no collection overrides by default
         assert!(config.collection_overrides.is_empty());
@@ -461,11 +461,11 @@ mod wal_config_tests {
         // Verify overrides are preserved
         assert_eq!(config.collection_overrides.len(), 2);
         
-        let large_config = config.collection_overrides.get("large_vectors").unwrap();
+        let large_config = config.collection_overrides.get(key).unwrap();
         assert_eq!(large_config.memory_flush_size_bytes, Some(100 * 1024 * 1024));
         assert_eq!(large_config.default_ttl_days, Some(90));
         
-        let small_config = config.collection_overrides.get("small_vectors").unwrap();
+        let small_config = config.collection_overrides.get(key).unwrap();
         assert_eq!(small_config.memory_flush_size_bytes, Some(1024 * 1024));
         assert_eq!(small_config.default_ttl_days, Some(7));
         

@@ -62,7 +62,7 @@ impl Default for ColumnarSearchConfig {
 struct SearchCandidate {
     row_group_id: usize,
     row_offset: u32,
-    distance: f32,
+    similarity: f32,
     vector_id: Option<String>,
 }
 
@@ -372,7 +372,7 @@ async fn phase4_full_precision_columnar(
         let distance_metric = viper.metadata.distance_metric;
         
         let handle = tokio::spawn(async move {
-            let _permit = sem.acquire().await.unwrap();
+            let _permit = sem/* TODO: Fix VectorMemoryPool::acquire() method */.await.unwrap();
             
             // Load full precision vectors and IDs
             let (vectors, ids) = load_full_vectors_and_ids(rg_idx, &row_offsets).await?;
@@ -504,13 +504,13 @@ fn record_matches_filter(record: &VectorRecord, filter: &MetadataFilter) -> bool
 fn condition_matches(condition: &FilterCondition, metadata: &std::collections::HashMap<String, serde_json::Value>) -> bool {
     match condition {
         FilterCondition::Equals(column, value) => {
-            metadata.get(column).map_or(false, |v| v == value)
+            metadata.get(key).map_or(false, |v| v == value)
         }
         FilterCondition::Range(column, min, max) => {
-            metadata.get(column).map_or(false, |v| v >= min && v <= max)
+            metadata.get(key).map_or(false, |v| v >= min && v <= max)
         }
         FilterCondition::In(column, values) => {
-            metadata.get(column).map_or(false, |v| values.contains(v))
+            metadata.get(key).map_or(false, |v| values.contains_hash(v))
         }
         FilterCondition::IsNull(column) => {
             !metadata.contains_key(column) || metadata[column].is_null()
@@ -648,21 +648,21 @@ mod tests {
         heap.push(SearchCandidate {
             row_group_id: 0,
             row_offset: 0,
-            distance: 10.0,
+            similarity: 10.0,
             vector_id: None,
         });
         
         heap.push(SearchCandidate {
             row_group_id: 0,
             row_offset: 1,
-            distance: 5.0,
+            similarity: 5.0,
             vector_id: None,
         });
         
         heap.push(SearchCandidate {
             row_group_id: 0,
             row_offset: 2,
-            distance: 15.0,
+            similarity: 15.0,
             vector_id: None,
         });
         
@@ -685,10 +685,10 @@ mod tests {
         
         let projection = build_projection_mask(&config, &filter);
         
-        assert!(projection.contains(&"id".to_string()));
-        assert!(projection.contains(&"vector".to_string()));
-        assert!(projection.contains(&"vector_binary".to_string()));
-        assert!(projection.contains(&"category".to_string()));
-        assert!(projection.contains(&"price".to_string()));
+        assert!(projection.contains_hash(&"id".to_string()));
+        assert!(projection.contains_hash(&"vector".to_string()));
+        assert!(projection.contains_hash(&"vector_binary".to_string()));
+        assert!(projection.contains_hash(&"category".to_string()));
+        assert!(projection.contains_hash(&"price".to_string()));
     }
 }

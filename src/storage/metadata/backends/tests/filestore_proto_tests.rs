@@ -23,7 +23,7 @@ mod tests {
     fn create_test_config(temp_dir: &TempDir) -> FilestoreMetadataConfig {
         FilestoreMetadataConfig {
             storage_url: format!("file://{}", temp_dir.path().display()),
-            enable_compression: true,
+            compression: true,
             enable_snapshots: true,
             snapshot_threshold: 10,
             keep_snapshots: 3,
@@ -45,7 +45,7 @@ mod tests {
                 filterable_columns: vec![
                     FilterableColumnSpec {
                         name: "category".to_string(),
-                        data_type: FilterableDataType::FilterableString as i32,
+                        // data_type removed -  FilterableDataType::FilterableString as i32,
                         indexed: true,
                         supports_range: false,
                         estimated_cardinality: Some(100),
@@ -56,7 +56,7 @@ mod tests {
                     },
                     FilterableColumnSpec {
                         name: "price".to_string(),
-                        data_type: FilterableDataType::FilterableFloat as i32,
+                        // data_type removed -  FilterableDataType::FilterableFloat as i32,
                         indexed: true,
                         supports_range: true,
                         estimated_cardinality: None,
@@ -65,9 +65,9 @@ mod tests {
                     },
                 ],
                 index_configs: vec![],
-                quantization_config: None,
-                primary_index_name: "default".to_string(),
-                enable_automatic_index_selection: true,
+                quantization: None,
+                primary_index: "default".to_string(),
+                auto_index_selection: true,
                 description: None,
                 tags: vec![],
                 owner: None,
@@ -82,7 +82,7 @@ mod tests {
                 last_updated: chrono::Utc::now().timestamp(),
             }),
             metadata: Some(CollectionMetadata {
-                created_at: chrono::Utc::now().timestamp(),
+                timestamp: chrono::Utc::now().timestamp(),
                 updated_at: chrono::Utc::now().timestamp(),
                 version: Some(1),
                 description: Some("Test collection".to_string()),
@@ -317,7 +317,7 @@ mod tests {
             config.filterable_columns = vec![
                 FilterableColumnSpec {
                     name: "timestamp".to_string(),
-                    data_type: FilterableDataType::FilterableDatetime as i32,
+                    // data_type removed -  FilterableDataType::FilterableDatetime as i32,
                     indexed: true,
                     supports_range: true,
                     estimated_cardinality: None,
@@ -326,7 +326,7 @@ mod tests {
                     },
                 FilterableColumnSpec {
                     name: "status".to_string(),
-                    data_type: FilterableDataType::FilterableString as i32,
+                    // data_type removed -  FilterableDataType::FilterableString as i32,
                     indexed: true,
                     supports_range: false,
                     estimated_cardinality: Some(5),
@@ -335,7 +335,7 @@ mod tests {
                     },
                 FilterableColumnSpec {
                     name: "score".to_string(),
-                    data_type: FilterableDataType::FilterableInteger as i32,
+                    // data_type removed -  FilterableDataType::FilterableInteger as i32,
                     indexed: true,
                     supports_range: true,
                     estimated_cardinality: Some(100),
@@ -354,8 +354,8 @@ mod tests {
             .expect("Collection should exist");
         
         assert_eq!(retrieved.filterable_metadata_fields.len(), 3);
-        assert!(retrieved.filterable_metadata_fields.contains(&"timestamp".to_string()));
-        assert!(retrieved.filterable_metadata_fields.contains(&"status".to_string()));
-        assert!(retrieved.filterable_metadata_fields.contains(&"score".to_string()));
+        assert!(retrieved.filterable_metadata_fields.contains_hash(&"timestamp".to_string()));
+        assert!(retrieved.filterable_metadata_fields.contains_hash(&"status".to_string()));
+        assert!(retrieved.filterable_metadata_fields.contains_hash(&"score".to_string()));
     }
 }

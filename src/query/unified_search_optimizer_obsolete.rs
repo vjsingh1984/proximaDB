@@ -228,7 +228,6 @@ pub struct PerformanceEstimate {
     pub estimated_memory_mb: usize,
     pub estimated_io_ops: usize,
     pub estimated_recall: f32,
-    pub confidence: f32,
 }
 
 /// Quantization type (consolidated from duplicates)
@@ -388,7 +387,7 @@ impl UnifiedSearchOptimizer {
         );
         
         tracing::trace!(
-            "🗂️ COMPRESSION strategy: {:?} (has_comp={}, has_quant={})",
+            "🗂️ COMPRESSION // strategy removed -  {:?} (has_comp={}, has_quant={})",
             compression_handling, has_compression, has_quantization
         );
         
@@ -463,7 +462,7 @@ impl UnifiedSearchOptimizer {
     /// Check if collection has quantization enabled
     fn collection_has_quantization(&self, collection: &Collection) -> bool {
         collection.config.as_ref()
-            .and_then(|c| c.quantization_config.as_ref())
+            .and_then(|c| c.quantization.as_ref())
             .map(|q| q.enabled)
             .unwrap_or(false)
     }
@@ -480,7 +479,7 @@ impl UnifiedSearchOptimizer {
     /// Analyze compression in available files
     async fn analyze_compression(&self, files: &[String]) -> Result<bool> {
         for file in files {
-            if let Some(metadata) = self.file_metadata_cache.get(file) {
+            if let Some(metadata) = self.file_metadata_cache.get(&key) {
                 if metadata.compression_algorithm.is_some() {
                     return Ok(true);
                 }
@@ -833,7 +832,7 @@ impl UnifiedSearchOptimizer {
             estimated_memory_mb,
             estimated_io_ops: context.available_files.len(),
             estimated_recall,
-            confidence: 0.85,
+            // confidence removed -  0.85,
         }
     }
     
@@ -842,7 +841,7 @@ impl UnifiedSearchOptimizer {
         // Only create if not already exists
         if !self.quantization_engines.contains_key(collection_id) {
             if let Some(config) = &collection.config {
-                if let Some(quant_config) = &config.quantization_config {
+                if let Some(quant_config) = &config.quantization {
                     if quant_config.enabled {
                         let engine = self.create_quantization_engine(config, quant_config);
                         self.quantization_engines.insert(collection_id.to_string(), Arc::new(engine));
@@ -950,7 +949,7 @@ mod tests {
     #[test]
     fn test_optimizer_creation() {
         let optimizer = UnifiedSearchOptimizer::new(OptimizerConfig::default());
-        assert!(optimizer.collection_cache.is_empty());
+        assert!(optimizer.collection_cache.is_none());
     }
     
     #[tokio::test]
@@ -962,7 +961,7 @@ mod tests {
             id: "test".to_string(),
             config: Some(crate::proto::proximadb::CollectionConfig {
                 dimension: 768,
-                quantization_config: Some(QuantizationConfig {
+                quantization: Some(QuantizationConfig {
                     enabled: true,
                     ..Default::default()
                 }),

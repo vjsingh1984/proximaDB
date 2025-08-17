@@ -64,11 +64,11 @@ fn test_unified_compression_roundtrip() {
     for (algorithm, expected_marker) in algorithms_and_markers {
         let block = DataBlock::new(1, records.clone());
         let config = DataBlockCompressionConfig {
-            enable_compression: algorithm != UnifiedCompressionAlgorithm::None,
+            compression: algorithm != UnifiedCompressionAlgorithm::None,
             compression_threshold: 100,
             compression_level: 3,
             compression_algorithm: algorithm.clone(),
-            vector_config: Default::default(),
+            // vector_config removed -  Default::default(),
             collection_compression: None,
         };
         
@@ -105,11 +105,11 @@ fn test_unified_compression_efficiency() {
     
     // Test uncompressed
     let uncompressed_config = DataBlockCompressionConfig {
-        enable_compression: false,
+        compression: false,
         compression_threshold: 0,
         compression_level: 3,
         compression_algorithm: UnifiedCompressionAlgorithm::None,
-        vector_config: Default::default(),
+        // vector_config removed -  Default::default(),
         collection_compression: None,
     };
     let uncompressed = block.serialize_with_config(&uncompressed_config).unwrap();
@@ -123,11 +123,11 @@ fn test_unified_compression_efficiency() {
     
     for algorithm in compression_algorithms {
         let config = DataBlockCompressionConfig {
-            enable_compression: true,
+            compression: true,
             compression_threshold: 100,
             compression_level: 6,
             compression_algorithm: algorithm.clone(),
-            vector_config: Default::default(),
+            // vector_config removed -  Default::default(),
             collection_compression: None,
         };
         
@@ -153,11 +153,11 @@ fn test_unified_compression_threshold() {
     
     let block = DataBlock::new(1, records);
     let config = DataBlockCompressionConfig {
-        enable_compression: true,
+        compression: true,
         compression_threshold: 10000, // High threshold
         compression_level: 3,
         compression_algorithm: UnifiedCompressionAlgorithm::Zstd,
-        vector_config: Default::default(),
+        // vector_config removed -  Default::default(),
         collection_compression: None,
     };
     
@@ -209,11 +209,11 @@ fn test_unified_compression_mixed_deserialization() {
         let block = DataBlock::new(i as u32, records);
         
         let config = DataBlockCompressionConfig {
-            enable_compression: *algorithm != UnifiedCompressionAlgorithm::None,
+            compression: *algorithm != UnifiedCompressionAlgorithm::None,
             compression_threshold: 100,
             compression_level: 3,
             compression_algorithm: algorithm.clone(),
-            vector_config: Default::default(),
+            // vector_config removed -  Default::default(),
             collection_compression: None,
         };
         

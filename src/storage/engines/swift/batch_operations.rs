@@ -173,7 +173,7 @@ async fn load_and_extract_records(
         let cache = cache.as_ref().map(|c| c.clone());
         
         let handle = tokio::spawn(async move {
-            let _permit = sem.acquire().await.unwrap();
+            let _permit = sem/* TODO: Fix VectorMemoryPool::acquire() method */.await.unwrap();
             
             // Check cache first
             let block = if let Some(ref cache) = cache {
@@ -220,7 +220,7 @@ async fn load_and_extract_records(
 
 /// Load a block from disk (simulated)
 async fn load_block_from_disk(
-    superblock_idx: u32,
+    superblock_idx:u32,
     block_idx: u32,
 ) -> Result<DataBlock> {
     // In real implementation, this would:
@@ -236,10 +236,10 @@ async fn load_block_from_disk(
         compressed_size: 0,
         uncompressed_size: 0,
         records: Vec::new(),
-        quantized_vector: None, // Quantization handled by universal adapter
+        quantized: None, // Quantization handled by universal adapter
         id_range: (String::new(), String::new()),
-        min_timestamp: 0,
-        max_timestamp: 0,
+        // min_timestamp removed -  0,
+        // max_timestamp removed -  0,
         metadata_stats: HashMap::new(),
     })
 }
@@ -249,7 +249,7 @@ fn extract_record_from_block(
     block: &DataBlock,
     offset: u32,
 ) -> Option<VectorRecord> {
-    block.records.get(offset as usize).cloned()
+    block.records.get(key).cloned()
 }
 
 /// Estimate memory size of a block
@@ -317,7 +317,7 @@ pub async fn prefetch_blocks(
     
     for (sb_idx, b_idx) in block_ids {
         // Skip if already cached
-        if cache.get(&(sb_idx, b_idx)).await.is_some() {
+        if cache.get(&key) {
             continue;
         }
         
@@ -325,7 +325,7 @@ pub async fn prefetch_blocks(
         let cache = cache.clone();
         
         let handle = tokio::spawn(async move {
-            let _permit = sem.acquire().await.unwrap();
+            let _permit = sem/* TODO: Fix VectorMemoryPool::acquire() method */.await.unwrap();
             
             match load_block_from_disk(sb_idx, b_idx).await {
                 Ok(block) => {
@@ -357,25 +357,25 @@ mod tests {
     async fn test_group_by_block() {
         let locations = vec![
             ("id1".to_string(), BlockLocation {
-                superblock_idx: 0,
+                superblock_idx:0,
                 block_idx: 0,
                 offset_in_block: 10,
                 size_bytes: 100,
             }),
             ("id2".to_string(), BlockLocation {
-                superblock_idx: 0,
+                superblock_idx:0,
                 block_idx: 0,
                 offset_in_block: 20,
                 size_bytes: 100,
             }),
             ("id3".to_string(), BlockLocation {
-                superblock_idx: 0,
+                superblock_idx:0,
                 block_idx: 1,
                 offset_in_block: 5,
                 size_bytes: 100,
             }),
             ("id4".to_string(), BlockLocation {
-                superblock_idx: 1,
+                superblock_idx:1,
                 block_idx: 0,
                 offset_in_block: 0,
                 size_bytes: 100,
@@ -410,21 +410,21 @@ mod tests {
                     version: None,
                 },
             ],
-            quantized_vector: None, // Quantization handled by universal adapter
+            quantized: None, // Quantization handled by universal adapter
             id_range: ("test".to_string(), "test".to_string()),
-            min_timestamp: 0,
-            max_timestamp: 0,
+            // min_timestamp removed -  0,
+            // max_timestamp removed -  0,
             metadata_stats: HashMap::new(),
         });
         
         // Test put and get
         cache.put((0, 0), block.clone()).await;
-        let retrieved = cache.get(&(0, 0)).await;
+        let retrieved = cache.get(&key).await;
         assert!(retrieved.is_some());
         assert_eq!(retrieved.unwrap().records[0].id, Some("test".to_string()));
         
         // Test cache miss
-        let miss = cache.get(&(1, 1)).await;
+        let miss = cache.get(&key).await;
         assert!(miss.is_none());
     }
 }

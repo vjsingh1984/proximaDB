@@ -93,7 +93,7 @@ impl OptimizedReaderDemo {
             query_vector: self.create_test_query_vector(),
             k: 10,
             metadata_filters: None,
-            quantization_config: None,
+            quantization: None,
             return_vectors: true,
             distance_metric: Some(DistanceMetric::Cosine),
         };
@@ -115,7 +115,7 @@ impl OptimizedReaderDemo {
             query_vector: self.create_test_query_vector(),
             k: 10,
             metadata_filters: None,
-            quantization_config: None,
+            quantization: None,
             return_vectors: true,
             distance_metric: Some(DistanceMetric::Cosine),
         };
@@ -147,7 +147,7 @@ impl OptimizedReaderDemo {
             query_vector: self.create_test_query_vector(),
             k: 20,
             metadata_filters: Some(MetadataFilter { filters }),
-            quantization_config: None,
+            quantization: None,
             return_vectors: false, // Only need IDs for this demo
             distance_metric: Some(DistanceMetric::Euclidean),
         };
@@ -173,7 +173,7 @@ impl OptimizedReaderDemo {
             query_vector: self.create_test_query_vector(),
             k: 20,
             metadata_filters: Some(MetadataFilter { filters: cloud_filters }),
-            quantization_config: None,
+            quantization: None,
             return_vectors: false,
             distance_metric: Some(DistanceMetric::Euclidean),
         };
@@ -202,7 +202,7 @@ impl OptimizedReaderDemo {
             query_vector: self.create_test_query_vector(),
             k: 50,
             metadata_filters: None,
-            quantization_config: Some(QuantizationConfig {
+            quantization: Some(QuantizationConfig {
                 method: QuantizationMethod::PQ8,
                 quantized_column: "vector_pq8".to_string(),
             }),
@@ -240,7 +240,7 @@ impl OptimizedReaderDemo {
             query_vector: self.create_test_query_vector(),
             k: 25,
             metadata_filters: Some(MetadataFilter { filters }),
-            quantization_config: Some(QuantizationConfig {
+            quantization: Some(QuantizationConfig {
                 method: QuantizationMethod::PQ4,
                 quantized_column: "vector_pq4".to_string(),
             }),
@@ -285,7 +285,7 @@ impl OptimizedReaderDemo {
                 query_vector: base_query_vector.clone(),
                 k: 15,
                 metadata_filters: None,
-                quantization_config: None,
+                quantization: None,
                 return_vectors: true,
                 distance_metric: Some(DistanceMetric::Cosine),
             };

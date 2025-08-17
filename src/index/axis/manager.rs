@@ -180,7 +180,7 @@ impl AxisManager {
         // Get collection config for quantization settings
         // First try shared cache, then fall back to collection service
         let collection = if let Some(cache) = &self.shared_collection_cache {
-            cache.get(collection_id).map(|entry| entry.clone())
+            cache.get(cache_key).cloned()
         } else if let Some(collection_service) = &self.collection_service {
             collection_service.get_collection(collection_id).await.ok().flatten()
                 .map(|c| Arc::new(c))
@@ -192,7 +192,7 @@ impl AxisManager {
         let processed_vector = if let Some(collection) = &collection {
             // Check if quantization is enabled for this collection
             if let Some(config) = &collection.config {
-                if let Some(quant_config) = &config.quantization_config {
+                if let Some(quant_config) = &config.quantization {
                     if quant_config.enabled {
                         // Quantize vector for in-memory index using collection settings
                         // This reuses our existing quantization infrastructure
@@ -362,7 +362,7 @@ impl AxisManager {
             }
             MigrationDecision::Stay { reason } => {
                 debug!(
-                    "AXIS: Collection {} staying with current strategy: {}",
+                    "AXIS: Collection {} staying with current // strategy removed -  {}",
                     collection_id, reason
                 );
             }
@@ -480,7 +480,7 @@ impl AxisManager {
     pub async fn get_collection_strategy(&self, collection_id: &str) -> Result<IndexSelectionStrategy> {
         let strategies = self.collection_strategies.read().await;
         strategies
-            .get(collection_id)
+            .get(key)
             .cloned()
             .ok_or_else(|| anyhow::anyhow!("No strategy found for collection {}", collection_id))
     }
@@ -507,7 +507,7 @@ impl AxisManager {
         collection_id: &str,
     ) -> Option<MigrationStatus> {
         let migrations = self.active_migrations.read().await;
-        migrations.get(collection_id).cloned()
+        migrations.get(key).cloned()
     }
 
     /// Get current metrics
@@ -886,7 +886,7 @@ impl AxisManager {
             enable_progressive: true,
             filter_threshold: 0.8,
             candidate_multiplier: 10,
-            quality_threshold: 0.95,
+            // quality_threshold removed -  0.95,
             training_sample_size: quant_config.training_sample_size.unwrap_or(10000) as usize,
             memory_budget_mb: 512,
             enable_hardware_acceleration: true,
@@ -979,6 +979,6 @@ pub struct QueryResult {
 #[derive(Debug, Clone)]
 pub struct ScoredResult {
     pub vector_id: VectorId,
-    pub score: f32,
+    pub similarity: f32,
     pub expires_at: Option<DateTime<Utc>>,
 }

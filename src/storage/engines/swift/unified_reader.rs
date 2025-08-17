@@ -161,7 +161,7 @@ impl UnifiedSwiftReader {
     /// Read with specific strategy
     pub async fn read_with_strategy(
         &self,
-        strategy: SwiftReadStrategy,
+        // strategy removed -  SwiftReadStrategy,
     ) -> Result<SwiftReadResult> {
         match strategy {
             SwiftReadStrategy::StreamAll => self.stream_all().await,
@@ -538,7 +538,7 @@ impl UnifiedSwiftReader {
     
     async fn get_superblock_metadata(&self, sb_id: u32) -> Result<SuperBlockMetadata> {
         let metadata = self.load_superblock_metadata().await?;
-        metadata.get(&sb_id)
+        metadata.get(key)
             .cloned()
             .ok_or_else(|| anyhow!("Superblock {} not found", sb_id))
     }

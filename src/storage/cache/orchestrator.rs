@@ -138,7 +138,7 @@ impl AccessPatternTracker {
         for i in 0..update_count {
             let idx = history_len - 1 - i;
             if let Some(record) = history.get_mut(idx) {
-                if !record.followed_by.contains(&key) && record.followed_by.len() < 5 {
+                if !record.followed_by.contains_hash(&key) && record.followed_by.len() < 5 {
                     record.followed_by.push(key.clone());
                 }
             }
@@ -183,7 +183,7 @@ impl AccessPatternTracker {
             for i in 0..update_count {
                 let idx = history_len - 1 - i;
                 if let Some(record) = history_guard.get_mut(idx) {
-                    if !record.followed_by.contains(&event.key) && record.followed_by.len() < 5 {
+                    if !record.followed_by.contains_hash(&event.key) && record.followed_by.len() < 5 {
                         record.followed_by.push(event.key.clone());
                     }
                 }
@@ -335,7 +335,7 @@ impl DynamicMemoryAllocator {
             let stat = entry.value();
             
             // Score based on hit rate, access frequency, and efficiency
-            let efficiency = stat.hit_rate * stat.access_frequency;
+            let efficiency = stat.hit_rate_percent * stat.access_frequency;
             let score = efficiency * (1.0 + (1.0 / stat.avg_entry_size as f64));
             scores.insert(cache_type, score);
             total_score += score;
@@ -361,7 +361,7 @@ impl DynamicMemoryAllocator {
 
     /// Get current allocation for a cache type
     pub async fn get_allocation(&self, cache_type: CacheType) -> usize {
-        self.allocations.get(&cache_type)
+        self.allocations.get(key)
             .map(|entry| *entry.value())
             .unwrap_or(0)
     }
@@ -502,7 +502,7 @@ impl CascadeInvalidator {
         
         // Process transitive dependencies
         while let Some(current) = queue.pop_front() {
-            if let Some(entry) = self.reverse_index.get(&current) {
+            if let Some(entry) = self.reverse_index.get(key) {
                 for dependent in entry.value() {
                     if visited.insert(dependent.clone()) {
                         queue.push_back(dependent.clone());
@@ -734,7 +734,7 @@ impl CrossCacheOrchestrator {
             stats_updates.push((
                 CacheType::VectorData,
                 UsageStats {
-                    hit_rate: metrics.hit_rate(),
+                    hit_rate: metrics.hit_rate_percent(),
                     avg_entry_size: 1024, // Would calculate actual size
                     access_frequency: metrics.total_gets() as f64 / 3600.0,
                     last_rebalance: SystemTime::now(),

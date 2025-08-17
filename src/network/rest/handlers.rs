@@ -35,12 +35,14 @@ use crate::api_handlers::{UnifiedHandlers, conversions};
 use crate::proto::proximadb::SearchVectorRecord;
 
 use crate::proto::proximadb::{
-    OperationMetrics, IndexConfig, QuantizationConfig,
+    OperationMetrics, IndexConfig, QuantizationConfig, CompressionConfig,
     CollectionConfig, IndexingAlgorithm, IndexUpdateMode, StorageEngine,
-    DistanceMetric, FilterableDataType,
+    DistanceMetric, FilterableDataType, StorageConfig,
+    ParquetWriterSettings, FooterCacheSettings, HybridWriterSettings,
+    SstEngineSettings, ViperEngineSettings, NovaEngineSettings,
     vector_operation_response::ResultPayload,
     HnswConfig, IvfConfig, FlatConfig, PqConfig, AnnoyConfig, LshConfig,
-    FilterableColumnSpec,
+    FilterableColumnSpec, AccessPattern, DataDensity,
     CollectionRequest, CollectionOperation, VectorRecord, VectorBatchRequest,
     Collection as ProtoCollection, RandomProjectionType
 };
@@ -74,40 +76,83 @@ impl IntoResponse for ErrorResponse {
 // UNIFIED API REQUEST/RESPONSE TYPES - Aligned with Proto
 // ============================================================================
 
-/// Unified collection operation request - aligned with proto CollectionRequest
+/// Unified collection operation request - uses proto CollectionConfig directly
 #[derive(Debug, Deserialize, Serialize)]
 pub struct CollectionOperationRequest {
     pub operation: String, // "create", "update" (get/list/delete now use dedicated HTTP verbs)
     pub collection_id: Option<String>,
     pub collection_name: Option<String>,
-    pub config: Option<RestCollectionConfig>,
+    pub config: Option<CollectionConfigJson>,  // JSON-friendly wrapper around proto CollectionConfig
     pub query_params: Option<HashMap<String, String>>, // limit, offset, filters
     pub options: Option<HashMap<String, bool>>,        // force, include_stats
 }
 
-/// Collection config - aligned with proto CollectionConfig
+/// JSON-serializable wrapper for proto CollectionConfig
+/// This allows REST API to accept JSON while internally using the same proto structure
 #[derive(Debug, Deserialize, Serialize)]
-pub struct RestCollectionConfig {
+#[serde(rename_all = "snake_case")]
+pub struct CollectionConfigJson {
     pub name: String,
     pub dimension: i32,
     pub distance_metric: Option<String>,            // "cosine", "euclidean", "dot_product" - defaults to "cosine"
-    pub storage_engine: Option<String>,             // "viper", "lsm" - defaults to "viper"
-    pub primary_indexing_algorithm: Option<String>, // "hnsw", "ivf", "flat", "pq", "annoy" - defaults to "hnsw"
-    pub filterable_columns: Option<Vec<FilterableColumn>>,
-    pub index_configs: Option<Vec<IndexConfiguration>>,
-    pub quantization_config: Option<RestQuantizationConfig>,
-    pub primary_index_name: Option<String>,
-    pub enable_automatic_index_selection: Option<bool>,
+    pub storage_engine: Option<String>,             // "viper", "sst" - defaults to "viper"
+    pub filterable_columns: Option<Vec<FilterableColumnSpec>>,
+    pub index_configs: Option<Vec<IndexConfig>>,
+    pub quantization: Option<QuantizationConfig>,   // Renamed from quantization
+    pub storage_config: Option<StorageConfig>,      // Renamed from storage_engine_config and using StorageConfig
+    pub primary_index: Option<String>,              // Renamed from primary_index_name
+    pub auto_index_selection: Option<bool>,         // Renamed from enable_automatic_index_selection
     pub description: Option<String>,
     pub tags: Option<Vec<String>>,
     pub owner: Option<String>,
+    // Note: Removed primary_indexing_algorithm, compression, storage_location - now in StorageConfig
+}
+
+impl CollectionConfigJson {
+    /// Convert JSON config to proto CollectionConfig
+    pub fn to_proto(&self) -> CollectionConfig {
+        let mut config = CollectionConfig {
+            name: self.name.clone(),
+            dimension: self.dimension,
+            distance_metric: conversions::parse_distance_metric(&self.distance_metric.as_deref().unwrap_or("cosine")).into(),
+            storage_engine: conversions::parse_storage_engine(&self.storage_engine.as_deref().unwrap_or("viper")).into(),
+            filterable_columns: self.filterable_columns.clone().unwrap_or_default(),
+            index_configs: self.index_configs.clone().unwrap_or_default(),
+            quantization: self.quantization.clone(),
+            storage_config: self.storage.clone(),
+            primary_index: self.primary_index.clone().unwrap_or_default(),
+            auto_index_selection: self.auto_index_selection.unwrap_or(false),
+            description: self.description.clone(),
+            tags: self.tags.clone().unwrap_or_default(),
+            owner: self.owner.clone(),
+        };
+        config
+    }
+    
+    /// Create from proto CollectionConfig
+    pub fn from_proto(proto: &CollectionConfig) -> Self {
+        Self {
+            name: proto.name.clone(),
+            dimension: proto.dimension,
+            distance_metric: Some(conversions::distance_metric_to_string(proto.distance_metric())),
+            storage_engine: Some(conversions::storage_engine_to_string(proto.storage_engine())),
+            filterable_columns: if proto.filterable_columns.is_empty() { None } else { Some(proto.filterable_columns.clone()) },
+            index_configs: if proto.index_configs.is_empty() { None } else { Some(proto.index_configs.clone()) },
+            quantization: proto.quantization.clone(),
+            storage_config: proto.storage.clone(),
+            primary_index: if proto.primary_index.is_empty() { None } else { Some(proto.primary_index.clone()) },
+            auto_index_selection: Some(proto.auto_index_selection),
+            description: proto.description.clone(),
+            tags: if proto.tags.is_empty() { None } else { Some(proto.tags.clone()) },
+            owner: proto.owner.clone(),
+        }
+    }
 }
 
 /// Filterable column spec - aligned with proto
 #[derive(Debug, Deserialize, Serialize)]
 pub struct FilterableColumn {
     pub name: String,
-    pub data_type: String, // "string", "integer", "float", "boolean", "datetime"
     pub indexed: bool,
     pub supports_range: bool,
     pub estimated_cardinality: Option<i32>,
@@ -276,6 +321,126 @@ pub struct QuantizationValidation {
     pub retraining_threshold: f32,
 }
 
+/// Storage engine configuration - aligned with proto StorageEngineConfig
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct RestStorageEngineConfig {
+    // Optimization hints
+    pub access_pattern: Option<String>,         // "write_heavy", "read_heavy", "balanced", "archive"
+    pub data_density: Option<String>,           // "dense", "sparse", "mixed"
+    pub frequent_updates: Option<bool>,
+    pub expected_size_gb: Option<i64>,
+    pub read_write_ratio: Option<f32>,
+    
+    // Quick presets
+    pub preset: Option<String>,                 // "maximum_performance", "balanced", "memory_constrained", "cloud_optimized", "real_time"
+    
+    // Master optimization control
+    pub enable_all_optimizations: Option<bool>,
+    
+    // Specific configuration overrides
+    pub parquet_writer: Option<RestParquetWriterSettings>,
+    pub footer_cache: Option<RestFooterCacheSettings>,
+    pub hybrid_writer: Option<RestHybridWriterSettings>,
+    
+    // Engine-specific settings
+    pub sst_settings: Option<RestSstEngineSettings>,
+    pub viper_settings: Option<RestViperEngineSettings>,
+    pub nova_settings: Option<RestNovaEngineSettings>,
+}
+
+/// Parquet writer settings
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct RestParquetWriterSettings {
+    pub row_group_size: Option<i32>,
+    pub page_size: Option<i32>,
+    pub enable_bloom_filters: Option<bool>,
+    pub bloom_filter_fpp: Option<f32>,
+    pub bloom_filter_columns: Option<Vec<String>>,
+    pub enable_column_statistics: Option<bool>,
+    pub enable_page_index: Option<bool>,
+    pub enable_column_index: Option<bool>,
+    pub enable_offset_index: Option<bool>,
+    pub page_index_granularity: Option<i32>,
+    pub enable_dictionary: Option<bool>,
+    pub dictionary_threshold: Option<f32>,
+    pub enable_delta_encoding: Option<bool>,
+    pub enable_byte_stream_split: Option<bool>,
+    pub enable_pq_sorting: Option<bool>,
+    pub pq_sorting_segments: Option<i32>,
+    pub pq_sorting_codebook_size: Option<i32>,
+    pub enable_native_metadata: Option<bool>,
+    pub metadata_inference_samples: Option<i32>,
+    pub write_batch_size: Option<i32>,
+    pub id_less_storage: Option<bool>,
+}
+
+/// Footer cache settings
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct RestFooterCacheSettings {
+    pub enable: Option<bool>,
+    pub max_entries: Option<i64>,
+    pub ttl_seconds: Option<i64>,
+    pub time_to_idle_seconds: Option<i64>,
+    pub enable_persistence: Option<bool>,
+    pub persistence_path: Option<String>,
+    pub enable_prefetch: Option<bool>,
+    pub prefetch_threshold: Option<i64>,
+    pub warming_interval_seconds: Option<i64>,
+    pub compression: Option<bool>,
+    pub compression_level: Option<i32>,
+}
+
+/// Hybrid writer settings
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct RestHybridWriterSettings {
+    pub enable: Option<bool>,
+    pub initial_mode: Option<String>,
+    pub enable_auto_switch: Option<bool>,
+    pub mode_switch_threshold: Option<i32>,
+    pub pattern_window_size: Option<i32>,
+    pub streaming_threshold: Option<f32>,
+    pub batch_threshold: Option<i32>,
+    pub max_buffer_size: Option<i32>,
+    pub buffer_time_limit_seconds: Option<i64>,
+    pub enable_concurrent_writes: Option<bool>,
+    pub max_concurrent_writers: Option<i32>,
+    pub optimize_row_group_size: Option<bool>,
+    pub min_row_group_size: Option<i32>,
+    pub max_row_group_size: Option<i32>,
+}
+
+/// SST engine settings
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct RestSstEngineSettings {
+    pub enable_bloom_filters: Option<bool>,
+    pub bloom_filter_fpp: Option<f32>,
+    pub compression: Option<String>,
+    pub compression_level: Option<i32>,
+    pub write_buffer_size: Option<i64>,
+    pub max_write_buffers: Option<i32>,
+    pub block_size_kb: Option<i32>,
+    pub dynamic_block_sizing: Option<bool>,
+}
+
+/// VIPER engine settings
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct RestViperEngineSettings {
+    pub inherit_global_settings: Option<bool>,
+    pub enable_columnar_compression: Option<bool>,
+    pub enable_vector_quantization: Option<bool>,
+    pub vector_chunk_size: Option<i32>,
+    pub enable_lazy_loading: Option<bool>,
+}
+
+/// NOVA engine settings
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct RestNovaEngineSettings {
+    pub inherit_global_settings: Option<bool>,
+    pub enable_real_time_mode: Option<bool>,
+    pub streaming_buffer_size: Option<i32>,
+    pub prefer_low_latency: Option<bool>,
+}
+
 /// Get vector query parameters
 #[derive(Debug, Deserialize)]
 pub struct GetVectorParams {
@@ -290,8 +455,7 @@ pub struct VectorGetResponse {
     pub collection_id: String,
     pub vector: Option<Vec<f32>>,
     pub metadata: Option<HashMap<String, serde_json::Value>>,
-    pub score: Option<f32>,
-    pub rank: Option<i32>,
+    pub similarity: Option<f32>,
 }
 
 /// Collection response - aligned with proto CollectionResponse
@@ -304,7 +468,6 @@ pub struct CollectionResponse {
     pub affected_count: i64,
     pub total_count: Option<i64>,
     pub metadata: HashMap<String, String>,
-    pub error_message: Option<String>,
     pub error_code: Option<String>,
     pub processing_time_us: i64,
 }
@@ -313,9 +476,9 @@ pub struct CollectionResponse {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Collection {
     pub id: String,
-    pub config: RestCollectionConfig,
+    pub config: CollectionConfigJson,
     pub stats: CollectionStats,
-    pub created_at: i64,
+    pub timestamp: i64,
     pub updated_at: i64,
 }
 
@@ -326,7 +489,7 @@ pub struct CollectionInfo {
     pub name: String,
     pub dimension: i32,
     pub metric: String,
-    pub created_at: i64,
+    pub timestamp: i64,
     pub updated_at: i64,
     pub vector_count: Option<i64>,
     pub indexed: bool,
@@ -419,8 +582,7 @@ pub struct SearchParameters {
 pub struct IncludeFields {
     pub vector: bool,
     pub metadata: bool,
-    pub score: bool,
-    pub rank: bool,
+    pub similarity: bool,
 }
 
 /// Search optimization hints
@@ -453,7 +615,6 @@ pub struct VectorOperationResponse {
     pub metrics: RestOperationMetrics,
     pub results: Option<Vec<SearchVectorRecord>>,
     pub vector_ids: Vec<String>,
-    pub error_message: Option<String>,
     pub error_code: Option<String>,
 }
 
@@ -537,7 +698,6 @@ pub struct SqlQueryResponse {
 #[derive(Debug, Serialize)]
 pub struct ColumnInfo {
     pub name: String,
-    pub data_type: String,
 }
 
 // ============================================================================
@@ -639,7 +799,7 @@ pub async fn collection_operation(
         affected_count: proto_response.affected_count,
         total_count: proto_response.total_count,
         metadata: proto_response.metadata.into_iter().collect(),
-        error_message: proto_response.error_message,
+        // error_message removed -  proto_response.error_message,
         error_code: proto_response.error_code,
         processing_time_us: proto_response.processing_time_us,
     };
@@ -658,7 +818,7 @@ pub async fn vector_batch(
     // Handle flexible metadata format before conversion
     if let Some(vectors) = request_json.get_mut("vectors").and_then(|v| v.as_array_mut()) {
         for vector in vectors {
-            if let Some(metadata) = vector.get_mut("metadata") {
+            if let Some(metadata) = vector.get_mut("metadata_info") {
                 // Convert object format to array format if needed
                 if let serde_json::Value::Object(obj) = metadata {
                     let array_format: Vec<serde_json::Value> = obj.iter()
@@ -720,7 +880,7 @@ pub async fn vector_batch(
         },
         results: None,
         vector_ids: proto_response.vector_ids,
-        error_message: proto_response.error_message,
+        // error_message removed -  proto_response.error_message,
         error_code: proto_response.error_code,
     };
     
@@ -757,9 +917,9 @@ pub async fn vector_search(
                         id: r.id.clone(),
                         vector: r.vector,
                         metadata: r.metadata,
-                        rank: r.rank,
-                        score: r.score,
-                        distance: r.distance,
+                        // rank removed -  r.rank,
+                        similarity: r.score,
+                        similarity: r.distance,
                         version: r.version,
                         timestamp: r.timestamp,
                         collection_id: r.collection_id,
@@ -796,7 +956,7 @@ pub async fn vector_search(
         },
         results: Some(results),
         vector_ids: vec![],
-        error_message: proto_response.error_message,
+        // error_message removed -  proto_response.error_message,
         error_code: proto_response.error_code,
     };
     
@@ -830,8 +990,8 @@ pub async fn get_vector(
                             metadata: if include_metadata { 
                                 Some(crate::core::proto_metadata_helper::proto_metadata_to_json(&result.metadata))
                             } else { None },
-                            score: Some(result.score),
-                            rank: Some(result.rank),
+                            similarity: Some(result.score),
+                            // rank removed -  Some(result.rank),
                         };
                         Ok(Json(vector_response))
                     } else {
@@ -933,7 +1093,7 @@ pub async fn get_collection_metrics(
     let include_hints = params.get("include_hints")
         .map(|v| v.parse().unwrap_or(true))
         .unwrap_or(true);
-    let _include_history = params.get("include_history")
+    let _include_history = params.get("include_hints")
         .map(|v| v.parse().unwrap_or(false))
         .unwrap_or(false);
     
@@ -1119,7 +1279,7 @@ fn convert_quantization_config_to_proto(config: RestQuantizationConfig) -> Quant
                 _ => Some(8),
             }),
         training_sample_size: Some(10000),
-        quality_threshold: Some(0.95),
+        // quality_threshold removed -  Some(0.95),
         enable_progressive_search: Some(true),
         binary_filter_threshold: Some(0.3),
     }
@@ -1127,89 +1287,9 @@ fn convert_quantization_config_to_proto(config: RestQuantizationConfig) -> Quant
 
 
 /// Convert REST config to proto config
-fn convert_to_proto_config(config: RestCollectionConfig) -> Result<CollectionConfig, StatusCode> {
-    // Apply defaults for optional fields
-    let distance_metric_str = config.distance_metric.as_deref().unwrap_or("cosine");
-    let distance_metric = match distance_metric_str {
-        "cosine" => DistanceMetric::Cosine as i32,
-        "euclidean" => DistanceMetric::Euclidean as i32,
-        "dot_product" => DistanceMetric::DotProduct as i32,
-        _ => DistanceMetric::Cosine as i32,
-    };
-    
-    let storage_engine_str = config.storage_engine.as_deref().unwrap_or("viper");
-    let storage_engine = match storage_engine_str {
-        "viper" => StorageEngine::Viper as i32,
-        "sst" => StorageEngine::Sst as i32,
-        _ => StorageEngine::Viper as i32,
-    };
-    
-    let indexing_algorithm_str = config.primary_indexing_algorithm.as_deref().unwrap_or("hnsw");
-    let indexing_algorithm = match indexing_algorithm_str {
-        "hnsw" => IndexingAlgorithm::Hnsw as i32,
-        "ivf" => IndexingAlgorithm::Ivf as i32,
-        "flat" => IndexingAlgorithm::Flat as i32,
-        "pq" => IndexingAlgorithm::Pq as i32,
-        "annoy" => IndexingAlgorithm::Annoy as i32,
-        "lsh" => IndexingAlgorithm::Lsh as i32,
-        _ => IndexingAlgorithm::Hnsw as i32,
-    };
-    
-    // Convert filterable columns
-    let filterable_columns = config.filterable_columns.unwrap_or_default()
-        .into_iter()
-        .map(|col| {
-            let data_type = match col.data_type.as_str() {
-                "string" => FilterableDataType::FilterableString as i32,
-                "integer" => FilterableDataType::FilterableInteger as i32,
-                "float" => FilterableDataType::FilterableFloat as i32,
-                "boolean" => FilterableDataType::FilterableBoolean as i32,
-                "datetime" => FilterableDataType::FilterableDatetime as i32,
-                "array_string" => FilterableDataType::FilterableArrayString as i32,
-                "array_integer" => FilterableDataType::FilterableArrayInteger as i32,
-                "array_float" => FilterableDataType::FilterableArrayFloat as i32,
-                _ => FilterableDataType::FilterableString as i32,
-            };
-            
-            FilterableColumnSpec {
-                name: col.name,
-                data_type,
-                indexed: col.indexed,
-                supports_range: col.supports_range,
-                estimated_cardinality: col.estimated_cardinality,
-                encoding_hint: None,  // SDK-driven encoding hints (2025-08-06)
-            
-                    }
-        })
-        .collect();
-    
-    // Convert index configs
-    let index_configs = config.index_configs.unwrap_or_default()
-        .into_iter()
-        .map(|idx| convert_index_config_to_proto(idx))
-        .collect();
-    
-    // Convert quantization config
-    let quantization_config = config.quantization_config.map(convert_quantization_config_to_proto);
-    
-    Ok(CollectionConfig {
-        name: config.name,
-        dimension: config.dimension,
-        distance_metric,
-        storage_engine,
-        primary_indexing_algorithm: indexing_algorithm,
-        filterable_columns,
-        index_configs,
-        quantization_config,
-        primary_index_name: config.primary_index_name.unwrap_or_default(),
-        enable_automatic_index_selection: config.enable_automatic_index_selection.unwrap_or(false),
-        description: config.description,
-        tags: config.tags.unwrap_or_default(),
-        owner: config.owner,
-        compression: None,  // SDK-driven compression (2025-08-06)
-        optimization_hints: None,  // SDK-driven optimization (2025-08-06)
-        storage_location: None,
-    })
+fn convert_to_proto_config(config: CollectionConfigJson) -> Result<CollectionConfig, StatusCode> {
+    // Simply use the to_proto method we already have
+    Ok(config.to_proto())
 }
 
 /// Convert index config from proto
@@ -1506,70 +1586,15 @@ fn convert_quantization_config_from_proto(config: QuantizationConfig) -> RestQua
 fn convert_from_proto_collection(proto: ProtoCollection) -> Collection {
     let config = proto.config.unwrap_or_default();
     
-    let distance_metric = match config.distance_metric {
-        x if x == DistanceMetric::Cosine as i32 => "cosine",
-        x if x == DistanceMetric::Euclidean as i32 => "euclidean",
-        x if x == DistanceMetric::DotProduct as i32 => "dot_product",
-        _ => "cosine",
-    }.to_string();
-    
-    let storage_engine = match config.storage_engine {
-        x if x == StorageEngine::Viper as i32 => "viper",
-        x if x == StorageEngine::Sst as i32 => "sst",
-        _ => "viper",
-    }.to_string();
-    
-    let indexing_algorithm = match config.primary_indexing_algorithm {
-        x if x == IndexingAlgorithm::Hnsw as i32 => "hnsw",
-        x if x == IndexingAlgorithm::Ivf as i32 => "ivf",
-        x if x == IndexingAlgorithm::Flat as i32 => "flat",
-        x if x == IndexingAlgorithm::Pq as i32 => "pq",
-        x if x == IndexingAlgorithm::Annoy as i32 => "annoy",
-        x if x == IndexingAlgorithm::Lsh as i32 => "lsh",
-        _ => "hnsw",
-    }.to_string();
-    
     Collection {
         id: proto.id,
-        config: RestCollectionConfig {
-            name: config.name,
-            dimension: config.dimension,
-            distance_metric: Some(distance_metric),
-            storage_engine: Some(storage_engine),
-            primary_indexing_algorithm: Some(indexing_algorithm),
-            filterable_columns: Some(config.filterable_columns.into_iter().map(|col| {
-                FilterableColumn {
-                    name: col.name,
-                    data_type: match col.data_type {
-                        x if x == FilterableDataType::FilterableString as i32 => "string",
-                        x if x == FilterableDataType::FilterableInteger as i32 => "integer",
-                        x if x == FilterableDataType::FilterableFloat as i32 => "float",
-                        x if x == FilterableDataType::FilterableBoolean as i32 => "boolean",
-                        x if x == FilterableDataType::FilterableDatetime as i32 => "datetime",
-                        x if x == FilterableDataType::FilterableArrayString as i32 => "array_string",
-                        x if x == FilterableDataType::FilterableArrayInteger as i32 => "array_integer",
-                        x if x == FilterableDataType::FilterableArrayFloat as i32 => "array_float",
-                        _ => "string",
-                    }.to_string(),
-                    indexed: col.indexed,
-                    supports_range: col.supports_range,
-                    estimated_cardinality: col.estimated_cardinality,
-                }
-            }).collect()),
-            index_configs: Some(config.index_configs.into_iter().map(convert_index_config_from_proto).collect()),
-            quantization_config: config.quantization_config.map(convert_quantization_config_from_proto),
-            primary_index_name: if config.primary_index_name.is_empty() { None } else { Some(config.primary_index_name) },
-            enable_automatic_index_selection: Some(config.enable_automatic_index_selection),
-            description: config.description,
-            tags: Some(config.tags),
-            owner: config.owner,
-        },
+        config: CollectionConfigJson::from_proto(&config),
         stats: CollectionStats {
             vector_count: proto.stats.as_ref().map(|s| s.vector_count).unwrap_or(0),
             index_size_bytes: proto.stats.as_ref().map(|s| s.index_size_bytes).unwrap_or(0),
             data_size_bytes: proto.stats.as_ref().map(|s| s.data_size_bytes).unwrap_or(0),
         },
-        created_at: proto.created_at,
+        timestamp: proto.created_at,
         updated_at: proto.updated_at,
     }
 }
@@ -1609,7 +1634,7 @@ pub async fn list_collections(
                     x if x == DistanceMetric::DotProduct as i32 => "dot_product",
                     _ => "cosine",
                 }.to_string(),
-                created_at: c.created_at,
+                timestamp: c.created_at,
                 updated_at: c.updated_at,
                 vector_count: stats.map(|s| s.vector_count),
                 indexed: stats.map(|s| s.index_size_bytes > 0).unwrap_or(false),
@@ -1659,7 +1684,7 @@ pub async fn get_collection(
                     x if x == DistanceMetric::DotProduct as i32 => "dot_product",
                     _ => "cosine",
                 }.to_string(),
-                created_at: c.created_at,
+                timestamp: c.created_at,
                 updated_at: c.updated_at,
                 vector_count: stats.map(|s| s.vector_count),
                 indexed: stats.map(|s| s.index_size_bytes > 0).unwrap_or(false),
@@ -1711,7 +1736,7 @@ pub async fn delete_collection(
         affected_count: proto_response.affected_count,
         total_count: proto_response.total_count,
         metadata: proto_response.metadata.into_iter().collect(),
-        error_message: proto_response.error_message,
+        // error_message removed -  proto_response.error_message,
         error_code: proto_response.error_code,
         processing_time_us: proto_response.processing_time_us,
     };
@@ -1752,7 +1777,7 @@ pub async fn delete_vectors(
             updated_at: Some((current_time / 1000) as u32),
             expires_at: Some((current_time / 1000) as u32), // Mark for deletion (convert ms to seconds)
             version: Some(1),
-            quantized_vector: None,
+            quantized: None,
         
         })
         .collect();
@@ -1799,7 +1824,7 @@ pub async fn delete_vectors(
         },
         results: None,
         vector_ids: proto_response.vector_ids,
-        error_message: proto_response.error_message,
+        // error_message removed -  proto_response.error_message,
         error_code: proto_response.error_code,
     };
     
@@ -1823,7 +1848,7 @@ pub async fn debug_list_unflushed_vectors(
                     "vector_length": v.vector.len(),
                     "metadata_count": v.metadata.len(),
                     "vector_preview": v.vector.iter().take(4).cloned().collect::<Vec<f32>>(),
-                    "metadata": v.metadata.iter().map(|m| serde_json::json!({
+                    "metadata_info": v.metadata.iter().map(|m| serde_json::json!({
                         "key": m.key,
                         "value": m.value
                     })).collect::<Vec<_>>()

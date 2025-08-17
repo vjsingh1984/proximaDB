@@ -30,7 +30,7 @@ use super::{FileOptions, FileSystem, FilesystemError, FsResult};
 pub struct AtomicWriteConfig {
     /// Strategy to use based on environment
     pub strategy: AtomicWriteStrategy,
-
+    
     /// Temp directory configuration
     pub temp_config: TempDirectoryConfig,
 
@@ -62,7 +62,7 @@ pub enum AtomicWriteStrategy {
     /// Write locally first, then flush to cloud storage atomically
     CloudOptimized {
         local_temp_dir: PathBuf,
-        enable_compression: bool,
+        compression: bool,
         chunk_size_mb: usize,
     },
 
@@ -348,7 +348,7 @@ impl AtomicWriteExecutor for SameMountTempExecutor {
 /// Cloud-optimized executor - local staging + cloud flush
 pub struct CloudOptimizedExecutor {
     local_temp_dir: PathBuf,
-    enable_compression: bool,
+    compression: bool,
     chunk_size_mb: usize,
     config: AtomicWriteConfig,
 }
@@ -356,20 +356,20 @@ pub struct CloudOptimizedExecutor {
 impl CloudOptimizedExecutor {
     pub fn new(
         local_temp_dir: PathBuf,
-        enable_compression: bool,
+        compression: bool,
         chunk_size_mb: usize,
         config: AtomicWriteConfig,
     ) -> Self {
         Self {
             local_temp_dir,
-            enable_compression,
+            compression,
             chunk_size_mb,
             config,
         }
     }
 
     async fn compress_data(&self, data: &[u8]) -> FsResult<Vec<u8>> {
-        if !self.enable_compression {
+        if !self.compression {
             return Ok(data.to_vec());
         }
 
@@ -418,7 +418,7 @@ impl AtomicWriteExecutor for CloudOptimizedExecutor {
             .await?;
 
         // Atomic flush to cloud storage
-        let cloud_data = if self.enable_compression {
+        let cloud_data = if self.compression {
             // If compressed, upload compressed data
             data_to_write
         } else {
@@ -535,11 +535,11 @@ impl AtomicWriteExecutorFactory {
             }
             AtomicWriteStrategy::CloudOptimized {
                 local_temp_dir,
-                enable_compression,
+                compression,
                 chunk_size_mb,
             } => Box::new(CloudOptimizedExecutor::new(
                 local_temp_dir.clone(),
-                *enable_compression,
+                *compression,
                 *chunk_size_mb,
                 config.clone(),
             )),
@@ -568,7 +568,7 @@ impl AtomicWriteExecutorFactory {
         let config = AtomicWriteConfig {
             strategy: AtomicWriteStrategy::CloudOptimized {
                 local_temp_dir: local_temp_dir.clone(),
-                enable_compression: true,
+                compression: true,
                 chunk_size_mb: 8,
             },
             ..Default::default()

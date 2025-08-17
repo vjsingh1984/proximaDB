@@ -16,8 +16,8 @@ mod tests {
         // Basic creation test
         let filesystem_factory = Arc::new(FilesystemFactory::new(Default::default()).await.unwrap());
         let config = FilestoreMetadataConfig {
-            storage_url: "file:///tmp/test_metadata".to_string(),
-            enable_compression: true,
+            storage_url: "file:///tmp/test_metadata_info".to_string(),
+            compression: true,
             enable_snapshots: false,
             snapshot_threshold: 1000,
             keep_snapshots: 3,

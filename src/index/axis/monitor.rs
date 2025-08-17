@@ -285,7 +285,6 @@ struct ComponentHealth {
     pub component_name: String,
     pub status: HealthStatus,
     pub last_check: DateTime<Utc>,
-    pub error_message: Option<String>,
     pub response_time_ms: f64,
 }
 
@@ -476,7 +475,7 @@ impl MetricsCollector {
     /// Get metrics for a collection
     async fn get_metrics(&self, collection_id: &str) -> Option<CollectionMetrics> {
         let collection_metrics = self.collection_metrics.read().await;
-        collection_metrics.get(collection_id).cloned()
+        collection_metrics.get(key).cloned()
     }
 
     /// Get system-wide metrics

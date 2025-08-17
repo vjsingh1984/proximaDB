@@ -94,8 +94,7 @@ pub struct StageMetrics {
 pub struct ProgressiveCandidate {
     pub row_group_id: u32,
     pub row_offset: u32,
-    pub distance: f32,
-    pub confidence: f32,        // Confidence in distance estimate
+    pub similarity: f32,
     pub stage: ProcessingStage,
     pub vector_id: Option<String>,
     pub record: Option<VectorRecord>,
@@ -309,8 +308,8 @@ impl ProgressiveColumnarSearch {
                 candidates.push(ProgressiveCandidate {
                     row_group_id: rg_candidate.row_group_id,
                     row_offset: rg_candidate.row_offset,
-                    distance: rg_candidate.distance,
-                    confidence: 0.3, // Low confidence from initial processing
+                    similarity: rg_candidate.distance,
+                    // confidence removed -  0.3, // Low confidence from initial processing
                     stage: ProcessingStage::BloomFilter,
                     vector_id: rg_candidate.vector_id.clone(),
                     record: rg_candidate.record.clone(),
@@ -362,8 +361,8 @@ impl ProgressiveColumnarSearch {
             }
             
             let updated_candidate = ProgressiveCandidate {
-                distance: binary_distance,
-                confidence: 0.5,
+                similarity: binary_distance,
+                // confidence removed -  0.5,
                 stage: ProcessingStage::BinaryFilter,
                 ..candidate
             };
@@ -454,8 +453,8 @@ impl ProgressiveColumnarSearch {
             }
             
             let updated_candidate = ProgressiveCandidate {
-                distance: int8_distance,
-                confidence: 0.7,
+                similarity: int8_distance,
+                // confidence removed -  0.7,
                 stage: ProcessingStage::Int8Filter,
                 ..candidate
             };
@@ -544,8 +543,8 @@ impl ProgressiveColumnarSearch {
             }
             
             let updated_candidate = ProgressiveCandidate {
-                distance: pq_distance,
-                confidence: 0.9,
+                similarity: pq_distance,
+                // confidence removed -  0.9,
                 stage: ProcessingStage::PQFilter,
                 ..candidate
             };
@@ -914,8 +913,8 @@ mod tests {
         heap.push(ProgressiveCandidate {
             row_group_id: 0,
             row_offset: 0,
-            distance: 10.0,
-            confidence: 0.8,
+            similarity: 10.0,
+            // confidence removed -  0.8,
             stage: ProcessingStage::BinaryFilter,
             vector_id: None,
             record: None,
@@ -924,8 +923,8 @@ mod tests {
         heap.push(ProgressiveCandidate {
             row_group_id: 0,
             row_offset: 1,
-            distance: 5.0,
-            confidence: 0.8,
+            similarity: 5.0,
+            // confidence removed -  0.8,
             stage: ProcessingStage::BinaryFilter,
             vector_id: None,
             record: None,

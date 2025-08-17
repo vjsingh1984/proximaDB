@@ -119,7 +119,7 @@ impl DistanceTableCache {
         // Try to get from cache first
         {
             let cache = self.cache.read().await;
-            if let Some(cached_table) = cache.get(&cache_key) {
+            if let Some(cached_table) = cache.get(&key) {
                 // Update access statistics
                 let mut stats = self.stats.write().await;
                 stats.hit_count += 1;
@@ -340,7 +340,7 @@ impl DistanceTableCache {
         let mut result = stats.clone();
         
         if result.hit_count + result.miss_count > 0 {
-            result.hit_rate = result.hit_count as f32 / (result.hit_count + result.miss_count) as f32;
+            result.hit_rate_percent = result.hit_count as f32 / (result.hit_count + result.miss_count) as f32;
         }
         
         result.size_mb = result.total_size_bytes / (1024 * 1024);
@@ -371,7 +371,7 @@ impl UniversalQuantizedCalculator {
                 eviction_policy: DistanceCacheEvictionPolicy::LRU,
                 cache_ttl_seconds: config.cache_config.ttl_seconds,
                 precompute_tables: true,
-                enable_compression: false,
+                compression: false,
             },
             approximation: crate::compute::distance_computation::ApproximationConfig {
                 enable_early_termination: true,
@@ -495,8 +495,8 @@ impl UniversalQuantizedCalculator {
         
         Ok(QuantizedDistanceResult {
             distance,
-            confidence: 0.9, // High confidence for INT8
-            computation_method: ComputationMethod::SIMD,
+            // confidence removed -  0.9, // High confidence for INT8
+            // computation_method removed -  ComputationMethod::SIMD,
         })
     }
     
@@ -523,8 +523,8 @@ impl UniversalQuantizedCalculator {
         
         Ok(QuantizedDistanceResult {
             distance,
-            confidence: 0.8, // Good confidence for PQ
-            computation_method: ComputationMethod::SIMD,
+            // confidence removed -  0.8, // Good confidence for PQ
+            // computation_method removed -  ComputationMethod::SIMD,
         })
     }
     
@@ -562,15 +562,15 @@ impl UniversalQuantizedCalculator {
         
         Ok(QuantizedDistanceResult {
             distance,
-            confidence: 0.7, // Lower confidence for binary
-            computation_method: ComputationMethod::SIMD,
+            // confidence removed -  0.7, // Lower confidence for binary
+            // computation_method removed -  ComputationMethod::SIMD,
         })
     }
     
     // SIMD-optimized distance computation methods
     
     async fn compute_int8_euclidean(&self, query: &[i8], candidate: &[i8]) -> AdapterResult<f32> {
-        if self.hardware_capabilities.avx2_supported && query.len() >= 32 {
+        if self.hardware_capabilities.cpu.features.avx2_support && query.len() >= 32 {
             self.update_stats_counter(|stats| stats.simd_usage_count += 1).await;
             // SIMD implementation would go here
             // For now, use scalar implementation
@@ -585,7 +585,7 @@ impl UniversalQuantizedCalculator {
     }
     
     async fn compute_int8_manhattan(&self, query: &[i8], candidate: &[i8]) -> AdapterResult<f32> {
-        if self.hardware_capabilities.avx2_supported && query.len() >= 32 {
+        if self.hardware_capabilities.cpu.features.avx2_support && query.len() >= 32 {
             self.update_stats_counter(|stats| stats.simd_usage_count += 1).await;
             // SIMD implementation would go here
         }
@@ -598,7 +598,7 @@ impl UniversalQuantizedCalculator {
     }
     
     async fn compute_int8_dot_product(&self, query: &[i8], candidate: &[i8]) -> AdapterResult<f32> {
-        if self.hardware_capabilities.avx2_supported && query.len() >= 32 {
+        if self.hardware_capabilities.cpu.features.avx2_support && query.len() >= 32 {
             self.update_stats_counter(|stats| stats.simd_usage_count += 1).await;
             // SIMD implementation would go here
         }
@@ -700,7 +700,7 @@ impl UniversalQuantizedCalculator {
         let cache_stats = self.distance_cache.get_statistics().await;
         
         let mut result = stats.clone();
-        result.cache_hit_rate = cache_stats.hit_rate;
+        result.cache_hit_rate = cache_stats.hit_rate_percent;
         
         result
     }

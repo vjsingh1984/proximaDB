@@ -54,10 +54,10 @@ async fn test_vector_search_request_structure() -> Result<()> {
         }
     });
     
-    assert_eq!(search_request["k"], 10);
-    assert_eq!(search_request["filters"]["category"], "test");
-    assert_eq!(search_request["include_vectors"], true);
-    assert_eq!(search_request["optimization_hints"]["enable_two_stage_search"], true);
+    assert_eq!(search_request.get("k"), 10);
+    assert_eq!(search_request.get("filters")["category"], "test");
+    assert_eq!(search_request.get("include_vectors"), true);
+    assert_eq!(search_request.get("optimization_hints")["enable_two_stage_search"], true);
     
     debug!("✅ Vector search request structure test passed");
     Ok(())
@@ -72,7 +72,7 @@ async fn test_collection_config_with_quantization() -> Result<()> {
         "distance_metric": "COSINE",
         "storage_engine": "VIPER",
         "indexing_algorithm": "HNSW",
-        "quantization_config": {
+        "quantization": {
             "quantization_type": "PQ",
             "bits_per_code": 8,
             "num_subspaces": 16,
@@ -84,7 +84,7 @@ async fn test_collection_config_with_quantization() -> Result<()> {
     assert_eq!(collection_config["dimension"], 128);
     assert_eq!(collection_config["distance_metric"], "COSINE");
     
-    let quant_config = &collection_config["quantization_config"];
+    let quant_config = &collection_config["quantization"];
     assert_eq!(quant_config["quantization_type"], "PQ");
     assert_eq!(quant_config["bits_per_code"], 8);
     assert_eq!(quant_config["num_subspaces"], 16);
@@ -151,12 +151,12 @@ async fn test_vector_mutation_operations() -> Result<()> {
         "soft_delete": true
     });
     
-    assert_eq!(update_request["operation"], "UPDATE");
-    assert_eq!(update_request["vector_id"], "test_vector_1");
-    assert_eq!(update_request["metadata_updates"]["priority"], "medium");
+    assert_eq!(update_request.get("operation"), "UPDATE");
+    assert_eq!(update_request.get("vector_id"), "test_vector_1");
+    assert_eq!(update_request.get("metadata_updates")["priority"], "medium");
     
-    assert_eq!(delete_request["operation"], "DELETE");
-    assert_eq!(delete_request["soft_delete"], true);
+    assert_eq!(delete_request.get("operation"), "DELETE");
+    assert_eq!(delete_request.get("soft_delete"), true);
     
     debug!("✅ Vector mutation operations test passed");
     Ok(())

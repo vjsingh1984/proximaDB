@@ -106,7 +106,7 @@ impl FixedLengthSerializer {
         let bytes: &[u8] = cast_slice(vectors);
         
         // Apply compression based on configuration
-        let compressed = match self.config.compression {
+        let compressed = match self.config.storage.as_ref().and_then(|s| s.compression.as_ref()) {
             CompressionType::None => bytes.to_vec(),
             CompressionType::Zstd => self.compress_zstd(bytes)?,
             CompressionType::Lz4 => self.compress_lz4(bytes)?,
@@ -288,7 +288,7 @@ impl FixedLengthSerializer {
     }
     
     fn compression_type_to_byte(&self) -> u8 {
-        match self.config.compression {
+        match self.config.storage.as_ref().and_then(|s| s.compression.as_ref()) {
             CompressionType::None => 0,
             CompressionType::Zstd => 1,
             CompressionType::Lz4 => 2,

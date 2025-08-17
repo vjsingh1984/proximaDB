@@ -358,8 +358,8 @@ mod wal_config_tests {
         assert!(config.multi_disk.collection_affinity);
         
         // Verify compression defaults
-        assert!(!config.compression.compress_memory);
-        assert!(config.compression.compress_disk);
+        assert!(!config.storage_config.as_ref().and_then(|s| s.compression.as_ref()).compress_memory);
+        assert!(config.storage_config.as_ref().and_then(|s| s.compression.as_ref()).compress_disk);
         
         // Verify no collection overrides by default
         assert!(config.collection_overrides.is_empty());
@@ -473,6 +473,6 @@ mod wal_config_tests {
         assert!(config.performance.global_shrink_factor > 0.0);
         assert!(config.performance.global_shrink_factor <= 1.0);
         assert!(config.memtable.mvcc_versions_retained >= 1);
-        assert!(config.compression.min_compress_size >= 0);
+        assert!(config.storage_config.as_ref().and_then(|s| s.compression.as_ref()).min_compress_size >= 0);
     }
 }

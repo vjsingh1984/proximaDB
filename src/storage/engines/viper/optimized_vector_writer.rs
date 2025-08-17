@@ -26,7 +26,6 @@ pub struct OptimizedVectorWriterConfig {
     /// Use BinaryArray with bytemuck for vector storage
     pub use_binary_array: bool,
     /// Vector serialization configuration
-    pub vector_config: VectorSerializationConfig,
     /// Parquet compression enabled
     pub compression_enabled: bool,
     /// Parquet compression algorithm
@@ -45,7 +44,7 @@ impl Default for OptimizedVectorWriterConfig {
     fn default() -> Self {
         Self {
             use_binary_array: true,
-            vector_config: VectorSerializationConfig::default(),
+            // vector_config removed -  VectorSerializationConfig::default(),
             compression_enabled: true,    // Compression enabled by default
             compression_algorithm: "zstd".to_string(),
             parquet_compression_level: 6, // Higher compression for storage
@@ -61,19 +60,8 @@ impl OptimizedVectorWriterConfig {
     pub fn from_viper_config(config: &crate::core::ViperConfig) -> Self {
         Self {
             use_binary_array: true,
-            vector_config: VectorSerializationConfig {
-                use_bytemuck: true,
-                compression_threshold: 256,
-                compression_algorithm: match config.compression.as_str() {
-                    "zstd" => CompressionAlgorithm::Zstd,
-                    "lz4" => CompressionAlgorithm::Lz4,
-                    _ => CompressionAlgorithm::None,
-                },
-                compression_level: config.compression_level,
-                adaptive_compression: true,
-            },
-            compression_enabled: config.compression != "none",
-            compression_algorithm: config.compression.clone(),
+            compression_enabled: config.storage.as_ref().and_then(|s| s.compression.as_ref()) != "none",
+            compression_algorithm: config.storage.as_ref().and_then(|s| s.compression.as_ref()).clone(),
             parquet_compression_level: config.compression_level,
             row_group_size: config.row_group_size,
             write_batch_size: 1024,
@@ -118,7 +106,7 @@ impl OptimizedVectorWriter {
         fields.push(Field::new("version", DataType::Int64, true));
         
         // Metadata as JSON string (could be optimized to struct later)
-        fields.push(Field::new("metadata", DataType::Utf8, true));
+        fields.push(Field::new("metadata_info", DataType::Utf8, true));
 
         Ok(Schema::new(fields))
     }
@@ -478,9 +466,9 @@ mod tests {
             updated_at: Some(1234567890),
             expires_at: None,
             version: Some(1),
-            rank: None,
-            score: None,
-            distance: None,
+            // rank removed -  None,
+            similarity: None,
+            similarity: None,
         }
     }
 

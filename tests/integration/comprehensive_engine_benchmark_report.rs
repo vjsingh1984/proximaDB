@@ -784,7 +784,7 @@ async fn run_benchmark(
         "VIPER" => {
             // Configure VIPER with compression
             let mut viper_config = env.viper_config.clone();
-            viper_config.compression = config.algorithm.clone();
+            viper_config.storage_config.as_ref().and_then(|s| s.compression.as_ref()) = config.algorithm.clone();
             viper_config.compression_level = config.level;
             
             let engine = proximadb::storage::engines::viper::ViperEngine::from_core_config(
@@ -1115,8 +1115,8 @@ fn build_result(
     let p50_idx = sorted_latencies.len() / 2;
     let p99_idx = (sorted_latencies.len() * 99) / 100;
     
-    let query_latency_p50 = sorted_latencies.get(p50_idx).copied().unwrap_or(0.0);
-    let query_latency_p99 = sorted_latencies.get(p99_idx).copied().unwrap_or(0.0);
+    let query_latency_p50 = sorted_latencies.get(key).copied().unwrap_or(0.0);
+    let query_latency_p99 = sorted_latencies.get(key).copied().unwrap_or(0.0);
     
     // Calculate latency percentage change vs baseline
     let (latency_change_p50, latency_change_p99) = if let Some(baseline) = baseline {
@@ -1145,8 +1145,8 @@ fn build_result(
     let filter_p50_idx = sorted_filter_latencies.len() / 2;
     let filter_p99_idx = (sorted_filter_latencies.len() * 99) / 100;
     
-    let filter_latency_p50 = sorted_filter_latencies.get(filter_p50_idx).copied().unwrap_or(0.0);
-    let filter_latency_p99 = sorted_filter_latencies.get(filter_p99_idx).copied().unwrap_or(0.0);
+    let filter_latency_p50 = sorted_filter_latencies.get(key).copied().unwrap_or(0.0);
+    let filter_latency_p99 = sorted_filter_latencies.get(key).copied().unwrap_or(0.0);
     
     let avg_filter_latency = if !sorted_filter_latencies.is_empty() {
         sorted_filter_latencies.iter().sum::<f64>() / sorted_filter_latencies.len() as f64
@@ -1224,7 +1224,7 @@ async fn count_files_in_dir(path: &str) -> usize {
             if let Ok(metadata) = entry.metadata().await {
                 if metadata.is_file() {
                     // Only count actual data files (SST or Parquet)
-                    if file_name.ends_with(".sst") || file_name.ends_with(".parquet") {
+                    if file_name.ends_with(".sstable") || file_name.ends_with(".parquet") {
                         count += 1;
                     }
                 }
@@ -1261,7 +1261,7 @@ async fn get_directory_size(path: &str) -> u64 {
                     // Track specific file types
                     if file_name.ends_with(".parquet") {
                         parquet_files.push((file_name.clone(), file_size));
-                    } else if file_name.ends_with(".sst") {
+                    } else if file_name.ends_with(".sstable") {
                         sst_files.push((file_name.clone(), file_size));
                     }
                 }
@@ -1501,7 +1501,7 @@ async fn test_generate_comprehensive_benchmark_report() -> Result<()> {
         println!("\n  Sparsity {}%:", sparsity);
         
         // Get the pre-generated vectors for this sparsity level
-        let vector_set = vector_sets.get(sparsity).unwrap();
+        let vector_set = vector_sets.get(key).unwrap();
         
         // SST baseline
         match run_baseline("SST", *sparsity, vector_set, batch_count, vectors_per_batch).await {
@@ -1520,7 +1520,7 @@ async fn test_generate_comprehensive_benchmark_report() -> Result<()> {
                 println!("    ✅ VIPER baseline: {} results", viper_baseline.top_k_ids.len());
                 
                 // Compare VIPER and SST baseline results - they should be similar
-                if let Some(sst_baseline) = baselines.get(&("SST".to_string(), *sparsity)) {
+                if let Some(sst_baseline) = baselines.get(key), *sparsity)) {
                     let mut matching_ids = 0;
                     for (i, viper_id) in viper_baseline.top_k_ids.iter().enumerate() {
                         if i < sst_baseline.top_k_ids.len() && viper_id == &sst_baseline.top_k_ids[i] {
@@ -1555,11 +1555,11 @@ async fn test_generate_comprehensive_benchmark_report() -> Result<()> {
         println!("\n━━━━━ SPARSITY LEVEL: {}% ━━━━━", sparsity);
         
         // Get the pre-generated vectors for this sparsity level
-        let vector_set = vector_sets.get(sparsity).unwrap();
+        let vector_set = vector_sets.get(key).unwrap();
         
         // Get baselines for this sparsity level
-        let sst_baseline = baselines.get(&("SST".to_string(), *sparsity));
-        let viper_baseline = baselines.get(&("VIPER".to_string(), *sparsity));
+        let sst_baseline = baselines.get(key), *sparsity));
+        let viper_baseline = baselines.get(key), *sparsity));
         
         for (algo, levels) in &algorithms_and_levels {
             // Skip "none" algorithm as that's our baseline

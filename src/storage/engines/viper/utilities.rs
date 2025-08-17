@@ -406,7 +406,7 @@ pub struct PartitionMetadata {
     pub vector_count: usize,
     pub size_bytes: usize,
     pub compression_ratio: f32,
-    pub created_at: DateTime<Utc>,
+    pub timestamp: DateTime<Utc>,
     pub last_accessed: DateTime<Utc>,
 }
 
@@ -659,7 +659,6 @@ pub struct PerformanceRecommendation {
     pub recommendation_type: String,
     pub description: String,
     pub expected_improvement: f32,
-    pub confidence: f32,
 }
 
 /// Compression recommendation

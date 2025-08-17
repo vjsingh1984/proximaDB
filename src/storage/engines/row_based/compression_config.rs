@@ -39,7 +39,6 @@ pub struct RowBasedCompressionConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VectorCompressionStrategy {
     /// Strategy type
-    pub strategy: VectorCompressionType,
     
     /// Dimension-specific settings
     pub dimension_thresholds: HashMap<usize, CompressionSettings>,
@@ -291,7 +290,7 @@ impl RowBasedCompressionConfig {
     pub fn get_vector_settings(&self, dimension: usize) -> CompressionSettings {
         self.vector_compression
             .dimension_thresholds
-            .get(&dimension)
+            .get(key)
             .cloned()
             .unwrap_or_else(|| self.default_vector_settings(dimension))
     }
@@ -370,9 +369,9 @@ impl RowBasedCompressionConfig {
     fn get_simd_optimal_algorithm(&self, hardware: &HardwareCapabilities) -> Option<CompressionAlgorithm> {
         let simd_algos = &self.vector_compression.hardware_optimizations.simd_algorithms;
         
-        if hardware.has_avx512() && simd_algos.contains(&CompressionAlgorithm::Lz4) {
+        if hardware.has_avx512() && simd_algos.contains_hash(&CompressionAlgorithm::Lz4) {
             Some(CompressionAlgorithm::Lz4)
-        } else if hardware.has_avx2() && simd_algos.contains(&CompressionAlgorithm::Snappy) {
+        } else if hardware.has_avx2() && simd_algos.contains_hash(&CompressionAlgorithm::Snappy) {
             Some(CompressionAlgorithm::Snappy)
         } else {
             None
@@ -412,7 +411,7 @@ impl Default for VectorCompressionStrategy {
         }
         
         Self {
-            strategy: VectorCompressionType::Adaptive,
+            // strategy removed -  VectorCompressionType::Adaptive,
             dimension_thresholds,
             hardware_optimizations: HardwareCompressionConfig::default(),
             quantization_aware: true,

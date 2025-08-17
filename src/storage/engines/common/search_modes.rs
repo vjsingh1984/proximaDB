@@ -184,7 +184,6 @@ pub struct DiversificationParams {
     pub enabled: bool,
     
     /// Diversification strategy
-    pub strategy: DiversificationStrategy,
     
     /// Diversity threshold
     pub diversity_threshold: f32,
@@ -289,7 +288,6 @@ pub enum ResultAggregationStrategy {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HybridFusionParams {
     /// Fusion strategy
-    pub strategy: FusionStrategy,
     
     /// Component weights
     pub weights: FusionWeights,
@@ -600,7 +598,6 @@ pub struct RefinementParams {
     pub enabled: bool,
     
     /// Refinement strategy
-    pub strategy: RefinementStrategy,
     
     /// Refinement budget
     pub refinement_budget: RefinementBudget,
@@ -987,7 +984,6 @@ pub struct ProgressiveRefinement {
     pub cross_stage_refinement: bool,
     
     /// Refinement strategy
-    pub strategy: ProgressiveRefinementStrategy,
     
     /// Refinement budget
     pub budget: RefinementBudget,
@@ -1096,7 +1092,7 @@ pub struct CandidateRecord {
     pub id: String,
     
     /// Distance/similarity score
-    pub score: f32,
+    pub similarity: f32,
     
     /// Optional vector data
     pub vector: Option<Vec<f32>>,

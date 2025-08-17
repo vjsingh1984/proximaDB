@@ -196,6 +196,9 @@ impl CompactionTestEnv {
             max_concurrent_per_collection: 2,
             global_max_concurrent: 4,
             operation_timeout: Duration::from_secs(30),
+            queue_aware_compaction: true,
+            max_queue_wait: Duration::from_secs(300),
+            urgency_threshold: 0.8,
         };
         
         let orchestrator = CompactionOrchestrator::new(filesystem.clone(), config);
@@ -321,7 +324,7 @@ impl PerformanceTester {
     /// Benchmark filename parsing performance
     pub fn benchmark_filename_parsing(iterations: usize) -> Duration {
         let codec = FilenameCodec::new();
-        let test_filename = "L5_20250814T143052_a7f3c2d1.sst";
+        let test_filename = "L5_20250814T143052_a7f3c2d1.sstable";
         
         let start = Instant::now();
         

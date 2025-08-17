@@ -18,7 +18,7 @@ struct CreateCollectionRequest {
     distance_metric: String,
     storage_engine: String,
     indexing_algorithm: String,
-    quantization_config: Option<serde_json::Value>,
+    quantization: Option<serde_json::Value>,
 }
 
 #[derive(Debug, serde::Serialize)]
@@ -60,7 +60,7 @@ struct SearchOptimizationHints {
 }
 
 async fn create_test_collection(client: &Client, collection_name: &str) -> Result<()> {
-    let quantization_config = json!({
+    let quantization = json!({
         "enabled": true,
         "storage_quantization": {
             "enabled": true,
@@ -82,7 +82,7 @@ async fn create_test_collection(client: &Client, collection_name: &str) -> Resul
         distance_metric: "cosine".to_string(),
         storage_engine: "viper".to_string(),
         indexing_algorithm: "hnsw".to_string(),
-        quantization_config: Some(quantization_config),
+        quantization: Some(quantization),
     };
 
     let response = client
@@ -329,7 +329,7 @@ async fn test_rest_vector_search_with_quantization() -> Result<()> {
         for item in data {
             if let Some(metadata) = item["metadata"].as_object() {
                 assert_eq!(
-                    metadata.get("category").and_then(|v| v.as_str()),
+                    metadata.get(key).and_then(|v| v.as_str()),
                     Some("test")
                 );
             }

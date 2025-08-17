@@ -88,7 +88,7 @@ impl FilestoreCheckpointManager {
             config,
             filesystem,
             filestore_url,
-            metadata_path: PathBuf::from("metadata"),
+            metadata_path: PathBuf::from("metadata_info"),
             stats: CheckpointStats::default(),
         }
     }

@@ -25,13 +25,13 @@ mod tests {
         let cache = DecompressionCache::from_config(test_cache_config(10)); // 10MB cache
         
         let key = BlockCacheKey {
-            file_path: "test.sst".to_string(),
+            file_path: "test.sstable".to_string(),
             block_id: 1,
             block_offset: 0,
         };
         
         // Test miss
-        assert!(cache.get(&key).await.is_none());
+        assert!(cache.get(&key);
         
         // Test put and hit
         let block = DataBlock::new(1, vec![]);
@@ -39,7 +39,7 @@ mod tests {
             .await
             .unwrap();
         
-        assert!(cache.get(&key).await.is_some());
+        assert!(cache.get(&key);
         
         // Check stats
         let stats = cache.get_stats().await;
@@ -54,7 +54,7 @@ mod tests {
         // Fill cache with blocks
         for i in 0..100 {
             let key = BlockCacheKey {
-                file_path: "test.sst".to_string(),
+                file_path: "test.sstable".to_string(),
                 block_id: i,
                 block_offset: 0,
             };
@@ -96,7 +96,7 @@ mod tests {
         // Add multiple blocks from same file
         for i in 0..5 {
             let key = BlockCacheKey {
-                file_path: "test_file.sst".to_string(),
+                file_path: "test_file.sstable".to_string(),
                 block_id: i,
                 block_offset: i as u64 * 1000,
             };
@@ -108,7 +108,7 @@ mod tests {
         // Add blocks from different file
         for i in 0..3 {
             let key = BlockCacheKey {
-                file_path: "other_file.sst".to_string(),
+                file_path: "other_file.sstable".to_string(),
                 block_id: i,
                 block_offset: i as u64 * 1000,
             };
@@ -118,26 +118,26 @@ mod tests {
         }
         
         // Invalidate first file
-        cache.invalidate_file("test_file.sst").await;
+        cache.invalidate_file("test_file.sstable").await;
         
         // Check that blocks from first file are gone
         for i in 0..5 {
             let key = BlockCacheKey {
-                file_path: "test_file.sst".to_string(),
+                file_path: "test_file.sstable".to_string(),
                 block_id: i,
                 block_offset: i as u64 * 1000,
             };
-            assert!(cache.get(&key).await.is_none());
+            assert!(cache.get(&key);
         }
         
         // Check that blocks from second file are still there
         for i in 0..3 {
             let key = BlockCacheKey {
-                file_path: "other_file.sst".to_string(),
+                file_path: "other_file.sstable".to_string(),
                 block_id: i,
                 block_offset: i as u64 * 1000,
             };
-            assert!(cache.get(&key).await.is_some());
+            assert!(cache.get(&key);
         }
     }
 
@@ -148,7 +148,7 @@ mod tests {
         // Add blocks for collection1
         for i in 0..3 {
             let key = BlockCacheKey {
-                file_path: format!("collection1/file_{}.sst", i),
+                file_path: format!("collection1/file_{}.sstable", i),
                 block_id: 0,
                 block_offset: 0,
             };
@@ -160,7 +160,7 @@ mod tests {
         // Add blocks for collection2
         for i in 0..3 {
             let key = BlockCacheKey {
-                file_path: format!("collection2/file_{}.sst", i),
+                file_path: format!("collection2/file_{}.sstable", i),
                 block_id: 0,
                 block_offset: 0,
             };
@@ -175,21 +175,21 @@ mod tests {
         // Check that collection1 blocks are gone
         for i in 0..3 {
             let key = BlockCacheKey {
-                file_path: format!("collection1/file_{}.sst", i),
+                file_path: format!("collection1/file_{}.sstable", i),
                 block_id: 0,
                 block_offset: 0,
             };
-            assert!(cache.get(&key).await.is_none());
+            assert!(cache.get(&key);
         }
         
         // Check that collection2 blocks are still there
         for i in 0..3 {
             let key = BlockCacheKey {
-                file_path: format!("collection2/file_{}.sst", i),
+                file_path: format!("collection2/file_{}.sstable", i),
                 block_id: 0,
                 block_offset: 0,
             };
-            assert!(cache.get(&key).await.is_some());
+            assert!(cache.get(&key);
         }
     }
 
@@ -198,13 +198,13 @@ mod tests {
         let cache = DecompressionCache::from_config(test_cache_config(10));
         
         let key1 = BlockCacheKey {
-            file_path: "test.sst".to_string(),
+            file_path: "test.sstable".to_string(),
             block_id: 1,
             block_offset: 0,
         };
         
         let key2 = BlockCacheKey {
-            file_path: "test.sst".to_string(),
+            file_path: "test.sstable".to_string(),
             block_id: 2,
             block_offset: 1000,
         };
@@ -214,11 +214,11 @@ mod tests {
         cache.put(key1.clone(), block, None).await.unwrap();
         
         // Perform multiple accesses
-        cache.get(&key1).await; // Hit
-        cache.get(&key1).await; // Hit
-        cache.get(&key2).await; // Miss
-        cache.get(&key1).await; // Hit
-        cache.get(&key2).await; // Miss
+        cache.get(&key).await; // Hit
+        cache.get(&key).await; // Hit
+        cache.get(&key).await; // Miss
+        cache.get(&key).await; // Hit
+        cache.get(&key).await; // Miss
         
         // Check hit rate
         let hit_rate = cache.get_hit_rate().await;
@@ -231,7 +231,7 @@ mod tests {
         let cache = DecompressionCache::from_config(test_cache_config(10));
         
         // Simulate prefetching multiple blocks
-        let file_path = "prefetch_test.sst";
+        let file_path = "prefetch_test.sstable";
         let mut blocks = vec![];
         
         for i in 0..10 {
@@ -263,7 +263,7 @@ mod tests {
                 block_id: i,
                 block_offset: 0,
             };
-            assert!(cache.get(&key).await.is_some());
+            assert!(cache.get(&key);
         }
     }
 
@@ -281,7 +281,7 @@ mod tests {
         for (i, algo) in algorithms.iter().enumerate() {
             for j in 0..3 {
                 let key = BlockCacheKey {
-                    file_path: format!("file_{}.sst", i),
+                    file_path: format!("file_{}.sstable", i),
                     block_id: j,
                     block_offset: j as u64 * 1000,
                 };
@@ -314,7 +314,7 @@ mod tests {
         
         // Add a block
         let key = BlockCacheKey {
-            file_path: "test.sst".to_string(),
+            file_path: "test.sstable".to_string(),
             block_id: 1,
             block_offset: 0,
         };
@@ -323,13 +323,13 @@ mod tests {
         cache.put(key.clone(), block, None).await.unwrap();
         
         // Verify it's cached
-        assert!(cache.get(&key).await.is_some());
+        assert!(cache.get(&key);
         
         // Clear cache
         cache.clear().await;
         
         // Verify it's gone
-        assert!(cache.get(&key).await.is_none());
+        assert!(cache.get(&key);
         assert_eq!(cache.get_current_size().await, 0);
     }
 }

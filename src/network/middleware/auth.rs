@@ -115,7 +115,7 @@ pub async fn auth_middleware<B>(
     // Extract Authorization header
     let auth_header = request
         .headers()
-        .get(header::AUTHORIZATION)
+        .get(key)
         .and_then(|header| header.to_str().ok());
 
     let api_key = match auth_header {
@@ -140,7 +140,7 @@ pub async fn auth_middleware<B>(
     };
 
     // Validate API key
-    let user_info = match auth_config.api_keys.get(api_key) {
+    let user_info = match auth_config.api_keys.get(key) {
         Some(user_info) => user_info.clone(),
         None => {
             return Err((

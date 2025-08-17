@@ -64,7 +64,7 @@ use std::fs::File;
 /// Create test VIPER configuration with specific compression algorithm
 fn create_viper_config_with_algorithm(env: &UnifiedTestEnvironment, algorithm: &str, level: i32) -> proximadb::core::config::ViperConfig {
     let mut config = env.viper_config.clone();
-    config.compression = algorithm.to_string();
+    config.storage_config.as_ref().and_then(|s| s.compression.as_ref()) = algorithm.to_string();
     config.compression_level = level;
     config.row_group_size = 50_000;
     config
@@ -335,7 +335,7 @@ async fn test_viper_engine_flush_creates_compressed_parquet_files() -> anyhow::R
     
     for rg in row_groups {
         for col in rg.columns() {
-            match col.compression() {
+            match col.storage_config.as_ref().and_then(|s| s.compression.as_ref())() {
                 parquet::basic::Compression::ZSTD(_) => {
                     info!("Column uses ZSTD compression");
                 }
@@ -438,7 +438,7 @@ async fn test_viper_compaction_merges_compressed_parquet_efficiently() -> anyhow
     
     // Create VIPER engine with compression enabled
     let mut viper_config = env.viper_config.clone();
-    viper_config.compression = "zstd".to_string();
+    viper_config.storage_config.as_ref().and_then(|s| s.compression.as_ref()) = "zstd".to_string();
     viper_config.compression_level = 3;
     viper_config.row_group_size = 50_000;
     
@@ -849,7 +849,7 @@ async fn test_compression_algorithm_vs_disabled() -> anyhow::Result<()> {
             for (i, rg) in metadata.row_groups().iter().enumerate() {
                 for (j, col) in rg.columns().iter().enumerate() {
                     info!("  Row group {}, Column {}: {:?} compression", 
-                          i, j, col.compression());
+                          i, j, col.storage_config.as_ref().and_then(|s| s.compression.as_ref())());
                 }
                 if i >= 1 { break; } // Only show first couple row groups
             }

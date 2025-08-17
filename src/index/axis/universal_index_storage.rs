@@ -147,7 +147,7 @@ impl<T: IndexData> UniversalIndexStorage<T> {
         self.data_locations.insert(id.clone(), StorageLocation::Memory);
         self.access_tracker.insert(id.clone(), std::time::SystemTime::now());
         
-        debug!("Stored {} data {} in memory", self.index_type, id);
+        debug!("Stored {} data {} in mem", self.index_type, id);
         
         // Check if we need to evict from memory
         if self.memory_cache.len() > self.max_memory_items {
@@ -163,12 +163,12 @@ impl<T: IndexData> UniversalIndexStorage<T> {
         self.access_tracker.insert(id.to_string(), std::time::SystemTime::now());
         
         // Check current location
-        let location = self.data_locations.get(id).map(|l| l.clone());
+        let location = self.data_locations.get(key).map(|l| l.clone());
         
         match location {
             Some(StorageLocation::Memory) => {
                 // Fast path: already in memory
-                if let Some(bytes) = self.memory_cache.get(id) {
+                if let Some(bytes) = self.memory_cache.get(&key) {
                     let data: T = bincode::deserialize(&bytes)?;
                     return Ok(Some(data));
                 }
@@ -250,7 +250,7 @@ impl<T: IndexData> UniversalIndexStorage<T> {
                     self.data_locations.remove(id);
                 }
                 
-                info!("Evicted {} data {} from memory", self.index_type, id);
+                info!("Evicted {} data {} from mem", self.index_type, id);
             }
         }
         
@@ -292,7 +292,7 @@ impl<T: IndexData> UniversalIndexStorage<T> {
                     updated_at: None,
                     expires_at: None,
                     version: None,
-                    quantized_vector: None,
+                    quantized: None,
                 });
                 // Write records using streaming approach for production consistency
                 let record_count = records.len();
@@ -379,7 +379,7 @@ impl<T: IndexData> UniversalIndexStorage<T> {
         let bytes = bincode::serialize(&data)?;
         self.memory_cache.insert(id.to_string(), bytes);
         self.data_locations.insert(id.to_string(), StorageLocation::Memory);
-        debug!("Promoted {} to memory", id);
+        debug!("Promoted {} to mem", id);
         Ok(())
     }
     
@@ -431,7 +431,7 @@ impl<T: IndexData> UniversalIndexStorage<T> {
                     updated_at: None,
                     expires_at: None,
                     version: None,
-                    quantized_vector: None,
+                    quantized: None,
                 };
                 records.insert(id.to_string(), record);
                 // Write records using streaming approach for production consistency
@@ -568,7 +568,7 @@ mod tests {
         assert!(storage.memory_cache.len() <= 11, "Expected at most 11 items in memory after eviction");
         
         // Retrieve should promote back to memory
-        let node = storage.get("node_0_5").await.unwrap();
+        let node = storage.get(&key).await.unwrap();
         assert!(node.is_some());
     }
 }

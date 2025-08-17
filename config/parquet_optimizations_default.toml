@@ -1,0 +1,264 @@
+# ProximaDB Parquet Optimizations Configuration
+# 
+# All optimizations are ENABLED by default for maximum performance.
+# Users can selectively disable or tune settings as needed.
+# 
+# Configuration Hierarchy:
+# 1. Server defaults (this file)
+# 2. Collection-level overrides (via collection.config.storage_engine_config)
+# 3. Runtime overrides (via API)
+
+# ============================================================================
+# GLOBAL STORAGE ENGINE SETTINGS
+# ============================================================================
+
+[storage]
+# Default storage engine for new collections
+default_engine = "viper"  # Options: "viper", "sst", "nova", "swift", "prism"
+
+# Enable Parquet optimizations globally
+enable_parquet_optimizations = true  # DEFAULT: true (all optimizations on)
+
+# ============================================================================
+# PARQUET WRITER CONFIGURATION
+# All settings apply to VIPER and NOVA engines by default
+# ============================================================================
+
+[storage.parquet_writer]
+# Row group configuration
+row_group_size = 10_000              # Number of records per row group
+page_size = 1_048_576                # 1MB pages for optimal I/O
+
+# Bloom filter optimization (95% metadata scan reduction)
+enable_bloom_filters = true          # DEFAULT: true
+bloom_filter_fpp = 0.01              # False positive probability (1%)
+# Auto-detect columns for bloom filters if not specified
+bloom_filter_columns = []            # Empty = auto-detect
+
+# Page indexes (5-20x faster range queries)
+enable_column_statistics = true      # DEFAULT: true
+enable_page_index = true            # DEFAULT: true
+enable_column_index = true          # DEFAULT: true (critical for cloud)
+enable_offset_index = true          # DEFAULT: true (direct page access)
+page_index_granularity = 1_000      # Rows per page index entry
+
+# Compression settings
+compression = "mixed"                # Options: "zstd", "lz4", "snappy", "gzip", "mixed"
+enable_dictionary = true             # DEFAULT: true (string compression)
+dictionary_threshold = 0.7           # Use dictionary if <70% unique
+enable_delta_encoding = true         # DEFAULT: true (integer compression)
+enable_byte_stream_split = true      # DEFAULT: true (float compression)
+
+# PQ-based sorting (2-3x compression improvement)
+enable_pq_sorting = true             # DEFAULT: true
+pq_sorting_segments = 8              # PQ segments for sorting
+pq_sorting_codebook_size = 256       # Codebook size (8-bit codes)
+
+# Native metadata types (50-80% metadata query improvement)
+enable_native_metadata = true        # DEFAULT: true
+metadata_inference_samples = 1_000   # Samples for type inference
+
+# Batch settings
+write_batch_size = 1_000             # Records per batch
+id_less_storage = false              # Keep ID column for APIs
+
+# ============================================================================
+# FOOTER CACHE CONFIGURATION
+# 70-90% cloud API reduction
+# ============================================================================
+
+[storage.footer_cache]
+enable = true                        # DEFAULT: true
+max_entries = 10_000                 # Cache up to 10K file footers
+ttl_seconds = 3_600                  # 1 hour TTL
+time_to_idle_seconds = 1_800         # 30 min idle eviction
+
+# Persistence (survive restarts)
+enable_persistence = true            # DEFAULT: true
+persistence_path = "data/footer_cache.bin"
+
+# Prefetching (proactive caching)
+enable_prefetch = true               # DEFAULT: true
+prefetch_threshold = 10              # Prefetch after N accesses
+warming_interval_seconds = 300       # Cache warming every 5 min
+
+# Cache compression
+enable_compression = true            # DEFAULT: true
+compression_level = 3                # 1-9, 3 = balanced
+
+# ============================================================================
+# HYBRID WRITER CONFIGURATION
+# Adaptive streaming/batch mode
+# ============================================================================
+
+[storage.hybrid_writer]
+enable = true                        # DEFAULT: true
+initial_mode = "adaptive"            # Options: "streaming", "batch", "adaptive"
+
+# Automatic mode switching
+enable_auto_switch = true            # DEFAULT: true
+mode_switch_threshold = 1_000        # Records before mode evaluation
+pattern_window_size = 100            # History window for pattern detection
+
+# Mode thresholds
+streaming_threshold = 100.0          # Records/second for streaming mode
+batch_threshold = 1_000              # Records per batch for batch mode
+
+# Buffer management
+max_buffer_size = 100_000            # Maximum buffer before flush
+buffer_time_limit_seconds = 30       # Force flush after N seconds
+
+# Concurrency
+enable_concurrent_writes = true      # DEFAULT: true
+max_concurrent_writers = 4           # Parallel writers
+
+# Row group optimization
+optimize_row_group_size = true       # DEFAULT: true
+min_row_group_size = 1_000
+max_row_group_size = 100_000
+
+# ============================================================================
+# VIPER ENGINE SPECIFIC SETTINGS
+# ============================================================================
+
+[storage.engines.viper]
+# Inherit global Parquet settings by default
+inherit_global_settings = true       # DEFAULT: true
+
+# VIPER-specific overrides (optional)
+# Uncomment to override global settings for VIPER
+# [storage.engines.viper.parquet_writer]
+# row_group_size = 50_000            # Larger for analytics workloads
+# compression = "zstd"                # Better compression for cold data
+
+# [storage.engines.viper.footer_cache]
+# max_entries = 20_000                # More cache for analytics
+
+# ============================================================================
+# NOVA ENGINE SPECIFIC SETTINGS
+# ============================================================================
+
+[storage.engines.nova]
+# Inherit global Parquet settings by default
+inherit_global_settings = true       # DEFAULT: true
+
+# NOVA-specific overrides (optional)
+# Uncomment to override global settings for NOVA
+# [storage.engines.nova.parquet_writer]
+# row_group_size = 5_000              # Smaller for real-time
+# compression = "lz4"                 # Faster compression
+
+# [storage.engines.nova.hybrid_writer]
+# initial_mode = "streaming"          # Prefer streaming for real-time
+
+# ============================================================================
+# SST ENGINE SPECIFIC SETTINGS
+# SST doesn't use Parquet but has its own optimizations
+# ============================================================================
+
+[storage.engines.sst]
+# SST-specific bloom filters
+enable_bloom_filters = true          # DEFAULT: true
+bloom_filter_fpp = 0.01
+
+# SST compression
+compression = "zstd"
+compression_level = 3
+
+# Write buffer settings
+write_buffer_size = 67_108_864       # 64MB
+max_write_buffers = 4
+
+# ============================================================================
+# MONITORING AND METRICS
+# ============================================================================
+
+[monitoring.parquet_optimizations]
+# Enable detailed metrics
+enable_metrics = true                # DEFAULT: true
+metrics_interval_seconds = 60        # Collect metrics every minute
+
+# Alert thresholds
+cache_hit_rate_threshold = 0.8       # Alert if cache hit rate < 80%
+compression_ratio_threshold = 2.0     # Alert if compression < 2x
+mode_switch_frequency = 10           # Alert if >10 switches per minute
+
+# ============================================================================
+# PRESETS FOR QUICK CONFIGURATION
+# Uncomment one preset to apply predefined settings
+# ============================================================================
+
+# Maximum performance (default - all optimizations enabled)
+# preset = "maximum_performance"
+
+# Balanced (most optimizations, conservative settings)
+# preset = "balanced"
+
+# Memory constrained (disable memory-heavy features)
+# preset = "memory_constrained"  
+
+# Cloud optimized (maximize cloud efficiency)
+# preset = "cloud_optimized"
+
+# Real-time (minimum latency)
+# preset = "real_time"
+
+# ============================================================================
+# PER-COLLECTION OVERRIDE EXAMPLE
+# Collections can override these settings via their config
+# ============================================================================
+
+# Example collection configuration (set via API):
+# {
+#   "name": "my_collection",
+#   "dimension": 768,
+#   "engine": "viper",
+#   "storage_engine_config": {
+#     "parquet_writer": {
+#       "row_group_size": 20000,
+#       "enable_pq_sorting": false
+#     },
+#     "footer_cache": {
+#       "max_entries": 5000
+#     }
+#   }
+# }
+
+# ============================================================================
+# MIGRATION FROM OLD CONFIGURATION
+# ============================================================================
+
+[migration]
+# Automatically migrate old configurations
+auto_migrate = true                  # DEFAULT: true
+
+# Map old settings to new optimized defaults
+apply_optimizations_to_existing = true  # DEFAULT: true
+
+# ============================================================================
+# ADVANCED TUNING
+# Only modify if you understand the implications
+# ============================================================================
+
+[advanced]
+# Memory limits
+max_memory_per_writer_mb = 512       # Maximum memory per writer
+cache_memory_limit_mb = 1_024        # Total cache memory limit
+
+# I/O settings
+io_threads = 8                       # Parallel I/O threads
+prefetch_depth = 10                  # Prefetch queue depth
+
+# Quantization tuning
+quantization_quality = 0.95          # Quality vs speed trade-off
+enable_hardware_acceleration = true   # Use SIMD/GPU when available
+
+# Cloud storage optimizations
+enable_s3_optimizations = true       # S3-specific optimizations
+enable_gcs_optimizations = true       # GCS-specific optimizations
+enable_azure_optimizations = true     # Azure-specific optimizations
+
+# Retry and timeout settings
+cloud_retry_attempts = 3
+cloud_timeout_seconds = 30
+cache_operation_timeout_ms = 100

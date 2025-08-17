@@ -252,7 +252,7 @@ pub trait FlushParametersExt {
 impl FlushParametersExt for FlushParameters {
     fn has_quantized(&self) -> bool {
         self.collection_config.as_ref()
-            .and_then(|c| c.quantization_config.as_ref())
+            .and_then(|c| c.quantization.as_ref())
             .map(|q| q.enabled)
             .unwrap_or(false)
     }
@@ -341,7 +341,7 @@ mod tests {
         for i in 0..1000 {
             notifier.notify_flush(
                 "test_collection",
-                vec![format!("file_{}.sst", i)],
+                vec![format!("file_{}.sstable", i)],
                 100,
                 false,
                 true,
@@ -367,7 +367,7 @@ mod tests {
         // Unknown files can be compacted
         let can_compact = notifier.can_compact_files(
             "test_collection",
-            &["unknown1.sst".to_string(), "unknown2.sst".to_string()],
+            &["unknown1.sstable".to_string(), "unknown2.sstable".to_string()],
         ).await;
         
         assert!(can_compact);

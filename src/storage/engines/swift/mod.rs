@@ -64,13 +64,13 @@ pub struct SstHeader {
     
     // Collection information
     pub collection_id: String,
-    pub created_at: i64,
+    pub timestamp: i64,
     pub compaction_level: u8,
     
     // Vector configuration
     pub dimension: usize,
     pub distance_metric: DistanceMetric,
-    pub quantization_config: QuantizationConfig,
+    pub quantization: QuantizationConfig,
     
     // Record counts
     pub total_records: u64,
@@ -149,7 +149,7 @@ impl SstFile {
         &mut self, 
         records: Vec<VectorRecord>,
         quantization_adapter: Option<&crate::storage::engines::common::UniversalQuantizationAdapter>,
-        quantization_config: Option<&crate::storage::engines::common::UniversalQuantizationConfig>,
+        quantization: Option<&crate::storage::engines::common::UniversalQuantizationConfig>,
     ) -> Result<()> {
         if records.is_empty() {
             return Ok(());
@@ -182,7 +182,7 @@ impl SstFile {
                 .collect();
             
             // Use universal adapter if provided to quantize vectors
-            if let (Some(adapter), Some(config)) = (quantization_adapter, quantization_config) {
+            if let (Some(adapter), Some(config)) = (quantization_adapter, quantization) {
                 // Quantize vectors and update the quantized_section
                 // The quantized_section is already part of the DataBlock
                 // We need to populate it with the quantized data
@@ -257,7 +257,7 @@ impl SstFile {
             let vectors: Vec<Vec<f32>> = chunk.iter()
                 .map(|r| r.vector.clone())
                 .collect();
-            block.quantized_block.quantize_vectors(&vectors, &self.header.quantization_config)?;
+            block.quantized_block.as_ref().quantize_vectors(&vectors, &self.header.quantization)?;
             
             // Update ID index
             for (idx, record) in chunk.iter().enumerate() {
@@ -325,11 +325,11 @@ impl SstFile {
             version: 1,
             file_id: Uuid::new_v4(),
             collection_id,
-            created_at: chrono::Utc::now().timestamp(),
+            timestamp: chrono::Utc::now().timestamp(),
             compaction_level: 0,
             dimension,
             distance_metric,
-            quantization_config: QuantizationConfig::default(),
+            quantization: QuantizationConfig::default(),
             total_records: 0,
             deleted_records: 0,
             superblock_count: 0,

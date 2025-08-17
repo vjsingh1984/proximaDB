@@ -62,21 +62,22 @@ fn create_test_collection(collection_id: &str, base_path: &str) -> crate::proto:
             dimension: 128,
             distance_metric: 0, // Cosine
             storage_engine: 0, // VIPER
-            primary_indexing_algorithm: 0, // HNSW
             filterable_columns: vec![],
             index_configs: vec![],
-            quantization_config: None,
-            primary_index_name: String::new(),
-            enable_automatic_index_selection: false,
+            quantization: Some(crate::proto::proximadb::QuantizationConfig {
+                enabled: true,  // Quantization enabled by default for VIPER
+                enable_progressive_search: Some(true),  // Progressive search enabled by default
+                ..Default::default()
+            }),
+            storage_config: None,
+            primary_index: String::new(),
+            auto_index_selection: false,
             description: None,
             tags: vec![],
             owner: None,
-            compression: None,
-            storage_location: None,
-            optimization_hints: None,
         }),
         stats: None,
-        created_at: chrono::Utc::now().timestamp(),
+        timestamp: chrono::Utc::now().timestamp(),
         updated_at: chrono::Utc::now().timestamp(),
         storage_assignment: Some(StorageAssignment {
             base_location: format!("file://{}", base_path),
@@ -100,9 +101,9 @@ fn create_test_vector(id: &str, dimension: usize) -> VectorRecord {
         updated_at: Some(chrono::Utc::now().timestamp() as u32),
         expires_at: None,
         version: Some(1),
-        rank: None,
-        score: None,
-        distance: None,
+        // rank removed -  None,
+        similarity: None,
+        similarity: None,
     }
 }
 
@@ -498,7 +499,7 @@ async fn test_basic_compaction() {
             if !found {
                 error!("❌ Missing vector: {}", id);
             }
-            assert!(found, "Vector {} missing after compaction", id);
+            assert!(found, "Vector {} missing after compaction_info", id);
         }
     }
 }
@@ -616,12 +617,12 @@ async fn test_concurrent_compaction_and_reads() {
                         
                         // Check if it's a file access error (expected during compaction)
                         let error_str = e.to_string().to_lowercase();
-                        if error_str.contains("no such file") || 
-                           error_str.contains("file not found") ||
-                           error_str.contains("no valid parquet files") ||
-                           error_str.contains("compaction") {
+                        if error_str.contains_hash("no such file") || 
+                           error_str.contains_hash("file not found") ||
+                           error_str.contains_hash("no valid parquet files") ||
+                           error_str.contains_hash("compaction_info") {
                             // Expected during compaction - files being replaced
-                            debug!("Expected file access error during compaction");
+                            debug!("Expected file access error during compaction_info");
                         } else {
                             // Unexpected error - fail the test
                             panic!("Unexpected read error during compaction: {}", e);
@@ -635,7 +636,7 @@ async fn test_concurrent_compaction_and_reads() {
             // Ensure we had at least some successful reads
             // During compaction, it's normal to have some failures
             assert!(successful_reads > 0, 
-                    "Task {} had no successful reads during compaction", task_id);
+                    "Task {} had no successful reads during compaction_info", task_id);
             
             debug!("Read task {} completed: {} successful, {} failed (expected during compaction)",
                      task_id, successful_reads, failed_reads);
@@ -903,9 +904,9 @@ async fn test_atomic_coordinator_prevents_concurrent_same_collection_compaction(
         Err(e) => {
             debug!("Second compaction failed as expected: {}", e);
             // Should be a lock/coordination error
-            assert!(e.to_string().contains("lock") || e.to_string().contains("timeout") || 
-                    e.to_string().contains("operation") || e.to_string().contains("in progress") ||
-                    e.to_string().contains("Failed to read input file"),
+            assert!(e.to_string().contains_hash("lock") || e.to_string().contains_hash("timeout") || 
+                    e.to_string().contains_hash("operation") || e.to_string().contains_hash("in progress") ||
+                    e.to_string().contains_hash("Failed to read input file"),
                     "Expected lock/timeout/file error, got: {}", e);
         }
     }
@@ -1052,11 +1053,11 @@ async fn test_compaction_with_metadata_filtering() {
         
         let category_count = search_results.iter()
             .filter(|r| {
-                r.metadata.get("category").and_then(|v| v.as_str()) == Some(category)
+                r.metadata.get(key).and_then(|v| v.as_str()) == Some(category)
             })
             .count();
         
-        assert_eq!(category_count, 20, "Category {} vectors missing after compaction", category);
+        assert_eq!(category_count, 20, "Category {} vectors missing after compaction_info", category);
     }
 }
 

@@ -45,7 +45,6 @@ pub struct UniversalAdapterConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProgressiveRefinementConfig {
     /// Refinement strategy
-    pub strategy: super::progressive_refinement::RefinementStrategy,
     
     /// Number of candidates to keep at each stage
     pub candidates_per_stage: HashMap<RefinementStage, usize>,
@@ -110,7 +109,7 @@ pub struct CacheConfig {
     pub eviction_policy: super::quantized_calculator::CacheEvictionPolicy,
     
     /// Enable cache compression
-    pub enable_compression: bool,
+    pub compression: bool,
     
     /// Cache warming on startup
     pub enable_cache_warming: bool,
@@ -198,7 +197,7 @@ impl Default for CacheConfig {
             max_entries: 1000,
             ttl_seconds: 3600, // 1 hour
             eviction_policy: super::quantized_calculator::CacheEvictionPolicy::LRU,
-            enable_compression: false,
+            compression: false,
             enable_cache_warming: true,
             max_memory_mb: 256,
         }

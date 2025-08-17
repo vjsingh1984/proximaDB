@@ -39,7 +39,6 @@ pub struct StorageQuantizationConfig {
     pub candidate_multiplier: usize, // How many candidates to keep at each stage
     
     /// Quality settings
-    pub quality_threshold: f32,
     pub training_sample_size: usize,
     
     /// Resource settings
@@ -69,7 +68,7 @@ impl Default for StorageQuantizationConfig {
             filter_threshold: 0.3,
             candidate_multiplier: 10,
             
-            quality_threshold: 0.95,
+            // quality_threshold removed -  0.95,
             training_sample_size: 10000,
             
             memory_budget_mb: 1024,
@@ -148,7 +147,7 @@ pub struct StorageQuantizationEngine {
     /// Configuration
     config: StorageQuantizationConfig,
     /// Cached codebooks
-    codebooks: Arc<DashMap<String, Arc<Codebook>>>,
+    // codebooks removed -  Arc<DashMap<String, Arc<Codebook>>>,
     /// Hardware capabilities
     hardware: Option<HardwareBackend>,
 }
@@ -186,7 +185,7 @@ impl StorageQuantizationEngine {
             unified_engine,
             distance_compute,
             config,
-            codebooks: Arc::new(DashMap::new()),
+            // codebooks removed -  Arc::new(DashMap::new()),
             hardware,
         }
     }

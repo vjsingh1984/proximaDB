@@ -78,7 +78,7 @@ where
         // Insert into HashMap
         let mut data = self.data.write().await;
         let old_size = if data.contains_key(&key) {
-            Self::estimate_entry_size(&key, data.get(&key).unwrap())
+            Self::estimate_entry_size(&key, data.get(key).unwrap())
         } else {
             0
         };
@@ -320,14 +320,14 @@ mod tests {
         assert!(memtable.insert(2u64, "value2".to_string()).await.is_ok());
 
         assert_eq!(
-            memtable.get(&1u64).await.unwrap(),
+            memtable.get(&hash).await.unwrap(),
             Some("value1".to_string())
         );
         assert_eq!(
-            memtable.get(&2u64).await.unwrap(),
+            memtable.get(&hash).await.unwrap(),
             Some("value2".to_string())
         );
-        assert_eq!(memtable.get(&3u64).await.unwrap(), None);
+        assert_eq!(memtable.get(&hash).await.unwrap(), None);
 
         // Test size tracking
         assert!(memtable.size_bytes().await > 0);

@@ -140,7 +140,7 @@ pub struct RollbackPoint {
     pub point_id: String,
     pub step_id: String,
     pub state_snapshot: StateSnapshot,
-    pub created_at: DateTime<Utc>,
+    pub timestamp: DateTime<Utc>,
 }
 
 /// State snapshot for rollback
@@ -319,7 +319,7 @@ impl IndexMigrationEngine {
         to: IndexSelectionStrategy,
     ) -> Result<MigrationResult> {
         // Acquire resource permit
-        let _permit = self.resource_limiter.acquire().await?;
+        let _permit = self.resource_limiter/* TODO: Fix VectorMemoryPool::acquire() method */.await?;
 
         // Create migration plan
         let plan = self.create_migration_plan(collection_id, from.clone(), to.clone())?;

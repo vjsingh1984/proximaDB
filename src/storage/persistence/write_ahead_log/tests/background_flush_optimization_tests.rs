@@ -146,7 +146,7 @@ mod tests {
             distance_metric: DistanceMetric::Cosine,
             compression_config: CompressionConfig::default(),
             filterable_columns: Vec::new(),
-            quantization_config: None,
+            quantization: None,
             batch_size_hint: Some(1000),
             priority: OperationPriority::Normal,
             timeout_ms: Some(60_000),
@@ -163,9 +163,9 @@ mod tests {
                 timestamp: 0,
                 updated_at: None,
                 expires_at: None,
-                distance: None,
-                rank: None,
-                score: None,
+                similarity: None,
+                // rank removed -  None,
+                similarity: None,
                 version: None,
                 ..Default::default()
             })

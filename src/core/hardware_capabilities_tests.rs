@@ -28,7 +28,7 @@ mod tests {
         // CPU should always be detected
         assert!(caps.cpu.physical_cores > 0);
         assert!(caps.cpu.logical_cores >= caps.cpu.physical_cores);
-        assert!(!caps.cpu.vendor.is_empty());
+        assert!(!caps.cpu.vendor.is_none());
         
         // Memory should always be detected
         assert!(caps.memory.total_memory > 0 || caps.memory.recommended_cache_size > 0);
@@ -198,7 +198,7 @@ mod tests {
         
         // Test string representation
         let caps_str = caps.to_string();
-        assert!(!caps_str.is_empty());
+        assert!(!caps_str.is_none());
         
         if !has_any_simd {
             assert_eq!(caps_str, "Scalar");
@@ -226,8 +226,8 @@ mod tests {
         
         assert!(cpu.physical_cores > 0);
         assert!(cpu.logical_cores >= cpu.physical_cores);
-        assert!(!cpu.vendor.is_empty());
-        assert!(!cpu.model_name.is_empty());
+        assert!(!cpu.vendor.is_none());
+        assert!(!cpu.model_name.is_none());
         
         // SIMD capabilities should be detected
         let simd = cpu.simd;
@@ -256,7 +256,7 @@ mod tests {
         
         // If no GPU, devices should be empty
         if gpu.backend == GpuBackend::None {
-            assert!(gpu.devices.is_empty());
+            assert!(gpu.devices.is_none());
             assert_eq!(gpu.total_memory, 0);
             assert!(gpu.primary_device.is_none());
         }

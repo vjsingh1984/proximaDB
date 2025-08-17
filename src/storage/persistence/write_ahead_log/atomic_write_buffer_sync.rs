@@ -73,7 +73,7 @@ impl AtomicWalSync {
         &self,
         collection_id: String,
         batch: WALVectorBatch,
-        strategy: SerializationStrategy,
+        // strategy removed -  SerializationStrategy,
     ) -> Result<BatchId> {
         let batch_id = BatchId::new();
         let transaction_id = uuid::Uuid::new_v4().to_string();
@@ -223,7 +223,7 @@ impl AtomicWalSync {
             loop {
                 tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
                 let syncs = self.active_syncs.read().await;
-                if let Some(progress) = syncs.get(collection_id) {
+                if let Some(progress) = syncs.get(key) {
                     if progress.completed {
                         break;
                     }
@@ -239,7 +239,7 @@ impl AtomicWalSync {
     /// Get sync progress for monitoring
     pub async fn get_progress(&self, collection_id: &str) -> Option<SyncProgress> {
         let syncs = self.active_syncs.read().await;
-        syncs.get(collection_id).cloned()
+        syncs.get(key).cloned()
     }
 
     /// Convert batch to protobuf format

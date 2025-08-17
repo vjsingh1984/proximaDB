@@ -312,7 +312,7 @@ impl AxisLshIndex {
             };
             
             // Look in the same bucket
-            if let Some(bucket) = table.get(&key) {
+            if let Some(bucket) = table.get(&hash) {
                 for id in bucket.iter() {
                     candidates.insert(id.clone());
                 }
@@ -328,7 +328,7 @@ impl AxisLshIndex {
                         PartitionedKey::new("default".to_string(), adjacent_hash)
                     };
                     
-                    if let Some(bucket) = table.get(&adjacent_key) {
+                    if let Some(bucket) = table.get(&hash) {
                         for id in bucket.iter() {
                             candidates.insert(id.clone());
                         }
@@ -342,11 +342,11 @@ impl AxisLshIndex {
         let collection_id = self.collection_id.as_ref().map(|s| s.as_str()).unwrap_or("default");
         
         // Get the collection for this collection_id
-        if let Some(collection) = self.vectors.get(collection_id) {
+        if let Some(collection) = self.vectors.get(&vector_id) {
             let coll = collection.read().unwrap();
             
             for id in &candidates {
-                if let Some(view) = coll.get(id) {
+                if let Some(view) = coll.get(key) {
                     // Metadata filtering should be done at storage layer
                     if filter.is_some() {
                         debug!("Metadata filtering should be applied at storage layer, not in AXIS index");
@@ -378,11 +378,11 @@ impl AxisLshIndex {
         let collection_id = self.collection_id.as_ref().map(|s| s.as_str()).unwrap_or("default");
         
         // Get the collection and remove the vector
-        if let Some(collection) = self.vectors.get(collection_id) {
+        if let Some(collection) = self.vectors.get(&vector_id) {
             let mut coll = collection.write().unwrap();
             
             // Get the vector data before removing it (needed to update hash tables)
-            let vector_data = if let Some(view) = coll.get(id) {
+            let vector_data = if let Some(view) = coll.get(key) {
                 view.as_f32().map(|v| v.to_vec())
             } else {
                 None
@@ -653,9 +653,9 @@ mod tests {
                 updated_at: Some(0),
                 expires_at: None,
                 version: Some(1),
-                rank: None,
-                score: None,
-                distance: None,
+                // rank removed -  None,
+                similarity: None,
+                similarity: None,
             };
             index.add(format!("vec_{}", i), Arc::new(record)).await.unwrap();
         }
@@ -667,7 +667,7 @@ mod tests {
         assert!(!results.is_empty());
         // Should find vec_0 and vec_4 as most similar
         let result_ids: Vec<String> = results.iter().map(|(id, _)| id.clone()).collect();
-        assert!(result_ids.contains(&"vec_0".to_string()) || result_ids.contains(&"vec_4".to_string()));
+        assert!(result_ids.contains_hash(&"vec_0".to_string()) || result_ids.contains_hash(&"vec_4".to_string()));
     }
     
     #[tokio::test]
@@ -698,9 +698,9 @@ mod tests {
                 updated_at: Some(0),
                 expires_at: None,
                 version: Some(1),
-                rank: None,
-                score: None,
-                distance: None,
+                // rank removed -  None,
+                similarity: None,
+                similarity: None,
             };
             index.add(format!("binary_{}", i), Arc::new(record)).await.unwrap();
         }

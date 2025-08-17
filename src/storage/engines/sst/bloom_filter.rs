@@ -52,7 +52,7 @@ pub struct SstableBloomFilter {
 #[derive(Debug, Serialize, Deserialize)]
 struct SerializedSstableBloomFilter {
     // BloomFilterConfig fields flattened to avoid Option<f64> issues
-    strategy: u8,
+    // strategy removed -  u8,
     bits_per_key: u32,
     false_positive_rate: f64,  // Use NaN for None
     expected_items: usize,
@@ -95,7 +95,7 @@ impl HierarchicalBloomConfig {
             // L0: Optimize for fast writes, minimal bloom overhead
             0 => Self {
                 global_key_filter: BloomFilterConfig {
-                    strategy: BloomStrategy::ByteAligned,
+                    // strategy removed -  BloomStrategy::ByteAligned,
                     bits_per_key: 8,  // Lower memory usage for frequent writes
                     false_positive_rate: Some(0.01),
                     expected_items: 10_000,
@@ -103,7 +103,7 @@ impl HierarchicalBloomConfig {
                     hash_algorithm: HashAlgorithm::XXHash,
                 },
                 global_metadata_filter: BloomFilterConfig {
-                    strategy: BloomStrategy::Simple,
+                    // strategy removed -  BloomStrategy::Simple,
                     bits_per_key: 4,  // Minimal metadata filtering at L0
                     false_positive_rate: Some(0.05),
                     expected_items: 5_000,
@@ -111,7 +111,7 @@ impl HierarchicalBloomConfig {
                     hash_algorithm: HashAlgorithm::XXHash,
                 },
                 block_key_filter: BloomFilterConfig {
-                    strategy: BloomStrategy::Simple,
+                    // strategy removed -  BloomStrategy::Simple,
                     bits_per_key: 6,
                     false_positive_rate: Some(0.02),
                     expected_items: 1_000,
@@ -119,7 +119,7 @@ impl HierarchicalBloomConfig {
                     hash_algorithm: HashAlgorithm::XXHash,
                 },
                 block_metadata_filter: BloomFilterConfig {
-                    strategy: BloomStrategy::Simple,
+                    // strategy removed -  BloomStrategy::Simple,
                     bits_per_key: 4,
                     false_positive_rate: Some(0.05),
                     expected_items: 500,
@@ -133,7 +133,7 @@ impl HierarchicalBloomConfig {
             // L1-L2: Balanced performance for point queries and metadata filtering
             1..=2 => Self {
                 global_key_filter: BloomFilterConfig {
-                    strategy: BloomStrategy::ByteAligned,
+                    // strategy removed -  BloomStrategy::ByteAligned,
                     bits_per_key: 10,
                     false_positive_rate: Some(0.005),
                     expected_items: 50_000,
@@ -141,7 +141,7 @@ impl HierarchicalBloomConfig {
                     hash_algorithm: HashAlgorithm::XXHash,
                 },
                 global_metadata_filter: BloomFilterConfig {
-                    strategy: BloomStrategy::Composite,
+                    // strategy removed -  BloomStrategy::Composite,
                     bits_per_key: 8,
                     false_positive_rate: Some(0.01),
                     expected_items: 25_000,
@@ -149,7 +149,7 @@ impl HierarchicalBloomConfig {
                     hash_algorithm: HashAlgorithm::XXHash,
                 },
                 block_key_filter: BloomFilterConfig {
-                    strategy: BloomStrategy::ByteAligned,
+                    // strategy removed -  BloomStrategy::ByteAligned,
                     bits_per_key: 8,
                     false_positive_rate: Some(0.01),
                     expected_items: 2_000,
@@ -157,7 +157,7 @@ impl HierarchicalBloomConfig {
                     hash_algorithm: HashAlgorithm::XXHash,
                 },
                 block_metadata_filter: BloomFilterConfig {
-                    strategy: BloomStrategy::Simple,
+                    // strategy removed -  BloomStrategy::Simple,
                     bits_per_key: 6,
                     false_positive_rate: Some(0.02),
                     expected_items: 1_000,
@@ -171,7 +171,7 @@ impl HierarchicalBloomConfig {
             // L3+: Optimize for read efficiency, highest bloom filter fidelity
             _ => Self {
                 global_key_filter: BloomFilterConfig {
-                    strategy: BloomStrategy::Composite,
+                    // strategy removed -  BloomStrategy::Composite,
                     bits_per_key: 12,  // High fidelity for deep levels
                     false_positive_rate: Some(0.002),
                     expected_items: 200_000,
@@ -179,7 +179,7 @@ impl HierarchicalBloomConfig {
                     hash_algorithm: HashAlgorithm::CityHash,
                 },
                 global_metadata_filter: BloomFilterConfig {
-                    strategy: BloomStrategy::Composite,
+                    // strategy removed -  BloomStrategy::Composite,
                     bits_per_key: 10,
                     false_positive_rate: Some(0.005),
                     expected_items: 100_000,
@@ -187,7 +187,7 @@ impl HierarchicalBloomConfig {
                     hash_algorithm: HashAlgorithm::CityHash,
                 },
                 block_key_filter: BloomFilterConfig {
-                    strategy: BloomStrategy::Composite,
+                    // strategy removed -  BloomStrategy::Composite,
                     bits_per_key: 10,
                     false_positive_rate: Some(0.005),
                     expected_items: 5_000,
@@ -195,7 +195,7 @@ impl HierarchicalBloomConfig {
                     hash_algorithm: HashAlgorithm::CityHash,
                 },
                 block_metadata_filter: BloomFilterConfig {
-                    strategy: BloomStrategy::ByteAligned,
+                    // strategy removed -  BloomStrategy::ByteAligned,
                     bits_per_key: 8,
                     false_positive_rate: Some(0.01),
                     expected_items: 2_500,
@@ -212,7 +212,7 @@ impl HierarchicalBloomConfig {
     pub fn for_metadata_workload() -> Self {
         Self {
             global_key_filter: BloomFilterConfig {
-                strategy: BloomStrategy::ByteAligned,
+                // strategy removed -  BloomStrategy::ByteAligned,
                 bits_per_key: 10,
                 false_positive_rate: Some(0.005),
                 expected_items: 100_000,
@@ -220,7 +220,7 @@ impl HierarchicalBloomConfig {
                 hash_algorithm: HashAlgorithm::XXHash,
             },
             global_metadata_filter: BloomFilterConfig {
-                strategy: BloomStrategy::Composite,
+                // strategy removed -  BloomStrategy::Composite,
                 bits_per_key: 12,  // High fidelity for metadata filtering
                 false_positive_rate: Some(0.002),
                 expected_items: 50_000,
@@ -228,7 +228,7 @@ impl HierarchicalBloomConfig {
                 hash_algorithm: HashAlgorithm::CityHash,
             },
             block_key_filter: BloomFilterConfig {
-                strategy: BloomStrategy::Simple,
+                // strategy removed -  BloomStrategy::Simple,
                 bits_per_key: 6,
                 false_positive_rate: Some(0.02),
                 expected_items: 2_000,
@@ -236,7 +236,7 @@ impl HierarchicalBloomConfig {
                 hash_algorithm: HashAlgorithm::XXHash,
             },
             block_metadata_filter: BloomFilterConfig {
-                strategy: BloomStrategy::Composite,
+                // strategy removed -  BloomStrategy::Composite,
                 bits_per_key: 10,
                 false_positive_rate: Some(0.005),
                 expected_items: 1_000,
@@ -252,7 +252,7 @@ impl HierarchicalBloomConfig {
     pub fn for_write_optimized() -> Self {
         Self {
             global_key_filter: BloomFilterConfig {
-                strategy: BloomStrategy::Simple,
+                // strategy removed -  BloomStrategy::Simple,
                 bits_per_key: 6,  // Minimal overhead
                 false_positive_rate: Some(0.02),
                 expected_items: 10_000,
@@ -260,7 +260,7 @@ impl HierarchicalBloomConfig {
                 hash_algorithm: HashAlgorithm::Murmur3,  // Fastest hash
             },
             global_metadata_filter: BloomFilterConfig {
-                strategy: BloomStrategy::Simple,
+                // strategy removed -  BloomStrategy::Simple,
                 bits_per_key: 4,
                 false_positive_rate: Some(0.05),
                 expected_items: 5_000,
@@ -268,7 +268,7 @@ impl HierarchicalBloomConfig {
                 hash_algorithm: HashAlgorithm::Murmur3,
             },
             block_key_filter: BloomFilterConfig {
-                strategy: BloomStrategy::Simple,
+                // strategy removed -  BloomStrategy::Simple,
                 bits_per_key: 4,
                 false_positive_rate: Some(0.05),
                 expected_items: 500,
@@ -276,7 +276,7 @@ impl HierarchicalBloomConfig {
                 hash_algorithm: HashAlgorithm::Murmur3,
             },
             block_metadata_filter: BloomFilterConfig {
-                strategy: BloomStrategy::Simple,
+                // strategy removed -  BloomStrategy::Simple,
                 bits_per_key: 4,
                 false_positive_rate: Some(0.05),
                 expected_items: 250,

@@ -132,7 +132,7 @@ use tracing::{debug, error, info};
             "vectors": (0..100).map(|i| {
                 serde_json::json!({
                     "id": format!("vec_{}", i),
-                    "metadata": {
+                    "metadata_info": {
                         "category": format!("category_{}", i % 10),
                         "description": format!("This is a test vector number {}", i),
                         "tags": vec!["test", "compression", "benchmark"],

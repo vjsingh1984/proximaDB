@@ -312,7 +312,7 @@ pub mod utils {
         let block_size = calculate_optimal_block_size(
             config.dimension,
             config.records_per_block,
-            config.compression.compression_ratio_estimate,
+            config.storage.as_ref().and_then(|s| s.compression.as_ref()).compression_ratio_estimate,
         );
         
         let blocks_in_memory = config.performance.cache_size_bytes / block_size;
@@ -336,7 +336,7 @@ pub mod utils {
         match workload_type {
             WorkloadType::HighThroughputWrite => {
                 // Optimize for writes
-                config.compression.compression_level = 1; // Fast compression
+                config.storage.as_ref().and_then(|s| s.compression.as_ref()).compression_level = 1; // Fast compression
                 config.performance.max_concurrent_operations = 16;
                 config.records_per_block = 4000; // Larger blocks
             }
@@ -352,7 +352,7 @@ pub mod utils {
             WorkloadType::LargeScale => {
                 // Optimize for scale
                 config.superblock_size_target = 2 * 1024 * 1024 * 1024; // 2GB
-                config.compression.compression_level = 6; // Better compression
+                config.storage.as_ref().and_then(|s| s.compression.as_ref()).compression_level = 6; // Better compression
                 config.quantization.enable_aggressive_quantization = true;
             }
         }
@@ -404,7 +404,7 @@ mod tests {
         );
         
         assert_eq!(config.dimension, 384);
-        assert_eq!(config.compression.compression_level, 1);
+        assert_eq!(config.storage.as_ref().and_then(|s| s.compression.as_ref()).compression_level, 1);
         assert_eq!(config.records_per_block, 4000);
         assert_eq!(config.performance.max_concurrent_operations, 16);
     }

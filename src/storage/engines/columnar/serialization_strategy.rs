@@ -340,7 +340,7 @@ impl SerializationStrategyOptimizer {
     /// Benchmark FP32 serialization strategy
     fn benchmark_fp32_strategy(
         &self,
-        strategy: &SerializationStrategy,
+        // strategy removed -  &SerializationStrategy,
         vectors: &[Vec<f32>],
     ) -> Result<SerializationMetrics> {
         if let SerializationStrategy::FullPrecision { compression, .. } = strategy {
@@ -394,7 +394,7 @@ impl SerializationStrategyOptimizer {
     /// Benchmark INT8 serialization strategy
     fn benchmark_int8_strategy(
         &self,
-        strategy: &SerializationStrategy,
+        // strategy removed -  &SerializationStrategy,
         vectors: &[Vec<f32>],
     ) -> Result<SerializationMetrics> {
         if let SerializationStrategy::INT8Quantized { vectorization, .. } = strategy {
@@ -432,7 +432,7 @@ impl SerializationStrategyOptimizer {
     /// Benchmark Binary serialization strategy
     fn benchmark_binary_strategy(
         &self,
-        strategy: &SerializationStrategy,
+        // strategy removed -  &SerializationStrategy,
         vectors: &[Vec<f32>],
     ) -> Result<SerializationMetrics> {
         if let SerializationStrategy::BinaryQuantized { hamming_optimization, .. } = strategy {
@@ -463,7 +463,7 @@ impl SerializationStrategyOptimizer {
     /// Benchmark PQ serialization strategy
     fn benchmark_pq_strategy(
         &self,
-        strategy: &SerializationStrategy,
+        // strategy removed -  &SerializationStrategy,
         vectors: &[Vec<f32>],
     ) -> Result<SerializationMetrics> {
         if let SerializationStrategy::ProductQuantized { 

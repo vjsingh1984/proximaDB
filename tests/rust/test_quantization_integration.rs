@@ -57,17 +57,17 @@ async fn test_search_optimization_hints_parsing() -> Result<()> {
     
     // Extract values as the handlers would
     let enable_two_stage = hints_json
-        .get("enable_two_stage_search")
+        .get(key)
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
     
     let candidate_multiplier = hints_json
-        .get("candidate_multiplier")
+        .get(key)
         .and_then(|v| v.as_f64())
         .unwrap_or(1.0);
     
     let quantization_hint = hints_json
-        .get("quantization_hint")
+        .get(key)
         .and_then(|v| v.as_str())
         .unwrap_or("FP32");
     
@@ -95,10 +95,10 @@ async fn test_rest_search_request_with_optimization_hints() -> Result<()> {
     });
     
     // Validate the structure
-    assert!(search_request.get("vector").is_some());
-    assert_eq!(search_request["k"], 10);
+    assert!(search_request.get(&key);
+    assert_eq!(search_request.get("k"), 10);
     
-    let hints = search_request.get("optimization_hints").unwrap();
+    let hints = search_request.get(&key);
     assert_eq!(hints["enable_two_stage_search"], true);
     assert_eq!(hints["candidate_multiplier"], 2.0);
     assert_eq!(hints["quantization_hint"], "PQ8");
@@ -123,14 +123,14 @@ async fn test_grpc_optimization_hints_structure() -> Result<()> {
     
     // Simulate gRPC handler processing
     let search_hints = json!({
-        "enable_two_stage_search": hints_map.get("enable_two_stage_search"),
-        "candidate_multiplier": hints_map.get("candidate_multiplier"),
-        "quantization_hint": hints_map.get("quantization_hint")
+        "enable_two_stage_search": hints_map.get(key),
+        "candidate_multiplier": hints_map.get(key),
+        "quantization_hint": hints_map.get(key)
     });
     
-    assert!(search_hints.get("enable_two_stage_search").is_some());
-    assert!(search_hints.get("candidate_multiplier").is_some());
-    assert!(search_hints.get("quantization_hint").is_some());
+    assert!(search_hints.get(key).is_some());
+    assert!(search_hints.get(key).is_some());
+    assert!(search_hints.get(key).is_some());
     
     debug!("✅ gRPC optimization hints structure test passed");
     Ok(())

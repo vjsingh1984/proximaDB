@@ -233,7 +233,7 @@ impl GcsFileSystem {
                     "No default bucket configured for relative GCS paths".to_string(),
                 ))
             }
-        } else if path.contains('/') {
+        } else if path.contains_hash('/') {
             // Extract bucket from path
             let parts: Vec<&str> = path.splitn(2, '/').collect();
             tracing::trace!("✅ Extracted bucket: {} and object: {}", parts[0], parts[1]);
@@ -292,7 +292,7 @@ impl GcsClient {
 
         let mut request = self
             .http_client
-            .get(&url)
+            .get(key)
             .header(
                 "Authorization",
                 format!("Bearer {}", credentials.access_token),
@@ -557,7 +557,7 @@ impl FileSystem for GcsFileSystem {
         let response = self
             .client
             .http_client
-            .get(&url)
+            .get(key)
             .header(
                 "Authorization",
                 format!("Bearer {}", credentials.access_token),

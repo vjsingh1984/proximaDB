@@ -93,9 +93,9 @@ async fn test_unified_memory_allocator() {
     let new_allocations = allocator.rebalance().await;
     
     // FilterBitmap should get more memory due to high hit rate and frequency
-    let filter_allocation = new_allocations.get(&CacheType::FilterBitmap).unwrap();
-    let vector_allocation = new_allocations.get(&CacheType::VectorData).unwrap();
-    let query_allocation = new_allocations.get(&CacheType::QueryResult).unwrap();
+    let filter_allocation = new_allocations.get(key).unwrap();
+    let vector_allocation = new_allocations.get(key).unwrap();
+    let query_allocation = new_allocations.get(key).unwrap();
     
     // Verify allocations sum to total budget
     let total = filter_allocation + vector_allocation + query_allocation;
@@ -158,20 +158,20 @@ async fn test_invalidation_invalidator() {
     
     // Test cascade when vec1 changes
     let cascade = invalidator.get_invalidation_cascade("vec1").await;
-    assert!(cascade.contains(&"query1".to_string()));
-    assert!(cascade.contains(&"filter1".to_string()));
-    assert!(cascade.contains(&"query2".to_string())); // Transitive
+    assert!(cascade.contains_hash(&"query1".to_string()));
+    assert!(cascade.contains_hash(&"filter1".to_string()));
+    assert!(cascade.contains_hash(&"query2".to_string())); // Transitive
     
     // Test cascade when vec2 changes
     let cascade = invalidator.get_invalidation_cascade("vec2").await;
-    assert!(cascade.contains(&"query1".to_string()));
-    assert!(!cascade.contains(&"filter1".to_string()));
+    assert!(cascade.contains_hash(&"query1".to_string()));
+    assert!(!cascade.contains_hash(&"filter1".to_string()));
     
     // Test dependency removal
     invalidator.remove_dependencies("query1").await;
     let cascade = invalidator.get_invalidation_cascade("vec1").await;
-    assert!(!cascade.contains(&"query1".to_string()));
-    assert!(cascade.contains(&"filter1".to_string()));
+    assert!(!cascade.contains_hash(&"query1".to_string()));
+    assert!(cascade.contains_hash(&"filter1".to_string()));
 }
 
 /// Test full cache orchestrator integration
@@ -317,8 +317,8 @@ async fn test_memory_pressure_handling() {
         CacheType::IndexStructure,
         CacheType::Metadata,
     ] {
-        assert!(allocations.get(cache_type).is_some());
-        assert!(*allocations.get(cache_type).unwrap() > 0);
+        assert!(allocations.get(key).is_some());
+        assert!(*allocations.get(key).unwrap() > 0);
     }
     
     // Verify total doesn't exceed budget

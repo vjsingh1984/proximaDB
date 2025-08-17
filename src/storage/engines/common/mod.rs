@@ -223,7 +223,7 @@ pub struct UniversalBlockConfig {
     pub enable_padding: bool,
     
     /// Block-level features
-    pub enable_compression: bool,
+    pub compression: bool,
     pub enable_checksums: bool,
     pub enable_bloom_filters: bool,
     pub enable_statistics: bool,
@@ -270,8 +270,7 @@ pub enum IndexType {
 /// ID index configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct IdIndexConfig {
-    pub strategy: IdIndexStrategy,
-    pub enable_compression: bool,
+    pub compression: bool,
     pub enable_caching: bool,
     pub cache_size_mb: usize,
 }
@@ -339,7 +338,6 @@ pub struct UniversalSchemaConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VectorSchemaConfig {
     pub dimension: usize,
-    pub data_type: VectorDataType,
     pub normalization: Option<VectorNormalization>,
     pub validation: VectorValidationConfig,
 }
@@ -604,7 +602,7 @@ impl Default for UniversalBlockConfig {
             max_block_size: 64 * 1024 * 1024,    // 64MB
             alignment_bytes: 4096,
             enable_padding: true,
-            enable_compression: true,
+            compression: true,
             enable_checksums: true,
             enable_bloom_filters: true,
             enable_statistics: true,
@@ -627,8 +625,8 @@ impl Default for UniversalIndexConfig {
 impl Default for IdIndexConfig {
     fn default() -> Self {
         Self {
-            strategy: IdIndexStrategy::Hybrid,
-            enable_compression: true,
+            // strategy removed -  IdIndexStrategy::Hybrid,
+            compression: true,
             enable_caching: true,
             cache_size_mb: 256,
         }
@@ -672,7 +670,7 @@ impl Default for VectorSchemaConfig {
     fn default() -> Self {
         Self {
             dimension: 768,
-            data_type: VectorDataType::Float32,
+            // data_type removed -  VectorDataType::Float32,
             normalization: Some(VectorNormalization::L2),
             validation: VectorValidationConfig::default(),
         }
@@ -726,33 +724,33 @@ pub mod utils {
         
         match workload {
             WorkloadType::HighThroughput => {
-                config.storage_config.organization = StorageOrganization::Hierarchical {
+                config.storage.organization = StorageOrganization::Hierarchical {
                     superblock_size_target: 2 * 1024 * 1024 * 1024, // 2GB
                     blocks_per_superblock: 128,
                     records_per_block: 4000,
                 };
                 config.performance.max_concurrent_operations = 32;
-                config.compression.compression_level = 1; // Fast compression
+                config.storage.as_ref().and_then(|s| s.compression.as_ref()).compression_level = 1; // Fast compression
             }
             WorkloadType::LowLatency => {
-                config.storage_config.organization = StorageOrganization::Flat {
+                config.storage.organization = StorageOrganization::Flat {
                     target_block_size: 4 * 1024 * 1024, // 4MB
                     records_per_block: 500,
                 };
                 config.performance.enable_prefetching = true;
-                config.storage_config.index_config.id_index.enable_caching = true;
+                config.storage.index_config.id_index.enable_caching = true;
             }
             WorkloadType::Analytics => {
                 config.engine_type = EngineType::Columnar;
-                config.storage_config.organization = StorageOrganization::Columnar {
+                config.storage.organization = StorageOrganization::Columnar {
                     row_group_size_target: 256 * 1024 * 1024, // 256MB
                     rows_per_group: 1000000,
                     column_chunk_size: 65536,
                 };
-                config.compression.compression_level = 6; // Better compression
+                config.storage.as_ref().and_then(|s| s.compression.as_ref()).compression_level = 6; // Better compression
             }
             WorkloadType::RealTime => {
-                config.storage_config.organization = StorageOrganization::Adaptive {
+                config.storage.organization = StorageOrganization::Adaptive {
                     workload_hints: vec![WorkloadHint::RealTimeHeavy, WorkloadHint::PointQueryHeavy],
                     adaptation_frequency: 60000, // 1 minute
                 };
@@ -765,8 +763,8 @@ pub mod utils {
             config.performance.cache_size_bytes = 8 * 1024 * 1024 * 1024; // 8GB
         }
         
-        if hardware.cpu_cores() > 16 {
-            config.performance.max_concurrent_operations = hardware.cpu_cores();
+        if hardware.cpu.core_count() > 16 {
+            config.performance.max_concurrent_operations = hardware.cpu.core_count();
         }
         
         config
@@ -775,7 +773,7 @@ pub mod utils {
     /// Validate configuration compatibility
     pub fn validate_config_compatibility(config: &UniversalEngineConfig) -> Result<()> {
         // Validate engine type matches storage organization
-        match (&config.engine_type, &config.storage_config.organization) {
+        match (&config.engine_type, &config.storage.organization) {
             (EngineType::Columnar, StorageOrganization::Columnar { .. }) => {}
             (EngineType::RowBased, StorageOrganization::Hierarchical { .. }) => {}
             (EngineType::RowBased, StorageOrganization::Flat { .. }) => {}
@@ -789,7 +787,7 @@ pub mod utils {
         }
         
         // Validate dimension consistency
-        if config.dimension != config.storage_config.schema_config.vector_schema.dimension {
+        if config.dimension != config.storage.schema_config.vector_schema.dimension {
             return Err(anyhow::anyhow!("Dimension mismatch in configuration"));
         }
         
@@ -822,7 +820,7 @@ mod tests {
         assert_eq!(config.engine_name, "universal");
         assert_eq!(config.dimension, 768);
         assert!(matches!(config.engine_type, EngineType::RowBased));
-        assert!(config.storage_config.block_config.enable_compression);
+        assert!(config.storage.block_config.enable_compression);
     }
     
     #[test]
@@ -835,7 +833,7 @@ mod tests {
         );
         
         if let StorageOrganization::Hierarchical { records_per_block, .. } = 
-            high_throughput_config.storage_config.organization {
+            high_throughput_config.storage.organization {
             assert_eq!(records_per_block, 4000);
         } else {
             panic!("Expected hierarchical organization for high throughput");
@@ -857,11 +855,11 @@ mod tests {
         assert!(validate_config_compatibility(&config).is_ok());
         
         // Mismatched dimensions should fail
-        config.storage_config.schema_config.vector_schema.dimension = 512;
+        config.storage.schema_config.vector_schema.dimension = 512;
         assert!(validate_config_compatibility(&config).is_err());
         
         // Fix dimension and test invalid concurrent operations
-        config.storage_config.schema_config.vector_schema.dimension = 768;
+        config.storage.schema_config.vector_schema.dimension = 768;
         config.performance.max_concurrent_operations = 0;
         assert!(validate_config_compatibility(&config).is_err());
     }

@@ -158,7 +158,6 @@ pub struct TableStatistics {
 
 #[derive(Debug, Clone)]
 pub struct GlobalColumnStats {
-    pub data_type: DataType,
     pub null_ratio: f64,
     pub cardinality: u64,
     pub avg_size_bytes: u64,
@@ -219,7 +218,7 @@ impl MetadataIndex {
             if let Some(metadata) = record.metadata.as_ref() {
                 for (key, value) in metadata {
                     // Only index filterable columns
-                    if !self.filterable_columns.contains(key) {
+                    if !self.filterable_columns.contains_hash(key) {
                         continue;
                     }
                     
@@ -371,16 +370,16 @@ impl MetadataIndex {
     }
     
     fn find_blocks_with_value(&self, column: &str, value: &serde_json::Value) -> Result<BitSet> {
-        if let Some(index) = self.column_indexes.get(column) {
+        if let Some(index) = self.column_indexes.get(key) {
             match index {
                 ColumnIndex::Inverted { value_to_blocks, .. } => {
-                    Ok(value_to_blocks.get(value)
+                    Ok(value_to_blocks.get(key)
                         .cloned()
                         .unwrap_or_else(|| BitSet::new(self.table_stats.total_blocks as usize)))
                 }
                 ColumnIndex::BTree { tree, .. } => {
                     let ordered = OrderedValue::from(value.clone());
-                    Ok(tree.get(&ordered)
+                    Ok(tree.get(key)
                         .cloned()
                         .unwrap_or_else(|| BitSet::new(self.table_stats.total_blocks as usize)))
                 }
@@ -392,7 +391,7 @@ impl MetadataIndex {
     }
     
     fn find_blocks_in_range(&self, column: &str, min: &serde_json::Value, max: &serde_json::Value) -> Result<BitSet> {
-        if let Some(ColumnIndex::BTree { tree, .. }) = self.column_indexes.get(column) {
+        if let Some(ColumnIndex::BTree { tree, .. }) = self.column_indexes.get(key) {
             let min_ordered = OrderedValue::from(min.clone());
             let max_ordered = OrderedValue::from(max.clone());
             
@@ -475,8 +474,8 @@ mod tests {
             ],
             quantized_block: super::super::quantization_blocks::QuantizedBlock::new(3),
             id_range: ("1".to_string(), "1".to_string()),
-            min_timestamp: 0,
-            max_timestamp: 0,
+            // min_timestamp removed -  0,
+            // max_timestamp removed -  0,
             metadata_stats: HashMap::new(),
         };
         

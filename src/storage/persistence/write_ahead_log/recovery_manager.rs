@@ -408,7 +408,7 @@ impl RecoveryManager {
         // If flush was successful, mark the WAL file for deletion
         if flush_result.success {
             debug!(
-                "✅ Successfully flushed {} vectors from WAL file {} - marking for deletion",
+                "✅ Successfully flushed {} vectors from WAL file {} - marking for deletion_info",
                 flush_result.entries_flushed, file_info.file_path.display()
             );
             
@@ -438,7 +438,7 @@ impl RecoveryManager {
     ) -> Result<crate::storage::traits::FlushResult> {
         // Get the storage engine for this collection
         let engines = storage_engines.read().await;
-        let engine = engines.get(&file_info.collection_id)
+        let engine = engines.get(key)
             .ok_or_else(|| anyhow::anyhow!(
                 "No storage engine registered for collection {}",
                 file_info.collection_id
@@ -691,9 +691,9 @@ mod tests {
             updated_at: Some(1234567890),
             expires_at: None,
             version: Some(1),
-            rank: None,
-            score: None,
-            distance: None,
+            // rank removed -  None,
+            similarity: None,
+            similarity: None,
         
         }
     }
@@ -723,7 +723,7 @@ mod tests {
             let batch = WALVectorBatch {
                 batch_id: BatchId::new(),
                 vector_records: Arc::new(vec![vector.clone()]),
-                created_at: std::time::SystemTime::now(),
+                timestamp: std::time::SystemTime::now(),
                 total_size_bytes: 256,
                 is_flushed: false,
             metadata_bloom_filter: None,

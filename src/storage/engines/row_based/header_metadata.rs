@@ -18,7 +18,7 @@ pub struct RowBasedHeader {
     
     /// File identification
     pub file_id: Uuid,
-    pub created_at: i64,
+    pub timestamp: i64,
     pub created_by: String,
     
     /// Engine metadata
@@ -101,7 +101,6 @@ pub struct CollectionMetadata {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FilterableColumn {
     pub name: String,
-    pub data_type: ColumnDataType,
     pub indexed: bool,
     pub bloom_filter_enabled: bool,
     pub statistics: ColumnStatistics,
@@ -334,7 +333,7 @@ pub struct FileMetadata {
     /// Basic file information
     pub file_path: String,
     pub file_size: u64,
-    pub created_at: i64,
+    pub timestamp: i64,
     pub modified_at: i64,
     pub accessed_at: i64,
     
@@ -472,7 +471,7 @@ impl RowBasedHeader {
             version: 1,
             format_version: "1.0.0".to_string(),
             file_id: Uuid::new_v4(),
-            created_at: chrono::Utc::now().timestamp(),
+            timestamp: chrono::Utc::now().timestamp(),
             created_by: "SST Engine".to_string(),
             engine_metadata: EngineMetadata::new_sst(),
             collection_metadata: CollectionMetadata::new(collection_id, dimension),
@@ -492,7 +491,7 @@ impl RowBasedHeader {
             version: 1,
             format_version: "1.0.0".to_string(),
             file_id: Uuid::new_v4(),
-            created_at: chrono::Utc::now().timestamp(),
+            timestamp: chrono::Utc::now().timestamp(),
             created_by: "SWIFT Engine".to_string(),
             engine_metadata: EngineMetadata::new_swift(),
             collection_metadata: CollectionMetadata::new(collection_id, dimension),
@@ -785,11 +784,11 @@ mod tests {
     #[test]
     fn test_engine_metadata_features() {
         let sst_meta = EngineMetadata::new_sst();
-        assert!(sst_meta.supported_features.contains(&"bloom_filters".to_string()));
+        assert!(sst_meta.supported_features.contains_hash(&"bloom_filters".to_string()));
         assert!(sst_meta.optimization_hints.prefer_sequential_access);
         
         let swift_meta = EngineMetadata::new_swift();
-        assert!(swift_meta.supported_features.contains(&"dual_mode".to_string()));
+        assert!(swift_meta.supported_features.contains_hash(&"dual_mode".to_string()));
         assert!(swift_meta.optimization_hints.prefer_random_access);
     }
 }

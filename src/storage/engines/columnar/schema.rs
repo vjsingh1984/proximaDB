@@ -39,7 +39,6 @@ pub struct ColumnarSchemaConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FilterableColumnSpec {
     pub name: String,
-    pub data_type: FilterableDataType,
     pub nullable: bool,
     pub indexed: bool,
     pub estimated_cardinality: Option<usize>,
@@ -145,7 +144,7 @@ pub struct ColumnarSchemaBuilder {
 struct CachedSchema {
     schema: Arc<Schema>,
     compression_metadata: CompressionMetadata,
-    created_at: std::time::Instant,
+    timestamp: std::time::Instant,
     ttl: std::time::Duration,
 }
 
@@ -471,13 +470,13 @@ impl ColumnarSchemaBuilder {
         );
         
         fields.push(Field::new(
-            "extra_metadata",
+            "extra_metadata_info",
             DataType::List(Arc::new(Field::new("item", kv_struct, true))),
             true,
         ));
         
-        column_compression.insert("extra_metadata".to_string(), config.compression_strategy.metadata_columns);
-        compression_ratios.insert("extra_metadata".to_string(), 4.0); // JSON-like data compresses well
+        column_compression.insert("extra_metadata_info".to_string(), config.compression_strategy.metadata_columns);
+        compression_ratios.insert("extra_metadata_info".to_string(), 4.0); // JSON-like data compresses well
         
         trace!("Added extra metadata field");
         Ok(())
@@ -539,7 +538,7 @@ impl ColumnarSchemaBuilder {
         let cached = CachedSchema {
             schema,
             compression_metadata,
-            created_at: std::time::Instant::now(),
+            timestamp: std::time::Instant::now(),
             ttl: std::time::Duration::from_secs(3600), // 1 hour TTL
         };
         
@@ -557,7 +556,7 @@ impl ColumnarSchemaBuilder {
     /// Clear cache for collection
     pub async fn clear_cache(&self, collection_id: &str) {
         let mut cache = self.schema_cache.write().await;
-        cache.retain(|key, _| !key.contains(collection_id));
+        cache.retain(|key, _| !key.contains_hash(collection_id));
         debug!("Cleared schema cache for collection: {}", collection_id);
     }
     
@@ -587,14 +586,14 @@ impl Default for ColumnarSchemaBuilder {
 pub async fn create_schema_from_collection(
     collection_id: &str,
     dimension: usize,
-    quantization_config: Option<&QuantizationConfig>,
+    quantization: Option<&QuantizationConfig>,
     filterable_columns: &[FilterableColumnSpec],
 ) -> Result<(Arc<Schema>, CompressionMetadata)> {
     let builder = ColumnarSchemaBuilder::new();
     
     let config = ColumnarSchemaConfig {
         dimension,
-        quantization: quantization_config.cloned(),
+        quantization: quantization.cloned(),
         filterable_columns: filterable_columns.to_vec(),
         optimization: SchemaOptimization::default(),
         compression_strategy: CompressionStrategy::default(),
@@ -606,18 +605,18 @@ pub async fn create_schema_from_collection(
 /// Validate schema compatibility with quantization config
 pub fn validate_schema_compatibility(
     schema: &Schema,
-    quantization_config: &QuantizationConfig,
+    quantization: &QuantizationConfig,
 ) -> Result<()> {
     // Check that required quantized columns exist
-    if quantization_config.enable_binary && schema.field_with_name("vector_binary").is_err() {
+    if quantization.enable_binary && schema.field_with_name("vector_binary").is_err() {
         return Err(anyhow::anyhow!("Binary quantization enabled but vector_binary column missing"));
     }
     
-    if quantization_config.enable_int8 && schema.field_with_name("vector_int8").is_err() {
+    if quantization.enable_int8 && schema.field_with_name("vector_int8").is_err() {
         return Err(anyhow::anyhow!("INT8 quantization enabled but vector_int8 column missing"));
     }
     
-    if quantization_config.enable_pq && schema.field_with_name("vector_pq").is_err() {
+    if quantization.enable_pq && schema.field_with_name("vector_pq").is_err() {
         return Err(anyhow::anyhow!("PQ quantization enabled but vector_pq column missing"));
     }
     
@@ -638,7 +637,7 @@ mod tests {
             filterable_columns: vec![
                 FilterableColumnSpec {
                     name: "category".to_string(),
-                    data_type: FilterableDataType::String,
+                    // data_type removed -  FilterableDataType::String,
                     nullable: true,
                     indexed: false,
                     estimated_cardinality: Some(100),

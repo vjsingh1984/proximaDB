@@ -112,7 +112,7 @@ async fn test_authentication_middleware() {
 
     // Test 1: Health endpoint should work without authentication (when require_auth_for_health is false)
     let response = client
-        .get(&format!("{}/health", base_url))
+        .get(key))
         .send()
         .await
         .unwrap();
@@ -120,7 +120,7 @@ async fn test_authentication_middleware() {
 
     // Test 2: Collections endpoint should require authentication
     let response = client
-        .get(&format!("{}/collections", base_url))
+        .get(key))
         .send()
         .await
         .unwrap();
@@ -128,7 +128,7 @@ async fn test_authentication_middleware() {
 
     // Test 3: Valid API key should allow access
     let response = client
-        .get(&format!("{}/collections", base_url))
+        .get(key))
         .header("Authorization", "Bearer test-api-key-123")
         .send()
         .await
@@ -137,7 +137,7 @@ async fn test_authentication_middleware() {
 
     // Test 4: Invalid API key should be rejected
     let response = client
-        .get(&format!("{}/collections", base_url))
+        .get(key))
         .header("Authorization", "Bearer invalid-key")
         .send()
         .await
@@ -227,7 +227,7 @@ async fn test_rate_limiting_middleware() {
 
     // Test 1: Health endpoint should work without rate limiting (when limit_health_endpoints is false)
     let response = client
-        .get(&format!("{}/health", base_url))
+        .get(key))
         .send()
         .await
         .unwrap();
@@ -236,7 +236,7 @@ async fn test_rate_limiting_middleware() {
     // Test 2: First few requests to collections should work
     for i in 1..=3 {
         let response = client
-            .get(&format!("{}/collections", base_url))
+            .get(key))
             .send()
             .await
             .unwrap();
@@ -246,7 +246,7 @@ async fn test_rate_limiting_middleware() {
 
     // Test 3: Request beyond limit should be rate limited
     let response = client
-        .get(&format!("{}/collections", base_url))
+        .get(key))
         .send()
         .await
         .unwrap();

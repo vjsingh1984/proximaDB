@@ -53,8 +53,8 @@ mod tests {
         block.metadata_stats = DataBlockMetadata {
             min_key: "test_0000".to_string(),
             max_key: "test_0009".to_string(),
-            min_timestamp: 1000,
-            max_timestamp: 1009,
+            // min_timestamp removed -  1000,
+            // max_timestamp removed -  1009,
             record_count: 10,
             null_count: 0,
             metadata_columns: vec!["category".to_string(), "score".to_string()],
@@ -92,7 +92,7 @@ mod tests {
     async fn test_hierarchical_sst_write_read() {
         use crate::proto::proximadb::{MetadataItem, metadata_item};
         let temp_dir = TempDir::new().unwrap();
-        let sst_path = temp_dir.path().join("test_hierarchical.sst").to_str().unwrap().to_string();
+        let sst_path = temp_dir.path().join("test_hierarchical.sstable").to_str().unwrap().to_string();
         
         // Write SST file with hierarchical structure
         use crate::storage::persistence::filesystem::FilesystemConfig;
@@ -157,7 +157,7 @@ mod tests {
     #[allow(dead_code)]
     async fn test_block_iteration_with_filesystem_api() {
         let temp_dir = TempDir::new().unwrap();
-        let sst_path = temp_dir.path().join("test_iterator.sst").to_str().unwrap().to_string();
+        let sst_path = temp_dir.path().join("test_iterator.sstable").to_str().unwrap().to_string();
         
         // Write test data using filesystem API
         use crate::storage::persistence::filesystem::FilesystemConfig;
@@ -225,7 +225,7 @@ mod tests {
     async fn test_metadata_statistics_in_blocks() {
         use crate::proto::proximadb::{MetadataItem, metadata_item};
         let temp_dir = TempDir::new().unwrap();
-        let sst_path = temp_dir.path().join("test_metadata.sst").to_str().unwrap().to_string();
+        let sst_path = temp_dir.path().join("test_metadata.sstable").to_str().unwrap().to_string();
         
         
         // Write SST with specific metadata patterns
@@ -297,8 +297,8 @@ mod tests {
         };
         
         // Verify metadata statistics are populated
-        assert!(block0.metadata_stats.metadata_columns.contains(&"score".to_string()));
-        assert!(block0.metadata_stats.metadata_columns.contains(&"type".to_string()));
+        assert!(block0.metadata_stats.metadata_columns.contains_hash(&"score".to_string()));
+        assert!(block0.metadata_stats.metadata_columns.contains_hash(&"type".to_string()));
         
         // Check min/max values exist
         assert!(block0.metadata_stats.min_values.contains_key("score"));
@@ -306,8 +306,8 @@ mod tests {
         
         // Verify the values make sense (min < max for scores)
         if let (Some(min_score), Some(max_score)) = (
-            block0.metadata_stats.min_values.get("score"),
-            block0.metadata_stats.max_values.get("score")
+            block0.metadata_stats.min_values.get(key),
+            block0.metadata_stats.max_values.get(key)
         ) {
             let min_val: i32 = min_score.as_str().unwrap().parse().unwrap();
             let max_val: i32 = max_score.as_str().unwrap().parse().unwrap();
@@ -320,7 +320,7 @@ mod tests {
     #[allow(dead_code)]
     async fn test_random_block_access() {
         let temp_dir = TempDir::new().unwrap();
-        let sst_path = temp_dir.path().join("test_random_access.sst").to_str().unwrap().to_string();
+        let sst_path = temp_dir.path().join("test_random_access.sstable").to_str().unwrap().to_string();
         
         // Write multiple blocks of test data
         use crate::storage::persistence::filesystem::FilesystemConfig;
@@ -389,7 +389,7 @@ mod tests {
     #[allow(dead_code)]
     async fn test_bloom_filter_in_blocks() {
         let temp_dir = TempDir::new().unwrap();
-        let sst_path = temp_dir.path().join("test_bloom.sst").to_str().unwrap().to_string();
+        let sst_path = temp_dir.path().join("test_bloom.sstable").to_str().unwrap().to_string();
         
         // Write SST file
         use crate::storage::persistence::filesystem::FilesystemConfig;

@@ -148,7 +148,7 @@ impl PostingListStorage {
             }
             PostingListStorage::SstDisk { base_path, collection_id } => {
                 // Write to SST format on disk
-                let path = format!("{}/{}/posting_lists/cluster_{}.sst", 
+                let path = format!("{}/{}/posting_lists/cluster_{}.sstable", 
                     base_path, collection_id, cluster_id);
                 
                 let mut config = crate::storage::persistence::filesystem::FilesystemConfig::default();
@@ -191,7 +191,7 @@ impl PostingListStorage {
                         updated_at: None,
                         expires_at: None,
                         version: None,
-                        quantized_vector: None,
+                        quantized: None,
                     });
                 }
                 
@@ -214,7 +214,7 @@ impl PostingListStorage {
             }
             PostingListStorage::CloudSst { bucket, collection_id } => {
                 // Write to S3 using SST format
-                let key = format!("{}/posting_lists/cluster_{}.sst", 
+                let key = format!("{}/posting_lists/cluster_{}.sstable", 
                     collection_id, cluster_id);
                 
                 debug!("Stored posting list {} to S3 (SST) at s3://{}/{}", 
@@ -238,7 +238,7 @@ impl PostingListStorage {
         match self {
             PostingListStorage::Memory { cache } => {
                 // Deserialize from bincode in memory
-                if let Some(bytes) = cache.get(&cluster_id) {
+                if let Some(bytes) = cache.get(&key) {
                     let list: PostingList = bincode::deserialize(&bytes)?;
                     Ok(Some(list))
                 } else {
@@ -247,7 +247,7 @@ impl PostingListStorage {
             }
             PostingListStorage::SstDisk { base_path, collection_id } => {
                 // Read from SST format on disk
-                let path = format!("{}/{}/posting_lists/cluster_{}.sst", 
+                let path = format!("{}/{}/posting_lists/cluster_{}.sstable", 
                     base_path, collection_id, cluster_id);
                 
                 let mut config = crate::storage::persistence::filesystem::FilesystemConfig::default();
@@ -374,14 +374,14 @@ impl TieredPostingListManager {
     /// Get posting list with tier-aware loading
     pub async fn get(&self, cluster_id: usize) -> Result<Option<PostingList>> {
         // Try memory first
-        if let Some(list) = self.memory_storage.get(cluster_id).await? {
+        if let Some(list) = self.memory_storage.get(key).await? {
             self.access_tracker.insert(cluster_id, std::time::SystemTime::now());
             return Ok(Some(list));
         }
         
         // Try disk if available
         if let Some(ref disk) = self.disk_storage {
-            if let Some(list) = disk.get(cluster_id).await? {
+            if let Some(list) = disk.get(key).await? {
                 // Promote to memory
                 self.memory_storage.put(cluster_id, list.clone()).await?;
                 self.access_tracker.insert(cluster_id, std::time::SystemTime::now());
@@ -392,14 +392,14 @@ impl TieredPostingListManager {
         
         // Try cloud if available
         if let Some(ref cloud) = self.cloud_storage {
-            if let Some(list) = cloud.get(cluster_id).await? {
+            if let Some(list) = cloud.get(key).await? {
                 // Promote to memory (and optionally disk)
                 self.memory_storage.put(cluster_id, list.clone()).await?;
                 if let Some(ref disk) = self.disk_storage {
                     disk.put(cluster_id, list.clone()).await?;
                 }
                 self.access_tracker.insert(cluster_id, std::time::SystemTime::now());
-                info!("Promoted posting list {} from cloud to memory", cluster_id);
+                info!("Promoted posting list {} from cloud to mem", cluster_id);
                 return Ok(Some(list));
             }
         }
@@ -436,7 +436,7 @@ impl TieredPostingListManager {
             let evict_count = MAX_MEMORY_LISTS / 10;
             for (cluster_id, _) in access_times.iter().take(evict_count) {
                 // Get posting list from memory
-                if let Some(list) = self.memory_storage.get(*cluster_id).await? {
+                if let Some(list) = self.memory_storage.get(key).await? {
                     // Demote to disk (convert from bincode to SST/VIPER)
                     if let Some(ref disk) = self.disk_storage {
                         disk.put(*cluster_id, list).await?;

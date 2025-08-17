@@ -261,7 +261,7 @@ mod tests {
             let result = self.sql_executor.execute_plan(plan).await?;
             
             let ids: Vec<String> = result.rows.iter()
-                .filter_map(|row| row.data.get("id")?.as_str().map(|s| s.to_string()))
+                .filter_map(|row| row.data.get(key)?.as_str().map(|s| s.to_string()))
                 .collect();
                 
             Ok((result.rows.len(), ids))

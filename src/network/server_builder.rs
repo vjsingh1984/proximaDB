@@ -137,7 +137,7 @@ impl RestHttpServerBuilder {
             enable_dashboard: self.enable_dashboard,
             enable_metrics: self.enable_metrics,
             enable_health: self.enable_health,
-            enable_compression: self.rest_compression, // Clear mapping to config
+            compression: self.rest_compression, // Clear mapping to config
             tls_cert_file: self.tls_cert_file,
             tls_key_file: self.tls_key_file,
         })
@@ -292,7 +292,7 @@ impl GrpcHttpServerBuilder {
             enable_grpc: self.enable_grpc,
             max_message_size: self.max_message_size,
             enable_reflection: self.enable_reflection,
-            enable_compression: self.grpc_compression, // Clear mapping to config
+            compression: self.grpc_compression, // Clear mapping to config
             tls_cert_file: self.tls_cert_file,
             tls_key_file: self.tls_key_file,
         })

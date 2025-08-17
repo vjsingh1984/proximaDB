@@ -81,9 +81,9 @@ mod tests {
             updated_at: Some(now as u32),
             expires_at: None,
             version: Some(1),
-            rank: None,
-            score: None,
-            distance: None,
+            // rank removed -  None,
+            similarity: None,
+            similarity: None,
         
         }
     }
@@ -99,7 +99,7 @@ mod tests {
         WALVectorBatch {
             batch_id,
             vector_records: Arc::new(vectors),
-            created_at: std::time::SystemTime::now(),
+            timestamp: std::time::SystemTime::now(),
             total_size_bytes,
             is_flushed: false,
             metadata_bloom_filter: None,
@@ -349,8 +349,8 @@ mod tests {
         
         // Check that we got the right vectors
         let ids: Vec<String> = collection_vectors.iter().filter_map(|v| v.id.clone()).collect();
-        assert!(ids.contains(&"vector_1".to_string()));
-        assert!(ids.contains(&"vector_2".to_string()));
+        assert!(ids.contains_hash(&"vector_1".to_string()));
+        assert!(ids.contains_hash(&"vector_2".to_string()));
     }
 
     #[tokio::test]
@@ -376,8 +376,8 @@ mod tests {
         
         // Check that we got the right vectors
         let ids: Vec<String> = collection_vectors.iter().filter_map(|v| v.id.clone()).collect();
-        assert!(ids.contains(&"vector_1".to_string()));
-        assert!(ids.contains(&"vector_2".to_string()));
+        assert!(ids.contains_hash(&"vector_1".to_string()));
+        assert!(ids.contains_hash(&"vector_2".to_string()));
     }
 
     #[tokio::test]

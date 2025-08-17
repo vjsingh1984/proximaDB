@@ -24,7 +24,7 @@ mod sst_cache_integration {
         
         // Create test block key
         let block_key = SstBlockKey::new(
-            "test_file.sst".to_string(),
+            "test_file.sstable".to_string(),
             1024,
             4096,
         );
@@ -44,7 +44,7 @@ mod sst_cache_integration {
         
         let block = cached_block.unwrap();
         assert_eq!(block.data, test_data);
-        assert!(matches!(block.compression, CompressionType::Zstd));
+        assert!(matches!(block.storage.as_ref().and_then(|s| s.compression.as_ref()), CompressionType::Zstd));
         assert_eq!(block.uncompressed_size, 16);
     }
     
@@ -53,7 +53,7 @@ mod sst_cache_integration {
         let vector_cache = Arc::new(VectorStore::new(100));
         
         let block_key = SstBlockKey::new(
-            "vectors.sst".to_string(),
+            "vectors.sstable".to_string(),
             2048,
             8192,
         );
@@ -68,9 +68,9 @@ mod sst_cache_integration {
                 timestamp: 1000,
                 updated_at: None,
                 expires_at: None,
-                rank: None,
-                score: None,
-                distance: None,
+                // rank removed -  None,
+                similarity: None,
+                similarity: None,
             },
             VectorRecord {
                 id: Some("v2".to_string()),
@@ -80,9 +80,9 @@ mod sst_cache_integration {
                 timestamp: 1001,
                 updated_at: None,
                 expires_at: None,
-                rank: None,
-                score: None,
-                distance: None,
+                // rank removed -  None,
+                similarity: None,
+                similarity: None,
             },
         ];
         
@@ -102,7 +102,7 @@ mod sst_cache_integration {
         
         // Create test SSTable index
         let index = SstableIndex {
-            file_path: "test.sst".to_string(),
+            file_path: "test.sstable".to_string(),
             entries: vec![
                 SstIndexEntry {
                     key: "block1".to_string(),
@@ -129,10 +129,10 @@ mod sst_cache_integration {
         };
         
         // Cache index
-        index_cache.cache_sstable_index("test.sst", index.clone()).await.unwrap();
+        index_cache.cache_sstable_index("test.sstable", index.clone()).await.unwrap();
         
         // Retrieve index
-        let cached_index = index_cache.get_sstable_index("test.sst").await;
+        let cached_index = index_cache.get_sstable_index("test.sstable").await;
         assert!(cached_index.is_some());
         
         let retrieved = cached_index.unwrap();
@@ -147,7 +147,7 @@ mod sst_cache_integration {
         
         // Create index with multiple blocks
         let index = SstableIndex {
-            file_path: "search.sst".to_string(),
+            file_path: "search.sstable".to_string(),
             entries: vec![
                 SstIndexEntry {
                     key: "block1".to_string(),
@@ -182,17 +182,17 @@ mod sst_cache_integration {
             metadata_stats: HashMap::new(),
         };
         
-        index_cache.cache_sstable_index("search.sst", index).await.unwrap();
+        index_cache.cache_sstable_index("search.sstable", index).await.unwrap();
         
         // Test finding blocks for specific keys
-        let blocks = index_cache.find_blocks_for_key("search.sst", "cherry").await;
+        let blocks = index_cache.find_blocks_for_key("search.sstable", "cherry").await;
         assert!(blocks.is_some());
         let matching = blocks.unwrap();
         assert_eq!(matching.len(), 1);
         assert_eq!(matching[0].key, "block2");
         
         // Test key that spans block boundary
-        let blocks = index_cache.find_blocks_for_key("search.sst", "banana").await;
+        let blocks = index_cache.find_blocks_for_key("search.sstable", "banana").await;
         assert!(blocks.is_some());
         let matching = blocks.unwrap();
         assert_eq!(matching.len(), 1);
@@ -214,7 +214,7 @@ mod viper_cache_integration {
             "schema": {
                 "vector": "Float32Array",
                 "id": "String",
-                "metadata": "Json"
+                "metadata_info": "Json"
             },
             "row_groups": 5,
             "total_rows": 10000
@@ -224,7 +224,7 @@ mod viper_cache_integration {
         metadata_cache.put("parquet_schema_test", schema_metadata.clone()).await.unwrap();
         
         // Retrieve metadata
-        let cached = metadata_cache.get("parquet_schema_test").await;
+        let cached = metadata_cache.get(&key).await;
         assert!(cached.is_some());
         assert_eq!(cached.unwrap(), schema_metadata);
     }
@@ -255,7 +255,7 @@ mod viper_cache_integration {
         
         metadata_cache.put("column_stats_rg0", column_stats.clone()).await.unwrap();
         
-        let cached = metadata_cache.get("column_stats_rg0").await;
+        let cached = metadata_cache.get(&key).await;
         assert!(cached.is_some());
         assert_eq!(cached.unwrap()["columns"]["vector"]["min"], serde_json::json!([0.0, 0.0, 0.0]));
     }
@@ -273,7 +273,7 @@ mod unified_search_cache_tests {
         let metadata_cache = Arc::new(MetadataStore::new(50));
         
         // Simulate SST engine caching data
-        let sst_block_key = SstBlockKey::new("shared.sst".to_string(), 0, 4096);
+        let sst_block_key = SstBlockKey::new("shared.sstable".to_string(), 0, 4096);
         let sst_vectors = vec![
             VectorRecord {
                 id: Some("sst_v1".to_string()),
@@ -283,9 +283,9 @@ mod unified_search_cache_tests {
                 timestamp: 1000,
                 updated_at: None,
                 expires_at: None,
-                rank: None,
-                score: None,
-                distance: None,
+                // rank removed -  None,
+                similarity: None,
+                similarity: None,
             },
         ];
         vector_cache.cache_block_vectors(&sst_block_key, sst_vectors).await.unwrap();
@@ -301,7 +301,7 @@ mod unified_search_cache_tests {
             .await.unwrap();
         
         // Both engines can access the same metadata
-        let meta = metadata_cache.get("shared_schema").await;
+        let meta = metadata_cache.get(&key).await;
         assert!(meta.is_some());
         assert_eq!(meta.unwrap()["format"], "unified");
     }
@@ -312,7 +312,7 @@ mod unified_search_cache_tests {
         let index_cache = Arc::new(IndexNodeCache::new(50));
         
         // Cache data
-        let block_key = SstBlockKey::new("invalidate.sst".to_string(), 0, 4096);
+        let block_key = SstBlockKey::new("invalidate.sstable".to_string(), 0, 4096);
         vector_cache.cache_compressed_block(
             &block_key,
             vec![1, 2, 3],
@@ -322,24 +322,24 @@ mod unified_search_cache_tests {
         
         // Cache index
         let index = SstableIndex {
-            file_path: "invalidate.sst".to_string(),
+            file_path: "invalidate.sstable".to_string(),
             entries: vec![],
             total_blocks: 1,
             total_vectors: 10,
             metadata_stats: HashMap::new(),
         };
-        index_cache.cache_sstable_index("invalidate.sst", index).await.unwrap();
+        index_cache.cache_sstable_index("invalidate.sstable", index).await.unwrap();
         
         // Verify data is cached
         assert!(vector_cache.get_compressed_block(&block_key).await.is_some());
-        assert!(index_cache.get_sstable_index("invalidate.sst").await.is_some());
+        assert!(index_cache.get_sstable_index("invalidate.sstable").await.is_some());
         
         // Invalidate SSTable data
-        vector_cache.invalidate_sstable("invalidate.sst").await.unwrap();
-        index_cache.invalidate("sst_index_invalidate.sst").await;
+        vector_cache.invalidate_sstable("invalidate.sstable").await.unwrap();
+        index_cache.invalidate("sst_index_invalidate.sstable").await;
         
         // Verify invalidation
-        assert!(index_cache.get_sstable_index("invalidate.sst").await.is_none());
+        assert!(index_cache.get_sstable_index("invalidate.sstable").await.is_none());
     }
     
     #[tokio::test]
@@ -350,7 +350,7 @@ mod unified_search_cache_tests {
         // Try to cache many blocks
         for i in 0..100 {
             let block_key = SstBlockKey::new(
-                format!("file_{}.sst", i),
+                format!("file_{}.sstable", i),
                 i * 4096,
                 4096,
             );
@@ -367,11 +367,11 @@ mod unified_search_cache_tests {
         
         // Cache should have evicted old entries due to memory limit
         // First entries should be evicted
-        let first_key = SstBlockKey::new("file_0.sst".to_string(), 0, 4096);
+        let first_key = SstBlockKey::new("file_0.sstable".to_string(), 0, 4096);
         let first_block = small_cache.get_compressed_block(&first_key).await;
         
         // Recent entries should still be cached
-        let recent_key = SstBlockKey::new("file_99.sst".to_string(), 99 * 4096, 4096);
+        let recent_key = SstBlockKey::new("file_99.sstable".to_string(), 99 * 4096, 4096);
         let recent_block = small_cache.get_compressed_block(&recent_key).await;
         
         // Due to LRU eviction, old entries might be gone
@@ -397,7 +397,7 @@ use tracing::{debug, error, info};
         // Cache 1000 blocks
         for i in 0..1000 {
             let key = SstBlockKey::new(
-                format!("perf_{}.sst", i / 100),
+                format!("perf_{}.sstable", i / 100),
                 (i % 100) as u64 * 4096,
                 4096,
             );
@@ -419,7 +419,7 @@ use tracing::{debug, error, info};
         
         for i in 0..1000 {
             let key = SstBlockKey::new(
-                format!("perf_{}.sst", i / 100),
+                format!("perf_{}.sstable", i / 100),
                 (i % 100) as u64 * 4096,
                 4096,
             );

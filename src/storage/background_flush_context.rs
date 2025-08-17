@@ -111,7 +111,7 @@ pub struct BackgroundFlushContext {
     
     // === Performance Configuration ===
     /// Vector quantization settings (if enabled)
-    pub quantization_config: Option<QuantizationConfig>,
+    pub quantization: Option<QuantizationConfig>,
     /// Suggested batch size for operations
     pub batch_size_hint: Option<usize>,
     
@@ -181,7 +181,7 @@ impl BackgroundFlushContext {
             distance_metric: Self::distance_metric_to_proto(&self.distance_metric),
             storage_engine: Self::storage_engine_to_proto(&self.storage_engine),
             filterable_columns: self.filterable_columns.clone(),
-            quantization_config: self.quantization_config.as_ref().map(|qc| {
+            quantization: self.quantization.as_ref().map(|qc| {
                 crate::proto::proximadb::QuantizationConfig {
                     enabled: qc.enabled,
                     ..Default::default()
@@ -200,7 +200,7 @@ impl BackgroundFlushContext {
             id: self.collection_id.clone(),
             config: Some(config),
             stats: Some(stats),
-            created_at: chrono::Utc::now().timestamp_millis(),
+            timestamp: chrono::Utc::now().timestamp_millis(),
             updated_at: chrono::Utc::now().timestamp_millis(),
             storage_assignment: Some(storage_assignment),
         }
@@ -251,7 +251,7 @@ impl BackgroundFlushContext {
         };
         
         // Parse quantization config if present
-        let quantization_config = config.quantization_config.as_ref().map(|qc| {
+        let quantization = config.quantization.as_ref().map(|qc| {
             // Extract quantization type from the simplified QuantizationConfig
             let quantization_type = match qc.method() {
                 crate::proto::proximadb::quantization_config::Method::ProductQuantization => "product",
@@ -282,7 +282,7 @@ impl BackgroundFlushContext {
             distance_metric,
             compression_config,
             filterable_columns: config.filterable_columns.clone(),
-            quantization_config,
+            quantization,
             batch_size_hint,
             priority: OperationPriority::Normal,
             timeout_ms: Some(300_000), // 5 minutes default
@@ -300,7 +300,7 @@ impl BackgroundFlushContext {
             distance_metric: DistanceMetric::Cosine,
             compression_config: CompressionConfig::default(),
             filterable_columns: Vec::new(),
-            quantization_config: None,
+            quantization: None,
             batch_size_hint: Some(1000),
             priority: OperationPriority::Normal,
             timeout_ms: Some(60_000),

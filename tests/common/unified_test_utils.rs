@@ -279,7 +279,7 @@ impl UnifiedTestEnvironment {
         let all_files = fs.list(&storage_url).await?;
         
         let sst_files: Vec<String> = all_files.iter()
-            .filter(|entry| entry.name.ends_with(".sst"))
+            .filter(|entry| entry.name.ends_with(".sstable"))
             .map(|entry| format!("{}/{}", storage_url, entry.name))
             .collect();
         
@@ -644,7 +644,7 @@ pub mod operations {
                 }
             };
             
-            config.compression = Some(proximadb::proto::proximadb::CompressionConfig {
+            config.storage_config.as_ref().and_then(|s| s.compression.as_ref()) = Some(proximadb::proto::proximadb::CompressionConfig {
                 algorithm,
                 level: Some(compression_level),
                 ..Default::default()
@@ -889,7 +889,7 @@ pub async fn flush_sst_with_block_stats(
     // Create SST config with specified block size
     let mut sst_config = environment.sst_config.clone();
     sst_config.block_size_kb = block_size_kb as u32;
-    sst_config.compression = compression_algo.to_string();
+    sst_config.storage_config.as_ref().and_then(|s| s.compression.as_ref()) = compression_algo.to_string();
     sst_config.compression_level = compression_level;
     
     // Create SST storage
@@ -955,7 +955,7 @@ pub async fn flush_sst_with_block_stats(
     
     // Extract block statistics from engine metrics
     let blocks_created = flush_result.engine_metrics
-        .get("sstables_created")
+        .get(key)
         .and_then(|v| v.as_u64())
         .unwrap_or(1) as usize;
     

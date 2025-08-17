@@ -30,9 +30,9 @@ use tracing::{debug, error, info};
         debug!("Converted metadata: {:?}", converted);
         
         // Check conversion
-        assert_eq!(converted.get("category"), Some(&"electronics".to_string()));
-        assert_eq!(converted.get("price"), Some(&"99.99".to_string()));
-        assert_eq!(converted.get("in_stock"), Some(&"true".to_string()));
+        assert_eq!(converted.get(key), Some(&"electronics".to_string()));
+        assert_eq!(converted.get(key), Some(&"99.99".to_string()));
+        assert_eq!(converted.get(key), Some(&"true".to_string()));
     }
     
     #[test]

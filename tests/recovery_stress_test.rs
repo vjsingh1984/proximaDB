@@ -27,7 +27,7 @@ mod recovery_stress_tests {
         // Create some SSTable files
         for i in 0..file_count {
             let dummy_data = format!("SSTable {} data for collection {}", i, collection_id);
-            fs::write(data_dir.join(format!("{:06}.sst", i)), dummy_data.as_bytes()).await?;
+            fs::write(data_dir.join(format!("{:06}.sstable", i)), dummy_data.as_bytes()).await?;
         }
         Ok(())
     }

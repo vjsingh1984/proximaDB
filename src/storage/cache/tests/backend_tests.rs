@@ -28,16 +28,16 @@ async fn test_memory_backend_basic_operations() {
     let value = "test_value".to_string();
     
     assert!(backend.put(key.clone(), value.clone()).await.is_ok());
-    assert_eq!(backend.get(&key).await, Some(value.clone()));
+    assert_eq!(backend.get(key).await, Some(value.clone()));
     
     // Test contains
-    assert!(backend.contains(&key).await);
-    assert!(!backend.contains(&"non_existent".to_string()).await);
+    assert!(backend.contains_hash(&key).await);
+    assert!(!backend.contains_hash(&"non_existent".to_string()).await);
     
     // Test remove
     assert!(backend.remove(&key).await);
-    assert!(!backend.contains(&key).await);
-    assert_eq!(backend.get(&key).await, None);
+    assert!(!backend.contains_hash(&key).await);
+    assert_eq!(backend.get(key).await, None);
 }
 
 #[tokio::test]
@@ -114,7 +114,7 @@ async fn test_memory_backend_concurrent_access() {
             for j in 0..100 {
                 let key = i * 100 + j;
                 let _ = backend_clone.put(key, key * 2).await;
-                let _ = backend_clone.get(&key).await;
+                let _ = backend_clone.get(key).await;
             }
         });
         handles.push(handle);

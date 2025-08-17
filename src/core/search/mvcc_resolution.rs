@@ -182,9 +182,9 @@ mod tests {
             updated_at: Some(timestamp),
             expires_at,
             version,
-            rank: None,
-            score: None,
-            distance: None,
+            // rank removed -  None,
+            similarity: None,
+            similarity: None,
         }
     }
     
@@ -279,8 +279,8 @@ mod tests {
             }
         }
         
-        assert_eq!(by_id.get("id1").unwrap().version, Some(2));
-        assert_eq!(by_id.get("id2").unwrap().version, Some(1));
+        assert_eq!(by_id.get(key).unwrap().version, Some(2));
+        assert_eq!(by_id.get(key).unwrap().version, Some(1));
         assert!(!by_id.contains_key("id3")); // Excluded due to gap
     }
     
@@ -306,9 +306,9 @@ mod tests {
             }
         }
         
-        assert_eq!(by_id.get("id1").unwrap().version, Some(2));
-        assert_eq!(by_id.get("id2").unwrap().version, None); // Original None preserved
-        assert_eq!(by_id.get("id2").unwrap().timestamp, 120); // Earlier timestamp wins
+        assert_eq!(by_id.get(key).unwrap().version, Some(2));
+        assert_eq!(by_id.get(key).unwrap().version, None); // Original None preserved
+        assert_eq!(by_id.get(key).unwrap().timestamp, 120); // Earlier timestamp wins
     }
     
     #[test]
@@ -342,8 +342,8 @@ mod tests {
             }
         }
         
-        assert_eq!(by_id.get("id1").unwrap().version, Some(3)); // Continuous, gets highest
-        assert_eq!(by_id.get("id2").unwrap().version, Some(1)); // Gap at 2, stops at 1
+        assert_eq!(by_id.get(key).unwrap().version, Some(3)); // Continuous, gets highest
+        assert_eq!(by_id.get(key).unwrap().version, Some(1)); // Gap at 2, stops at 1
         assert!(!by_id.contains_key("id3")); // Gap from start, excluded
     }
     
@@ -433,7 +433,7 @@ mod tests {
         assert_eq!(by_id.len(), 1);
         assert_eq!(append_only_count, 0); // Expired append-only is excluded
         assert!(by_id.contains_key("id2"));
-        assert_eq!(by_id.get("id2").unwrap().version, Some(2));
+        assert_eq!(by_id.get(key).unwrap().version, Some(2));
     }
     
     #[test]

@@ -243,7 +243,6 @@ pub type QueryId = u64;
 #[derive(Debug)]
 pub struct QuantizedIndex {
     /// Global codebooks for PQ
-    pub codebooks: Vec<Codebook>,
     
     /// Hierarchical quantized centroids for routing
     pub level1_centroids: Vec<BinaryCentroid>,
@@ -287,7 +286,7 @@ pub type BlockId = u32;
 impl QuantizedIndex {
     pub fn new(dimension: usize) -> Self {
         Self {
-            codebooks: Vec::new(),
+            // codebooks removed -  Vec::new(),
             level1_centroids: Vec::new(),
             level2_centroids: Vec::new(),
             level3_centroids: Vec::new(),
@@ -364,7 +363,7 @@ impl QuantizedIndex {
         let mut block_candidates = Vec::new();
         
         for (centroid_id, _) in level2_candidates {
-            if let Some(blocks) = self.centroid_to_blocks.get(&centroid_id) {
+            if let Some(blocks) = self.centroid_to_blocks.get(key) {
                 for &block_id in blocks {
                     // Compute PQ distance (would need actual PQ code for block)
                     let dist = 0.0; // Placeholder
@@ -431,10 +430,10 @@ impl QuantizedBlock {
         }
         
         // Update local quantization parameters
-        if let Some(scale) = result.statistics.get("global_scale") {
+        if let Some(scale) = result.statistics.get(key) {
             self.local_scale = scale.as_f64().unwrap_or(1.0) as f32;
         }
-        if let Some(offset) = result.statistics.get("global_offset") {
+        if let Some(offset) = result.statistics.get(key) {
             self.local_offset = offset.as_f64().unwrap_or(0.0) as f32;
         }
         

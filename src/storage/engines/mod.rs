@@ -12,8 +12,8 @@ pub mod swift;   // Storage With Instant Fast Traversal - dual-mode SST with ID-
 // Temporarily disabled due to arrow-arith compilation conflicts - TODO: Re-enable when resolved  
 // pub mod nova;    // Next-gen Optimized Vector Analytics - dual-mode VIPER with columnar quantization
 pub mod prism;   // Progressive Retrieval through Indexed Storage Management - memory-optimized hierarchical engine
-// Temporarily disabled due to arrow-arith compilation conflicts - TODO: Re-enable when resolved
-// pub mod columnar; // Shared columnar storage infrastructure for NOVA and VIPER
+pub mod raptor;  // Row-Aligned Predicated Tensor Optimized Repository - cloud-optimized with embedded HNSW
+pub mod columnar; // Shared columnar storage infrastructure for NOVA and VIPER
 pub mod row_based; // Shared row-based storage infrastructure for SST and SWIFT
 pub mod common; // Universal engine infrastructure shared across all engines
 pub mod factory; // Engine factory for creating instances
@@ -29,6 +29,7 @@ pub use swift::SwiftEngine;
 // Temporarily disabled due to arrow-arith compilation conflicts - TODO: Re-enable when resolved
 // pub use nova::NovaEngine;
 pub use prism::PrismEngine;
+pub use raptor::RaptorEngine;
 
 // Re-export factory and utilities
 pub use factory::{
@@ -82,32 +83,5 @@ pub enum LevelType {
 }
 
 // Stub implementations for disabled engines
-pub mod viper {
-    use std::sync::Arc;
-    use anyhow::Result;
-    // use crate::core::config::CoreConfig;  // May not exist - using stub
-    // use crate::storage::filesystem::FilesystemFactory;  // May not exist - using stub
-    
-    // Stub types for missing dependencies
-    #[derive(Debug, Clone)]
-    pub struct CoreConfig;
-    
-    pub trait FilesystemFactory: Send + Sync {}
-    
-    #[derive(Debug, Clone)]
-    pub struct ViperEngine {
-        // Stub implementation
-    }
-    
-    impl ViperEngine {
-        pub async fn from_core_config(
-            _config: CoreConfig,
-            _filesystem_factory: Arc<dyn FilesystemFactory>,
-        ) -> Result<Self> {
-            Ok(Self {})
-        }
-    }
-}
-
-// Re-export the stub
-pub use viper::ViperEngine;
+// Re-export the viper module and its engine
+pub mod viper;

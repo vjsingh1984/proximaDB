@@ -176,7 +176,6 @@ pub struct FilterableColumn {
     pub name: String,
     
     /// Column data type
-    pub data_type: ColumnDataType,
     
     /// Column statistics for optimization
     pub statistics: ColumnStatistics,
@@ -511,7 +510,7 @@ impl UniversalFilterOptimizer {
     ) -> Result<FilterAnalysis> {
         let column_name = self.extract_column_name(condition);
         
-        let column_metadata = self.columns.get(&column_name)
+        let column_metadata = self.columns.get(key)
             .ok_or_else(|| anyhow::anyhow!("Unknown column: {}", column_name))?;
         
         // Determine best execution strategy
@@ -728,7 +727,7 @@ mod tests {
         let mut columns = HashMap::new();
         columns.insert("status".to_string(), FilterableColumn {
             name: "status".to_string(),
-            data_type: ColumnDataType::String,
+            // data_type removed -  ColumnDataType::String,
             statistics: ColumnStatistics {
                 total_count: 1000,
                 null_count: 0,

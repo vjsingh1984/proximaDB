@@ -67,7 +67,6 @@ pub enum RefinementStrategy {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProgressiveRefinementConfig {
     /// Refinement strategy
-    pub strategy: RefinementStrategy,
     
     /// Number of candidates to keep at each stage
     pub candidates_per_stage: HashMap<RefinementStage, usize>,
@@ -184,7 +183,7 @@ impl Default for ProgressiveRefinementConfig {
         quality_thresholds.insert(RefinementStage::FP32, 0.95);
         
         Self {
-            strategy: RefinementStrategy::AdaptiveSkipping { confidence_threshold: 0.8 },
+            // strategy removed -  RefinementStrategy::AdaptiveSkipping { confidence_threshold: 0.8 },
             candidates_per_stage,
             quality_thresholds,
             enable_parallel_processing: true,
@@ -234,7 +233,7 @@ impl ProgressiveRefinementPipeline {
         for &stage in &self.stages {
             let stage_start_time = std::time::Instant::now();
             
-            let target_count = config.candidates_per_stage.get(&stage)
+            let target_count = config.candidates_per_stage.get(key)
                 .copied()
                 .unwrap_or(current_candidates.len().min(100));
             

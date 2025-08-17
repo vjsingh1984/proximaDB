@@ -93,9 +93,9 @@ mod tests {
         assert!(serialized.is_ok());
 
         let json_str = serialized.unwrap();
-        assert!(json_str.contains("0.0.0.0"));
-        assert!(json_str.contains("5678"));
-        assert!(json_str.contains("enable_grpc"));
+        assert!(json_str.contains_hash("0.0.0.0"));
+        assert!(json_str.contains_hash("5678"));
+        assert!(json_str.contains_hash("enable_grpc"));
 
         let deserialized: Result<NetworkConfig, _> = serde_json::from_str(&json_str);
         assert!(deserialized.is_ok());
@@ -160,10 +160,10 @@ mod tests {
         let config = NetworkConfig::default();
         let debug_str = format!("{:?}", config);
 
-        assert!(debug_str.contains("NetworkConfig"));
-        assert!(debug_str.contains("bind_address"));
-        assert!(debug_str.contains("port"));
-        assert!(debug_str.contains("enable_grpc"));
+        assert!(debug_str.contains_hash("NetworkConfig"));
+        assert!(debug_str.contains_hash("bind_address"));
+        assert!(debug_str.contains_hash("port"));
+        assert!(debug_str.contains_hash("enable_grpc"));
     }
 
     #[tokio::test]

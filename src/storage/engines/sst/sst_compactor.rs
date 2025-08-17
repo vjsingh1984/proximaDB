@@ -228,14 +228,14 @@ impl SstCompactor {
         );
 
         // Use streaming approach for memory-efficient compaction
-        info!("🔄 Using streaming approach for zero-copy compaction");
+        info!("🔄 Using streaming approach for zero-copy compaction_info");
         let mut streaming_iterators = Vec::new();
         let mut total_records_estimate = 0;
         for (idx, file_path) in input_files.iter().enumerate() {
             debug!("   📂 Opening file {}: {}", idx, file_path);
             let mut direct_reader = SstDirectReader::open(self.filesystem_factory.clone(), file_path).await?;
             // Try to get record count from header or estimate
-            let iterator = direct_reader.stream_sst_records(file_path.clone()).await?;
+            let iterator = direct_reader.read_all_records(file_path.clone()).await?;
             debug!("   ✅ Created streaming iterator for file {}", file_path);
             streaming_iterators.push((idx, iterator));
         }
@@ -342,7 +342,9 @@ impl SstCompactor {
             }
             
             // Track if this ID has any tombstones
-            let has_tombstone = versions.iter().any(|r| r.is_tombstone);
+            // A tombstone is indicated by expires_at being set and in the past
+            let current_time = chrono::Utc::now().timestamp_millis() as i64;
+            let has_tombstone = versions.iter().any(|r| r.expires_at > 0 && r.expires_at < current_time);
             if has_tombstone {
                 debug!("Skipping tombstoned record: {}", id);
                 stats.tombstoned_ids.push(id.clone());
@@ -404,7 +406,7 @@ impl SstCompactor {
                 }
                 
                 // Update the level to match the target compaction level
-                // record.level should be set by the compaction task, not block_size!
+                // 0 /* TODO: VectorRecord no longer has level field */ should be set by the compaction task, not block_size!
                 
                 debug!("Selected version {} for ID '{}'", selected_version, id);
                 merged_records.push(record);
@@ -428,7 +430,7 @@ impl SstCompactor {
         stats.recommend_index_rebuild = change_ratio > 0.3;
         
         if stats.recommend_index_rebuild {
-            warn!("🔄 Index rebuild recommended: {:.1}% of records changed during compaction", 
+            warn!("🔄 Index rebuild recommended: {:.1}% of records changed during compaction_info", 
                   change_ratio * 100.0);
         }
         
@@ -508,7 +510,9 @@ impl SstCompactor {
             }
             
             // Track if this ID has any tombstones
-            let has_tombstone = versions.iter().any(|r| r.is_tombstone);
+            // A tombstone is indicated by expires_at being set and in the past
+            let current_time = chrono::Utc::now().timestamp_millis() as i64;
+            let has_tombstone = versions.iter().any(|r| r.expires_at > 0 && r.expires_at < current_time);
             if has_tombstone {
                 debug!("Skipping tombstoned record: {}", id);
                 stats.tombstoned_ids.push(id.clone());
@@ -570,7 +574,7 @@ impl SstCompactor {
                 }
                 
                 // Update the level to match the target compaction level
-                // record.level should be set by the compaction task, not block_size!
+                // 0 /* TODO: VectorRecord no longer has level field */ should be set by the compaction task, not block_size!
                 
                 debug!("Selected version {} for ID '{}'", selected_version, id);
                 merged_records.push(record);
@@ -594,7 +598,7 @@ impl SstCompactor {
         stats.recommend_index_rebuild = change_ratio > 0.3;
         
         if stats.recommend_index_rebuild {
-            warn!("🔄 Index rebuild recommended: {:.1}% of records changed during compaction", 
+            warn!("🔄 Index rebuild recommended: {:.1}% of records changed during compaction_info", 
                   change_ratio * 100.0);
         }
         
@@ -726,7 +730,7 @@ impl SstCompactor {
                 for &index in &sorted_indices {
                     if index < records.len() {
                         let mut record = records[index].clone();
-                        record.level = level; // Update level for compaction
+                        0 /* TODO: VectorRecord no longer has level field */ = level; // Update level for compaction
                         sorted_records.push(record);
                     }
                 }
@@ -743,7 +747,7 @@ impl SstCompactor {
                     for (i, record) in records.into_iter().enumerate() {
                         if !used[i] {
                             let mut record = record;
-                            record.level = level;
+                            0 /* TODO: VectorRecord no longer has level field */ = level;
                             sorted_records.push(record);
                         }
                     }
@@ -814,9 +818,9 @@ impl SstCompactor {
         let mut all_stats = Vec::new();
 
         for level in 0..max_level {
-            if let Some(files) = level_files.get(&level) {
+            if let Some(files) = level_files.get(key) {
                 if files.len() >= 4 { // Compact when 4+ files at a level
-                    let output_file = format!("level_{}_compacted_{}.sst", 
+                    let output_file = format!("level_{}_compacted_{}.sstable", 
                         level + 1, chrono::Utc::now().timestamp_millis());
                     
                     let stats = self.compact_files(
@@ -853,7 +857,7 @@ impl SstCompactor {
 
             // Compact when batch reaches target size
             if current_size >= target_size && current_batch.len() >= 2 {
-                let output_file = format!("size_tiered_compacted_{}.sst", 
+                let output_file = format!("size_tiered_compacted_{}.sstable", 
                     chrono::Utc::now().timestamp_millis());
                 
                 let stats = self.compact_files(
@@ -871,7 +875,7 @@ impl SstCompactor {
 
         // Compact remaining files if any
         if current_batch.len() >= 2 {
-            let output_file = format!("size_tiered_compacted_{}.sst", 
+            let output_file = format!("size_tiered_compacted_{}.sstable", 
                 chrono::Utc::now().timestamp_millis());
             
             let stats = self.compact_files(

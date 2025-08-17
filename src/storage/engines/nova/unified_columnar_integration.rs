@@ -157,7 +157,7 @@ pub struct QualityThresholds {
 struct NovaCollectionMetadata {
     collection_id: String,
     dimension: usize,
-    quantization_config: Option<QuantizationConfig>,
+    quantization: Option<QuantizationConfig>,
     filterable_columns: Vec<FilterableColumnSpec>,
     schema: Arc<arrow_schema::Schema>,
     compression_metadata: crate::storage::engines::columnar::CompressionMetadata,
@@ -209,7 +209,6 @@ pub struct RowGroupStats {
 #[derive(Debug, Clone)]
 pub struct ColumnStats {
     pub column_name: String,
-    pub data_type: String,
     pub null_count: usize,
     pub distinct_count: usize,
     pub min_value: Option<serde_json::Value>,
@@ -581,7 +580,7 @@ impl NovaUnifiedEngine {
         let metadata = NovaCollectionMetadata {
             collection_id: collection_id.to_string(),
             dimension: 768,
-            quantization_config: Some(QuantizationConfig::default()),
+            quantization: Some(QuantizationConfig::default()),
             filterable_columns: vec![],
             schema: Arc::new(arrow_schema::Schema::empty()),
             compression_metadata: crate::storage::engines::columnar::CompressionMetadata {
@@ -609,7 +608,7 @@ impl NovaUnifiedEngine {
     
     async fn get_nova_collection_metadata(&self, collection_id: &str) -> Result<NovaCollectionMetadata> {
         let cache = self.collection_cache.read().await;
-        cache.get(collection_id)
+        cache.get(cache_key).cloned()
             .cloned()
             .ok_or_else(|| anyhow::anyhow!("NOVA collection metadata not found: {}", collection_id))
     }
@@ -658,7 +657,7 @@ impl NovaUnifiedEngine {
             crate::storage::engines::columnar::QuantizedVectorData {
                 fp32: Some(vec![1.0; 768]),
                 binary: Some(vec![0xFF; 96]),
-                int8: Some(crate::storage::engines::columnar::distance::Int8VectorData {
+                int8: Some(crate::storage::engines::columnar::similarity::Int8VectorData {
                     values: vec![100; 768],
                     scale: 0.01,
                     zero_point: 0,
@@ -706,9 +705,9 @@ impl NovaUnifiedEngine {
             .enumerate()
             .map(|(i, result)| NovaSearchResult {
                 vector_id: format!("nova_vector_{}", i),
-                distance: result.distance,
+                similarity: result.distance,
                 quality_estimate: result.quality_estimate,
-                computation_method: result.method,
+                // computation_method removed -  result.method,
                 hierarchical_level: 0, // Placeholder
                 zone_id: Some(i), // Placeholder
             })
@@ -770,9 +769,8 @@ pub struct AdvancedSearchResult {
 #[derive(Debug)]
 pub struct NovaSearchResult {
     pub vector_id: String,
-    pub distance: f32,
+    pub similarity: f32,
     pub quality_estimate: f32,
-    pub computation_method: crate::storage::engines::columnar::ComputationMethod,
     pub hierarchical_level: usize,
     pub zone_id: Option<usize>,
 }

@@ -16,9 +16,8 @@ pub struct SearchResult {
     /// Similarity score (higher = more similar)
     pub score: f32,
     /// Distance value (lower = more similar, if different from score)  
-    pub distance: Option<f32>,
+    pub similarity: Option<f32>,
     /// Result rank (1-based) - use u16 since ranks are typically small
-    pub rank: Option<u16>,
     /// Original vector data (optional for bandwidth optimization)
     pub vector: Option<Vec<f32>>,
     /// Associated metadata
@@ -42,7 +41,7 @@ pub struct SearchResult {
     /// Index path for result tracking
     pub index_path: Option<String>,
     /// Creation timestamp
-    pub created_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub timestamp: Option<chrono::DateTime<chrono::Utc>>,
 }
 
 /// Debug information for search results
@@ -89,13 +88,13 @@ pub struct EngineStats {
 
 impl SearchResult {
     /// Create a basic search result
-    pub fn new(id: String, score: f32) -> Self {
+    pub fn new(id: String, similarity: f32) -> Self {
         Self {
             id,
             vector_id: None,
-            score,
-            distance: None,
-            rank: None,
+            score: similarity,
+            similarity: None,
+            // rank removed -  None,
             vector: None,
             metadata: HashMap::new(),
             debug_info: None,
@@ -105,22 +104,22 @@ impl SearchResult {
             quantization_info: None,
             engine_stats: None,
             index_path: None,
-            created_at: None,
+            timestamp: None,
         }
     }
     
     /// Create search result with metadata
     pub fn with_metadata(
         id: String,
-        score: f32,
+        similarity: f32,
         metadata: HashMap<String, serde_json::Value>,
     ) -> Self {
         Self {
             id,
             vector_id: None,
-            score,
-            distance: None,
-            rank: None,
+            score: similarity,
+            similarity: None,
+            // rank removed -  None,
             vector: None,
             metadata,
             debug_info: None,
@@ -130,7 +129,7 @@ impl SearchResult {
             quantization_info: None,
             engine_stats: None,
             index_path: None,
-            created_at: None,
+            timestamp: None,
         }
     }
     
@@ -178,9 +177,9 @@ impl SearchResult {
         Self {
             id,
             vector_id,
-            score: semantic_distance.normalized_score,
-            distance: Some(semantic_distance.rank_value),
-            rank: None,
+            similarity: semantic_distance.normalized_score,
+            similarity: Some(semantic_distance.rank_value),
+            // rank removed -  None,
             vector,
             metadata,
             debug_info: None,
@@ -190,18 +189,18 @@ impl SearchResult {
             quantization_info: None,
             engine_stats: None,
             index_path: None,
-            created_at: None,
+            timestamp: None,
         }
     }
     
     /// Create a simple search result with just ID, score and defaults for other fields
-    pub fn simple(id: String, score: f32) -> Self {
+    pub fn simple(id: String, similarity: f32) -> Self {
         Self {
             id,
             vector_id: None,
-            score,
-            distance: None,
-            rank: None,
+            score: similarity,
+            similarity: None,
+            // rank removed -  None,
             vector: None,
             metadata: HashMap::new(),
             debug_info: None,
@@ -211,7 +210,7 @@ impl SearchResult {
             quantization_info: None,
             engine_stats: None,
             index_path: None,
-            created_at: None,
+            timestamp: None,
         }
     }
 }

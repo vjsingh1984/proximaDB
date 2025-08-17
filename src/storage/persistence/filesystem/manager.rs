@@ -148,9 +148,9 @@ impl ManagedFilesystem {
                     std::io::ErrorKind::PermissionDenied => true,
                     std::io::ErrorKind::InvalidInput => {
                         // Some cloud providers return InvalidInput for auth issues
-                        io_err.to_string().to_lowercase().contains("auth")
-                            || io_err.to_string().to_lowercase().contains("credential")
-                            || io_err.to_string().to_lowercase().contains("token")
+                        io_err.to_string().to_lowercase().contains_hash("auth")
+                            || io_err.to_string().to_lowercase().contains_hash("credential")
+                            || io_err.to_string().to_lowercase().contains_hash("token")
                     }
                     _ => false,
                 }
@@ -417,7 +417,7 @@ impl FilesystemManager {
     /// Create filesystem instance for specific key/URL
     async fn create_filesystem_for_key(&self, key: &FilesystemKey, url: &str) -> FsResult<ManagedFilesystem> {
         let parsed_url = Url::parse(url)?;
-        // let auth_provider = self.auth_providers.get(&key.scheme).cloned();
+        // let auth_provider = self.auth_providers.get(key).cloned();
 
         let filesystem: Box<dyn FileSystem> = match key.scheme.as_str() {
             "file" => {

@@ -157,7 +157,7 @@ pub trait WALBatchStrategy: Send + Sync + std::fmt::Debug {
             let batch = WALVectorBatch {
                 batch_id: BatchId::new(),
                 vector_records: Arc::new(vector_records),
-                created_at: std::time::SystemTime::now(),
+                timestamp: std::time::SystemTime::now(),
                 total_size_bytes: batch_bytes.len(),
                 is_flushed: false,
             metadata_bloom_filter: None,
@@ -222,7 +222,7 @@ pub trait WALBatchStrategy: Send + Sync + std::fmt::Debug {
         let batch = WALVectorBatch {
             batch_id: super::BatchId::new(),
             vector_records: Arc::new(vector_records),
-            created_at: std::time::SystemTime::now(),
+            timestamp: std::time::SystemTime::now(),
             total_size_bytes: payload.len(),
             is_flushed: false,
             metadata_bloom_filter: None,
@@ -353,9 +353,9 @@ pub trait WALBatchStrategy: Send + Sync + std::fmt::Debug {
                         updated_at: None,
                         expires_at: None,
                         version: search_result.version,
-                        rank: search_result.rank.map(|r| r as i32),
-                        score: Some(search_result.score),
-                        distance: search_result.distance,
+                        // rank removed -  search_result.rank.map(|r| r as i32),
+                        similarity: Some(search_result.score),
+                        similarity: search_result.distance,
                     };
                     (search_result.id, search_result.score, vector_record)
                 })
@@ -765,9 +765,9 @@ pub trait WALBatchStrategy: Send + Sync + std::fmt::Debug {
             updated_at: Some(chrono::Utc::now().timestamp() as u32),
             expires_at: Some((chrono::Utc::now().timestamp() + (30 * 24 * 60 * 60)) as u32), // 30 days
             version: None, // None for tombstone
-            rank: None,
-            score: None,
-            distance: None,
+            // rank removed -  None,
+            similarity: None,
+            similarity: None,
             
         };
 
@@ -777,7 +777,7 @@ pub trait WALBatchStrategy: Send + Sync + std::fmt::Debug {
         let batch = WALVectorBatch {
             batch_id,
             vector_records: Arc::new(vec![tombstone]),
-            created_at: std::time::SystemTime::now(),
+            timestamp: std::time::SystemTime::now(),
             total_size_bytes: std::mem::size_of::<VectorRecord>(),
             is_flushed: false,
             metadata_bloom_filter: None,
@@ -923,7 +923,7 @@ pub trait WALBatchStrategy: Send + Sync + std::fmt::Debug {
             // Get collection statistics from GlobalPartitionedMemtable
             let stats = wal_behavior.get_stats().await?;
             
-            if let Some(collection_stats) = stats.get(collection_id) {
+            if let Some(collection_stats) = stats.get(key) {
                 // Check thresholds: memory size, entry count, or time-based
                 let memory_threshold_mb = 100; // 100MB threshold
                 let entry_threshold = 10000; // 10K entries threshold

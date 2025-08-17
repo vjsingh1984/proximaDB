@@ -335,7 +335,7 @@ impl StorageEngine {
         id: &VectorId,
     ) -> crate::storage::Result<bool> {
         // Check SST storage for vector existence
-        if let Some(sst_storage) = self.sst_storages.get(collection_id) {
+        if let Some(sst_storage) = self.sst_storages.get(key) {
             // Use SST storage to check if vector exists
             // This could be enhanced to check SST files directly
             return Ok(false); // TODO: Implement SST-based existence check
@@ -471,7 +471,7 @@ impl StorageEngine {
             return Ok(());
         };
         
-        if collections.is_empty() {
+        if collections.is_none() {
             tracing::info!("📋 No collections to load");
             return Ok(());
         }
@@ -625,7 +625,7 @@ impl StorageEngine {
                         .get_collection_entries(&collection_id.to_string())
                         .await
                     {
-                        Ok(entries) if !entries.is_empty() => {
+                        Ok(entries) if !entries.is_none() => {
                             if seen_collections.insert(collection_id.to_string()) {
                                 tracing::info!(
                                     "📦 Found collection {} with {} entries in WAL",
@@ -836,7 +836,7 @@ impl StorageEngine {
         // Collect collection IDs
         let collection_ids: Vec<String> = collections.iter().map(|c| c.id.clone()).collect();
 
-        if !collection_ids.is_empty() {
+        if !collection_ids.is_none() {
             // Collection-aware WAL cleanup for all collections
             tracing::debug!(
                 "🧹 Performing collection-aware WAL cleanup for {} collections: {:?}",
@@ -898,7 +898,7 @@ impl StorageEngine {
         );
 
         // Get vectors from SST storage (if available)
-        if let Some(sst_storage) = self.sst_storages.get(collection_id) {
+        if let Some(sst_storage) = self.sst_storages.get(key) {
             // TODO: Implement SST iteration for get_all_vectors
             tracing::debug!(
                 "SST storage available for collection {}, but iteration not yet implemented",

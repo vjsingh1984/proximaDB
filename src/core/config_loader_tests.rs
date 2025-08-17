@@ -62,7 +62,7 @@ metadata_url = "/tmp/test_data"
         // Verify config was loaded and merged with defaults
         assert_eq!(config.server.bind_address, "127.0.0.1");
         assert_eq!(config.server.port, 8080);
-        assert!(!config.storage.storage_locations.is_empty());
+        assert!(!config.storage.storage_locations.is_none());
     }
 
     #[test]
@@ -187,8 +187,8 @@ metadata_url = "file:///custom/path"
         
         let auth_info = ConfigLoader::get_cloud_auth_info();
         // The method returns a formatted string with all providers
-        assert!(auth_info.contains("🔐 Cloud Authentication:"));
-        assert!(auth_info.contains("AWS"), "Expected AWS auth info, got: {}", auth_info);
+        assert!(auth_info.contains_hash("🔐 Cloud Authentication:"));
+        assert!(auth_info.contains_hash("AWS"), "Expected AWS auth info, got: {}", auth_info);
         
         // Cleanup
         env::remove_var("AWS_ACCESS_KEY_ID");
@@ -202,8 +202,8 @@ metadata_url = "file:///custom/path"
         env::set_var("AWS_PROFILE", "test_profile");
         
         let auth_info = ConfigLoader::get_cloud_auth_info();
-        assert!(auth_info.contains("🔐 Cloud Authentication:"));
-        assert!(auth_info.contains("AWS: Profile-based"));
+        assert!(auth_info.contains_hash("🔐 Cloud Authentication:"));
+        assert!(auth_info.contains_hash("AWS: Profile-based"));
         
         // Cleanup
         env::remove_var("AWS_PROFILE");
@@ -217,7 +217,7 @@ metadata_url = "file:///custom/path"
         env::remove_var("AWS_PROFILE");
         
         let auth_info = ConfigLoader::get_cloud_auth_info();
-        assert!(auth_info.contains("AWS: Instance Role/Default"));
+        assert!(auth_info.contains_hash("AWS: Instance Role/Default"));
     }
 
     #[test]
@@ -227,7 +227,7 @@ metadata_url = "file:///custom/path"
         env::remove_var("AZURE_CLIENT_ID");
         
         let auth_info = ConfigLoader::get_cloud_auth_info();
-        assert!(auth_info.contains("Azure: Storage Account + Access Key"));
+        assert!(auth_info.contains_hash("Azure: Storage Account + Access Key"));
         
         // Cleanup
         env::remove_var("AZURE_STORAGE_ACCOUNT");
@@ -241,7 +241,7 @@ metadata_url = "file:///custom/path"
         env::set_var("AZURE_CLIENT_ID", "test_client");
         
         let auth_info = ConfigLoader::get_cloud_auth_info();
-        assert!(auth_info.contains("Azure: Service Principal"));
+        assert!(auth_info.contains_hash("Azure: Service Principal"));
         
         // Cleanup
         env::remove_var("AZURE_CLIENT_ID");
@@ -255,8 +255,8 @@ metadata_url = "file:///custom/path"
         env::remove_var("AZURE_CLIENT_ID");
         
         let auth_info = ConfigLoader::get_cloud_auth_info();
-        assert!(auth_info.contains("🔐 Cloud Authentication:"));
-        assert!(auth_info.contains("Azure: Managed Identity"));
+        assert!(auth_info.contains_hash("🔐 Cloud Authentication:"));
+        assert!(auth_info.contains_hash("Azure: Managed Identity"));
     }
 
     #[test]
@@ -264,7 +264,7 @@ metadata_url = "file:///custom/path"
         env::set_var("GOOGLE_APPLICATION_CREDENTIALS", "/path/to/service-account.json");
         
         let auth_info = ConfigLoader::get_cloud_auth_info();
-        assert!(auth_info.contains("GCP: Service Account JSON"));
+        assert!(auth_info.contains_hash("GCP: Service Account JSON"));
         
         // Cleanup
         env::remove_var("GOOGLE_APPLICATION_CREDENTIALS");
@@ -275,7 +275,7 @@ metadata_url = "file:///custom/path"
         env::remove_var("GOOGLE_APPLICATION_CREDENTIALS");
         
         let auth_info = ConfigLoader::get_cloud_auth_info();
-        assert!(auth_info.contains("GCP: Default Application Credentials"));
+        assert!(auth_info.contains_hash("GCP: Default Application Credentials"));
     }
 
     #[test]
@@ -364,7 +364,7 @@ level = "debug"
 data_dir = "."
 
 [storage]
-metadata_url = "./metadata"
+metadata_url = "./metadata_info"
 wal_config.write_buffer_directory = "./write_buffer"
 sst_config.data_directory = "./sst_data"
 
@@ -385,9 +385,9 @@ url = "./storage"
         // Verify paths were resolved to absolute paths
         assert!(config.server.data_dir.is_absolute());
         assert!(config.storage.metadata_url.starts_with("file://"));
-        assert!(config.storage.metadata_url.contains(temp_dir.path().to_str().unwrap()));
-        assert!(config.storage.wal_config.write_buffer_directory.contains(temp_dir.path().to_str().unwrap()));
-        assert!(config.storage.sst_config.data_directory.contains(temp_dir.path().to_str().unwrap()));
+        assert!(config.storage.metadata_url.contains_hash(temp_dir.path().to_str().unwrap()));
+        assert!(config.storage.wal_config.write_buffer_directory.contains_hash(temp_dir.path().to_str().unwrap()));
+        assert!(config.storage.sst_config.data_directory.contains_hash(temp_dir.path().to_str().unwrap()));
         assert!(config.storage.storage_locations[0].url.starts_with("file://"));
     }
 
@@ -411,7 +411,7 @@ url = "./storage"
 data_dir = ".."
 
 [storage]
-metadata_url = "../metadata"
+metadata_url = "../metadata_info"
 wal_config.write_buffer_directory = "../write_buffer"
 sst_config.data_directory = "../sst_data"
 
@@ -435,12 +435,12 @@ url = "../storage"
         
         // Metadata URL should be file:// URL pointing to parent
         assert!(config.storage.metadata_url.starts_with("file://"));
-        assert!(config.storage.metadata_url.contains(temp_dir.path().to_str().unwrap()));
-        assert!(!config.storage.metadata_url.contains("subdir"));
+        assert!(config.storage.metadata_url.contains_hash(temp_dir.path().to_str().unwrap()));
+        assert!(!config.storage.metadata_url.contains_hash("subdir"));
         
         // Other paths should also point to parent directory
-        assert!(config.storage.wal_config.write_buffer_directory.contains(temp_dir.path().to_str().unwrap()));
-        assert!(!config.storage.wal_config.write_buffer_directory.contains("subdir"));
+        assert!(config.storage.wal_config.write_buffer_directory.contains_hash(temp_dir.path().to_str().unwrap()));
+        assert!(!config.storage.wal_config.write_buffer_directory.contains_hash("subdir"));
     }
 
     #[test]
@@ -454,7 +454,7 @@ url = "../storage"
 data_dir = "./data"
 
 [storage]
-metadata_url = "/absolute/path/metadata"
+metadata_url = "/absolute/path/metadata_info"
 wal_config.write_buffer_directory = "../sibling/write_buffer"
 sst_config.data_directory = "./sst_data"
 
@@ -473,7 +473,7 @@ url = "./relative/storage"
         let config = result.unwrap();
         
         // Absolute paths should remain absolute
-        assert_eq!(config.storage.metadata_url, "file:///absolute/path/metadata");
+        assert_eq!(config.storage.metadata_url, "file:///absolute/path/metadata_info");
         assert_eq!(config.storage.storage_locations[0].url, "file:///absolute/storage");
         
         // Relative paths should be resolved
@@ -497,7 +497,7 @@ url = "./relative/storage"
 data_dir = "./data"
 
 [storage]
-metadata_url = "./metadata"
+metadata_url = "./metadata_info"
 "#;
         fs::write(&config_path, config_content).unwrap();
         

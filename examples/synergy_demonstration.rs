@@ -212,7 +212,7 @@ async fn demonstrate_combined_synergy() -> Result<()> {
     println!("🔧 Processing {} vectors with {} dimensions", vectors.len(), vectors[0].len());
     
     // Step 1: Quantize the vectors
-    let quantization_config = UniversalQuantizationConfig {
+    let quantization = UniversalQuantizationConfig {
         enabled: true,
         stages: vec![
             ProgressiveQuantizationStage {
@@ -231,7 +231,7 @@ async fn demonstrate_combined_synergy() -> Result<()> {
     };
     
     println!("\n🧮 Step 1: Quantizing vectors...");
-    let quantized_result = quantization_adapter.quantize_progressive(&vectors, &quantization_config)?;
+    let quantized_result = quantization_adapter.quantize_progressive(&vectors, &quantization)?;
     
     // Serialize quantized data for compression
     let quantized_data = bincode::serialize(&quantized_result.stages)?;

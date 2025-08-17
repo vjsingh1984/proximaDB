@@ -59,9 +59,9 @@ fn create_proto_test_vector(id: &str, dimension: usize) -> VectorRecord {
         updated_at: Some(1234567890),
         expires_at: Some(1234567890 + 86400), // 24 hours later
         version: Some(1),
-        rank: Some(1),
-        score: Some(0.95),
-        distance: None,
+        // rank removed -  Some(1),
+        similarity: Some(0.95),
+        similarity: None,
     }
 }
 
@@ -71,7 +71,7 @@ fn create_test_batch(vectors: Vec<VectorRecord>) -> WALVectorBatch {
     WALVectorBatch {
         batch_id: BatchId::new(),
         vector_records: Arc::new(vectors),
-        created_at: std::time::SystemTime::now(),
+        timestamp: std::time::SystemTime::now(),
         total_size_bytes: vector_count * 300, // Proto has more overhead
         is_flushed: false,
             metadata_bloom_filter: None,

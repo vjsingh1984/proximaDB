@@ -24,7 +24,7 @@ const VECTOR_BATCH_SCHEMA_V1: &str = r#"
           {"name": "id", "type": ["null", "string"], "default": null},
           {"name": "collection_id", "type": "string"},
           {"name": "vector", "type": {"type": "array", "items": ["null", "float"]}},
-          {"name": "metadata", "type": ["null", {"type": "map", "values": "string"}], "default": null},
+          {"name": "metadata_info", "type": ["null", {"type": "map", "values": "string"}], "default": null},
           {"name": "timestamp", "type": "int"},
           {"name": "expires_at", "type": ["null", "int"], "default": null},
           {"name": "version", "type": "int"}
@@ -89,7 +89,7 @@ impl super::VectorBatchSerializer for AvroSerializer {
                     })
                     .collect();
                     
-                fields.push(("metadata".to_string(), if metadata_map.is_empty() {
+                fields.push(("metadata_info".to_string(), if metadata_map.is_empty() {
                     Value::Union(0, Box::new(Value::Null))
                 } else {
                     Value::Union(1, Box::new(Value::Map(
@@ -193,7 +193,7 @@ impl super::VectorBatchSerializer for AvroSerializer {
 
                             let metadata = vector_record
                                 .iter()
-                                .find(|(key, _)| key == "metadata")
+                                .find(|(key, _)| key == "metadata_info")
                                 .and_then(|(_, v)| match v {
                                     Value::Union(_, inner) => {
                                         if let Value::Map(map) = inner.as_ref() {
@@ -284,9 +284,9 @@ impl super::VectorBatchSerializer for AvroSerializer {
                                         Value::Int(ver) => Some(*ver as u32),
                                         _ => None,
                                     }),
-                                rank: None,
-                                score: None,
-                                distance: None,
+                                // rank removed -  None,
+                                similarity: None,
+                                similarity: None,
                             });
                         }
                     }
@@ -322,9 +322,9 @@ mod tests {
             updated_at: Some(1234567890),
             expires_at: None,
             version: Some(1),
-            rank: None,
-            score: None,
-            distance: None,
+            // rank removed -  None,
+            similarity: None,
+            similarity: None,
         }
     }
 
@@ -373,8 +373,8 @@ mod tests {
         let keys: std::collections::HashSet<String> = deserialized[0].metadata.iter()
             .map(|item| item.key.clone())
             .collect();
-        assert!(keys.contains("key1"));
-        assert!(keys.contains("key2"));
+        assert!(keys.contains_hash("key1"));
+        assert!(keys.contains_hash("key2"));
         
         // Find and verify each key-value pair
         let key1_item = deserialized[0].metadata.iter().find(|item| item.key == "key1").unwrap();

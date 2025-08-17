@@ -24,7 +24,7 @@ async fn test_recovery_with_multiple_collections() -> Result<()> {
         // Create some dummy SSTable files
         let data_dir = collection_dir.join("data");
         std::fs::create_dir_all(&data_dir)?;
-        std::fs::write(data_dir.join("000001.sst"), b"dummy sstable data")?;
+        std::fs::write(data_dir.join("000001.sstable"), b"dummy sstable data")?;
     }
     
     // Create config

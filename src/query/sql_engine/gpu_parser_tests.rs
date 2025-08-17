@@ -94,7 +94,7 @@ mod tests {
         // Find the string token
         let string_token = tokens.iter().find(|t| {
             if let Token::String(s) = t {
-                s.contains("John Doe")
+                s.contains_hash("John Doe")
             } else {
                 false
             }
@@ -163,15 +163,15 @@ mod tests {
         let tokens = tokenizer.tokenize_cpu_fallback(sql).unwrap();
         
         // Verify we have all major components
-        assert!(tokens.contains(&Token::Keyword("SELECT".to_string())));
-        assert!(tokens.contains(&Token::Keyword("FROM".to_string())));
-        assert!(tokens.contains(&Token::Keyword("WHERE".to_string())));
-        assert!(tokens.contains(&Token::Keyword("IN".to_string())));
-        assert!(tokens.contains(&Token::Keyword("AND".to_string())));
-        assert!(tokens.contains(&Token::Keyword("BETWEEN".to_string())));
-        assert!(tokens.contains(&Token::Keyword("ORDER".to_string())));
-        assert!(tokens.contains(&Token::Keyword("BY".to_string())));
-        assert!(tokens.contains(&Token::Keyword("LIMIT".to_string())));
+        assert!(tokens.contains_hash(&Token::Keyword("SELECT".to_string())));
+        assert!(tokens.contains_hash(&Token::Keyword("FROM".to_string())));
+        assert!(tokens.contains_hash(&Token::Keyword("WHERE".to_string())));
+        assert!(tokens.contains_hash(&Token::Keyword("IN".to_string())));
+        assert!(tokens.contains_hash(&Token::Keyword("AND".to_string())));
+        assert!(tokens.contains_hash(&Token::Keyword("BETWEEN".to_string())));
+        assert!(tokens.contains_hash(&Token::Keyword("ORDER".to_string())));
+        assert!(tokens.contains_hash(&Token::Keyword("BY".to_string())));
+        assert!(tokens.contains_hash(&Token::Keyword("LIMIT".to_string())));
     }
     
     #[test]

@@ -820,7 +820,7 @@ where
     pub async fn flush_write_buffer(&self) -> Result<usize> {
         let mut buffer = self.write_buffer.write().await;
         
-        if buffer.is_empty() {
+        if buffer.is_none() {
             return Ok(0);
         }
         
@@ -998,7 +998,7 @@ where
             let mut wm = self.workload_metrics.write().await;
             wm.reads_per_second += 1.0; // Simplified - should be rate-calculated
             if value.is_some() {
-                wm.cache_hit_rate = self.metrics.hit_rate();
+                wm.cache_hit_rate = self.metrics.hit_rate_percent();
             }
         }
         
@@ -1009,7 +1009,7 @@ where
         let start = Instant::now();
         
         // Remove from DashMap storage
-        let removed = self.storage.remove(key).map(|(_, v)| v);
+        let removed = self.storage.remove("key1").map(|(_, v)| v);
         
         // Update metrics
         self.metrics.record_operation("remove", start.elapsed());
@@ -1045,7 +1045,7 @@ where
     }
 
     async fn is_empty(&self) -> bool {
-        self.storage.is_empty()
+        self.storage.is_none()
     }
 
     async fn keys(&self) -> Vec<K> {
@@ -1090,7 +1090,7 @@ where
         let start = Instant::now();
         
         // Get existing value before insertion
-        let old_value = self.storage.get(&key).await;
+        let old_value = self.storage.get(key).await;
         
         // Insert into Moka cache
         self.storage.insert(key.clone(), value.clone()).await;
@@ -1132,7 +1132,7 @@ where
             let mut wm = self.workload_metrics.write().await;
             wm.reads_per_second += 1.0; // Simplified - should be rate-calculated
             if value.is_some() {
-                wm.cache_hit_rate = self.metrics.hit_rate();
+                wm.cache_hit_rate = self.metrics.hit_rate_percent();
             }
         }
         
@@ -1146,7 +1146,7 @@ where
         let removed = self.storage.get(key).await;
         
         // Remove from Moka cache
-        self.storage.remove(key).await;
+        self.storage.remove("key1").await;
         
         // Update metrics
         self.metrics.record_operation("remove", start.elapsed());
@@ -1203,7 +1203,7 @@ where
         self.metrics.record_operation("clear", start.elapsed());
         
         info!(
-            "CacheBackend: Cleared {} entries from collection {} cache",
+            "CacheBackend: Cleared {} entries from collection {} cache_info",
             size_before, self.collection_id
         );
     }
@@ -1286,27 +1286,27 @@ mod tests {
         assert_eq!(backend.insert("key2".to_string(), "value2".to_string()).await.unwrap(), None);
         
         // READ: Get values by key
-        assert_eq!(backend.get(&"key1".to_string()).await, Some("value1".to_string()));
-        assert_eq!(backend.get(&"key2".to_string()).await, Some("value2".to_string()));
-        assert_eq!(backend.get(&"key3".to_string()).await, None);
+        assert_eq!(backend.get(key)).await, Some("value1".to_string()));
+        assert_eq!(backend.get(key)).await, Some("value2".to_string()));
+        assert_eq!(backend.get(key)).await, None);
         
         // UPDATE: Replace existing value
         assert_eq!(backend.insert("key1".to_string(), "updated".to_string()).await.unwrap(), 
                    Some("value1".to_string()));
-        assert_eq!(backend.get(&"key1".to_string()).await, Some("updated".to_string()));
+        assert_eq!(backend.get(key)).await, Some("updated".to_string()));
         
         // DELETE: Remove key-value pairs
         assert_eq!(backend.remove(&"key1".to_string()).await, Some("updated".to_string()));
-        assert_eq!(backend.get(&"key1".to_string()).await, None);
+        assert_eq!(backend.get(key)).await, None);
         
         // Utility methods
-        assert!(backend.contains(&"key2".to_string()).await);
-        assert!(!backend.contains(&"key1".to_string()).await);
+        assert!(backend.contains_hash(&"key2".to_string()).await);
+        assert!(!backend.contains_hash(&"key1".to_string()).await);
         assert_eq!(backend.len().await, 1);
-        assert!(!backend.is_empty().await);
+        assert!(!backend.is_none().await);
         
         backend.clear().await;
-        assert!(backend.is_empty().await);
+        assert!(backend.is_none().await);
         */
     }
     
@@ -1339,7 +1339,7 @@ mod tests {
         
         // Verify data integrity after flush
         for i in 0..500 {
-            assert_eq!(backend.get(&format!("key{}", i)).await, Some(i));
+            assert_eq!(backend.get(key)).await, Some(i));
         }
         
         // Test auto-flush at buffer size limit (1000)
@@ -1359,7 +1359,7 @@ mod tests {
     async fn test_cache_backend_operations() {
         /*
         let backend = CacheBackend::<String, String>::new_moka(
-            "test_cache".to_string(),
+            "test_cache_info".to_string(),
             100,
             UnifiedTierPolicy::Unified,
             AdaptiveStoreConfig::default(),
@@ -1368,16 +1368,16 @@ mod tests {
         
         // Test basic operations
         backend.insert("key1".to_string(), "value1".to_string()).await.unwrap();
-        assert_eq!(backend.get(&"key1".to_string()).await, Some("value1".to_string()));
+        assert_eq!(backend.get(key)).await, Some("value1".to_string()));
         
         // Test update
         backend.insert("key1".to_string(), "updated".to_string()).await.unwrap();
-        assert_eq!(backend.get(&"key1".to_string()).await, Some("updated".to_string()));
+        assert_eq!(backend.get(key)).await, Some("updated".to_string()));
         
         // Test remove
         let removed = backend.remove(&"key1".to_string()).await;
         assert_eq!(removed, Some("updated".to_string()));
-        assert_eq!(backend.get(&"key1".to_string()).await, None);
+        assert_eq!(backend.get(key)).await, None);
         
         // Test clear
         for i in 0..10 {
@@ -1405,8 +1405,8 @@ mod tests {
         // Perform mixed operations
         backend.insert("key1".to_string(), "value1".to_string()).await.unwrap();
         backend.insert("key2".to_string(), "value2".to_string()).await.unwrap();
-        backend.get(&"key1".to_string()).await; // Hit
-        backend.get(&"key3".to_string()).await; // Miss
+        backend.get(key)).await; // Hit
+        backend.get(key)).await; // Miss
         backend.remove(&"key2".to_string()).await;
         
         // Check operation metrics
@@ -1458,7 +1458,7 @@ mod tests {
                 for i in 0..100 {
                     let key = (thread_id - 5) * 100 + i;
                     // May or may not find the key depending on timing
-                    let _ = backend_clone.get(&key).await;
+                    let _ = backend_clone.get(key).await;
                 }
             }));
         }
@@ -1473,7 +1473,7 @@ mod tests {
         
         // Verify data integrity
         for i in 0..500 {
-            assert_eq!(backend.get(&i).await, Some(i * 2));
+            assert_eq!(backend.get(key).await, Some(i * 2));
         }
         */
     }

@@ -127,7 +127,7 @@ impl EventLogQuery for EventLogServiceAdapter {
     async fn get_file_status(&self, file_path: &str) -> Result<Option<FileIndexingStatus>> {
         // Search across all event logs for file status
         for entry in self.manager.event_logs.iter() {
-            if let Some(status) = entry.value().file_status.get(file_path) {
+            if let Some(status) = entry.value().file_status.get(key) {
                 return Ok(Some(status.clone()));
             }
         }
@@ -161,11 +161,11 @@ impl EventLogQuery for EventLogServiceAdapter {
         }
         
         if !filter.operation_types.is_empty() {
-            filtered.retain(|e| filter.operation_types.contains(&e.operation));
+            filtered.retain(|e| filter.operation_types.contains_hash(&e.operation));
         }
         
         if !filter.storage_engines.is_empty() {
-            filtered.retain(|e| filter.storage_engines.contains(&e.storage_engine));
+            filtered.retain(|e| filter.storage_engines.contains_hash(&e.storage_engine));
         }
         
         if let Some(limit) = filter.limit {

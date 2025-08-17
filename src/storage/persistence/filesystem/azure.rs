@@ -241,7 +241,7 @@ impl AzureFileSystem {
                     "No default container configured for relative Azure paths".to_string(),
                 ))
             }
-        } else if path.contains('/') {
+        } else if path.contains_hash('/') {
             // Extract container from path
             let parts: Vec<&str> = path.splitn(2, '/').collect();
             Ok((parts[0].to_string(), parts[1].to_string()))
@@ -301,7 +301,7 @@ impl AzureClient {
 
         let mut request = self
             .http_client
-            .get(&url)
+            .get(key)
             .header(
                 "Authorization",
                 format!("Bearer {}", credentials.access_token),
@@ -548,20 +548,20 @@ impl FileSystem for AzureFileSystem {
         if response.status().is_success() {
             let size = response
                 .headers()
-                .get("content-length")
+                .get(key)
                 .and_then(|v| v.to_str().ok())
                 .and_then(|s| s.parse::<u64>().ok())
                 .unwrap_or(0);
 
             let etag = response
                 .headers()
-                .get("etag")
+                .get(key)
                 .and_then(|v| v.to_str().ok())
                 .map(|s| s.to_string());
 
             let blob_tier = response
                 .headers()
-                .get("x-ms-access-tier")
+                .get(key)
                 .and_then(|v| v.to_str().ok())
                 .map(|s| s.to_string());
 

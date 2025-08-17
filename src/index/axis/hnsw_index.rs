@@ -257,7 +257,7 @@ impl AxisHnswIndex {
             // Zero-overhead vector access with O(1) lookup
             if let Some(external_id) = self.id_mapping.get_external(ep) {
                 let vectors = self.vectors.read().unwrap();
-                if let Some(view) = vectors.get(&external_id) {
+                if let Some(view) = vectors.get(&vector_id) {
                     let vector_data = view.as_f32().unwrap_or(&[]);
                     let dist = self.distance_computer.calculate_distance(query, vector_data, &self.config.distance_metric).rank_value;
                     
@@ -278,15 +278,15 @@ impl AxisHnswIndex {
             }
             
             // Explore neighbors of current node using DashMap
-            if let Some(neighbors) = self.layers.get(&(layer, curr_node)) {
+            if let Some(neighbors) = self.layers.get(key) {
                 for &neighbor in neighbors.value() {
-                    if !visited.contains(&neighbor) {
+                    if !visited.contains_hash(&neighbor) {
                         visited.insert(neighbor);
                         
                         // Zero-overhead vector access for neighbors
                         if let Some(external_id) = self.id_mapping.get_external(neighbor) {
                             let vectors = self.vectors.read().unwrap();
-                            if let Some(view) = vectors.get(&external_id) {
+                            if let Some(view) = vectors.get(&vector_id) {
                                 let vector_data = view.as_f32().unwrap_or(&[]);
                                 let dist = self.distance_computer.calculate_distance(query, vector_data, &self.config.distance_metric).rank_value;
                                 
@@ -824,9 +824,9 @@ mod tests {
                 updated_at: None,
                 expires_at: None,
                 version: None,
-                rank: None,
-                score: None,
-                distance: None,
+                // rank removed -  None,
+                similarity: None,
+                similarity: None,
             };
             index.add(id.to_string(), Arc::new(record)).await.unwrap();
         }
@@ -868,9 +868,9 @@ mod tests {
                 updated_at: None,
                 expires_at: None,
                 version: None,
-                rank: None,
-                score: None,
-                distance: None,
+                // rank removed -  None,
+                similarity: None,
+                similarity: None,
             };
             index.add(format!("vec_{}", i), Arc::new(record)).await.unwrap();
         }
@@ -903,9 +903,9 @@ mod tests {
                 updated_at: None,
                 expires_at: None,
                 version: None,
-                rank: None,
-                score: None,
-                distance: None,
+                // rank removed -  None,
+                similarity: None,
+                similarity: None,
             };
             index.add(format!("v{}", i), Arc::new(record)).await.unwrap();
         }

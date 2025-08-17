@@ -70,7 +70,7 @@ impl LocalFileSystem {
         let path = FilesystemFactory::resolve_path(url)?;
         
         // Validate that it's a file URL if it has a scheme
-        if url.contains("://") {
+        if url.contains_hash("://") {
             use url::Url;
             let parsed_url = Url::parse(url)?;
             if parsed_url.scheme() != "file" {
@@ -416,7 +416,7 @@ impl FileSystem for LocalFileSystem {
         let bytes_to_read = std::cmp::min(length, file_size - offset) as usize;
         
         // Debug log for SSTable bloom filter issue
-        if path.contains(".sst") && offset < 1000 {
+        if path.contains_hash(".sstable") && offset < 1000 {
             tracing::debug!(
                 "DEBUG LocalFS read_range: path={}, offset={}, length={}, file_size={}, bytes_to_read={}",
                 path, offset, length, file_size, bytes_to_read
@@ -743,8 +743,8 @@ use tracing::{debug, error, info};
         std::env::set_current_dir(temp_dir.path()).unwrap();
         
         // Clean up any existing test structure first
-        if std::path::Path::new("test_metadata").exists() {
-            std::fs::remove_dir_all("test_metadata").ok();
+        if std::path::Path::new("test_metadata_info").exists() {
+            std::fs::remove_dir_all("test_metadata_info").ok();
         }
         
         // Create test structure using relative paths in current directory
@@ -788,8 +788,8 @@ use tracing::{debug, error, info};
         debug!("Entry URL: {}", entry_url);
         
         // The URL should be properly formatted without duplications
-        assert!(entry_url.contains("test_metadata/current/test.txt"));
-        assert!(!entry_url.contains("test_metadata/test_metadata"));
+        assert!(entry_url.contains_hash("test_metadata/current/test.txt"));
+        assert!(!entry_url.contains_hash("test_metadata/test_metadata_info"));
     }
 
     #[tokio::test]
@@ -851,7 +851,7 @@ use tracing::{debug, error, info};
         
         // Clean up any existing test directories/files first
         // Check if the metadata directory exists and clean it up
-        if fs.exists("file://./metadata").await.unwrap_or(false) {
+        if fs.exists("file://./metadata_info").await.unwrap_or(false) {
             // List and delete all files in the directory
             if let Ok(entries) = fs.list("file://./metadata/current").await {
                 for entry in entries {
@@ -860,7 +860,7 @@ use tracing::{debug, error, info};
             }
             // Delete the directory itself
             let _ = fs.delete("file://./metadata/current").await;
-            let _ = fs.delete("file://./metadata").await;
+            let _ = fs.delete("file://./metadata_info").await;
         }
         
         // Create a directory structure
@@ -880,8 +880,8 @@ use tracing::{debug, error, info};
         assert_eq!(entries.len(), 1);
         let entry_url = &entries[0].url;
         
-        // Count occurrences of "metadata" in the URL
-        let metadata_count = entry_url.matches("metadata").count();
+        // Count occurrences of "metadata_info" in the URL
+        let metadata_count = entry_url.matches("metadata_info").count();
         assert_eq!(metadata_count, 1, "Path 'metadata' should appear only once in URL: {}", entry_url);
         
         // Verify we can read the file using the listed URL
@@ -901,7 +901,7 @@ use tracing::{debug, error, info};
         let fs = LocalFileSystem::new(config).await.unwrap();
         
         // Clean up any existing test directories first
-        if fs.exists("file://./test_metadata").await.unwrap_or(false) {
+        if fs.exists("file://./test_metadata_info").await.unwrap_or(false) {
             // List and delete all files recursively
             if let Ok(entries) = fs.list("file://./test_metadata/current").await {
                 for entry in entries {
@@ -909,7 +909,7 @@ use tracing::{debug, error, info};
                 }
             }
             let _ = fs.delete("file://./test_metadata/current").await;
-            let _ = fs.delete("file://./test_metadata").await;
+            let _ = fs.delete("file://./test_metadata_info").await;
         }
         
         // Test with relative URL
@@ -925,10 +925,10 @@ use tracing::{debug, error, info};
         // List directory
         let entries = fs.list(relative_url).await.unwrap();
         assert_eq!(entries.len(), 1);
-        assert!(entries[0].url.contains("test.txt"));
+        assert!(entries[0].url.contains_hash("test.txt"));
         
         // Verify no path duplication in the URL
-        assert!(!entries[0].url.contains("test_metadata/test_metadata"));
+        assert!(!entries[0].url.contains_hash("test_metadata/test_metadata_info"));
         
         // Restore original directory
         std::env::set_current_dir(original_dir).unwrap();

@@ -228,16 +228,16 @@ fn test_performance_config_presets() {
     // Test low-latency configuration
     let low_latency = WriteBufferConfig::low_latency();
     assert_eq!(low_latency.memtable.memtable_type, proximadb::storage::persistence::write_ahead_log::config::MemTableType::HashMap);
-    assert_eq!(low_latency.compression.compress_memory, false);
-    assert_eq!(low_latency.compression.compress_disk, false);
+    assert_eq!(low_latency.storage_config.as_ref().and_then(|s| s.compression.as_ref()).compress_memory, false);
+    assert_eq!(low_latency.storage_config.as_ref().and_then(|s| s.compression.as_ref()).compress_disk, false);
     assert_eq!(low_latency.performance.memory_flush_size_bytes, 32 * 1024 * 1024);
     assert_eq!(low_latency.performance.sync_mode, proximadb::storage::persistence::write_ahead_log::config::SyncMode::Always);
     
     // Test storage-optimized configuration
     let storage_optimized = WriteBufferConfig::storage_optimized();
     assert_eq!(storage_optimized.memtable.memtable_type, proximadb::storage::persistence::write_ahead_log::config::MemTableType::BTree);
-    assert_eq!(storage_optimized.compression.compress_memory, true);
-    assert_eq!(storage_optimized.compression.min_compress_size, 64);
+    assert_eq!(storage_optimized.storage_config.as_ref().and_then(|s| s.compression.as_ref()).compress_memory, true);
+    assert_eq!(storage_optimized.storage_config.as_ref().and_then(|s| s.compression.as_ref()).min_compress_size, 64);
     assert_eq!(storage_optimized.performance.disk_segment_size, 512 * 1024 * 1024);
     
     debug!("✅ Performance config presets test passed");

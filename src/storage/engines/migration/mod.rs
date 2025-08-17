@@ -35,7 +35,6 @@ pub struct MigrationConfig {
     pub collections: Vec<String>,
     
     /// Migration strategy
-    pub strategy: MigrationStrategy,
     
     /// Validation settings
     pub validation: ValidationConfig,
@@ -179,7 +178,7 @@ impl Default for MigrationConfig {
             source_engine: ProtoStorageEngine::Viper,
             target_engine: ProtoStorageEngine::Nova,
             collections: Vec::new(),
-            strategy: MigrationStrategy::CopyThenSwitch,
+            // strategy removed -  MigrationStrategy::CopyThenSwitch,
             validation: ValidationConfig::default(),
             performance: PerformanceConfig::default(),
             rollback: RollbackConfig::default(),

@@ -99,7 +99,7 @@ use tracing::{debug, error, info};
             cache_hit_ratio: 0.85,
             cache_size_bytes: (128 * 1024 * 1024) as i64,
             cache_entry_count: 25000,
-            created_at: chrono::Utc::now().timestamp_millis(),
+            timestamp: chrono::Utc::now().timestamp_millis(),
             updated_at: chrono::Utc::now().timestamp_millis(),
             ..Default::default()
         };
@@ -108,7 +108,7 @@ use tracing::{debug, error, info};
         let mut filterable_stats = HashMap::new();
         filterable_stats.insert("category".to_string(), FilterableColumnStats {
             column_name: "category".to_string(),
-            data_type: "string".to_string(),
+            // data_type removed -  "string".to_string(),
             cardinality: 25,
             null_count: 100,
             selectivity: 0.0025, // 25/10000
@@ -211,7 +211,7 @@ use tracing::{debug, error, info};
                 vector_count: 1000,
                 dimension: 128,
                 total_inserts: 1000,
-                created_at: chrono::Utc::now().timestamp_millis(),
+                timestamp: chrono::Utc::now().timestamp_millis(),
                 updated_at: chrono::Utc::now().timestamp_millis(),
                 ..Default::default()
             };
@@ -254,7 +254,7 @@ use tracing::{debug, error, info};
                 collection_id: collection_id.to_string(),
                 vector_count: 500,
                 dimension: 256,
-                created_at: chrono::Utc::now().timestamp_millis(),
+                timestamp: chrono::Utc::now().timestamp_millis(),
                 updated_at: chrono::Utc::now().timestamp_millis(),
                 ..Default::default()
             };
@@ -268,7 +268,7 @@ use tracing::{debug, error, info};
         // Verify all test collections are present
         for expected_collection in &collections {
             assert!(
-                collection_list.contains(&expected_collection.to_string()),
+                collection_list.contains_hash(&expected_collection.to_string()),
                 "Collection {} not found in list: {:?}",
                 expected_collection,
                 collection_list
@@ -293,7 +293,7 @@ use tracing::{debug, error, info};
             collection_id: "cleanup_test_collection".to_string(),
             vector_count: 1000,
             dimension: 128,
-            created_at: chrono::Utc::now().timestamp_millis(),
+            timestamp: chrono::Utc::now().timestamp_millis(),
             updated_at: chrono::Utc::now().timestamp_millis(),
             ..Default::default()
         };
@@ -338,7 +338,7 @@ use tracing::{debug, error, info};
                     vector_count: (i + 1) * 1000,
                     dimension: 384,
                     total_inserts: (i + 1) * 1000,
-                    created_at: chrono::Utc::now().timestamp_millis(),
+                    timestamp: chrono::Utc::now().timestamp_millis(),
                     updated_at: chrono::Utc::now().timestamp_millis(),
                     ..Default::default()
                 };
@@ -370,7 +370,7 @@ use tracing::{debug, error, info};
         // Verify all collections exist
         let collection_list = store.list_collections().await.unwrap();
         for expected_collection in &completed_collections {
-            assert!(collection_list.contains(expected_collection), 
+            assert!(collection_list.contains_hash(expected_collection), 
                    "Collection {} not found after concurrent operations", expected_collection);
         }
         
@@ -400,7 +400,7 @@ use tracing::{debug, error, info};
             collection_id: "filesystem_test".to_string(),
             vector_count: 2500,
             dimension: 512,
-            created_at: chrono::Utc::now().timestamp_millis(),
+            timestamp: chrono::Utc::now().timestamp_millis(),
             updated_at: chrono::Utc::now().timestamp_millis(),
             ..Default::default()
         };

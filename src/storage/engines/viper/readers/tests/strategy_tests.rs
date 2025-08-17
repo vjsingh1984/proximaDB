@@ -44,7 +44,7 @@ async fn test_direct_arrow_strategy() -> Result<()> {
     let result = reader.execute_query(query).await?;
     
     // Verify DirectArrow strategy was used
-    assert!(result.strategy_used.contains("DirectArrow"));
+    assert!(result.strategy_used.contains_hash("DirectArrow"));
     assert_eq!(result.vectors.len(), 10);
     assert!(result.processing_time_ms > 0);
     assert!(result.bytes_read > 0);
@@ -126,7 +126,7 @@ async fn test_quantized_two_stage_strategy() -> Result<()> {
     let result = reader.execute_query(query).await?;
     
     // Verify QuantizedTwoStage strategy was used
-    assert!(result.strategy_used.contains("QuantizedTwoStage") || result.strategy_used.contains("DirectArrow"));
+    assert!(result.strategy_used.contains_hash("QuantizedTwoStage") || result.strategy_used.contains_hash("DirectArrow"));
     assert!(result.total_candidates > 0);
     assert!(result.processing_time_ms > 0);
     
@@ -421,7 +421,7 @@ async fn test_performance_characteristics() -> Result<()> {
         assert!(result.processing_time_ms > 0);
         assert_eq!(result.vectors.len(), 20.min(size));
         
-        debug!("📊 Size {}: {}ms (strategy: {})", size, duration.as_millis(), result.strategy_used);
+        debug!("📊 Size {}: {}ms (// strategy removed -  {})", size, duration.as_millis(), result.strategy_used);
     }
     
     info!("✅ Performance characteristics test passed");

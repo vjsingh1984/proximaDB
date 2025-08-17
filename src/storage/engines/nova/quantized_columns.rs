@@ -66,7 +66,6 @@ pub struct Int8Column {
 #[derive(Debug, Clone)]
 pub struct PQColumn {
     pub codes: Vec<PQCode>,
-    pub codebooks: Vec<Codebook>,
 }
 
 /// Metadata for quantized columns in Parquet
@@ -105,7 +104,6 @@ pub struct PQColumnInfo {
     pub column_name: String,
     pub num_segments: u8,
     pub bits_per_segment: u8,
-    pub codebooks: Vec<Codebook>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -202,7 +200,7 @@ impl QuantizedColumnBuilder {
             if !pq_data.is_empty() {
                 columns.pq_column = Some(PQColumn {
                     codes: pq_data,
-                    codebooks: Vec::new(), // Would be populated from adapter
+                    // codebooks removed -  Vec::new(), // Would be populated from adapter
                 });
             }
         }
@@ -369,7 +367,6 @@ pub struct Int8QuantizedColumn {
 #[derive(Debug)]
 pub struct PQQuantizedColumn {
     pub codes: Vec<PQCode>,
-    pub codebooks: Vec<Codebook>,
     pub num_segments: u8,
     pub bits_per_segment: u8,
 }

@@ -61,7 +61,7 @@ pub struct Codebook {
     pub quantization_level: UnifiedQuantizationLevel,
     
     /// Creation timestamp
-    pub created_at: chrono::DateTime<chrono::Utc>,
+    pub timestamp: chrono::DateTime<chrono::Utc>,
     
     /// Training configuration
     pub training_config: TrainingConfig,
@@ -316,7 +316,7 @@ impl UnifiedQuantizationEngine {
                     adaptive_subvectors: false,
                 })),
             },
-            created_at: chrono::Utc::now(),
+            timestamp: chrono::Utc::now(),
             training_config: TrainingConfig {
                 num_training_vectors: training_vectors.len(),
                 iterations: 100,
@@ -935,13 +935,13 @@ pub struct QuantizationMetadata {
 
 /// In-memory codebook store for testing
 pub struct InMemoryCodebookStore {
-    codebooks: Arc<tokio::sync::RwLock<std::collections::HashMap<String, Codebook>>>,
+    // codebooks removed -  Arc<tokio::sync::RwLock<std::collections::HashMap<String, Codebook>>>,
 }
 
 impl InMemoryCodebookStore {
     pub fn new() -> Self {
         Self {
-            codebooks: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
+            // codebooks removed -  Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
         }
     }
 }

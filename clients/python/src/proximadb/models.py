@@ -443,6 +443,117 @@ class ComprehensiveQuantizationConfig(BaseModel):
 
 
 # ============================================================================
+# STORAGE ENGINE CONFIGURATION MODELS
+# ============================================================================
+
+class AccessPattern(str, Enum):
+    """Access patterns for storage optimization"""
+    UNKNOWN = "unknown"
+    WRITE_HEAVY = "write_heavy"
+    READ_HEAVY = "read_heavy"
+    BALANCED = "balanced"
+    ARCHIVE = "archive"
+
+
+class DataDensity(str, Enum):
+    """Data density characteristics"""
+    UNKNOWN = "unknown"
+    DENSE = "dense"        # >80% non-zero values
+    SPARSE = "sparse"      # <20% non-zero values
+    MIXED = "mixed"
+
+
+class ParquetWriterSettings(BaseModel):
+    """Parquet writer settings for columnar engines"""
+    row_group_size: Optional[int] = None
+    page_size: Optional[int] = None
+    enable_bloom_filters: Optional[bool] = None
+    bloom_filter_fpp: Optional[float] = None
+    bloom_filter_columns: Optional[List[str]] = None
+    enable_column_statistics: Optional[bool] = None
+    enable_page_index: Optional[bool] = None
+    enable_column_index: Optional[bool] = None
+    enable_offset_index: Optional[bool] = None
+    page_index_granularity: Optional[int] = None
+    enable_dictionary: Optional[bool] = None
+    dictionary_threshold: Optional[float] = None
+    enable_delta_encoding: Optional[bool] = None
+    enable_byte_stream_split: Optional[bool] = None
+    enable_pq_sorting: Optional[bool] = None
+    pq_sorting_segments: Optional[int] = None
+    pq_sorting_codebook_size: Optional[int] = None
+    enable_native_metadata: Optional[bool] = None
+    metadata_inference_samples: Optional[int] = None
+    write_batch_size: Optional[int] = None
+    id_less_storage: Optional[bool] = None
+
+
+class FooterCacheSettings(BaseModel):
+    """Footer cache settings for cloud storage optimization"""
+    enable: Optional[bool] = None
+    max_entries: Optional[int] = None
+    ttl_seconds: Optional[int] = None
+    time_to_idle_seconds: Optional[int] = None
+    enable_persistence: Optional[bool] = None
+    persistence_path: Optional[str] = None
+    enable_prefetch: Optional[bool] = None
+    prefetch_threshold: Optional[int] = None
+    warming_interval_seconds: Optional[int] = None
+    enable_compression: Optional[bool] = None
+    compression_level: Optional[int] = None
+
+
+class HybridWriterSettings(BaseModel):
+    """Hybrid writer settings for adaptive performance"""
+    enable: Optional[bool] = None
+    initial_mode: Optional[str] = None  # "streaming", "batch", "adaptive"
+    enable_auto_switch: Optional[bool] = None
+    mode_switch_threshold: Optional[int] = None
+    pattern_window_size: Optional[int] = None
+    streaming_threshold: Optional[float] = None
+    batch_threshold: Optional[int] = None
+    max_buffer_size: Optional[int] = None
+    buffer_time_limit_seconds: Optional[int] = None
+    enable_concurrent_writes: Optional[bool] = None
+    max_concurrent_writers: Optional[int] = None
+    optimize_row_group_size: Optional[bool] = None
+    min_row_group_size: Optional[int] = None
+    max_row_group_size: Optional[int] = None
+
+
+class SstEngineSettings(BaseModel):
+    """SST-specific engine settings"""
+    enable_bloom_filters: Optional[bool] = None
+    bloom_filter_fpp: Optional[float] = None
+    compression: Optional[CompressionAlgorithm] = None
+    compression_level: Optional[int] = None
+    write_buffer_size: Optional[int] = None
+    max_write_buffers: Optional[int] = None
+    block_size_kb: Optional[int] = None
+    dynamic_block_sizing: Optional[bool] = None
+
+
+class ViperEngineSettings(BaseModel):
+    """VIPER-specific engine settings"""
+    inherit_global_settings: Optional[bool] = None
+    enable_columnar_compression: Optional[bool] = None
+    enable_vector_quantization: Optional[bool] = None
+    vector_chunk_size: Optional[int] = None
+    enable_lazy_loading: Optional[bool] = None
+
+
+class NovaEngineSettings(BaseModel):
+    """NOVA-specific engine settings"""
+    inherit_global_settings: Optional[bool] = None
+    enable_real_time_mode: Optional[bool] = None
+    streaming_buffer_size: Optional[int] = None
+    prefer_low_latency: Optional[bool] = None
+
+
+# Note: StorageEngineConfig is deprecated, use StorageConfig instead
+
+
+# ============================================================================
 # INDEX CONFIGURATION MODELS
 # ============================================================================
 
@@ -547,21 +658,31 @@ class FilterableColumn(BaseModel):
 
 
 class CollectionConfig(BaseModel):
-    """Collection configuration for REST API with server-aligned defaults"""
+    """Collection configuration aligned with proto CollectionConfig"""
+    # CORE CONFIGURATION (Required)
     name: str = Field(min_length=8)  # Minimum 8 characters to prevent collision with 7-char base62 IDs
     dimension: int = Field(ge=1, le=100000)  # Server supports up to 100k dimensions
     distance_metric: Optional[DistanceMetric] = DistanceMetric.COSINE  # Default to most common metric
+    
+    # STORAGE CONFIGURATION
     storage_engine: Optional[StorageEngine] = StorageEngine.VIPER  # Align with server default
-    primary_indexing_algorithm: Optional[IndexingAlgorithm] = IndexingAlgorithm.HNSW  # Best for most use cases
-    filterable_columns: Optional[List[FilterableColumn]] = None
+    storage_config: Optional['StorageConfig'] = None  # Complete storage configuration
+    
+    # INDEX CONFIGURATION
     index_configs: Optional[List[IndexConfiguration]] = None
-    quantization_config: Optional[QuantizationConfig] = None
-    compression: Optional[CompressionConfig] = None  # SDK-driven compression (proto field name)
-    primary_index_name: Optional[str] = None
-    enable_automatic_index_selection: Optional[bool] = None
+    primary_index: Optional[str] = None  # Primary index name
+    auto_index_selection: Optional[bool] = None  # Auto-select best index
+    
+    # SCHEMA CONFIGURATION
+    filterable_columns: Optional[List[FilterableColumn]] = None
+    quantization: Optional[QuantizationConfig] = None  # Vector quantization
+    
+    # METADATA
     description: Optional[str] = None
     tags: Optional[List[str]] = None
     owner: Optional[str] = None
+    
+    # Additional Python SDK fields
     metadata_schema: Optional[Dict[str, Any]] = None
     filterable_metadata_fields: Optional[List[str]] = None
     
@@ -929,10 +1050,36 @@ class CompressionType(str, Enum):
 
 
 class StorageConfig(BaseModel):
-    """Storage configuration"""
-    compression: CompressionType = CompressionType.NONE
-    replication_factor: int = 1
-    enable_tiering: bool = False
+    """Complete storage configuration matching proto StorageConfig"""
+    # Storage location and persistence
+    storage_location: Optional[str] = None  # Override default storage path
+    persistent: Optional[bool] = True  # Whether data persists after restart
+    
+    # Compression configuration
+    compression: Optional[CompressionConfig] = None
+    
+    # Optimization hints
+    access_pattern: Optional[AccessPattern] = None
+    data_density: Optional[DataDensity] = None
+    frequent_updates: Optional[bool] = None
+    expected_size_gb: Optional[int] = None
+    read_write_ratio: Optional[float] = None
+    
+    # Quick presets
+    preset: Optional[str] = None  # "maximum_performance", "balanced", "memory_constrained", "cloud_optimized", "real_time", "archive"
+    
+    # Master optimization control
+    enable_all_optimizations: Optional[bool] = True  # Default enabled
+    
+    # Specific configuration overrides
+    parquet_writer: Optional[ParquetWriterSettings] = None
+    footer_cache: Optional[FooterCacheSettings] = None
+    hybrid_writer: Optional[HybridWriterSettings] = None
+    
+    # Engine-specific settings
+    sst_settings: Optional[SstEngineSettings] = None
+    viper_settings: Optional[ViperEngineSettings] = None
+    nova_settings: Optional[NovaEngineSettings] = None
 
 
 class FlushConfig(BaseModel):

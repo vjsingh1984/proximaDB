@@ -104,7 +104,7 @@ impl IndexMemoryTracker {
     
     /// Check if an index is available in memory
     pub async fn is_index_available(&self, collection_id: &str) -> bool {
-        if let Some(status) = self.collection_status.get(collection_id) {
+        if let Some(status) = self.collection_status.get(key) {
             matches!(
                 status.memory_state,
                 MemoryState::InMemory | MemoryState::PartiallyLoaded { .. }
@@ -116,7 +116,7 @@ impl IndexMemoryTracker {
     
     /// Get detailed memory status for a collection
     pub async fn get_memory_status(&self, collection_id: &str) -> Option<IndexMemoryStatus> {
-        self.collection_status.get(collection_id).map(|s| s.clone())
+        self.collection_status.get(key).map(|s| s.clone())
     }
     
     /// Register an index as loaded in memory
@@ -262,7 +262,7 @@ impl IndexMemoryTracker {
     ) -> Result<bool> {
         // First check if disk location exists
         let disk_location = {
-            if let Some(status) = self.collection_status.get(collection_id) {
+            if let Some(status) = self.collection_status.get(key) {
                 status.disk_location.clone()
             } else {
                 return Ok(false);

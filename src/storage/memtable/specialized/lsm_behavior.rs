@@ -158,7 +158,7 @@ where
         // Check bloom filter first (negative lookup optimization)
         {
             let bloom = self.bloom_filter.read().await;
-            if !bloom.contains(key) {
+            if !bloom.contains_hash(key) {
                 // Definitely not present
                 let mut metrics = self.lsm_metrics.write().await;
                 metrics.bloom_filter_hits += 1;
@@ -178,7 +178,7 @@ where
         }
 
         // Query underlying memtable
-        let result = self.inner.get(&key.to_string()).await?;
+        let result = self.inner.get(key).await?;
 
         // Update metrics
         let mut metrics = self.lsm_metrics.write().await;
@@ -233,7 +233,7 @@ where
             entries: filtered_entries,
             bloom_filter_data: self.bloom_filter.read().await.serialize(),
             metadata: SsTableMetadata {
-                created_at: current_time,
+                timestamp: current_time,
                 entry_count: self.inner.len().await,
                 size_bytes: self.inner.size_bytes().await,
                 tombstone_count: self.tombstones.read().await.len(),
@@ -458,7 +458,7 @@ pub struct SsTableData {
 /// SSTable metadata
 #[derive(Debug, Clone)]
 pub struct SsTableMetadata {
-    pub created_at: u64,
+    pub timestamp: u64,
     pub entry_count: usize,
     pub size_bytes: usize,
     pub tombstone_count: usize,
@@ -488,7 +488,7 @@ impl Clone for BloomFilter {
     fn clone(&self) -> Self {
         // Clone by re-creating from serialized data
         let config = BloomFilterConfig {
-            strategy: BloomStrategy::Simple,
+            // strategy removed -  BloomStrategy::Simple,
             expected_items: 1000, // Default
             ..Default::default()
         };
@@ -505,7 +505,7 @@ impl Clone for BloomFilter {
 impl BloomFilter {
     pub fn new(size: usize) -> Self {
         let config = BloomFilterConfig {
-            strategy: BloomStrategy::Simple, // Use simple strategy for memtable
+            // strategy removed -  BloomStrategy::Simple, // Use simple strategy for memtable
             bits_per_key: 8,
             expected_items: size,
             enabled: true,
@@ -552,7 +552,7 @@ impl<'de> serde::Deserialize<'de> for BloomFilter {
     {
         let serialized_data = Vec::<u8>::deserialize(deserializer)?;
         let config = BloomFilterConfig {
-            strategy: BloomStrategy::Simple,
+            // strategy removed -  BloomStrategy::Simple,
             expected_items: 1000, // Default
             ..Default::default()
         };
@@ -683,13 +683,13 @@ mod tests {
         bloom.insert("key3");
 
         // Test positive cases
-        assert!(bloom.contains("key1"));
-        assert!(bloom.contains("key2"));
-        assert!(bloom.contains("key3"));
+        assert!(bloom.contains_hash("key1"));
+        assert!(bloom.contains_hash("key2"));
+        assert!(bloom.contains_hash("key3"));
 
         // Test negative case (might have false positives)
         // This test might occasionally fail due to false positives
-        let not_present = bloom.contains("nonexistent_key");
+        let not_present = bloom.contains_hash("nonexistent_key");
         // We can't assert false because of possible false positives
     }
 }

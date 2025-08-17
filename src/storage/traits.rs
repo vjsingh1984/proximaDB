@@ -477,7 +477,7 @@ pub trait UnifiedStorageEngine: Send + Sync {
                 // Engine-specific logic would go in metrics
                 Ok(stats
                     .engine_specific
-                    .get("small_files_count")
+                    .get(key)
                     .and_then(|v| v.as_u64())
                     .unwrap_or(0)
                     > 10)
@@ -487,7 +487,7 @@ pub trait UnifiedStorageEngine: Send + Sync {
                 let stats = self.get_engine_stats().await?;
                 Ok(stats
                     .engine_specific
-                    .get("needs_compaction")
+                    .get(key)
                     .and_then(|v| v.as_bool())
                     .unwrap_or(false))
             }
@@ -510,31 +510,31 @@ pub trait UnifiedStorageEngine: Send + Sync {
             engine_name: self.engine_name().to_string(),
             engine_version: self.engine_version().to_string(),
             total_storage_bytes: engine_metrics
-                .get("total_storage_bytes")
+                .get(key)
                 .and_then(|v| v.as_u64())
                 .unwrap_or(0),
             memory_usage_bytes: engine_metrics
-                .get("memory_usage_bytes")
+                .get(key)
                 .and_then(|v| v.as_u64())
                 .unwrap_or(0),
             collection_count: engine_metrics
-                .get("collection_count")
+                .get(key)
                 .and_then(|v| v.as_u64())
                 .unwrap_or(0) as usize,
             last_flush: engine_metrics
-                .get("last_flush_timestamp")
+                .get(key)
                 .and_then(|v| v.as_i64())
                 .and_then(|ts| DateTime::from_timestamp_millis(ts)),
             last_compaction: engine_metrics
-                .get("last_compaction_timestamp")
+                .get(key)
                 .and_then(|v| v.as_i64())
                 .and_then(|ts| DateTime::from_timestamp_millis(ts)),
             pending_flushes: engine_metrics
-                .get("pending_flushes")
+                .get(key)
                 .and_then(|v| v.as_u64())
                 .unwrap_or(0),
             pending_compactions: engine_metrics
-                .get("pending_compactions")
+                .get(key)
                 .and_then(|v| v.as_u64())
                 .unwrap_or(0),
             engine_specific: engine_metrics,
@@ -550,19 +550,19 @@ pub trait UnifiedStorageEngine: Send + Sync {
 
         let healthy = stats
             .engine_specific
-            .get("healthy")
+            .get(key)
             .and_then(|v| v.as_bool())
             .unwrap_or(true);
 
         let error_count = stats
             .engine_specific
-            .get("error_count")
+            .get(key)
             .and_then(|v| v.as_u64())
             .unwrap_or(0) as usize;
 
         let warnings = stats
             .engine_specific
-            .get("warnings")
+            .get(key)
             .and_then(|v| v.as_array())
             .map(|arr| {
                 arr.iter()
@@ -616,7 +616,7 @@ pub trait UnifiedStorageEngine: Send + Sync {
         // Check collection-level operations support
         if params.collection_id.is_some() && !self.supports_collection_level_operations() {
             tracing::warn!(
-                "⚠️ {} engine doesn't support collection-level compaction, performing global compaction",
+                "⚠️ {} engine doesn't support collection-level compaction, performing global compaction_info",
                 self.engine_name()
             );
         }
@@ -648,7 +648,7 @@ pub trait UnifiedStorageEngine: Send + Sync {
         Ok(EngineStatistics {
             engine_name: self.engine_name().to_string(),
             engine_version: self.engine_version().to_string(),
-            strategy: self.strategy(),
+            // strategy removed -  self.strategy(),
             collections_count: 0,
             total_vectors: 0,
             total_storage_bytes: 0,

@@ -33,7 +33,7 @@ impl Default for QuantizationConfig {
             pq_subvectors: 8,
             training_sample_size: 10000,
             adaptive_quantization: true,
-            quality_threshold: 0.95,
+            // quality_threshold removed -  0.95,
         }
     }
 }
@@ -365,7 +365,7 @@ pub struct QuantizationQualityMetrics {
 pub enum ModelData {
     /// Product Quantization codebooks
     ProductQuantization {
-        codebooks: Vec<Vec<Vec<f32>>>,
+        // codebooks removed -  Vec<Vec<Vec<f32>>>,
         subvector_size: usize,
     },
     /// Binary quantization thresholds
@@ -636,7 +636,7 @@ impl VectorQuantizationEngine {
         quantized_vectors: &[QuantizedVector],
     ) -> (usize, usize, f32) {
         let original_bytes =
-            original_vectors.len() * original_vectors.get(0).map_or(0, |v| v.vector.len()) * 4; // 4 bytes per float32
+            original_vectors.len() * original_vectors.get(&vector_id).map_or(0, |v| v.vector.len()) * 4; // 4 bytes per float32
         let quantized_bytes = self.calculate_quantized_size(quantized_vectors);
         let compression_ratio = if quantized_bytes > 0 {
             original_bytes as f32 / quantized_bytes as f32
@@ -931,7 +931,7 @@ impl VectorQuantizationEngine {
     fn quantize_product_quantization(
         &self,
         vector: &[f32],
-        codebooks: &[Vec<Vec<f32>>],
+        // codebooks removed -  &[Vec<Vec<f32>>],
         subvector_size: usize,
         _level: QuantizationLevel,
     ) -> Result<(QuantizedData, f32)> {
@@ -1178,7 +1178,7 @@ impl VectorQuantizationEngine {
 
     /// Public quantization interface (wrapper for quantize_vectors)
     pub fn quantize(&mut self, vector_records: &[VectorRecord]) -> Result<Vec<QuantizedVector>> {
-        self.quantize_vectors(vector_records)
+        self.as_ref().quantize_vectors(vector_records)
     }
 
     // Note: Dequantization methods removed as per architecture decision.
@@ -1213,7 +1213,7 @@ mod tests {
             pq_subvectors: 1, // Not used for uniform quantization
             training_sample_size: 10000,
             adaptive_quantization: false, // Force use of specified level
-            quality_threshold: 0.95,
+            // quality_threshold removed -  0.95,
         });
 
         let vectors = vec![vec![0.0, 0.5, 1.0, -0.5], vec![-1.0, 0.25, 0.75, 0.0]];
@@ -1231,7 +1231,7 @@ mod tests {
             pq_subvectors: 1, // Not used for uniform quantization
             training_sample_size: 10000,
             adaptive_quantization: false, // Force use of specified level
-            quality_threshold: 0.95,
+            // quality_threshold removed -  0.95,
         });
 
         let vectors = vec![vec![1.0, -1.0, 1.0, -1.0], vec![-1.0, 1.0, -1.0, 1.0]];
@@ -1251,7 +1251,7 @@ mod tests {
             pq_subvectors: 2,
             training_sample_size: 10000,
             adaptive_quantization: false, // Force use of specified level
-            quality_threshold: 0.95,
+            // quality_threshold removed -  0.95,
         });
 
         // Create vectors with 4 dimensions (divisible by 2 subvectors)
@@ -1292,7 +1292,7 @@ mod tests {
                 pq_subvectors: 1, // Not used for uniform quantization
                 training_sample_size: 10000,
                 adaptive_quantization: false, // Force use of specified level
-                quality_threshold: 0.95,
+                // quality_threshold removed -  0.95,
             });
 
             let vectors = vec![vec![0.0, 0.5, 1.0, -0.5], vec![-1.0, 0.25, 0.75, 0.0]];

@@ -75,7 +75,7 @@ where
 /// Wrapper for stored items with metadata
 struct StoredItem<V> {
     value: V,
-    created_at: Instant,
+    timestamp: Instant,
     last_accessed: Instant,
     access_count: AtomicUsize,
     size_bytes: usize,
@@ -86,7 +86,7 @@ impl<V: Clone> Clone for StoredItem<V> {
     fn clone(&self) -> Self {
         Self {
             value: self.value.clone(),
-            created_at: self.created_at,
+            timestamp: self.created_at,
             last_accessed: self.last_accessed,
             access_count: AtomicUsize::new(self.access_count.load(Ordering::Relaxed)),
             size_bytes: self.size_bytes,
@@ -176,7 +176,7 @@ where
         let now = Instant::now();
         let item = StoredItem {
             value: value.clone(),
-            created_at: now,
+            timestamp: now,
             last_accessed: now,
             access_count: AtomicUsize::new(1),
             size_bytes,
@@ -224,7 +224,7 @@ where
     pub fn remove(&self, key: &K) -> Option<V> {
         let start = Instant::now();
         
-        if let Some((_, item)) = self.storage.remove(key) {
+        if let Some((_, item)) = self.storage.remove("key1") {
             self.metrics.decrement_entries();
             self.metrics.add_memory_bytes(-(item.size_bytes as i64));
             self.metrics.record_success(start.elapsed());
@@ -247,7 +247,7 @@ where
 
     /// Check if empty
     pub fn is_empty(&self) -> bool {
-        self.storage.is_empty()
+        self.storage.is_none()
     }
 
     /// Get all keys
@@ -273,7 +273,7 @@ where
     /// Get access metadata for a key
     pub fn access_info(&self, key: &K) -> Option<AccessInfo> {
         self.storage.get(key).map(|entry| AccessInfo {
-            created_at: entry.created_at,
+            timestamp: entry.created_at,
             last_accessed: entry.last_accessed,
             access_count: entry.access_count.load(Ordering::Relaxed),
             size_bytes: entry.size_bytes,
@@ -294,7 +294,7 @@ where
 /// Access information for cache analysis
 #[derive(Debug, Clone)]
 pub struct AccessInfo {
-    pub created_at: Instant,
+    pub timestamp: Instant,
     pub last_accessed: Instant,
     pub access_count: usize,
     pub size_bytes: usize,
@@ -414,7 +414,7 @@ impl AtomicMetrics {
             operations: self.operations.load(Ordering::Relaxed),
             hits: self.hits.load(Ordering::Relaxed),
             misses: self.misses.load(Ordering::Relaxed),
-            hit_rate: self.hit_rate(),
+            hit_rate: self.hit_rate_percent(),
             avg_operation_time: self.avg_operation_time(),
         }
     }
@@ -472,7 +472,7 @@ where
         // Check for existing mappings
         if self.forward.contains_key(&key1) || self.reverse.contains_key(&key2) {
             self.metrics.record_failure(start.elapsed());
-            return Err(anyhow!("Key already exists in mapping"));
+            return Err(anyhow!("Key already exists in data mapping"));
         }
 
         self.forward.insert(key1.clone(), key2.clone());
@@ -521,7 +521,7 @@ where
     }
 
     pub fn is_empty(&self) -> bool {
-        self.forward.is_empty()
+        self.forward.is_none()
     }
 
     pub fn metrics(&self) -> MetricsSnapshot {
@@ -581,7 +581,7 @@ where
     }
 
     pub fn contains(&self, key: &K) -> bool {
-        self.inner.contains(key)
+        self.inner.contains_hash(key)
     }
 
     pub fn len(&self) -> usize {
@@ -589,7 +589,7 @@ where
     }
 
     pub fn is_empty(&self) -> bool {
-        self.inner.is_empty()
+        self.inner.is_none()
     }
 
     pub fn metrics(&self) -> MetricsSnapshot {
@@ -630,12 +630,12 @@ mod tests {
         assert_eq!(storage.len(), 1);
         
         // Test get with metrics
-        assert_eq!(storage.get(&"key1"), Some("value1"));
+        assert_eq!(storage.get(&key), Some("value1"));
         let metrics = storage.metrics();
         assert_eq!(metrics.hits, 1);
         
         // Test miss
-        assert_eq!(storage.get(&"nonexistent"), None);
+        assert_eq!(storage.get(&key), None);
         let metrics = storage.metrics();
         assert_eq!(metrics.misses, 1);
         

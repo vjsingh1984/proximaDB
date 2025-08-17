@@ -54,7 +54,7 @@ impl StorageEngineFactory {
     
     /// Create a storage engine from strategy enum
     pub fn create_from_strategy(
-        strategy: StorageEngineStrategy,
+        // strategy removed -  StorageEngineStrategy,
     ) -> Result<Arc<dyn UnifiedStorageEngine>> {
         match strategy {
             StorageEngineStrategy::Viper => {
@@ -211,7 +211,7 @@ impl StorageEngineFactory {
         
         let (best_engine, best_score) = scores[0];
         info!(
-            "Recommended engine: {:?} (score: {})",
+            "Recommended engine: {:?} (similarity: {})",
             best_engine, best_score
         );
         
@@ -332,7 +332,7 @@ impl StorageEngineFactory {
                 ],
                 cons: vec![
                     "Higher write latency".to_string(),
-                    "Complex compaction".to_string(),
+                    "Complex compaction_info".to_string(),
                 ],
                 best_for: vec![
                     "Analytics workloads".to_string(),

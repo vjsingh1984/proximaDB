@@ -52,9 +52,9 @@ mod tests {
             updated_at: Some(1234567890),
             expires_at: None,
             version: Some(1),
-            rank: None,
-            score: None,
-            distance: None,
+            // rank removed -  None,
+            similarity: None,
+            similarity: None,
         }
     }
 

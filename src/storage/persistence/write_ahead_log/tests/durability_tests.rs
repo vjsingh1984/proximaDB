@@ -50,7 +50,7 @@ async fn create_test_write_buffer_manager_with_config(_durability: DurabilityLev
     let fs_factory = Arc::new(FilesystemFactory::new(fs_config).await.expect("Failed to create filesystem factory"));
     
     // Create strategy directly based on type
-    let strategy: Box<dyn WALBatchStrategy> = match wal_config.strategy_type {
+    let // strategy removed -  Box<dyn WALBatchStrategy> = match wal_config.strategy_type {
         WriteBufferStrategyType::ProtoBatch => {
             Box::new(ProtoSerializationStrategy::new(&wal_config, fs_factory.clone()).await.expect("Failed to create proto strategy"))
         }
@@ -82,9 +82,9 @@ async fn test_durability_level_no_sync() {
             timestamp: 0,
             updated_at: None,
             expires_at: None,
-            distance: None,
-            rank: None,
-            score: None,
+            similarity: None,
+            // rank removed -  None,
+            similarity: None,
             version: None,
             ..Default::default()
         },

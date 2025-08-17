@@ -19,7 +19,7 @@ mod metadata_backend_tests {
     #[tokio::test]
     async fn test_single_metadata_backend_instance() {
         let temp_dir = TempDir::new().unwrap();
-        let metadata_path = temp_dir.path().join("metadata");
+        let metadata_path = temp_dir.path().join("metadata_info");
         let storage_path = temp_dir.path().join("storage");
         
         // Create metadata backend config
@@ -126,7 +126,7 @@ mod metadata_backend_tests {
     #[tokio::test]
     async fn test_collection_service_dependency_injection() {
         let temp_dir = TempDir::new().unwrap();
-        let metadata_path = temp_dir.path().join("metadata");
+        let metadata_path = temp_dir.path().join("metadata_info");
         
         // Create filesystem factory
         let fs_config = FilesystemConfig::default();
@@ -135,7 +135,7 @@ mod metadata_backend_tests {
         // Create metadata backend
         let filestore_config = FilestoreMetadataConfig {
             filestore_url: format!("file://{}", metadata_path.to_string_lossy()),
-            enable_compression: true,
+            compression: true,
             enable_backup: true,
             enable_snapshot_archival: true,
             max_archived_snapshots: 5,

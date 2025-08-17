@@ -339,7 +339,7 @@ impl IndexRecoveryManager {
             }
             
             _ => {
-                info!("Unsupported recovery tier, defaulting to memory");
+                info!("Unsupported recovery tier, defaulting to mem");
                 self.load_index_to_memory(collection_id, index_data, index_type).await?;
             }
         }
@@ -399,7 +399,7 @@ impl IndexRecoveryManager {
         collection_id: &str,
     ) -> Result<(), SerializationError> {
         // Look for checkpoint location
-        let checkpoint_path = if let Some(location) = self.checkpoint_locations.get(collection_id) {
+        let checkpoint_path = if let Some(location) = self.checkpoint_locations.get(key) {
             location.clone()
         } else {
             // Default checkpoint location
@@ -530,7 +530,7 @@ impl IndexRecoveryManager {
         index_data: Vec<u8>,
         index_type: IndexType,
     ) -> Result<(), SerializationError> {
-        info!("Loading {:?} index for collection {} into memory", index_type, collection_id);
+        info!("Loading {:?} index for collection {} into mem", index_type, collection_id);
         
         // This would deserialize and load the actual index
         // For now, we'll just update the state
@@ -539,7 +539,7 @@ impl IndexRecoveryManager {
         self.collection_state.transition_to_memory(
             collection_id,
         ).await
-            .map_err(|_| SerializationError::Io(std::io::Error::new(std::io::ErrorKind::Other, "Failed to transition to memory")))?;
+            .map_err(|_| SerializationError::Io(std::io::Error::new(std::io::ErrorKind::Other, "Failed to transition to mem")))?;
         
         // Update stats
         {
@@ -575,7 +575,7 @@ impl IndexRecoveryManager {
     
     /// Get recovery status for a collection
     pub fn get_recovery_status(&self, collection_id: &str) -> Option<RecoveryStatus> {
-        self.recovery_status.get(collection_id).map(|s| s.clone())
+        self.recovery_status.get(key).map(|s| s.clone())
     }
     
     /// Log recovery statistics

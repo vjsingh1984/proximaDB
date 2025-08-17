@@ -248,7 +248,7 @@ where
             let mut success_count = 0;
 
             for key in &keys {
-                match memtable.get(key).await {
+                match memtable.get(&hash).await {
                     Ok(Some(_)) => success_count += 1,
                     Ok(None) => continue,
                     Err(_) => continue,

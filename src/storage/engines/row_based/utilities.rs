@@ -37,11 +37,11 @@ impl RowBasedUtilities {
             
             // Calculate quantized data size
             total_quantized_bytes += block.quantized_section.binary_sketches.len() * 
-                block.quantized_section.binary_sketches.get(0).map(|s| s.data.len()).unwrap_or(0);
+                block.quantized_section.binary_sketches.get(key).map(|s| s.data.len()).unwrap_or(0);
             total_quantized_bytes += block.quantized_section.int8_vectors.len() * 
-                block.quantized_section.int8_vectors.get(0).map(|v| v.quantized_vector.len()).unwrap_or(0);
+                block.quantized_section.int8_vectors.get(&vector_id).map(|v| v.quantized_vector.len()).unwrap_or(0);
             total_quantized_bytes += block.quantized_section.pq_codes.len() * 
-                block.quantized_section.pq_codes.get(0).map(|c| c.len()).unwrap_or(0);
+                block.quantized_section.pq_codes.get(key).map(|c| c.len()).unwrap_or(0);
             
             // Calculate index size (rough estimate)
             total_index_bytes += block.block_id.as_bytes().len() * 2; // ID in index structures
@@ -80,7 +80,7 @@ impl RowBasedUtilities {
         match workload.workload_type {
             WorkloadType::HighThroughput => {
                 config.records_per_block = 4000; // Larger blocks for throughput
-                config.compression.compression_level = 1; // Fast compression
+                config.storage.as_ref().and_then(|s| s.compression.as_ref()).compression_level = 1; // Fast compression
                 config.performance.max_concurrent_operations = 16;
             }
             WorkloadType::LowLatency => {
@@ -90,7 +90,7 @@ impl RowBasedUtilities {
             }
             WorkloadType::MemoryConstrained => {
                 config.quantization.enable_progressive_quantization = true;
-                config.compression.compression_level = 6; // Better compression
+                config.storage.as_ref().and_then(|s| s.compression.as_ref()).compression_level = 6; // Better compression
                 config.performance.cache_size_bytes = 256 * 1024 * 1024; // 256MB
             }
             WorkloadType::AnalyticsHeavy => {
@@ -105,8 +105,8 @@ impl RowBasedUtilities {
             config.performance.cache_size_bytes = 2 * 1024 * 1024 * 1024; // 2GB cache
         }
         
-        if hardware.cpu_cores() > 8 {
-            config.performance.max_concurrent_operations = hardware.cpu_cores();
+        if hardware.cpu.core_count() > 8 {
+            config.performance.max_concurrent_operations = hardware.cpu.core_count();
         }
         
         if hardware.has_nvme_storage() {
@@ -175,7 +175,7 @@ impl RowBasedUtilities {
         vectors: &[Vec<f32>],
         hardware: &HardwareCapabilities,
     ) -> OptimizedVectorLayout {
-        let dimension = vectors.get(0).map(|v| v.len()).unwrap_or(0);
+        let dimension = vectors.get(&vector_id).map(|v| v.len()).unwrap_or(0);
         
         // Determine optimal SIMD alignment
         let simd_width = if hardware.has_avx512() {
@@ -687,11 +687,11 @@ mod tests {
     #[test]
     fn test_filename_generation() {
         let sst_filename = FilenameGenerator::generate_sst_filename(3);
-        assert!(sst_filename.contains("L3_"));
-        assert!(sst_filename.ends_with(".sst"));
+        assert!(sst_filename.contains_hash("L3_"));
+        assert!(sst_filename.ends_with(".sstable"));
         
         let swift_filename = FilenameGenerator::generate_swift_filename(2);
-        assert!(swift_filename.contains("L2_"));
+        assert!(swift_filename.contains_hash("L2_"));
         assert!(swift_filename.ends_with(".swift"));
         
         let level = FilenameGenerator::parse_level_from_filename(&sst_filename);

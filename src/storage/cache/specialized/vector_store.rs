@@ -300,7 +300,7 @@ impl VectorStore {
             timestamp: chrono::Utc::now().timestamp() as u32,
             updated_at: None,
             expires_at: None,
-            quantized_vector: None,
+            quantized: None,
         };
         
         self.put(cache_key, block_record).await;
@@ -310,7 +310,7 @@ impl VectorStore {
     /// Retrieve a compressed block from cache
     pub async fn get_compressed_block(&self, key: &SstBlockKey) -> Option<CompressedBlock> {
         let cache_key = key.to_cache_key();
-        let record = self.get(&cache_key).await?;
+        let record = self.get(key).await?;
         
         // Extract compressed data from metadata
         let mut compressed_data = None;
@@ -370,7 +370,7 @@ impl VectorStore {
         let mut vectors = Vec::with_capacity(count);
         for idx in 0..count {
             let vector_key = format!("{}_v{}", key.to_cache_key(), idx);
-            if let Some(vector) = self.get(&vector_key).await {
+            if let Some(vector) = self.get(key).await {
                 vectors.push(vector);
             } else {
                 break; // Stop if we don't find a vector

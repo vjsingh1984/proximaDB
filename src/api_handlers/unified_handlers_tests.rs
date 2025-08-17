@@ -30,9 +30,9 @@ mod tests {
             primary_indexing_algorithm: IndexingAlgorithm::Hnsw as i32,
             filterable_columns: vec![],
             index_configs: vec![],
-            quantization_config: None,
-            primary_index_name: "default".to_string(),
-            enable_automatic_index_selection: true,
+            quantization: None,
+            primary_index: "default".to_string(),
+            auto_index_selection: true,
             description: Some(format!("Test collection {}", name)),
             tags: vec!["test".to_string()],
             owner: Some("test_user".to_string()),
@@ -52,9 +52,9 @@ mod tests {
             updated_at: Some(Utc::now().timestamp() as u32),
             expires_at: None,
             version: Some(1),
-            rank: None,
-            score: None,
-            distance: None,
+            // rank removed -  None,
+            similarity: None,
+            similarity: None,
         
         }
     }
@@ -85,7 +85,7 @@ mod tests {
         
         // Test Debug implementation
         let debug_str = format!("{:?}", result);
-        assert!(debug_str.contains("SqlQueryResult"));
+        assert!(debug_str.contains_hash("SqlQueryResult"));
     }
 
     #[test]
@@ -99,13 +99,13 @@ mod tests {
         assert_eq!(config.dimension, 128);
         assert_eq!(config.distance_metric, DistanceMetric::Cosine as i32);
         assert_eq!(config.storage_engine, StorageEngine::Sst as i32);
-        assert_eq!(config.primary_indexing_algorithm, IndexingAlgorithm::Hnsw as i32);
+        assert_eq!(config.primary_index, IndexingAlgorithm::Hnsw as i32);
         assert!(config.description.is_some());
-        assert!(!config.tags.is_empty());
-        assert!(config.filterable_columns.is_empty());
-        assert!(config.index_configs.is_empty());
-        assert_eq!(config.primary_index_name, "default");
-        assert!(config.enable_automatic_index_selection);
+        assert!(!config.tags.is_none());
+        assert!(config.filterable_columns.is_none());
+        assert!(config.index_configs.is_none());
+        assert_eq!(config.primary_index, "default");
+        assert!(config.auto_index_selection);
         assert!(config.owner.is_some());
     }
 
@@ -118,7 +118,7 @@ mod tests {
         assert_eq!(record.vector.len(), 128);
         assert_eq!(record.version, Some(1));
         assert!(record.timestamp > 0);
-        assert!(record.metadata.is_empty());
+        assert!(record.metadata.is_none());
     }
 
     #[test]
@@ -169,8 +169,8 @@ mod tests {
         let fields = IncludeFields {
             vector: true,
             metadata: false,
-            score: true,
-            rank: true,
+            similarity: true,
+            // rank removed -  true,
         };
         
         assert!(fields.vector);
@@ -236,8 +236,8 @@ mod tests {
             include_fields: Some(IncludeFields {
                 vector: true,
                 metadata: true,
-                score: true,
-                rank: true,
+                similarity: true,
+                // rank removed -  true,
             }),
             search_optimization: None,
         };
@@ -259,9 +259,9 @@ mod tests {
             updated_at: Some(1234567890),
             expires_at: Some(1234567999),
             version: Some(2),
-            rank: Some(1),
-            score: Some(0.95),
-            distance: Some(0.1),
+            // rank removed -  Some(1),
+            similarity: Some(0.95),
+            similarity: Some(0.1),
         
         };
         
@@ -290,9 +290,9 @@ mod tests {
             primary_indexing_algorithm: IndexingAlgorithm::Ivf as i32,
             filterable_columns: vec![],
             index_configs: vec![],
-            quantization_config: None,
-            primary_index_name: "primary".to_string(),
-            enable_automatic_index_selection: false,
+            quantization: None,
+            primary_index: "primary".to_string(),
+            auto_index_selection: false,
             description: None,
             tags: vec![],
             owner: None,
@@ -304,18 +304,18 @@ mod tests {
         assert_eq!(config.dimension, 256);
         assert_eq!(config.distance_metric, DistanceMetric::Euclidean as i32);
         assert!(config.description.is_none());
-        assert!(config.tags.is_empty());
+        assert!(config.tags.is_none());
         assert!(config.owner.is_none());
-        assert!(!config.enable_automatic_index_selection);
+        assert!(!config.auto_index_selection);
         
         // Test setting optional fields
         config.description = Some("Updated description".to_string());
         config.owner = Some("new_owner".to_string());
-        config.enable_automatic_index_selection = true;
+        config.auto_index_selection = true;
         
         assert_eq!(config.description.unwrap(), "Updated description");
         assert_eq!(config.owner.unwrap(), "new_owner");
-        assert!(config.enable_automatic_index_selection);
+        assert!(config.auto_index_selection);
     }
 
     #[test]
@@ -389,9 +389,9 @@ mod tests {
             primary_indexing_algorithm: IndexingAlgorithm::Hnsw as i32,
             filterable_columns: vec![],
             index_configs: vec![],
-            quantization_config: None,
-            primary_index_name: "main".to_string(),
-            enable_automatic_index_selection: true,
+            quantization: None,
+            primary_index: "main".to_string(),
+            auto_index_selection: true,
             description: Some("Collection with tags".to_string()),
             tags: vec!["production".to_string(), "v1".to_string()],
             owner: Some("test_owner".to_string()),
@@ -401,8 +401,8 @@ mod tests {
             };
         
         assert_eq!(config.tags.len(), 2);
-        assert!(config.tags.contains(&"production".to_string()));
-        assert!(config.tags.contains(&"v1".to_string()));
+        assert!(config.tags.contains_hash(&"production".to_string()));
+        assert!(config.tags.contains_hash(&"v1".to_string()));
         assert_eq!(config.owner.unwrap(), "test_owner");
     }
 
@@ -453,9 +453,9 @@ mod tests {
             updated_at: Some(Utc::now().timestamp() as u32),
             expires_at: None,
             version: Some(1),
-            rank: None,
-            score: None,
-            distance: None,
+            // rank removed -  None,
+            similarity: None,
+            similarity: None,
         
         };
         

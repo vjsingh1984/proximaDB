@@ -175,7 +175,7 @@ impl MetadataStore {
     /// Get cached Parquet schema
     pub async fn get_parquet_schema(&self, file_path: &str) -> Option<ParquetSchemaMapping> {
         let key = format!("parquet_schema:{}", file_path);
-        let value = self.get(&key).await?;
+        let value = self.get(key).await?;
         serde_json::from_value(value).ok()
     }
     
@@ -194,7 +194,7 @@ impl MetadataStore {
     /// Get cached Parquet file metadata
     pub async fn get_parquet_metadata(&self, file_path: &str) -> Option<ParquetFileMetadata> {
         let key = format!("parquet_meta:{}", file_path);
-        let value = self.get(&key).await?;
+        let value = self.get(key).await?;
         serde_json::from_value(value).ok()
     }
     
@@ -217,7 +217,7 @@ impl MetadataStore {
         row_group_idx: usize,
     ) -> Option<Value> {
         let key = format!("parquet_rg:{}:{}", file_path, row_group_idx);
-        self.get(&key).await
+        self.get(key).await
     }
     
     /// Cache multiple schemas as a batch
@@ -266,7 +266,7 @@ impl MetadataStore {
     /// Check if Parquet metadata exists for a file
     pub async fn has_parquet_metadata(&self, file_path: &str) -> bool {
         let key = format!("parquet_meta:{}", file_path);
-        self.get(&key).await.is_some()
+        self.get(key).await.is_some()
     }
 }
 

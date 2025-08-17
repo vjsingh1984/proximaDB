@@ -50,7 +50,7 @@ fn test_metrics_recording() {
     
     // Check hit rate calculation
     let expected_hit_rate = 4.0 / 6.0; // 4 hits out of 6 gets
-    assert!((snapshot.hit_rate - expected_hit_rate).abs() < 0.001);
+    assert!((snapshot.hit_rate_percent - expected_hit_rate).abs() < 0.001);
 }
 
 #[test]
@@ -112,5 +112,5 @@ fn test_metrics_summary_print() {
     
     // Verify percentages
     assert_eq!(snapshot.total_gets, 100);
-    assert_eq!(snapshot.hit_rate, 0.95); // 95% hit rate
+    assert_eq!(snapshot.hit_rate_percent, 0.95); // 95% hit rate
 }

@@ -313,7 +313,7 @@ fn print_benchmark_results(results: &[BenchmarkResult]) {
         "Vectors", "128-dim", "384-dim", "768-dim", "1536-dim");
     println!("{}", "-".repeat(75));
     
-    if let Some(pq8_results) = by_config.get("PQ8 + INT8 + Binary") {
+    if let Some(pq8_results) = by_config.get(key) {
         for count in &[1000, 5000, 10000, 50000] {
             print!("{:<15}", format!("{}K", count / 1000));
             for dim in &[128, 384, 768, 1536] {

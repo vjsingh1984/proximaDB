@@ -188,7 +188,7 @@ pub struct BackendPerformanceConfig {
     pub query_timeout_secs: u64,
 
     /// Enable compression
-    pub enable_compression: bool,
+    pub compression: bool,
 }
 
 impl Default for BackendPerformanceConfig {
@@ -200,7 +200,7 @@ impl Default for BackendPerformanceConfig {
             cache_ttl_secs: 300,
             batch_size: 100,
             query_timeout_secs: 30,
-            enable_compression: true,
+            compression: true,
         }
     }
 }
@@ -491,7 +491,7 @@ impl Default for MetadataBackendConfig {
         Self {
             backend_type: MetadataBackendType::default(),
             connection: BackendConnectionConfig {
-                connection_string: "file://./data/metadata".to_string(),
+                connection_string: "file://./data/metadata_info".to_string(),
                 auth: None,
                 pool_config: PoolConfig::default(),
                 ssl_config: None,

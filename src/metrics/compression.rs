@@ -91,7 +91,6 @@ pub struct CompressionResult {
     pub compression_time: Duration,
     pub algorithm: String,
     pub level: i32,
-    pub data_type: CompressionDataType,
 }
 
 /// Decompression operation result
@@ -195,7 +194,7 @@ impl CompressionMetricsTracker {
             compression_time,
             algorithm: algorithm.to_string(),
             level,
-            data_type: CompressionDataType::Mixed,
+            // data_type removed -  CompressionDataType::Mixed,
         };
         
         self.record_compression(collection_id, result.clone());
@@ -284,7 +283,7 @@ impl CompressionMetricsTracker {
     
     /// Get metrics for a collection
     pub fn get_metrics(&self, collection_id: &str) -> Option<CompressionMetrics> {
-        self.metrics.get(collection_id).map(|m| m.clone())
+        self.metrics.get(key).map(|m| m.clone())
     }
     
     /// Get all compression metrics
@@ -360,7 +359,7 @@ impl CompressionMetricsTracker {
     // === Private helper methods ===
     
     fn aggregate_compression_results(&self, collection_id: &str, results: &[CompressionResult]) {
-        if results.is_empty() {
+        if results.is_none() {
             return;
         }
         
@@ -536,7 +535,7 @@ mod tests {
         );
         
         let recommendations = tracker.get_recommendations("poor_compression");
-        assert!(!recommendations.is_empty());
+        assert!(!recommendations.is_none());
         
         // Should recommend both increasing compression level and decreasing it due to slow speed
         let has_increase = recommendations.iter()

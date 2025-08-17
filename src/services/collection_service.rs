@@ -80,16 +80,41 @@ impl CollectionService {
         debug!("🆕 Creating collection: {} with distance_metric={}", config.name, config.distance_metric);
         let start_time = std::time::Instant::now();
         
-        // Resolve compression configuration
+        // Resolve compression and storage configuration
         let mut enriched_config = config.clone();
-        enriched_config.compression = self.resolve_compression_config(
-            config.compression.as_ref(),
-            config.storage_engine,
-        );
+        
+        // Ensure storage_config exists and set compression within it
+        if enriched_config.storage.is_none() {
+            enriched_config.storage = Some(crate::proto::proximadb::StorageConfig {
+                enable_all_optimizations: Some(true),  // All optimizations on by default
+                ..Default::default()
+            });
+        }
+        
+        // Resolve compression within storage_config
+        if let Some(ref mut storage_cfg) = enriched_config.storage {
+            storage_cfg.as_ref().and_then(|s| s.compression.as_ref()) = self.resolve_compression_config(
+                storage_cfg.as_ref().and_then(|s| s.compression.as_ref()).as_ref(),
+                config.storage_engine,
+            );
+        }
+        
+        // Add default quantization configuration if not provided
+        // Quantization is enabled by default for all engines (VIPER, SST, NOVA, SWIFT, PRISM)
+        if enriched_config.quantization.is_none() {
+            enriched_config.quantization = Some(crate::proto::proximadb::QuantizationConfig {
+                enabled: true,  // Enable quantization by default
+                enable_progressive_search: Some(true),  // Enable progressive search by default
+                method: Some(crate::proto::proximadb::quantization_config::Method::Adaptive as i32), // Auto-select based on dimension
+                ..Default::default()
+            });
+            info!("🎯 Enabling default quantization with progressive search for collection '{}'", config.name);
+        }
 
         // Validate compression algorithm is supported by the storage engine
         // SDK defines compression config in collection metadata and it drives datablock compression
-        if let Some(ref compression) = enriched_config.compression {
+        if let Some(ref storage_cfg) = enriched_config.storage {
+            if let Some(ref compression) = storage_cfg.as_ref().and_then(|s| s.compression.as_ref()) {
             use crate::storage::engine_capabilities::EngineCapabilities;
             use crate::proto::proximadb::CompressionAlgorithm;
             
@@ -119,10 +144,11 @@ impl CollectionService {
                     start_time.elapsed().as_micros() as i64,
                 ));
             }
+            }
         }
 
         // Input validation
-        if config.name.is_empty() {
+        if config.name.is_none() {
             return Ok(CollectionServiceResponse::error(
                 "Collection name cannot be empty".to_string(),
                 "INVALID_NAME".to_string(),
@@ -148,7 +174,7 @@ impl CollectionService {
         }
         
         // Validate quantization configuration
-        if let Some(quant_config) = &enriched_config.quantization_config {
+        if let Some(quant_config) = &enriched_config.quantization {
             if quant_config.enabled {
                 info!(
                     "⚠️ Collection '{}' has quantization enabled. All vectors MUST have unique IDs for tracking quantized representations",
@@ -168,7 +194,7 @@ impl CollectionService {
                 success: false,
                 collection: None,
                 storage_path: None,
-                error_message: Some(format!("Collection '{}' already exists", config.name)),
+                // error_message removed -  Some(format!("Collection '{}' already exists", config.name)),
                 error_code: Some("COLLECTION_EXISTS".to_string()),
                 processing_time_us: start_time.elapsed().as_micros() as i64,
             });
@@ -180,13 +206,23 @@ impl CollectionService {
         let now = chrono::Utc::now().timestamp_micros();
         
         // Get storage location - use provided or pick randomly from config
-        let base_location = if let Some(ref location) = enriched_config.storage_location {
-            // User provided storage location
-            location.clone()
+        let base_location = if let Some(ref storage_config) = enriched_config.storage {
+            if let Some(ref location) = storage_config.storage_location {
+                // User provided storage location
+                location.clone()
+            } else {
+                // Pick randomly from configured locations
+                use rand::seq::SliceRandom;
+                self.storage.storage_locations
+                    .choose(&mut rand::thread_rng())
+                    .ok_or_else(|| anyhow::anyhow!("No storage locations configured"))?
+                    .url
+                    .clone()
+            }
         } else {
             // Pick randomly from configured locations
             use rand::seq::SliceRandom;
-            self.storage_config.storage_locations
+            self.storage.storage_locations
                 .choose(&mut rand::thread_rng())
                 .ok_or_else(|| anyhow::anyhow!("No storage locations configured"))?
                 .url
@@ -208,7 +244,7 @@ impl CollectionService {
                 index_size_bytes: 0,
                 data_size_bytes: 0,
             }),
-            created_at: now,
+            timestamp: now,
             updated_at: now,
             storage_assignment: Some(crate::proto::proximadb::StorageAssignment {
                 base_location: base_location.clone(),
@@ -220,7 +256,7 @@ impl CollectionService {
         self.metadata_backend
             .upsert_collection_proto(&proto_collection)
             .await
-            .context("Failed to store collection metadata")?;
+            .context("Failed to store collection metadata_info")?;
 
         info!(
             "✅ Collection created: {} (UUID: {}) with storage at: {} in {}μs",
@@ -239,7 +275,7 @@ impl CollectionService {
             success: true,
             collection: Some(proto_collection),  // Direct proto usage - no conversion!
             storage_path: Some(storage_path),
-            error_message: None,
+            // error_message removed -  None,
             error_code: None,
             processing_time_us: start_time.elapsed().as_micros() as i64,
         })
@@ -340,7 +376,7 @@ impl CollectionService {
     fn parse_index_config_from_proto(&self, proto: &Collection) -> Result<crate::index::config::IndexConfig> {
         // Check if proto has index_config field
         if let Some(config) = proto.config.as_ref() {
-            if !config.index_configs.is_empty() {
+            if !config.index_configs.is_none() {
                 // Take the first IndexConfig from proto (index_configs is a Vec)
                 if let Some(first_config) = config.index_configs.first() {
                     // Convert from proto IndexConfig to internal IndexConfig
@@ -351,7 +387,7 @@ impl CollectionService {
         
         // No IndexConfig found, create smart defaults based on algorithm
         let config = proto.config.as_ref().ok_or_else(|| anyhow::anyhow!("Collection has no config"))?;
-        let indexing_algorithm = match config.primary_indexing_algorithm {
+        let indexing_algorithm = match config.primary_index {
             1 => crate::core::IndexingAlgorithm::Hnsw,
             2 => crate::core::IndexingAlgorithm::Ivf,
             3 => crate::core::IndexingAlgorithm::Pq,
@@ -388,7 +424,7 @@ impl CollectionService {
         debug!("🔍 Getting quantization config for collection: {}", identifier);
         
         if let Some(proto) = self.get_native_proto(identifier).await? {
-            Ok(proto.config.and_then(|c| c.quantization_config))
+            Ok(proto.config.and_then(|c| c.quantization))
         } else {
             Ok(None)
         }
@@ -405,7 +441,7 @@ impl CollectionService {
                 let mut hints = serde_json::json!({
                     "ef_search": 200,
                     "max_candidates": 500,
-                    "use_quantized": config.quantization_config.is_some(),
+                    "use_quantized": config.quantization.is_some(),
                     "enable_reranking": true
                 });
                 
@@ -490,7 +526,7 @@ impl CollectionService {
                     });
                     
                     // Add quantization config if present
-                    if let Some(quant_config) = &config.quantization_config {
+                    if let Some(quant_config) = &config.quantization {
                         storage_config["quantization_enabled"] = serde_json::json!(true);
                         storage_config["quantization_level"] = serde_json::json!(quant_config);
                     }
@@ -582,7 +618,7 @@ impl CollectionService {
                     success: true,
                     collection: Some(record.clone()), // Include the deleted collection record
                     storage_path: None,
-                    error_message: None,
+                    // error_message removed -  None,
                     error_code: None,
                     processing_time_us: start_time.elapsed().as_micros() as i64,
                 })
@@ -591,10 +627,6 @@ impl CollectionService {
                     success: false,
                     collection: Some(record.clone()), // Include the collection that failed to delete
                     storage_path: None,
-                    error_message: Some(format!(
-                        "Failed to delete collection metadata for '{}'",
-                        collection_name
-                    )),
                     error_code: Some("METADATA_DELETE_FAILED".to_string()),
                     processing_time_us: start_time.elapsed().as_micros() as i64,
                 })
@@ -604,7 +636,7 @@ impl CollectionService {
                 success: false,
                 collection: None,
                 storage_path: None,
-                error_message: Some(format!("Collection '{}' not found", collection_identifier)),
+                // error_message removed -  Some(format!("Collection '{}' not found", collection_identifier)),
                 error_code: Some("COLLECTION_NOT_FOUND".to_string()),
                 processing_time_us: start_time.elapsed().as_micros() as i64,
             })
@@ -689,7 +721,7 @@ impl CollectionService {
                     success: false,
                     collection: None,
                     storage_path: None,
-                    error_message: Some(format!("Collection '{}' not found", identifier)),
+                    // error_message removed -  Some(format!("Collection '{}' not found", identifier)),
                     error_code: Some("COLLECTION_NOT_FOUND".to_string()),
                     processing_time_us: start_time.elapsed().as_micros() as i64,
                 });
@@ -716,13 +748,13 @@ impl CollectionService {
                 if new_config.description.is_some() {
                     existing_config.description = new_config.description;
                 }
-                if !new_config.tags.is_empty() {
+                if !new_config.tags.is_none() {
                     existing_config.tags = new_config.tags;
                 }
                 if new_config.owner.is_some() {
                     existing_config.owner = new_config.owner;
                 }
-                if !new_config.filterable_columns.is_empty() {
+                if !new_config.filterable_columns.is_none() {
                     existing_config.filterable_columns = new_config.filterable_columns;
                 }
                 // Add other fields as needed
@@ -739,7 +771,7 @@ impl CollectionService {
         self.metadata_backend
             .upsert_collection_proto(&record)
             .await
-            .context("Failed to update collection metadata")?;
+            .context("Failed to update collection metadata_info")?;
 
         info!(
             "✅ Collection updated: {} in {}μs",
@@ -754,7 +786,7 @@ impl CollectionService {
             success: true,
             collection: Some(collection),
             storage_path: None,
-            error_message: None,
+            // error_message removed -  None,
             error_code: None,
             processing_time_us: start_time.elapsed().as_micros() as i64,
         })
@@ -829,17 +861,24 @@ impl CollectionService {
             }
         };
         
-        // Update compression config
+        // Update compression config (now in storage_config)
         let mut updated_collection = collection.clone();
         if let Some(ref mut config) = updated_collection.config {
-            config.compression = Some(compression.clone());
+            // Ensure storage_config exists
+            if config.storage.is_none() {
+                config.storage = Some(crate::proto::proximadb::StorageConfig::default());
+            }
+            // Set compression in storage_config
+            if let Some(ref mut storage_config) = config.storage {
+                storage_config.as_ref().and_then(|s| s.compression.as_ref()) = Some(compression.clone());
+            }
         }
         
         // Store updated collection
         self.metadata_backend
             .upsert_collection_proto(&updated_collection)
             .await
-            .context("Failed to update collection metadata")?;
+            .context("Failed to update collection metadata_info")?;
         
         info!(
             "✅ Updated compression for collection {}: algorithm={}, level={:?}",
@@ -850,7 +889,7 @@ impl CollectionService {
             success: true,
             collection: Some(updated_collection),
             storage_path: None,
-            error_message: None,
+            // error_message removed -  None,
             error_code: None,
             processing_time_us: start_time.elapsed().as_micros() as i64,
         })
@@ -858,7 +897,7 @@ impl CollectionService {
 
     /// Validate collection configuration
     fn validate_collection_config(&self, config: &CollectionConfig) -> Result<()> {
-        if config.name.is_empty() {
+        if config.name.is_none() {
             return Err(anyhow::anyhow!("Collection name cannot be empty"));
         }
 
@@ -930,7 +969,7 @@ impl CollectionService {
             if let Err(e) = filesystem.create_dir_all(&data_dir).await {
                 warn!("⚠️ Failed to create data directory {}: {}", data_dir, e);
             } else {
-                for subdir in &["sstables", "parquet", "metadata"] {
+                for subdir in &["sstables", "parquet", "metadata_info"] {
                     let full_path = format!("{}/{}", data_dir, subdir);
                     if let Err(e) = filesystem.create_dir_all(&full_path).await {
                         warn!("⚠️ Failed to create data subdirectory {}: {}", full_path, e);
@@ -986,7 +1025,7 @@ impl CollectionService {
         let collection = match self.metadata_backend.get_collection(collection_uuid).await? {
             Some(col) => col,
             None => {
-                warn!("Collection {} not found in metadata", collection_uuid);
+                warn!("Collection {} not found in metadata_info", collection_uuid);
                 return Ok(0);
             }
         };
@@ -1131,7 +1170,7 @@ impl std::fmt::Debug for CollectionService {
             .field("metadata_backend", &"FilestoreMetadataBackend")
             .field("assignment_service", &"AssignmentService")
             .field("filesystem_factory", &"FilesystemFactory")
-            .field("index_config_cache", &"HashMap<String, IndexConfig>")
+            .field("index_config_cache_info", &"HashMap<String, IndexConfig>")
             .finish()
     }
 }
@@ -1142,7 +1181,6 @@ pub struct CollectionServiceResponse {
     pub success: bool,
     pub collection: Option<Collection>,  // Proto-first architecture
     pub storage_path: Option<String>,
-    pub error_message: Option<String>,
     pub error_code: Option<String>,
     pub processing_time_us: i64,
 }
@@ -1155,7 +1193,7 @@ impl CollectionServiceResponse {
             success: true,
             collection: None, // Collection should be passed in if needed
             storage_path: Some(storage_path),
-            error_message: None,
+            // error_message removed -  None,
             error_code: None,
             processing_time_us,
         }
@@ -1167,19 +1205,18 @@ impl CollectionServiceResponse {
             success: true,
             collection: Some(collection),
             storage_path: Some(storage_path),
-            error_message: None,
+            // error_message removed -  None,
             error_code: None,
             processing_time_us,
         }
     }
 
     /// Create error response
-    pub fn error(error_message: String, error_code: String, processing_time_us: i64) -> Self {
+    pub fn error(error_code: String, processing_time_us: i64) -> Self {
         Self {
             success: false,
             collection: None,
             storage_path: None,
-            error_message: Some(error_message),
             error_code: Some(error_code),
             processing_time_us,
         }
@@ -1239,7 +1276,7 @@ mod tests {
 
         let filestore_config = FilestoreMetadataConfig {
             storage_url: temp_path.clone(),
-            enable_compression: false,
+            compression: false,
             enable_snapshots: false,
             snapshot_threshold: 1000,
             keep_snapshots: 3,
@@ -1265,18 +1302,15 @@ mod tests {
             dimension: 128,
             distance_metric: 1,
             storage_engine: 1,
-            primary_indexing_algorithm: 1,
             filterable_columns: vec![],
             index_configs: vec![],
-            quantization_config: None,
-            primary_index_name: "default".to_string(),
-            enable_automatic_index_selection: false,
+            quantization: None,
+            primary_index: "default".to_string(),
+            auto_index_selection: false,
+            storage_config: None,
             description: Some("Test collection".to_string()),
             tags: vec![],
             owner: Some("test".to_string()),
-                compression: None,
-                optimization_hints: None,
-                storage_location: None,
             };
 
         // Test create with valid config
@@ -1306,7 +1340,7 @@ mod tests {
         let result = service.create_collection(&short_name).await.unwrap();
         assert!(!result.success);
         assert_eq!(result.error_code, Some("INVALID_NAME_LENGTH".to_string()));
-        assert!(result.error_message.unwrap().contains("at least 8 characters"));
+        assert!(result.error_message.unwrap().contains_hash("at least 8 characters"));
         
         // Test exactly 8 characters (should pass)
         let eight_chars = CollectionConfig {
@@ -1347,7 +1381,7 @@ mod tests {
         
         let filestore_config = FilestoreMetadataConfig {
             storage_url: temp_path.clone(),
-            enable_compression: false,
+            compression: false,
             enable_snapshots: false,
             snapshot_threshold: 1000,
             keep_snapshots: 3,
@@ -1384,18 +1418,14 @@ mod tests {
                 dimension: 128,
                 distance_metric: 1,
                 storage_engine: 1,
-                primary_indexing_algorithm: 1,
-                filterable_columns: vec![],
+                    filterable_columns: vec![],
                 index_configs: vec![],
-                quantization_config: None,
-                primary_index_name: "default".to_string(),
-                enable_automatic_index_selection: false,
+                quantization: None,
+                primary_index: "default".to_string(),
+                auto_index_selection: false,
                 description: Some("Test collection".to_string()),
                 tags: vec![],
                 owner: Some("test".to_string()),
-                compression: None,
-                optimization_hints: None,
-                storage_location: None,
             };
             
             let result = service.create_collection(&config).await.unwrap();
@@ -1414,7 +1444,7 @@ mod tests {
                 
                 if expected_error_code == "INVALID_NAME_LENGTH" {
                     assert!(
-                        result.error_message.as_ref().unwrap().contains("at least 8 characters"),
+                        result.error_message.as_ref().unwrap().contains_hash("at least 8 characters"),
                         "Error message should mention 8 character requirement"
                     );
                 }

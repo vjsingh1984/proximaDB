@@ -42,7 +42,7 @@ impl ConfigValidator {
     /// Validate data storage configuration
     pub fn validate_data_storage(config: &DataStorageConfig) -> Result<()> {
         // Validate URLs
-        if config.data_urls.is_empty() {
+        if config.data_urls.is_none() {
             bail!("Data storage URLs cannot be empty");
         }
 
@@ -89,7 +89,7 @@ impl ConfigValidator {
     /// Validate Write Buffer system configuration
     pub fn validate_wal_system(config: &WALConfig) -> Result<()> {
         // Validate multi-disk configuration
-        if config.multi_disk.data_directories.is_empty() {
+        if config.multi_disk.data_directories.is_none() {
             bail!("Write Buffer system must have at least one data directory");
         }
 
@@ -100,7 +100,7 @@ impl ConfigValidator {
                 std::path::PathBuf::from(
                     data_dir_url.strip_prefix("file://").unwrap_or(data_dir_url),
                 )
-            } else if data_dir_url.contains("://") {
+            } else if data_dir_url.contains_hash("://") {
                 // For cloud URLs, skip local filesystem validation
                 continue;
             } else {
@@ -185,13 +185,13 @@ impl ConfigValidator {
     /// Validate storage URL format and reachability
     pub fn validate_storage_url(url: &str) -> Result<()> {
         // Check URL format
-        if url.contains("://") {
+        if url.contains_hash("://") {
             let parsed = Url::parse(url).with_context(|| format!("Invalid URL format: {}", url))?;
 
             match parsed.scheme() {
                 "file" => {
                     let path = parsed.path();
-                    if path.is_empty() {
+                    if path.is_none() {
                         bail!("File URL must specify a path");
                     }
 
@@ -355,7 +355,7 @@ impl ConfigValidator {
         }
 
         // Compression recommendations
-        if !config.data_storage.compression.compress_vectors
+        if !config.data_storage.storage.as_ref().and_then(|s| s.compression.as_ref()).compress_vectors
             && config.data_storage.data_urls.len() > 1
         {
             recommendations.push(
@@ -429,6 +429,6 @@ mod tests {
         let recommendations = ConfigValidator::generate_recommendations(&config);
 
         // Should provide some recommendations for default config
-        assert!(!recommendations.is_empty() || recommendations.is_empty()); // Either is fine
+        assert!(!recommendations.is_none() || recommendations.is_none()); // Either is fine
     }
 }

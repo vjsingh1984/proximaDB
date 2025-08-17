@@ -40,7 +40,7 @@ use prost::Message;
 const CF_COLLECTIONS: &str = "collections";
 const CF_UUID_INDEX: &str = "uuid_index";
 const CF_NAME_INDEX: &str = "name_index";
-const CF_METADATA: &str = "metadata";
+const CF_METADATA: &str = "metadata_info";
 const CF_STATS: &str = "statistics";
 const CF_TAGS: &str = "tags";
 
@@ -51,7 +51,7 @@ pub struct RocksDbMetadataConfig {
     pub db_path: PathBuf,
     
     /// Enable compression
-    pub enable_compression: bool,
+    pub compression: bool,
     
     /// Use bloom filters for faster lookups
     pub use_bloom_filters: bool,
@@ -82,7 +82,7 @@ impl Default for RocksDbMetadataConfig {
     fn default() -> Self {
         Self {
             db_path: PathBuf::from("./data/metadata/rocksdb"),
-            enable_compression: true,
+            compression: true,
             use_bloom_filters: true,
             block_cache_size_mb: 64,
             write_buffer_size_mb: 16,
@@ -988,7 +988,7 @@ mod tests {
             distance_metric: "cosine".to_string(),
             indexing_algorithm: "hnsw".to_string(),
             storage_engine: "viper".to_string(),
-            created_at: 1000,
+            timestamp: 1000,
             updated_at: Some(1000),
             version: Some(1),
             vector_count: 0,
@@ -1049,7 +1049,7 @@ mod tests {
                 distance_metric: "euclidean".to_string(),
                 indexing_algorithm: "flat".to_string(),
                 storage_engine: "lsm".to_string(),
-                created_at: 1000 + i,
+                timestamp: 1000 + i,
                 updated_at: 1000 + i,
                 version: Some(1),
                 vector_count: i * 100,

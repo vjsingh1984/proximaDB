@@ -95,9 +95,9 @@ async fn test_compaction_trigger_conditions() -> Result<()> {
     let records_file3 = create_test_sst_records(collection_id, 200);
     
     // Create SST files
-    let sst_file1 = collection_dir.join("sst_1.sst");
-    let sst_file2 = collection_dir.join("sst_2.sst");
-    let sst_file3 = collection_dir.join("sst_3.sst");
+    let sst_file1 = collection_dir.join("sst_1.sstable");
+    let sst_file2 = collection_dir.join("sst_2.sstable");
+    let sst_file3 = collection_dir.join("sst_3.sstable");
     
     create_test_sst_file(&sst_file1, &records_file1).await?;
     create_test_sst_file(&sst_file2, &records_file2).await?;
@@ -105,7 +105,7 @@ async fn test_compaction_trigger_conditions() -> Result<()> {
     
     // Test compaction with threshold reached
     let compaction_manager = CompactionManager::new(config.clone()).await.unwrap();
-    let output_file = collection_dir.join("compacted_output.sst");
+    let output_file = collection_dir.join("compacted_output.sstable");
     
     let task = CompactionTask {
         collection_id: collection_id.to_string(),
@@ -143,7 +143,7 @@ async fn test_compaction_priority_levels() -> Result<()> {
     
     // Create test records
     let records = create_test_sst_records(collection_id, 100);
-    let input_file = collection_dir.join("input.sst");
+    let input_file = collection_dir.join("input.sstable");
     create_test_sst_file(&input_file, &records).await?;
     
     // Test different priority levels
@@ -155,7 +155,7 @@ async fn test_compaction_priority_levels() -> Result<()> {
     ];
     
     for (i, priority) in priorities.iter().enumerate() {
-        let output_file = collection_dir.join(format!("output_{}.sst", i));
+        let output_file = collection_dir.join(format!("output_{}.sstable", i));
         
         let task = CompactionTask {
             collection_id: collection_id.to_string(),
@@ -234,11 +234,11 @@ async fn test_compaction_with_expired_records() -> Result<()> {
     }
     
     // Create input file
-    let input_file = collection_dir.join("input_with_expired.sst");
+    let input_file = collection_dir.join("input_with_expired.sstable");
     create_test_sst_file(&input_file, &records).await?;
     
     // Perform compaction
-    let output_file = collection_dir.join("compacted_without_expired.sst");
+    let output_file = collection_dir.join("compacted_without_expired.sstable");
     let task = CompactionTask {
         collection_id: collection_id.to_string(),
         level: 0,
@@ -349,10 +349,10 @@ async fn test_compaction_level_configuration() -> Result<()> {
         
         // Test compaction with different levels
         let records = create_test_sst_records(collection_id, 100);
-        let input_file = collection_dir.join(format!("input_level_{}.sst", level_count));
+        let input_file = collection_dir.join(format!("input_level_{}.sstable", level_count));
         create_test_sst_file(&input_file, &records).await?;
         
-        let output_file = collection_dir.join(format!("output_level_{}.sst", level_count));
+        let output_file = collection_dir.join(format!("output_level_{}.sstable", level_count));
         let task = CompactionTask {
             collection_id: collection_id.to_string(),
             level: 0,
@@ -389,13 +389,13 @@ async fn test_compaction_performance_metrics() -> Result<()> {
     
     // Create larger dataset for performance testing
     let large_records = create_test_sst_records(collection_id, 5000);
-    let input_file = collection_dir.join("large_input.sst");
+    let input_file = collection_dir.join("large_input.sstable");
     create_test_sst_file(&input_file, &large_records).await?;
     
     // Measure compaction performance
     let start_time = std::time::Instant::now();
     
-    let output_file = collection_dir.join("performance_output.sst");
+    let output_file = collection_dir.join("performance_output.sstable");
     let task = CompactionTask {
         collection_id: collection_id.to_string(),
         level: 0,

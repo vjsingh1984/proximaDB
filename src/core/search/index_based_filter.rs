@@ -105,7 +105,6 @@ pub trait MetadataSource: Send + Sync {
 
 #[derive(Debug, Clone)]
 pub struct ColumnMetadata {
-    pub data_type: ColumnDataType,
     pub has_index: bool,
     pub cardinality: Option<u64>,
     pub min_value: Option<serde_json::Value>,

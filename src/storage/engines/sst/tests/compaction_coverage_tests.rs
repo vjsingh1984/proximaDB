@@ -17,7 +17,7 @@ mod tests {
         config.compaction_threshold = 3;
         config.block_size_kb = 3072;
         config.compaction_strategy = "tiered".to_string();
-        config.compression = "lz4".to_string();
+        config.storage.as_ref().and_then(|s| s.compression.as_ref()) = "lz4".to_string();
         config.decompression_cache_config = None;
         config
     }
@@ -32,9 +32,9 @@ mod tests {
             updated_at: Some(timestamp as u32),
             expires_at: None,
             version: Some(1),
-            rank: None,
-            score: None,
-            distance: None,
+            // rank removed -  None,
+            similarity: None,
+            similarity: None,
             ..Default::default()
         }
     }
@@ -95,10 +95,10 @@ mod tests {
     fn test_compaction_task_creation_and_cloning() {
         // Test CompactionTask creation
         let input_files = vec![
-            PathBuf::from("/tmp/input1.sst"), 
-            PathBuf::from("/tmp/input2.sst")
+            PathBuf::from("/tmp/input1.sstable"), 
+            PathBuf::from("/tmp/input2.sstable")
         ];
-        let output_file = PathBuf::from("/tmp/output.sst");
+        let output_file = PathBuf::from("/tmp/output.sstable");
         
         let task = CompactionTask {
             level: 2,
@@ -200,7 +200,7 @@ mod tests {
         let task = CompactionTask {
             level: 1,
             input_files: vec![], // Empty input files
-            output_file: PathBuf::from("/tmp/empty_output.sst"),
+            output_file: PathBuf::from("/tmp/empty_output.sstable"),
             priority: CompactionPriority::Medium,
             block_size_kb: None,
             compression_config: None,
@@ -216,13 +216,13 @@ mod tests {
         
         // Test scheduling task with many input files
         let many_files: Vec<PathBuf> = (0..10)
-            .map(|i| PathBuf::from(format!("/tmp/input_{}.sst", i)))
+            .map(|i| PathBuf::from(format!("/tmp/input_{}.sstable", i)))
             .collect();
         
         let task = CompactionTask {
             level: 2,
             input_files: many_files,
-            output_file: PathBuf::from("/tmp/multi_output.sst"),
+            output_file: PathBuf::from("/tmp/multi_output.sstable"),
             priority: CompactionPriority::Critical,
             block_size_kb: None,
             compression_config: None,
@@ -322,10 +322,10 @@ mod tests {
         CompactionTask {
             level,
             input_files: vec![
-                PathBuf::from(format!("/tmp/{}_input1.sst", collection_id)),
-                PathBuf::from(format!("/tmp/{}_input2.sst", collection_id)),
+                PathBuf::from(format!("/tmp/{}_input1.sstable", collection_id)),
+                PathBuf::from(format!("/tmp/{}_input2.sstable", collection_id)),
             ],
-            output_file: PathBuf::from(format!("/tmp/{}_output.sst", collection_id)),
+            output_file: PathBuf::from(format!("/tmp/{}_output.sstable", collection_id)),
             priority,
             block_size_kb: None,
             compression_config: None,

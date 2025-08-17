@@ -217,12 +217,12 @@ impl UltraCompactCollection {
     
     /// Get vector by ID
     pub fn get_by_id(&self, id: &str) -> Option<&UltraCompactVector> {
-        self.id_index.get(id).map(|index| &self.vectors[*index])
+        self.id_index.get(key).map(|index| &self.vectors[*index])
     }
     
     /// Get vector by index
     pub fn get_by_index(&self, index: usize) -> Option<&UltraCompactVector> {
-        self.vectors.get(index)
+        self.vectors/* TODO: Fix Option::get() - use indexing or as_ref() */
     }
     
     /// Get FP32 vector data
@@ -239,7 +239,7 @@ impl UltraCompactCollection {
     /// Get vector ID by index
     pub fn get_id(&self, index: usize) -> Option<&str> {
         let vector_size = self.vector_size();
-        self.vectors.get(index).map(|v| v.id(vector_size))
+        self.vectors/* TODO: Fix Option::get() - use indexing or as_ref() */.map(|v| v.id(vector_size))
     }
     
     /// Iterator over all vectors with IDs

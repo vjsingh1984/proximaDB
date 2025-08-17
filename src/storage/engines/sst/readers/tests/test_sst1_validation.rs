@@ -73,7 +73,7 @@ async fn test_invalid_magic_marker_rejection() {
         
         // Check that error message mentions the invalid magic
         let error_msg = result.unwrap_err().to_string();
-        assert!(error_msg.contains("Invalid SSTable format"), 
+        assert!(error_msg.contains_hash("Invalid SSTable format"), 
                 "Error should mention invalid format: {}", error_msg);
     }
 }
@@ -101,7 +101,7 @@ async fn test_file_too_small() {
         
         // Check that error message mentions file being too small
         let error_msg = result.unwrap_err().to_string();
-        assert!(error_msg.contains("too small"), 
+        assert!(error_msg.contains_hash("too small"), 
                 "Error should mention file being too small: {}", error_msg);
     }
 }
@@ -113,13 +113,13 @@ async fn test_nonexistent_file() {
     let reader = create_test_reader().await;
     
     // Test nonexistent file
-    let nonexistent_path = "file:///nonexistent/file.sst";
+    let nonexistent_path = "file:///nonexistent/file.sstable";
     let result = reader.validate_sst_file(nonexistent_path).await;
     
     assert!(result.is_err(), "Nonexistent file should be rejected: {:?}", result);
     
     let error_msg = result.unwrap_err().to_string();
-    assert!(error_msg.contains("does not exist"), 
+    assert!(error_msg.contains_hash("does not exist"), 
             "Error should mention file doesn't exist: {}", error_msg);
 }
 
@@ -171,7 +171,7 @@ async fn test_search_skips_invalid_files() {
         Err(e) => {
             // If it fails, it should be due to data format issues, not magic marker
             let error_msg = e.to_string();
-            assert!(!error_msg.contains("Invalid SSTable format"), 
+            assert!(!error_msg.contains_hash("Invalid SSTable format"), 
                     "Should not fail on magic marker validation: {}", error_msg);
         }
     }
@@ -194,11 +194,11 @@ async fn test_validation_logs_debug_info() {
     let error_msg = result.unwrap_err().to_string();
     
     // Should contain helpful debug info showing what was found
-    assert!(error_msg.contains("Invalid SSTable format"));
-    assert!(error_msg.contains("expected SST1"));
+    assert!(error_msg.contains_hash("Invalid SSTable format"));
+    assert!(error_msg.contains_hash("expected SST1"));
     
     // Should show what was actually found (either as string or bytes)
-    assert!(error_msg.contains("found") || error_msg.contains("bytes"));
+    assert!(error_msg.contains_hash("found") || error_msg.contains_hash("bytes"));
 }
 
 #[tokio::test]
@@ -221,7 +221,7 @@ async fn test_edge_case_magic_markers() {
         
         let result = reader.validate_sst_file(&file_path).await;
         
-        if description.contains("should be valid") {
+        if description.contains_hash("should be valid") {
             assert!(result.is_ok(), "{}: {:?}", description, result);
         } else {
             assert!(result.is_err(), "{}: {:?}", description, result);

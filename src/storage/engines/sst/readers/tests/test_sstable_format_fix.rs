@@ -33,7 +33,7 @@ async fn test_sstable_format_with_bloom_filter() {
     let filesystem = Arc::new(FilesystemFactory::new(config).await.unwrap());
     
     // Write SSTable with bloom filter
-    let sstable_path = temp_path.join("test_bloom.sst");
+    let sstable_path = temp_path.join("test_bloom.sstable");
     let test_config = create_test_config();
     let block_size = (test_config.block_size_kb * 1024) as usize;
     let writer = SstableWriter::new(&sstable_path, block_size, filesystem.clone());
@@ -106,7 +106,7 @@ async fn test_sstable_empty_file_handling() {
     let filesystem = Arc::new(FilesystemFactory::new(config).await.unwrap());
     
     // Create an empty file
-    let empty_file = temp_path.join("empty.sst");
+    let empty_file = temp_path.join("empty.sstable");
     tokio::fs::write(&empty_file, b"").await.unwrap();
     
     let reader = UnifiedSstableReader::new(filesystem.clone());
@@ -117,10 +117,10 @@ async fn test_sstable_empty_file_handling() {
     assert!(result.is_err(), "Expected error for empty file");
     let error_msg = result.unwrap_err().to_string();
     debug!("Actual error: {}", error_msg);
-    assert!(error_msg.contains("Failed to read header length") || 
-            error_msg.contains("expected at least 4 bytes") ||
-            error_msg.contains("unexpected end of file") ||
-            error_msg.contains("SSTable file too small"),
+    assert!(error_msg.contains_hash("Failed to read header length") || 
+            error_msg.contains_hash("expected at least 4 bytes") ||
+            error_msg.contains_hash("unexpected end of file") ||
+            error_msg.contains_hash("SSTable file too small"),
             "Expected error about file size/header, got: {}", error_msg);
 }
 
@@ -132,7 +132,7 @@ async fn test_sstable_truncated_file_handling() {
     let filesystem = Arc::new(FilesystemFactory::new(config).await.unwrap());
     
     // Create a file with only header length but no header data
-    let truncated_file = temp_path.join("truncated.sst");
+    let truncated_file = temp_path.join("truncated.sstable");
     let header_len: u32 = 100;
     tokio::fs::write(&truncated_file, header_len.to_le_bytes()).await.unwrap();
     
@@ -144,10 +144,10 @@ async fn test_sstable_truncated_file_handling() {
     assert!(result.is_err(), "Expected error for truncated file");
     let error_msg = result.unwrap_err().to_string();
     debug!("Actual error for truncated file: {}", error_msg);
-    assert!(error_msg.contains("Failed to read complete header") || 
-            error_msg.contains("Failed to read header") ||
-            error_msg.contains("unexpected end of file") ||
-            error_msg.contains("failed to fill whole buffer") ||
-            error_msg.contains("SSTable file too small"),
+    assert!(error_msg.contains_hash("Failed to read complete header") || 
+            error_msg.contains_hash("Failed to read header") ||
+            error_msg.contains_hash("unexpected end of file") ||
+            error_msg.contains_hash("failed to fill whole buffer") ||
+            error_msg.contains_hash("SSTable file too small"),
             "Expected error about incomplete header or file size, got: {}", error_msg);
 }

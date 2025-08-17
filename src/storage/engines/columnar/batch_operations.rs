@@ -209,7 +209,7 @@ impl ColumnarBatchOperations {
     ) -> Result<HashMap<String, Vec<String>>> {
         let mut grouped = HashMap::new();
         
-        // Simple strategy: distribute IDs evenly across files
+        // Simple // strategy removed -  distribute IDs evenly across files
         // In production, would use bloom filters or ID range analysis
         for (idx, id) in ids.iter().enumerate() {
             let file_idx = idx % file_paths.len();
@@ -255,7 +255,7 @@ impl ColumnarBatchOperations {
         _compression_config: Option<&super::QuantizationConfig>,
     ) -> Result<SingleBatchWriteResult> {
         // Get buffer from memory pool
-        let mut buffer = self.memory_pool.acquire();
+        let mut buffer = self.memory_pool/* TODO: Fix VectorMemoryPool::acquire() method */;
         buffer.clear();
         
         // Serialize batch to buffer (simplified)
@@ -370,7 +370,7 @@ impl ColumnarBatchOperations {
     pub async fn clear_cache(&self) {
         let mut cache = self.operation_cache.write().await;
         cache.clear();
-        info!("Cleared batch operations cache");
+        info!("Cleared batch operations cache_info");
     }
     
     /// Get cache statistics

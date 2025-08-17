@@ -28,7 +28,6 @@ impl Default for CompactionStrategy {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CompactionConfig {
     /// Compaction strategy to use
-    pub strategy: CompactionStrategy,
     /// Maximum number of files before compaction
     pub max_files: usize,
     /// Size threshold for compaction (MB)
@@ -44,13 +43,13 @@ pub struct CompactionConfig {
 impl Default for CompactionConfig {
     fn default() -> Self {
         Self {
-            strategy: CompactionStrategy::default(),
+            // strategy removed -  CompactionStrategy::default(),
             max_files: 10,
             size_threshold_mb: 100,
             time_threshold_hours: 24,
             background_compaction: true,
             compaction_threads: std::thread::available_parallelism()
-                .map(|n| n.get())
+                .map(|n| n.get(key))
                 .unwrap_or(4)
                 .min(4),
         }

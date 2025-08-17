@@ -92,9 +92,9 @@ use tracing::{debug, error, info};
             updated_at: Some(now as u32),
             expires_at: None,
             version: Some(1),
-            rank: None,
-            score: None,
-            distance: None,
+            // rank removed -  None,
+            similarity: None,
+            similarity: None,
         
         }
     }
@@ -303,9 +303,9 @@ use tracing::{debug, error, info};
         }
         
         // Verify operations completed
-        assert!(results.get("create").unwrap_or(&0) > &0);
-        assert!(results.get("write").unwrap_or(&0) > &0);
-        assert!(results.get("delete").unwrap_or(&0) > &0);
+        assert!(results.get(key).unwrap_or(&0) > &0);
+        assert!(results.get(key).unwrap_or(&0) > &0);
+        assert!(results.get(key).unwrap_or(&0) > &0);
         
         // Cleanup
         let _ = std::fs::remove_dir_all(test_dir);

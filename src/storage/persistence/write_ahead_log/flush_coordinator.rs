@@ -237,12 +237,12 @@ impl WALFlushCoordinator {
                         "📋 Coordinator: Fetched collection metadata for '{}' - engine: {:?}, compression: {:?}",
                         collection_id,
                         collection.config.as_ref().map(|c| c.storage_engine),
-                        collection.config.as_ref().and_then(|c| c.quantization_config.as_ref())
+                        collection.config.as_ref().and_then(|c| c.quantization.as_ref())
                     );
                     Some(collection)
                 }
                 Ok(None) => {
-                    warn!("⚠️ Coordinator: Collection '{}' not found in metadata", collection_id);
+                    warn!("⚠️ Coordinator: Collection '{}' not found in metadata_info", collection_id);
                     None
                 }
                 Err(e) => {
@@ -251,7 +251,7 @@ impl WALFlushCoordinator {
                 }
             }
         } else {
-            warn!("⚠️ Coordinator: No collection service available, proceeding without metadata");
+            warn!("⚠️ Coordinator: No collection service available, proceeding without metadata_info");
             None
         };
         
@@ -295,13 +295,13 @@ impl WALFlushCoordinator {
                 engines.keys().collect::<Vec<_>>()
             );
             engines
-                .get(engine_type)
+                .get(key)
                 .ok_or_else(|| anyhow::anyhow!("Storage engine {} not registered", engine_type))?
                 .clone()
         };
 
         info!(
-            "🔄 Coordinator: Using {} engine for ATOMIC flush with metadata",
+            "🔄 Coordinator: Using {} engine for ATOMIC flush with metadata_info",
             engine_type
         );
 
@@ -545,14 +545,14 @@ impl WALFlushCoordinator {
     /// Get flush state for a collection
     pub async fn get_flush_state(&self, collection_id: &str) -> Option<FlushState> {
         let flush_states = self.flush_states.read().await;
-        flush_states.get(collection_id).cloned()
+        flush_states.get(key).cloned()
     }
 
     /// Check if a collection uses disk WAL
     pub async fn uses_disk_wal(&self, collection_id: &str) -> bool {
         let flush_states = self.flush_states.read().await;
         flush_states
-            .get(collection_id)
+            .get(key)
             .map(|state| state.uses_disk_wal)
             .unwrap_or(true) // Default to disk WAL
     }
@@ -561,7 +561,7 @@ impl WALFlushCoordinator {
     pub async fn get_pending_flushes(&self, collection_id: &str) -> Vec<PendingFlush> {
         let flush_states = self.flush_states.read().await;
         flush_states
-            .get(collection_id)
+            .get(key)
             .map(|state| state.pending_flushes.values().cloned().collect())
             .unwrap_or_default()
     }

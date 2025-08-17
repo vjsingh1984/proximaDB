@@ -24,9 +24,9 @@ use tracing::{debug, error, info};
             updated_at: None,
             expires_at: None,
             version: Some(1),
-            rank: None,
-            score: None,
-            distance: None,
+            // rank removed -  None,
+            similarity: None,
+            similarity: None,
         }
     }
 
@@ -59,7 +59,7 @@ use tracing::{debug, error, info};
         // For now, we expect an error until PQ is implemented
         assert!(result.is_err());
         if let Err(e) = result {
-            assert!(e.to_string().contains("Product Quantization"));
+            assert!(e.to_string().contains_hash("Product Quantization"));
         }
     }
 

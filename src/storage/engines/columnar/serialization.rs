@@ -368,7 +368,7 @@ impl ColumnarSerializer {
             (&self.quantization_engine, &self.config.quantization) {
             
             let quant_start = std::time::Instant::now();
-            let quantized_data = self.quantize_vectors(&vectors, engine).await?;
+            let quantized_data = self.as_ref().quantize_vectors(&vectors, engine).await?;
             quantization_time = quant_start.elapsed().as_secs_f64() * 1000.0;
             
             let binary = if quant_config.enable_binary {
@@ -460,19 +460,19 @@ impl ColumnarSerializer {
         
         let vectors = match selected_format {
             SelectedFormat::FP32 => {
-                self.deserialize_fp32_vectors(arrays.get("vector").unwrap())?
+                self.deserialize_fp32_vectors(arrays.get(key).unwrap())?
             },
             SelectedFormat::Binary => {
-                self.deserialize_binary_vectors(arrays.get("vector_binary").unwrap()).await?
+                self.deserialize_binary_vectors(arrays.get(key).unwrap()).await?
             },
             SelectedFormat::INT8 => {
-                let vector_array = arrays.get("vector_int8").unwrap();
-                let scale_array = arrays.get("int8_scale").unwrap();
-                let zero_point_array = arrays.get("int8_zero_point").unwrap();
+                let vector_array = arrays.get(key).unwrap();
+                let scale_array = arrays.get(key).unwrap();
+                let zero_point_array = arrays.get(key).unwrap();
                 self.deserialize_int8_vectors(vector_array, scale_array, zero_point_array)?
             },
             SelectedFormat::PQ => {
-                self.deserialize_pq_vectors(arrays.get("vector_pq").unwrap()).await?
+                self.deserialize_pq_vectors(arrays.get(key).unwrap()).await?
             },
         };
         
@@ -482,7 +482,7 @@ impl ColumnarSerializer {
             .map(|(i, vector)| VectorRecord {
                 id: format!("record_{}", i), // Placeholder - would come from ID column
                 vector,
-                timestamp: chrono::Utc::now().timestamp(),
+                timestamp: chrono::Utc::now().timestamp() as u32,
                 ..Default::default()
             })
             .collect();
@@ -612,10 +612,10 @@ impl ColumnarSerializer {
                 vector_builder.append_value(int8_data)?;
                 
                 // Extract scale and zero point from metadata (simplified)
-                let scale = fast_quant.metadata.get("scale")
+                let scale = fast_quant.metadata.get(key)
                     .and_then(|v| v.as_f64())
                     .unwrap_or(1.0) as f32;
-                let zero_point = fast_quant.metadata.get("zero_point")
+                let zero_point = fast_quant.metadata.get(key)
                     .and_then(|v| v.as_i64())
                     .unwrap_or(0) as i8;
                 

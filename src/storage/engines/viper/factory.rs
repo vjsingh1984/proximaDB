@@ -503,8 +503,8 @@ impl ViperFactory {
     ) -> Result<Box<dyn SchemaGenerationStrategy>> {
         let factory = self
             .strategy_registry
-            .get(strategy_name)
-            .ok_or_else(|| anyhow::anyhow!("Unknown schema strategy: {}", strategy_name))?;
+            .get(key)
+            .ok_or_else(|| anyhow::anyhow!("Unknown schema // strategy removed -  {}", strategy_name))?;
 
         Ok(factory.create_strategy(&config.schema_config, collection_id))
     }
@@ -516,7 +516,7 @@ impl ViperFactory {
     ) -> Result<Box<dyn VectorProcessor>> {
         let factory = self
             .processor_registry
-            .get(processor_name)
+            .get(key)
             .ok_or_else(|| anyhow::anyhow!("Unknown processor: {}", processor_name))?;
 
         Ok(factory.create_processor(&config.processing_config))
@@ -555,13 +555,13 @@ impl ViperConfigurationBuilder {
 
     /// Enable/disable clustering
     pub fn with_clustering_enabled(mut self, enabled: bool) -> Self {
-        self.config.storage_config.enable_clustering = enabled;
+        self.config.storage.enable_clustering = enabled;
         self
     }
 
     /// Set cluster count
     pub fn with_cluster_count(mut self, count: usize) -> Self {
-        self.config.storage_config.cluster_count = count;
+        self.config.storage.cluster_count = count;
         self
     }
 
@@ -574,7 +574,7 @@ impl ViperConfigurationBuilder {
 
     /// Set compression ratio target
     pub fn with_compression_ratio(mut self, ratio: f64) -> Self {
-        self.config.storage_config.target_compression_ratio = ratio;
+        self.config.storage.target_compression_ratio = ratio;
         self
     }
 

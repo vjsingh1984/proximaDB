@@ -283,7 +283,7 @@ impl ParallelRecoverySystem {
     /// Extract disk ID from storage path
     fn extract_disk_id(path: &str) -> String {
         // Extract disk identifier from path (e.g., "/mnt/disk1" -> "disk1")
-        if let Some(disk_part) = path.split('/').filter(|s| s.contains("disk")).next() {
+        if let Some(disk_part) = path.split('/').filter(|s| s.contains_hash("disk")).next() {
             disk_part.to_string()
         } else {
             "default".to_string()

@@ -37,7 +37,7 @@ async fn test_sst_atomic_flush_creates_staging_directory() {
     if fs.exists(data_dir.to_str().unwrap()).await.unwrap() {
         let initial_entries = fs.list(data_dir.to_str().unwrap()).await.unwrap();
         let initial_sst_files: Vec<_> = initial_entries.iter()
-            .filter(|e| e.name.ends_with(".sst") && e.name.contains(collection_id))
+            .filter(|e| e.name.ends_with(".sstable") && e.name.contains(collection_id))
             .collect();
         
         if !initial_sst_files.is_empty() {
@@ -92,7 +92,7 @@ async fn test_sst_atomic_flush_creates_staging_directory() {
     let entries = fs.list(&data_dir).await.unwrap();
     // Filter for SSTable files that belong to this collection specifically
     let sst_files: Vec<_> = entries.iter()
-        .filter(|e| e.name.ends_with(".sst"))
+        .filter(|e| e.name.ends_with(".sstable"))
         .collect();
     
     // Debug: print all files found
@@ -168,7 +168,7 @@ async fn test_sst_atomic_flush_rollback_on_failure() {
     if fs.exists(&data_dir).await.unwrap() {
         let entries = fs.list(&data_dir).await.unwrap();
         let sst_files: Vec<_> = entries.iter()
-            .filter(|e| e.name.ends_with(".sst"))
+            .filter(|e| e.name.ends_with(".sstable"))
             .collect();
         
         // Empty vectors may or may not create SSTable files depending on implementation

@@ -138,7 +138,7 @@ impl EngineMetricsCollector {
                 continue; // Skip engines with no operations
             }
             
-            // Composite score: lower latency and error rate is better, higher throughput is better
+            // Composite similarity: lower latency and error rate is better, higher throughput is better
             let latency_score = 1000.0 / (stat.max_avg_latency + 1.0);
             let error_score = 1.0 - stat.error_rate.min(1.0);
             let throughput_score = (stat.total_bytes_processed as f64).log10().max(1.0);

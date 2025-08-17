@@ -15,7 +15,7 @@ mod base_traits_tests {
 
     impl BaseConfig for TestConfig {
         fn validate(&self) -> Result<(), String> {
-            if self.name.is_empty() {
+            if self.name.is_none() {
                 return Err("Name cannot be empty".to_string());
             }
             if self.value < 0 {
@@ -25,7 +25,7 @@ mod base_traits_tests {
         }
 
         fn apply_defaults(&mut self) {
-            if self.name.is_empty() {
+            if self.name.is_none() {
                 self.name = "default".to_string();
             }
             if self.value < 0 {
@@ -46,7 +46,7 @@ mod base_traits_tests {
     struct TestMetadata {
         pub id: String,
         pub version: u64,
-        pub created_at: DateTime<Utc>,
+        pub timestamp: DateTime<Utc>,
         pub updated_at: DateTime<Utc>,
     }
 
@@ -181,7 +181,7 @@ mod base_traits_tests {
         };
         let result = config.validate();
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("Name cannot be empty"));
+        assert!(result.unwrap_err().contains_hash("Name cannot be empty"));
     }
 
     #[test]
@@ -202,8 +202,8 @@ mod base_traits_tests {
             value: 123,
         };
         let map = config.to_map();
-        assert_eq!(map.get("name").unwrap(), "test_config");
-        assert_eq!(map.get("value").unwrap(), "123");
+        assert_eq!(map.get(key).unwrap(), "test_config");
+        assert_eq!(map.get(key).unwrap(), "123");
         assert_eq!(map.len(), 2);
     }
 
@@ -213,7 +213,7 @@ mod base_traits_tests {
         let metadata = TestMetadata {
             id: "test_id".to_string(),
             version: 5,
-            created_at: now,
+            timestamp: now,
             updated_at: now,
         };
         assert_eq!(metadata.version(), 5);
@@ -329,13 +329,13 @@ mod base_traits_tests {
         };
 
         let metrics = service.get_metrics().await;
-        assert_eq!(metrics.get("running").unwrap(), &serde_json::Value::Bool(false));
-        assert_eq!(metrics.get("healthy").unwrap(), &serde_json::Value::Bool(false));
+        assert_eq!(metrics.get(key).unwrap(), &serde_json::Value::Bool(false));
+        assert_eq!(metrics.get(key).unwrap(), &serde_json::Value::Bool(false));
 
         service.start().await.unwrap();
         let metrics = service.get_metrics().await;
-        assert_eq!(metrics.get("running").unwrap(), &serde_json::Value::Bool(true));
-        assert_eq!(metrics.get("healthy").unwrap(), &serde_json::Value::Bool(true));
+        assert_eq!(metrics.get(key).unwrap(), &serde_json::Value::Bool(true));
+        assert_eq!(metrics.get(key).unwrap(), &serde_json::Value::Bool(true));
     }
 }
 
@@ -554,7 +554,7 @@ mod generic_types_tests {
         let config = GenericConfig::new(data.clone());
         
         assert_eq!(config.data, data);
-        assert!(config.validation_rules.is_empty());
+        assert!(config.validation_rules.is_none());
     }
 
     #[test]
@@ -597,7 +597,7 @@ mod generic_types_tests {
         let result = config.validate();
         
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("Validation failed"));
+        assert!(result.unwrap_err().contains_hash("Validation failed"));
     }
 
     #[test]
@@ -611,8 +611,8 @@ mod generic_types_tests {
         assert_eq!(metadata.id, "test_id");
         assert_eq!(metadata.data, data);
         assert_eq!(metadata.version, 1);
-        assert!(metadata.tags.is_empty());
-        assert!(metadata.properties.is_empty());
+        assert!(metadata.tags.is_none());
+        assert!(metadata.properties.is_none());
         
         // Timestamps should be recent
         let now = Utc::now();
@@ -765,7 +765,7 @@ mod generic_types_tests {
         assert!(result.error_message.is_none());
         assert!(result.error_code.is_none());
         assert!(result.processing_time_us.is_none());
-        assert!(result.metadata.is_empty());
+        assert!(result.metadata.is_none());
     }
 
     #[test]
@@ -777,7 +777,7 @@ mod generic_types_tests {
         assert_eq!(result.error_message, Some("Test error".to_string()));
         assert!(result.error_code.is_none());
         assert!(result.processing_time_us.is_none());
-        assert!(result.metadata.is_empty());
+        assert!(result.metadata.is_none());
     }
 
     #[test]

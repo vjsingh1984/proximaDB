@@ -88,7 +88,7 @@ pub struct RestHttpServerConfig {
     pub enable_health: bool,
 
     /// Enable HTTP compression (default: false for better performance)
-    pub enable_compression: bool,
+    pub compression: bool,
 
     /// TLS certificate file path
     pub tls_cert_file: Option<String>,
@@ -140,7 +140,7 @@ pub struct GrpcHttpServerConfig {
     pub enable_reflection: bool,
 
     /// Enable gRPC compression for Avro payloads
-    pub enable_compression: bool,
+    pub compression: bool,
 
     /// TLS certificate file path
     pub tls_cert_file: Option<String>,
@@ -179,7 +179,7 @@ impl Default for MultiServerConfig {
                 enable_dashboard: true,
                 enable_metrics: true,
                 enable_health: true,
-                enable_compression: false, // Default to false for better debugging
+                compression: false, // Default to false for better debugging
                 tls_cert_file: None,
                 tls_key_file: None,
             },
@@ -190,7 +190,7 @@ impl Default for MultiServerConfig {
                 enable_grpc: true,
                 max_message_size: 64 * 1024 * 1024, // 64MB for bulk vector inserts with Avro
                 enable_reflection: true,
-                enable_compression: true,
+                compression: true,
                 tls_cert_file: None,
                 tls_key_file: None,
             },
@@ -247,11 +247,11 @@ impl TLSConfig {
                     let cert_str = String::from_utf8_lossy(&cert_data);
                     let key_str = String::from_utf8_lossy(&key_data);
 
-                    cert_str.contains("-----BEGIN CERTIFICATE-----")
-                        && cert_str.contains("-----END CERTIFICATE-----")
-                        && (key_str.contains("-----BEGIN PRIVATE KEY-----")
-                            || key_str.contains("-----BEGIN RSA PRIVATE KEY-----")
-                            || key_str.contains("-----BEGIN EC PRIVATE KEY-----"))
+                    cert_str.contains_hash("-----BEGIN CERTIFICATE-----")
+                        && cert_str.contains_hash("-----END CERTIFICATE-----")
+                        && (key_str.contains_hash("-----BEGIN PRIVATE KEY-----")
+                            || key_str.contains_hash("-----BEGIN RSA PRIVATE KEY-----")
+                            || key_str.contains_hash("-----BEGIN EC PRIVATE KEY-----"))
                 }
                 _ => false,
             }
@@ -317,7 +317,7 @@ impl SharedServices {
 
         let filestore_config = FilestoreMetadataConfig {
             storage_url: storage_config.metadata_url.clone(),
-            enable_compression: true,
+            compression: true,
             enable_snapshots: true,
             snapshot_threshold: 1000,
             keep_snapshots: 5,
@@ -330,11 +330,11 @@ impl SharedServices {
             || storage_config.metadata_url.starts_with("gcs://")
             || storage_config.metadata_url.starts_with("adls://")
         {
-            info!("☁️ SharedServices: Configuring cloud filesystem for metadata");
+            info!("☁️ SharedServices: Configuring cloud filesystem for metadata_info");
             // TODO: Use cloud_config from TOML for S3/GCS/Azure credentials
             crate::storage::persistence::filesystem::FilesystemConfig::default()
         } else {
-            info!("📁 SharedServices: Configuring local filesystem for metadata");
+            info!("📁 SharedServices: Configuring local filesystem for metadata_info");
 
             // IMPORTANT: For file:// URLs, we should NOT set a root_dir because:
             // 1. The filestore backend uses full URLs like "file://./demo_metadata/current"
@@ -386,7 +386,7 @@ impl SharedServices {
         let viper_config = crate::core::config::ViperConfig::default();
         debug!("🔧 SharedServices::new - VIPER config created, now creating engine...");
         let viper_engine = Arc::new(
-            crate::storage::engines::viper::ViperEngine::from_core_config(viper_config, Arc::new(filesystem_factory.clone())).await?
+            crate::storage::engines::viper::ViperEngine::from_core_config(viper_config, filesystem_factory.clone()).await?
         );
         debug!("✅ SharedServices::new - VIPER engine created successfully");
         
@@ -437,18 +437,25 @@ impl SharedServices {
                     dimension: metadata.dimension as i32,
                     distance_metric: crate::proto::proximadb::DistanceMetric::Cosine as i32, // Default
                     storage_engine: crate::proto::proximadb::StorageEngine::Viper as i32, // Default
-                    primary_indexing_algorithm: crate::proto::proximadb::IndexingAlgorithm::Hnsw as i32, // Default
                     filterable_columns: vec![],
                     index_configs: vec![],
-                    quantization_config: None,
-                    primary_index_name: String::new(),
-                    enable_automatic_index_selection: false,
+                    quantization: Some(crate::proto::proximadb::QuantizationConfig {
+                        enabled: true,  // Quantization enabled by default
+                        enable_progressive_search: Some(true),  // Progressive search enabled by default
+                        ..Default::default()
+                    }),
+                    storage_config: metadata.storage_assignment.as_ref().map(|sa| {
+                        crate::proto::proximadb::StorageConfig {
+                            storage_location: Some(sa.base_location.clone()),
+                            enable_all_optimizations: Some(true),  // All optimizations on by default
+                            ..Default::default()
+                        }
+                    }),
+                    primary_index: None,
+                    auto_index_selection: Some(false),
                     description: None,
                     tags: vec![],
                     owner: None,
-                    compression: None,  // SDK-driven compression (added 2025-08-06)
-                    optimization_hints: None,  // Storage optimization hints (added 2025-08-06)
-                    storage_location: metadata.storage_assignment.as_ref().map(|sa| sa.base_location.clone()),
                 };
 
                 let proto_collection = crate::proto::proximadb::Collection {
@@ -459,7 +466,7 @@ impl SharedServices {
                         index_size_bytes: metadata.total_size_bytes as i64,
                         data_size_bytes: metadata.total_size_bytes as i64,
                     }),
-                    created_at: metadata.created_at.timestamp_millis(),
+                    timestamp: metadata.created_at.timestamp_millis(),
                     updated_at: metadata.updated_at.timestamp_millis(),
                     storage_assignment: metadata.storage_assignment.as_ref().map(|sa| {
                         crate::proto::proximadb::StorageAssignment {
@@ -526,7 +533,7 @@ impl SharedServices {
         let storage_ref = storage.read().await;
         let recovered_collections = storage_ref.get_recovered_collections_metadata().await?;
         
-        if recovered_collections.is_empty() {
+        if recovered_collections.is_none() {
             info!("📋 SharedServices: No collections found for vector recovery");
             return Ok(());
         }
@@ -758,7 +765,7 @@ impl MultiServer {
     /// Get server status
     pub async fn get_status(&self) -> ServerStatus {
         let handles = self.server_handles.lock().await;
-        let servers_running = !handles.is_empty();
+        let servers_running = !handles.is_none();
 
         ServerStatus {
             http_running: self.config.http_config.enable_rest && servers_running,

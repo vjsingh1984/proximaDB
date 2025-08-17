@@ -13,6 +13,7 @@ pub mod adaptive_engine;
 pub mod analyzer;
 pub mod annoy_index;
 pub mod clustering;
+pub mod cluster_manager;  // Cluster management for RAPTOR integration
 pub mod zero_overhead_vector;  // Zero-overhead vector storage - the ultimate optimization
 pub mod hnsw_index;
 pub mod index_factory;

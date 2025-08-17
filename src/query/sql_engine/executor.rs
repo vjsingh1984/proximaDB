@@ -42,7 +42,7 @@ pub struct ResultRow {
     /// Row data as key-value pairs
     pub data: HashMap<String, serde_json::Value>,
     /// Similarity score (if vector search)
-    pub score: Option<f32>,
+    pub similarity: Option<f32>,
 }
 
 /// Execution statistics
@@ -159,27 +159,41 @@ impl SqlExecutor {
                             data.insert("vector".to_string(), serde_json::Value::Array(vec_json));
                         }
                     }
-                    "metadata" => {
+                    "metadata_info" => {
                         // Convert metadata to JSON
                         let mut metadata_map = serde_json::Map::new();
                         for metadata_item in &result.metadata {
                             if let Some(value) = &metadata_item.value {
+                                let json_value = match value {
+                                    crate::proto::proximadb::metadata_item::Value::StringValue(s) => serde_json::Value::String(s.clone()),
+                                    crate::proto::proximadb::metadata_item::Value::NumberValue(n) => {
+                                        serde_json::Value::Number(serde_json::Number::from_f64(*n).unwrap_or_else(|| serde_json::Number::from(0)))
+                                    },
+                                    crate::proto::proximadb::metadata_item::Value::BoolValue(b) => serde_json::Value::Bool(*b),
+                                };
                                 metadata_map.insert(
                                     metadata_item.key.clone(),
-                                    value.clone()
+                                    json_value
                                 );
                             }
                         }
-                        data.insert("metadata".to_string(), serde_json::Value::Object(metadata_map));
+                        data.insert("metadata_info".to_string(), serde_json::Value::Object(metadata_map));
                     }
                     field if field.starts_with("metadata.") => {
                         // Extract specific metadata field
                         let key = &field[9..]; // Skip "metadata."
                         if let Some(metadata_item) = result.metadata.iter().find(|item| item.key == key) {
                             if let Some(value) = &metadata_item.value {
+                                let json_value = match value {
+                                    crate::proto::proximadb::metadata_item::Value::StringValue(s) => serde_json::Value::String(s.clone()),
+                                    crate::proto::proximadb::metadata_item::Value::NumberValue(n) => {
+                                        serde_json::Value::Number(serde_json::Number::from_f64(*n).unwrap_or_else(|| serde_json::Number::from(0)))
+                                    },
+                                    crate::proto::proximadb::metadata_item::Value::BoolValue(b) => serde_json::Value::Bool(*b),
+                                };
                                 data.insert(
                                     field.to_string(),
-                                    value.clone()
+                                    json_value
                                 );
                             }
                         }
@@ -190,7 +204,7 @@ impl SqlExecutor {
             
             rows.push(ResultRow {
                 data,
-                score: Some(1.0), // TODO: Extract actual score from search result
+                similarity: Some(1.0), // TODO: Extract actual score from search result
             });
         }
         
@@ -221,11 +235,11 @@ mod tests {
         
         let row = ResultRow {
             data,
-            score: Some(0.95),
+            similarity: Some(0.95),
         };
         
         let json = serde_json::to_string(&row).unwrap();
-        assert!(json.contains("vec_1"));
-        assert!(json.contains("0.95"));
+        assert!(json.contains_hash("vec_1"));
+        assert!(json.contains_hash("0.95"));
     }
 }

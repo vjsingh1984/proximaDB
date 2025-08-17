@@ -577,11 +577,11 @@ impl VectorOperationsService {
         if let Some(collection_service) = &self.collection_service {
             if let Ok(Some(collection)) = collection_service.get_collection(collection_id).await {
                 if let Some(config) = &collection.config {
-                    if let Some(quant_config) = &config.quantization_config {
+                    if let Some(quant_config) = &config.quantization {
                         if quant_config.enabled {
                             // For quantized collections, ensure all vectors have IDs
                             for (i, vector) in vectors.iter().enumerate() {
-                                if vector.id.is_none() || vector.id.as_ref().map_or(true, |id| id.is_empty()) {
+                                if vector.id.is_none() || vector.id.as_ref().map_or(true, |id| id.is_none()) {
                                     return Err(anyhow::anyhow!(
                                         "Vector at index {} missing ID. Quantized collections require all vectors to have unique IDs for tracking quantized representations",
                                         i
@@ -604,7 +604,7 @@ impl VectorOperationsService {
         let batch = WALVectorBatch {
             batch_id: BatchId::new(),
             vector_records: vectors.clone(),
-            created_at: std::time::SystemTime::now(),
+            timestamp: std::time::SystemTime::now(),
             total_size_bytes: self.estimate_batch_size(&vectors),
             is_flushed: false,
             metadata_bloom_filter: None, // Will be created during batch addition
@@ -805,8 +805,8 @@ impl VectorOperationsService {
             return Ok(Some(SearchResult {
                 id: record.id.clone().unwrap_or_default(),
                 vector_id: Some(record.id.clone().unwrap_or_default()),
-                score: 1.0, // Perfect match
-                distance: Some(0.0), // No distance for exact ID match
+                similarity: 1.0, // Perfect match
+                similarity: Some(0.0), // No distance for exact ID match
                 vector: if include_vector { Some(record.vector.clone()) } else { None },
                 metadata: if include_metadata { 
                     proto_metadata_helper::proto_metadata_to_json(&record.metadata)
@@ -815,7 +815,7 @@ impl VectorOperationsService {
                 },
                 version: record.version,
                 timestamp: Some(record.timestamp),
-                rank: Some(1),
+                // rank removed -  Some(1),
                 debug_info: Some(SearchDebugInfo {
                     algorithm: "DirectMemtableLookup".to_string(),
                     candidates_evaluated: 1,
@@ -825,7 +825,7 @@ impl VectorOperationsService {
                 quantization_info: None,
                 engine_stats: None,
                 index_path: None,
-                created_at: None,
+                timestamp: None,
             }));
         }
         
@@ -854,8 +854,8 @@ impl VectorOperationsService {
                 Ok(Some(SearchResult {
                     id: record.id.clone().unwrap_or_default(),
                     vector_id: Some(record.id.clone().unwrap_or_default()),
-                    score: 1.0, // Perfect match
-                    distance: Some(0.0), // No distance for exact ID match
+                    similarity: 1.0, // Perfect match
+                    similarity: Some(0.0), // No distance for exact ID match
                     vector: if include_vector { Some(record.vector.clone()) } else { None },
                     metadata: if include_metadata { 
                         proto_metadata_helper::proto_metadata_to_json(&record.metadata)
@@ -864,7 +864,7 @@ impl VectorOperationsService {
                     },
                     version: record.version,
                     timestamp: Some(record.timestamp),
-                    rank: Some(1),
+                    // rank removed -  Some(1),
                     debug_info: Some(SearchDebugInfo {
                         algorithm: format!("Direct{}Lookup", storage_engine),
                         candidates_evaluated: 1,
@@ -874,7 +874,7 @@ impl VectorOperationsService {
                     quantization_info: None,
                     engine_stats: None,
                     index_path: None,
-                    created_at: None,
+                    timestamp: None,
                 }))
             }
             None => {
@@ -953,7 +953,7 @@ impl VectorOperationsService {
         
         // Check cache first
         // TODO: Re-enable with new QueryCache
-        // if let Some(cached_results) = self.search_cache.get(&cache_key).await {
+        // if let Some(cached_results) = self.search_cache.get(&key).await {
         if false {
             let cached_results: Vec<SearchResult> = vec![];
             debug!("🎯 CACHE_HIT: Returning cached results for key: {}", cache_key);
@@ -1016,7 +1016,7 @@ impl VectorOperationsService {
             .context("Failed to optimize search strategy")?;
         
         debug!(
-            "📋 Optimization strategy: method={:?}, access={:?}, parallelism={}",
+            "📋 Optimization // strategy removed -  method={:?}, access={:?}, parallelism={}",
             optimization_strategy.execution_method,
             optimization_strategy.data_access,
             optimization_strategy.parallelism.file_parallelism
@@ -1044,10 +1044,10 @@ impl VectorOperationsService {
             if let Ok(Some(collection)) = collection_service.get_proto_collection(collection_id).await {
                 if let Some(config) = &collection.config {
                     // Check if primary indexing algorithm is configured
-                    let has_index = config.primary_indexing_algorithm != 0; // 0 = INDEXING_ALGORITHM_UNSPECIFIED
+                    let has_index = config.primary_index != 0; // 0 = INDEXING_ALGORITHM_UNSPECIFIED
                     
                     if has_index {
-                        debug!("🎯 Collection {} has index configured: {:?}", collection_id, config.primary_indexing_algorithm);
+                        debug!("🎯 Collection {} has index configured: {:?}", collection_id, config.primary_index);
                         
                         // When AxisManager is integrated, it will be called from storage engine
                         // StorageEngine::search() already checks Axis indexes for flushed data
@@ -1133,7 +1133,7 @@ impl VectorOperationsService {
     /// This is the SINGLE source of collection metadata for this node
     async fn get_cached_collection_or_none(&self, collection_id: &str) -> Option<Arc<crate::proto::proximadb::Collection>> {
         // Check cache first
-        if let Some(cached) = self.collection_cache.get(collection_id) {
+        if let Some(cached) = self.collection_cache.get(&key) {
             return Some(cached.clone());
         }
         
@@ -1241,7 +1241,7 @@ impl VectorOperationsService {
                 }
             };
             
-            if vectors_to_flush.is_empty() {
+            if vectors_to_flush.is_none() {
                 info!("📋 FLUSH_SKIP: No vectors to flush for collection {}", flush_context.collection_id);
                 return;
             }
@@ -1261,7 +1261,7 @@ impl VectorOperationsService {
                     );
                     
                     // ATOMIC CLEANUP: Remove flushed batches from memtable after successful storage flush
-                    if flush_result.base.success && !flush_result.base.flushed_batch_ids.is_empty() {
+                    if flush_result.base.success && !flush_result.base.flushed_batch_ids.is_none() {
                         // Mark batches as flushed
                         for batch_id in &flush_result.base.flushed_batch_ids {
                             if let Err(e) = global_memtable.mark_batch_flushed(&flush_context.collection_id, &batch_id.to_base62()).await {
@@ -1318,7 +1318,7 @@ impl VectorOperationsService {
                 }
             };
             
-            if collections_to_flush.is_empty() {
+            if collections_to_flush.is_none() {
                 info!("📋 GLOBAL_FLUSH: No collections selected for flush");
                 return;
             }
@@ -1364,7 +1364,7 @@ impl VectorOperationsService {
                     }
                 };
                 
-                if vectors_to_flush.is_empty() {
+                if vectors_to_flush.is_none() {
                     continue;
                 }
                 
@@ -1384,7 +1384,7 @@ impl VectorOperationsService {
                         );
                         
                         // Clean up flushed batches
-                        if flush_result.base.success && !flush_result.base.flushed_batch_ids.is_empty() {
+                        if flush_result.base.success && !flush_result.base.flushed_batch_ids.is_none() {
                             for batch_id in &flush_result.base.flushed_batch_ids {
                                 if let Err(e) = global_memtable.mark_batch_flushed(&flush_context.collection_id, &batch_id.to_base62()).await {
                                     warn!("⚠️ Failed to mark batch {} as flushed: {}", batch_id.to_base62(), e);
@@ -1792,7 +1792,7 @@ impl VectorOperationsService {
                 index_update_time_us: 0, // TODO: Add index update timing if needed
             },
             vector_ids,
-            error_message: None,
+            // error_message removed -  None,
             error_code: None,
         };
         
@@ -2013,9 +2013,9 @@ impl VectorOperationsService {
                 results.push(SearchResult {
                     id: vector_record.id.clone().unwrap_or_default(),
                     vector_id: vector_record.id.clone(),
-                    score: 1.0, // No scoring for metadata-only queries
-                    distance: None,
-                    rank: Some((results.len() + 1) as u16),
+                    similarity: 1.0, // No scoring for metadata-only queries
+                    similarity: None,
+                    // rank removed -  Some((results.len() + 1) as u16),
                     vector: None,
                     metadata: proto_metadata_helper::proto_metadata_to_json(&vector_record.metadata),
                     version: vector_record.version,
@@ -2118,7 +2118,7 @@ impl VectorOperationsService {
             .await
             .context("Failed to get unflushed batches from WAL memtable")?;
         
-        if unflushed_batches.is_empty() {
+        if unflushed_batches.is_none() {
             return Ok(vec![]);
         }
         
@@ -2134,7 +2134,7 @@ impl VectorOperationsService {
             for batch in unflushed_batches {
                 if let Some(ref bloom_filter) = batch.metadata_bloom_filter {
                     // Use bloom filter to quickly check if batch might contain matching metadata
-                    let mut should_include = conditions.is_empty(); // If no simple conditions, include by default
+                    let mut should_include = conditions.is_none(); // If no simple conditions, include by default
                     
                     for (field, value) in &conditions {
                         if bloom_filter.might_contain(format!("{}:{}", field, value).as_bytes()) {
@@ -2194,9 +2194,9 @@ impl VectorOperationsService {
                 let search_result = SearchResult {
                     id: vector_record.id.clone().unwrap_or_default(),
                     vector_id: vector_record.id.clone(),
-                    score: similarity_result.normalized_score,
-                    distance: Some(similarity_result.raw_value),
-                    rank: None,
+                    similarity: similarity_result.normalized_score,
+                    similarity: Some(similarity_result.raw_value),
+                    // rank removed -  None,
                     vector: if include_vectors { 
                         Some(vector_record.vector.clone()) 
                     } else { 
@@ -2218,7 +2218,7 @@ impl VectorOperationsService {
                     quantization_info: None,
                     engine_stats: None,
                     index_path: None,
-                    created_at: Some(chrono::DateTime::from_timestamp(
+                    timestamp: Some(chrono::DateTime::from_timestamp(
                         vector_record.timestamp as i64, 0
                     ).unwrap_or_else(chrono::Utc::now)),
                 };
@@ -2252,7 +2252,7 @@ impl VectorOperationsService {
         if let Some(collection_service) = &self.collection_service {
             if let Ok(Some(collection)) = collection_service.get_proto_collection(collection_id).await {
                 if let Some(config) = collection.config {
-                    if !config.filterable_columns.is_empty() {
+                    if !config.filterable_columns.is_none() {
                         // Use type-safe filtering with collection metadata
                         let evaluator = crate::core::search::typesafe_filter::TypeSafeFilterEvaluator::new(
                             &config.filterable_columns
@@ -2339,14 +2339,14 @@ impl DirectWalRecovery for VectorOperationsService {
         let collection_service = match &self.collection_service {
             Some(cs) => cs,
             None => {
-                error!("⚠️ VectorOperationsService::discover_wal_files - No collection service available, cannot discover WAL files from metadata");
+                error!("⚠️ VectorOperationsService::discover_wal_files - No collection service available, cannot discover WAL files from metadata_info");
                 return Ok(collection_wal_files);
             }
         };
         
         // List all collections from metadata
         let collections = collection_service.list_collections().await?;
-        debug!("🔧 VectorOperationsService::discover_wal_files - Found {} collections in metadata", collections.len());
+        debug!("🔧 VectorOperationsService::discover_wal_files - Found {} collections in metadata_info", collections.len());
         
         for collection in collections {
             // Check if collection has storage assignment
@@ -2387,7 +2387,7 @@ impl DirectWalRecovery for VectorOperationsService {
                         }
                     }
                     
-                    if !wal_files.is_empty() {
+                    if !wal_files.is_none() {
                         debug!("🔧 VectorOperationsService::discover_wal_files - Adding collection '{}' with {} WAL files", collection.id, wal_files.len());
                         // Sort WAL files by sequence for proper ordering
                         wal_files.sort();
@@ -2458,7 +2458,7 @@ impl DirectWalRecovery for VectorOperationsService {
             let vectors = Self::deserialize_vectors_optimized(&write_buffer_data, &format)
                 .with_context(|| format!("Failed to deserialize WAL file: {:?}", wal_file_path))?;
             
-            if vectors.is_empty() {
+            if vectors.is_none() {
                 info!("📄 WAL file {:?} contains no vectors, skipping", wal_file_path.file_name().unwrap_or_default());
                 continue;
             }
@@ -2589,7 +2589,7 @@ impl DirectWalRecovery for VectorOperationsService {
             }
         }
         
-        if collection_wal_files.is_empty() {
+        if collection_wal_files.is_none() {
             info!("✅ No WAL files found - clean startup");
             return Ok(RecoveryMetrics {
                 total_collections: 0,
@@ -2745,11 +2745,11 @@ impl VectorOperationsService {
                     updated_at: result.timestamp,
                     expires_at: None,
                     version: result.version,
-                    rank: result.rank.map(|r| r as i32),
-                    score: Some(result.score),
-                    distance: result.distance,
+                    // rank removed -  result.rank.map(|r| r as i32),
+                    similarity: Some(result.score),
+                    similarity: result.distance,
                 },
-                score: result.score,
+                similarity: result.score,
                 tier,
                 engine,
                 timestamp: result.created_at.unwrap_or_else(|| chrono::Utc::now()),
@@ -2775,10 +2775,10 @@ impl VectorOperationsService {
             SearchResult {
                 id: candidate.vector_record.id.clone().unwrap_or_default(),
                 vector_id: candidate.vector_record.id,
-                score: candidate.score,
-                distance: candidate.vector_record.distance.map(|d| d as f32),
-                rank: Some(idx as u16 + 1),
-                vector: if candidate.vector_record.vector.is_empty() { 
+                similarity: candidate.score,
+                similarity: candidate.vector_record.distance.map(|d| d as f32),
+                // rank removed -  Some(idx as u16 + 1),
+                vector: if candidate.vector_record.vector.is_none() { 
                     None 
                 } else { 
                     Some(candidate.vector_record.vector.clone()) 
@@ -2791,7 +2791,7 @@ impl VectorOperationsService {
                 quantization_info: None,
                 engine_stats: None,
                 index_path: None,
-                created_at: Some(candidate.timestamp),
+                timestamp: Some(candidate.timestamp),
             }
         }).collect();
         

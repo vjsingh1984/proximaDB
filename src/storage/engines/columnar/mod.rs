@@ -22,6 +22,10 @@ pub mod quantization_adapter;
 pub mod batch_operations;
 pub mod schema_manager;
 pub mod utilities;
+pub mod footer_cache;
+pub mod native_metadata;
+pub mod hybrid_writer;
+pub mod config_builder;
 
 // New unified columnar infrastructure
 pub mod schema;
@@ -29,22 +33,36 @@ pub mod serialization;
 pub mod common;
 // NOTE: Distance computation has been moved to crate::compute::distance_computation::quantized
 
-// Examples demonstrating optimization benefits
-pub mod examples;
+// Examples demonstrating optimization benefits (moved to tests)
+#[cfg(test)]
+mod examples_test;
 
 // Comprehensive tests for ID-aware columnar storage
 #[cfg(test)]
 mod tests;
 
 // Re-exports for convenience
-pub use parquet_reader::UnifiedParquetReader;
-pub use parquet_writer::{StreamingParquetWriter, BatchParquetWriter, ParquetWriterConfig, IdLessLookup};
+pub use parquet_reader::{UnifiedParquetReader, PagePruningInfo, PageRange};
+pub use parquet_writer::{StreamingParquetWriter, BatchParquetWriter, ParquetWriterConfig, IdLessLookup, StreamingParquetWriterStats};
 pub use optimization::{ColumnarOptimizer, ProgressiveSearchConfig, StreamingRowGroupIterator};
 pub use id_index::{ColumnarIdIndex, ParquetLocation, IndexStats};
 pub use quantization_adapter::ColumnarQuantizationAdapter;
 pub use batch_operations::ColumnarBatchOperations;
 pub use schema_manager::ColumnarSchemaManager;
 pub use utilities::ColumnarUtilities;
+pub use footer_cache::{ParquetFooterCache, FooterCacheConfig, CacheStats, WarmingStrategy};
+
+pub use native_metadata::{
+    NativeMetadataHandler, NativeMetadataStats, NativeMetadataQueryOptimizer,
+    MetadataFieldType, OptimizedFilter, NativePredicate, PredicateOperator
+};
+pub use hybrid_writer::{
+    HybridParquetWriter, HybridWriterConfig, HybridWriterStatistics,
+    WriterMode, InsertionPattern, PatternType
+};
+pub use config_builder::{
+    ParquetConfigBuilder, FooterCacheBuilder, HybridWriterBuilder, ParquetPresets
+};
 
 // New unified infrastructure exports
 pub use schema::{
@@ -62,6 +80,7 @@ pub use serialization::{
 pub use common::{
     CommonColumnarOperations, CommonColumnarConfig, PerformanceMonitor,
     SchemaGenerationConfig, SerializationOptimizationConfig, DistanceComputationConfig,
+    OptimalBatchSizes, ViperOptimizations, RowGroupSizeOptimization,
 };
 
 use anyhow::Result;
@@ -91,7 +110,7 @@ pub struct ColumnarConfig {
     pub max_cache_size_bytes: usize,
     
     /// Quantization configuration
-    pub quantization_config: QuantizationConfig,
+    pub quantization: QuantizationConfig,
     
     /// Optimization thresholds
     pub optimization_thresholds: OptimizationThresholds,
@@ -151,7 +170,7 @@ pub struct ColumnarFileMetadata {
     pub distance_metric: DistanceMetric,
     
     /// Quantization configuration
-    pub quantization_config: QuantizationConfig,
+    pub quantization: QuantizationConfig,
     
     /// Column statistics
     pub column_stats: HashMap<String, ColumnStatistics>,
@@ -160,7 +179,7 @@ pub struct ColumnarFileMetadata {
     pub version: u32,
     
     /// Creation timestamp
-    pub created_at: chrono::DateTime<chrono::Utc>,
+    pub timestamp: chrono::DateTime<chrono::Utc>,
     
     /// Last modified timestamp
     pub modified_at: chrono::DateTime<chrono::Utc>,
@@ -239,7 +258,7 @@ pub struct RowGroupStats {
 pub struct SearchCandidate {
     pub row_group_id: usize,
     pub row_offset: u32,
-    pub distance: f32,
+    pub similarity: f32,
     pub vector_id: Option<String>,
 }
 
@@ -372,7 +391,7 @@ impl Default for ColumnarConfig {
             enable_projection: true,
             enable_row_group_pruning: true,
             max_cache_size_bytes: 512 * 1024 * 1024, // 512MB
-            quantization_config: QuantizationConfig::default(),
+            quantization: QuantizationConfig::default(),
             optimization_thresholds: OptimizationThresholds::default(),
         }
     }
@@ -633,9 +652,9 @@ mod tests {
         assert_eq!(config.max_cache_size_bytes, 512 * 1024 * 1024);
         
         // Test quantization defaults
-        assert!(config.quantization_config.enable_binary);
-        assert!(config.quantization_config.enable_int8);
-        assert!(config.quantization_config.enable_pq);
+        assert!(config.quantization.enable_binary);
+        assert!(config.quantization.enable_int8);
+        assert!(config.quantization.enable_pq);
         
         // Test optimization thresholds
         assert_eq!(config.optimization_thresholds.row_group_pruning_threshold, 1000);

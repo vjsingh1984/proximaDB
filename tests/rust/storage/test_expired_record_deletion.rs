@@ -79,7 +79,7 @@ async fn test_sst_expired_record_deletion() -> Result<()> {
     let collection_dir = data_dir.join("test_collection");
     std::fs::create_dir_all(&collection_dir)?;
     
-    let sst_file = collection_dir.join("test.sst");
+    let sst_file = collection_dir.join("test.sstable");
     let mut sst_data = Vec::new();
     
     for record in &test_records {
@@ -91,7 +91,7 @@ async fn test_sst_expired_record_deletion() -> Result<()> {
     std::fs::write(&sst_file, &sst_data)?;
     
     // Create compaction task
-    let output_file = collection_dir.join("compacted.sst");
+    let output_file = collection_dir.join("compacted.sstable");
     let task = CompactionTask {
         collection_id: "test_collection".to_string(),
         level: 0,

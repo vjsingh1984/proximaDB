@@ -114,18 +114,18 @@ impl IdIndex {
     
     /// Lookup an ID and return its location
     pub fn lookup(&self, id: &str) -> Option<BlockLocation> {
-        self.id_to_location.read().unwrap().get(id).cloned()
+        self.id_to_location.read().unwrap().get(key).cloned()
     }
     
     /// Async lookup for compatibility with async APIs
     pub async fn lookup_async(&self, id: &str) -> Option<RecordLocation> {
-        self.id_to_location.read().unwrap().get(id).cloned()
+        self.id_to_location.read().unwrap().get(key).cloned()
     }
     
     /// Batch lookup for multiple IDs
     pub fn lookup_batch(&self, ids: &[String]) -> Vec<Option<BlockLocation>> {
         let map = self.id_to_location.read().unwrap();
-        ids.iter().map(|id| map.get(id).cloned()).collect()
+        ids.iter().map(|id| map.get(key).cloned()).collect()
     }
     
     /// Range query - get all IDs in a range
@@ -278,7 +278,7 @@ impl TwoLevelIdIndex {
         
         // Look in the dense index for exact location
         let dense_idx = &self.dense_indexes[range.1.dense_index_id];
-        dense_idx.entries.get(id).copied()
+        dense_idx.entries.get(key).copied()
     }
 }
 

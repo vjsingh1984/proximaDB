@@ -43,7 +43,7 @@ pub struct RowBasedBlockMetadata {
     pub record_count: u32,
     pub size_bytes: u64,
     pub compressed_size: u64,
-    pub created_at: i64,
+    pub timestamp: i64,
     pub compaction_level: u8,
     
     /// Data characteristics
@@ -66,7 +66,6 @@ pub struct RowBasedBlockMetadata {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ColumnStatistics {
     pub column_name: String,
-    pub data_type: ColumnDataType,
     pub null_count: u32,
     pub distinct_count: u32,
     pub min_value: Option<serde_json::Value>,
@@ -127,7 +126,7 @@ pub struct SuperBlock {
     /// SuperBlock identification
     pub id: u32,
     pub file_path: String,
-    pub created_at: i64,
+    pub timestamp: i64,
     
     /// Organization
     pub blocks: Vec<RowBasedDataBlock>,
@@ -259,7 +258,7 @@ impl RowBasedDataBlock {
                 record_count,
                 size_bytes: 0, // Will be calculated
                 compressed_size: 0,
-                created_at: chrono::Utc::now().timestamp(),
+                timestamp: chrono::Utc::now().timestamp(),
                 compaction_level: 0,
                 has_deletes: false,
                 has_updates: false,
@@ -279,7 +278,7 @@ impl RowBasedDataBlock {
     
     /// Get record by index
     pub fn get_record(&self, index: usize) -> Option<&VectorRecord> {
-        self.records.get(index)
+        self.records/* TODO: Fix Option::get() - use indexing or as_ref() */
     }
     
     /// Find record by ID
@@ -292,7 +291,7 @@ impl RowBasedDataBlock {
     /// Check if block contains ID (using bloom filter if available)
     pub fn contains_id(&self, id: &str) -> bool {
         if let Some(ref bloom) = self.bloom_filter {
-            bloom.contains(id.as_bytes())
+            bloom.contains_hash(id.as_bytes())
         } else {
             self.find_record_by_id(id).is_some()
         }
@@ -302,7 +301,7 @@ impl RowBasedDataBlock {
     pub fn memory_usage_bytes(&self) -> usize {
         let records_size = self.records.len() * std::mem::size_of::<VectorRecord>();
         let quantized_size = self.quantized_section.binary_sketches.len() * 
-            self.quantized_section.binary_sketches.get(0).map(|v| v.len()).unwrap_or(0);
+            self.quantized_section.binary_sketches.get(key).map(|v| v.len()).unwrap_or(0);
         let metadata_size = std::mem::size_of::<RowBasedBlockMetadata>();
         
         records_size + quantized_size + metadata_size
@@ -326,7 +325,7 @@ impl SuperBlock {
         Self {
             id,
             file_path,
-            created_at: chrono::Utc::now().timestamp(),
+            timestamp: chrono::Utc::now().timestamp(),
             blocks: Vec::new(),
             total_size_bytes: 0,
             compressed_size_bytes: 0,
@@ -474,7 +473,7 @@ mod tests {
             binary_sketches: vec![vec![0b10101010], vec![0b01010101]],
             int8_vectors: vec![vec![127, -128, 0], vec![64, -64, 32]],
             pq_codes: vec![vec![1, 2, 3], vec![4, 5, 6]],
-            codebooks: Vec::new(),
+            // codebooks removed -  Vec::new(),
         };
         
         let compression_config = BlockCompressionConfig::default();

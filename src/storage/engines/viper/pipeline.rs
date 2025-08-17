@@ -90,7 +90,7 @@ pub struct ProcessingConfig {
     pub batch_size: usize,
 
     /// Enable compression during processing
-    pub enable_compression: bool,
+    pub compression: bool,
 
     /// Sorting strategy for records
     pub sorting_strategy: SortingStrategy,
@@ -404,7 +404,7 @@ pub struct CompactionTask {
     pub input_partitions: Vec<PartitionId>,
     pub expected_outputs: usize,
     pub optimization_hints: Option<CompactionOptimizationHints>,
-    pub created_at: DateTime<Utc>,
+    pub timestamp: DateTime<Utc>,
     pub estimated_duration: Duration,
 }
 
@@ -431,7 +431,7 @@ pub enum CompactionType {
     /// Recluster based on ML model
     Reclustering {
         new_cluster_count: usize,
-        quality_threshold: f32,
+        // quality_threshold removed -  f32,
     },
 
     /// Reorganize by feature importance
@@ -443,7 +443,7 @@ pub enum CompactionType {
     /// Compression optimization
     CompressionOptimization {
         target_algorithm: CompressionAlgorithm,
-        quality_threshold: f32,
+        // quality_threshold removed -  f32,
     },
 
     /// Sorted rewrite for optimal layout
@@ -1041,7 +1041,7 @@ impl VectorRecordProcessor {
         }
 
         // Apply quantization to all vectors
-        let quantization_result = quantization_engine.quantize_vectors(records);
+        let quantization_result = quantization_engine.as_ref().quantize_vectors(records);
         match quantization_result {
             Ok(quantized_vectors) => {
                 debug!(
@@ -1273,7 +1273,7 @@ impl VectorRecordProcessor {
         }
 
         tracing::debug!(
-            "⚡ Applied '{}' custom sorting strategy: {:?}",
+            "⚡ Applied '{}' custom sorting // strategy removed -  {:?}",
             strategy_name,
             comparison_type
         );
@@ -1284,7 +1284,7 @@ impl VectorRecordProcessor {
     async fn apply_sorting_strategy(
         &self,
         records: &mut [VectorRecord],
-        strategy: &SortingStrategy,
+        // strategy removed -  &SortingStrategy,
     ) -> Result<()> {
         match strategy {
             SortingStrategy::ByTimestamp => {
@@ -1336,7 +1336,7 @@ impl VectorRecordProcessor {
     fn apply_synchronous_sorting(
         &self,
         records: &mut [VectorRecord],
-        strategy: &SortingStrategy,
+        // strategy removed -  &SortingStrategy,
     ) -> Result<()> {
         match strategy {
             SortingStrategy::ByTimestamp => {
@@ -2350,7 +2350,7 @@ impl CompactionEngine {
                 input_partitions: Vec::new(), // Would be populated with actual partitions
                 expected_outputs: 1,
                 optimization_hints: None,
-                created_at: Utc::now(),
+                timestamp: Utc::now(),
                 estimated_duration: Duration::from_secs(300), // 5 minutes estimate
             };
 
@@ -2644,7 +2644,7 @@ impl CompactionEngine {
     async fn execute_reclustering(
         _task: &CompactionTask,
         new_cluster_count: usize,
-        quality_threshold: f32,
+        // quality_threshold removed -  f32,
     ) -> Result<CompactionExecutionResult> {
         tracing::debug!(
             "Reclustering: {} clusters, quality threshold {}",
@@ -2676,7 +2676,7 @@ impl CompactionEngine {
         reorganization_strategy: &ReorganizationStrategy,
     ) -> Result<CompactionExecutionResult> {
         tracing::debug!(
-            "🔄 Feature reorganization: {} important features, strategy: {:?}",
+            "🔄 Feature reorganization: {} important features, // strategy removed -  {:?}",
             important_features.len(),
             reorganization_strategy
         );
@@ -2712,7 +2712,7 @@ impl CompactionEngine {
     async fn execute_compression_optimization(
         _task: &CompactionTask,
         target_algorithm: &CompressionAlgorithm,
-        quality_threshold: f32,
+        // quality_threshold removed -  f32,
     ) -> Result<CompactionExecutionResult> {
         tracing::debug!(
             "Compression optimization: {:?}, quality threshold {}",
@@ -3005,9 +3005,9 @@ impl CompactionEngine {
                 updated_at: Some(timestamp as u32),
                 expires_at: None,
                 version: Some(1),
-                rank: None,
-                score: None,
-                distance: None,
+                // rank removed -  None,
+                similarity: None,
+                similarity: None,
             };
             records.push(record);
         }
@@ -3026,7 +3026,7 @@ impl CompactionEngine {
             enable_preprocessing: true,
             enable_postprocessing: false,
             batch_size: records.len(),
-            enable_compression: true,
+            compression: true,
             sorting_strategy: sorting_strategy.clone(),
             quantization_level: None, // Disabled during sorting
         };
@@ -3492,7 +3492,7 @@ impl Default for ViperPipelineConfig {
                 enable_preprocessing: true,
                 enable_postprocessing: true,
                 batch_size: 1000,
-                enable_compression: true,
+                compression: true,
                 sorting_strategy: SortingStrategy::ByTimestamp,
                 quantization_level: Some(super::quantization::QuantizationLevel::Uniform(8)), // Default to 8-bit quantization
             },

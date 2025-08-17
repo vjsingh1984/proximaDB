@@ -104,9 +104,9 @@ fn create_test_collection(collection_id: &str, base_path: &str) -> crate::proto:
             primary_indexing_algorithm: 0, // HNSW
             filterable_columns: vec![],
             index_configs: vec![],
-            quantization_config: None,
-            primary_index_name: String::new(),
-            enable_automatic_index_selection: false,
+            quantization: None,
+            primary_index: String::new(),
+            auto_index_selection: false,
             description: None,
             tags: vec![],
             owner: None,
@@ -115,7 +115,7 @@ fn create_test_collection(collection_id: &str, base_path: &str) -> crate::proto:
             optimization_hints: None,
         }),
         stats: None,
-        created_at: chrono::Utc::now().timestamp(),
+        timestamp: chrono::Utc::now().timestamp(),
         updated_at: chrono::Utc::now().timestamp(),
         storage_assignment: Some(StorageAssignment {
             base_location: format!("file://{}", base_path),
@@ -139,9 +139,9 @@ fn create_test_vector(id: &str, dimension: usize) -> VectorRecord {
         updated_at: Some(chrono::Utc::now().timestamp() as u32),
         expires_at: None,
         version: Some(1),
-        rank: None,
-        score: None,
-        distance: None,
+        // rank removed -  None,
+        similarity: None,
+        similarity: None,
     }
 }
 
@@ -242,7 +242,7 @@ async fn test_viper_flush_and_compaction_debug() -> Result<()> {
     }
     
     // Step 4: Run compaction
-    debug!("\n🗜️ Step 4: Running compaction");
+    debug!("\n🗜️ Step 4: Running compaction_info");
     
     let compact_params = crate::storage::traits::CompactionParameters {
         collection_id: Some(collection_id.to_string()),
@@ -259,7 +259,7 @@ async fn test_viper_flush_and_compaction_debug() -> Result<()> {
              compact_result.input_files, compact_result.output_files, compact_result.entries_processed);
     
     // Step 5: List files after compaction
-    debug!("\n📋 Step 5: Listing files after compaction");
+    debug!("\n📋 Step 5: Listing files after compaction_info");
     
     let entries_after = fs.list(&data_url).await?;
     let mut compacted_files = Vec::new();
@@ -267,7 +267,7 @@ async fn test_viper_flush_and_compaction_debug() -> Result<()> {
     for entry in entries_after {
         if entry.name.ends_with(".parquet") && !entry.metadata.is_directory {
             debug!("  📄 Found: {}", entry.name);
-            if entry.name.contains("compacted") {
+            if entry.name.contains_hash("compacted") {
                 compacted_files.push(entry.url.clone());
             }
         }

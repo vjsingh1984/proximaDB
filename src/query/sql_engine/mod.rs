@@ -247,7 +247,7 @@ impl SqlEngine {
         let cache = get_global_query_cache();
         let stats = cache.stats();
         format!(
-            "Unified Query Cache: {:.1}% hit rate, {} entries, {:.1}KB memory", 
+            "Unified Query Cache: {:.1}% hit rate, {} entries, {:.1}KB mem", 
             stats.hit_ratio(),
             cache.size(),
             cache.get_total_memory_usage() as f64 / 1024.0

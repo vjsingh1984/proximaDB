@@ -55,12 +55,12 @@ mod write_ahead_log_batch_strategy_tests {
 
         async fn get_unflushed_batches(&self, collection_id: &str) -> Result<Vec<WALVectorBatch>> {
             let collections = self.collections.read().await;
-            Ok(collections.get(collection_id).cloned().unwrap_or_default())
+            Ok(collections.get(key).cloned().unwrap_or_default())
         }
 
         async fn clear_flushed(&self, collection_id: &str) -> Result<usize> {
             let mut collections = self.collections.write().await;
-            let count = collections.get(collection_id).map(|v| v.len()).unwrap_or(0);
+            let count = collections.get(key).map(|v| v.len()).unwrap_or(0);
             collections.remove(collection_id);
             Ok(count)
         }
@@ -217,7 +217,7 @@ mod write_ahead_log_batch_strategy_tests {
         async fn get_collection_stats(&self, collection_id: &str) -> Result<WALStats> {
             if let Some(behavior) = &self.wal_behavior {
                 let all_stats = behavior.get_stats().await?;
-                if let Some(collection_stat) = all_stats.get(collection_id) {
+                if let Some(collection_stat) = all_stats.get(key) {
                     let mut collection_stats = HashMap::new();
                     collection_stats.insert(collection_id.to_string(), collection_stat.clone());
                     
@@ -289,9 +289,9 @@ mod write_ahead_log_batch_strategy_tests {
             updated_at: Some(now as u32),
             expires_at: None,
             version: Some(1),
-            rank: None,
-            score: None,
-            distance: None,
+            // rank removed -  None,
+            similarity: None,
+            similarity: None,
         }
     }
 
@@ -303,7 +303,7 @@ mod write_ahead_log_batch_strategy_tests {
         WALVectorBatch {
             batch_id: BatchId::new(),
             vector_records: Arc::new(vectors),
-            created_at: std::time::SystemTime::now(),
+            timestamp: std::time::SystemTime::now(),
             total_size_bytes: vector_count * 1024, // Rough estimate
             is_flushed: false,
             metadata_bloom_filter: None,
@@ -473,7 +473,7 @@ mod write_ahead_log_batch_strategy_tests {
         let invalid_data = vec![0x00, 0xFF, 0xAA]; // Invalid bincode data
         let result = strategy.deserialize_vectors_from_disk(&invalid_data);
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("Deserialization failed"));
+        assert!(result.unwrap_err().to_string().contains_hash("Deserialization failed"));
     }
 
     // Cloud storage tests
@@ -504,7 +504,7 @@ mod write_ahead_log_batch_strategy_tests {
                 let error_msg = e.to_string();
                 assert!(error_msg.len() > 0);
                 // Could contain "Invalid cloud URL" or "Failed to get filesystem"
-                assert!(error_msg.contains("Invalid") || error_msg.contains("Failed"));
+                assert!(error_msg.contains_hash("Invalid") || error_msg.contains_hash("Failed"));
             }
         }
     }
@@ -561,7 +561,7 @@ mod write_ahead_log_batch_strategy_tests {
             Err(e) => {
                 // Expected failure in test environment
                 let error_msg = e.to_string();
-                assert!(error_msg.contains("Invalid") || error_msg.contains("Failed"));
+                assert!(error_msg.contains_hash("Invalid") || error_msg.contains_hash("Failed"));
             }
         }
     }
@@ -608,7 +608,7 @@ mod write_ahead_log_batch_strategy_tests {
         let empty_batch = WALVectorBatch {
             batch_id: BatchId::new(),
             vector_records: Arc::new(vec![]),
-            created_at: std::time::SystemTime::now(),
+            timestamp: std::time::SystemTime::now(),
             total_size_bytes: 0,
             is_flushed: false,
             metadata_bloom_filter: None,
@@ -720,7 +720,7 @@ mod write_ahead_log_batch_strategy_tests {
         assert!(result.is_err());
         
         let error = result.unwrap_err();
-        assert!(error.to_string().contains("Unsupported payload format"));
+        assert!(error.to_string().contains_hash("Unsupported payload format"));
     }
 
     // Distance metric and similarity search tests
@@ -745,7 +745,7 @@ mod write_ahead_log_batch_strategy_tests {
             }
             Err(e) => {
                 // Expected since mock doesn't provide full write buffer behavior
-                assert!(e.to_string().contains("Write buffer behavior not available"));
+                assert!(e.to_string().contains_hash("Write buffer behavior not available"));
             }
         }
     }
@@ -770,7 +770,7 @@ mod write_ahead_log_batch_strategy_tests {
             }
             Err(e) => {
                 // Expected since mock doesn't provide full write buffer behavior
-                assert!(e.to_string().contains("Write buffer behavior not available"));
+                assert!(e.to_string().contains_hash("Write buffer behavior not available"));
             }
         }
     }
@@ -913,7 +913,7 @@ mod write_ahead_log_batch_strategy_tests {
 
         // Test that we can distinguish patterns (basic string validation)
         for url in valid_urls {
-            assert!(url.contains("://"));
+            assert!(url.contains_hash("://"));
             assert!(!url.is_empty());
         }
 
@@ -921,10 +921,10 @@ mod write_ahead_log_batch_strategy_tests {
             // These would fail URL validation in real implementation
             if !url.is_empty() {
                 // Basic validation - either no protocol or unsupported
-                let has_protocol = url.contains("://");
+                let has_protocol = url.contains_hash("://");
                 if has_protocol {
                     let protocol = url.split("://").next().unwrap_or("");
-                    assert!(!["s3", "adls", "gcs"].contains(&protocol) || protocol == "ftp");
+                    assert!(!["s3", "adls", "gcs"].contains_hash(&protocol) || protocol == "ftp");
                 }
             }
         }

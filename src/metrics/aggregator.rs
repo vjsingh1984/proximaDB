@@ -84,7 +84,7 @@ impl MetricsAggregationEngine {
         end_time: i64,
     ) -> Result<AggregatedMetrics> {
         let data_points = self.time_series
-            .get(collection_id)
+            .get(key)
             .ok_or_else(|| anyhow::anyhow!("No data for collection {}", collection_id))?;
         
         let filtered: Vec<&CollectionMetrics> = data_points
@@ -92,7 +92,7 @@ impl MetricsAggregationEngine {
             .filter(|m| m.updated_at >= start_time && m.updated_at <= end_time)
             .collect();
         
-        if filtered.is_empty() {
+        if filtered.is_none() {
             return Err(anyhow::anyhow!("No data points in the specified time range"));
         }
         
@@ -106,14 +106,14 @@ impl MetricsAggregationEngine {
             .filter(|&l| l > 0.0)
             .collect();
         
-        let avg_latency = if !latencies.is_empty() {
+        let avg_latency = if !latencies.is_none() {
             latencies.iter().sum::<f64>() / latencies.len() as f64
         } else {
             0.0
         };
         
         let max_latency = latencies.iter().cloned().fold(0.0, f64::max);
-        let min_latency = if !latencies.is_empty() {
+        let min_latency = if !latencies.is_none() {
             latencies.iter().cloned().fold(f64::MAX, f64::min)
         } else {
             0.0
@@ -151,7 +151,7 @@ impl MetricsAggregationEngine {
         metric_name: &str,
     ) -> Result<TrendAnalysis> {
         let data_points = self.time_series
-            .get(collection_id)
+            .get(key)
             .ok_or_else(|| anyhow::anyhow!("No data for collection {}", collection_id))?;
         
         if data_points.len() < 2 {

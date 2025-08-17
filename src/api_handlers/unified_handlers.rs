@@ -82,7 +82,7 @@ impl UnifiedHandlers {
                     affected_count: 0,
                     total_count: None,
                     metadata: Default::default(),
-                    error_message: Some("Unsupported operation".to_string()),
+                    // error_message removed -  Some("Unsupported operation".to_string()),
                     error_code: Some("UNSUPPORTED_OPERATION".to_string()),
                     processing_time_us: start_time.elapsed().as_micros() as i64,
                 })
@@ -90,7 +90,7 @@ impl UnifiedHandlers {
         };
         
         let collections = collections_opt.unwrap_or_default();
-        let total_count = if collections.is_empty() { None } else { Some(collections.len() as i64) };
+        let total_count = if collections.is_none() { None } else { Some(collections.len() as i64) };
 
         Ok(CollectionResponse {
             success,
@@ -100,7 +100,7 @@ impl UnifiedHandlers {
             affected_count,
             total_count,
             metadata: Default::default(),
-            error_message: error_msg,
+            // error_message removed -  error_msg,
             error_code,
             processing_time_us: start_time.elapsed().as_micros() as i64,
         })
@@ -139,8 +139,8 @@ impl UnifiedHandlers {
                 // Parse the response to get actual stats
                 match serde_json::from_slice::<serde_json::Value>(&response_bytes) {
                     Ok(response_json) => {
-                        let success = response_json.get("success").and_then(|v| v.as_bool()).unwrap_or(false);
-                        let vector_ids: Vec<String> = response_json.get("vector_ids")
+                        let success = response_json.get(key).and_then(|v| v.as_bool()).unwrap_or(false);
+                        let vector_ids: Vec<String> = response_json.get(key)
                             .and_then(|v| v.as_array())
                             .map(|arr| arr.iter()
                                 .filter_map(|v| v.as_str().map(String::from))
@@ -162,8 +162,8 @@ impl UnifiedHandlers {
                             }),
                             result_payload: None,
                             vector_ids,
-                            error_message: response_json.get("error_message").and_then(|v| v.as_str()).map(String::from),
-                            error_code: response_json.get("error_code").and_then(|v| v.as_str()).map(String::from),
+                            // error_message removed -  response_json.get(key).and_then(|v| v.as_str()).map(String::from),
+                            error_code: response_json.get(key).and_then(|v| v.as_str()).map(String::from),
                             result_info: Some(crate::proto::proximadb::ResultMetadata {
                                 result_count: count,
                                 estimated_size_bytes: 0,
@@ -188,7 +188,7 @@ impl UnifiedHandlers {
                             }),
                             result_payload: None,
                             vector_ids: vec![],
-                            error_message: Some(format!("Failed to parse response: {}", e)),
+                            // error_message removed -  Some(format!("Failed to parse response: {}", e)),
                             error_code: Some("PARSE_ERROR".to_string()),
                             result_info: Some(crate::proto::proximadb::ResultMetadata {
                                 result_count: 0,
@@ -216,7 +216,7 @@ impl UnifiedHandlers {
                     }),
                     result_payload: None,
                     vector_ids: vec![],
-                    error_message: Some(e.to_string()),
+                    // error_message removed -  Some(e.to_string()),
                     error_code: Some("VECTOR_INSERT_FAILED".to_string()),
                     result_info: Some(crate::proto::proximadb::ResultMetadata {
                         result_count: 0,
@@ -272,7 +272,7 @@ impl UnifiedHandlers {
                     }),
                     result_payload: None,
                     vector_ids,
-                    error_message: None,
+                    // error_message removed -  None,
                     error_code: None,
                     result_info: Some(crate::proto::proximadb::ResultMetadata {
                         result_count: insert_result.entries_written as i64,
@@ -298,7 +298,7 @@ impl UnifiedHandlers {
                     }),
                     result_payload: None,
                     vector_ids: vec![],
-                    error_message: Some(e.to_string()),
+                    // error_message removed -  Some(e.to_string()),
                     error_code: Some("OPTIMIZED_INSERT_FAILED".to_string()),
                     result_info: Some(crate::proto::proximadb::ResultMetadata {
                         result_count: 0,
@@ -329,7 +329,7 @@ impl UnifiedHandlers {
                     metrics: None,
                     result_payload: None,
                     vector_ids: vec![],
-                    error_message: Some(format!("Collection not found: '{}'", collection_identifier)),
+                    // error_message removed -  Some(format!("Collection not found: '{}'", collection_identifier)),
                     error_code: Some("NOT_FOUND".to_string()),
                     result_info: None,
                 });
@@ -362,7 +362,7 @@ impl UnifiedHandlers {
                     metrics: None,
                     result_payload: None,
                     vector_ids: vec![],
-                    error_message: Some(format!("Collection not found: '{}'", collection_id)),
+                    // error_message removed -  Some(format!("Collection not found: '{}'", collection_id)),
                     error_code: Some("NOT_FOUND".to_string()),
                     result_info: None,
                 });
@@ -382,11 +382,11 @@ impl UnifiedHandlers {
                 // Convert VectorRecord to proto SearchVectorRecord (no metadata conversion loss)
                 let proto_result = crate::proto::proximadb::SearchVectorRecord {
                     id: vector_record.id.unwrap_or_else(|| "unknown".to_string()),
-                    score: 1.0, // Perfect match for get_vector
+                    similarity: 1.0, // Perfect match for get_vector
                     vector: if include_vector { vector_record.vector } else { vec![] },
                     metadata: if include_metadata { vector_record.metadata } else { vec![] },
-                    rank: 1,
-                    distance: 0.0, // Perfect match for get_vector
+                    // rank removed -  1,
+                    similarity: 0.0, // Perfect match for get_vector
                     version: vector_record.updated_at,
                     timestamp: Some(vector_record.timestamp),
                     collection_id: None, // Will be set by caller
@@ -412,7 +412,7 @@ impl UnifiedHandlers {
                         }
                     )),
                     vector_ids: vec![vector_id.to_string()],
-                    error_message: None,
+                    // error_message removed -  None,
                     error_code: None,
                     result_info: None,
                 })
@@ -424,7 +424,7 @@ impl UnifiedHandlers {
                     metrics: None,
                     result_payload: None,
                     vector_ids: vec![],
-                    error_message: Some(format!("Vector not found: '{}'", vector_id)),
+                    // error_message removed -  Some(format!("Vector not found: '{}'", vector_id)),
                     error_code: Some("NOT_FOUND".to_string()),
                     result_info: None,
                 })
@@ -437,7 +437,7 @@ impl UnifiedHandlers {
                     metrics: None,
                     result_payload: None,
                     vector_ids: vec![],
-                    error_message: Some(format!("Get vector failed: {}", e)),
+                    // error_message removed -  Some(format!("Get vector failed: {}", e)),
                     error_code: Some("INTERNAL_ERROR".to_string()),
                     result_info: None,
                 })
@@ -466,7 +466,7 @@ impl UnifiedHandlers {
         // Convert proto SearchParams to core SearchParams with filter expressions
         let search_params = if let Some(first_query) = request.queries.first() {
             if let Some(ref metadata_filter) = first_query.metadata_filter {
-                if !metadata_filter.conditions.is_empty() {
+                if !metadata_filter.conditions.is_none() {
                     // Convert proto MetadataFilter to HashMap first
                     let mut filters = std::collections::HashMap::new();
                     for condition in &metadata_filter.conditions {
@@ -488,7 +488,7 @@ impl UnifiedHandlers {
                             }
                         }
                     }
-                    if !filters.is_empty() {
+                    if !filters.is_none() {
                         // Create SearchParams with converted filters
                         let params = crate::core::search::SearchParams::default()
                             .with_simple_filters(filters);
@@ -523,11 +523,11 @@ impl UnifiedHandlers {
                     
                     crate::proto::proximadb::SearchVectorRecord {
                         id: result.id.unwrap_or_else(|| format!("result_{}", index)),
-                        score: 1.0, // TODO: Implement actual scoring
+                        similarity: 1.0, // TODO: Implement actual scoring
                         vector,
                         metadata,
-                        rank: (index + 1) as i32,
-                        distance: 0.0, // TODO: Implement actual distance calculation
+                        // rank removed -  (index + 1) as i32,
+                        similarity: 0.0, // TODO: Implement actual distance calculation
                         version: result.version,
                         timestamp: Some(result.timestamp),
                         collection_id: None,
@@ -563,7 +563,7 @@ impl UnifiedHandlers {
                         }
                     )),
                     vector_ids: vec![],
-                    error_message: None,
+                    // error_message removed -  None,
                     error_code: None,
                     result_info: Some(crate::proto::proximadb::ResultMetadata {
                         result_count,
@@ -581,7 +581,7 @@ impl UnifiedHandlers {
                     metrics: None,
                     result_payload: None,
                     vector_ids: vec![],
-                    error_message: Some(e.to_string()),
+                    // error_message removed -  Some(e.to_string()),
                     error_code: Some("SEARCH_FAILED".to_string()),
                     result_info: None,
                 })

@@ -362,7 +362,7 @@ mod tests {
         let index = TestIndex {
             id: "test".to_string(),
             vectors: vec![1.0, 2.0, 3.0],
-            metadata: "test metadata".to_string(),
+            metadata: "test metadata_info".to_string(),
         };
         
         let serialized = IndexFormatStrategy::serialize(
@@ -383,7 +383,7 @@ mod tests {
         let index = TestIndex {
             id: "test".to_string(),
             vectors: vec![1.0; 1000], // Large vector for compression
-            metadata: "test metadata".to_string(),
+            metadata: "test metadata_info".to_string(),
         };
         
         let uncompressed = IndexFormatStrategy::serialize(

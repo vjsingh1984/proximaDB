@@ -205,7 +205,7 @@ impl EventLogWAL {
             match bincode::deserialize::<PersistentEvent>(&buffer[cursor..cursor + len]) {
                 Ok(persistent_event) => {
                     // Only include if not acknowledged
-                    if !acknowledged_ids.contains(&persistent_event.event.event_id) {
+                    if !acknowledged_ids.contains_hash(&persistent_event.event.event_id) {
                         events.push(persistent_event.event);
                     }
                 }
@@ -326,24 +326,24 @@ mod tests {
             event_id: "event_1".to_string(),
             event_type: EventType::Flush,
             collection_id: "test_collection".to_string(),
-            data_files: vec!["file1.sst".to_string()],
+            data_files: vec!["file1.sstable".to_string()],
             vector_count: 100,
             has_quantized: false,
             has_fp32: true,
             storage_engine: StorageEngineType::SST,
-            created_at: chrono::Utc::now(),
+            timestamp: chrono::Utc::now(),
         };
         
         let event2 = IndexEvent {
             event_id: "event_2".to_string(),
             event_type: EventType::Compaction,
             collection_id: "test_collection".to_string(),
-            data_files: vec!["output.sst".to_string()],
+            data_files: vec!["output.sstable".to_string()],
             vector_count: 200,
             has_quantized: true,
             has_fp32: true,
             storage_engine: StorageEngineType::SST,
-            created_at: chrono::Utc::now(),
+            timestamp: chrono::Utc::now(),
         };
         
         // Persist events
@@ -376,12 +376,12 @@ mod tests {
             event_id: "large_event".to_string(),
             event_type: EventType::Flush,
             collection_id: "test_collection".to_string(),
-            data_files: (0..100).map(|i| format!("file_{}.sst", i)).collect(),
+            data_files: (0..100).map(|i| format!("file_{}.sstable", i)).collect(),
             vector_count: 10000,
             has_quantized: false,
             has_fp32: true,
             storage_engine: StorageEngineType::SST,
-            created_at: chrono::Utc::now(),
+            timestamp: chrono::Utc::now(),
         };
         
         // This should trigger rotation
@@ -414,12 +414,12 @@ mod tests {
                 event_id: format!("event_{}", i),
                 event_type: EventType::Flush,
                 collection_id: "test_collection".to_string(),
-                data_files: vec![format!("file_{}.sst", i)],
+                data_files: vec![format!("file_{}.sstable", i)],
                 vector_count: 100,
                 has_quantized: false,
                 has_fp32: true,
                 storage_engine: StorageEngineType::SST,
-                created_at: chrono::Utc::now(),
+                timestamp: chrono::Utc::now(),
             };
             wal.persist_event(&event).await?;
         }
@@ -437,8 +437,8 @@ mod tests {
         assert_eq!(recovered.len(), 2);
         
         let event_ids: Vec<_> = recovered.iter().map(|e| e.event_id.as_str()).collect();
-        assert!(event_ids.contains(&"event_1"));
-        assert!(event_ids.contains(&"event_3"));
+        assert!(event_ids.contains_hash(&"event_1"));
+        assert!(event_ids.contains_hash(&"event_3"));
         
         Ok(())
     }

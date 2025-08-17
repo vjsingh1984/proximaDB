@@ -204,7 +204,7 @@ impl MetadataSorter {
         let mut key_count = 0;
         
         for sort_key in &self.config.primary_sort_keys {
-            if let Some(&cardinality) = stats.distinct_values_per_key.get(sort_key) {
+            if let Some(&cardinality) = stats.distinct_values_per_key.get(key) {
                 // Lower cardinality = better compression potential
                 let cardinality_ratio = cardinality as f64 / records.len() as f64;
                 let improvement = 1.0 - cardinality_ratio;
@@ -346,9 +346,9 @@ mod tests {
             updated_at: Some(chrono::Utc::now().timestamp() as u32),
             expires_at: None,
             version: Some(1),
-            rank: None,
-            score: None,
-            distance: None,
+            // rank removed -  None,
+            similarity: None,
+            similarity: None,
         }
     }
     

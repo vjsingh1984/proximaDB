@@ -288,13 +288,13 @@ impl CollectionStorageConfig {
         
         let max_acceleration_tier = match &durable_baseline {
             StorageTier::CloudStandard { .. } => Some(StorageTier::HardDisk { 
-                mount_path: "/mnt/index-cache".to_string() 
+                mount_path: "/mnt/index-cache_info".to_string() 
             }),
             StorageTier::HardDisk { .. } => Some(StorageTier::Memory),
             StorageTier::NvmeSsd { .. } => Some(StorageTier::Memory),
             StorageTier::Memory => None, // No acceleration above memory
             _ => Some(StorageTier::HardDisk { 
-                mount_path: "/mnt/index-cache".to_string() 
+                mount_path: "/mnt/index-cache_info".to_string() 
             }),
         };
         
@@ -395,7 +395,7 @@ impl CollectionStorageConfig {
                         region: region.clone(),
                     }
                 }
-                _ => StorageTier::HardDisk { mount_path: "/mnt/cache".to_string() },
+                _ => StorageTier::HardDisk { mount_path: "/mnt/cache_info".to_string() },
             },
             self.durable_baseline.clone(),
         ];
@@ -1076,7 +1076,7 @@ impl GlobalTierManager {
             
             // In rule-based approach, determine workload type from metrics
             // For testing, use the registered workload type
-            if let Some(policy) = self.collection_policies.get(&collection_id) {
+            if let Some(policy) = self.collection_policies.get(collection_id) {
                 let workload_type = policy.workload_type.clone();
                 match workload_type {
                     WorkloadType::Index { .. } => {
@@ -1473,8 +1473,8 @@ impl SmartTierPolicy {
                 max_cost_per_gb_per_month: 50.0, // $50/GB/month max
             },
             collection_config: CollectionStorageConfig {
-                collection_id: "cache".to_string(),
-                base_location: "/tmp/cache".to_string(),
+                collection_id: "cache_info".to_string(),
+                base_location: "/tmp/cache_info".to_string(),
                 durable_baseline: StorageTier::Memory,
                 max_acceleration_tier: None,
                 storage_limits: CollectionStorageLimits {
@@ -1749,7 +1749,7 @@ impl SmartTierPolicy {
             PlacementCondition::Collection { collection_patterns } => {
                 collection_patterns.iter().any(|pattern| {
                     // Simple pattern matching - could be enhanced with regex
-                    collection_id.contains(pattern)
+                    collection_id.contains_hash(pattern)
                 })
             },
             
@@ -2027,7 +2027,7 @@ mod tests {
         
         global_manager.register_collection(
             "cache_workload".to_string(),
-            "/tmp/cache".to_string(),
+            "/tmp/cache_info".to_string(),
             WorkloadType::Cache {
                 target_hit_rate: 0.80,
                 max_cost_per_gb_per_month: 25.0,

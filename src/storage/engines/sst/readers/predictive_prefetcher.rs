@@ -75,7 +75,6 @@ pub struct SequentialPattern {
     pub last_block_id: u32,
     pub access_count: u32,
     pub stride: i32,
-    pub confidence: f64,
     pub last_access: Instant,
 }
 
@@ -228,7 +227,7 @@ impl PredictivePrefetcher {
         let mut predictions = Vec::new();
         
         // Sequential pattern prediction
-        if let Some(seq_pattern) = self.access_patterns.sequential_patterns.get(&current_key.file_path) {
+        if let Some(seq_pattern) = self.access_patterns.sequential_patterns.get(key) {
             if seq_pattern.confidence > 0.7 {
                 for i in 1..=self.config.prefetch_window {
                     let next_block_id = (current_key.block_id as i32 + seq_pattern.stride * i as i32) as u32;
@@ -248,7 +247,7 @@ impl PredictivePrefetcher {
         }
         
         // Random pattern prediction (hot blocks)
-        if let Some(rand_pattern) = self.access_patterns.random_patterns.get(&current_key.file_path) {
+        if let Some(rand_pattern) = self.access_patterns.random_patterns.get(key) {
             let mut hot_blocks: Vec<_> = rand_pattern.hot_blocks.iter().collect();
             hot_blocks.sort_by_key(|(_, count)| std::cmp::Reverse(**count));
             
@@ -289,7 +288,7 @@ impl PredictivePrefetcher {
         for (i, record) in history.iter().enumerate() {
             if record.key.file_path == current_key.file_path {
                 // Look at next accesses
-                if let Some(next_record) = history.get(i + 1) {
+                if let Some(next_record) = history.get(key) {
                     if next_record.key.file_path == current_key.file_path {
                         *pattern_scores.entry(next_record.key.block_id).or_insert(0.0) += 1.0;
                     }
@@ -371,7 +370,7 @@ impl PredictivePrefetcher {
     
     /// Detect access type
     async fn detect_access_type(&self, key: &BlockCacheKey) -> AccessType {
-        if let Some(pattern) = self.access_patterns.sequential_patterns.get(&key.file_path) {
+        if let Some(pattern) = self.access_patterns.sequential_patterns.get(key) {
             if pattern.confidence > 0.7 {
                 return AccessType::Sequential;
             }
@@ -489,7 +488,7 @@ impl AccessPatternTracker {
                 last_block_id: record.key.block_id,
                 access_count: 1,
                 stride: 1,
-                confidence: 0.5,
+                // confidence removed -  0.5,
                 last_access: record.timestamp,
             });
             
@@ -616,7 +615,7 @@ use tracing::{debug, error, info};
         // Record sequential access pattern (without actual prefetching)
         for i in 0..10 {
             let key = BlockCacheKey {
-                file_path: "test.sst".to_string(),
+                file_path: "test.sstable".to_string(),
                 block_id: i,
                 block_index: i as usize,
             };
@@ -635,7 +634,7 @@ use tracing::{debug, error, info};
         
         // Check that sequential pattern was detected
         let pattern = prefetcher.access_patterns.sequential_patterns
-            .get("test.sst")
+            .get(key)
             .unwrap();
         
         assert_eq!(pattern.stride, 1);
@@ -656,7 +655,7 @@ use tracing::{debug, error, info};
         for _ in 0..20 {
             for &block_id in &hot_blocks {
                 let key = BlockCacheKey {
-                    file_path: "random.sst".to_string(),
+                    file_path: "random.sstable".to_string(),
                     block_id,
                     block_index: block_id as usize,
                 };
@@ -674,7 +673,7 @@ use tracing::{debug, error, info};
         
         // Check hot blocks were identified
         let pattern = prefetcher.access_patterns.random_patterns
-            .get("random.sst")
+            .get(key)
             .unwrap();
         
         assert_eq!(pattern.hot_blocks[&5], 20);
@@ -694,7 +693,7 @@ use tracing::{debug, error, info};
         // Build sequential pattern (without actual prefetching)
         for i in 0..5 {
             let key = BlockCacheKey {
-                file_path: "predict.sst".to_string(),
+                file_path: "predict.sstable".to_string(),
                 block_id: i * 2, // Stride of 2
                 block_index: i as usize,
             };
@@ -711,7 +710,7 @@ use tracing::{debug, error, info};
         
         // Predict next blocks
         let current_key = BlockCacheKey {
-            file_path: "predict.sst".to_string(),
+            file_path: "predict.sstable".to_string(),
             block_id: 8,
             block_index: 4,
         };
@@ -719,12 +718,12 @@ use tracing::{debug, error, info};
         let predictions = prefetcher.predict_next_blocks(&current_key).await.unwrap();
         
         // Check if sequential pattern was detected
-        let has_pattern = prefetcher.access_patterns.sequential_patterns.contains_key("predict.sst");
+        let has_pattern = prefetcher.access_patterns.sequential_patterns.contains_key("predict.sstable");
         if has_pattern {
-            let pattern = prefetcher.access_patterns.sequential_patterns.get("predict.sst").unwrap();
+            let pattern = prefetcher.access_patterns.sequential_patterns.get(key).unwrap();
             // Pattern should have detected stride of 2
             assert_eq!(pattern.stride, 2);
-            debug!("Pattern confidence: {}", pattern.confidence);
+            debug!("Pattern // confidence removed -  {}", pattern.confidence);
             
             // If confidence is high enough for predictions
             if pattern.confidence > 0.7 {

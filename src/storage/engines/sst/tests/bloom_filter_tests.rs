@@ -16,7 +16,7 @@ use tracing::{debug, error, info};
     #[test]
     fn test_bloom_filter_basic_operations() {
         let config = BloomFilterConfig {
-            strategy: BloomStrategy::ByteAligned,
+            // strategy removed -  BloomStrategy::ByteAligned,
             bits_per_key: 10,
             expected_items: 100,
             enabled: true,
@@ -43,7 +43,7 @@ use tracing::{debug, error, info};
     #[test]
     fn test_bloom_filter_false_positive_rate() {
         let config = BloomFilterConfig {
-            strategy: BloomStrategy::ByteAligned,
+            // strategy removed -  BloomStrategy::ByteAligned,
             bits_per_key: 10,
             expected_items: 1000,
             enabled: true,
@@ -63,7 +63,7 @@ use tracing::{debug, error, info};
     #[test]
     fn test_metadata_bloom_filter() {
         let config = BloomFilterConfig {
-            strategy: BloomStrategy::Composite,
+            // strategy removed -  BloomStrategy::Composite,
             expected_items: 100,
             enabled: true,
             ..Default::default()
@@ -108,7 +108,7 @@ use tracing::{debug, error, info};
     fn test_sstable_bloom_filter() {
         // Create key filter
         let key_config = BloomFilterConfig {
-            strategy: BloomStrategy::ByteAligned,
+            // strategy removed -  BloomStrategy::ByteAligned,
             expected_items: 100,
             ..Default::default()
         };
@@ -118,7 +118,7 @@ use tracing::{debug, error, info};
         
         // Create metadata filter
         let meta_config = BloomFilterConfig {
-            strategy: BloomStrategy::Composite,
+            // strategy removed -  BloomStrategy::Composite,
             expected_items: 100,
             ..Default::default()
         };
@@ -195,7 +195,7 @@ use tracing::{debug, error, info};
     #[test]
     fn test_bloom_filter_size_estimation() {
         let config = BloomFilterConfig {
-            strategy: BloomStrategy::ByteAligned,
+            // strategy removed -  BloomStrategy::ByteAligned,
             bits_per_key: 10,
             expected_items: 1000,
             enabled: true,
@@ -216,7 +216,7 @@ use tracing::{debug, error, info};
     #[test]
     fn test_bloom_filter_with_high_accuracy() {
         let config = BloomFilterConfig {
-            strategy: BloomStrategy::ByteAligned,
+            // strategy removed -  BloomStrategy::ByteAligned,
             bits_per_key: 20, // Higher bits for very low false positive rate
             expected_items: 100,
             enabled: true,

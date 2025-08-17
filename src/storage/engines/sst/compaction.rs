@@ -698,10 +698,10 @@ impl CompactionManager {
         let mut deleted_vector_ids = Vec::new();
         let mut merged_vectors = Vec::new();
         
-        for (id, sst_record) in resolved_records.iter() {
+        for (id, vector_record) in resolved_records.iter() {
             // Check if record is expired (TTL-based expiry)
-            let is_expired = if let Some(expires_at) = sst_record.expires_at {
-                (expires_at as i64) < (current_time / 1000) // Convert milliseconds to seconds for comparison
+            let is_expired = if vector_record.expires_at > 0 {
+                vector_record.expires_at < current_time // Both in milliseconds
             } else {
                 false
             };
@@ -715,9 +715,11 @@ impl CompactionManager {
             }
             
             // Handle tombstone cleanup
-            let should_keep = if sst_record.is_tombstone {
+            // Check if it's a tombstone by checking if expires_at is set and in the past
+            let is_tombstone = vector_record.expires_at > 0 && vector_record.expires_at < current_time;
+            let should_keep = if is_tombstone {
                 // Keep tombstones that are less than 1 hour old
-                let age = (current_time / 1000) - (sst_record.timestamp as i64); // Both in seconds
+                let age = (current_time / 1000) - (vector_record.timestamp as i64); // Both in seconds
                 let keep_tombstone = age < (60 * 60); // 1 hour in seconds
                 
                 if !keep_tombstone {
@@ -732,15 +734,14 @@ impl CompactionManager {
             };
 
             if should_keep {
-                // OPTIMIZED: Direct VectorRecord sorting (no conversion needed)
-                let vector_record: VectorRecord = sst_record.clone().into();
+                // OPTIMIZED: Direct VectorRecord usage (already a VectorRecord)
                 
                 // Track merged vectors for AXIS (non-tombstone records)
-                if !sst_record.is_tombstone {
+                if !is_tombstone {
                     merged_vectors.push(vector_record.clone());
                 }
                 
-                vector_records.push(vector_record);
+                vector_records.push(vector_record.clone());
             }
         }
         
@@ -817,7 +818,7 @@ impl CompactionManager {
         
         let bytes_written = if let Some(ref coordinator) = atomic_coordinator {
             // Use atomic operations for compaction
-            info!("🔒 LSM COMPACTION: Using atomic operations for compaction");
+            info!("🔒 LSM COMPACTION: Using atomic operations for compaction_info");
             
             // Create staging configuration
             // Don't include collection_id in StagingConfig - the base_url already points to the final location
@@ -836,7 +837,7 @@ impl CompactionManager {
             let atomic_op = coordinator.begin_atomic_operation(&staging_config).await
                 .map_err(|e| crate::core::StorageError::SstStorage(format!("Failed to begin atomic operation: {}", e)))?;
             
-            debug!("Started atomic operation {} for compaction", atomic_op.operation_id);
+            debug!("Started atomic operation {} for compaction_info", atomic_op.operation_id);
             
             // Get the staging filename
             let staging_filename = task.output_file.file_name()

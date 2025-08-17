@@ -67,7 +67,7 @@ mod tests {
     impl CollectionService for MockCollectionService {
         async fn get_collection(&self, id: &str) -> Result<Collection> {
             let collections = self.collections.read().await;
-            collections.get(id)
+            collections.get(key)
                 .cloned()
                 .ok_or_else(|| anyhow::anyhow!("Collection not found"))
         }

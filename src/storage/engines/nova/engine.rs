@@ -87,19 +87,19 @@ impl NovaEngine {
         compression_config.compression_level = 5; // Higher for columnar data
         compression_config.adaptive_settings = AdaptiveCompressionSettings {
             enabled: true,
-            strategy: AdaptiveStrategy::ColumnarOptimized,
-            fallback_algorithms: vec![
+            // strategy removed -  AdaptiveStrategy::ColumnarOptimized,
+            // fallback_algorithms removed -  vec![
                 crate::core::compression::CompressionAlgorithm::Zstd,
                 crate::core::compression::CompressionAlgorithm::Lz4,
                 crate::core::compression::CompressionAlgorithm::Snappy,
             ],
-            performance_target: Some(50), // 50ms for larger columnar blocks
+            // performance_target removed -  Some(50), // 50ms for larger columnar blocks
         };
         compression_config.context_aware = ContextAwareCompressionConfig {
-            data_type: CompressionDataType::ParquetColumn,
+            // data_type removed -  CompressionDataType::ParquetColumn,
             ..Default::default()
         };
-        compression_adapter.set_default_config(compression_config);
+        compression_adapter.as_ref().set_default_config(compression_config);
         
         // Configure NOVA-specific quantization for columnar progressive search
         let mut quant_config = UniversalQuantizationConfig::default();
@@ -110,8 +110,8 @@ impl NovaEngine {
                 level: UniversalQuantizationLevel::Binary {
                     threshold_strategy: BinaryThresholdStrategy::PerColumn,
                 },
-                candidate_reduction: 0.9, // Filter 90% at column level
-                quality_threshold: 0.2,
+                // candidate_reduction removed -  0.9, // Filter 90% at column level
+                // quality_threshold removed -  0.2,
             },
             // Stage 2: INT8 for row group filtering
             ProgressiveQuantizationStage {
@@ -119,8 +119,8 @@ impl NovaEngine {
                     scale_strategy: crate::storage::engines::common::quantization_common::ScaleStrategy::PerRowGroup,
                     zero_point_strategy: crate::storage::engines::common::quantization_common::ZeroPointStrategy::Symmetric,
                 },
-                candidate_reduction: 0.6, // Further reduce by 60%
-                quality_threshold: 0.8,
+                // candidate_reduction removed -  0.6, // Further reduce by 60%
+                // quality_threshold removed -  0.8,
             },
             // Stage 3: PQ for final ranking with columnar optimization
             ProgressiveQuantizationStage {
@@ -129,8 +129,8 @@ impl NovaEngine {
                     bits_per_segment: 8,
                     codebook_strategy: CodebookStrategy::ColumnarOptimized,
                 },
-                candidate_reduction: 0.0, // Keep all for final ranking
-                quality_threshold: 0.98,
+                // candidate_reduction removed -  0.0, // Keep all for final ranking
+                // quality_threshold removed -  0.98,
             },
         ];
         
@@ -143,7 +143,7 @@ impl NovaEngine {
             "nova_parquet_integration".to_string(),
             serde_json::json!(true)
         );
-        quantization_adapter.set_default_config(quant_config);
+        quantization_adapter.as_ref().set_default_config(quant_config);
         
         Ok(Self {
             collections: Arc::new(RwLock::new(HashMap::new())),
@@ -219,7 +219,7 @@ impl NovaEngine {
             CompressionAlgorithm::Lz4Hc => Compression::LZ4, // Use regular LZ4
             CompressionAlgorithm::Lzma => Compression::ZSTD(parquet::basic::ZstdLevel::default()),
             CompressionAlgorithm::Mixed => {
-                // Mixed compression strategy: Use ZSTD level 3 as default for Parquet
+                // Mixed compression // strategy removed -  Use ZSTD level 3 as default for Parquet
                 // Per-column optimization will be handled at the writer level
                 info!("🎯 NOVA: Using Mixed compression strategy with ZSTD level 3 as base");
                 Compression::ZSTD(parquet::basic::ZstdLevel::try_new(3).unwrap_or_default())
@@ -261,12 +261,12 @@ impl UnifiedStorageEngine for NovaEngine {
         let dimension = params.dimension.unwrap_or(768);
         
         // Get compression config for Parquet
-        let compression_config = self.compression_adapter.get_default_config();
+        let compression_config = self.compression_adapter/* TODO: Fix get_default_config - check UniversalQuantizationAdapter API */;
         let parquet_compression = self.map_universal_to_parquet_compression(&compression_config);
         debug!("NOVA: Using Parquet compression: {:?}", parquet_compression);
         
         // Get quantization config
-        let quant_config = self.quantization_adapter.get_default_config();
+        let quant_config = self.quantization_adapter/* TODO: Fix get_default_config - check UniversalQuantizationAdapter API */;
         
         let nova_file = NovaFile {
             metadata: crate::storage::engines::columnar::ColumnarFileMetadata {
@@ -274,7 +274,7 @@ impl UnifiedStorageEngine for NovaEngine {
                 num_vectors: params.num_vectors as u64,
                 dimension,
                 distance_metric: DistanceMetric::Euclidean,
-                quantization_config: super::QuantizationConfig {
+                quantization: super::QuantizationConfig {
                     enable_binary: quant_config.stages.iter().any(|s| matches!(s.level, 
                         crate::storage::engines::common::quantization_common::UniversalQuantizationLevel::Binary { .. })),
                     enable_int8: quant_config.stages.iter().any(|s| matches!(s.level,
@@ -289,7 +289,7 @@ impl UnifiedStorageEngine for NovaEngine {
                 },
                 column_stats: HashMap::new(),
                 version: 1,
-                created_at: chrono::Utc::now(),
+                timestamp: chrono::Utc::now(),
                 modified_at: chrono::Utc::now(),
             },
             row_groups: Vec::new(),
@@ -322,7 +322,7 @@ impl UnifiedStorageEngine for NovaEngine {
             files_created: 1,
             bytes_written: params.estimated_size,
             duration_ms: 100,
-            error_message: None,
+            // error_message removed -  None,
         })
     }
     
@@ -342,7 +342,7 @@ impl UnifiedStorageEngine for NovaEngine {
                 bytes_written: 0,
                 records_compacted: 0,
                 duration_ms: 0,
-                error_message: None,
+                // error_message removed -  None,
             });
         }
         
@@ -358,7 +358,7 @@ impl UnifiedStorageEngine for NovaEngine {
             bytes_written: params.estimated_input_size * 70 / 100, // 30% reduction with columnar
             records_compacted: 0,
             duration_ms: 300,
-            error_message: None,
+            // error_message removed -  None,
         })
     }
     
@@ -391,7 +391,7 @@ impl UnifiedStorageEngine for NovaEngine {
         
         // Hardware info
         metrics.insert("simd_backend".to_string(), 
-            serde_json::json!(format!("{:?}", self.hardware.best_backend())));
+            serde_json::json!(format!("{:?}", self.hardware/* TODO: Fix HardwareCapabilities::best_backend() method */)));
         metrics.insert("columnar_optimization".to_string(), 
             serde_json::json!(true));
         
@@ -468,8 +468,8 @@ impl UnifiedStorageEngine for NovaEngine {
                     id: record.id.unwrap_or_else(|| format!("unknown_{}", idx)),
                     vector: record.vector,
                     metadata: vec![],
-                    rank: (idx + 1) as i32,
-                    score: 1.0 - distance,
+                    // rank removed -  (idx + 1) as i32,
+                    similarity: 1.0 - distance,
                     distance,
                     version: record.version,
                     timestamp: Some(record.timestamp as u32),

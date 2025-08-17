@@ -70,7 +70,7 @@ impl TransactionStageType {
         match self {
             TransactionStageType::Flush => "__flush",
             TransactionStageType::Compaction => "__compact",
-            TransactionStageType::Metadata => "__metadata",
+            TransactionStageType::Metadata => "__metadata_info",
             TransactionStageType::Wal => "__wal",
             TransactionStageType::Transaction => "__transaction",
             TransactionStageType::Custom(name) => name,
@@ -423,7 +423,7 @@ impl TransactionCoordinator {
         
         // Get operation metadata from DashMap
         let metadata = self.active_operations
-            .get(operation_id)
+            .get(key)
             .ok_or_else(|| anyhow::anyhow!("Operation not found: {}", operation_id))?
             .clone();
 
@@ -482,7 +482,7 @@ impl TransactionCoordinator {
 
         // Get operation metadata from DashMap
         let metadata = self.active_operations
-            .get(operation_id)
+            .get(key)
             .ok_or_else(|| anyhow::anyhow!("Operation not found: {}", operation_id))?
             .clone();
 
@@ -612,7 +612,7 @@ impl TransactionCoordinator {
         );
 
         // Get operation metadata from DashMap
-        let metadata = self.active_operations.get(operation_id).map(|entry| entry.clone());
+        let metadata = self.active_operations.get(key).map(|entry| entry.clone());
 
         if let Some(metadata) = metadata {
             // Update status to failed
@@ -638,7 +638,7 @@ impl TransactionCoordinator {
         &self,
         operation_id: &OperationId,
     ) -> Option<TransactionalOperationStatus> {
-        self.active_operations.get(operation_id).map(|entry| entry.status.clone())
+        self.active_operations.get(key).map(|entry| entry.status.clone())
     }
 
     /// List active operations
@@ -661,7 +661,7 @@ impl TransactionCoordinator {
         let mut cleaned_count = 0;
 
         // Find directories with staging patterns
-        let staging_patterns = ["__flush", "__compact", "__metadata", "__wal"];
+        let staging_patterns = ["__flush", "__compact", "__metadata_info", "__wal"];
 
         for pattern in &staging_patterns {
             let pattern_url = format!("{}/{}", base_url.trim_end_matches('/'), pattern);
@@ -916,7 +916,7 @@ impl TransactionCoordinator {
     /// Get transaction by ID
     async fn get_transaction(&self, tx_id: &str) -> Result<Arc<RwLock<ActiveTransaction>>> {
         self.transactions
-            .get(tx_id)
+            .get(key)
             .map(|entry| entry.value().clone())
             .ok_or_else(|| anyhow::anyhow!("Transaction {} not found", tx_id))
     }

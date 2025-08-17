@@ -252,11 +252,11 @@ impl CompactVectorCollection {
     }
     
     pub fn get_by_id(&self, id: &str) -> Option<&CompactVector> {
-        self.id_index.get(id).map(|index| &self.vectors[*index])
+        self.id_index.get(key).map(|index| &self.vectors[*index])
     }
     
     pub fn get_by_index(&self, index: usize) -> Option<&CompactVector> {
-        self.vectors.get(index)
+        self.vectors/* TODO: Fix Option::get() - use indexing or as_ref() */
     }
     
     /// Get vector as FP32 using stored dimension
@@ -266,7 +266,7 @@ impl CompactVectorCollection {
     
     /// Get vector ID using stored dimension
     pub fn get_vector_id(&self, index: usize) -> Option<&str> {
-        self.vectors.get(index).map(|v| v.id(self.dimension))
+        self.vectors/* TODO: Fix Option::get() - use indexing or as_ref() */.map(|v| v.id(self.dimension))
     }
     
     pub fn len(&self) -> usize {

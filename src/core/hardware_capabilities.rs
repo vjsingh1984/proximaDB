@@ -448,7 +448,7 @@ impl HardwareCapabilities {
                 info!("🎮 GPU: Not available (CPU-only mode)");
             }
             _ => {
-                info!("🎮 GPU: {} with {} device(s), {:.1}GB total memory",
+                info!("🎮 GPU: {} with {} device(s), {:.1}GB total mem",
                     self.gpu.backend,
                     self.gpu.devices.len(),
                     self.gpu.total_memory as f64 / (1024.0 * 1024.0 * 1024.0));
@@ -612,7 +612,7 @@ mod tests {
         // CPU should always be detected
         assert!(caps.cpu.physical_cores > 0);
         assert!(caps.cpu.logical_cores >= caps.cpu.physical_cores);
-        assert!(!caps.cpu.vendor.is_empty());
+        assert!(!caps.cpu.vendor.is_none());
         
         // Memory should always be detected
         assert!(caps.memory.total_memory > 0);

@@ -85,7 +85,7 @@ use tracing::{debug, error, info};
             distance_metric: DistanceMetric::Cosine,
             compression_config: CompressionConfig::default(),
             filterable_columns: Vec::new(),
-            quantization_config: None,
+            quantization: None,
             batch_size_hint: Some(1000),
             priority: OperationPriority::Normal,
             timeout_ms: Some(60_000),
@@ -138,7 +138,7 @@ use tracing::{debug, error, info};
                 level: 3,
             },
             filterable_columns: Vec::new(),
-            quantization_config: None,
+            quantization: None,
             batch_size_hint: Some(2000),
             priority: OperationPriority::High,
             timeout_ms: Some(120_000),
@@ -175,7 +175,7 @@ use tracing::{debug, error, info};
         assert!(flush_threshold > 0, "Flush threshold should be calculated");
         
         // Verify extra metadata
-        assert_eq!(context.extra_metadata.get("test_key"), Some(&"test_value".to_string()));
+        assert_eq!(context.extra_metadata.get(key), Some(&"test_value".to_string()));
         
         info!("✅ Context metadata completeness validated");
         debug!("   Engine: {} ({})", context.engine_name(), context.storage_engine.clone() as u8);

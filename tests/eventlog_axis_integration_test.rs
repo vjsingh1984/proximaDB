@@ -97,7 +97,7 @@ impl TestFixture {
             config: Some(CollectionConfig {
                 dimension,
                 distance_metric: DistanceMetric::Cosine as i32,
-                quantization_config: None,
+                quantization: None,
                 index_config: None,
                 compression: None,
             }),
@@ -113,7 +113,7 @@ impl TestFixture {
         let mut files = Vec::new();
         
         for i in 0..num_files {
-            let file_path = format!("{}/sst_{:04}.sst", self.temp_dir.path().display(), i);
+            let file_path = format!("{}/sst_{:04}.sstable", self.temp_dir.path().display(), i);
             
             // Create a simple SST file with test data
             // In a real test, we'd use SstWriter to create proper files
@@ -371,7 +371,7 @@ async fn test_viper_event_processing() -> Result<()> {
         config: Some(CollectionConfig {
             dimension: 384,
             distance_metric: DistanceMetric::Cosine as i32,
-            quantization_config: Some(proximadb::proto::proximadb::QuantizationConfig {
+            quantization: Some(proximadb::proto::proximadb::QuantizationConfig {
                 enabled: true,
                 method: 1, // ProductQuantization
                 num_subvectors: Some(48),
@@ -599,7 +599,7 @@ async fn test_extraction_modes() -> Result<()> {
             config: Some(CollectionConfig {
                 dimension: 128,
                 distance_metric: DistanceMetric::Euclidean as i32,
-                quantization_config: None, // No quantization
+                quantization: None, // No quantization
                 index_config: None,
                 compression: None,
             }),
@@ -620,7 +620,7 @@ async fn test_extraction_modes() -> Result<()> {
             config: Some(CollectionConfig {
                 dimension: 256,
                 distance_metric: DistanceMetric::Cosine as i32,
-                quantization_config: Some(proximadb::proto::proximadb::QuantizationConfig {
+                quantization: Some(proximadb::proto::proximadb::QuantizationConfig {
                     enabled: true,
                     method: 2, // ScalarQuantization
                     num_subvectors: Some(32),
@@ -647,7 +647,7 @@ async fn test_extraction_modes() -> Result<()> {
             config: Some(CollectionConfig {
                 dimension: 384,
                 distance_metric: DistanceMetric::DotProduct as i32,
-                quantization_config: Some(proximadb::proto::proximadb::QuantizationConfig {
+                quantization: Some(proximadb::proto::proximadb::QuantizationConfig {
                     enabled: true,
                     method: 1, // ProductQuantization
                     num_subvectors: Some(48),

@@ -330,10 +330,10 @@ async fn test_search_result_structure() {
     assert_eq!(search_result.index_path, Some("test_index".to_string()));
     
     // Test metadata access
-    let category = search_result.metadata.get("category").unwrap().as_str().unwrap();
+    let category = search_result.metadata.get(key).unwrap().as_str().unwrap();
     assert_eq!(category, "test");
     
-    let score = search_result.metadata.get("score").unwrap().as_f64().unwrap();
+    let score = search_result.metadata.get(key).unwrap().as_f64().unwrap();
     assert_eq!(score, 0.85);
     
     // Test completed

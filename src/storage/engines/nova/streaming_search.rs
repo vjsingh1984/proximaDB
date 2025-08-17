@@ -165,7 +165,7 @@ struct PredictedPerformance {
     estimated_latency_ms: u64,
     estimated_memory: usize,
     estimated_candidates: usize,
-    confidence: f32,
+    // confidence removed -  f32,
 }
 
 impl StreamingSearchEngine {
@@ -374,7 +374,7 @@ impl StreamingSearchEngine {
             let cache_key = format!("sb_{}", superblock.id);
             let advanced_zone_map = {
                 let cache = self.zone_maps_cache.read().await;
-                if let Some(zone_map) = cache.get(&cache_key) {
+                if let Some(zone_map) = cache.get(&key) {
                     cache_hits += 1;
                     zone_map.clone()
                 } else {
@@ -655,11 +655,11 @@ impl PerformanceTracker {
         // Update thresholds based on performance
         if performance.latency_ms > 1000 {
             // Increase pruning aggressiveness
-            let current = self.adaptive_thresholds.get("pruning_threshold").unwrap_or(&0.5);
+            let current = self.adaptive_thresholds.get(key).unwrap_or(&0.5);
             self.adaptive_thresholds.insert("pruning_threshold".to_string(), (current * 1.1).min(0.9));
         } else if performance.latency_ms < 100 {
             // Decrease pruning aggressiveness for better quality
-            let current = self.adaptive_thresholds.get("pruning_threshold").unwrap_or(&0.5);
+            let current = self.adaptive_thresholds.get(key).unwrap_or(&0.5);
             self.adaptive_thresholds.insert("pruning_threshold".to_string(), (current * 0.9).max(0.1));
         }
     }

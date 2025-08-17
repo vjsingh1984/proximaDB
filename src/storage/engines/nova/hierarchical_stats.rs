@@ -174,7 +174,6 @@ pub struct SearchCostEstimate {
     pub estimated_latency_ms: f32,
     
     /// Confidence in estimate (0.0-1.0)
-    pub confidence: f32,
 }
 
 /// Access patterns and usage statistics
@@ -259,7 +258,7 @@ impl SuperBlock {
     /// Get ordered row groups by estimated search cost
     pub fn get_ordered_row_groups(&self, enhanced_stats: &[EnhancedRowGroupStats]) -> Vec<u32> {
         let mut row_group_costs: Vec<(u32, f32)> = enhanced_stats.iter()
-            .filter(|stats| self.row_groups.contains(&stats.row_group_id))
+            .filter(|stats| self.row_groups.contains_hash(&stats.row_group_id))
             .map(|stats| (stats.row_group_id, stats.search_cost_estimate.estimated_latency_ms))
             .collect();
         
@@ -603,7 +602,7 @@ mod tests {
                     cpu_cost: 20.0,
                     memory_cost: 15.0,
                     estimated_latency_ms: 50.0,
-                    confidence: 0.8,
+                    // confidence removed -  0.8,
                 },
                 access_stats: AccessStats {
                     access_count: 0,

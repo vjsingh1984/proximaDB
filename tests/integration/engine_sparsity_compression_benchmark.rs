@@ -103,7 +103,7 @@ async fn benchmark_configuration(
             },
             "VIPER" => {
                 let mut config = env_uncompressed.viper_config.clone();
-                config.compression = "none".to_string();
+                config.storage_config.as_ref().and_then(|s| s.compression.as_ref()) = "none".to_string();
                 
                 let engine = proximadb::storage::engines::viper::ViperEngine::from_core_config(
                     config,
@@ -176,7 +176,7 @@ async fn benchmark_configuration(
         },
         "VIPER" => {
             let mut config = env.viper_config.clone();
-            config.compression = algorithm.to_string();
+            config.storage_config.as_ref().and_then(|s| s.compression.as_ref()) = algorithm.to_string();
             config.compression_level = level;
             
             let engine = proximadb::storage::engines::viper::ViperEngine::from_core_config(

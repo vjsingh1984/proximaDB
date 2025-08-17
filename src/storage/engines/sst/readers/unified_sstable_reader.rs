@@ -82,9 +82,9 @@ impl std::fmt::Debug for UnifiedSstableReader {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("UnifiedSstableReader")
             .field("filesystem", &"FilesystemFactory")
-            .field("vector_cache", &"VectorStore")
-            .field("index_node_cache", &"IndexNodeCache")
-            .field("bloom_cache", &"BitmapFilterCache")
+            .field("vector_cache_info", &"VectorStore")
+            .field("index_node_cache_info", &"IndexNodeCache")
+            .field("bloom_cache_info", &"BitmapFilterCache")
             .field("strategy_selector", &self.strategy_selector)
             .finish()
     }
@@ -315,7 +315,7 @@ pub struct ModularBlockReader {
 impl ModularBlockReader {
     pub async fn open(filesystem_factory: Arc<FilesystemFactory>, file_path: &str) -> Result<Self> {
         // Extract scheme from URL for proper filesystem selection
-        let scheme = if file_path.contains("://") {
+        let scheme = if file_path.contains_hash("://") {
             file_path.split("://").next().unwrap_or("file")
         } else {
             "file"
@@ -420,7 +420,7 @@ impl ModularBlockReader {
             ).await {
                 // Convert SST QuantizedSection to StorageQuantizedData format
                 for (record_idx, pq_code) in quantized_section.pq_codes.iter().enumerate() {
-                    let binary_sketch = quantized_section.binary_sketches.get(record_idx);
+                    let binary_sketch = quantized_section.binary_sketches.get(key);
                     
                     let storage_data = StorageQuantizedData {
                         id: format!("block_{}_record_{}", block_idx, record_idx),
@@ -473,7 +473,7 @@ impl ModularBlockReader {
         let mut results = Vec::new();
         
         for &candidate_idx in final_candidates.iter().take(k) {
-            if let Some((block_idx, record_idx)) = block_indices.get(candidate_idx) {
+            if let Some((block_idx, record_idx)) = block_indices.get(key) {
                 // Load full vector from the specific block
                 if let Ok(full_vector) = self.load_full_vector(*block_idx, *record_idx, &index_entries).await {
                     let distance = crate::compute::distance_computation::engine::UnifiedDistanceCompute::default()
@@ -482,9 +482,9 @@ impl ModularBlockReader {
                     results.push(SearchResult {
                         id: format!("block_{}_record_{}", block_idx, record_idx),
                         vector_id: None,
-                        score: 1.0 - distance.raw_value, // Convert distance to score
-                        distance: Some(distance.raw_value),
-                        rank: None,
+                        similarity: 1.0 - distance.raw_value, // Convert distance to score
+                        similarity: Some(distance.raw_value),
+                        // rank removed -  None,
                         vector: Some(full_vector),
                         metadata: HashMap::new(),
                         debug_info: None,
@@ -494,7 +494,7 @@ impl ModularBlockReader {
                         quantization_info: None,
                         engine_stats: None,
                         index_path: None,
-                        created_at: None,
+                        timestamp: None,
                     });
                 }
             }
@@ -516,13 +516,13 @@ impl ModularBlockReader {
         record_idx: usize,
         index_entries: &[IndexEntry],
     ) -> Result<Vec<f32>> {
-        if let Some(index_entry) = index_entries.get(block_idx) {
+        if let Some(index_entry) = index_entries.get(key) {
             // Read the full data block
             let mut reader_clone = self.clone();
             let data_block = reader_clone.read_data_block_async(block_idx as u64, ReadMode::Direct).await?;
             
             // Extract the specific record
-            if let Some(record) = data_block.records.get(record_idx) {
+            if let Some(record) = data_block.records.get(key) {
                 Ok(record.vector.clone())
             } else {
                 Err(anyhow::anyhow!("Record {} not found in block {}", record_idx, block_idx))
@@ -557,11 +557,11 @@ impl ModularBlockReader {
                     .calculate_distance(query_vector, &record.vector, distance_metric);
                 
                 all_results.push(SearchResult {
-                    id: record.id.clone(),
+                    id: record.id.clone().unwrap_or_default(),
                     vector_id: None,
-                    score: 1.0 - distance.raw_value,
-                    distance: Some(distance.raw_value),
-                    rank: None,
+                    similarity: 1.0 - distance.raw_value,
+                    similarity: Some(distance.raw_value),
+                    // rank removed -  None,
                     vector: Some(record.vector.clone()),
                     metadata: HashMap::new(), // TODO: Convert metadata
                     debug_info: None,
@@ -571,7 +571,7 @@ impl ModularBlockReader {
                     quantization_info: None,
                     engine_stats: None,
                     index_path: None,
-                    created_at: None,
+                    timestamp: None,
                 });
             }
         }
@@ -1281,7 +1281,7 @@ impl UnifiedSstableReader {
     /// This prevents reading non-SSTable files that could cause deserialization errors
     pub async fn validate_sst_file(&self, file_path: &str) -> Result<()> {
         // Extract scheme from file path for proper filesystem selection
-        let scheme = if file_path.contains("://") {
+        let scheme = if file_path.contains_hash("://") {
             file_path.split("://").next().unwrap_or("file")
         } else {
             "file"
@@ -1375,7 +1375,7 @@ impl UnifiedSstableReader {
         
         // 1. Select optimal reading strategy
         let strategy = self.strategy_selector.select_strategy(params, collection_context)?;
-        debug!("📊 Selected strategy: {:?}", strategy);
+        debug!("📊 Selected // strategy removed -  {:?}", strategy);
         
         // 2. Apply strategy to read relevant blocks
         let relevant_blocks = self.apply_strategy(&strategy, params, collection_context).await?;
@@ -1405,7 +1405,7 @@ impl UnifiedSstableReader {
     /// Apply reading strategy to load relevant blocks
     fn apply_strategy<'a>(
         &'a self,
-        strategy: &'a SstableReadingStrategy,
+        // strategy removed -  &'a SstableReadingStrategy,
         params: &'a SearchParams,
         context: &'a CollectionContext,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Vec<DataBlock>>> + Send + 'a>> {
@@ -1474,7 +1474,9 @@ impl UnifiedSstableReader {
             // Process records with optimized filtering and distance calculation
             for record in &block.records {
                 // Fast tombstone check (most common early exit)
-                if record.is_tombstone {
+                // A tombstone is indicated by expires_at being set and in the past
+                let current_time = chrono::Utc::now().timestamp_millis() as i64;
+                if record.expires_at.unwrap_or(0) > 0 && record.expires_at.unwrap_or(0) < current_time {
                     tombstones += 1;
                     continue;
                 }
@@ -1496,16 +1498,16 @@ impl UnifiedSstableReader {
                 
                 // Efficient SearchResult creation (minimize allocations)
                 scored_results.push(SearchResult {
-                    id: record.id.clone(),
-                    score: similarity.normalized_score,
-                    distance: Some(similarity.raw_value),
-                    rank: None,
+                    id: record.id.clone().unwrap_or_default(),
+                    similarity: similarity.normalized_score,
+                    similarity: Some(similarity.raw_value),
+                    // rank removed -  None,
                     vector: Some(record.vector.clone()),
                     vector_id: Some(record.id.clone()),
                     metadata: self.metadata_items_to_json(&record.metadata),
                     debug_info: None,
                     semantic_distance: Some(similarity), // Use unified distance result
-                    created_at: None,
+                    timestamp: None,
                     engine_stats: None,
                     quantization_info: None,
                     index_path: None,
@@ -1852,8 +1854,8 @@ impl UnifiedSstableReader {
             // Check each metadata condition against block statistics
             for (column, value) in &metadata_conditions {
                 // Check if this block might contain the value
-                if let Some(min_val) = entry.metadata_min_values.get(column) {
-                    if let Some(max_val) = entry.metadata_max_values.get(column) {
+                if let Some(min_val) = entry.metadata_min_values.get(key) {
+                    if let Some(max_val) = entry.metadata_max_values.get(key) {
                         // Use the centralized comparison function for proper numeric handling
                         // If value is outside the min/max range, skip this block
                         if Self::compare_metadata_values(value, min_val) == std::cmp::Ordering::Less ||
@@ -1864,7 +1866,7 @@ impl UnifiedSstableReader {
                     }
                 } else {
                     // Column not present in this block, check if there are nulls
-                    if entry.metadata_null_counts.get(column).copied().unwrap_or(0) == 0 {
+                    if entry.metadata_null_counts.get(key).copied().unwrap_or(0) == 0 {
                         // No values for this column in this block
                         should_include = false;
                         break;
@@ -1958,7 +1960,7 @@ impl UnifiedSstableReader {
                     updated_at: r.updated_at,
                     expires_at: r.expires_at,
                     version: r.version,
-                    quantized_vector: None,
+                    quantized: None,
                 }
             }).collect();
             let _ = self.vector_cache.cache_block_vectors(&sst_cache_key, vector_records).await;
@@ -1970,7 +1972,7 @@ impl UnifiedSstableReader {
     /// Load a block from disk with cloud-optimized range requests
     async fn load_block_from_disk(&self, context: &CollectionContext, block_idx: usize) -> Result<Option<DataBlock>> {
         // Extract scheme from file path for proper filesystem selection
-        let scheme = if context.file_path.contains("://") {
+        let scheme = if context.file_path.contains_hash("://") {
             context.file_path.split("://").next().unwrap_or("file")
         } else {
             "file"
@@ -2117,7 +2119,7 @@ impl UnifiedSstableReader {
     /// Load index with cloud-optimized metadata reading
     async fn load_index_optimized(&self, file_path: &str) -> Result<SstableIndex> {
         // Extract scheme from file path for proper filesystem selection
-        let scheme = if file_path.contains("://") {
+        let scheme = if file_path.contains_hash("://") {
             file_path.split("://").next().unwrap_or("file")
         } else {
             "file"
@@ -2324,7 +2326,7 @@ impl UnifiedSstableReader {
                         updated_at: record.updated_at,
                         expires_at: record.expires_at,
                         version: record.version.map(|v| v as u32),
-                        quantized_vector: None,
+                        quantized: None,
                     
         }));
                 }
@@ -2356,7 +2358,7 @@ impl UnifiedSstableReader {
     /// Load just the bloom filter from an SSTable file
     async fn load_bloom_filter(&self, file_path: &str) -> Result<Option<SstableBloomFilter>> {
         // Extract scheme from file path for proper filesystem selection
-        let scheme = if file_path.contains("://") {
+        let scheme = if file_path.contains_hash("://") {
             file_path.split("://").next().unwrap_or("file").to_string()
         } else {
             "file".to_string()
@@ -2410,7 +2412,7 @@ impl UnifiedSstableReader {
     /// Load metadata for an SSTable (header and bloom filter)
     pub async fn load_metadata(&self, file_path: &str) -> Result<()> {
         // Extract scheme from file path for proper filesystem selection
-        let scheme = if file_path.contains("://") {
+        let scheme = if file_path.contains_hash("://") {
             file_path.split("://").next().unwrap_or("file")
         } else {
             "file"
@@ -2496,7 +2498,7 @@ impl UnifiedSstableReader {
                     // Create an empty bloom filter as fallback
                     // This allows the SSTable to be read even if the bloom filter is corrupted
                     let key_filter_config = BloomFilterConfig {
-                        strategy: BloomStrategy::ByteAligned,
+                        // strategy removed -  BloomStrategy::ByteAligned,
                         expected_items: 1000,
                         bits_per_key: 10,
                         enabled: false, // Disable since we couldn't load it
@@ -2714,7 +2716,7 @@ impl UnifiedSstableReader {
             if let Some(first_block) = blocks.first() {
                 debug!("  🔎 First block has {} records", first_block.records.len());
                 for (i, record) in first_block.records.iter().take(3).enumerate() {
-                    debug!("    Record {}: id={:?}, tombstone={}", i, record.id, record.is_tombstone);
+                    debug!("    Record {}: id={:?}, tombstone={}", i, record.id, record/* REMOVED: is_tombstone field no longer exists */);
                 }
             }
             
@@ -2738,7 +2740,7 @@ impl UnifiedSstableReader {
                path, !skip_bloom_filters, !skip_indexes, sequential_io);
         
         // Extract scheme from path
-        let scheme = if path.contains("://") {
+        let scheme = if path.contains_hash("://") {
             path.split("://").next().unwrap_or("file")
         } else {
             "file"
@@ -2831,7 +2833,7 @@ impl UnifiedSstableReader {
         let index = Arc::new(self.load_index_optimized(path).await?);
         
         // Extract scheme from path for proper filesystem selection
-        let scheme = if path.contains("://") {
+        let scheme = if path.contains_hash("://") {
             path.split("://").next().unwrap_or("file")
         } else {
             "file"
@@ -3065,8 +3067,8 @@ impl UnifiedSstableReader {
                             key: e.key.clone(),
                             block_offset: e.offset,
                             block_size: e.size as usize,
-                            min_key: e.metadata_min_values.get("min_key").and_then(|v| v.as_str()).unwrap_or(&e.key).to_string(),
-                            max_key: e.metadata_max_values.get("max_key").and_then(|v| v.as_str()).unwrap_or(&e.key).to_string(),
+                            min_key: e.metadata_min_values.get(key).and_then(|v| v.as_str()).unwrap_or(&e.key).to_string(),
+                            max_key: e.metadata_max_values.get(key).and_then(|v| v.as_str()).unwrap_or(&e.key).to_string(),
                             vector_count: 1,
                             bloom_filter_offset: None,
                         }).collect(),
@@ -3173,7 +3175,7 @@ impl UnifiedSstableReader {
             // For now, use a simpler approach without streaming
             // TODO: Implement proper async streaming
             let mut direct_reader_clone = SstDirectReader::new(self.filesystem.clone())?;
-            let sst_stream = direct_reader_clone.stream_sst_records(file_path.clone()).await?;
+            let sst_stream = direct_reader_clone.read_all_records(file_path.clone()).await?;
             
             // Collect all records from the iterator
             for record in sst_stream {
@@ -3215,7 +3217,7 @@ impl UnifiedSstableReader {
             let selected_blocks = self.select_blocks_for_search(&index_blocks, search_params);
             
             for block_idx in selected_blocks {
-                if let Some(index_entry) = index_blocks.get(block_idx) {
+                if let Some(index_entry) = index_blocks.get(key) {
                     let data_block = block_reader.read_data_block_at_offset(
                         index_entry.offset,
                         index_entry.size as usize,
@@ -3285,7 +3287,7 @@ impl UnifiedSstableReader {
     fn is_hot_data(&self, data_block: &DataBlock) -> bool {
         // Simple heuristic: blocks with many non-tombstone records are hot
         let active_records = data_block.records.iter()
-            .filter(|r| !r.is_tombstone)
+            .filter(|r| !r/* REMOVED: is_tombstone field no longer exists */)
             .count();
         active_records > data_block.records.len() / 2
     }
@@ -3364,7 +3366,7 @@ impl UnifiedSstableReader {
         
         // Use compaction-optimized strategy
         let strategy = self.strategy_selector.select_compaction_strategy(&context);
-        debug!("📊 COMPACTION: Using strategy: {:?}", strategy);
+        debug!("📊 COMPACTION: Using // strategy removed -  {:?}", strategy);
         
         // Load all blocks using optimized strategy
         let blocks = self.apply_strategy(&strategy, &Default::default(), &context).await?;
@@ -3381,22 +3383,17 @@ impl UnifiedSstableReader {
             for record in &block.records {
                 total_records += 1;
                 
-                if record.is_tombstone {
+                // Check if record is a tombstone (expired or empty vector)
+                let is_tombstone = record.expires_at.map_or(false, |exp| exp < chrono::Utc::now().timestamp() as u32) 
+                    || record.vector.is_empty();
+                    
+                if is_tombstone {
                     tombstone_records += 1;
                     // Include tombstones for compaction to handle properly
                 }
                 
-                // Convert SstRecord to VectorRecord
-                let vector_record = VectorRecord {
-                    id: Some(record.id.clone()),
-                    vector: record.vector.clone(),
-                    metadata: record.metadata.clone(),
-                    timestamp: record.timestamp,
-                    updated_at: record.updated_at,
-                    expires_at: record.expires_at,
-                    version: record.version.map(|v| v as u32),
-                    quantized_vector: None,
-                };
+                // VectorRecord already has all the fields we need
+                let vector_record = record.clone();
                 
                 all_records.push(vector_record);
             }

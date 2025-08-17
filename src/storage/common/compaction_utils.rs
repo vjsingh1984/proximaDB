@@ -95,7 +95,7 @@ impl CompactionFileDiscovery {
                 let file_path = file_meta.path.clone();
                 
                 // Check if file can be compacted
-                let can_compact = match engine_type {
+                let can_compact_result = match engine_type {
                     StorageEngineType::SST => {
                         let handler = SstFlushHandler::new();
                         handler.can_compact_files(collection_id, &[file_path.clone()]).await
@@ -108,11 +108,13 @@ impl CompactionFileDiscovery {
                     }
                 };
                 
+                let can_compact = can_compact_result.unwrap_or(false);
+                
                 if can_compact {
                     level_compactable.push(file_meta);
                     compactable_count += 1;
                     debug!(
-                        "  ✅ Level {} file {} is ready for compaction",
+                        "  ✅ Level {} file {} is ready for compaction_info",
                         level, file_path
                     );
                 } else {
@@ -164,7 +166,7 @@ impl CompactionFileDiscovery {
         level: u32,
         threshold: usize,
     ) -> bool {
-        if let Some(level_files) = filtered_files.compactable_files.get(&level) {
+        if let Some(level_files) = filtered_files.compactable_files.get(key) {
             let should_compact = level_files.len() >= threshold;
             
             if should_compact {
@@ -172,7 +174,7 @@ impl CompactionFileDiscovery {
                     "✅ COMPACTION: Level {} has {} compactable files (>= threshold {})",
                     level, level_files.len(), threshold
                 );
-            } else if filtered_files.pending_files.get(&level).is_some() {
+            } else if filtered_files.pending_files.get(key).is_some() {
                 debug!(
                     "⏸️ COMPACTION: Level {} has only {} compactable files (< threshold {}), some files pending",
                     level, level_files.len(), threshold
@@ -192,7 +194,7 @@ impl CompactionFileDiscovery {
         level: u32,
     ) -> Vec<String> {
         filtered_files.compactable_files
-            .get(&level)
+            .get(key)
             .map(|files| files.iter().map(|f| f.path.clone()).collect())
             .unwrap_or_default()
     }
@@ -232,7 +234,7 @@ impl CompactionTaskBuilder {
             "count" => file_discovery.should_trigger_compaction(&filtered_files, 0, config.l0_file_threshold),
             "size" => {
                 // Calculate total size at L0
-                let l0_total_size_mb = filtered_files.compactable_files.get(&0)
+                let l0_total_size_mb = filtered_files.compactable_files.get(key)
                     .map(|files| files.iter().map(|f| f.size_bytes / (1024 * 1024)).sum::<u64>() as usize)
                     .unwrap_or(0);
                 l0_total_size_mb >= config.l0_size_threshold_mb
@@ -240,7 +242,7 @@ impl CompactionTaskBuilder {
             "hybrid" | _ => {
                 // Use both count and size thresholds
                 let count_triggered = file_discovery.should_trigger_compaction(&filtered_files, 0, config.l0_file_threshold);
-                let l0_total_size_mb = filtered_files.compactable_files.get(&0)
+                let l0_total_size_mb = filtered_files.compactable_files.get(key)
                     .map(|files| files.iter().map(|f| f.size_bytes / (1024 * 1024)).sum::<u64>() as usize)
                     .unwrap_or(0);
                 let size_triggered = l0_total_size_mb >= config.l0_size_threshold_mb;
@@ -280,14 +282,14 @@ impl CompactionTaskBuilder {
             let should_compact = match config.strategy.as_str() {
                 "count" => file_discovery.should_trigger_compaction(&filtered_files, level, level_file_threshold),
                 "size" => {
-                    let level_total_size_mb = filtered_files.compactable_files.get(&level)
+                    let level_total_size_mb = filtered_files.compactable_files.get(key)
                         .map(|files| files.iter().map(|f| f.size_bytes / (1024 * 1024)).sum::<u64>() as usize)
                         .unwrap_or(0);
                     level_total_size_mb >= level_size_threshold_mb
                 }
                 "hybrid" | _ => {
                     let count_triggered = file_discovery.should_trigger_compaction(&filtered_files, level, level_file_threshold);
-                    let level_total_size_mb = filtered_files.compactable_files.get(&level)
+                    let level_total_size_mb = filtered_files.compactable_files.get(key)
                         .map(|files| files.iter().map(|f| f.size_bytes / (1024 * 1024)).sum::<u64>() as usize)
                         .unwrap_or(0);
                     let size_triggered = level_total_size_mb >= level_size_threshold_mb;
@@ -402,7 +404,7 @@ impl CompactionSelfHealing {
     /// Log self-healing behavior when files transition from pending to ready
     pub fn log_file_transition(collection_id: &str, file_path: &str) {
         info!(
-            "🔄 SELF-HEALING: File {} for collection {} is now ready for compaction",
+            "🔄 SELF-HEALING: File {} for collection {} is now ready for compaction_info",
             file_path, collection_id
         );
     }
@@ -415,7 +417,7 @@ impl CompactionSelfHealing {
         let mut healed_files = Vec::new();
         
         for file in previous_pending {
-            if current_compactable.contains(file) {
+            if current_compactable.contains_hash(file) {
                 healed_files.push(file.clone());
             }
         }
@@ -438,15 +440,15 @@ mod tests {
     #[test]
     fn test_self_healing_detection() {
         let previous_pending = vec![
-            "file1.sst".to_string(),
-            "file2.sst".to_string(),
-            "file3.sst".to_string(),
+            "file1.sstable".to_string(),
+            "file2.sstable".to_string(),
+            "file3.sstable".to_string(),
         ];
         
         let current_compactable = vec![
-            "file1.sst".to_string(),
-            "file3.sst".to_string(),
-            "file4.sst".to_string(),
+            "file1.sstable".to_string(),
+            "file3.sstable".to_string(),
+            "file4.sstable".to_string(),
         ];
         
         let healed = CompactionSelfHealing::check_self_healing(
@@ -455,7 +457,7 @@ mod tests {
         );
         
         assert_eq!(healed.len(), 2);
-        assert!(healed.contains(&"file1.sst".to_string()));
-        assert!(healed.contains(&"file3.sst".to_string()));
+        assert!(healed.contains_hash(&"file1.sstable".to_string()));
+        assert!(healed.contains_hash(&"file3.sstable".to_string()));
     }
 }

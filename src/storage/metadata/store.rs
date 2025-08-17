@@ -46,7 +46,7 @@ pub struct MetadataStoreConfig {
 impl Default for MetadataStoreConfig {
     fn default() -> Self {
         Self {
-            metadata_storage_urls: vec!["file://./data/metadata".to_string()],
+            metadata_storage_urls: vec!["file://./data/metadata_info".to_string()],
             enable_atomic_operations: true,
             cache_config: MetadataCacheConfig::default(),
             backup_config: None,
@@ -179,7 +179,7 @@ impl MetadataStore {
 
         // Ensure metadata directories exist for local file URLs
         for url in &config.metadata_storage_urls {
-            if url.starts_with("file://") || !url.contains("://") {
+            if url.starts_with("file://") || !url.contains_hash("://") {
                 let path = if url.starts_with("file://") {
                     url.strip_prefix("file://").unwrap()
                 } else {
@@ -486,7 +486,7 @@ impl MetadataStoreInterface for MetadataStore {
                     dimension: versioned.dimension,
                     distance_metric: versioned.distance_metric,
                     indexing_algorithm: versioned.indexing_algorithm,
-                    created_at: DateTime::from_timestamp(versioned.timestamp as i64, 0).unwrap_or_default(),
+                    timestamp: DateTime::from_timestamp(versioned.timestamp as i64, 0).unwrap_or_default(),
                     updated_at: DateTime::from_timestamp(versioned.timestamp as i64, 0).unwrap_or_default(),
                     vector_count: versioned.vector_count,
                     total_size_bytes: versioned.total_size_bytes,
@@ -567,7 +567,7 @@ impl MetadataStoreInterface for MetadataStore {
                     dimension: versioned.dimension,
                     distance_metric: versioned.distance_metric,
                     indexing_algorithm: versioned.indexing_algorithm,
-                    created_at: DateTime::from_timestamp(versioned.timestamp as i64, 0).unwrap_or_default(),
+                    timestamp: DateTime::from_timestamp(versioned.timestamp as i64, 0).unwrap_or_default(),
                     updated_at: DateTime::from_timestamp(versioned.timestamp as i64, 0).unwrap_or_default(),
                     vector_count: versioned.vector_count,
                     total_size_bytes: versioned.total_size_bytes,

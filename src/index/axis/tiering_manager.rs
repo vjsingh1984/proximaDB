@@ -366,7 +366,7 @@ impl AxisTieringManager {
         for (collection_id, _frequency) in collection_frequencies {
             // Check if memory-pinned
             if let Some(constraints) = &self.config.collection_constraints {
-                if constraints.memory_pinned_collections.contains(&collection_id) {
+                if constraints.memory_pinned_collections.contains_hash(&collection_id) {
                     debug!("Skipping memory-pinned collection {}", collection_id);
                     continue;
                 }
@@ -481,7 +481,7 @@ impl AxisTieringManager {
         // Apply collection-specific overrides if configured
         let mut metrics = workload_metrics;
         if let Some(constraints) = &self.config.collection_constraints {
-            if let Some(override_pattern) = constraints.workload_overrides.get(collection_id) {
+            if let Some(override_pattern) = constraints.workload_overrides.get(key) {
                 metrics.pattern = override_pattern.clone();
             }
         }
@@ -534,15 +534,15 @@ impl AxisTieringManager {
         // Check collection-specific constraints
         if let Some(constraints) = &self.config.collection_constraints {
             // Memory pinned collections
-            if constraints.memory_pinned_collections.contains(&collection_id.to_string()) {
+            if constraints.memory_pinned_collections.contains_hash(&collection_id.to_string()) {
                 if !matches!(global_recommendation, StorageTier::Memory) {
-                    debug!("Collection {} is memory-pinned, keeping in memory", collection_id);
+                    debug!("Collection {} is memory-pinned, keeping in mem", collection_id);
                     return Ok(Some(StorageTier::Memory));
                 }
             }
             
             // No-cloud collections
-            if constraints.no_cloud_collections.contains(&collection_id.to_string()) {
+            if constraints.no_cloud_collections.contains_hash(&collection_id.to_string()) {
                 if matches!(
                     global_recommendation, 
                     StorageTier::CloudStandard { .. } | 
@@ -557,7 +557,7 @@ impl AxisTieringManager {
             }
             
             // Maximum tier per collection
-            if let Some(max_tier) = constraints.max_tier_per_collection.get(collection_id) {
+            if let Some(max_tier) = constraints.max_tier_per_collection.get(key) {
                 if self.tier_order(global_recommendation) > self.tier_order(max_tier) {
                     debug!("Collection {} limited to tier {:?}", collection_id, max_tier);
                     return Ok(Some(max_tier.clone()));
@@ -796,7 +796,7 @@ impl AxisTieringManager {
     async fn is_promotion_allowed(&self, collection_id: &str, target_tier: &StorageTier) -> anyhow::Result<bool> {
         if let Some(constraints) = &self.config.collection_constraints {
             // Check max tier constraint
-            if let Some(max_tier) = constraints.max_tier_per_collection.get(collection_id) {
+            if let Some(max_tier) = constraints.max_tier_per_collection.get(key) {
                 if self.tier_order(target_tier) < self.tier_order(max_tier) {
                     return Ok(false); // Would exceed max tier
                 }
@@ -809,14 +809,14 @@ impl AxisTieringManager {
     async fn is_demotion_allowed(&self, collection_id: &str, target_tier: &StorageTier) -> anyhow::Result<bool> {
         if let Some(constraints) = &self.config.collection_constraints {
             // Memory pinned collections cannot be demoted from memory
-            if constraints.memory_pinned_collections.contains(&collection_id.to_string()) {
+            if constraints.memory_pinned_collections.contains_hash(&collection_id.to_string()) {
                 if !matches!(target_tier, StorageTier::Memory) {
                     return Ok(false);
                 }
             }
             
             // No-cloud collections cannot be demoted to cloud
-            if constraints.no_cloud_collections.contains(&collection_id.to_string()) {
+            if constraints.no_cloud_collections.contains_hash(&collection_id.to_string()) {
                 if matches!(target_tier, 
                     StorageTier::CloudStandard { .. } | 
                     StorageTier::CloudInfrequentAccess { .. } |
@@ -834,7 +834,7 @@ impl AxisTieringManager {
     async fn is_at_slowest_allowed_tier(&self, collection_id: &str, current_tier: &StorageTier) -> anyhow::Result<bool> {
         if let Some(constraints) = &self.config.collection_constraints {
             // No-cloud collections: HDD is slowest
-            if constraints.no_cloud_collections.contains(&collection_id.to_string()) {
+            if constraints.no_cloud_collections.contains_hash(&collection_id.to_string()) {
                 return Ok(matches!(current_tier, StorageTier::HardDisk { .. }));
             }
         }
@@ -981,7 +981,7 @@ impl AxisTieringManager {
             CollectionTierState::Memory { .. } => Ok(StorageTier::Memory),
             CollectionTierState::Disk { disk_location, .. } => {
                 // Determine tier based on disk location
-                if disk_location.to_string_lossy().contains("nvme") {
+                if disk_location.to_string_lossy().contains_hash("nvme") {
                     Ok(StorageTier::NvmeSsd { mount_path: disk_location.to_string_lossy().to_string() })
                 } else {
                     Ok(StorageTier::HardDisk { mount_path: disk_location.to_string_lossy().to_string() })

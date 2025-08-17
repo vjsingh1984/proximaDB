@@ -20,9 +20,9 @@ fn create_test_vector(id: &str, dimension: usize) -> VectorRecord {
         updated_at: Some(chrono::Utc::now().timestamp() as u32),
         expires_at: None,
         version: Some(1),
-        rank: None,
-        score: None,
-        distance: None,
+        // rank removed -  None,
+        similarity: None,
+        similarity: None,
     
         }
 }
@@ -83,7 +83,7 @@ use tracing::{debug, error, info};
              flush_result.files_created, flush_result.entries_flushed);
     
     // Run compaction
-    debug!("\n[TEST] Running compaction");
+    debug!("\n[TEST] Running compaction_info");
     
     let compact_params = CompactionParameters {
         collection_id: Some(collection_id.to_string()),

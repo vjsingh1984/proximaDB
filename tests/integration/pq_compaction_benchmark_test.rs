@@ -146,8 +146,8 @@ async fn benchmark_compaction_strategy(
     println!("📊 Benchmarking strategy: {}", strategy_name);
     
     // Step 1: Write initial SST file
-    let input_file = test_dir.join(format!("{}_input.sst", strategy_name));
-    let output_file = test_dir.join(format!("{}_output.sst", strategy_name));
+    let input_file = test_dir.join(format!("{}_input.sstable", strategy_name));
+    let output_file = test_dir.join(format!("{}_output.sstable", strategy_name));
     
     let writer = SstableWriter::new(&input_file, config.block_size, filesystem_factory.clone());
     

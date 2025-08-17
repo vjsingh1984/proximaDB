@@ -145,7 +145,7 @@ impl CollectionStateManager {
     
     /// Get current state for a collection
     pub fn get_state(&self, collection_id: &str) -> Option<CollectionTierState> {
-        self.states.get(collection_id).map(|s| s.clone())
+        self.states.get(key).map(|s| s.clone())
     }
     
     /// Set state for a collection
@@ -340,7 +340,7 @@ impl CollectionStateManager {
     
     /// Calculate heat score for a collection
     pub fn calculate_heat_score(&self, collection_id: &str) -> f64 {
-        if let Some(history) = self.access_history.get(collection_id) {
+        if let Some(history) = self.access_history.get(key) {
             let recency_score = if let Some(&last) = history.recent_accesses.last() {
                 let age_secs = last.elapsed().as_secs_f64();
                 (-age_secs / 86400.0).exp() // Exponential decay over days
@@ -591,9 +591,9 @@ mod tests {
         
         // Check candidates with adjusted thresholds
         let promotion_candidates = manager.get_promotion_candidates(0.1);
-        assert!(promotion_candidates.contains(&hot_id.to_string()));
+        assert!(promotion_candidates.contains_hash(&hot_id.to_string()));
         
         let demotion_candidates = manager.get_demotion_candidates(0.5);
-        assert!(demotion_candidates.contains(&cold_id.to_string()));
+        assert!(demotion_candidates.contains_hash(&cold_id.to_string()));
     }
 }

@@ -68,6 +68,13 @@ impl VectorOperationsService {
             include_expired: Some(false),
             timeout_ms: None,
             enable_two_stage: None,
+            // Add missing fields with defaults
+            custom_hints: None,
+            enable_clustering_hint: None,
+            enable_metadata_filtering_hint: None,
+            quantization_hint: None,
+            runtime_hints: None,
+            requires_ordering: None,
         };
         
         let context = UnifiedQueryContext {
@@ -196,7 +203,7 @@ impl VectorOperationsService {
         }
         
         // Return final results or intermediate if no final step produced results
-        if results.is_empty() {
+        if results.is_none() {
             Ok(intermediate_results.unwrap_or_default())
         } else {
             Ok(results)
@@ -214,14 +221,34 @@ impl VectorOperationsService {
         match pushdown_op {
             FilterPushdownOperation::StorageLevel { filter, estimated_reduction } => {
                 debug!("⬇️ Pushing filter to storage (reduction: {:.1}%)", estimated_reduction * 100.0);
+                // Convert FilterCondition to UnifiedMetadataFilter
+                let unified_filter = crate::query::unified_query_optimizer::UnifiedMetadataFilter {
+                    conditions: vec![filter],
+                    logic: crate::query::unified_query_optimizer::FilterLogic::And,
+                    optimization_hints: crate::query::unified_query_optimizer::FilterOptimizationHints {
+                        expected_selectivity: Some(estimated_reduction),
+                        preferred_index: None,
+                        allow_parallel: true,
+                    },
+                };
                 // Configure storage engine to apply filter during scan
-                self.storage_engine.configure_scan_filter(collection_id, filter).await?;
+                self.storage_engine.configure_scan_filter(collection_id, &unified_filter).await?;
             }
             FilterPushdownOperation::IndexLevel { filter, index_name } => {
                 debug!("⬇️ Pushing filter to index: {:?}", index_name);
+                // Convert FilterCondition to UnifiedMetadataFilter
+                let unified_filter = crate::query::unified_query_optimizer::UnifiedMetadataFilter {
+                    conditions: vec![filter],
+                    logic: crate::query::unified_query_optimizer::FilterLogic::And,
+                    optimization_hints: crate::query::unified_query_optimizer::FilterOptimizationHints {
+                        expected_selectivity: None,
+                        preferred_index: index_name.clone(),
+                        allow_parallel: true,
+                    },
+                };
                 // Configure index to apply filter during lookup
                 if let Some(index) = index_name {
-                    self.storage_engine.configure_index_filter(collection_id, &index, filter).await?;
+                    self.storage_engine.configure_index_filter(collection_id, &index, &unified_filter).await?;
                 }
             }
         }
@@ -250,7 +277,7 @@ impl VectorOperationsService {
     // Helper methods (simplified for demonstration)
     
     async fn get_or_load_collection(&self, collection_id: &str) -> Result<Arc<Collection>> {
-        if let Some(cached) = self.collection_cache.get(collection_id) {
+        if let Some(cached) = self.collection_cache.get(&key) {
             Ok(cached.clone())
         } else {
             // Load from storage
@@ -266,15 +293,21 @@ impl VectorOperationsService {
     }
     
     async fn get_vector_count(&self, collection_id: &str) -> Result<usize> {
-        self.storage_engine.get_collection_stats(collection_id)
-            .await
-            .map(|stats| stats.total_vectors)
+        let stats = self.storage_engine.get_collection_stats(collection_id).await?;
+        // Stats is a serde_json::Value, extract the vector count
+        let count = stats.get(key)
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0) as usize;
+        Ok(count)
     }
     
     async fn get_column_count(&self, collection_id: &str) -> Result<usize> {
-        self.storage_engine.get_collection_metadata(collection_id)
-            .await
-            .map(|meta| meta.column_count)
+        let meta = self.storage_engine.get_collection_metadata(collection_id).await?;
+        // Meta is a serde_json::Value, extract the column count
+        let count = meta.get(key)
+            .and_then(|v| v.as_u64())
+            .unwrap_or(10) as usize; // Default to 10 columns
+        Ok(count)
     }
     
     // Stub implementations for execution methods

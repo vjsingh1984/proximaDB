@@ -23,9 +23,9 @@ async fn test_global_partitioned_batch_operations() {
         updated_at: Some(now as u32),
         expires_at: None,
         version: Some(1),
-        rank: None,
-        score: None,
-        distance: None,
+        // rank removed -  None,
+        similarity: None,
+        similarity: None,
     
         };
 
@@ -37,9 +37,9 @@ async fn test_global_partitioned_batch_operations() {
         updated_at: Some(now as u32),
         expires_at: None,
         version: Some(1),
-        rank: None,
-        score: None,
-        distance: None,
+        // rank removed -  None,
+        similarity: None,
+        similarity: None,
     
         };
 
@@ -47,7 +47,7 @@ async fn test_global_partitioned_batch_operations() {
     let batch = WALVectorBatch {
         batch_id: BatchId::new(),
         vector_records: Arc::new(vec![vector_record1.clone(), vector_record2.clone()]),
-        created_at: std::time::SystemTime::now(),
+        timestamp: std::time::SystemTime::now(),
         total_size_bytes: 1024, // Approximate
         is_flushed: false,
             metadata_bloom_filter: None,
@@ -94,12 +94,12 @@ async fn test_global_partitioned_multi_collection() {
             updated_at: Some(now as u32),
             expires_at: None,
             version: Some(1),
-            rank: None,
-            score: None,
-            distance: None,
+            // rank removed -  None,
+            similarity: None,
+            similarity: None,
         
         }]),
-        created_at: std::time::SystemTime::now(),
+        timestamp: std::time::SystemTime::now(),
         total_size_bytes: 512,
         is_flushed: false,
         metadata_bloom_filter: None,
@@ -116,12 +116,12 @@ async fn test_global_partitioned_multi_collection() {
             updated_at: Some(now as u32),
             expires_at: None,
             version: Some(1),
-            rank: None,
-            score: None,
-            distance: None,
+            // rank removed -  None,
+            similarity: None,
+            similarity: None,
         
         }]),
-        created_at: std::time::SystemTime::now(),
+        timestamp: std::time::SystemTime::now(),
         total_size_bytes: 512,
         is_flushed: false,
         metadata_bloom_filter: None,
@@ -170,9 +170,9 @@ async fn test_mvcc_and_logical_deletes() {
         updated_at: Some(now),
         expires_at: None,
         version: Some(1),
-        rank: None,
-        score: None,
-        distance: None,
+        // rank removed -  None,
+        similarity: None,
+        similarity: None,
     
         };
 
@@ -185,9 +185,9 @@ async fn test_mvcc_and_logical_deletes() {
         updated_at: Some(now),
         expires_at: None,
         version: Some(2), // Higher version
-        rank: None,
-        score: None,
-        distance: None,
+        // rank removed -  None,
+        similarity: None,
+        similarity: None,
     
         };
 
@@ -200,9 +200,9 @@ async fn test_mvcc_and_logical_deletes() {
         updated_at: Some(now),
         expires_at: Some(now - 1), // Expired 1 second ago
         version: Some(3), // Highest version (delete)
-        rank: None,
-        score: None,
-        distance: None,
+        // rank removed -  None,
+        similarity: None,
+        similarity: None,
     
         };
 
@@ -210,7 +210,7 @@ async fn test_mvcc_and_logical_deletes() {
     let batch1 = WALVectorBatch {
         batch_id: BatchId::new(),
         vector_records: Arc::new(vec![vector_v1]),
-        created_at: std::time::SystemTime::now(),
+        timestamp: std::time::SystemTime::now(),
         total_size_bytes: 512,
         is_flushed: false,
             metadata_bloom_filter: None,
@@ -219,7 +219,7 @@ async fn test_mvcc_and_logical_deletes() {
     let batch2 = WALVectorBatch {
         batch_id: BatchId::new(),
         vector_records: Arc::new(vec![vector_v2]),
-        created_at: std::time::SystemTime::now(),
+        timestamp: std::time::SystemTime::now(),
         total_size_bytes: 512,
         is_flushed: false,
             metadata_bloom_filter: None,
@@ -228,7 +228,7 @@ async fn test_mvcc_and_logical_deletes() {
     let batch3 = WALVectorBatch {
         batch_id: BatchId::new(),
         vector_records: Arc::new(vec![vector_v3_delete]),
-        created_at: std::time::SystemTime::now(),
+        timestamp: std::time::SystemTime::now(),
         total_size_bytes: 512,
         is_flushed: false,
             metadata_bloom_filter: None,
@@ -272,9 +272,9 @@ async fn test_global_partitioned_deletion_via_expiry() {
         updated_at: Some(now),
         expires_at: Some(now - 1), // Expired 1 second ago
         version: Some(1),
-        rank: None,
-        score: None,
-        distance: None,
+        // rank removed -  None,
+        similarity: None,
+        similarity: None,
     
         };
 
@@ -287,16 +287,16 @@ async fn test_global_partitioned_deletion_via_expiry() {
         updated_at: Some(now),
         expires_at: Some(now + 3600), // Expires in 1 hour (in seconds)
         version: Some(1),
-        rank: None,
-        score: None,
-        distance: None,
+        // rank removed -  None,
+        similarity: None,
+        similarity: None,
     
         };
 
     let batch = WALVectorBatch {
         batch_id: BatchId::new(),
         vector_records: Arc::new(vec![expired_vector, valid_vector]),
-        created_at: std::time::SystemTime::now(),
+        timestamp: std::time::SystemTime::now(),
         total_size_bytes: 1024,
         is_flushed: false,
             metadata_bloom_filter: None,
@@ -331,7 +331,7 @@ async fn test_global_partitioned_clear_operations() {
             create_test_vector("vec2", "test_collection", vec![0.0, 1.0]),
             create_test_vector("vec3", "test_collection", vec![1.0, 1.0]),
         ]),
-        created_at: std::time::SystemTime::now(),
+        timestamp: std::time::SystemTime::now(),
         total_size_bytes: 1536,
         is_flushed: false,
             metadata_bloom_filter: None,
@@ -364,9 +364,9 @@ fn create_test_vector(id: &str, collection_id: &str, vector: Vec<f32>) -> Vector
         updated_at: Some(now as u32),
         expires_at: None,
         version: Some(1),
-        rank: None,
-        score: None,
-        distance: None,
+        // rank removed -  None,
+        similarity: None,
+        similarity: None,
     
         }
 }

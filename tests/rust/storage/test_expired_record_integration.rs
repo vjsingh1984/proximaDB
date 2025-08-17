@@ -85,7 +85,7 @@ async fn test_sst_expired_record_full_pipeline() -> Result<()> {
     
     // Create multiple SST files to trigger compaction
     for (i, record) in records.iter().enumerate() {
-        let sst_file = collection_dir.join(format!("sst_{}_{}.sst", i, record.sequence_number));
+        let sst_file = collection_dir.join(format!("sst_{}_{}.sstable", i, record.sequence_number));
         let serialized = bincode::serialize(record)?;
         let mut sst_data = Vec::new();
         sst_data.extend_from_slice(&(serialized.len() as u32).to_le_bytes());
@@ -95,15 +95,15 @@ async fn test_sst_expired_record_full_pipeline() -> Result<()> {
     
     // Step 2: Trigger compaction
     let compaction_manager = CompactionManager::new(config.clone()).await.unwrap();
-    let output_file = collection_dir.join("compacted_output.sst");
+    let output_file = collection_dir.join("compacted_output.sstable");
     
     let task = CompactionTask {
         collection_id: collection_id.to_string(),
         level: 0,
         input_files: vec![
-            collection_dir.join("sst_0_1.sst"),
-            collection_dir.join("sst_1_2.sst"),
-            collection_dir.join("sst_2_3.sst"),
+            collection_dir.join("sst_0_1.sstable"),
+            collection_dir.join("sst_1_2.sstable"),
+            collection_dir.join("sst_2_3.sstable"),
         ],
         output_file: output_file.clone(),
         priority: CompactionPriority::High,

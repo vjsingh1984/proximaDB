@@ -76,7 +76,7 @@ impl OptimizedWalPathResolver {
         // Check cache first (with TTL validation)
         {
             let cache = self.path_cache.read().await;
-            if let Some(cached_paths) = cache.get(collection_id) {
+            if let Some(cached_paths) = cache.get(&key) {
                 // Use 5-minute cache TTL
                 if Utc::now() - cached_paths.last_accessed < chrono::Duration::minutes(5) {
                     return Ok(cached_paths.clone());
@@ -107,21 +107,21 @@ impl OptimizedWalPathResolver {
             wal_base: format!("{}/{}/wal", base_path, collection_id),
             wal_logs: format!("{}/{}/wal/logs", base_path, collection_id),
             wal_snapshots: format!("{}/{}/wal/snapshots", base_path, collection_id),
-            wal_metadata: format!("{}/{}/wal/metadata", base_path, collection_id),
+            wal_metadata: format!("{}/{}/wal/metadata_info", base_path, collection_id),
             
             // Data paths (use storage assignment)
             data_sstables: format!("{}/{}/data/sstables", storage_assignment.storage_url, collection_id),
             data_segments: format!("{}/{}/data/segments", storage_assignment.storage_url, collection_id),
-            data_metadata: format!("{}/{}/data/metadata", storage_assignment.storage_url, collection_id),
+            data_metadata: format!("{}/{}/data/metadata_info", storage_assignment.storage_url, collection_id),
             
             // Index paths (use storage assignment)
             index_hnsw: format!("{}/{}/indexes/hnsw", storage_assignment.storage_url, collection_id),
             index_ivf: format!("{}/{}/indexes/ivf", storage_assignment.storage_url, collection_id),
-            index_metadata: format!("{}/{}/indexes/metadata", storage_assignment.storage_url, collection_id),
+            index_metadata: format!("{}/{}/indexes/metadata_info", storage_assignment.storage_url, collection_id),
             
             // Cache & metadata (use WAL location for speed)
-            cache_path: format!("{}/{}/cache", base_path, collection_id),
-            metadata_path: format!("{}/{}/metadata", base_path, collection_id),
+            cache_path: format!("{}/{}/cache_info", base_path, collection_id),
+            metadata_path: format!("{}/{}/metadata_info", base_path, collection_id),
             
             // Timestamps
             last_accessed: Utc::now(),
@@ -168,7 +168,7 @@ impl OptimizedWalPathResolver {
         
         // Determine batch size based on disk type
         // SSDs can handle larger batches, HDDs need smaller ones
-        let batch_size = if paths.base_path.contains("ssd") || paths.base_path.contains("nvme") {
+        let batch_size = if paths.base_path.contains_hash("ssd") || paths.base_path.contains_hash("nvme") {
             10000  // Large batch for SSDs
         } else {
             1000   // Smaller batch for HDDs

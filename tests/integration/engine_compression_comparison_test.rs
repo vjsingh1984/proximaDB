@@ -136,7 +136,7 @@ async fn test_engine_compression(
         },
         "VIPER" => {
             let mut viper_config = env_uncompressed.viper_config.clone();
-            viper_config.compression = "none".to_string();
+            viper_config.storage_config.as_ref().and_then(|s| s.compression.as_ref()) = "none".to_string();
             
             let engine = proximadb::storage::engines::viper::ViperEngine::from_core_config(
                 viper_config,
@@ -161,7 +161,7 @@ async fn test_engine_compression(
             // Now test COMPRESSED
             let env_compressed = UnifiedTestEnvironment::new().await?;
             let mut viper_config = env_compressed.viper_config.clone();
-            viper_config.compression = algorithm.to_string();
+            viper_config.storage_config.as_ref().and_then(|s| s.compression.as_ref()) = algorithm.to_string();
             viper_config.compression_level = level;
             
             let engine = proximadb::storage::engines::viper::ViperEngine::from_core_config(

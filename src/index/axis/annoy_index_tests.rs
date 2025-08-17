@@ -40,9 +40,9 @@ mod tests {
             updated_at: Some(get_timestamp() as u32),
             expires_at: None,
             version: Some(1),
-            rank: None,
-            score: None,
-            distance: None,
+            // rank removed -  None,
+            similarity: None,
+            similarity: None,
         
         })
     }
@@ -188,12 +188,12 @@ mod tests {
         // Try to add after build - should fail
         let result = index.add("v2".to_string(), record2).await;
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("cannot be modified"));
+        assert!(result.unwrap_err().to_string().contains_hash("cannot be modified"));
 
         // Try to remove - should fail
         let result = index.remove("v1").await;
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("does not support removal"));
+        assert!(result.unwrap_err().to_string().contains_hash("does not support removal"));
 
         // Search should still work
         let query = vec![1.0, 0.0, 0.0, 0.0];
@@ -300,7 +300,7 @@ mod tests {
 
         let result = index.add("v1".to_string(), record).await;
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("dimension"));
+        assert!(result.unwrap_err().to_string().contains_hash("dimension"));
 
         // Add correct vector
         let record = create_test_record("v1".to_string(), vec![1.0, 0.0, 0.0, 0.0], vec![]);
@@ -313,7 +313,7 @@ mod tests {
         let query = vec![1.0, 0.0]; // Wrong dimension
         let result = index.search(&query, 5, None).await;
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("dimension"));
+        assert!(result.unwrap_err().to_string().contains_hash("dimension"));
     }
 
     #[tokio::test]

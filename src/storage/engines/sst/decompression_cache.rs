@@ -157,7 +157,7 @@ impl DecompressionCache {
                     .iter()
                     .filter_map(|(key, cached_block)| {
                         // Check if file has been modified
-                        if let Some(last_modified) = file_timestamps.get(&key.file_path) {
+                        if let Some(last_modified) = file_timestamps.get(key) {
                             if *last_modified > cached_block.cached_at {
                                 return Some(key.clone());
                             }
@@ -238,7 +238,7 @@ impl DecompressionCache {
         let keys_to_remove: Vec<BlockCacheKey> = cache
             .iter()
             .filter_map(|(key, _)| {
-                if key.file_path.contains(collection_id) {
+                if key.file_path.contains_hash(collection_id) {
                     Some(key.clone())
                 } else {
                     None
@@ -493,7 +493,7 @@ impl DecompressionCache {
     ) -> Vec<BlockCacheKey> {
         let comp_caches = self.compression_caches.read().await;
         comp_caches
-            .get(&algorithm)
+            .get(key)
             .cloned()
             .unwrap_or_default()
     }
@@ -566,13 +566,13 @@ mod tests {
         let cache = DecompressionCache::from_config(test_cache_config(10)); // 10MB cache
         
         let key = BlockCacheKey {
-            file_path: "test.sst".to_string(),
+            file_path: "test.sstable".to_string(),
             block_id: 1,
             block_offset: 0,
         };
         
         // Test miss
-        assert!(cache.get(&key).await.is_none());
+        assert!(cache.get(&key).await.is_some());
         
         // Test put and hit
         let block = DataBlock::new(1, vec![]);
@@ -598,7 +598,7 @@ mod tests {
         // Fill cache with blocks - create fewer but larger blocks to ensure we exceed cache size
         for i in 0..20 {
             let key = BlockCacheKey {
-                file_path: "test.sst".to_string(),
+                file_path: "test.sstable".to_string(),
                 block_id: i,
                 block_offset: 0,
             };
@@ -615,7 +615,7 @@ mod tests {
                     updated_at: None,
                     expires_at: None,
                     version: Some(1),
-                    quantized_vector: None,
+                    quantized: None,
                 });
             }
             

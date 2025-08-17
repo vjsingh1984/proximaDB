@@ -25,7 +25,6 @@ pub struct FilterableColumn {
     /// Column name in metadata
     pub name: String,
     /// Data type for Parquet schema
-    pub data_type: FilterableDataType,
     /// Whether to create an index on this column
     pub indexed: bool,
     /// Whether this column supports range queries
@@ -129,7 +128,7 @@ pub struct ViperEngineConfig {
 
     // Future: Quantization and clustering integration
     /// Quantization configuration per cluster
-    pub quantization_config: Option<QuantizationConfig>,
+    pub quantization: Option<QuantizationConfig>,
     /// Cluster-specific quantization strategies
     pub cluster_quantization_map: HashMap<ClusterId, VectorStorageFormat>,
     /// Vector quality metrics for quantization decisions
@@ -199,7 +198,7 @@ pub struct ClusterMetadata {
     pub centroid: Vec<f32>,
     pub vector_count: usize,
     pub total_size_bytes: usize,
-    pub created_at: SystemTime,
+    pub timestamp: SystemTime,
     pub last_updated: SystemTime,
     pub compression_ratio: f32,
     pub quantization_level: QuantizationLevel,
@@ -296,7 +295,7 @@ impl ViperEngineConfig {
             enable_ml_clustering: false,  // Disabled by default
             initial_cluster_count: 16,
             enable_quantization: false,    // Disabled by default
-            parquet_compression: match config.compression.as_str() {
+            parquet_compression: match config.storage.as_ref().and_then(|s| s.compression.as_ref()).as_str() {
                 "zstd" => ParquetCompression::Zstd,
                 "snappy" => ParquetCompression::Snappy,
                 "gzip" => ParquetCompression::Gzip,
@@ -306,7 +305,7 @@ impl ViperEngineConfig {
             row_group_size: config.row_group_size,
             enable_background_compaction: true,
             flush_size_bytes: None,
-            quantization_config: None,
+            quantization: None,
             cluster_quantization_map: HashMap::new(),
             vector_quality_metrics: VectorQualityMetrics::default(),
             search_performance_stats: SearchPerformanceStats::default(),
@@ -324,7 +323,7 @@ impl Default for ViperEngineConfig {
             row_group_size: 1000,
             enable_background_compaction: true,
             flush_size_bytes: Some(1024 * 1024), // 1MB flush size for testing
-            quantization_config: None,
+            quantization: None,
             cluster_quantization_map: HashMap::new(),
             vector_quality_metrics: VectorQualityMetrics::default(),
             search_performance_stats: SearchPerformanceStats::default(),
@@ -332,17 +331,7 @@ impl Default for ViperEngineConfig {
     }
 }
 
-impl Default for ParquetCompression {
-    fn default() -> Self {
-        Self::Snappy
-    }
-}
 
-impl Default for CompressionAlgorithm {
-    fn default() -> Self {
-        Self::Snappy
-    }
-}
 
 impl Default for SchemaConfig {
     fn default() -> Self {

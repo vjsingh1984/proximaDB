@@ -134,7 +134,6 @@ impl Default for HashAlgorithm {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BloomFilterConfig {
     /// Strategy to use
-    pub strategy: BloomStrategy,
     
     /// Bits per key (for ByteAligned/BitPacked)
     pub bits_per_key: u32,
@@ -155,7 +154,7 @@ pub struct BloomFilterConfig {
 impl Default for BloomFilterConfig {
     fn default() -> Self {
         Self {
-            strategy: BloomStrategy::ByteAligned,
+            // strategy removed -  BloomStrategy::ByteAligned,
             bits_per_key: 10,
             false_positive_rate: None,
             expected_items: 10000,
@@ -169,7 +168,7 @@ impl BloomFilterConfig {
     /// Create config for SSTable usage
     pub fn for_sstable(expected_items: usize) -> Self {
         Self {
-            strategy: BloomStrategy::ByteAligned,
+            // strategy removed -  BloomStrategy::ByteAligned,
             bits_per_key: 10,
             expected_items,
             ..Default::default()
@@ -179,7 +178,7 @@ impl BloomFilterConfig {
     /// Create config for memtable usage
     pub fn for_memtable(expected_items: usize) -> Self {
         Self {
-            strategy: BloomStrategy::BitPacked,
+            // strategy removed -  BloomStrategy::BitPacked,
             bits_per_key: 8,
             expected_items,
             ..Default::default()

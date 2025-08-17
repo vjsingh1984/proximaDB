@@ -78,7 +78,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             name.to_lowercase()
         ));
         code.push_str(&format!(
-            "    COMPILED_SCHEMAS.get(\"{}\").unwrap()\n",
+            "    COMPILED_SCHEMAS.get(key).unwrap()\n",
             name
         ));
         code.push_str("}\n\n");

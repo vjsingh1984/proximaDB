@@ -75,7 +75,7 @@ impl EnhancedSstableWriter {
             
             // Default algorithm (will be overridden by adaptive if enabled)
             primary_algorithm: CompressionAlgorithm::Zstd,
-            fallback_algorithms: vec![
+            // fallback_algorithms removed -  vec![
                 CompressionAlgorithm::Lz4,
                 CompressionAlgorithm::Snappy,
             ],
@@ -84,18 +84,18 @@ impl EnhancedSstableWriter {
             // Adaptive compression - KEY BENEFIT!
             adaptive_settings: AdaptiveCompressionSettings {
                 enabled: true,
-                strategy: AdaptiveStrategy::DataDriven, // Analyze data patterns
-                fallback_algorithms: vec![
+                // strategy removed -  AdaptiveStrategy::DataDriven, // Analyze data patterns
+                // fallback_algorithms removed -  vec![
                     CompressionAlgorithm::Zstd,  // High compression
                     CompressionAlgorithm::Lz4,   // Fast compression
                     CompressionAlgorithm::None,  // Skip if not compressible
                 ],
-                performance_target: Some(10), // 10ms target
+                // performance_target removed -  Some(10), // 10ms target
             },
             
             // Context-aware compression - SST SPECIFIC!
             context_aware: ContextAwareCompressionConfig {
-                data_type: CompressionDataType::SstBlock,
+                // data_type removed -  CompressionDataType::SstBlock,
                 size_hint: Some(data.len()),
                 access_pattern: Some(AccessPattern::Sequential), // SST is sequential
             },
@@ -157,7 +157,7 @@ mod integration_tests {
     
     #[tokio::test]
     async fn test_adaptive_compression_benefits() {
-        let mut writer = EnhancedSstableWriter::new("/tmp/test.sst").unwrap();
+        let mut writer = EnhancedSstableWriter::new("/tmp/test.sstable").unwrap();
         
         // Test 1: Highly compressible data (should select Zstd)
         let repetitive_block = DataBlock {

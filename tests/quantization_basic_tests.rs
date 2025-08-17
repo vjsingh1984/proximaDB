@@ -580,7 +580,7 @@ mod tests {
             let vectors = generate_test_vectors(100, 256);
             
             // Use pooled buffer
-            let mut buffer = memory_pool.serialization_buffers.acquire();
+            let mut buffer = memory_pool.serialization_buffers/* TODO: Fix VectorMemoryPool::acquire() method */;
             
             // Quantize
             let quantized = engine.quantize_batch(&vectors, None).await.unwrap();

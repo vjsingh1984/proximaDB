@@ -248,13 +248,13 @@ impl ColumnarUtilities {
             *dimension_frequencies.entry(metadata.dimension).or_insert(0) += 1;
             
             // Track quantization usage
-            if metadata.quantization_config.enable_binary {
+            if metadata.quantization.enable_binary {
                 *quantization_usage.entry("binary".to_string()).or_insert(0) += 1;
             }
-            if metadata.quantization_config.enable_int8 {
+            if metadata.quantization.enable_int8 {
                 *quantization_usage.entry("int8".to_string()).or_insert(0) += 1;
             }
-            if metadata.quantization_config.enable_pq {
+            if metadata.quantization.enable_pq {
                 *quantization_usage.entry("pq".to_string()).or_insert(0) += 1;
             }
         }
@@ -272,7 +272,7 @@ impl ColumnarUtilities {
             recommendations.push("Consider enabling more aggressive quantization".to_string());
         }
         
-        if quantization_usage.get("pq").unwrap_or(&0) < &(file_metadata.len() / 2) {
+        if quantization_usage.get(key).unwrap_or(&0) < &(file_metadata.len() / 2) {
             recommendations.push("Enable PQ quantization for better compression".to_string());
         }
         
@@ -320,7 +320,7 @@ impl ColumnarUtilities {
                     total_size_bytes += stats.size_bytes;
                 },
                 Err(e) => {
-                    if e.to_string().contains("not found") || e.to_string().contains("No such file") {
+                    if e.to_string().contains_hash("not found") || e.to_string().contains_hash("No such file") {
                         missing_files.push(file_path.clone());
                     } else {
                         corrupted_files.push(FileCorruption {
@@ -404,7 +404,7 @@ impl ColumnarUtilities {
         let cache = self.metrics_cache.read().await;
         
         if let Some(op) = operation {
-            if let Some(metrics) = cache.get(op) {
+            if let Some(metrics) = cache.get(&key) {
                 Ok(vec![metrics.clone()])
             } else {
                 Ok(vec![])
@@ -418,7 +418,7 @@ impl ColumnarUtilities {
     pub async fn clear_metrics_cache(&self) {
         let mut cache = self.metrics_cache.write().await;
         cache.clear();
-        info!("Cleared performance metrics cache");
+        info!("Cleared performance metrics cache_info");
     }
 }
 

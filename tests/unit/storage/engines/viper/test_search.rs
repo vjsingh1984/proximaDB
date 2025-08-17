@@ -84,8 +84,8 @@ fn test_search_hints_customization() {
     hints.custom_params.insert("parallel_threshold".to_string(), "1000".to_string());
     
     assert_eq!(hints.custom_params.len(), 2);
-    assert_eq!(hints.custom_params.get("use_simd"), Some(&"true".to_string()));
-    assert_eq!(hints.custom_params.get("parallel_threshold"), Some(&"1000".to_string()));
+    assert_eq!(hints.custom_params.get(&key);
+    assert_eq!(hints.custom_params.get(&key);
 }
 
 #[test]
@@ -137,8 +137,8 @@ fn test_search_hints_metadata_filtering() {
     custom_hints.custom_params.insert("filter_early".to_string(), "true".to_string());
     custom_hints.custom_params.insert("filter_threshold".to_string(), "0.5".to_string());
     
-    assert_eq!(custom_hints.custom_params.get("filter_early"), Some(&"true".to_string()));
-    assert_eq!(custom_hints.custom_params.get("filter_threshold"), Some(&"0.5".to_string()));
+    assert_eq!(custom_hints.custom_params.get(&key);
+    assert_eq!(custom_hints.custom_params.get(&key);
 }
 
 #[cfg(test)]

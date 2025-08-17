@@ -386,7 +386,7 @@ impl MmapPool {
         
         {
             let mut cache = self.files.write();
-            if let Some(mmap) = cache.get(&path) {
+            if let Some(mmap) = cache.get(&key) {
                 return Ok(Arc::clone(mmap));
             }
         }
@@ -498,14 +498,14 @@ mod tests {
         std::fs::write(&path2, b"File 2")?;
         
         // Get files from pool
-        let mmap1 = pool.get(&path1)?;
-        let mmap2 = pool.get(&path2)?;
+        let mmap1 = pool.get(key)?;
+        let mmap2 = pool.get(key)?;
         
         assert_eq!(mmap1.len(), 6);
         assert_eq!(mmap2.len(), 6);
         
         // Get again - should return cached
-        let mmap1_again = pool.get(&path1)?;
+        let mmap1_again = pool.get(key)?;
         assert!(Arc::ptr_eq(&mmap1, &mmap1_again));
         
         Ok(())

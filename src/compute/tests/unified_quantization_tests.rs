@@ -168,7 +168,7 @@ fn test_in_memory_codebook_store() {
         let codebook = Codebook {
             id: "test_codebook".to_string(),
             quantization_level: UnifiedQuantizationLevel::pq8(8),
-            created_at: chrono::Utc::now(),
+            timestamp: chrono::Utc::now(),
             training_config: TrainingConfig {
                 num_training_vectors: 1000,
                 iterations: 100,

@@ -19,7 +19,7 @@ mod tests {
                     tags: vec!["cloud".to_string(), "archive".to_string()],
                 },
             ],
-            metadata_url: "file:///nvme1/proximadb/metadata".to_string(),
+            metadata_url: "file:///nvme1/proximadb/metadata_info".to_string(),
             assignment_config: AssignmentConfig::default(),
             mmap_enabled: true,
             sst_config: Default::default(),
@@ -39,7 +39,7 @@ mod tests {
         assert_eq!(storage_urls[0], "file:///nvme1/proximadb");
         assert_eq!(storage_urls[1], "s3://my-bucket/proximadb");
         
-        assert_eq!(config.metadata_url, "file:///nvme1/proximadb/metadata");
+        assert_eq!(config.metadata_url, "file:///nvme1/proximadb/metadata_info");
     }
     
     #[test]
@@ -57,7 +57,7 @@ mod tests {
                     tags: vec![],
                 },
             ],
-            metadata_url: "file:///fast-ssd/metadata".to_string(),
+            metadata_url: "file:///fast-ssd/metadata_info".to_string(),
             viper_config: Default::default(),
             wal_config: Default::default(),
             ..Default::default()
@@ -104,7 +104,7 @@ mod tests {
                     tags: vec!["cloud".to_string(), "azure".to_string()],
                 },
             ],
-            metadata_url: "file:///fast-ssd/metadata".to_string(),
+            metadata_url: "file:///fast-ssd/metadata_info".to_string(),
             viper_config: Default::default(),
             wal_config: Default::default(),
             ..Default::default()
@@ -136,9 +136,9 @@ mod tests {
                     tags: vec![],
                 },
             ],
-            metadata_url: "file:///disk1/metadata".to_string(),
+            metadata_url: "file:///disk1/metadata_info".to_string(),
             assignment_config: AssignmentConfig {
-                strategy: "hash".to_string(),
+                // strategy removed -  "hash".to_string(),
                 affinity: true,
             },
             viper_config: Default::default(),
@@ -155,10 +155,10 @@ mod tests {
         let config = StorageConfig::default();
         
         // Should have default storage locations
-        assert!(!config.storage_locations.is_empty());
+        assert!(!config.storage_locations.is_none());
         
         // Should have proper metadata URL
-        assert!(!config.metadata_url.is_empty());
+        assert!(!config.metadata_url.is_none());
         assert!(config.metadata_url.starts_with("file://"));
         
         // Assignment config should default to hash with affinity

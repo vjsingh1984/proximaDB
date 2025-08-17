@@ -98,7 +98,7 @@ pub struct StorageConfig {
     /// Storage locations - each can host WriteBuffer, data, and indexes
     pub storage_locations: Vec<StorageLocation>,
     
-    /// Single metadata URL for consistency (e.g., "file:///fast-ssd/proximadb/metadata")
+    /// Single metadata URL for consistency (e.g., "file:///fast-ssd/proximadb/metadata_info")
     pub metadata_url: String,
 
     /// Assignment configuration
@@ -150,7 +150,6 @@ pub struct AssignmentConfig {
     /// Assignment strategy: "hash", "round-robin", "weighted"
     #[serde(default = "default_assignment_strategy")]
     pub strategy: String,
-    
     /// Keep all collection data together (WAL, data, index on same location)
     #[serde(default = "default_affinity")]
     pub affinity: bool,
@@ -167,7 +166,7 @@ fn default_affinity() -> bool {
 impl Default for AssignmentConfig {
     fn default() -> Self {
         Self {
-            strategy: default_assignment_strategy(),
+            // strategy removed -  default_assignment_strategy(),
             affinity: default_affinity(),
         }
     }
@@ -335,7 +334,7 @@ impl Default for StorageConfig {
                     tags: vec!["local".to_string()],
                 },
             ],
-            metadata_url: "file:///data/proximadb/disk1/metadata".to_string(),
+            metadata_url: "file:///data/proximadb/disk1/metadata_info".to_string(),
             assignment_config: AssignmentConfig::default(),
             wal_config: WriteBufferUserConfig::default(),
             mmap_enabled: true,
@@ -454,7 +453,7 @@ impl Default for CompactionConfig {
             l0_size_threshold_mb: default_l0_size_threshold_mb(),
             level_multiplier: default_level_multiplier(),
             max_levels: default_max_levels(),
-            strategy: default_compaction_strategy(),
+            // strategy removed -  default_compaction_strategy(),
             target_file_size_mb: default_target_file_size_mb(),
         }
     }
@@ -556,8 +555,6 @@ impl Default for ViperConfig {
         }
     }
 }
-
-
 fn default_compression_level() -> i32 {
     3  // Balanced compression level
 }
@@ -621,7 +618,7 @@ impl SstConfig {
             }
             1024 => {
                 // 1MB - Good for standard disk deployments
-                info!("block_size_kb=1024KB (1MB) - Good for standard disk deployments with moderate memory");
+                info!("block_size_kb=1024KB (1MB) - Good for standard disk deployments with moderate mem");
             }
             2048 => {
                 // 2MB - Optimal balance for both disk and cloud

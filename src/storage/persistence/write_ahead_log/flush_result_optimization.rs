@@ -128,7 +128,7 @@ impl BatchFlushProcessor {
                 let mut processed = Vec::with_capacity(chunk.len());
                 for vector in chunk {
                     // Process vector with memory pool buffer
-                    let _buffer = pool.acquire().await;
+                    let _buffer = pool/* TODO: Fix VectorMemoryPool::acquire() method */.await;
                     processed.push(Arc::new(vector));
                 }
                 processed
@@ -179,7 +179,7 @@ impl FlushResultCache {
     
     /// Check if a flush result is cached
     pub async fn get(&self, key: &str) -> Option<Arc<FlushResult>> {
-        self.cache.get(key).await
+        self.cache.get(&key).await
     }
     
     /// Cache a flush result
@@ -244,7 +244,7 @@ impl OptimizedFlushCoordinator {
         
         // Check cache first
         let cache_key = format!("{}:{}", collection_id, vectors.len());
-        if let Some(cached) = self.result_cache.get(&cache_key).await {
+        if let Some(cached) = self.result_cache.get(&key).await {
             self.metrics.cache_hits.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             debug!("✅ Cache hit for flush result");
             
@@ -332,8 +332,8 @@ mod tests {
         let pool = VectorMemoryPool::new(10, 128);
         
         // Acquire buffers
-        let buf1 = pool.acquire().await;
-        let buf2 = pool.acquire().await;
+        let buf1 = pool/* TODO: Fix VectorMemoryPool::acquire() method */.await;
+        let buf2 = pool/* TODO: Fix VectorMemoryPool::acquire() method */.await;
         
         assert_eq!(buf1.len(), 128);
         assert_eq!(buf2.len(), 128);
@@ -343,7 +343,7 @@ mod tests {
         pool.release(buf2).await;
         
         // Verify reuse
-        let buf3 = pool.acquire().await;
+        let buf3 = pool/* TODO: Fix VectorMemoryPool::acquire() method */.await;
         assert_eq!(buf3.len(), 128);
     }
     
@@ -360,9 +360,9 @@ mod tests {
                 updated_at: Some(0),
                 expires_at: None,
                 version: Some(0),
-                rank: None,
-                score: None,
-                distance: None,
+                // rank removed -  None,
+                similarity: None,
+                similarity: None,
             })
             .collect();
         
@@ -383,9 +383,9 @@ mod tests {
                 updated_at: Some(0),
                 expires_at: None,
                 version: Some(0),
-                rank: None,
-                score: None,
-                distance: None,
+                // rank removed -  None,
+                similarity: None,
+                similarity: None,
             })
             .collect();
         

@@ -11,7 +11,7 @@ use std::io::Cursor;
 use crate::core::search::SearchResult;
 
 // Hardcoded Avro schema for compile-time reliability and zero dependencies
-const VECTOR_RECORD_SCHEMA_JSON: &str = r#"{
+const VECTOR_RECORD_SCHEMA_JSON: &str = r#" {
   "type": "record",
   "name": "VectorRecord", 
   "namespace": "proximadb.unified",
@@ -36,7 +36,7 @@ const VECTOR_RECORD_SCHEMA_JSON: &str = r#"{
       "doc": "Vector embeddings as float array"
     },
     {
-      "name": "metadata",
+      "name": "metadata_info",
       "type": {
         "type": "map",
         "values": [
@@ -114,11 +114,8 @@ pub struct VectorRecord {
     pub version: Option<i64>,  // Optional
 
     // Optional fields for search results and compatibility
-    pub rank: Option<i32>,
-    pub score: Option<f32>,
-    pub distance: Option<f32>,
-
-        }
+    pub similarity: Option<f32>,
+}
 
 // Note: VectorRecord intentionally does NOT implement Eq or Hash
 // to maintain Avro compatibility and zero-copy semantics.
@@ -142,9 +139,9 @@ impl VectorRecord {
             updated_at: None,
             expires_at: None,
             version: None,
-            rank: None,
-            score: None,
-            distance: None,
+            // rank removed -  None,
+            similarity: None,
+            similarity: None,
         
         }
     }
@@ -167,9 +164,9 @@ impl VectorRecord {
             updated_at: None,
             expires_at: None,
             version: None,
-            rank: None,
-            score: None,
-            distance: None,
+            // rank removed -  None,
+            similarity: None,
+            similarity: None,
         }
     }
 
@@ -208,7 +205,7 @@ impl VectorRecord {
             };
             metadata_map.insert(key.clone(), avro_value);
         }
-        record.put("metadata", Value::Map(metadata_map));
+        record.put("metadata_info", Value::Map(metadata_map));
         
         record.put("timestamp", Value::Long(self.timestamp));
         record.put("updated_at", self.updated_at.map(Value::Long).unwrap_or(Value::Union(0, Box::new(Value::Null))));
@@ -262,16 +259,14 @@ impl VectorRecord {
     }
 
     /// Convert to search result (zero-copy field mapping)
-    pub fn to_search_result(&self, score: f32, rank: Option<i32>) -> SearchResult {
+    pub fn to_search_result(&self, similarity: f32) -> SearchResult {
         SearchResult {
             id: self.id.clone(),
             vector_id: Some(self.id.clone()),
-            score,
-            distance: None,
-            rank: rank.map(|r| r as u16),
+            score: similarity,
+            similarity: Some(similarity),
             vector: Some(self.vector.clone()),
             metadata: self.metadata.clone(),
-            created_at: Some(chrono::DateTime::from_timestamp(self.timestamp, 0).unwrap_or_default()),
             debug_info: None,
             semantic_distance: None,
             quantization_info: None,
@@ -339,14 +334,10 @@ impl VectorRecord {
     }
 }
 
-
-
 /// Use proto-generated enums as single source of truth
 pub use crate::proto::proximadb::DistanceMetric;
 pub use crate::proto::proximadb::StorageEngine;
 pub use crate::proto::proximadb::IndexingAlgorithm;
-
-
 /// Compression algorithms for data storage and transmission
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub enum CompressionAlgorithm {
@@ -390,7 +381,7 @@ impl Default for CompactionStrategy {
 /// Compaction configuration for storage engines
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CompactionConfig {
-    pub strategy: CompactionStrategy,
+
     pub max_sstable_size_mb: u64,
     pub max_level_size_mb: u64,
     pub compaction_threads: u32,
@@ -401,7 +392,7 @@ pub struct CompactionConfig {
 impl Default for CompactionConfig {
     fn default() -> Self {
         Self {
-            strategy: CompactionStrategy::SizeTiered,
+            // strategy removed -  CompactionStrategy::SizeTiered,
             max_sstable_size_mb: 64,
             max_level_size_mb: 512,
             compaction_threads: 2,
@@ -497,7 +488,7 @@ pub struct VectorInsertResponse {
     /// Generated or affected vector IDs
     pub vector_ids: Vec<String>,
     /// Error message if operation failed
-    pub error_message: Option<String>,
+
     /// Error code if operation failed
     pub error_code: Option<String>,
 }
@@ -541,18 +532,17 @@ impl VectorInsertResponse {
             success: true,
             metrics,
             vector_ids,
-            error_message: None,
+            // error_message removed -  None,
             error_code: None,
         }
     }
 
     /// Create a failed vector insert response
-    pub fn error(error_message: String, error_code: Option<String>) -> Self {
+    pub fn error(error_code: Option<String>) -> Self {
         Self {
             success: false,
             metrics: VectorOperationMetrics::default(),
             vector_ids: Vec::new(),
-            error_message: Some(error_message),
             error_code,
         }
     }
@@ -623,7 +613,7 @@ pub struct VectorSearchResponse {
     pub total_found: i64,
     pub processing_time_us: i64,
     pub algorithm_used: String,
-    pub error_message: Option<String>,
+
     pub search_metadata: SearchMetadata,
     pub debug_info: Option<SearchDebugInfo>,
 }
@@ -693,8 +683,6 @@ pub struct CollectionResponse {
     /// Processing time in microseconds
     pub processing_time_us: i64,
 }
-
-
 // Implementation blocks for new types
 impl CollectionRequest {
     /// Create a new collection creation request
@@ -757,7 +745,7 @@ impl CollectionResponse {
             affected_count: 0,
             total_count: None,
             metadata: HashMap::new(),
-            error_message: None,
+            // error_message removed -  None,
             error_code: None,
             processing_time_us,
         }
@@ -766,7 +754,7 @@ impl CollectionResponse {
     /// Create a failed collection response
     pub fn error(
         operation: CollectionOperation,
-        error_message: String,
+        // error_message removed -  String,
         error_code: Option<String>,
         processing_time_us: i64,
     ) -> Self {
@@ -778,7 +766,7 @@ impl CollectionResponse {
             affected_count: 0,
             total_count: None,
             metadata: HashMap::new(),
-            error_message: Some(error_message),
+            // error_message removed -  Some(error_message),
             error_code,
             processing_time_us,
         }
@@ -897,7 +885,7 @@ pub struct SearchContext {
     pub query_vector: Vec<f32>,
     pub k: usize,
     pub filters: Option<Vec<MetadataFilter>>,
-    pub strategy: SearchStrategy,
+
     pub algorithm_hints: HashMap<String, String>,
     pub threshold: Option<f32>,
     pub timeout_ms: Option<u64>,
@@ -1025,7 +1013,7 @@ pub struct OperationResponse {
     /// Operation success status
     pub success: bool,
     /// Error message if operation failed
-    pub error_message: Option<String>,
+
     /// Error code if operation failed
     pub error_code: Option<String>,
     /// Number of items affected by the operation
@@ -1092,7 +1080,7 @@ impl OperationResponse {
     pub fn success(affected_count: i64, processing_time_us: i64) -> Self {
         Self {
             success: true,
-            error_message: None,
+            // error_message removed -  None,
             error_code: None,
             affected_count,
             processing_time_us,
@@ -1102,13 +1090,13 @@ impl OperationResponse {
 
     /// Create a failed operation response
     pub fn error(
-        error_message: String,
+        // error_message removed -  String,
         error_code: Option<String>,
         processing_time_us: i64,
     ) -> Self {
         Self {
             success: false,
-            error_message: Some(error_message),
+            // error_message removed -  Some(error_message),
             error_code,
             affected_count: 0,
             processing_time_us,

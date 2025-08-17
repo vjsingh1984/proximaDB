@@ -103,9 +103,9 @@ mod tests {
             timestamp,
             updated_at: None,
             expires_at,
-            distance: None,
-            rank: None,
-            score: None,
+            similarity: None,
+            // rank removed -  None,
+            similarity: None,
             version: None,
             ..Default::default()
         }
@@ -188,11 +188,11 @@ mod tests {
         
         for file in &all_files {
             debug!("  - {} (size: {} bytes, is_sst: {})", 
-                   file.name, file.metadata.size, file.name.ends_with(".sst"));
+                   file.name, file.metadata.size, file.name.ends_with(".sstable"));
         }
         
         let sst_files: Vec<String> = all_files.iter()
-            .filter(|entry| entry.name.ends_with(".sst"))
+            .filter(|entry| entry.name.ends_with(".sstable"))
             .map(|entry| format!("{}/{}", storage_url, entry.name))
             .collect();
         
@@ -361,7 +361,7 @@ mod tests {
         input_files.extend(sst_files2);
         
         // Create output path
-        let output_path = format!("file://{}/mvcc_compacted.sst", temp_dir.path().to_string_lossy());
+        let output_path = format!("file://{}/mvcc_compacted.sstable", temp_dir.path().to_string_lossy());
 
         // Create compactor and perform compaction
         let mvcc_resolver = Arc::new(MvccResolver::new());
@@ -379,8 +379,8 @@ mod tests {
         // - Expected output: 3 records (latest version of user_1, user_2, and user_3)
         assert_eq!(stats.records_read, 5, "Should read all 5 input records");
         assert_eq!(stats.records_written, 3, "Should write 3 records after MVCC resolution");
-        assert!(stats.updated_vector_ids.contains(&"user_1".to_string()), "user_1 should be updated");
-        assert!(stats.updated_vector_ids.contains(&"user_2".to_string()), "user_2 should be updated");
+        assert!(stats.updated_vector_ids.contains_hash(&"user_1".to_string()), "user_1 should be updated");
+        assert!(stats.updated_vector_ids.contains_hash(&"user_2".to_string()), "user_2 should be updated");
         
         // Verify output file exists
         let fs = filesystem_factory.get_filesystem("file:///").unwrap();
@@ -446,7 +446,7 @@ mod tests {
         ).await.unwrap();
         
         // Create output path
-        let output_path = format!("file://{}/expiry_compacted.sst", temp_dir.path().to_string_lossy());
+        let output_path = format!("file://{}/expiry_compacted.sstable", temp_dir.path().to_string_lossy());
 
         // Create compactor and perform compaction
         let mvcc_resolver = Arc::new(MvccResolver::new());
@@ -463,8 +463,8 @@ mod tests {
         // - Input: 3 records
         // - Expected output: 2 records (expired_record should be deleted)
         assert_eq!(stats.records_read, 3, "Should read all 3 input records");
-        assert_eq!(stats.records_written, 2, "Should write 2 records after expiry deletion");
-        assert!(stats.deleted_vector_ids.contains(&"expired_record".to_string()), 
+        assert_eq!(stats.records_written, 2, "Should write 2 records after expiry deletion_info");
+        assert!(stats.deleted_vector_ids.contains_hash(&"expired_record".to_string()), 
                 "expired_record should be in deleted list");
         assert_eq!(stats.records_deleted, 1, "Should have deleted 1 expired record");
         
@@ -539,7 +539,7 @@ mod tests {
         let mut reader = SstDirectReader::open(filesystem_factory.clone(), sst_file).await.unwrap();
         
         debug!("🔄 Testing stream_sst_records method");
-        let mut iterator = reader.stream_sst_records(sst_file.clone()).await.unwrap();
+        let mut iterator = reader.read_all_records(sst_file.clone()).await.unwrap();
         
         let mut streamed_records = Vec::new();
         let mut count = 0;
@@ -567,7 +567,7 @@ mod tests {
         assert_eq!(streamed_records[2].id, "stream_3", "Third record ID should match");
         
         // Test that streaming produces same results as read_all_for_compaction
-        debug!("🔄 Comparing streaming vs read_all_for_compaction");
+        debug!("🔄 Comparing streaming vs read_all_for_compaction_info");
         let mut reader2 = SstDirectReader::open(filesystem_factory.clone(), sst_file).await.unwrap();
         let all_records = reader2.read_all_for_compaction().await.unwrap();
         
@@ -634,7 +634,7 @@ mod tests {
         ).await.unwrap();
         
         // Create output path
-        let output_path = format!("file://{}/metadata_compacted.sst", temp_dir.path().to_string_lossy());
+        let output_path = format!("file://{}/metadata_compacted.sstable", temp_dir.path().to_string_lossy());
 
         // Create compactor and perform compaction
         let mvcc_resolver = Arc::new(MvccResolver::new());
@@ -648,8 +648,8 @@ mod tests {
         ).await.unwrap();
 
         // Verify stats
-        assert_eq!(stats.records_read, 2, "Should read 2 records with metadata");
-        assert_eq!(stats.records_written, 2, "Should write 2 records with metadata");
+        assert_eq!(stats.records_read, 2, "Should read 2 records with metadata_info");
+        assert_eq!(stats.records_written, 2, "Should write 2 records with metadata_info");
         
         // Verify output file exists
         let fs = filesystem_factory.get_filesystem("file:///").unwrap();
@@ -683,8 +683,8 @@ mod tests {
         block.metadata_stats = DataBlockMetadata {
             min_key: "test_0000".to_string(),
             max_key: "test_0009".to_string(),
-            min_timestamp: 1000,
-            max_timestamp: 1009,
+            // min_timestamp removed -  1000,
+            // max_timestamp removed -  1009,
             record_count: 10,
             null_count: 0,
             metadata_columns: vec!["category".to_string(), "score".to_string()],
@@ -815,7 +815,7 @@ mod tests {
         assert!(!sst_files.is_empty(), "Should create SST files");
         
         // Compact the files to test metadata preservation
-        let output_path = format!("file://{}/metadata_stats_compacted.sst", base_path.to_string_lossy());
+        let output_path = format!("file://{}/metadata_stats_compacted.sstable", base_path.to_string_lossy());
         let mvcc_resolver = Arc::new(MvccResolver::new());
         let compactor = SstCompactor::new(filesystem_factory.clone(), Some(mvcc_resolver));
         
@@ -890,7 +890,7 @@ mod tests {
         
         // Create SST config with compression enabled
         let mut sst_config = create_test_sst_config(base_path.to_str().unwrap());
-        sst_config.compression = "zstd".to_string();  // Enable ZSTD compression
+        sst_config.storage.as_ref().and_then(|s| s.compression.as_ref()) = "zstd".to_string();  // Enable ZSTD compression
         sst_config.compression_level = 3;  // Set compression level
         
         // Create SST engine with compression
@@ -946,7 +946,7 @@ mod tests {
         let fs = filesystem_factory.get_filesystem("file:///").unwrap();
         let all_files = fs.list(&storage_url).await.unwrap();
         let sst_files: Vec<String> = all_files.iter()
-            .filter(|entry| entry.name.ends_with(".sst"))
+            .filter(|entry| entry.name.ends_with(".sstable"))
             .map(|entry| format!("{}/{}", storage_url, entry.name))
             .collect();
         
@@ -962,7 +962,7 @@ mod tests {
         debug!("📊 Pre-compaction total size: {} bytes", pre_compaction_size);
         
         // Create output path for compacted file
-        let output_path = format!("file://{}/compressed_compacted.sst", temp_dir.path().to_string_lossy());
+        let output_path = format!("file://{}/compressed_compacted.sstable", temp_dir.path().to_string_lossy());
         
         // Create compactor with compression support and perform compaction
         let mvcc_resolver = Arc::new(MvccResolver::new());
@@ -977,12 +977,12 @@ mod tests {
             sst_files.clone(),
             output_path.clone(),
             1, // target_level
-            collection.config.and_then(|c| c.compression), // Pass compression config from collection
+            collection.config.and_then(|c| c.storage.as_ref().and_then(|s| s.compression.as_ref())), // Pass compression config from collection
         ).await.unwrap();
         
         // Verify compaction stats
         assert_eq!(stats.records_read, 100, "Should read all 100 records");
-        assert_eq!(stats.records_written, 100, "Should write all 100 records after compaction");
+        assert_eq!(stats.records_written, 100, "Should write all 100 records after compaction_info");
         
         // Verify output file exists and check compression
         assert!(fs.exists(&output_path).await.unwrap(), "Compacted SST file should exist");

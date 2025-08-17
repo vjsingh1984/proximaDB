@@ -443,7 +443,7 @@ impl SstUnifiedSearchEngine {
                     debug!("🔍 SST SCAN: Checking file: '{}'", filename);
                     // 🔴 UNUSED - belongs_to_collection method doesn't exist
                     // if super::SstFilenameGenerator::belongs_to_collection(filename, &context.collection_id) {
-                    if filename.contains(&context.collection_id) {  // Simple check instead
+                    if filename.contains_hash(&context.collection_id) {  // Simple check instead
                         debug!("🔍 SST SCAN: ✅ MATCH - filename '{}' matches pattern", filename);
                         
                         // Extract level from filename using centralized utility

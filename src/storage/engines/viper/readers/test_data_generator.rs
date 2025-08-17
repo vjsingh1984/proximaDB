@@ -56,7 +56,7 @@ pub struct TestFileInfo {
 pub struct TestMetadata {
     pub category: String,
     pub year: i64,
-    pub score: f32,
+    pub similarity: f32,
     pub tags: Vec<String>,
     pub active: bool,
 }
@@ -229,7 +229,7 @@ impl ParquetTestDataGenerator {
         ];
         
         if config.include_metadata {
-            fields.push(Field::new("metadata", DataType::Utf8, true));
+            fields.push(Field::new("metadata_info", DataType::Utf8, true));
         }
         
         if config.include_timestamps {
@@ -292,7 +292,7 @@ impl ParquetTestDataGenerator {
         }
         
         if config.include_metadata {
-            fields.push(Field::new("metadata", DataType::Utf8, true));
+            fields.push(Field::new("metadata_info", DataType::Utf8, true));
         }
         
         Ok(Arc::new(Schema::new(fields)))
@@ -323,7 +323,7 @@ impl ParquetTestDataGenerator {
         ];
         
         if config.include_metadata {
-            fields.push(Field::new("metadata", DataType::Utf8, true));
+            fields.push(Field::new("metadata_info", DataType::Utf8, true));
         }
         
         Ok(Arc::new(Schema::new(fields)))
@@ -603,7 +603,7 @@ impl ParquetTestDataGenerator {
             .map(|i| TestMetadata {
                 category: format!("cat_{}", i % config.metadata_cardinality),
                 year: 2020 + (i % 5) as i64,
-                score: (i as f32) / (config.num_rows as f32),
+                similarity: (i as f32) / (config.num_rows as f32),
                 tags: vec!["tag1".to_string(), "tag2".to_string()],
                 active: i % 2 == 0,
             })

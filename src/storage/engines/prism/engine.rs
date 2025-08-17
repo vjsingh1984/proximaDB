@@ -28,7 +28,7 @@ pub struct Config {
     pub base_dir: String,
     pub storage_url: String,
     pub memory_cache_size_mb: usize,
-    pub enable_compression: bool,
+    pub compression: bool,
     pub enable_progressive_quantization: bool,
 }
 
@@ -38,7 +38,7 @@ impl Default for Config {
             base_dir: "/tmp/prism".to_string(),
             storage_url: "s3://prism-bucket".to_string(),
             memory_cache_size_mb: 3072,
-            enable_compression: true,
+            compression: true,
             enable_progressive_quantization: true,
         }
     }
@@ -102,7 +102,7 @@ impl PrismEngine {
             refinement_config: None,
             max_results,
             enable_acceleration: true,
-            quality_threshold: Some(0.85),
+            // quality_threshold removed -  Some(0.85),
             collection_id,
             engine_type: EngineType::PRISM,
         };

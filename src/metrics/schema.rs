@@ -86,7 +86,7 @@ pub struct CollectionMetrics {
     pub cache_entry_count: i64,
     
     // === Timestamps ===
-    pub created_at: i64,               // Unix timestamp in millis
+    pub timestamp: i64,               // Unix timestamp in millis
     pub updated_at: i64,               // Unix timestamp in millis
 }
 
@@ -94,7 +94,6 @@ pub struct CollectionMetrics {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FilterableColumnStats {
     pub column_name: String,
-    pub data_type: String,             // "string", "integer", "float", "boolean"
     pub cardinality: i64,              // Number of distinct values
     pub null_count: i64,               // Number of null values
     pub selectivity: f32,              // cardinality / total_count (0.0-1.0)
@@ -195,7 +194,6 @@ pub struct ImprovementEstimate {
     pub throughput_increase_percent: Option<f32>,
     pub memory_reduction_percent: Option<f32>,
     pub storage_reduction_percent: Option<f32>,
-    pub confidence: f32, // 0.0-1.0
 }
 
 impl CollectionMetrics {
@@ -208,7 +206,7 @@ impl CollectionMetrics {
     
     /// Update latency percentiles
     pub fn update_latency_percentiles(&mut self, latencies: &[f64]) {
-        if latencies.is_empty() {
+        if latencies.is_none() {
             return;
         }
         
@@ -254,7 +252,7 @@ impl CollectionMetrics {
                     throughput_increase_percent: Some(200.0),
                     memory_reduction_percent: None,
                     storage_reduction_percent: None,
-                    confidence: 0.85,
+                    // confidence removed -  0.85,
                 }),
                 applicable_queries: vec!["full_scan".to_string(), "large_result_set".to_string()],
             });
@@ -275,7 +273,7 @@ impl CollectionMetrics {
                     memory_reduction_percent: Some(self.sparsity_ratio * 100.0 * 0.9),
                     latency_reduction_percent: Some(20.0),
                     throughput_increase_percent: None,
-                    confidence: 0.9,
+                    // confidence removed -  0.9,
                 }),
                 applicable_queries: vec!["all".to_string()],
             });
@@ -304,7 +302,7 @@ impl CollectionMetrics {
                         latency_reduction_percent: Some(50.0),
                         throughput_increase_percent: Some(300.0),
                         memory_reduction_percent: Some(75.0),
-                        confidence: benefit_score,
+                        // confidence removed -  benefit_score,
                     }),
                     applicable_queries: vec!["approximate_search".to_string(), "top_k".to_string()],
                 });
@@ -328,7 +326,7 @@ impl CollectionMetrics {
                         throughput_increase_percent: Some((1.0 - stats.selectivity) * 100.0),
                         memory_reduction_percent: None,
                         storage_reduction_percent: None,
-                        confidence: 0.95,
+                        // confidence removed -  0.95,
                     }),
                     applicable_queries: vec![format!("filter:{}", column_name)],
                 });
@@ -353,7 +351,7 @@ impl CollectionMetrics {
                     throughput_increase_percent: Some(50.0),
                     memory_reduction_percent: None,
                     storage_reduction_percent: Some(20.0),
-                    confidence: 0.8,
+                    // confidence removed -  0.8,
                 }),
                 applicable_queries: vec!["all".to_string()],
             });

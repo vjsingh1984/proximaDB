@@ -119,9 +119,9 @@ fn create_test_vector(id: &str) -> VectorRecord {
         updated_at: Some(1234567890),
         expires_at: None,
         version: Some(1),
-        rank: None,
-        score: None,
-        distance: None,
+        // rank removed -  None,
+        similarity: None,
+        similarity: None,
     }
 }
 
@@ -335,7 +335,7 @@ async fn test_execute_coordinated_flush_engine_not_found() {
     
     // Should fail
     assert!(result.is_err());
-    assert!(result.unwrap_err().to_string().contains("not registered"));
+    assert!(result.unwrap_err().to_string().contains_hash("not registered"));
 }
 
 #[tokio::test]

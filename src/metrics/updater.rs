@@ -523,7 +523,7 @@ impl InternalMetricsUpdater for MetricsUpdateService {
         let mut metrics = self.store.get_collection_metrics(collection_id).await?
             .unwrap_or_else(|| CollectionMetrics {
                 collection_id: collection_id.to_string(),
-                created_at: chrono::Utc::now().timestamp_millis(),
+                timestamp: chrono::Utc::now().timestamp_millis(),
                 ..Default::default()
             });
         
@@ -555,7 +555,7 @@ impl InternalMetricsUpdater for MetricsUpdateService {
         let mut metrics = self.store.get_collection_metrics(collection_id).await?
             .unwrap_or_else(|| CollectionMetrics {
                 collection_id: collection_id.to_string(),
-                created_at: chrono::Utc::now().timestamp_millis(),
+                timestamp: chrono::Utc::now().timestamp_millis(),
                 ..Default::default()
             });
         
@@ -585,7 +585,7 @@ impl InternalMetricsUpdater for MetricsUpdateService {
         let mut metrics = self.store.get_collection_metrics(collection_id).await?
             .unwrap_or_else(|| CollectionMetrics {
                 collection_id: collection_id.to_string(),
-                created_at: chrono::Utc::now().timestamp_millis(),
+                timestamp: chrono::Utc::now().timestamp_millis(),
                 ..Default::default()
             });
         
@@ -614,7 +614,7 @@ impl InternalMetricsUpdater for MetricsUpdateService {
         let mut metrics = self.store.get_collection_metrics(collection_id).await?
             .unwrap_or_else(|| CollectionMetrics {
                 collection_id: collection_id.to_string(),
-                created_at: chrono::Utc::now().timestamp_millis(),
+                timestamp: chrono::Utc::now().timestamp_millis(),
                 ..Default::default()
             });
         
@@ -647,7 +647,7 @@ impl InternalMetricsUpdater for MetricsUpdateService {
         let mut metrics = self.store.get_collection_metrics(collection_id).await?
             .unwrap_or_else(|| CollectionMetrics {
                 collection_id: collection_id.to_string(),
-                created_at: chrono::Utc::now().timestamp_millis(),
+                timestamp: chrono::Utc::now().timestamp_millis(),
                 ..Default::default()
             });
         
@@ -677,7 +677,7 @@ impl InternalMetricsUpdater for MetricsUpdateService {
         let mut metrics = self.store.get_collection_metrics(collection_id).await?
             .unwrap_or_else(|| CollectionMetrics {
                 collection_id: collection_id.to_string(),
-                created_at: chrono::Utc::now().timestamp_millis(),
+                timestamp: chrono::Utc::now().timestamp_millis(),
                 ..Default::default()
             });
         
@@ -705,7 +705,7 @@ impl InternalMetricsUpdater for MetricsUpdateService {
         let mut metrics = self.store.get_collection_metrics(collection_id).await?
             .unwrap_or_else(|| CollectionMetrics {
                 collection_id: collection_id.to_string(),
-                created_at: chrono::Utc::now().timestamp_millis(),
+                timestamp: chrono::Utc::now().timestamp_millis(),
                 ..Default::default()
             });
         

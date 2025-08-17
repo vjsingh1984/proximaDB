@@ -31,9 +31,9 @@ fn create_test_vector(id: &str) -> VectorRecord {
         updated_at: Some(chrono::Utc::now().timestamp() as u32),
         expires_at: None,
         version: Some(1),
-        rank: None,
-        score: None,
-        distance: None,
+        // rank removed -  None,
+        similarity: None,
+        similarity: None,
     }
 }
 
@@ -498,7 +498,7 @@ async fn test_staging_operation_type_variants() {
     assert_eq!(compaction_type.staging_dir_name(), "__compact");
     
     let metadata_type = TransactionStageType::Metadata;
-    assert_eq!(metadata_type.staging_dir_name(), "__metadata");
+    assert_eq!(metadata_type.staging_dir_name(), "__metadata_info");
     
     let wal_type = TransactionStageType::Wal;
     assert_eq!(wal_type.staging_dir_name(), "__wal");

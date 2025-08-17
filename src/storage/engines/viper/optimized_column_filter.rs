@@ -129,7 +129,7 @@ impl VIPERColumnFilterEvaluator {
         match filter_expr {
             FilterExpression::Comparison { field, operator, value } => {
                 // Get column data from cache
-                if let Some(column_data) = self.column_cache.get(field) {
+                if let Some(column_data) = self.column_cache.get(&key) {
                     let mut qualifying_indices = Vec::new();
                     
                     debug!("🎯 Evaluating column '{}' with {} values", field, column_data.len());
@@ -209,7 +209,7 @@ impl VIPERColumnFilterEvaluator {
         required_columns: &HashSet<String>,
     ) -> Result<()> {
         for column_name in required_columns {
-            if self.loaded_columns.contains(column_name) {
+            if self.loaded_columns.contains_hash(column_name) {
                 debug!("🎯 Column '{}' already loaded", column_name);
                 continue;
             }
@@ -233,7 +233,7 @@ impl VIPERColumnFilterEvaluator {
             let mut column_values = Vec::new();
             for record in &all_records {
                 let metadata_map = crate::core::proto_metadata_helper::proto_metadata_to_json(&record.metadata);
-                let value = metadata_map.get(column_name)
+                let value = metadata_map.get(key)
                     .cloned()
                     .unwrap_or(serde_json::Value::Null);
                 column_values.push(value);
@@ -386,7 +386,7 @@ impl VIPERSelectiveReader {
         
         let selected_records: Vec<VectorRecord> = qualifying_indices
             .iter()
-            .filter_map(|&idx| all_records.get(idx).cloned())
+            .filter_map(|&idx| all_records.get(key).cloned())
             .collect();
         
         let io_savings = if !all_records.is_empty() {

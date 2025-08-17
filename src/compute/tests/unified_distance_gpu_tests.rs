@@ -31,19 +31,19 @@ use tracing::{debug, error, info, warn};
         match preferred_backend {
             HardwareBackend::Cuda => {
                 info!("✅ CUDA GPU selected as preferred backend");
-                assert!(available_backends.contains(&HardwareBackend::Cuda));
+                assert!(available_backends.contains_hash(&HardwareBackend::Cuda));
             }
             HardwareBackend::Rocm => {
                 info!("✅ ROCm GPU selected as preferred backend");
-                assert!(available_backends.contains(&HardwareBackend::Rocm));
+                assert!(available_backends.contains_hash(&HardwareBackend::Rocm));
             }
             HardwareBackend::Mps => {
                 info!("✅ Metal Performance Shaders selected as preferred backend");
-                assert!(available_backends.contains(&HardwareBackend::Mps));
+                assert!(available_backends.contains_hash(&HardwareBackend::Mps));
             }
             HardwareBackend::OpenCL => {
                 info!("✅ OpenCL GPU selected as preferred backend");
-                assert!(available_backends.contains(&HardwareBackend::OpenCL));
+                assert!(available_backends.contains_hash(&HardwareBackend::OpenCL));
             }
             HardwareBackend::CpuSimd(capability) => {
                 info!("✅ CPU SIMD selected as preferred backend: {}", capability);
@@ -65,7 +65,7 @@ use tracing::{debug, error, info, warn};
         
         // Verify that CPU SIMD and Scalar are always available as fallbacks
         assert!(available_backends.iter().any(|b| matches!(b, HardwareBackend::CpuSimd(_))));
-        assert!(available_backends.contains(&HardwareBackend::Scalar));
+        assert!(available_backends.contains_hash(&HardwareBackend::Scalar));
         
         info!("✅ Backend selection validation passed");
     }

@@ -36,7 +36,7 @@ async fn test_metadata_filtering_basic() {
     let filesystem = Arc::new(FilesystemFactory::new(config).await.unwrap());
     
     // Create SSTable with records having different metadata
-    let sstable_path = temp_path.join("metadata_test.sst");
+    let sstable_path = temp_path.join("metadata_test.sstable");
     let test_config = create_test_config();
     let block_size = (test_config.block_size_kb * 1024) as usize;
     let writer = SstableWriter::new(&sstable_path, block_size, filesystem.clone())
@@ -153,7 +153,7 @@ async fn test_metadata_filtering_basic() {
     assert_eq!(results.len(), 5, "Should find 5 records with category A");
     for result in &results {
         assert!(result.id.starts_with("vec_a_"), "All results should be category A");
-        let category = result.metadata.get("category").unwrap();
+        let category = result.metadata.get(key).unwrap();
         assert_eq!(category, &json!("A"), "Category should be A");
     }
     
@@ -174,7 +174,7 @@ async fn test_metadata_filtering_basic() {
     assert_eq!(results.len(), 5, "Should find 5 records with type image");
     for result in &results {
         assert!(result.id.starts_with("vec_b_"), "All image results should be category B");
-        let type_val = result.metadata.get("type").unwrap();
+        let type_val = result.metadata.get(key).unwrap();
         assert_eq!(type_val, &json!("image"), "Type should be image");
     }
     
@@ -213,8 +213,8 @@ async fn test_metadata_filtering_basic() {
     info!("Results with category=B AND type=image: {}", results.len());
     assert_eq!(results.len(), 5, "Should find 5 records matching both filters");
     for result in &results {
-        let category = result.metadata.get("category").unwrap();
-        let type_val = result.metadata.get("type").unwrap();
+        let category = result.metadata.get(key).unwrap();
+        let type_val = result.metadata.get(key).unwrap();
         assert_eq!(category, &json!("B"), "Category should be B");
         assert_eq!(type_val, &json!("image"), "Type should be image");
     }
@@ -248,7 +248,7 @@ async fn test_metadata_bloom_filter_optimization() {
     let filesystem = Arc::new(FilesystemFactory::new(config).await.unwrap());
     
     // Create SSTable with metadata bloom filters
-    let sstable_path = temp_path.join("bloom_metadata_test.sst");
+    let sstable_path = temp_path.join("bloom_metadata_test.sstable");
     let test_config = create_test_config();
     let block_size = (test_config.block_size_kb * 1024) as usize;
     let writer = SstableWriter::new(&sstable_path, block_size, filesystem.clone())

@@ -23,7 +23,7 @@ mod tests {
     fn create_test_config(temp_dir: &TempDir) -> RocksDbMetadataConfig {
         RocksDbMetadataConfig {
             db_path: temp_dir.path().join("rocksdb"),
-            enable_compression: true,
+            compression: true,
             use_bloom_filters: true,
             block_cache_size_mb: 16,
             write_buffer_size_mb: 8,
@@ -54,7 +54,7 @@ mod tests {
                 filterable_columns: vec![
                     FilterableColumnSpec {
                         name: "author".to_string(),
-                        data_type: FilterableDataType::FilterableString as i32,
+                        // data_type removed -  FilterableDataType::FilterableString as i32,
                         indexed: true,
                         supports_range: false,
                         estimated_cardinality: Some(1000),
@@ -65,7 +65,7 @@ mod tests {
                     },
                     FilterableColumnSpec {
                         name: "date".to_string(),
-                        data_type: FilterableDataType::FilterableDatetime as i32,
+                        // data_type removed -  FilterableDataType::FilterableDatetime as i32,
                         indexed: true,
                         supports_range: true,
                         estimated_cardinality: None,
@@ -74,7 +74,7 @@ mod tests {
                     },
                     FilterableColumnSpec {
                         name: "rating".to_string(),
-                        data_type: FilterableDataType::FilterableFloat as i32,
+                        // data_type removed -  FilterableDataType::FilterableFloat as i32,
                         indexed: true,
                         supports_range: true,
                         estimated_cardinality: Some(50),
@@ -97,7 +97,7 @@ mod tests {
                         ..Default::default()
                     },
                 ],
-                quantization_config: Some(QuantizationConfig {
+                quantization: Some(QuantizationConfig {
                     enabled: Some(true),
                     storage_quantization: Some(StorageQuantizationConfig {
                         enabled: Some(true),
@@ -114,8 +114,8 @@ mod tests {
                     }),
                     ..Default::default()
                 }),
-                primary_index_name: "primary_hnsw".to_string(),
-                enable_automatic_index_selection: true,
+                primary_index: "primary_hnsw".to_string(),
+                auto_index_selection: true,
                 description: None,
                 tags: vec![],
                 owner: None,
@@ -130,7 +130,7 @@ mod tests {
                 last_updated: chrono::Utc::now().timestamp(),
             }),
             metadata: Some(CollectionMetadata {
-                created_at: chrono::Utc::now().timestamp(),
+                timestamp: chrono::Utc::now().timestamp(),
                 updated_at: chrono::Utc::now().timestamp(),
                 version: Some(1),
                 description: Some("Test collection with RocksDB backend".to_string()),
@@ -302,7 +302,7 @@ mod tests {
         
         let metadata = retrieved.metadata.as_ref().unwrap();
         assert_eq!(metadata.tags.len(), 5);
-        assert!(metadata.tags.contains(&"rocksdb-backend".to_string()));
+        assert!(metadata.tags.contains_hash(&"rocksdb-backend".to_string()));
     }
 
     #[tokio::test]
@@ -414,7 +414,7 @@ mod tests {
             config.distance_metric = DistanceMetric::Euclidean as i32;
             config.filterable_columns.push(FilterableColumnSpec {
                 name: "new_field".to_string(),
-                data_type: FilterableDataType::FilterableBoolean as i32,
+                // data_type removed -  FilterableDataType::FilterableBoolean as i32,
                 indexed: true,
                 supports_range: false,
                 estimated_cardinality: Some(2),

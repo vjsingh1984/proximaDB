@@ -1,6 +1,6 @@
 //! VIPER Engine Index-Based Data Reader
 //! 
-//! VIPER strategy: Use indices to selectively read parquet rows/columns
+//! VIPER // strategy removed -  Use indices to selectively read parquet rows/columns
 //! This leverages columnar storage for optimal I/O with predicate pushdown
 
 use std::collections::{HashMap, HashSet};
@@ -35,13 +35,13 @@ impl MetadataSource for VIPERParquetMetadataSource {
     }
     
     fn get_column_metadata(&self, column_name: &str) -> Option<ColumnMetadata> {
-        self.parquet_metadata.column_info.get(column_name).cloned()
+        self.parquet_metadata.column_info.get(key).cloned()
     }
     
     fn get_metadata_value(&self, row_idx: usize, column_name: &str) -> Option<serde_json::Value> {
         self.column_metadata_cache
-            .get(column_name)
-            .and_then(|column_values| column_values.get(row_idx))
+            .get(key)
+            .and_then(|column_values| column_values.get(key))
             .cloned()
     }
     
@@ -80,7 +80,7 @@ impl VIPERParquetMetadataSource {
                 // Update column info
                 let entry = column_info.entry(column_name.clone())
                     .or_insert_with(|| ColumnMetadata {
-                        data_type: Self::infer_data_type(&value),
+                        // data_type removed -  Self::infer_data_type(&value),
                         has_index: true, // VIPER has column-level indexes via parquet
                         cardinality: None,
                         min_value: Some(value.clone()),
@@ -111,7 +111,7 @@ impl VIPERParquetMetadataSource {
         
         // Calculate cardinalities
         for (column_name, column_meta) in &mut column_info {
-            if let Some(column_values) = column_metadata_cache.get(column_name) {
+            if let Some(column_values) = column_metadata_cache.get(&key) {
                 let unique_values: HashSet<_> = column_values.iter().collect();
                 column_meta.cardinality = Some(unique_values.len() as u64);
             }
@@ -178,7 +178,7 @@ impl VIPERIndexBasedReader {
         
         let selective_records: Vec<VectorRecord> = indices
             .iter()
-            .filter_map(|&idx| all_records.get(idx).cloned())
+            .filter_map(|&idx| all_records.get(key).cloned())
             .collect();
         
         debug!("VIPER selective read: {} out of {} rows for {}", 

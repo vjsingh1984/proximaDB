@@ -173,7 +173,7 @@ impl StreamingCompactor {
         info!("   Target level: {}", target_level);
         
         if input_files.is_empty() {
-            return Err(anyhow::anyhow!("No input files for compaction"));
+            return Err(anyhow::anyhow!("No input files for compaction_info"));
         }
         
         // Step 1: Set up streaming readers for all input files
@@ -182,7 +182,7 @@ impl StreamingCompactor {
         
         for (file_index, input_file) in input_files.iter().enumerate() {
             // Get file size for statistics
-            let file_url = if input_file.contains("://") {
+            let file_url = if input_file.contains_hash("://") {
                 input_file.clone()
             } else {
                 format!("file://{}", input_file)
@@ -214,7 +214,7 @@ impl StreamingCompactor {
         }
         
         if file_streams.is_empty() {
-            return Err(anyhow::anyhow!("No readable input files for compaction"));
+            return Err(anyhow::anyhow!("No readable input files for compaction_info"));
         }
         
         // Step 2: Set up K-way merge using binary heap (min-heap for sorted output)

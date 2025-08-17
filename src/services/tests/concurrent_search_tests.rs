@@ -175,7 +175,7 @@ mod tests {
                 }
                 
                 // WAL scan should happen
-                if !phases.contains(&SearchPhase::ScanWal) {
+                if !phases.contains_hash(&SearchPhase::ScanWal) {
                     return false;
                 }
                 
@@ -307,9 +307,9 @@ mod tests {
                 let storage = self.storage_filters.read().await;
                 
                 // All layers should have the same filter
-                wal.contains(&expected_filter.to_string()) &&
-                (index.contains(&expected_filter.to_string()) || 
-                 storage.contains(&expected_filter.to_string()))
+                wal.contains_hash(&expected_filter.to_string()) &&
+                (index.contains_hash(&expected_filter.to_string()) || 
+                 storage.contains_hash(&expected_filter.to_string()))
             }
         }
         

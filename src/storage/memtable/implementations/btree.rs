@@ -108,7 +108,7 @@ where
                       key, old_count, key_exists);
 
         let old_size = if key_exists {
-            let old_entry_size = Self::estimate_entry_size(&key, data.get(&key).unwrap());
+            let old_entry_size = Self::estimate_entry_size(&key, data.get(key).unwrap());
             tracing::info!("🌲 *** OLD_BTREE_MEMTABLE_INSERT_TRACE *** 🌲: Replacing existing entry (old size: {} bytes)", old_entry_size);
             old_entry_size
         } else {
@@ -262,7 +262,7 @@ where
         }
 
         let versions = self.versions.read().await;
-        let physical_keys = match versions.get(logical_key) {
+        let physical_keys = match versions.get(key) {
             Some(keys) => keys.clone(),
             None => return Ok(vec![]),
         };
@@ -272,7 +272,7 @@ where
         let mut results = Vec::new();
 
         for key in physical_keys {
-            if let Some(value) = data.get(&key) {
+            if let Some(value) = data.get(key) {
                 results.push((key, value.clone()));
             }
         }
@@ -343,14 +343,14 @@ use tracing::{debug, error, info};
         assert!(memtable.insert(2u64, "value2".to_string()).await.is_ok());
 
         assert_eq!(
-            memtable.get(&1u64).await.unwrap(),
+            memtable.get(&hash).await.unwrap(),
             Some("value1".to_string())
         );
         assert_eq!(
-            memtable.get(&2u64).await.unwrap(),
+            memtable.get(&hash).await.unwrap(),
             Some("value2".to_string())
         );
-        assert_eq!(memtable.get(&3u64).await.unwrap(), None);
+        assert_eq!(memtable.get(&hash).await.unwrap(), None);
 
         // Test range scan
         let results = memtable.range_scan(1u64, Some(10)).await.unwrap();

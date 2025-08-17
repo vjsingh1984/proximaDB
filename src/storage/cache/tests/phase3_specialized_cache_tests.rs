@@ -14,7 +14,7 @@ use std::collections::HashMap;
 struct QueryResult {
     query_id: String,
     results: Vec<String>,
-    score: f32,
+    similarity: f32,
     execution_time_ms: f32,
 }
 
@@ -61,7 +61,7 @@ async fn test_filter_bitmap_cache_roaring() {
     assert!(combined.is_some());
     let combined_result = combined.unwrap();
     assert_eq!(combined_result.bitmap.len(), 1); // Only ID 100 is in both
-    assert!(combined_result.bitmap.contains(100));
+    assert!(combined_result.bitmap.contains_hash(100));
     
     // Test filter decomposition
     let complex_filter = "(age > 25 AND category = 'electronics') OR status = 'active'";
@@ -77,7 +77,7 @@ async fn test_filter_bitmap_cache_roaring() {
     
     let updated = cache.get_with_hooks(&"filter1".to_string()).await;
     assert!(updated.is_some());
-    assert!(updated.unwrap().bitmap.contains(200));
+    assert!(updated.unwrap().bitmap.contains_hash(200));
 }
 
 /// Test IndexNodeCache for hot path caching
@@ -123,8 +123,8 @@ async fn test_index_structure_cache_hot_paths() {
     
     // Test hot node identification
     let hot_nodes = cache.get_hot_nodes(5).await;
-    assert!(hot_nodes.contains(&"root".to_string()));
-    assert!(hot_nodes.contains(&"child1".to_string()));
+    assert!(hot_nodes.contains_hash(&"root".to_string()));
+    assert!(hot_nodes.contains_hash(&"child1".to_string()));
     
     // Test prefetch for traversal
     cache.prefetch_for_traversal("root", 2).await;
@@ -156,24 +156,24 @@ async fn test_query_result_cache_subqueries() {
         results: vec![
             SearchResult {
                 id: Some("vec1".to_string()),
-                score: 0.9,
+                similarity: 0.9,
                 vector: vec![],
                 metadata: vec![],
-                rank: None,
+                // rank removed -  None,
             },
             SearchResult {
                 id: Some("vec2".to_string()),
-                score: 0.85,
+                similarity: 0.85,
                 vector: vec![],
                 metadata: vec![],
-                rank: None,
+                // rank removed -  None,
             },
             SearchResult {
                 id: Some("vec3".to_string()),
-                score: 0.8,
+                similarity: 0.8,
                 vector: vec![],
                 metadata: vec![],
-                rank: None,
+                // rank removed -  None,
             },
         ],
         cached_at: SystemTime::now(),
@@ -185,17 +185,17 @@ async fn test_query_result_cache_subqueries() {
         results: vec![
             SearchResult {
                 id: Some("vec1".to_string()),
-                score: 0.95,
+                similarity: 0.95,
                 vector: vec![],
                 metadata: vec![],
-                rank: None,
+                // rank removed -  None,
             },
             SearchResult {
                 id: Some("vec2".to_string()),
-                score: 0.9,
+                similarity: 0.9,
                 vector: vec![],
                 metadata: vec![],
-                rank: None,
+                // rank removed -  None,
             },
         ],
         cached_at: SystemTime::now(),
@@ -206,10 +206,10 @@ async fn test_query_result_cache_subqueries() {
         results: vec![
             SearchResult {
                 id: Some("vec3".to_string()),
-                score: 0.85,
+                similarity: 0.85,
                 vector: vec![],
                 metadata: vec![],
-                rank: None,
+                // rank removed -  None,
             },
         ],
         cached_at: SystemTime::now(),
@@ -314,13 +314,13 @@ impl QueryCache {
             QueryResult {
                 query_id: "sub1".to_string(),
                 results: vec!["vec1".to_string()],
-                score: 0.9,
+                similarity: 0.9,
                 execution_time_ms: 5.0,
             },
             QueryResult {
                 query_id: "sub2".to_string(),
                 results: vec!["vec2".to_string()],
-                score: 0.8,
+                similarity: 0.8,
                 execution_time_ms: 3.0,
             },
         ]
@@ -330,7 +330,7 @@ impl QueryCache {
         Some(QueryResult {
             query_id: "combined".to_string(),
             results: vec!["vec1".to_string(), "vec2".to_string(), "vec3".to_string()],
-            score: 0.85,
+            similarity: 0.85,
             execution_time_ms: 10.0,
         })
     }

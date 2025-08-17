@@ -166,34 +166,42 @@ message DoubleArray {
 }
 
 message CollectionConfig {
-  string name = 1;
-  int32 dimension = 2;
-  DistanceMetric distance_metric = 3;
-  StorageEngine storage_engine = 4;
-  IndexingAlgorithm primary_indexing_algorithm = 5;     // Primary/default algorithm
-  repeated FilterableColumnSpec filterable_columns = 6; // Native typed filterable column specs
-  repeated IndexConfig index_configs = 7;               // MULTIPLE index configurations
-  QuantizationConfig quantization_config = 8;           // Vector quantization configuration
+  // ============================================================================
+  // CORE CONFIGURATION (Required)
+  // ============================================================================
+  string name = 1;                                      // Collection name (min 8 chars)
+  int32 dimension = 2;                                  // Vector dimension
+  DistanceMetric distance_metric = 3;                   // Distance metric for similarity
   
-  // Additional configuration for multiple indexes
-  string primary_index_name = 9;                        // Name of primary index to use for search
-  bool enable_automatic_index_selection = 10;           // Auto-select best index per query
+  // ============================================================================
+  // STORAGE CONFIGURATION
+  // ============================================================================
+  StorageEngine storage_engine = 4;                     // Storage engine type (VIPER, SST, etc.)
+  optional StorageConfig storage_config = 5;            // Complete storage configuration (renamed from storage_engine_config)
   
-  // Metadata fields
+  // ============================================================================
+  // INDEX CONFIGURATION
+  // ============================================================================
+  repeated IndexConfig index_configs = 6;               // Multiple index configurations
+  optional string primary_index = 7;                    // Primary index name (renamed from primary_index_name)
+  optional bool auto_index_selection = 8;               // Auto-select best index (renamed from enable_automatic_index_selection)
+  
+  // ============================================================================
+  // SCHEMA CONFIGURATION
+  // ============================================================================
+  repeated FilterableColumnSpec filterable_columns = 9; // Metadata columns for filtering
+  optional QuantizationConfig quantization = 10;        // Vector quantization (renamed from quantization_config)
+  
+  // ============================================================================
+  // METADATA
+  // ============================================================================
   optional string description = 11;                     // Human-readable description
   repeated string tags = 12;                            // Tags for categorization
-  optional string owner = 13;                           // Owner/creator of the collection
+  optional string owner = 13;                           // Owner/creator
   
-  // Compression configuration (field 14)
-  optional CompressionConfig compression = 14;          // Per-collection compression settings
-  
-  // Storage location (field 15) - optional, if not provided, system picks from config
-  optional string storage_location = 15;                // Base storage URL (e.g., "file:///data/disk1")
-  
-  // Storage optimization hints (field 16)
-  optional StorageOptimizationHints optimization_hints = 16; // Hints for automatic optimization
-  
-  // Note: Use filterable_columns (field 6) for specifying filterable fields with proper types!
+  // Note: Removed separate compression field - it's now part of StorageConfig
+  // Note: Removed storage_location - it's now part of StorageConfig
+  // Note: Removed primary_indexing_algorithm - use index_configs instead
 }
 
 // Advanced index configuration with per-collection customization
@@ -374,13 +382,128 @@ message CompressionConfig {
   optional bool dynamic_block_sizing = 9; // Auto-adjust based on vector dimensions (default: false)
 }
 
-// Storage optimization hints to guide compression selection
-message StorageOptimizationHints {
-  AccessPattern access_pattern = 1;       // Expected access pattern
-  DataDensity data_density = 2;           // Data density characteristics
-  bool frequent_updates = 3;              // Whether data is frequently updated
-  optional int64 expected_size_gb = 4;    // Expected collection size in GB
-  optional float read_write_ratio = 5;    // Read/write ratio (1.0 = balanced)
+// ============================================================================
+// STORAGE CONFIGURATION - Complete storage settings for a collection
+// ============================================================================
+message StorageConfig {
+  // Storage location and persistence
+  optional string storage_location = 1;            // Override default storage path (e.g., "s3://bucket/path")
+  optional bool persistent = 2;                    // Whether data persists after restart (default: true)
+  
+  // Compression configuration
+  optional CompressionConfig compression = 3;      // Compression settings
+  
+  // Optimization hints to guide automatic configuration
+  optional AccessPattern access_pattern = 4;       // Expected access pattern
+  optional DataDensity data_density = 5;           // Data density characteristics
+  optional bool frequent_updates = 6;              // Whether data is frequently updated
+  optional int64 expected_size_gb = 7;             // Expected collection size in GB
+  optional float read_write_ratio = 8;             // Read/write ratio (1.0 = balanced)
+  
+  // Quick presets for common use cases
+  optional string preset = 9;  // "maximum_performance", "balanced", "memory_constrained", "cloud_optimized", "real_time", "archive"
+  
+  // Master optimization control
+  optional bool enable_all_optimizations = 10;  // Master switch (default: true)
+  
+  // Specific configuration overrides (when you need fine control)
+  optional ParquetWriterSettings parquet_writer = 11;   // Common to VIPER, NOVA
+  optional FooterCacheSettings footer_cache = 12;       // Cloud storage optimization
+  optional HybridWriterSettings hybrid_writer = 13;     // Adaptive writer strategy
+  
+  // Engine-specific settings
+  optional SstEngineSettings sst_settings = 14;         // SST-specific
+  optional ViperEngineSettings viper_settings = 15;     // VIPER-specific
+  optional NovaEngineSettings nova_settings = 16;       // NOVA-specific
+}
+
+// Parquet writer settings - matches TOML configuration
+message ParquetWriterSettings {
+  optional int32 row_group_size = 1;
+  optional int32 page_size = 2;
+  optional bool enable_bloom_filters = 3;
+  optional float bloom_filter_fpp = 4;
+  repeated string bloom_filter_columns = 5;
+  optional bool enable_column_statistics = 6;
+  optional bool enable_page_index = 7;
+  optional bool enable_column_index = 8;
+  optional bool enable_offset_index = 9;
+  optional int32 page_index_granularity = 10;
+  optional bool enable_dictionary = 11;
+  optional float dictionary_threshold = 12;
+  optional bool enable_delta_encoding = 13;
+  optional bool enable_byte_stream_split = 14;
+  optional bool enable_pq_sorting = 15;
+  optional int32 pq_sorting_segments = 16;
+  optional int32 pq_sorting_codebook_size = 17;
+  optional bool enable_native_metadata = 18;
+  optional int32 metadata_inference_samples = 19;
+  optional int32 write_batch_size = 20;
+  optional bool id_less_storage = 21;
+}
+
+// Footer cache settings for cloud storage optimization
+message FooterCacheSettings {
+  optional bool enable = 1;
+  optional int64 max_entries = 2;
+  optional int64 ttl_seconds = 3;
+  optional int64 time_to_idle_seconds = 4;
+  optional bool enable_persistence = 5;
+  optional string persistence_path = 6;
+  optional bool enable_prefetch = 7;
+  optional int64 prefetch_threshold = 8;
+  optional int64 warming_interval_seconds = 9;
+  optional bool enable_compression = 10;
+  optional int32 compression_level = 11;
+}
+
+// Hybrid writer settings for adaptive performance
+message HybridWriterSettings {
+  optional bool enable = 1;
+  optional string initial_mode = 2;  // "streaming", "batch", "adaptive"
+  optional bool enable_auto_switch = 3;
+  optional int32 mode_switch_threshold = 4;
+  optional int32 pattern_window_size = 5;
+  optional float streaming_threshold = 6;
+  optional int32 batch_threshold = 7;
+  optional int32 max_buffer_size = 8;
+  optional int64 buffer_time_limit_seconds = 9;
+  optional bool enable_concurrent_writes = 10;
+  optional int32 max_concurrent_writers = 11;
+  optional bool optimize_row_group_size = 12;
+  optional int32 min_row_group_size = 13;
+  optional int32 max_row_group_size = 14;
+}
+
+// SST-specific engine settings
+message SstEngineSettings {
+  optional bool enable_bloom_filters = 1;
+  optional float bloom_filter_fpp = 2;
+  optional CompressionAlgorithm compression = 3;
+  optional int32 compression_level = 4;
+  optional int64 write_buffer_size = 5;
+  optional int32 max_write_buffers = 6;
+  optional int32 block_size_kb = 7;
+  optional bool dynamic_block_sizing = 8;
+}
+
+// VIPER-specific engine settings
+message ViperEngineSettings {
+  optional bool inherit_global_settings = 1;
+  // Additional VIPER-specific overrides
+  optional bool enable_columnar_compression = 2;
+  optional bool enable_vector_quantization = 3;
+  optional int32 vector_chunk_size = 4;
+  optional bool enable_lazy_loading = 5;
+}
+
+// NOVA-specific engine settings
+message NovaEngineSettings {
+  optional bool inherit_global_settings = 1;
+  // Additional NOVA-specific overrides
+  optional bool enable_real_time_mode = 2;
+  optional int32 streaming_buffer_size = 3;
+  optional bool prefer_low_latency = 4;
 }
 
 // Comprehensive quantization configuration with storage-aware strategies

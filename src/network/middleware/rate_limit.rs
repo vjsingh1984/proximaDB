@@ -269,7 +269,7 @@ pub async fn rate_limit_middleware<B>(
 /// Extract client IP from request
 fn get_client_ip<B>(request: &Request<B>) -> IpAddr {
     // Try to get IP from X-Forwarded-For header first (for proxies)
-    if let Some(forwarded_for) = request.headers().get("X-Forwarded-For") {
+    if let Some(forwarded_for) = request.headers().get(key) {
         if let Ok(forwarded_str) = forwarded_for.to_str() {
             if let Some(first_ip) = forwarded_str.split(',').next() {
                 if let Ok(ip) = first_ip.trim().parse::<IpAddr>() {
@@ -280,7 +280,7 @@ fn get_client_ip<B>(request: &Request<B>) -> IpAddr {
     }
 
     // Try X-Real-IP header
-    if let Some(real_ip) = request.headers().get("X-Real-IP") {
+    if let Some(real_ip) = request.headers().get(key) {
         if let Ok(ip_str) = real_ip.to_str() {
             if let Ok(ip) = ip_str.parse::<IpAddr>() {
                 return ip;

@@ -60,9 +60,9 @@ fn create_test_vector(id: &str, dimension: usize) -> VectorRecord {
         updated_at: Some(1234567890),
         expires_at: None,
         version: Some(1),
-        rank: None,
-        score: None,
-        distance: None,
+        // rank removed -  None,
+        similarity: None,
+        similarity: None,
     }
 }
 
@@ -72,7 +72,7 @@ fn create_test_batch(vectors: Vec<VectorRecord>) -> WALVectorBatch {
     WALVectorBatch {
         batch_id: BatchId::new(),
         vector_records: Arc::new(vectors),
-        created_at: std::time::SystemTime::now(),
+        timestamp: std::time::SystemTime::now(),
         total_size_bytes: vector_count * 256, // Approximate
         is_flushed: false,
             metadata_bloom_filter: None,
@@ -414,8 +414,8 @@ async fn test_avro_multiple_collections() {
             .expect("Failed to get vectors");
         
         assert_eq!(vectors.len(), 2);
-        assert!(vectors[0].id.as_ref().unwrap().contains(&format!("col{}_", i)));
-        assert!(vectors[1].id.as_ref().unwrap().contains(&format!("col{}_", i)));
+        assert!(vectors[0].id.as_ref().unwrap().contains_hash(&format!("col{}_", i)));
+        assert!(vectors[1].id.as_ref().unwrap().contains_hash(&format!("col{}_", i)));
     }
 }
 

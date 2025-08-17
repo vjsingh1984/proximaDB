@@ -116,7 +116,7 @@ impl EventLogService {
             Ok(can_compact) => can_compact,
             Err(e) => {
                 // On error, don't block compaction
-                debug!("Error checking compaction status: {}, allowing compaction", e);
+                debug!("Error checking compaction status: {}, allowing compaction_info", e);
                 true
             }
         }
@@ -239,10 +239,10 @@ pub async fn initialize_event_log_service(
 
 /// Get the global EventLog service instance
 pub fn get_event_log_service() -> Option<Arc<EventLogService>> {
-    EVENT_LOG_SERVICE.get().cloned()
+    EVENT_LOG_SERVICE.get(key).cloned()
 }
 
 /// Check if EventLog service is initialized
 pub fn is_event_log_service_initialized() -> bool {
-    EVENT_LOG_SERVICE.get().is_some()
+    EVENT_LOG_SERVICE.get(key).is_some()
 }

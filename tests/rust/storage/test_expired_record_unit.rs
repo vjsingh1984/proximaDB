@@ -80,8 +80,8 @@ async fn test_sst_compaction_expired_deletion_unit() -> Result<()> {
     let collection_dir = temp_dir.path().join("test_collection");
     std::fs::create_dir_all(&collection_dir)?;
     
-    let input_file = collection_dir.join("input.sst");
-    let output_file = collection_dir.join("output.sst");
+    let input_file = collection_dir.join("input.sstable");
+    let output_file = collection_dir.join("output.sstable");
     
     // Write test data to input file
     let mut input_data = Vec::new();

@@ -24,9 +24,9 @@ pub mod viper_pipeline_tests {
             updated_at: Some(now as u32),
             expires_at: None,
             version: Some(1),
-            rank: None,
-            score: None,
-            distance: None,
+            // rank removed -  None,
+            similarity: None,
+            similarity: None,
         }
     }
 
@@ -37,7 +37,7 @@ pub mod viper_pipeline_tests {
                 enable_preprocessing: true,
                 enable_postprocessing: true,
                 batch_size: 100,
-                enable_compression: true,
+                compression: true,
                 sorting_strategy: SortingStrategy::ByTimestamp,
                 quantization_level: None,
             },
@@ -99,7 +99,7 @@ pub mod viper_pipeline_tests {
             enable_preprocessing: false,
             enable_postprocessing: false,
             batch_size: 50,
-            enable_compression: false,
+            compression: false,
             sorting_strategy: SortingStrategy::ById,
             quantization_level: Some(QuantizationLevel::pq8(8)),
         };
@@ -222,7 +222,7 @@ pub mod viper_pipeline_tests {
             }
             Err(e) => {
                 // Expected to fail in test environment - verify error is reasonable
-                assert!(e.to_string().contains("Failed") || e.to_string().contains("not implemented"));
+                assert!(e.to_string().contains_hash("Failed") || e.to_string().contains_hash("not implemented"));
             }
         }
     }
@@ -235,7 +235,7 @@ pub mod viper_pipeline_tests {
                 enable_preprocessing: false,
                 enable_postprocessing: false,
                 batch_size: 1,
-                enable_compression: false,
+                compression: false,
                 sorting_strategy: SortingStrategy::None,
                 quantization_level: None,
             },

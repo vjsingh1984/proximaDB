@@ -184,7 +184,7 @@ use tracing::{debug, error, info};
             distance_metric: DistanceMetric::Cosine,
             compression_config: CompressionConfig::default(),
             filterable_columns: Vec::new(),
-            quantization_config: None,
+            quantization: None,
             batch_size_hint: Some(1000),
             priority: OperationPriority::Normal,
             timeout_ms: Some(60_000),
@@ -202,9 +202,9 @@ use tracing::{debug, error, info};
                 updated_at: None,
                 expires_at: None,
                 version: None,
-                rank: None,
-                score: None,
-                distance: None,
+                // rank removed -  None,
+                similarity: None,
+                similarity: None,
             })
             .collect()
     }
@@ -592,7 +592,7 @@ use tracing::{debug, error, info};
         // Verify collection list includes all test collections
         let collection_list = metrics_store.list_collections().await.unwrap();
         for collection_id in &collections {
-            assert!(collection_list.contains(&collection_id.to_string()), 
+            assert!(collection_list.contains_hash(&collection_id.to_string()), 
                    "Collection list should include {}", collection_id);
         }
         

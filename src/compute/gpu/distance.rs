@@ -20,7 +20,7 @@ use anyhow::{anyhow, Result};
 use std::sync::Arc;
 use tracing::{debug, info, warn};
 
-use super::distance::{DistanceCompute, DistanceMetric};
+use super::similarity::{DistanceCompute, DistanceMetric};
 use crate::compute::distance_computation::engine::{GpuAccelerator, HardwareBackend};
 use crate::core::hardware_capabilities::GpuBackend;
 
@@ -740,7 +740,7 @@ impl DistanceCompute for GpuDistanceCalculator {
             .unwrap_or_else(|e| {
                 warn!("GPU distance calculation failed: {}, falling back to CPU", e);
                 // Fallback to CPU implementation
-                use super::distance::create_distance_calculator;
+                use super::similarity::create_distance_calculator;
                 let cpu_calc = create_distance_calculator(self.metric.clone());
                 cpu_calc.calculate_distance(a, b, &self.metric)
             })
@@ -759,7 +759,7 @@ impl DistanceCompute for GpuDistanceCalculator {
             .unwrap_or_else(|e| {
                 warn!("GPU batch calculation failed: {}, falling back to CPU", e);
                 // Fallback to CPU implementation
-                use super::distance::create_distance_calculator;
+                use super::similarity::create_distance_calculator;
                 let cpu_calc = create_distance_calculator(self.metric.clone());
                 cpu_calc.distance_batch(query, vectors)
             })

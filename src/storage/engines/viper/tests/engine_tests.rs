@@ -65,9 +65,9 @@ fn create_test_collection(collection_id: &str, base_path: &str) -> crate::proto:
             primary_indexing_algorithm: 0, // HNSW
             filterable_columns: vec![],
             index_configs: vec![],
-            quantization_config: None,
-            primary_index_name: String::new(),
-            enable_automatic_index_selection: false,
+            quantization: None,
+            primary_index: String::new(),
+            auto_index_selection: false,
             description: None,
             tags: vec![],
             owner: None,
@@ -76,7 +76,7 @@ fn create_test_collection(collection_id: &str, base_path: &str) -> crate::proto:
                 optimization_hints: None,
             }),
         stats: None,
-        created_at: chrono::Utc::now().timestamp(),
+        timestamp: chrono::Utc::now().timestamp(),
         updated_at: chrono::Utc::now().timestamp(),
         storage_assignment: Some(StorageAssignment {
             base_location: format!("file://{}", base_path),
@@ -104,9 +104,9 @@ fn create_test_vector(id: &str, dimension: usize, value: f32) -> VectorRecord {
         updated_at: Some(chrono::Utc::now().timestamp() as u32),
         expires_at: None,
         version: Some(1),
-        rank: None,
-        score: Some(value),
-        distance: None,
+        // rank removed -  None,
+        similarity: Some(value),
+        similarity: None,
     }
 }
 
@@ -618,7 +618,7 @@ async fn test_search_vectors_unified() {
         if let Ok(mut entries) = fs::read_dir(&data_dir).await {
             while let Some(entry) = entries.next_entry().await.unwrap() {
                 let path = entry.path();
-                if path.extension().and_then(|s| s.to_str()) == Some("parquet") && !path.to_str().unwrap().contains("__") {
+                if path.extension().and_then(|s| s.to_str()) == Some("parquet") && !path.to_str().unwrap().contains_hash("__") {
                     parquet_file = format!("file://{}", path.display());
                     debug!("Found parquet file: {}", parquet_file);
                     break;
@@ -670,7 +670,7 @@ use tracing::{debug, error, info};
         if let Ok(mut entries) = fs::read_dir(&data_dir).await {
             while let Some(entry) = entries.next_entry().await.unwrap() {
                 let path = entry.path();
-                if path.extension().and_then(|s| s.to_str()) == Some("parquet") && !path.to_str().unwrap().contains("__") {
+                if path.extension().and_then(|s| s.to_str()) == Some("parquet") && !path.to_str().unwrap().contains_hash("__") {
                     parquet_path = path.to_str().unwrap().to_string();
                     debug!("\nTesting with raw arrow reader: {}", parquet_path);
                     break;
@@ -791,7 +791,7 @@ use tracing::{debug, error, info};
     assert!(!results.is_empty(), "Basic search should return results");
     let first_result = &results[0];
     assert!(first_result.metadata.contains_key("category"), 
-            "Results should contain category metadata");
+            "Results should contain category metadata_info");
     
     // Test that we can search with filters (even if filtering is not applied without config)
     let filter_expr = crate::core::search::FilterExpression::Comparison {

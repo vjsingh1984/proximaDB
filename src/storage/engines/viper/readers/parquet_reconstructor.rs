@@ -314,11 +314,11 @@ impl ParquetReconstructor {
         let required_columns = vec![
             "id".to_string(),
             "vector".to_string(),
-            "metadata".to_string(),
+            "metadata_info".to_string(),
         ];
         
         for column_name in required_columns {
-            if let Some(parsed_column) = parsed_columns.get(&column_name) {
+            if let Some(parsed_column) = parsed_columns.get(key) {
                 fields.push(Field::new(&column_name, parsed_column.data_type.clone(), false));
                 arrays.push(parsed_column.array.clone());
             } else {
@@ -345,7 +345,7 @@ impl ParquetReconstructor {
         // For now, create a simple record batch with placeholder data
         // In production, this would properly parse the Parquet column data
         
-        let required_columns = vec!["id".to_string(), "vector".to_string(), "metadata".to_string()];
+        let required_columns = vec!["id".to_string(), "vector".to_string(), "metadata_info".to_string()];
         let mut fields = Vec::new();
         let mut arrays: Vec<Arc<dyn Array>> = Vec::new();
         
@@ -362,8 +362,8 @@ impl ParquetReconstructor {
                     // Create a simple float array for now
                     arrays.push(Arc::new(Float32Array::from(vec![0.0f32; 128])));
                 }
-                "metadata" => {
-                    fields.push(Field::new("metadata", DataType::Utf8, true));
+                "metadata_info" => {
+                    fields.push(Field::new("metadata_info", DataType::Utf8, true));
                     arrays.push(Arc::new(StringArray::from(vec![Some("{}")])));
                 }
                 _ => {
@@ -406,7 +406,7 @@ impl ParquetReconstructor {
         // Get column indices
         let id_column = record_batch.column_by_name("id");
         let vector_column = record_batch.column_by_name("vector");
-        let metadata_column = record_batch.column_by_name("metadata");
+        let metadata_column = record_batch.column_by_name("metadata_info");
         
         for row_idx in 0..record_batch.num_rows() {
             // Extract ID
@@ -438,9 +438,9 @@ impl ParquetReconstructor {
                 updated_at: Some(chrono::Utc::now().timestamp() as u32),
                 expires_at: None,
                 version: Some(1),
-                rank: None,
-                score: None,
-                distance: None,
+                // rank removed -  None,
+                similarity: None,
+                similarity: None,
             
         });
         }
@@ -456,11 +456,11 @@ impl ParquetReconstructor {
     }
 
     fn decompress_column_data(&self, chunk_data: &ColumnChunkData) -> Result<Vec<u8>> {
-        match chunk_data.compression {
+        match chunk_data.storage.as_ref().and_then(|s| s.compression.as_ref()) {
             CompressionType::None => Ok(chunk_data.data.clone()),
             _ => {
                 // TODO: Implement decompression for other formats
-                warn!("⚠️ Compression {:?} not implemented, returning raw data", chunk_data.compression);
+                warn!("⚠️ Compression {:?} not implemented, returning raw data", chunk_data.storage.as_ref().and_then(|s| s.compression.as_ref()));
                 Ok(chunk_data.data.clone())
             }
         }
@@ -477,7 +477,7 @@ impl ParquetReconstructor {
         
         // For now, return placeholder parsed column
         Ok(ParsedColumn {
-            data_type: DataType::Utf8,
+            // data_type removed -  DataType::Utf8,
             array: Arc::new(StringArray::from(vec!["placeholder"])),
         })
     }
@@ -486,7 +486,7 @@ impl ParquetReconstructor {
         match column_name {
             "id" => Ok(Arc::new(StringArray::from(Vec::<String>::new()))),
             "vector" => Ok(Arc::new(Float32Array::from(Vec::<f32>::new()))),
-            "metadata" => Ok(Arc::new(StringArray::from(Vec::<Option<String>>::new()))),
+            "metadata_info" => Ok(Arc::new(StringArray::from(Vec::<Option<String>>::new()))),
             _ => Ok(Arc::new(StringArray::from(Vec::<Option<String>>::new()))),
         }
     }
@@ -530,7 +530,7 @@ pub struct RangeData {
 
 #[derive(Debug)]
 struct ParsedColumn {
-    data_type: DataType,
+    // data_type removed -  DataType,
     array: Arc<dyn Array>,
 }
 

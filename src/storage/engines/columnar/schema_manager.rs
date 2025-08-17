@@ -41,11 +41,11 @@ impl ColumnarSchemaManager {
         &self,
         collection_id: &str,
         dimension: usize,
-        quantization_config: Option<&QuantizationConfig>,
+        quantization: Option<&QuantizationConfig>,
         filterable_columns: &[FilterableColumn],
     ) -> Result<Arc<Schema>> {
         // Check cache first
-        let cache_key = self.generate_cache_key(collection_id, dimension, quantization_config, filterable_columns);
+        let cache_key = self.generate_cache_key(collection_id, dimension, quantization, filterable_columns);
         if let Some(cached) = self.get_cached_schema(&cache_key).await {
             if !cached.is_expired() {
                 debug!("Schema cache hit for collection: {}", collection_id);
@@ -55,7 +55,7 @@ impl ColumnarSchemaManager {
         
         info!("Creating vector schema for collection: {} (dim: {})", collection_id, dimension);
         
-        let config = quantization_config.unwrap_or(&self.default_config);
+        let config = quantization.unwrap_or(&self.default_config);
         let schema = self.build_schema(dimension, config, filterable_columns)?;
         
         // Cache the schema
@@ -127,7 +127,7 @@ impl ColumnarSchemaManager {
         
         // Add metadata storage for non-filterable fields
         fields.push(Field::new(
-            "extra_metadata",
+            "extra_metadata_info",
             DataType::List(Arc::new(Field::new(
                 "item",
                 DataType::Struct(vec![
@@ -272,7 +272,7 @@ impl ColumnarSchemaManager {
         &self,
         collection_id: &str,
         dimension: usize,
-        quantization_config: Option<&QuantizationConfig>,
+        quantization: Option<&QuantizationConfig>,
         filterable_columns: &[FilterableColumn],
     ) -> String {
         use std::collections::hash_map::DefaultHasher;
@@ -282,7 +282,7 @@ impl ColumnarSchemaManager {
         collection_id.hash(&mut hasher);
         dimension.hash(&mut hasher);
         
-        if let Some(config) = quantization_config {
+        if let Some(config) = quantization {
             config.enable_binary.hash(&mut hasher);
             config.enable_int8.hash(&mut hasher);
             config.enable_pq.hash(&mut hasher);
@@ -309,7 +309,7 @@ impl ColumnarSchemaManager {
     async fn cache_schema(&self, cache_key: String, schema: Arc<Schema>) {
         let cached = CachedSchema {
             schema,
-            created_at: chrono::Utc::now(),
+            timestamp: chrono::Utc::now(),
             ttl_seconds: 3600, // 1 hour TTL
         };
         
@@ -329,7 +329,7 @@ impl ColumnarSchemaManager {
     pub async fn clear_cache(&self) {
         let mut cache = self.schema_cache.write().await;
         cache.clear();
-        info!("Cleared schema cache");
+        info!("Cleared schema cache_info");
     }
     
     /// Get cache statistics
@@ -353,7 +353,7 @@ impl ColumnarSchemaManager {
         self.create_vector_schema(
             &metadata.collection_id,
             metadata.dimension,
-            Some(&metadata.quantization_config),
+            Some(&metadata.quantization),
             filterable_columns,
         ).await
     }
@@ -418,7 +418,6 @@ impl ColumnarSchemaManager {
 #[derive(Debug, Clone, Hash)]
 pub struct FilterableColumn {
     pub name: String,
-    pub data_type: String,
     pub nullable: bool,
     pub indexed: bool,
 }
@@ -427,7 +426,7 @@ pub struct FilterableColumn {
 #[derive(Debug, Clone)]
 struct CachedSchema {
     pub schema: Arc<Schema>,
-    pub created_at: chrono::DateTime<chrono::Utc>,
+    pub timestamp: chrono::DateTime<chrono::Utc>,
     pub ttl_seconds: i64,
 }
 
@@ -481,13 +480,13 @@ mod tests {
         let filterable_columns = vec![
             FilterableColumn {
                 name: "category".to_string(),
-                data_type: "string".to_string(),
+                // data_type removed -  "string".to_string(),
                 nullable: true,
                 indexed: true,
             },
             FilterableColumn {
                 name: "price".to_string(),
-                data_type: "float".to_string(),
+                // data_type removed -  "float".to_string(),
                 nullable: true,
                 indexed: false,
             },
@@ -510,7 +509,7 @@ mod tests {
         assert!(schema.field_with_name("price").is_ok());
         
         // Check metadata field
-        assert!(schema.field_with_name("extra_metadata").is_ok());
+        assert!(schema.field_with_name("extra_metadata_info").is_ok());
     }
     
     #[tokio::test]
@@ -553,7 +552,7 @@ mod tests {
             None,
             &[FilterableColumn {
                 name: "category".to_string(),
-                data_type: "string".to_string(),
+                // data_type removed -  "string".to_string(),
                 nullable: true,
                 indexed: true,
             }],
@@ -567,13 +566,13 @@ mod tests {
             &[
                 FilterableColumn {
                     name: "category".to_string(),
-                    data_type: "string".to_string(),
+                    // data_type removed -  "string".to_string(),
                     nullable: true,
                     indexed: true,
                 },
                 FilterableColumn {
                     name: "price".to_string(),
-                    data_type: "float".to_string(),
+                    // data_type removed -  "float".to_string(),
                     nullable: true,
                     indexed: false,
                 },

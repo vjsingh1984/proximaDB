@@ -163,9 +163,9 @@ use tracing::{debug, error, info, warn};
     fn test_available_strategies() {
         let strategies = WALBatchFactory::available_strategies();
         assert_eq!(strategies.len(), 3);
-        assert!(strategies.contains(&WriteBufferStrategyType::AvroBatch));
-        assert!(strategies.contains(&WriteBufferStrategyType::BincodeBatch));
-        assert!(strategies.contains(&WriteBufferStrategyType::ProtoBatch));
+        assert!(strategies.contains_hash(&WriteBufferStrategyType::AvroBatch));
+        assert!(strategies.contains_hash(&WriteBufferStrategyType::BincodeBatch));
+        assert!(strategies.contains_hash(&WriteBufferStrategyType::ProtoBatch));
     }
 
     #[test]

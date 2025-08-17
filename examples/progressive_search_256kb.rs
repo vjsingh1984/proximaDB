@@ -101,7 +101,7 @@ async fn main() -> Result<()> {
         // Setup SST engine with specific block size
         let mut sst_config = SstConfig::default();
         sst_config.block_size_kb = *block_size_kb;
-        sst_config.compression = "zstd".to_string();
+        sst_config.storage_config.as_ref().and_then(|s| s.compression.as_ref()) = "zstd".to_string();
         sst_config.compression_level = 3;
         
         let filesystem = FilesystemFactory::create_local(base_path);

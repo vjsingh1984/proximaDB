@@ -32,7 +32,7 @@ use tracing::{info, debug, warn};
 /// Create test SST configuration with specific compression algorithm
 fn create_sst_config_with_algorithm(env: &UnifiedTestEnvironment, algorithm: &str, level: i32) -> SstConfig {
     let mut config = env.sst_config.clone();
-    config.compression = algorithm.to_string();
+    config.storage_config.as_ref().and_then(|s| s.compression.as_ref()) = algorithm.to_string();
     config.compression_level = level;
     config.block_size_kb = 4096; // 4MB for optimal compression
     config
@@ -85,7 +85,7 @@ async fn test_sst_datablock_zstd_compression_roundtrip() -> anyhow::Result<()> {
     
     // Create SST config with compression enabled
     let mut config = env.sst_config.clone();
-    config.compression = "zstd".to_string();
+    config.storage_config.as_ref().and_then(|s| s.compression.as_ref()) = "zstd".to_string();
     config.compression_level = 3;
     
     // Create DataBlock with test records
@@ -132,7 +132,7 @@ async fn test_sst_engine_flush_with_compression_integration() -> anyhow::Result<
     
     // Create SST engine with compression enabled
     let mut sst_config = env.sst_config.clone();
-    sst_config.compression = "zstd".to_string();
+    sst_config.storage_config.as_ref().and_then(|s| s.compression.as_ref()) = "zstd".to_string();
     sst_config.compression_level = 3;
     
     let distance_compute = Arc::new(UnifiedDistanceCompute::new(proximadb::compute::distance_computation::DistanceMetric::Cosine));
@@ -174,7 +174,7 @@ async fn test_sst_compaction_preserves_compression_integrity() -> anyhow::Result
     
     // Create SST engine with compression enabled and lower compaction threshold
     let mut sst_config = env.sst_config.clone();
-    sst_config.compression = "zstd".to_string();
+    sst_config.storage_config.as_ref().and_then(|s| s.compression.as_ref()) = "zstd".to_string();
     sst_config.compression_level = 3;
     sst_config.compaction_threshold = 2; // Lower threshold to trigger compaction
     
@@ -255,7 +255,7 @@ async fn test_sst_search_compressed_blocks() -> anyhow::Result<()> {
     
     // Create SST engine with compression enabled
     let mut sst_config = env.sst_config.clone();
-    sst_config.compression = "zstd".to_string();
+    sst_config.storage_config.as_ref().and_then(|s| s.compression.as_ref()) = "zstd".to_string();
     sst_config.compression_level = 3;
     
     let distance_compute = Arc::new(UnifiedDistanceCompute::new(proximadb::compute::distance_computation::DistanceMetric::Cosine));
@@ -368,7 +368,7 @@ async fn test_compression_algorithm_vs_disabled() -> anyhow::Result<()> {
     
     // Test with compression enabled
     let mut config_compressed = env_compressed.sst_config.clone();
-    config_compressed.compression = "zstd".to_string();
+    config_compressed.storage_config.as_ref().and_then(|s| s.compression.as_ref()) = "zstd".to_string();
     config_compressed.compression_level = 3;
     
     let compressed_engine = SstStorage::new(
@@ -389,7 +389,7 @@ async fn test_compression_algorithm_vs_disabled() -> anyhow::Result<()> {
     
     // Test with compression disabled
     let mut config_uncompressed = env_uncompressed.sst_config.clone();
-    config_uncompressed.compression = "none".to_string();
+    config_uncompressed.storage_config.as_ref().and_then(|s| s.compression.as_ref()) = "none".to_string();
     config_uncompressed.compression_level = 0;
     
     let uncompressed_engine = SstStorage::new(
@@ -554,7 +554,7 @@ async fn test_compression_levels() -> anyhow::Result<()> {
         
         // Configure SST with specific compression level
         let mut config = env.sst_config.clone();
-        config.compression = "zstd".to_string();
+        config.storage_config.as_ref().and_then(|s| s.compression.as_ref()) = "zstd".to_string();
         config.compression_level = level;
         
         let distance_compute = Arc::new(UnifiedDistanceCompute::new(proximadb::compute::distance_computation::DistanceMetric::Cosine));

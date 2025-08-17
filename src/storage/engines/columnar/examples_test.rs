@@ -42,7 +42,7 @@ pub async fn viper_optimization_example() -> Result<()> {
     println!("  - Quantization: {:?}", recommendations.quantization_strategy);
     
     // Create optimized writer configuration
-    let quantization_config = QuantizationConfig {
+    let quantization = QuantizationConfig {
         enable_binary: true,
         enable_int8: true,
         enable_pq: true,
@@ -58,7 +58,7 @@ pub async fn viper_optimization_example() -> Result<()> {
             768,
             recommendations.use_bloom_filters,
             recommendations.use_id_less_storage,
-            quantization_config,
+            quantization,
         )?;
         
         println!("✍️  Writing 10,000 vectors with optimizations...");
@@ -178,7 +178,7 @@ pub async fn nova_optimization_example() -> Result<()> {
     println!("  - Quantization: {:?} (minimal storage)", recommendations.quantization_strategy);
     
     // NOVA benefits from the same infrastructure with different configuration
-    let quantization_config = QuantizationConfig {
+    let quantization = QuantizationConfig {
         enable_binary: true,
         enable_int8: true,
         enable_pq: true,
@@ -193,7 +193,7 @@ pub async fn nova_optimization_example() -> Result<()> {
             row_group_size: recommendations.row_group_size, // Larger row groups
             enable_bloom_filters: recommendations.use_bloom_filters,
             id_less_storage: recommendations.use_id_less_storage,
-            quantization: quantization_config,
+            quantization: quantization,
             compression: crate::core::compression::CompressionAlgorithm::Zstd, // Better compression
             ..Default::default()
         };
@@ -331,7 +331,7 @@ pub async fn performance_comparison_example() -> Result<()> {
     println!("💾 Memory Usage:");
     println!("  Before (load full files): 2GB for 1M vectors");
     println!("  After (streaming): 50MB for same dataset (96% reduction)");
-    println!("  Benefit: Process 40x larger datasets in same memory");
+    println!("  Benefit: Process 40x larger datasets in same mem");
     println!();
     
     println!("💽 Storage Efficiency:");
@@ -361,7 +361,7 @@ pub async fn performance_comparison_example() -> Result<()> {
 /// Run all examples to demonstrate the optimizations
 pub async fn run_all_examples() -> Result<()> {
     println!("🚀 Columnar Infrastructure Optimization Examples");
-    println!("=" .repeat(60));
+    println!("{}", "=".repeat(60));
     println!();
     
     // Run VIPER example

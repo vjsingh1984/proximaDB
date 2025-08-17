@@ -82,7 +82,6 @@ pub enum BatchProcessingStrategy {
 /// Concurrency configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ConcurrencyConfig {
-    pub strategy: BatchProcessingStrategy,
     pub max_parallelism: usize,
     pub work_stealing: bool,
     pub load_balancing: LoadBalancingStrategy,
@@ -134,7 +133,7 @@ pub struct PartialResult {
 #[derive(Debug, Clone)]
 pub struct CachedBatchResult {
     pub result: BatchResult,
-    pub created_at: std::time::Instant,
+    pub timestamp: std::time::Instant,
     pub access_count: u64,
     pub cache_key: String,
 }
@@ -190,7 +189,7 @@ impl RowBasedBatchOperations {
         }
         
         // Acquire semaphore for concurrency control
-        let _permit = self.semaphore.acquire().await?;
+        let _permit = self.semaphore/* TODO: Fix VectorMemoryPool::acquire() method */.await?;
         
         // Split into batches
         let batches = self.split_into_batches(&ids);
@@ -239,10 +238,10 @@ impl RowBasedBatchOperations {
             failed_operations,
             partial_results: all_results,
             throughput_ops_per_second: throughput,
-            memory_usage_peak: self.memory_pool.peak_usage(),
+            memory_usage_peak: self.memory_pool.as_ref().peak_usage(),
             cache_hit_rate: 0.0, // Would be calculated from actual cache usage
             cpu_usage_percent: 0.0, // Would be measured
-            memory_efficiency: self.memory_pool.efficiency(),
+            memory_efficiency: self.memory_pool.as_ref().efficiency(),
             io_efficiency: 1.0, // Would be calculated from actual I/O
         };
         
@@ -265,7 +264,7 @@ impl RowBasedBatchOperations {
         let start_time = std::time::Instant::now();
         
         // Acquire semaphore for concurrency control
-        let _permit = self.semaphore.acquire().await?;
+        let _permit = self.semaphore/* TODO: Fix VectorMemoryPool::acquire() method */.await?;
         
         // Split records into batches
         let batches = self.split_records_into_batches(records);
@@ -305,10 +304,10 @@ impl RowBasedBatchOperations {
             failed_operations,
             partial_results: all_results,
             throughput_ops_per_second: throughput,
-            memory_usage_peak: self.memory_pool.peak_usage(),
+            memory_usage_peak: self.memory_pool.as_ref().peak_usage(),
             cache_hit_rate: 0.0,
             cpu_usage_percent: 0.0,
-            memory_efficiency: self.memory_pool.efficiency(),
+            memory_efficiency: self.memory_pool.as_ref().efficiency(),
             io_efficiency: 1.0,
         })
     }
@@ -323,7 +322,7 @@ impl RowBasedBatchOperations {
         let operation_id = format!("batch_update_{}", uuid::Uuid::new_v4());
         let start_time = std::time::Instant::now();
         
-        let _permit = self.semaphore.acquire().await?;
+        let _permit = self.semaphore/* TODO: Fix VectorMemoryPool::acquire() method */.await?;
         
         let mut all_results = Vec::new();
         let mut successful_operations = 0;
@@ -382,10 +381,10 @@ impl RowBasedBatchOperations {
             failed_operations,
             partial_results: all_results,
             throughput_ops_per_second: throughput,
-            memory_usage_peak: self.memory_pool.peak_usage(),
+            memory_usage_peak: self.memory_pool.as_ref().peak_usage(),
             cache_hit_rate: 0.0,
             cpu_usage_percent: 0.0,
-            memory_efficiency: self.memory_pool.efficiency(),
+            memory_efficiency: self.memory_pool.as_ref().efficiency(),
             io_efficiency: 1.0,
         })
     }
@@ -400,7 +399,7 @@ impl RowBasedBatchOperations {
         let operation_id = format!("batch_delete_{}", uuid::Uuid::new_v4());
         let start_time = std::time::Instant::now();
         
-        let _permit = self.semaphore.acquire().await?;
+        let _permit = self.semaphore/* TODO: Fix VectorMemoryPool::acquire() method */.await?;
         
         let mut successful_operations = 0;
         let mut failed_operations = 0;
@@ -455,10 +454,10 @@ impl RowBasedBatchOperations {
             failed_operations,
             partial_results: all_results,
             throughput_ops_per_second: throughput,
-            memory_usage_peak: self.memory_pool.peak_usage(),
+            memory_usage_peak: self.memory_pool.as_ref().peak_usage(),
             cache_hit_rate: 0.0,
             cpu_usage_percent: 0.0,
-            memory_efficiency: self.memory_pool.efficiency(),
+            memory_efficiency: self.memory_pool.as_ref().efficiency(),
             io_efficiency: 1.0,
         })
     }
@@ -567,7 +566,7 @@ impl RowBasedBatchOperations {
             
             match index.lookup(id).await {
                 Some(location) => {
-                    if let Some(block) = blocks.get(location.superblock_id as usize) {
+                    if let Some(block) = blocks.get(key) {
                         if let Some(record) = block.get_record(location.record_offset as usize) {
                             successful_operations += 1;
                             partial_results.push(PartialResult {
@@ -690,7 +689,7 @@ impl RowBasedBatchOperations {
     /// Check operation cache
     async fn check_cache(&self, operation_id: &str) -> Option<CachedBatchResult> {
         let cache = self.operation_cache.read().await;
-        cache.get(operation_id).cloned()
+        cache.get(cache_key).cloned()
     }
     
     /// Cache operation result
@@ -707,7 +706,7 @@ impl RowBasedBatchOperations {
         if cache.len() < self.config.max_cache_entries {
             cache.insert(operation_id.clone(), CachedBatchResult {
                 result,
-                created_at: now,
+                timestamp: now,
                 access_count: 0,
                 cache_key: operation_id,
             });

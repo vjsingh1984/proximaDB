@@ -79,7 +79,7 @@ impl IndexVectorStore {
 
     /// Get a vector by ID
     pub fn get(&self, id: &str) -> Option<Arc<VectorRecord>> {
-        self.vectors.get(id).map(|entry| entry.value().clone())
+        self.vectors.get(&vector_id).map(|entry| entry.value().clone())
     }
 
     /// Remove a vector by ID
@@ -151,7 +151,7 @@ impl ConcurrentIdMapping {
     /// Register a new external ID and get its internal ID
     pub fn register(&self, external_id: String) -> Result<usize> {
         // Check if already exists
-        if let Some(entry) = self.external_to_internal.get(&external_id) {
+        if let Some(entry) = self.external_to_internal.get(key) {
             return Ok(*entry.value());
         }
 
@@ -167,12 +167,12 @@ impl ConcurrentIdMapping {
 
     /// Get internal ID for external ID
     pub fn get_internal(&self, external_id: &str) -> Option<usize> {
-        self.external_to_internal.get(external_id).map(|entry| *entry.value())
+        self.external_to_internal.get(key).map(|entry| *entry.value())
     }
 
     /// Get external ID for internal ID
     pub fn get_external(&self, internal_id: usize) -> Option<String> {
-        self.internal_to_external.get(&internal_id).map(|entry| entry.value().clone())
+        self.internal_to_external.get(key).map(|entry| entry.value().clone())
     }
 
     /// Remove mapping by external ID
@@ -434,9 +434,9 @@ mod tests {
             updated_at: None,
             expires_at: None,
             version: None,
-            rank: None,
-            score: None,
-            distance: None,
+            // rank removed -  None,
+            similarity: None,
+            similarity: None,
         });
 
         // Test insert
@@ -445,8 +445,8 @@ mod tests {
         assert!(!store.is_empty());
 
         // Test get
-        assert!(store.get("test1").is_some());
-        assert!(store.get("nonexistent").is_none());
+        assert!(store.get(key).is_some());
+        assert!(store.get(key).is_none());
 
         // Test remove
         assert!(store.remove("test1").is_some());

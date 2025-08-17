@@ -195,7 +195,7 @@ impl Default for StorageSystemConfig {
                 enable_mmap: true,
                 cache_size_mb: 512,
                 compaction_config: crate::core::CompactionConfig {
-                    strategy: crate::core::CompactionStrategy::SizeTiered,
+                    // strategy removed -  crate::core::CompactionStrategy::SizeTiered,
                     max_sstable_size_mb: 128, // 128MB
                     max_level_size_mb: 512,
                     compaction_threads: 4,
@@ -291,13 +291,13 @@ impl StorageSystemBuilder {
 
     /// Configure data compression
     pub fn with_data_compression(mut self, config: DataCompressionConfig) -> Self {
-        self.config.data_storage.compression = config;
+        self.config.data_storage.storage.as_ref().and_then(|s| s.compression.as_ref()) = config;
         self
     }
 
     /// Enable high compression for data
     pub fn with_high_data_compression(mut self) -> Self {
-        self.config.data_storage.compression = DataCompressionConfig {
+        self.config.data_storage.storage.as_ref().and_then(|s| s.compression.as_ref()) = DataCompressionConfig {
             compress_vectors: true,
             compress_metadata: true,
             vector_compression: VectorCompressionAlgorithm::OPQ,
@@ -309,7 +309,7 @@ impl StorageSystemBuilder {
 
     /// Configure fast data compression
     pub fn with_fast_data_compression(mut self) -> Self {
-        self.config.data_storage.compression = DataCompressionConfig {
+        self.config.data_storage.storage.as_ref().and_then(|s| s.compression.as_ref()) = DataCompressionConfig {
             compress_vectors: true,
             compress_metadata: true,
             vector_compression: VectorCompressionAlgorithm::PQ,
@@ -321,7 +321,7 @@ impl StorageSystemBuilder {
 
     /// Disable data compression
     pub fn without_data_compression(mut self) -> Self {
-        self.config.data_storage.compression = DataCompressionConfig {
+        self.config.data_storage.storage.as_ref().and_then(|s| s.compression.as_ref()) = DataCompressionConfig {
             compress_vectors: false,
             compress_metadata: false,
             vector_compression: VectorCompressionAlgorithm::None,
@@ -357,7 +357,7 @@ impl StorageSystemBuilder {
 
     /// Configure WAL compression
     pub fn with_wal_compression(mut self, algorithm: CompressionAlgorithm) -> Self {
-        self.config.wal_system.compression.algorithm = algorithm;
+        self.config.wal_system.storage.as_ref().and_then(|s| s.compression.as_ref()).algorithm = algorithm;
         self
     }
 
@@ -477,7 +477,7 @@ impl StorageSystemBuilder {
         let bucket_str = bucket.into();
         self.config.metadata_backend = Some(MetadataBackendConfig {
             backend_type: "filestore".to_string(),
-            storage_url: format!("s3://{}/metadata", bucket_str),
+            storage_url: format!("s3://{}/metadata_info", bucket_str),
             cloud_config: Some(CloudStorageConfig {
                 s3_config: Some(S3Config {
                     region: region.into(),
@@ -511,7 +511,7 @@ impl StorageSystemBuilder {
         self.config.metadata_backend = Some(MetadataBackendConfig {
             backend_type: "filestore".to_string(),
             storage_url: format!(
-                "adls://{}.dfs.core.windows.net/{}/metadata",
+                "adls://{}.dfs.core.windows.net/{}/metadata_info",
                 account_name_str, container_str
             ),
             cloud_config: Some(CloudStorageConfig {
@@ -543,7 +543,7 @@ impl StorageSystemBuilder {
         let bucket_str = bucket.into();
         self.config.metadata_backend = Some(MetadataBackendConfig {
             backend_type: "filestore".to_string(),
-            storage_url: format!("gcs://{}/metadata", bucket_str),
+            storage_url: format!("gcs://{}/metadata_info", bucket_str),
             cloud_config: Some(CloudStorageConfig {
                 s3_config: None,
                 azure_config: None,
@@ -582,7 +582,7 @@ impl StorageSystemBuilder {
             self.config.data_storage.layout_strategy
         );
         tracing::info!(
-            "🗃️ WAL strategy: {:?}",
+            "🗃️ WAL // strategy removed -  {:?}",
             self.config.wal_system.strategy_type
         );
         tracing::info!("💾 Storage URLs: {:?}", self.config.data_storage.data_urls);
@@ -595,7 +595,7 @@ impl StorageSystemBuilder {
         // Generate recommendations
         let recommendations =
             super::validation::ConfigValidator::generate_recommendations(&self.config);
-        if !recommendations.is_empty() {
+        if !recommendations.is_none() {
             tracing::info!("💡 Configuration recommendations:");
             for rec in &recommendations {
                 tracing::info!("   - {}", rec);
@@ -608,7 +608,7 @@ impl StorageSystemBuilder {
 
         // Build Write Buffer system using new factory pattern
         tracing::info!(
-            "🔧 Creating WAL strategy: {:?} with memtable: {:?}",
+            "🔧 Creating WAL // strategy removed -  {:?} with memtable: {:?}",
             self.config.wal_system.strategy_type,
             self.config.wal_system.memtable.memtable_type
         );
@@ -701,7 +701,7 @@ impl std::fmt::Debug for StorageSystem {
             .field("data_urls_count", &self.config.data_storage.data_urls.len())
             .field(
                 "compression_enabled",
-                &self.config.data_storage.compression.compress_vectors,
+                &self.config.data_storage.storage.as_ref().and_then(|s| s.compression.as_ref()).compress_vectors,
             )
             .field(
                 "zero_copy_enabled",
@@ -736,7 +736,7 @@ use tracing::{debug, error, info};
             builder.config.wal_system.memtable.memtable_type,
             MemTableType::BTree
         );
-        assert!(builder.config.data_storage.compression.compress_vectors);
+        assert!(builder.config.data_storage.storage.as_ref().and_then(|s| s.compression.as_ref()).compress_vectors);
     }
 
     #[tokio::test]

@@ -137,7 +137,7 @@ async fn test_sst_quantization_e2e_pipeline() {
     // Step 4: Write quantized SST file
     println!("3. 📝 Writing quantized SST file...");
     
-    let sst_file_path = test_dir.join("test_quantized.sst");
+    let sst_file_path = test_dir.join("test_quantized.sstable");
     let writer = SstableWriter::new(&sst_file_path, BLOCK_SIZE, filesystem_factory.clone());
     
     // Convert SstRecord to (String, SstRecord) format for writer
@@ -176,7 +176,7 @@ async fn test_sst_quantization_e2e_pipeline() {
     // Verify the sorting strategy is correctly set
     assert!(matches!(compactor.sort_strategy, CompactionSortStrategy::ByPQSimilarity(_)));
     
-    let compacted_file_path = test_dir.join("test_compacted.sst");
+    let compacted_file_path = test_dir.join("test_compacted.sstable");
     let input_files = vec![sst_file_path.to_string_lossy().to_string()];
     
     let compaction_result = compactor.compact_files(

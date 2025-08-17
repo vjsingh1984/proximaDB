@@ -9,7 +9,7 @@ use serde_json::json;
 
 #[tokio::test]
 async fn test_quantization_config_fields() -> Result<()> {
-    // Test that quantization_config field exists and can be used
+    // Test that quantization field exists and can be used
     use proximadb::proto::proximadb::*;
     
     // Check if we can find the QuantizationConfig message
@@ -24,9 +24,9 @@ async fn test_quantization_config_fields() -> Result<()> {
         primary_indexing_algorithm: 1, // HNSW
         filterable_columns: vec![],
         index_configs: vec![],
-        quantization_config: None, // This field should exist
-        primary_index_name: "default".to_string(),
-        enable_automatic_index_selection: false,
+        quantization: None, // This field should exist
+        primary_index: "default".to_string(),
+        auto_index_selection: false,
         description: Some("Test collection".to_string()),
         tags: vec![],
         owner: Some("test".to_string()),
@@ -36,7 +36,7 @@ async fn test_quantization_config_fields() -> Result<()> {
     };
     
     assert_eq!(basic_config.name, "basic_collection");
-    assert!(basic_config.quantization_config.is_none());
+    assert!(basic_config.quantization.is_none());
     
     debug!("✅ Quantization config field exists in CollectionConfig");
     Ok(())
@@ -55,9 +55,9 @@ async fn test_index_config_field() -> Result<()> {
         primary_indexing_algorithm: 1, // HNSW
         filterable_columns: vec![],
         index_configs: vec![],
-        quantization_config: None,
-        primary_index_name: "default".to_string(),
-        enable_automatic_index_selection: false,
+        quantization: None,
+        primary_index: "default".to_string(),
+        auto_index_selection: false,
         description: Some("Test collection".to_string()),
         tags: vec![],
         owner: Some("test".to_string()),
@@ -140,17 +140,17 @@ async fn test_handler_hint_processing() -> Result<()> {
     
     // Simulate gRPC handler processing
     let enable_two_stage = hints_json
-        .get("enable_two_stage_search")
+        .get(key)
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
     
     let candidate_multiplier = hints_json
-        .get("candidate_multiplier") 
+        .get(key) 
         .and_then(|v| v.as_f64())
         .unwrap_or(1.0) as f32;
     
     let quantization_hint = hints_json
-        .get("quantization_hint")
+        .get(key)
         .and_then(|v| v.as_str())
         .unwrap_or("FP32")
         .to_string();
@@ -160,9 +160,9 @@ async fn test_handler_hint_processing() -> Result<()> {
         "enable_two_stage_search": enable_two_stage,
         "candidate_multiplier": candidate_multiplier,
         "quantization_hint": quantization_hint,
-        "min_candidates": hints_json.get("min_candidates"),
-        "max_candidates": hints_json.get("max_candidates"),
-        "accuracy_threshold": hints_json.get("accuracy_threshold")
+        "min_candidates": hints_json.get(key),
+        "max_candidates": hints_json.get(key),
+        "accuracy_threshold": hints_json.get(key)
     });
     
     assert_eq!(processed_hints["enable_two_stage_search"], true);

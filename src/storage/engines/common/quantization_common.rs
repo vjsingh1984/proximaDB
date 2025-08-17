@@ -736,9 +736,6 @@ pub struct GarbageCollectionConfig {
     
     /// Collection frequency
     pub frequency: GarbageCollectionFrequency,
-    
-    /// Collection strategy
-    pub strategy: GarbageCollectionStrategy,
 }
 
 /// Garbage collection frequency
@@ -1358,7 +1355,7 @@ impl Default for QuantizationMemoryConfig {
             garbage_collection: GarbageCollectionConfig {
                 enabled: true,
                 frequency: GarbageCollectionFrequency::MemoryPressure { threshold: 0.8 },
-                strategy: GarbageCollectionStrategy::Incremental,
+                // strategy removed -  GarbageCollectionStrategy::Incremental,
             },
         }
     }

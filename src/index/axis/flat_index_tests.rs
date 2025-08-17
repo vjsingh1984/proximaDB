@@ -24,9 +24,9 @@ use tracing::{debug, error, info};
             updated_at: None,
             expires_at: None,
             version: Some(1),
-            rank: None,
-            score: None,
-            distance: None,
+            // rank removed -  None,
+            similarity: None,
+            similarity: None,
         }
     }
 

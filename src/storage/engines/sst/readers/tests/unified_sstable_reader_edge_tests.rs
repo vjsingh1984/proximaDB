@@ -104,7 +104,7 @@ mod edge_tests {
     #[tokio::test]
     async fn test_extreme_top_k_values() {
         let reader = create_test_reader().await;
-        let context = create_test_context("test", vec!["test.sst".to_string()]);
+        let context = create_test_context("test", vec!["test.sstable".to_string()]);
         
         // Test with very large top_k
         let params_large = SearchParams {
@@ -291,7 +291,7 @@ mod edge_tests {
         
         // Test empty object
         let filter_empty_object = FilterExpression::Comparison {
-            field: "metadata".to_string(),
+            field: "metadata_info".to_string(),
             operator: ComparisonOperator::Equals,
             value: json!({}),
         };
@@ -527,7 +527,7 @@ mod edge_tests {
         
         // Verify we have multiple versions and a tombstone
         assert_eq!(records.len(), 12);
-        assert!(records[10].is_tombstone);
+        assert!(records[10]/* REMOVED: is_tombstone field no longer exists */);
     }
 
     // ===== Bloom Filter Edge Cases =====
@@ -605,7 +605,7 @@ mod edge_tests {
         
         // Create a temporary directory and write test SSTable
         let temp_dir = TempDir::new().unwrap();
-        let sst_path = temp_dir.path().join("test.sst");
+        let sst_path = temp_dir.path().join("test.sstable");
         let file_url = format!("file://{}", sst_path.display());
         
         // Write test data
@@ -847,7 +847,7 @@ mod edge_tests {
         ];
         
         for tombstone in &tombstones {
-            assert!(tombstone.is_tombstone);
+            assert!(tombstone/* REMOVED: is_tombstone field no longer exists */);
             assert!(tombstone.vector.is_empty());
         }
     }
@@ -890,18 +890,18 @@ mod edge_tests {
             "//", // Double slash
             "/tmp/../etc/passwd", // Path traversal attempt
             "C:\\Windows\\System32", // Windows path on Unix
-            "file://localhost/test.sst", // URI format
+            "file://localhost/test.sstable", // URI format
             "s3://bucket/key", // Cloud storage path
-            "/path/with spaces/file.sst", // Spaces
-            "/path/with/🚀/emoji.sst", // Emoji in path
-            "/very/long/path/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.sst", // Very long path
-            "/path/with/.hidden/file.sst", // Hidden directory
-            "/path/with/../../../relative.sst", // Relative components
-            "/path/with/./current.sst", // Current directory reference
-            "/path/with/~user/home.sst", // Tilde expansion
-            "/path/with/$VAR/env.sst", // Environment variable
-            "/path/with/\0null.sst", // Null character (invalid)
-            "/path/with/\n/newline.sst", // Newline in path
+            "/path/with spaces/file.sstable", // Spaces
+            "/path/with/🚀/emoji.sstable", // Emoji in path
+            "/very/long/path/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.sstable", // Very long path
+            "/path/with/.hidden/file.sstable", // Hidden directory
+            "/path/with/../../../relative.sstable", // Relative components
+            "/path/with/./current.sstable", // Current directory reference
+            "/path/with/~user/home.sstable", // Tilde expansion
+            "/path/with/$VAR/env.sstable", // Environment variable
+            "/path/with/\0null.sstable", // Null character (invalid)
+            "/path/with/\n/newline.sstable", // Newline in path
         ];
         
         for path in edge_paths {

@@ -302,16 +302,16 @@ fn test_metadata_serialization() {
         assert!(obj.len() > 0, "Metadata object should not be empty");
         
         // Check specific fields if they exist
-        if let Some(string_val) = obj.get("string_field").and_then(|v| v.as_str()) {
+        if let Some(string_val) = obj.get(key).and_then(|v| v.as_str()) {
             assert_eq!(string_val, "test_value");
         }
-        if let Some(int_val) = obj.get("int_field").and_then(|v| v.as_f64()) {
+        if let Some(int_val) = obj.get(key).and_then(|v| v.as_f64()) {
             assert_eq!(int_val, 42.0);
         }
-        if let Some(float_val) = obj.get("float_field").and_then(|v| v.as_f64()) {
+        if let Some(float_val) = obj.get(key).and_then(|v| v.as_f64()) {
             assert!((float_val - 3.14).abs() < 0.001);
         }
-        if let Some(bool_val) = obj.get("bool_field").and_then(|v| v.as_bool()) {
+        if let Some(bool_val) = obj.get(key).and_then(|v| v.as_bool()) {
             assert_eq!(bool_val, true);
         }
     } else {

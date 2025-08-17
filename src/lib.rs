@@ -176,7 +176,7 @@ impl ProximaDB {
             let mut storage = self.storage.write().await;
             storage.start().await?;
         }
-        tracing::info!("✅ ProximaDB::start - Storage engine started, collections recovered from metadata");
+        tracing::info!("✅ ProximaDB::start - Storage engine started, collections recovered from metadata_info");
 
         // Step 2: Recover assignments from collection metadata
         tracing::info!("🗺️ ProximaDB::start - Step 2: Recovering assignments from collection metadata...");
@@ -203,7 +203,7 @@ impl ProximaDB {
         tracing::info!("🎉 ProximaDB::start - Database startup complete with proper recovery order!");
         tracing::info!("📋 Recovery Order Summary:");
         tracing::info!("  1️⃣ Collections: Recovered from metadata snapshots");
-        tracing::info!("  2️⃣ Assignments: Recovered from collection metadata"); 
+        tracing::info!("  2️⃣ Assignments: Recovered from collection metadata_info"); 
         tracing::info!("  3️⃣ Vectors: Recovered from write buffer");
         tracing::info!("  4️⃣ Services: HTTP/gRPC servers started");
         Ok(())

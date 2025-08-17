@@ -38,7 +38,7 @@ impl SSTRowFilterEvaluator {
     ) -> Result<Vec<usize>> {
         let mut qualifying_indices = Vec::new();
         
-        info!("SST Row Filter: Evaluating {} VectorRecords in memory", records.len());
+        info!("SST Row Filter: Evaluating {} VectorRecords in mem", records.len());
         
         for (index, record) in records.iter().enumerate() {
             // Use record ID or index as cache key
@@ -66,7 +66,7 @@ impl SSTRowFilterEvaluator {
     ) -> Result<Vec<usize>> {
         let mut qualifying_indices = Vec::new();
         
-        info!("SST Row Filter: Evaluating {} VectorRecords in memory", records.len());
+        info!("SST Row Filter: Evaluating {} VectorRecords in mem", records.len());
         
         for (index, record) in records.iter().enumerate() {
             // Use record ID or index as cache key
@@ -128,7 +128,7 @@ impl SSTRowFilterEvaluator {
         record_id: &str,
         metadata: &[crate::proto::proximadb::MetadataItem],
     ) -> Result<HashMap<String, serde_json::Value>> {
-        if let Some(cached) = self.metadata_cache.get(record_id) {
+        if let Some(cached) = self.metadata_cache.get(&key) {
             return Ok(cached.clone());
         }
         
@@ -149,7 +149,7 @@ impl SSTRowFilterEvaluator {
         cache_key: &str,
         metadata: &[crate::proto::proximadb::MetadataItem],
     ) -> Result<HashMap<String, serde_json::Value>> {
-        if let Some(cached) = self.metadata_cache.get(cache_key) {
+        if let Some(cached) = self.metadata_cache.get(&key) {
             return Ok(cached.clone());
         }
         
@@ -464,9 +464,9 @@ mod tests {
                 updated_at: None,
                 expires_at: None,
                 version: Some(1),
-                rank: None,
-                score: None,
-                distance: None,
+                // rank removed -  None,
+                similarity: None,
+                similarity: None,
             });
         }
         

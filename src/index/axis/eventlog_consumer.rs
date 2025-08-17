@@ -181,7 +181,7 @@ impl AxisEventLogConsumer {
         let event_id = event.event_id.clone();
         let event_type = match event.operation {
             EventType::Flush => "flush",
-            EventType::Compaction => "compaction",
+            EventType::Compaction => "compaction_info",
             EventType::Delete => "delete",
         };
         
@@ -199,9 +199,9 @@ impl AxisEventLogConsumer {
         );
         
         // Get collection configuration
-        debug!("[AXIS Consumer] Looking up collection {} in cache", event.collection_id);
+        debug!("[AXIS Consumer] Looking up collection {} in cache_info", event.collection_id);
         let collection = self.collection_cache
-            .get(&event.collection_id)
+            .get(key)
             .ok_or_else(|| {
                 error!("[AXIS Consumer] Collection {} not found in cache for event {}", event.collection_id, event_id);
                 anyhow::anyhow!("Collection {} not found", event.collection_id)
@@ -214,7 +214,7 @@ impl AxisEventLogConsumer {
             collection.config.as_ref().map(|c| c.dimension).unwrap_or(0),
             collection.config.as_ref().map(|c| c.storage_engine).unwrap_or(0),
             collection.config.as_ref()
-                .and_then(|c| c.quantization_config.as_ref())
+                .and_then(|c| c.quantization.as_ref())
                 .map(|q| q.enabled)
                 .unwrap_or(false)
         );
@@ -282,7 +282,7 @@ impl AxisEventLogConsumer {
             event_id,
             extraction_mode_str,
             collection.config.as_ref()
-                .and_then(|c| c.quantization_config.as_ref())
+                .and_then(|c| c.quantization.as_ref())
                 .map(|q| q.enabled)
                 .unwrap_or(false),
             event.has_fp32,
@@ -479,7 +479,7 @@ impl AxisEventLogConsumer {
     fn determine_extraction_mode(&self, collection: &Collection) -> ExtractionMode {
         // Check if collection has quantization enabled
         let has_quantization = collection.config.as_ref()
-            .and_then(|c| c.quantization_config.as_ref())
+            .and_then(|c| c.quantization.as_ref())
             .map(|q| q.enabled)
             .unwrap_or(false);
         
@@ -578,6 +578,10 @@ impl AxisEventLogConsumer {
                                 // Extract if we have either type
                                 !vector_record.vector.is_empty() || vector_record.quantized_vector.as_ref().map_or(false, |v| !v.is_empty())
                             }
+                            ExtractionMode::Auto => {
+                                // Auto mode: extract if we have any data
+                                !vector_record.vector.is_empty() || vector_record.quantized_vector.as_ref().map_or(false, |v| !v.is_empty())
+                            }
                         };
                         
                         if should_extract {
@@ -593,7 +597,7 @@ impl AxisEventLogConsumer {
                                 updated_at: vector_record.updated_at,
                                 expires_at: vector_record.expires_at,
                                 version: vector_record.version,
-                                quantized_vector: if matches!(extraction_mode, ExtractionMode::QuantizedOnly | ExtractionMode::Both) {
+                                quantized: if matches!(extraction_mode, ExtractionMode::QuantizedOnly | ExtractionMode::Both) {
                                     vector_record.quantized_vector.clone()
                                 } else {
                                     None
@@ -737,9 +741,9 @@ impl AxisEventLogConsumer {
 //                                         .unwrap_or(0),
 //                                     updated_at: None,
 //                                     expires_at: None,
-//                                     rank: None,
-//                                     score: None,
-//                                     distance: None,
+//                                     // rank removed -  None,
+//                                     similarity: None,
+//                                     similarity: None,
 //                                 };
 //                                 
 //                                 all_vectors.push(vector_record);

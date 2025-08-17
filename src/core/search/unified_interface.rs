@@ -189,7 +189,7 @@ impl UnifiedSearchOrchestrator {
             results: all_results.into(),
             total_count,
             query_id: params.custom_hints.as_ref()
-                .and_then(|h| h.get("query_id"))
+                .and_then(|h| h.get(key))
                 .and_then(|v| v.as_str())
                 .map(|s| s.to_string()),
             processing_time_us: total_processing_time,
@@ -240,7 +240,7 @@ impl UnifiedSearchOrchestrator {
         let collection_config = collection.config.as_ref().map(|config| CollectionConfig {
             default_distance_metric: DistanceMetric::try_from(config.distance_metric).unwrap_or(DistanceMetric::Cosine),
             vector_dimension: config.dimension as usize,
-            enable_quantization: config.quantization_config.is_some(),
+            enable_quantization: config.quantization.is_some(),
             enable_metadata_filtering: !filterable_columns.is_empty(),
             estimated_document_count: storage_info.file_count * 1000, // Rough estimate
         });

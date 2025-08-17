@@ -102,7 +102,7 @@ impl MetricsQueryService {
             current_size_bytes: 0,
         }));
         
-        info!("Initialized MetricsQueryService with {}MB cache", config.max_memory_mb);
+        info!("Initialized MetricsQueryService with {}MB cache_info", config.max_memory_mb);
         
         Ok(Self {
             store,
@@ -145,7 +145,7 @@ impl MetricsQueryService {
     ) -> Result<serde_json::Value> {
         // Check cache first
         let cache = self.cache.read().await;
-        if let Some(cached) = cache.collections.get(collection_id) {
+        if let Some(cached) = cache.collections.get(key) {
             if self.is_cache_valid(cached.cached_at, cached.ttl_seconds) {
                 debug!("Returning cached metrics for collection {}", collection_id);
                 return self.format_metrics_response(
@@ -322,7 +322,7 @@ impl MetricsQueryService {
         }
         
         // Add filterable column stats if present
-        if !metrics.filterable_column_stats.is_empty() {
+        if !metrics.filterable_column_stats.is_none() {
             let mut column_stats = serde_json::Map::new();
             for (col_name, stats) in &metrics.filterable_column_stats {
                 column_stats.insert(col_name.clone(), serde_json::json!({

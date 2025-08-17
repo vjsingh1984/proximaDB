@@ -24,9 +24,10 @@ use crate::storage::engines::common::{
     UniversalCompressionAdapter, UniversalCompressionConfig,
     compression_common::{
         AdaptiveCompressionSettings, AdaptiveStrategy,
-        ContextAwareCompressionConfig, CompressionDataType,
+        ContextAwareCompressionConfig,
     },
 };
+use crate::metrics::compression::CompressionDataType;
 
 use crate::storage::persistence::filesystem::{
     FilesystemFactory
@@ -282,7 +283,7 @@ impl FlushManager {
         let compaction_triggered = self.check_compaction_trigger(collection_id).await.unwrap_or(false);
 
         // Step 5: Update collection metadata
-        info!("🔄 VIPER: Step 5 - Updating collection metadata");
+        info!("🔄 VIPER: Step 5 - Updating collection metadata_info");
         self.update_collection_metadata_after_flush(collection_id, vector_records.len(), parquet_data.len()).await?;
 
         // Step 5.1: Record metrics (non-blocking, failure-tolerant)
@@ -364,8 +365,8 @@ impl FlushManager {
         // This ordering maximizes performance by eliminating rows early using efficient
         // columnar filters before expensive vector operations
         // Check if quantization is enabled to determine schema columns
-        let quantization_config = if let Some(ref collection) = collection_config {
-            collection.config.as_ref().and_then(|c| c.quantization_config.as_ref())
+        let quantization = if let Some(ref collection) = collection_config {
+            collection.config.as_ref().and_then(|c| c.quantization.as_ref())
         } else {
             None
         };
@@ -384,7 +385,7 @@ impl FlushManager {
         ];
         
         // Phase 2: Add quantized vector columns for compression + fast approximation
-        if let Some(quant_config) = quantization_config {
+        if let Some(quant_config) = quantization {
             if quant_config.enabled {
                 debug!("🗜️ VIPER: Adding quantized vector columns for collection {}", collection_id);
                 
@@ -422,7 +423,7 @@ impl FlushManager {
                 Vec::new()
             }
         } else {
-            info!("Collection {} config not available, using empty filterable metadata", collection_id);
+            info!("Collection {} config not available, using empty filterable metadata_info", collection_id);
             Vec::new()
         };
         
@@ -470,7 +471,7 @@ impl FlushManager {
         let mut vector_int8_data: Vec<Vec<i8>> = Vec::with_capacity(capacity);
         let mut vector_pq8_data: Vec<Vec<u8>> = Vec::with_capacity(capacity);
         let mut vector_pq4_data: Vec<Vec<u8>> = Vec::with_capacity(capacity);
-        let has_quantization = quantization_config.map(|q| q.enabled).unwrap_or(false);
+        let has_quantization = quantization.map(|q| q.enabled).unwrap_or(false);
         
         let filterable_field_names: std::collections::HashSet<String> = filterable_metadata
             .iter()
@@ -487,7 +488,7 @@ impl FlushManager {
                 // Use collection-specific quantization config for VIPER columnar optimization
                 let fp32_vector = &record.vector;
                 
-                if let Some(quant_config) = quantization_config {
+                if let Some(quant_config) = quantization {
                     debug!("🔧 VIPER: Applying collection quantization config for vector {}", 
                            record.id.as_deref().unwrap_or("unnamed"));
                     
@@ -533,7 +534,7 @@ impl FlushManager {
             let mut extra_kvs = Vec::new();
             for item in &record.metadata {
                 // Skip filterable fields - they're handled dynamically above
-                if !filterable_field_names.contains(&item.key) {
+                if !filterable_field_names.contains_hash(&item.key) {
                     // Convert metadata value to string for storage
                     let value_str = match &item.value {
                         Some(crate::proto::proximadb::metadata_item::Value::StringValue(s)) => s.clone(),
@@ -591,7 +592,7 @@ impl FlushManager {
         // 🎯 DYNAMIC FILTERABLE METADATA: Create Arrow arrays for each filterable column
         let mut dynamic_filterable_arrays: Vec<Arc<dyn Array>> = Vec::new();
         for filterable_column in &filterable_metadata {
-            let values = filterable_arrays.get(&filterable_column.name).unwrap();
+            let values = filterable_arrays.get(key).unwrap();
             
             let arrow_array: Arc<dyn Array> = {
                 use crate::proto::proximadb::FilterableDataType;
@@ -762,7 +763,7 @@ impl FlushManager {
         // Get compression settings from collection config if available
         if let Some(ref collection) = collection_config {
             if let Some(ref config) = collection.config {
-                if let Some(ref compression) = config.compression {
+                if let Some(ref compression) = config.storage.as_ref().and_then(|s| s.compression.as_ref()) {
                     use crate::proto::proximadb::CompressionAlgorithm;
                     
                     // Convert proto compression to universal config
@@ -805,7 +806,7 @@ impl FlushManager {
         };
         
         // Apply universal config to adapter
-        self.compression_adapter.set_default_config(universal_config.clone());
+        self.compression_adapter.as_ref().set_default_config(universal_config.clone());
         
         // Map universal compression to Parquet compression
         let compression_algo = self.map_universal_to_parquet_compression(&universal_config)?;
@@ -826,7 +827,7 @@ impl FlushManager {
         // Check if vectors are quantized (detected via collection config)
         let is_quantized = if let Some(ref collection) = collection_config {
             collection.config.as_ref()
-                .and_then(|c| c.quantization_config.as_ref())
+                .and_then(|c| c.quantization.as_ref())
                 .map(|q| q.enabled)
                 .unwrap_or(false)
         } else {
@@ -1248,7 +1249,7 @@ impl FlushManager {
                 )
             },
             CompressionAlgorithm::Mixed => {
-                // Mixed compression strategy: Use ZSTD level 3 as default for Parquet
+                // Mixed compression // strategy removed -  Use ZSTD level 3 as default for Parquet
                 // Per-column optimization will be handled at the writer level
                 info!("🎯 VIPER: Using Mixed compression strategy with ZSTD level 3 as base");
                 parquet::basic::Compression::ZSTD(

@@ -157,7 +157,7 @@ mod tests {
     #[test]
     fn test_bit_packed_basic() {
         let config = BloomFilterConfig {
-            strategy: crate::core::bloom::BloomStrategy::BitPacked,
+            // strategy removed -  crate::core::bloom::BloomStrategy::BitPacked,
             bits_per_key: 10,
             expected_items: 100,
             ..Default::default()

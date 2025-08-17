@@ -93,7 +93,6 @@ pub struct AxisTierRecommendation {
     pub storage_tier: StorageTier,
     
     /// Confidence score (0.0-1.0)
-    pub confidence: f64,
     
     /// Recommendation rationale
     pub rationale: String,
@@ -202,7 +201,7 @@ impl AxisTieringIntegration {
         let is_hot = self.access_tracker.is_frequently_accessed(collection_id, 10).await;
         
         // Get index type preferences
-        let preference = self.index_type_preferences.preferences.get(&index_type);
+        let preference = self.index_type_preferences.preferences.get(key);
         
         let recommended_tier = if is_hot {
             // Hot data: use index type's preferred tier or faster
@@ -228,7 +227,7 @@ impl AxisTieringIntegration {
                 current_tier: current_tier.clone(),
                 recommended_tier,
                 storage_tier,
-                confidence: if is_hot { 0.9 } else { 0.7 },
+                // confidence removed -  if is_hot { 0.9 } else { 0.7 },
                 rationale: self.generate_rationale(&index_type, is_hot, &recommended_tier),
             }))
         } else {

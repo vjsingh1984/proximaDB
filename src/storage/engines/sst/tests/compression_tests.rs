@@ -44,11 +44,11 @@ fn test_uncompressed_block() {
     
     let block = DataBlock::new(1, records.clone());
     let config = DataBlockCompressionConfig {
-        enable_compression: false,
+        compression: false,
         compression_threshold: 0,
         compression_level: 0,
         compression_algorithm: UnifiedCompressionAlgorithm::None,
-        vector_config: Default::default(),
+        // vector_config removed -  Default::default(),
         collection_compression: None,
     };
     
@@ -76,11 +76,11 @@ fn test_zstd_compression() {
     
     let block = DataBlock::new(1, records.clone());
     let config = DataBlockCompressionConfig {
-        enable_compression: true,
+        compression: true,
         compression_threshold: 100,
         compression_level: 3,
         compression_algorithm: UnifiedCompressionAlgorithm::Zstd,
-        vector_config: Default::default(),
+        // vector_config removed -  Default::default(),
         collection_compression: Some(CompressionConfig {
             algorithm: CompressionAlgorithm::CompressionZstd as i32,
             level: Some(3),
@@ -111,11 +111,11 @@ fn test_lz4_compression() {
     
     let block = DataBlock::new(2, records.clone());
     let config = DataBlockCompressionConfig {
-        enable_compression: true,
+        compression: true,
         compression_threshold: 100,
         compression_level: 0, // LZ4 doesn't use levels in lz4_flex
         compression_algorithm: UnifiedCompressionAlgorithm::Lz4,
-        vector_config: Default::default(),
+        // vector_config removed -  Default::default(),
         collection_compression: Some(CompressionConfig {
             algorithm: CompressionAlgorithm::CompressionLz4 as i32,
             level: None,
@@ -144,11 +144,11 @@ fn test_snappy_compression() {
     
     let block = DataBlock::new(3, records.clone());
     let config = DataBlockCompressionConfig {
-        enable_compression: true,
+        compression: true,
         compression_threshold: 100,
         compression_level: 0, // Snappy doesn't use levels
         compression_algorithm: UnifiedCompressionAlgorithm::Snappy,
-        vector_config: Default::default(),
+        // vector_config removed -  Default::default(),
         collection_compression: Some(CompressionConfig {
             algorithm: CompressionAlgorithm::CompressionSnappy as i32,
             level: None,
@@ -180,10 +180,10 @@ fn test_gzip_compression() {
     
     let block = DataBlock::new(4, records.clone());
     let config = DataBlockCompressionConfig {
-        enable_compression: true,
+        compression: true,
         compression_threshold: 100,
         compression_level: 6,
-        vector_config: Default::default(),
+        // vector_config removed -  Default::default(),
         collection_compression: Some(CompressionConfig {
             algorithm: CompressionAlgorithm::CompressionGzip as i32,
             level: Some(6),
@@ -210,10 +210,10 @@ fn test_brotli_compression() {
     
     let block = DataBlock::new(5, records.clone());
     let config = DataBlockCompressionConfig {
-        enable_compression: true,
+        compression: true,
         compression_threshold: 100,
         compression_level: 4,
-        vector_config: Default::default(),
+        // vector_config removed -  Default::default(),
         collection_compression: Some(CompressionConfig {
             algorithm: CompressionAlgorithm::CompressionBrotli as i32,
             level: Some(4),
@@ -260,10 +260,10 @@ fn test_all_compression_algorithms() {
     for (algo, expected_marker, level) in algorithms {
         let block = DataBlock::new(100, records.clone());
         let config = DataBlockCompressionConfig {
-            enable_compression: true,
+            compression: true,
             compression_threshold: 100,
             compression_level: level,
-            vector_config: Default::default(),
+            // vector_config removed -  Default::default(),
             collection_compression: Some(CompressionConfig {
                 algorithm: algo as i32,
                 level: Some(level),
@@ -297,11 +297,11 @@ fn test_compression_threshold() {
     
     let block = DataBlock::new(6, records.clone());
     let config = DataBlockCompressionConfig {
-        enable_compression: true,
+        compression: true,
         compression_threshold: 10000, // High threshold
         compression_level: 3,
         compression_algorithm: UnifiedCompressionAlgorithm::Zstd,
-        vector_config: Default::default(),
+        // vector_config removed -  Default::default(),
         collection_compression: Some(CompressionConfig {
             algorithm: CompressionAlgorithm::CompressionZstd as i32,
             level: Some(3),
@@ -325,11 +325,11 @@ fn test_compression_ratio_check() {
     
     let block = DataBlock::new(7, vec![record]);
     let config = DataBlockCompressionConfig {
-        enable_compression: true,
+        compression: true,
         compression_threshold: 100,
         compression_level: 3,
         compression_algorithm: UnifiedCompressionAlgorithm::Zstd,
-        vector_config: Default::default(),
+        // vector_config removed -  Default::default(),
         collection_compression: Some(CompressionConfig {
             algorithm: CompressionAlgorithm::CompressionZstd as i32,
             level: Some(3),
@@ -346,7 +346,7 @@ fn test_compression_ratio_check() {
     
     // Compressed size should be much smaller than uncompressed
     let uncompressed_config = DataBlockCompressionConfig {
-        enable_compression: false,
+        compression: false,
         ..config
     };
     let uncompressed = block.serialize_with_config(&uncompressed_config).unwrap();
@@ -376,10 +376,10 @@ fn test_mixed_compression_deserialization() {
         let block = DataBlock::new(i as u32, records);
         
         let config = DataBlockCompressionConfig {
-            enable_compression: *algo != CompressionAlgorithm::CompressionNone,
+            compression: *algo != CompressionAlgorithm::CompressionNone,
             compression_threshold: 100,
             compression_level: 3,
-            vector_config: Default::default(),
+            // vector_config removed -  Default::default(),
             collection_compression: if *algo != CompressionAlgorithm::CompressionNone {
                 Some(CompressionConfig {
                     algorithm: *algo as i32,

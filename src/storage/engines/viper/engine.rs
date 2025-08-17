@@ -148,16 +148,16 @@ impl ViperEngine {
                 level: UniversalQuantizationLevel::Binary {
                     threshold_strategy: BinaryThresholdStrategy::Adaptive,
                 },
-                candidate_reduction: 0.8, // Filter 80% using binary
-                quality_threshold: 0.3,
+                // candidate_reduction removed -  0.8, // Filter 80% using binary
+                // quality_threshold removed -  0.3,
             },
             ProgressiveQuantizationStage {
                 level: UniversalQuantizationLevel::Int8 {
                     scale_strategy: crate::storage::engines::common::quantization_common::ScaleStrategy::PerDimensionMinMax,
                     zero_point_strategy: crate::storage::engines::common::quantization_common::ZeroPointStrategy::Symmetric,
                 },
-                candidate_reduction: 0.5, // Further reduce using INT8
-                quality_threshold: 0.85,
+                // candidate_reduction removed -  0.5, // Further reduce using INT8
+                // quality_threshold removed -  0.85,
             },
             ProgressiveQuantizationStage {
                 level: UniversalQuantizationLevel::ProductQuantization {
@@ -165,8 +165,8 @@ impl ViperEngine {
                     bits_per_segment: 8,
                     codebook_strategy: CodebookStrategy::KMeans,
                 },
-                candidate_reduction: 0.0, // Keep all for final ranking
-                quality_threshold: 0.95,
+                // candidate_reduction removed -  0.0, // Keep all for final ranking
+                // quality_threshold removed -  0.95,
             },
         ];
         
@@ -180,7 +180,7 @@ impl ViperEngine {
             serde_json::json!("bit_packed")
         );
         
-        quantization_adapter.set_default_config(quant_config);
+        quantization_adapter.as_ref().set_default_config(quant_config);
         
         // ML clustering moved to AXIS
         // let ml_clustering_engine = MLClusteringEngine::new(super::ml_clustering::KMeansConfig::default());
@@ -492,9 +492,9 @@ impl ViperEngine {
                             updated_at: Some(updated_at as u32),
                             expires_at: expires_at.map(|v| v as u32),
                             version: Some(version as u32),
-                            rank: None,
-                            score: None,
-                            distance: None,
+                            // rank removed -  None,
+                            similarity: None,
+                            similarity: None,
             
         };
                         
@@ -562,7 +562,7 @@ impl ViperEngine {
     /// Get collection metadata
     pub async fn get_collection_metadata(&self, collection_id: &str) -> Option<CollectionMetadata> {
         let collections = self.collections.read().await;
-        collections.get(collection_id).cloned()
+        collections.get(key).cloned()
     }
     
     /// Update collection metadata
@@ -850,7 +850,7 @@ impl UnifiedStorageEngine for ViperEngine {
         debug!("🔍 VIPER DO_FLUSH: Checking compression configuration");
         if let Some(ref collection_config) = params.collection_config {
             if let Some(ref config) = collection_config.config {
-                if let Some(ref compression) = config.compression {
+                if let Some(ref compression) = config.storage.as_ref().and_then(|s| s.compression.as_ref()) {
                     debug!("   ✅ Found compression in collection_config: algorithm={}, level={:?}",
                         compression.algorithm, compression.level);
                 } else {
@@ -904,7 +904,17 @@ impl UnifiedStorageEngine for ViperEngine {
         
         // Step 3: Notify EventLog for async AXIS indexing (synchronous acknowledgment)
         let flush_handler = crate::storage::engines::viper::flush_eventlog_integration::ViperFlushHandler::new();
-        let file_paths = vec![parquet_path.to_string_lossy().to_string()];
+        
+        // Extract the file path from engine_metrics
+        let file_paths = if let Some(path_value) = flush_result.engine_metrics.get(key) {
+            if let serde_json::Value::String(path) = path_value {
+                vec![path.clone()]
+            } else {
+                vec![]
+            }
+        } else {
+            vec![]
+        };
         
         if let Err(e) = flush_handler.notify_flush_complete(params, file_paths, &params.vector_records).await {
             // Log but don't fail the flush - EventLog notification is best-effort
@@ -925,7 +935,7 @@ impl UnifiedStorageEngine for ViperEngine {
         debug!("🔍 VIPER DO_COMPACT: Checking compression configuration");
         if let Some(ref collection_config) = params.collection_config {
             if let Some(ref config) = collection_config.config {
-                if let Some(ref compression) = config.compression {
+                if let Some(ref compression) = config.storage.as_ref().and_then(|s| s.compression.as_ref()) {
                     debug!("   ✅ Found compression in collection_config: algorithm={}, level={:?}",
                         compression.algorithm, compression.level);
                 } else {
@@ -939,11 +949,11 @@ impl UnifiedStorageEngine for ViperEngine {
         }
         
         let collection_id = params.collection_id.as_ref()
-            .ok_or_else(|| anyhow::anyhow!("Collection ID required for VIPER compaction"))?;
+            .ok_or_else(|| anyhow::anyhow!("Collection ID required for VIPER compaction_info"))?;
         debug!("🗜️ VIPER compaction collection ID: {}", collection_id);
         
         // Get input files from hints or use default empty list
-        let input_files = params.hints.get("input_files")
+        let input_files = params.hints.get(key)
             .and_then(|v| v.as_array())
             .map(|arr| arr.iter().filter_map(|v| v.as_str()).map(|s| s.to_string()).collect::<Vec<String>>())
             .unwrap_or_default();
@@ -1088,7 +1098,7 @@ impl UnifiedStorageEngine for ViperEngine {
                 vector_dimension: query_vector.len(),
                 enable_quantization: collection_opt.as_ref()
                     .and_then(|c| c.config.as_ref())
-                    .and_then(|c| c.quantization_config.as_ref())
+                    .and_then(|c| c.quantization.as_ref())
                     .is_some(),
                 enable_metadata_filtering: true,
                 estimated_document_count: 0, // TODO: Get actual count
@@ -1106,7 +1116,7 @@ impl UnifiedStorageEngine for ViperEngine {
                 .map(|c| c.filterable_columns.iter().map(|col| {
                     crate::core::search::FilterableColumn {
                         name: col.name.clone(),
-                        data_type: crate::core::search::ColumnDataType::String, // TODO: Map properly
+                        // data_type removed -  crate::core::search::ColumnDataType::String, // TODO: Map properly
                         is_indexed: col.indexed,
                         estimated_cardinality: col.estimated_cardinality.map(|c| c as usize),
                     }

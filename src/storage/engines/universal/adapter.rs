@@ -88,7 +88,6 @@ pub struct DistanceComputationRequest {
     pub enable_acceleration: bool,
     
     /// Target quality threshold (0.0-1.0)
-    pub quality_threshold: Option<f32>,
     
     /// Collection ID for context
     pub collection_id: Uuid,
@@ -394,7 +393,7 @@ impl UniversalDistanceAdapter {
         let hardware_stats = self.hardware_manager.get_statistics().await;
         
         Ok(AdapterStatistics {
-            cache_hit_rate: cache_stats.hit_rate,
+            cache_hit_rate: cache_stats.hit_rate_percent,
             cache_size_mb: cache_stats.size_mb,
             total_computations: cache_stats.total_requests,
             hardware_acceleration_usage: hardware_stats.acceleration_usage_rate,
@@ -426,7 +425,7 @@ impl UniversalDistanceAdapter {
     
     async fn get_engine_adapter(&self, engine_type: &EngineType) -> AdapterResult<Arc<dyn StorageEngineAdapter>> {
         let adapters = self.engine_adapters.read().await;
-        adapters.get(engine_type)
+        adapters.get(key)
             .cloned()
             .ok_or_else(|| AdapterError::StorageEngineIntegration(
                 format!("No adapter found for engine type: {:?}", engine_type)

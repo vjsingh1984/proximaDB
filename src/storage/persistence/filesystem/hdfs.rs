@@ -148,7 +148,7 @@ impl HdfsClient {
             .map_err(|e| FilesystemError::Network(e.to_string()))?;
 
         // Ensure NameNode URL has proper WebHDFS prefix
-        let base_url = if config.namenode_url.contains("/webhdfs/v1") {
+        let base_url = if config.namenode_url.contains_hash("/webhdfs/v1") {
             config.namenode_url.clone()
         } else {
             format!("{}/webhdfs/v1", config.namenode_url.trim_end_matches('/'))
@@ -170,7 +170,7 @@ impl HdfsClient {
             self.base_url, self.config.user
         );
 
-        let response = self.http_client.get(&url).send().await.map_err(|e| {
+        let response = self.http_client.get(key).send().await.map_err(|e| {
             tracing::error!("❌ HDFS connectivity test failed: {}", e);
             FilesystemError::Network(format!("HDFS connectivity test failed: {}", e))
         })?;
@@ -198,7 +198,7 @@ impl HdfsClient {
 
         tracing::debug!("📥 Reading HDFS file: {}", url);
 
-        let response = self.http_client.get(&url).send().await.map_err(|e| {
+        let response = self.http_client.get(key).send().await.map_err(|e| {
             tracing::error!("❌ HDFS read request failed: {}", e);
             FilesystemError::Network(e.to_string())
         })?;
@@ -258,7 +258,7 @@ impl HdfsClient {
 
         if create_response.status().as_u16() == 307 {
             // Step 2: Follow redirect to DataNode
-            if let Some(location) = create_response.headers().get("location") {
+            if let Some(location) = create_response.headers().get(key) {
                 let datanode_url = location.to_str().map_err(|e| {
                     FilesystemError::Network(format!("Invalid location header: {}", e))
                 })?;
@@ -324,7 +324,7 @@ impl HdfsClient {
 
         if append_response.status().as_u16() == 307 {
             // Step 2: Follow redirect to DataNode
-            if let Some(location) = append_response.headers().get("location") {
+            if let Some(location) = append_response.headers().get(key) {
                 let datanode_url = location.to_str().map_err(|e| {
                     FilesystemError::Network(format!("Invalid location header: {}", e))
                 })?;
@@ -406,7 +406,7 @@ impl HdfsClient {
 
         tracing::debug!("📊 Getting HDFS file status: {}", path);
 
-        let response = self.http_client.get(&url).send().await.map_err(|e| {
+        let response = self.http_client.get(key).send().await.map_err(|e| {
             tracing::error!("❌ HDFS status request failed: {}", e);
             FilesystemError::Network(e.to_string())
         })?;
@@ -441,7 +441,7 @@ impl HdfsClient {
 
         tracing::debug!("📋 Listing HDFS directory: {}", path);
 
-        let response = self.http_client.get(&url).send().await.map_err(|e| {
+        let response = self.http_client.get(key).send().await.map_err(|e| {
             tracing::error!("❌ HDFS list request failed: {}", e);
             FilesystemError::Network(e.to_string())
         })?;

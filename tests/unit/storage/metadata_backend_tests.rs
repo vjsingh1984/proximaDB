@@ -98,12 +98,12 @@ async fn test_single_metadata_backend_instance() {
         primary_indexing_algorithm: IndexingAlgorithm::Hnsw as i32,
         filterable_columns: vec![],
         index_configs: vec![],
-        quantization_config: None,
+        quantization: None,
         compression: None,
         optimization_hints: None,
         storage_location: None,
-        primary_index_name: "default".to_string(),
-        enable_automatic_index_selection: false,
+        primary_index: "default".to_string(),
+        auto_index_selection: false,
         description: Some("Test collection".to_string()),
         tags: vec!["test".to_string()],
         owner: Some("test_user".to_string()),
@@ -176,12 +176,12 @@ async fn test_collection_service_dependency_injection() {
             primary_indexing_algorithm: IndexingAlgorithm::Hnsw as i32,
             filterable_columns: vec![],
             index_configs: vec![],
-            quantization_config: None,
+            quantization: None,
             compression: None,
             optimization_hints: None,
             storage_location: None,
-            primary_index_name: "default".to_string(),
-            enable_automatic_index_selection: false,
+            primary_index: "default".to_string(),
+            auto_index_selection: false,
             description: Some("Test proto-first collection".to_string()),
             tags: vec!["test".to_string(), "proto-first".to_string()],
             owner: Some("test_user".to_string()),
@@ -286,7 +286,7 @@ async fn test_metadata_backend_persistence() {
                     },
                     ],
                     index_configs: vec![],
-                    quantization_config: Some(proximadb::proto::proximadb::QuantizationConfig {
+                    quantization: Some(proximadb::proto::proximadb::QuantizationConfig {
                         enabled: true,
                         storage_quantization: Some(proximadb::proto::proximadb::StorageQuantizationConfig {
                             enabled: true,
@@ -327,8 +327,8 @@ async fn test_metadata_backend_persistence() {
                     compression: None,
                     optimization_hints: None,
                     storage_location: None,
-                    primary_index_name: "default".to_string(),
-                    enable_automatic_index_selection: false,
+                    primary_index: "default".to_string(),
+                    auto_index_selection: false,
                     description: Some(format!("Proto-first collection {}", i)),
                     tags: vec![format!("proto-tag{}", i), "persist-test".to_string()],
                     owner: Some("test_user".to_string()),
@@ -357,8 +357,8 @@ async fn test_metadata_backend_persistence() {
             .unwrap()
             .unwrap();
         assert_eq!(collection_0.config.as_ref().unwrap().filterable_columns.len(), 2);
-        assert!(collection_0.config.as_ref().unwrap().quantization_config.is_some());
-        let quantization = collection_0.config.as_ref().unwrap().quantization_config.as_ref().unwrap();
+        assert!(collection_0.config.as_ref().unwrap().quantization.is_some());
+        let quantization = collection_0.config.as_ref().unwrap().quantization.as_ref().unwrap();
         assert!(quantization.enabled);
         assert!(quantization.storage_quantization.is_some());
         assert!(quantization.search_quantization.is_some());
@@ -389,11 +389,11 @@ async fn test_metadata_backend_persistence() {
         assert_eq!(collection_1.config.as_ref().unwrap().storage_engine, ProtoStorageEngine::Viper as i32);
         
         // Verify proto-first quantization config persisted
-        let quantization_config = collection_1.config.as_ref().unwrap().quantization_config.as_ref().unwrap();
-        assert!(quantization_config.enabled);
-        assert!(quantization_config.storage_quantization.is_some());
-        assert!(quantization_config.search_quantization.is_some());
-        let search_config = quantization_config.search_quantization.as_ref().unwrap();
+        let quantization = collection_1.config.as_ref().unwrap().quantization.as_ref().unwrap();
+        assert!(quantization.enabled);
+        assert!(quantization.storage_quantization.is_some());
+        assert!(quantization.search_quantization.is_some());
+        let search_config = quantization.search_quantization.as_ref().unwrap();
         assert!(search_config.enabled);
         assert_eq!(search_config.candidate_multiplier, 3);
         
@@ -410,7 +410,7 @@ async fn test_metadata_backend_persistence() {
             assert!(collection.config.is_some());
             let config = collection.config.as_ref().unwrap();
             assert!(!config.filterable_columns.is_empty());
-            assert!(config.quantization_config.is_some());
+            assert!(config.quantization.is_some());
             assert!(config.tags.contains(&"persist-test".to_string()));
         }
     }
@@ -454,12 +454,12 @@ async fn test_metadata_backend_deletion() {
                 primary_indexing_algorithm: IndexingAlgorithm::Flat as i32,
                 filterable_columns: vec![],
                 index_configs: vec![],
-                quantization_config: None,
+                quantization: None,
                 compression: None,
                 optimization_hints: None,
                 storage_location: None,
-                primary_index_name: "default".to_string(),
-                enable_automatic_index_selection: false,
+                primary_index: "default".to_string(),
+                auto_index_selection: false,
                 description: None,
                 tags: vec!["deletable".to_string()],
                 owner: None,
@@ -563,12 +563,12 @@ async fn test_concurrent_metadata_operations() {
                     primary_indexing_algorithm: IndexingAlgorithm::Hnsw as i32,
                     filterable_columns: vec![],
                     index_configs: vec![],
-                    quantization_config: None,
+                    quantization: None,
                     compression: None,
                     optimization_hints: None,
                     storage_location: None,
-                    primary_index_name: "default".to_string(),
-                    enable_automatic_index_selection: false,
+                    primary_index: "default".to_string(),
+                    auto_index_selection: false,
                     description: None,
                     tags: vec!["concurrent".to_string()],
                     owner: None,
@@ -658,12 +658,12 @@ async fn test_metadata_backend_updates() {
             primary_indexing_algorithm: IndexingAlgorithm::Hnsw as i32,
             filterable_columns: vec![],
             index_configs: vec![],
-            quantization_config: None,
+            quantization: None,
             compression: None,
             optimization_hints: None,
             storage_location: None,
-            primary_index_name: "default".to_string(),
-            enable_automatic_index_selection: false,
+            primary_index: "default".to_string(),
+            auto_index_selection: false,
             description: Some("Initial description".to_string()),
             tags: vec!["v1".to_string()],
             owner: Some("user1".to_string()),
@@ -785,7 +785,7 @@ async fn test_collection_metadata_provider_trait() {
                     },
             ],
             index_configs: vec![],
-            quantization_config: Some(proximadb::proto::proximadb::QuantizationConfig {
+            quantization: Some(proximadb::proto::proximadb::QuantizationConfig {
                 enabled: true,
                 storage_quantization: Some(proximadb::proto::proximadb::StorageQuantizationConfig {
                     enabled: true,
@@ -826,8 +826,8 @@ async fn test_collection_metadata_provider_trait() {
             compression: None,
             optimization_hints: None,
             storage_location: None,
-            primary_index_name: "default".to_string(),
-            enable_automatic_index_selection: false,
+            primary_index: "default".to_string(),
+            auto_index_selection: false,
             description: Some("Testing proto-first trait implementation".to_string()),
             tags: vec!["trait".to_string(), "proto-first".to_string()],
             owner: Some("test_user".to_string()),
@@ -857,8 +857,8 @@ async fn test_collection_metadata_provider_trait() {
     
     // Verify proto-first features
     assert_eq!(collection.config.as_ref().unwrap().filterable_columns.len(), 2);
-    assert!(collection.config.as_ref().unwrap().quantization_config.is_some());
-    let quantization = collection.config.as_ref().unwrap().quantization_config.as_ref().unwrap();
+    assert!(collection.config.as_ref().unwrap().quantization.is_some());
+    let quantization = collection.config.as_ref().unwrap().quantization.as_ref().unwrap();
     assert!(quantization.enabled);
     assert!(quantization.storage_quantization.is_some());
     assert!(quantization.search_quantization.is_some());
@@ -876,6 +876,6 @@ async fn test_collection_metadata_provider_trait() {
     assert_eq!(all_collections[0].config.as_ref().unwrap().name, "trait_test_proto");
     
     // Test trait consistency with proto-first collections
-    assert!(all_collections[0].config.as_ref().unwrap().quantization_config.is_some());
+    assert!(all_collections[0].config.as_ref().unwrap().quantization.is_some());
     assert!(!all_collections[0].config.as_ref().unwrap().filterable_columns.is_empty());
 }

@@ -346,7 +346,7 @@ impl UniversalQuantizationAdapter {
     ) -> Result<StageQuantizationResult> {
         let start_time = std::time::Instant::now();
         
-        let quantized_data = self.storage_engine.quantize_vectors(vectors, config)?;
+        let quantized_data = self.storage_engine.as_ref().quantize_vectors(vectors, config)?;
         
         let execution_time = start_time.elapsed();
         let memory_used = self.estimate_binary_memory_usage(vectors.len(), vectors[0].len());
@@ -371,7 +371,7 @@ impl UniversalQuantizationAdapter {
     ) -> Result<StageQuantizationResult> {
         let start_time = std::time::Instant::now();
         
-        let quantized_data = self.storage_engine.quantize_vectors(vectors, config)?;
+        let quantized_data = self.storage_engine.as_ref().quantize_vectors(vectors, config)?;
         
         let execution_time = start_time.elapsed();
         let memory_used = self.estimate_int8_memory_usage(vectors.len(), vectors[0].len());
@@ -396,7 +396,7 @@ impl UniversalQuantizationAdapter {
     ) -> Result<StageQuantizationResult> {
         let start_time = std::time::Instant::now();
         
-        let quantized_data = self.storage_engine.quantize_vectors(vectors, config)?;
+        let quantized_data = self.storage_engine.as_ref().quantize_vectors(vectors, config)?;
         
         let execution_time = start_time.elapsed();
         let memory_used = self.estimate_pq_memory_usage(vectors.len(), config.pq_segments, config.pq_bits_per_segment);
@@ -464,7 +464,7 @@ impl UniversalQuantizationAdapter {
     
     /// Calculate memory usage for vectors
     fn calculate_memory_usage(&self, vectors: &[Vec<f32>]) -> usize {
-        vectors.len() * vectors.get(0).map(|v| v.len()).unwrap_or(0) * 4 // 4 bytes per f32
+        vectors.len() * vectors.get(&vector_id).map(|v| v.len()).unwrap_or(0) * 4 // 4 bytes per f32
     }
     
     /// Estimate binary quantization memory usage
@@ -658,16 +658,16 @@ mod tests {
                     level: UniversalQuantizationLevel::Binary { 
                         threshold_strategy: BinaryThresholdStrategy::Mean 
                     },
-                    candidate_reduction: 0.5,
-                    quality_threshold: 0.7,
+                    // candidate_reduction removed -  0.5,
+                    // quality_threshold removed -  0.7,
                 },
                 ProgressiveQuantizationStage {
                     level: UniversalQuantizationLevel::Int8 { 
                         scale_strategy: ScaleStrategy::GlobalMinMax,
                         zero_point_strategy: ZeroPointStrategy::Symmetric
                     },
-                    candidate_reduction: 0.3,
-                    quality_threshold: 0.85,
+                    // candidate_reduction removed -  0.3,
+                    // quality_threshold removed -  0.85,
                 },
                 ProgressiveQuantizationStage {
                     level: UniversalQuantizationLevel::ProductQuantization { 
@@ -675,8 +675,8 @@ mod tests {
                         bits_per_segment: 8,
                         codebook_strategy: CodebookStrategy::KMeans
                     },
-                    candidate_reduction: 0.2,
-                    quality_threshold: 0.9,
+                    // candidate_reduction removed -  0.2,
+                    // quality_threshold removed -  0.9,
                 },
             ],
             hardware_optimizations: Default::default(),
@@ -755,8 +755,8 @@ mod tests {
             level: UniversalQuantizationLevel::Binary { 
                 threshold_strategy: BinaryThresholdStrategy::Adaptive 
             },
-            candidate_reduction: 0.5,
-            quality_threshold: 0.7,
+            // candidate_reduction removed -  0.5,
+            // quality_threshold removed -  0.7,
         };
         
         let storage_config = adapter.map_universal_stage_to_storage_config(&binary_stage).unwrap();
@@ -769,8 +769,8 @@ mod tests {
                 scale_strategy: ScaleStrategy::PerDimensionMinMax,
                 zero_point_strategy: ZeroPointStrategy::Asymmetric
             },
-            candidate_reduction: 0.3,
-            quality_threshold: 0.85,
+            // candidate_reduction removed -  0.3,
+            // quality_threshold removed -  0.85,
         };
         
         let storage_config = adapter.map_universal_stage_to_storage_config(&int8_stage).unwrap();
@@ -785,8 +785,8 @@ mod tests {
                 bits_per_segment: 8,
                 codebook_strategy: CodebookStrategy::PCA
             },
-            candidate_reduction: 0.2,
-            quality_threshold: 0.9,
+            // candidate_reduction removed -  0.2,
+            // quality_threshold removed -  0.9,
         };
         
         let storage_config = adapter.map_universal_stage_to_storage_config(&pq_stage).unwrap();
@@ -830,14 +830,14 @@ mod tests {
         let stats = adapter.get_performance_stats();
         
         // Check stage 0 performance
-        let stage_0_perf = stats.stage_performance.get(&0).unwrap();
+        let stage_0_perf = stats.stage_performance.get(key).unwrap();
         assert_eq!(stage_0_perf.executions, 2);
         assert_eq!(stage_0_perf.total_time_ms, 90);
         assert_eq!(stage_0_perf.total_vectors, 1800);
         assert_eq!(stage_0_perf.total_memory_used, 28800);
         
         // Check stage 1 performance
-        let stage_1_perf = stats.stage_performance.get(&1).unwrap();
+        let stage_1_perf = stats.stage_performance.get(key).unwrap();
         assert_eq!(stage_1_perf.executions, 1);
         assert_eq!(stage_1_perf.total_time_ms, 30);
         assert_eq!(stage_1_perf.total_vectors, 500);

@@ -57,7 +57,7 @@ pub struct CollectionMetadata {
     pub indexing_algorithm: String,
 
     // Timestamps
-    pub created_at: DateTime<Utc>,
+    pub timestamp: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 
     // Statistics
@@ -212,7 +212,7 @@ impl Default for CollectionMetadata {
             dimension: 128,
             distance_metric: "cosine".to_string(),
             indexing_algorithm: "hnsw".to_string(),
-            created_at: Utc::now(),
+            timestamp: Utc::now(),
             updated_at: Utc::now(),
             vector_count: 0,
             total_size_bytes: 0,

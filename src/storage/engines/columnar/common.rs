@@ -456,7 +456,7 @@ struct CachedFileMetadata {
     metadata: ColumnarFileMetadata,
     schema: Arc<Schema>,
     compression_metadata: CompressionMetadata,
-    created_at: std::time::Instant,
+    timestamp: std::time::Instant,
     last_accessed: std::time::Instant,
     access_count: usize,
 }
@@ -476,7 +476,7 @@ pub struct PerformanceMonitor {
 
 /// Operation performance metrics
 #[derive(Debug, Default)]
-struct OperationMetrics {
+pub struct OperationMetrics {
     /// Serialization metrics
     serialization_ops: usize,
     serialization_total_time_ms: f64,
@@ -501,7 +501,7 @@ struct OperationMetrics {
 
 /// Resource usage metrics
 #[derive(Debug, Default)]
-struct ResourceMetrics {
+pub struct ResourceMetrics {
     /// Memory usage
     memory_usage_bytes: usize,
     peak_memory_usage_bytes: usize,
@@ -532,7 +532,7 @@ impl CommonColumnarOperations {
         // Initialize serializer
         let serialization_config = ColumnarSerializationConfig {
             dimension: 768, // TODO: Make configurable
-            quantization: config.base_config.quantization_config.clone().into(),
+            quantization: config.base_config.quantization.clone().into(),
             compression: config.serialization_config.to_serialization_compression(),
             memory_optimization: config.serialization_config.to_memory_optimization(),
             simd_config: config.serialization_config.to_simd_config(),
@@ -578,7 +578,7 @@ impl CommonColumnarOperations {
         &self,
         collection_id: &str,
         dimension: usize,
-        quantization_config: Option<&QuantizationConfig>,
+        quantization: Option<&QuantizationConfig>,
         filterable_columns: &[super::schema::FilterableColumnSpec],
     ) -> Result<(Arc<Schema>, CompressionMetadata)> {
         let start_time = std::time::Instant::now();
@@ -587,7 +587,7 @@ impl CommonColumnarOperations {
         
         let schema_config = ColumnarSchemaConfig {
             dimension,
-            quantization: quantization_config.cloned(),
+            quantization: quantization.cloned(),
             filterable_columns: filterable_columns.to_vec(),
             optimization: self.config.schema_config.to_schema_optimization(),
             compression_strategy: self.config.schema_config.default_compression_strategy.to_columnar_compression(),
@@ -663,7 +663,7 @@ impl CommonColumnarOperations {
     pub async fn compute_distance(
         &self,
         query: &[f32],
-        quantized_vector: &QuantizedVectorData,
+        quantized: &QuantizedVectorData,
         format_preference: Option<SelectedFormat>,
     ) -> Result<QuantizedDistanceResult> {
         let start_time = std::time::Instant::now();
@@ -730,7 +730,7 @@ impl CommonColumnarOperations {
     pub async fn compute_progressive_distance(
         &self,
         query: &[f32],
-        quantized_vector: &QuantizedVectorData,
+        quantized: &QuantizedVectorData,
         target_quality: f32,
     ) -> Result<QuantizedDistanceResult> {
         let start_time = std::time::Instant::now();
@@ -754,7 +754,7 @@ impl CommonColumnarOperations {
         debug!("Progressive distance computed in {:.2}ms with {} stages, final quality: {:.2}", 
                computation_time, 
                match &result.method {
-                   super::distance::ComputationMethod::ProgressiveRefinement { stages } => stages.len(),
+                   crate::compute::distance_computation::quantized::ComputationMethod::ProgressiveRefinement { stages } => stages.len(),
                    _ => 1,
                },
                result.quality_estimate);
@@ -800,7 +800,7 @@ impl CommonColumnarOperations {
                 metadata: metadata.clone(),
                 schema: schema.clone(),
                 compression_metadata: compression_metadata.clone(),
-                created_at: std::time::Instant::now(),
+                timestamp: std::time::Instant::now(),
                 last_accessed: std::time::Instant::now(),
                 access_count: 1,
             };
@@ -865,10 +865,10 @@ impl CommonColumnarOperations {
             num_vectors: 0,
             dimension: 768,
             distance_metric: DistanceMetric::Cosine,
-            quantization_config: QuantizationConfig::default(),
+            quantization: QuantizationConfig::default(),
             column_stats: HashMap::new(),
             version: 1,
-            created_at: chrono::Utc::now(),
+            timestamp: chrono::Utc::now(),
             modified_at: chrono::Utc::now(),
         };
         
@@ -983,20 +983,20 @@ impl SerializationOptimizationConfig {
 }
 
 impl DistanceComputationConfig {
-    fn to_simd_optimization(&self) -> super::distance::SIMDOptimization {
-        super::distance::SIMDOptimization::default()
+    fn to_simd_optimization(&self) -> crate::compute::distance_computation::quantized::SIMDOptimization {
+        crate::compute::distance_computation::quantized::SIMDOptimization::default()
     }
     
-    fn to_cache_config(&self) -> super::distance::DistanceCacheConfig {
-        super::distance::DistanceCacheConfig::default()
+    fn to_cache_config(&self) -> crate::compute::distance_computation::quantized::DistanceCacheConfig {
+        crate::compute::distance_computation::quantized::DistanceCacheConfig::default()
     }
     
-    fn to_approximation_config(&self) -> super::distance::ApproximationConfig {
-        super::distance::ApproximationConfig::default()
+    fn to_approximation_config(&self) -> crate::compute::distance_computation::quantized::ApproximationConfig {
+        crate::compute::distance_computation::quantized::ApproximationConfig::default()
     }
     
-    fn to_hardware_preferences(&self) -> super::distance::HardwarePreferences {
-        super::distance::HardwarePreferences::default()
+    fn to_hardware_preferences(&self) -> crate::compute::distance_computation::quantized::HardwarePreferences {
+        crate::compute::distance_computation::quantized::HardwarePreferences::default()
     }
 }
 

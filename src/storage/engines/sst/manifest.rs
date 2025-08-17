@@ -41,7 +41,7 @@ pub struct SstableFileInfo {
     /// Maximum key in the file
     pub max_key: String,
     /// Creation timestamp
-    pub created_at: i64,
+    pub timestamp: i64,
     /// Last compaction timestamp (if any)
     pub last_compacted_at: Option<i64>,
     /// Bloom filter false positive rate (actual)
@@ -68,7 +68,7 @@ pub struct ColumnStats {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ManifestVersion {
     pub version: u64,
-    pub created_at: i64,
+    pub timestamp: i64,
     pub files: BTreeMap<String, SstableFileInfo>,
 }
 
@@ -107,7 +107,7 @@ impl SstManifest {
             collection_id,
             current_version: Arc::new(RwLock::new(ManifestVersion {
                 version: Some(0),
-                created_at: chrono::Utc::now().timestamp(),
+                timestamp: chrono::Utc::now().timestamp(),
                 files: BTreeMap::new(),
             })),
             manifest_url,
@@ -246,7 +246,7 @@ impl SstManifest {
         for file_id in file_ids {
             if let Some(file_info) = current.files.get_mut(file_id) {
                 file_info.marked_for_deletion = true;
-                debug!("Marked SSTable {} for deletion", file_id);
+                debug!("Marked SSTable {} for deletion_info", file_id);
             }
         }
         
@@ -296,7 +296,7 @@ impl SstManifest {
                     return false;
                 }
                 
-                if let Some(stats) = f.metadata_columns.get(column) {
+                if let Some(stats) = f.metadata_columns.get(key) {
                     // Check if value falls within the range
                     Self::value_in_range(value, &stats.min_value, &stats.max_value)
                 } else {
@@ -317,7 +317,7 @@ impl SstManifest {
         }
         
         // Group files that can be compacted together
-        // Simple strategy: group by overlapping key ranges
+        // Simple // strategy removed -  group by overlapping key ranges
         let mut groups = Vec::new();
         let mut current_group = Vec::new();
         let mut current_max_key = String::new();
@@ -446,13 +446,13 @@ mod tests {
         // Add an SSTable
         let file_info = SstableFileInfo {
             file_id: "sst_001".to_string(),
-            file_path: "level0/sst_001.sst".to_string(),
+            file_path: "level0/sst_001.sstable".to_string(),
             level: 0,
             size_bytes: 1024 * 1024,
             record_count: 1000,
             min_key: "a".to_string(),
             max_key: "z".to_string(),
-            created_at: chrono::Utc::now().timestamp(),
+            timestamp: chrono::Utc::now().timestamp(),
             last_compacted_at: None,
             bloom_fpr: 0.01,
             metadata_columns: HashMap::new(),

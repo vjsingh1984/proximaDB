@@ -299,9 +299,9 @@ mod integration_tests {
             updated_at: None,
             expires_at: None,
             version: None,
-            rank: None,
-            score: None,
-            distance: None,
+            // rank removed -  None,
+            similarity: None,
+            similarity: None,
         });
         
         index.add("test1".to_string(), vector).await.unwrap();

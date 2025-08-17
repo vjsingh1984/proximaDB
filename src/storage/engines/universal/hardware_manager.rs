@@ -160,7 +160,7 @@ impl HardwareAccelerationManager {
         let current_strategy = Self::select_optimal_strategy(config, &simd_capabilities)?;
         
         debug!("Detected SIMD capabilities: {:?}", simd_capabilities);
-        debug!("Selected optimization strategy: {:?}", current_strategy);
+        debug!("Selected optimization // strategy removed -  {:?}", current_strategy);
         
         Ok(Self {
             capabilities: capabilities.clone(),
@@ -198,22 +198,22 @@ impl HardwareAccelerationManager {
             return false;
         }
         
-        self.simd_capabilities.sse2_supported || 
+        self.simd_capabilities.cpu.features.sse42_support || 
         self.simd_capabilities.avx_supported || 
-        self.simd_capabilities.neon_supported
+        self.simd_capabilities.cpu.features.neon_support
     }
     
     /// Get optimal SIMD lane count for given data type
     pub fn get_optimal_simd_lanes(&self, data_type: SIMDDataType) -> usize {
         match data_type {
             SIMDDataType::F32 => {
-                if self.simd_capabilities.avx512_supported && self.config.enable_avx512 {
+                if self.simd_capabilities.cpu.features.avx512_support && self.config.enable_avx512 {
                     16 // AVX-512 supports 16 f32 values
-                } else if self.simd_capabilities.avx2_supported && self.config.enable_avx2 {
+                } else if self.simd_capabilities.cpu.features.avx2_support && self.config.enable_avx2 {
                     8  // AVX2 supports 8 f32 values
-                } else if self.simd_capabilities.sse2_supported {
+                } else if self.simd_capabilities.cpu.features.sse42_support {
                     4  // SSE2 supports 4 f32 values
-                } else if self.simd_capabilities.neon_supported && self.config.enable_neon {
+                } else if self.simd_capabilities.cpu.features.neon_support && self.config.enable_neon {
                     4  // NEON supports 4 f32 values
                 } else {
                     1  // Scalar fallback
@@ -221,13 +221,13 @@ impl HardwareAccelerationManager {
             },
             SIMDDataType::I32 => self.get_optimal_simd_lanes(SIMDDataType::F32), // Same as F32
             SIMDDataType::I8 => {
-                if self.simd_capabilities.avx512_supported && self.config.enable_avx512 {
+                if self.simd_capabilities.cpu.features.avx512_support && self.config.enable_avx512 {
                     64 // AVX-512 supports 64 i8 values
-                } else if self.simd_capabilities.avx2_supported && self.config.enable_avx2 {
+                } else if self.simd_capabilities.cpu.features.avx2_support && self.config.enable_avx2 {
                     32 // AVX2 supports 32 i8 values
-                } else if self.simd_capabilities.sse2_supported {
+                } else if self.simd_capabilities.cpu.features.sse42_support {
                     16 // SSE2 supports 16 i8 values
-                } else if self.simd_capabilities.neon_supported && self.config.enable_neon {
+                } else if self.simd_capabilities.cpu.features.neon_support && self.config.enable_neon {
                     16 // NEON supports 16 i8 values
                 } else {
                     1  // Scalar fallback
@@ -260,12 +260,12 @@ impl HardwareAccelerationManager {
             },
             OptimizationStrategy::Parallel => {
                 self.stats.parallel_operations += 1;
-                computation.execute_parallel(self.capabilities.cpu_cores).await
+                computation.execute_parallel(self.capabilities.cpu.core_count).await
             },
             OptimizationStrategy::Hybrid => {
                 self.stats.simd_operations += 1;
                 self.stats.parallel_operations += 1;
-                computation.execute_hybrid(&self.simd_capabilities, self.capabilities.cpu_cores).await
+                computation.execute_hybrid(&self.simd_capabilities, self.capabilities.cpu.core_count).await
             },
             _ => {
                 computation.execute_scalar().await
@@ -296,7 +296,7 @@ impl HardwareAccelerationManager {
     pub fn get_capabilities(&self) -> AccelerationCapabilities {
         AccelerationCapabilities {
             simd: self.simd_capabilities.clone(),
-            cpu_cores: self.capabilities.cpu_cores,
+            cpu_cores: self.capabilities.cpu.core_count,
             l1_cache_size_kb: 32, // Typical L1 cache size
             l2_cache_size_kb: 256, // Typical L2 cache size
             l3_cache_size_kb: 8192, // Typical L3 cache size
@@ -310,45 +310,45 @@ impl HardwareAccelerationManager {
     fn detect_simd_capabilities(capabilities: &HardwareCapabilities) -> AdapterResult<SIMDCapabilities> {
         Ok(SIMDCapabilities {
             sse_supported: capabilities.sse_supported,
-            sse2_supported: capabilities.sse2_supported,
+            sse2_supported: capabilities.cpu.features.sse42_support,
             avx_supported: capabilities.avx_supported,
-            avx2_supported: capabilities.avx2_supported,
-            avx512_supported: capabilities.avx512_supported,
-            neon_supported: capabilities.neon_supported,
+            avx2_supported: capabilities.cpu.features.avx2_support,
+            avx512_supported: capabilities.cpu.features.avx512_support,
+            neon_supported: capabilities.cpu.features.neon_support,
             popcnt_supported: capabilities.popcnt_supported,
             bmi_supported: false, // Would need to detect BMI support
-            vector_register_width: if capabilities.avx512_supported {
+            vector_register_width: if capabilities.cpu.features.avx512_support {
                 512
-            } else if capabilities.avx2_supported {
+            } else if capabilities.cpu.features.avx2_support {
                 256
-            } else if capabilities.sse2_supported || capabilities.neon_supported {
+            } else if capabilities.cpu.features.sse42_support || capabilities.cpu.features.neon_support {
                 128
             } else {
                 64
             },
-            max_f32_lanes: if capabilities.avx512_supported {
+            max_f32_lanes: if capabilities.cpu.features.avx512_support {
                 16
-            } else if capabilities.avx2_supported {
+            } else if capabilities.cpu.features.avx2_support {
                 8
-            } else if capabilities.sse2_supported || capabilities.neon_supported {
+            } else if capabilities.cpu.features.sse42_support || capabilities.cpu.features.neon_support {
                 4
             } else {
                 1
             },
-            max_i32_lanes: if capabilities.avx512_supported {
+            max_i32_lanes: if capabilities.cpu.features.avx512_support {
                 16
-            } else if capabilities.avx2_supported {
+            } else if capabilities.cpu.features.avx2_support {
                 8
-            } else if capabilities.sse2_supported || capabilities.neon_supported {
+            } else if capabilities.cpu.features.sse42_support || capabilities.cpu.features.neon_support {
                 4
             } else {
                 1
             },
-            max_i8_lanes: if capabilities.avx512_supported {
+            max_i8_lanes: if capabilities.cpu.features.avx512_support {
                 64
-            } else if capabilities.avx2_supported {
+            } else if capabilities.cpu.features.avx2_support {
                 32
-            } else if capabilities.sse2_supported || capabilities.neon_supported {
+            } else if capabilities.cpu.features.sse42_support || capabilities.cpu.features.neon_support {
                 16
             } else {
                 1
@@ -364,11 +364,11 @@ impl HardwareAccelerationManager {
             return Ok(OptimizationStrategy::Scalar);
         }
         
-        if simd_capabilities.avx2_supported && config.enable_avx2 {
+        if simd_capabilities.cpu.features.avx2_support && config.enable_avx2 {
             Ok(OptimizationStrategy::SIMD)
-        } else if simd_capabilities.sse2_supported {
+        } else if simd_capabilities.cpu.features.sse42_support {
             Ok(OptimizationStrategy::SIMD)
-        } else if simd_capabilities.neon_supported && config.enable_neon {
+        } else if simd_capabilities.cpu.features.neon_support && config.enable_neon {
             Ok(OptimizationStrategy::SIMD)
         } else {
             warn!("No suitable SIMD capabilities found, falling back to scalar operations");
@@ -422,7 +422,7 @@ impl HardwareAccelerationManager {
                     (self.stats.simd_speedup_ratio * 0.9) + (2.5 * 0.1); // Assume ~2.5x speedup
             },
             OptimizationStrategy::Parallel => {
-                let core_speedup = (self.capabilities.cpu_cores as f32 * 0.8).min(8.0); // 80% efficiency cap
+                let core_speedup = (self.capabilities.cpu.core_count as f32 * 0.8).min(8.0); // 80% efficiency cap
                 self.stats.parallel_speedup_ratio = 
                     (self.stats.parallel_speedup_ratio * 0.9) + (core_speedup * 0.1);
             },

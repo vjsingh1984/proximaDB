@@ -46,13 +46,13 @@ fn create_test_search_context() -> UnifiedSearchContext {
         filterable_columns: vec![
             crate::core::search::FilterableColumn {
                 name: "category".to_string(),
-                data_type: crate::proto::proximadb::ColumnDataType::String,
+                // data_type removed -  crate::proto::proximadb::ColumnDataType::String,
                 is_indexed: true,
                 estimated_cardinality: 100,
             },
             crate::core::search::FilterableColumn {
                 name: "score".to_string(),
-                data_type: crate::proto::proximadb::ColumnDataType::Float,
+                // data_type removed -  crate::proto::proximadb::ColumnDataType::Float,
                 is_indexed: false,
                 estimated_cardinality: 1000,
             },
@@ -94,9 +94,9 @@ fn create_mock_search_results(count: usize) -> Vec<crate::core::search::SearchRe
         crate::core::search::SearchResult {
             id: format!("result_{}", i),
             vector_id: Some(format!("vector_{}", i)),
-            score: 1.0 - (i as f32 * 0.1),
-            distance: Some(i as f32 * 0.1),
-            rank: Some(i as u16 + 1),
+            similarity: 1.0 - (i as f32 * 0.1),
+            similarity: Some(i as f32 * 0.1),
+            // rank removed -  Some(i as u16 + 1),
             vector: Some((0..128).map(|j| (i * 128 + j) as f32 / 1000.0).collect()),
             metadata: {
                 let mut map = HashMap::new();
@@ -109,7 +109,7 @@ fn create_mock_search_results(count: usize) -> Vec<crate::core::search::SearchRe
             quantization_info: None,
             engine_stats: None,
             index_path: None,
-            created_at: Some(Utc::now()),
+            timestamp: Some(Utc::now()),
         }
     }).collect()
 }
@@ -407,9 +407,9 @@ mod search_tests {
                 let mut result = crate::core::search::SearchResult {
                     id: format!("duplicate_{}", i),
                     vector_id: Some(format!("vector_{}", i)),
-                    score: 1.0 - (i as f32 * 0.1),
-                    distance: Some(i as f32 * 0.1),
-                    rank: Some(i as u16 + 1),
+                    similarity: 1.0 - (i as f32 * 0.1),
+                    similarity: Some(i as f32 * 0.1),
+                    // rank removed -  Some(i as u16 + 1),
                     vector: Some((0..128).map(|j| (i * 128 + j) as f32 / 1000.0).collect()),
                     metadata: {
                         let mut map = HashMap::new();
@@ -422,7 +422,7 @@ mod search_tests {
                     quantization_info: None,
                     engine_stats: None,
                     index_path: None,
-                            created_at: Some(Utc::now()),
+                            timestamp: Some(Utc::now()),
                 };
                 mock_results.push(result);
             }
@@ -449,7 +449,7 @@ mod search_tests {
         
         // Each result should be the version 2 (latest)
         for result in &search_result_set.results {
-            let version = result.metadata.get("_version")
+            let version = result.metadata.get(key)
                 .and_then(|v| v.as_i64())
                 .unwrap_or(0);
             assert_eq!(version, 2);
@@ -510,8 +510,8 @@ mod helper_methods_tests {
         
         let file_list = files.unwrap();
         assert!(!file_list.is_empty());
-        assert!(file_list.iter().any(|f| f.contains("level0")));
-        assert!(file_list.iter().any(|f| f.contains("level1")));
+        assert!(file_list.iter().any(|f| f.contains_hash("level0")));
+        assert!(file_list.iter().any(|f| f.contains_hash("level1")));
     }
     
     #[tokio::test]
@@ -539,10 +539,10 @@ mod helper_methods_tests {
         let params = create_test_search_params();
         
         let original_files = vec![
-            "file1.sst".to_string(),
-            "file2.sst".to_string(),
-            "file3.sst".to_string(),
-            "file4.sst".to_string(),
+            "file1.sstable".to_string(),
+            "file2.sstable".to_string(),
+            "file3.sstable".to_string(),
+            "file4.sstable".to_string(),
         ];
         
         let optimized_files = engine.apply_optimization_hints(original_files, &context, &params).await;
@@ -572,9 +572,9 @@ mod helper_methods_tests {
             crate::core::search::SearchResult {
                 id: "doc1".to_string(),
                 vector_id: Some("vector1".to_string()),
-                score: 0.9,
-                distance: Some(0.1),
-                rank: Some(1),
+                similarity: 0.9,
+                similarity: Some(0.1),
+                // rank removed -  Some(1),
                 vector: None,
                 metadata: {
                     let mut map = HashMap::new();
@@ -586,14 +586,14 @@ mod helper_methods_tests {
                 quantization_info: None,
                 engine_stats: None,
                 index_path: None,
-                created_at: Some(Utc::now()),
+                timestamp: Some(Utc::now()),
             },
             crate::core::search::SearchResult {
                 id: "doc1".to_string(),
                 vector_id: Some("vector1".to_string()),
-                score: 0.8,
-                distance: Some(0.2),
-                rank: Some(2),
+                similarity: 0.8,
+                similarity: Some(0.2),
+                // rank removed -  Some(2),
                 vector: None,
                 metadata: {
                     let mut map = HashMap::new();
@@ -605,14 +605,14 @@ mod helper_methods_tests {
                 quantization_info: None,
                 engine_stats: None,
                 index_path: None,
-                created_at: Some(Utc::now()),
+                timestamp: Some(Utc::now()),
             },
             crate::core::search::SearchResult {
                 id: "doc2".to_string(),
                 vector_id: Some("vector2".to_string()),
-                score: 0.7,
-                distance: Some(0.3),
-                rank: Some(3),
+                similarity: 0.7,
+                similarity: Some(0.3),
+                // rank removed -  Some(3),
                 vector: None,
                 metadata: {
                     let mut map = HashMap::new();
@@ -624,7 +624,7 @@ mod helper_methods_tests {
                 quantization_info: None,
                 engine_stats: None,
                 index_path: None,
-                created_at: Some(Utc::now()),
+                timestamp: Some(Utc::now()),
             },
         ];
         
@@ -636,7 +636,7 @@ mod helper_methods_tests {
         
         // First result should be doc1 with version 2 (higher score)
         assert_eq!(resolved_results[0].id, "doc1");
-        let version = resolved_results[0].metadata.get("_version")
+        let version = resolved_results[0].metadata.get(key)
             .and_then(|v| v.as_i64())
             .unwrap_or(0);
         assert_eq!(version, 2);
@@ -701,9 +701,9 @@ mod edge_case_tests {
             crate::core::search::SearchResult {
                 id: "doc1".to_string(),
                 vector_id: Some("vector1".to_string()),
-                score: 0.9,
-                distance: Some(0.1),
-                rank: Some(1),
+                similarity: 0.9,
+                similarity: Some(0.1),
+                // rank removed -  Some(1),
                 vector: None,
                 metadata: vec![], // No version metadata
                 debug_info: None,
@@ -711,7 +711,7 @@ mod edge_case_tests {
                 quantization_info: None,
                 engine_stats: None,
                 index_path: None,
-                created_at: Some(Utc::now()),
+                timestamp: Some(Utc::now()),
             }
         ];
         
@@ -748,8 +748,8 @@ mod edge_case_tests {
         let params = create_test_search_params();
         
         let original_files = vec![
-            "file1.sst".to_string(),
-            "file2.sst".to_string(),
+            "file1.sstable".to_string(),
+            "file2.sstable".to_string(),
         ];
         
         let original_count = original_files.len();

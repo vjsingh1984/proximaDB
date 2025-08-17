@@ -61,7 +61,7 @@ use tracing::{debug, error, info};
         // Test routing queries to appropriate indexes based on selectivity
         let indexes = vec![
             IndexSpecification {
-                data_type: DataType::DenseVector { dimension: 512 },
+                // data_type removed -  DataType::DenseVector { dimension: 512 },
                 algorithm: IndexAlgorithm::HNSW {
                     m: 16,
                     ef_construction: 200,
@@ -73,7 +73,7 @@ use tracing::{debug, error, info};
                 selectivity_threshold: Some(0.1),  // Use for selective queries
             },
             IndexSpecification {
-                data_type: DataType::DenseVector { dimension: 512 },
+                // data_type removed -  DataType::DenseVector { dimension: 512 },
                 algorithm: IndexAlgorithm::IVF {
                     nlist: 1000,
                     nprobe: 100,
@@ -84,7 +84,7 @@ use tracing::{debug, error, info};
                 selectivity_threshold: Some(0.5),  // Use for bulk queries
             },
             IndexSpecification {
-                data_type: DataType::Metadata,
+                // data_type removed -  DataType::Metadata,
                 algorithm: IndexAlgorithm::BTree {
                     max_keys_per_node: 100,
                 },

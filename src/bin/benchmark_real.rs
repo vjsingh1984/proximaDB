@@ -143,9 +143,9 @@ async fn benchmark_indexing() {
                     updated_at: Some(0),
                     expires_at: Some(0),
                     version: Some(1),
-                    rank: Some(0),
-                    score: Some(0.0),
-                    distance: Some(0.0),
+                    // rank removed -  Some(0),
+                    similarity: Some(0.0),
+                    similarity: Some(0.0),
                 };
                 if let Err(e) = index.add(format!("vec_{}", i), Arc::new(record)).await {
                     error!("  LSH add failed: {}", e);

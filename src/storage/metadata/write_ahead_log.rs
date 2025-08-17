@@ -79,7 +79,7 @@ impl Default for MetadataWALConfig {
         base_config.memtable.mvcc_versions_retained = 10;
 
         // Use Snappy for fast compression (metadata needs fast read/write)
-        base_config.compression.algorithm = CompressionAlgorithm::Snappy;
+        base_config.storage.as_ref().and_then(|s| s.compression.as_ref()).algorithm = CompressionAlgorithm::Snappy;
 
         // Configuration optimized for metadata operations
 
@@ -158,7 +158,7 @@ impl std::fmt::Debug for MetadataWriteAheadLogManager {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("MetadataWriteAheadLogManager")
             .field("config", &self.config)
-            .field("metadata_cache", &"<cached data>")
+            .field("metadata_cache_info", &"<cached data>")
             .field("cache_timestamps", &"<timestamps>")
             .field("stats", &"<stats>")
             .finish()
@@ -224,7 +224,7 @@ impl MetadataWriteAheadLogManager {
             let batch = crate::storage::memtable::specialized::wal_behavior::WALVectorBatch {
                 batch_id: crate::storage::persistence::write_ahead_log::BatchId::new(),
                 vector_records: Arc::new(batch_records),
-                created_at: std::time::SystemTime::now(),
+                timestamp: std::time::SystemTime::now(),
                 total_size_bytes: 1024, // Approximate for metadata
                 is_flushed: false,
             metadata_bloom_filter: None,
@@ -271,9 +271,9 @@ impl MetadataWriteAheadLogManager {
             let cache = self.metadata_cache.read().await;
             let timestamps = self.cache_timestamps.read().await;
 
-            if let Some(metadata) = cache.get(collection_id) {
+            if let Some(metadata) = cache.get(&key) {
                 // Check TTL
-                if let Some(timestamp) = timestamps.get(collection_id) {
+                if let Some(timestamp) = timestamps.get(key) {
                     let age = Utc::now().signed_duration_since(*timestamp);
                     if age.num_seconds() < self.config.cache_ttl_seconds as i64 {
                         let mut stats = self.stats.write().await;
@@ -350,7 +350,7 @@ impl MetadataWriteAheadLogManager {
             // Sort by name for consistent ordering (B+Tree advantage)
             collections.sort_by(|a, b| a.name.cmp(&b.name));
 
-            tracing::debug!("✅ Listed {} collections from cache", collections.len());
+            tracing::debug!("✅ Listed {} collections from cache_info", collections.len());
             return Ok(collections);
         }
 
@@ -432,7 +432,7 @@ impl MetadataWriteAheadLogManager {
         }
 
         tracing::info!(
-            "✅ Metadata recovery completed - {} collections recovered into cache",
+            "✅ Metadata recovery completed - {} collections recovered into cache_info",
             recovered_collections
         );
         Ok(())
@@ -493,7 +493,7 @@ impl MetadataWriteAheadLogManager {
                 updated_at: Some(current_time_secs),
                 expires_at: Some(current_time_secs.saturating_sub(1)), // Mark as expired (logical delete)
                 version: Some(1),
-                quantized_vector: None,
+                quantized: None,
             
         };
 
@@ -506,7 +506,7 @@ impl MetadataWriteAheadLogManager {
                 let delete_batch = crate::storage::memtable::specialized::wal_behavior::WALVectorBatch {
                     batch_id: crate::storage::persistence::write_ahead_log::BatchId::new(),
                     vector_records: Arc::new(delete_batch_records),
-                    created_at: std::time::SystemTime::now(),
+                    timestamp: std::time::SystemTime::now(),
                     total_size_bytes: 1024, // Approximate for metadata
                     is_flushed: false,
             metadata_bloom_filter: None,
@@ -609,9 +609,9 @@ impl MetadataWriteAheadLogManager {
             updated_at: Some(timestamp_secs),
             expires_at: None,
             version: Some(1),
-            rank: None,
-            score: None,
-            distance: None,
+            // rank removed -  None,
+            similarity: None,
+            similarity: None,
         })
     }
 
@@ -635,7 +635,7 @@ pub struct SystemMetadata {
     pub version: String,
     pub node_id: String,
     pub cluster_name: String,
-    pub created_at: u32,  // Seconds since epoch
+    pub timestamp: u32,  // Seconds since epoch
     pub updated_at: Option<u32>,  // Seconds since epoch
     pub total_collections: u64,
     pub total_vectors: u64,
@@ -649,7 +649,7 @@ impl Default for SystemMetadata {
             version: "0.1.0".to_string(),
             node_id: uuid::Uuid::new_v4().to_string(),
             cluster_name: "default".to_string(),
-            created_at: Utc::now().timestamp() as u32,
+            timestamp: Utc::now().timestamp() as u32,
             updated_at: None,
             total_collections: 0,
             total_vectors: 0,
@@ -666,7 +666,7 @@ impl SystemMetadata {
             version: env!("CARGO_PKG_VERSION").to_string(),
             node_id,
             cluster_name: "proximadb-cluster".to_string(),
-            created_at: Utc::now().timestamp() as u32,
+            timestamp: Utc::now().timestamp() as u32,
             updated_at: Some(Utc::now().timestamp() as u32),
             total_collections: 0,
             total_vectors: 0,

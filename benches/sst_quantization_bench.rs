@@ -165,7 +165,7 @@ fn bench_memory_pool(c: &mut Criterion) {
     
     group.bench_function("with_pooling", |b| {
         b.iter(|| {
-            let mut buffer = memory_pool.serialization_buffers.acquire();
+            let mut buffer = memory_pool.serialization_buffers/* TODO: Fix VectorMemoryPool::acquire() method */;
             
             // Simulate serialization
             for vec in &vectors {

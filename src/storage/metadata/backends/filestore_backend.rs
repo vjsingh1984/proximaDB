@@ -60,7 +60,7 @@ pub struct FilestoreMetadataConfig {
     
     /// Enable compression for Avro files
     #[serde(default = "default_true")]
-    pub enable_compression: bool,
+    pub compression: bool,
     
     /// Enable periodic snapshots
     #[serde(default = "default_true")]
@@ -90,8 +90,8 @@ fn default_keep_snapshots() -> usize { 3 }
 impl Default for FilestoreMetadataConfig {
     fn default() -> Self {
         Self {
-            storage_url: "file://./data/metadata".to_string(),
-            enable_compression: true,
+            storage_url: "file://./data/metadata_info".to_string(),
+            compression: true,
             enable_snapshots: true,
             snapshot_threshold: 1000,
             keep_snapshots: 3,
@@ -1082,7 +1082,7 @@ impl FilestoreMetadataBackend {
             base_url: self.config.storage_url.clone(),
             collection_id: None, // Checkpoint is not collection-specific
             operation_type: TransactionStageType::Metadata,
-            custom_staging_dir: Some("__metadata".to_string()),
+            custom_staging_dir: Some("__metadata_info".to_string()),
             auto_cleanup: true,
             max_orphaned_age_hours: 24,
             skip_uuid_subdir: true,  // Skip UUID subdirectory to prevent orphaned directories
@@ -1493,7 +1493,7 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let config = FilestoreMetadataConfig {
             storage_url: format!("file://{}", temp_dir.path().to_string_lossy()),
-            enable_compression: true,
+            compression: true,
             enable_snapshots: false, // Disable for test
             ..Default::default()
         };
@@ -1513,9 +1513,9 @@ mod tests {
             primary_indexing_algorithm: 1, // HNSW
             filterable_columns: vec![],
             index_configs: vec![],
-            quantization_config: None,
-            primary_index_name: "default".to_string(),
-            enable_automatic_index_selection: false,
+            quantization: None,
+            primary_index: "default".to_string(),
+            auto_index_selection: false,
             description: Some("Test collection".to_string()),
             tags: vec![],
             owner: Some("test".to_string()),
@@ -1534,7 +1534,7 @@ mod tests {
                 index_size_bytes: 0,
                 data_size_bytes: 0,
             }),
-            created_at: chrono::Utc::now().timestamp_micros(),
+            timestamp: chrono::Utc::now().timestamp_micros(),
             updated_at: chrono::Utc::now().timestamp_micros(),
             storage_assignment: None,
         };
@@ -1579,7 +1579,7 @@ mod integration_tests {
         let fs_factory = Arc::new(crate::storage::persistence::filesystem::FilesystemFactory::new(fs_config).await.unwrap());
         let config = FilestoreMetadataConfig {
             storage_url: metadata_url.clone(),
-            enable_compression: true,
+            compression: true,
             enable_snapshots: true,
             snapshot_threshold: 1000,
             keep_snapshots: 3,
@@ -1601,9 +1601,9 @@ mod integration_tests {
                 primary_indexing_algorithm: IndexingAlgorithm::Hnsw as i32,
                 filterable_columns: vec![],
                 index_configs: vec![],
-                quantization_config: None,
-                primary_index_name: String::new(),
-                enable_automatic_index_selection: false,
+                quantization: None,
+                primary_index: String::new(),
+                auto_index_selection: false,
                 description: Some("Test atomic collection".to_string()),
                 tags: vec!["test".to_string()],
                 owner: Some("test_user".to_string()),
@@ -1617,7 +1617,7 @@ mod integration_tests {
                 index_size_bytes: 0,
                 data_size_bytes: 0,
             }),
-            created_at: std::time::SystemTime::now()
+            timestamp: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
                 .as_secs() as i64,
@@ -1643,7 +1643,7 @@ mod integration_tests {
     #[tokio::test]
     async fn test_relative_path_handling() {
         // Test relative path handling specifically
-        let test_dir = "test_relative_metadata";
+        let test_dir = "test_relative_metadata_info";
         std::fs::remove_dir_all(test_dir).ok(); // Clean up any previous test runs
         std::fs::create_dir_all(test_dir).ok();
         std::fs::create_dir_all(format!("{}/current", test_dir)).ok();
@@ -1655,7 +1655,7 @@ mod integration_tests {
         let fs_factory = Arc::new(crate::storage::persistence::filesystem::FilesystemFactory::new(fs_config).await.unwrap());
         let config = FilestoreMetadataConfig {
             storage_url: metadata_url.clone(),
-            enable_compression: true,
+            compression: true,
             enable_snapshots: true,
             snapshot_threshold: 1000,
             keep_snapshots: 3,
@@ -1676,9 +1676,9 @@ mod integration_tests {
                 primary_indexing_algorithm: IndexingAlgorithm::Hnsw as i32,
                 filterable_columns: vec![],
                 index_configs: vec![],
-                quantization_config: None,
-                primary_index_name: String::new(),
-                enable_automatic_index_selection: false,
+                quantization: None,
+                primary_index: String::new(),
+                auto_index_selection: false,
                 description: Some("Test relative collection".to_string()),
                 tags: vec!["test".to_string()],
                 owner: Some("test_user".to_string()),
@@ -1692,7 +1692,7 @@ mod integration_tests {
                 index_size_bytes: 0,
                 data_size_bytes: 0,
             }),
-            created_at: std::time::SystemTime::now()
+            timestamp: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
                 .as_secs() as i64,

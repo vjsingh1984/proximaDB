@@ -89,7 +89,7 @@ impl MemtableManager {
         let batch = WALVectorBatch {
             batch_id: crate::storage::persistence::write_ahead_log::BatchId::new(),
             vector_records: Arc::new(vec![vector]),
-            created_at: std::time::SystemTime::now(),
+            timestamp: std::time::SystemTime::now(),
             total_size_bytes: 256, // Approximate
             is_flushed: false,
             metadata_bloom_filter: None,
@@ -228,9 +228,9 @@ mod tests {
             updated_at: Some(1234567890),
             expires_at: None,
             version: Some(1),
-            rank: None,
-            score: None,
-            distance: None,
+            // rank removed -  None,
+            similarity: None,
+            similarity: None,
         }
     }
 
@@ -277,7 +277,7 @@ mod tests {
         let batch = WALVectorBatch {
             batch_id: crate::storage::persistence::write_ahead_log::BatchId::new(),
             vector_records: Arc::new(vectors),
-            created_at: std::time::SystemTime::now(),
+            timestamp: std::time::SystemTime::now(),
             total_size_bytes: 1024,
             is_flushed: false,
             metadata_bloom_filter: None,

@@ -83,7 +83,7 @@ async fn test_sstable_write_read_integration() -> Result<()> {
     ];
     
     // Write SSTable
-    let sst_path = format!("file://{}/test.sst", base_path);
+    let sst_path = format!("file://{}/test.sstable", base_path);
     let writer = SstableWriter::new(&sst_path, 4096, filesystem.clone())
         .with_bloom_config(BloomFilterConfig {
             false_positive_rate: 0.01,
@@ -95,7 +95,7 @@ async fn test_sstable_write_read_integration() -> Result<()> {
     for (i, vec) in vectors.iter().enumerate() {
         let mut lsm_record = SstRecord::from_vector_record(vec.clone(), "test_collection");
         lsm_record.sequence_number = i as u64;
-        lsm_record.level = 0;
+        lsm_0 /* TODO: VectorRecord no longer has level field */ = 0;
         entries.insert(vec.id.as_ref().unwrap().clone(), lsm_record);
     }
     
@@ -177,7 +177,7 @@ async fn test_empty_sstable() -> Result<()> {
     let filesystem = Arc::new(FilesystemFactory::new(HashMap::new()));
     
     // Write empty SSTable
-    let sst_path = format!("file://{}/empty.sst", base_path);
+    let sst_path = format!("file://{}/empty.sstable", base_path);
     let writer = SstableWriter::new(&sst_path, 4096, filesystem.clone());
     let entries = std::collections::BTreeMap::new();
     // Write records using streaming approach for production consistency

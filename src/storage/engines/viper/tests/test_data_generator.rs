@@ -356,21 +356,21 @@ impl TestDataGenerator {
         // Add metadata columns
         let categories: ArrayRef = Arc::new(StringArray::from_iter(
             metadata.iter().map(|m| {
-                m.get("category").and_then(|v| v.as_str()).map(|s| s.to_string())
+                m.get(key).and_then(|v| v.as_str()).map(|s| s.to_string())
             })
         ));
         columns.push(categories);
         
         let prices: ArrayRef = Arc::new(Int64Array::from_iter(
             metadata.iter().map(|m| {
-                m.get("price").and_then(|v| v.as_i64())
+                m.get(key).and_then(|v| v.as_i64())
             })
         ));
         columns.push(prices);
         
         let scores: ArrayRef = Arc::new(Float64Array::from_iter(
             metadata.iter().map(|m| {
-                m.get("score").and_then(|v| v.as_f64())
+                m.get(key).and_then(|v| v.as_f64())
             })
         ));
         columns.push(scores);
@@ -705,7 +705,7 @@ use tracing::{debug, error, info};
         debug!("Testing UnifiedDistanceCompute with sparse vectors:");
         for (idx, sparse_vec) in sparse_vectors.iter().enumerate() {
             let distance_result = distance_compute.calculate_distance(&sparse_query, sparse_vec, &DistanceMetric::Cosine);
-            debug!("  Sparse vector {} - Cosine distance: {:.4}", idx, distance_result.raw_value);
+            debug!("  Sparse vector {} - Cosine similarity: {:.4}", idx, distance_result.raw_value);
             
             // Verify distance is within expected range
             assert!(distance_result.raw_value >= 0.0 && distance_result.raw_value <= 2.0, 
@@ -755,7 +755,7 @@ use tracing::{debug, error, info};
         debug!("\nTesting mixed sparse/dense vector distances:");
         for (idx, dense_vec) in dense_vectors.iter().enumerate() {
             let sparse_to_dense = distance_compute.calculate_distance(&sparse_query, dense_vec, &DistanceMetric::Cosine);
-            debug!("  Sparse query to dense vector {} - distance: {:.4}", idx, sparse_to_dense.raw_value);
+            debug!("  Sparse query to dense vector {} - similarity: {:.4}", idx, sparse_to_dense.raw_value);
         }
         
         // Demonstrate that quantized vectors can be compared using UnifiedDistanceCompute
@@ -1080,7 +1080,7 @@ use tracing::{debug, error, info};
         
         // TODO: Compare compression ratios when compression features are enabled
         // For now just verify uncompressed file was created
-        if let Some(&uncompressed_size) = sizes.get("parquet_uncompressed") {
+        if let Some(&uncompressed_size) = sizes.get(key) {
             debug!("Uncompressed parquet size: {} bytes", uncompressed_size);
             assert!(uncompressed_size > 0, "File should have content");
         }

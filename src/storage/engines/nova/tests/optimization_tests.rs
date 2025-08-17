@@ -89,7 +89,7 @@ mod hierarchical_stats_tests {
                 cpu_cost: 20.0,
                 memory_cost: 15.0,
                 estimated_latency_ms: 50.0,
-                confidence: 0.8,
+                // confidence removed -  0.8,
             },
             access_stats: AccessStats {
                 access_count: 0,
@@ -200,8 +200,8 @@ mod progressive_search_tests {
         heap.push(ProgressiveCandidate {
             row_group_id: 0,
             row_offset: 0,
-            distance: 10.0,
-            confidence: 0.8,
+            similarity: 10.0,
+            // confidence removed -  0.8,
             stage: ProcessingStage::BinaryFilter,
             vector_id: None,
             record: None,
@@ -210,8 +210,8 @@ mod progressive_search_tests {
         heap.push(ProgressiveCandidate {
             row_group_id: 0,
             row_offset: 1,
-            distance: 5.0,
-            confidence: 0.8,
+            similarity: 5.0,
+            // confidence removed -  0.8,
             stage: ProcessingStage::BinaryFilter,
             vector_id: None,
             record: None,
@@ -532,7 +532,7 @@ mod integration_tests {
                         cpu_cost: 20.0 + i as f32,
                         memory_cost: 15.0 + i as f32,
                         estimated_latency_ms: 50.0 + i as f32,
-                        confidence: 0.8,
+                        // confidence removed -  0.8,
                     },
                     access_stats: AccessStats {
                         access_count: i as u64,

@@ -554,7 +554,7 @@ impl AdvancedZoneMap {
         max_distance: f32,
         result: &mut AdvancedIntersectionResult,
     ) {
-        if let Some(scaled_zone) = self.multi_scale_zones.get(&distance_metric) {
+        if let Some(scaled_zone) = self.multi_scale_zones.get(key) {
             // Use metric-specific optimized bounds
             let transformed_query = Self::transform_vector_for_metric(query, distance_metric);
             
@@ -667,7 +667,6 @@ impl Default for ZoneMapConfig {
 #[derive(Debug, Default)]
 pub struct AdvancedIntersectionResult {
     pub intersects: bool,
-    pub confidence: f32,
     pub pruning_strategy: PruningStrategy,
     pub estimated_selectivity: Option<f32>,
     pub estimated_cost_savings: f32,
@@ -768,9 +767,9 @@ impl SelectivityModel {
         match self.model_type {
             ModelType::Linear => {
                 // Simple linear model: selectivity = a * norm + b * sparsity + c
-                let norm_factor = self.parameters.get(0).unwrap_or(&0.0);
-                let sparsity_factor = self.parameters.get(1).unwrap_or(&0.0);
-                let intercept = self.parameters.get(2).unwrap_or(&0.5);
+                let norm_factor = self.parameters.get(key).unwrap_or(&0.0);
+                let sparsity_factor = self.parameters.get(key).unwrap_or(&0.0);
+                let intercept = self.parameters.get(key).unwrap_or(&0.5);
                 
                 (norm_factor * characteristics.norm + sparsity_factor * characteristics.sparsity + intercept)
                     .max(0.0)

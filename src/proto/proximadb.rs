@@ -58,7 +58,7 @@ pub struct VectorRecord {
     ///
     /// Pre-quantized vector data (avoids re-quantization)
     #[prost(bytes = "vec", optional, tag = "8")]
-    pub quantized_vector: ::core::option::Option<::prost::alloc::vec::Vec<u8>>,
+    pub quantized: ::core::option::Option<::prost::alloc::vec::Vec<u8>>,
 }
 /// Output record for search results - optimized for client consumption
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -81,7 +81,7 @@ pub struct SearchVectorRecord {
     pub rank: i32,
     /// Similarity score
     #[prost(float, tag = "5")]
-    pub score: f32,
+    pub similarity: f32,
     /// Distance value
     #[prost(float, tag = "6")]
     pub distance: f32,
@@ -162,35 +162,55 @@ pub struct DoubleArray {
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct CollectionConfig {
+    /// ============================================================================
+    /// CORE CONFIGURATION (Required)
+    /// ============================================================================
+    ///
+    /// Collection name (min 8 chars)
     #[prost(string, tag = "1")]
     pub name: ::prost::alloc::string::String,
+    /// Vector dimension
     #[prost(int32, tag = "2")]
     pub dimension: i32,
+    /// Distance metric for similarity
     #[prost(enumeration = "DistanceMetric", tag = "3")]
     pub distance_metric: i32,
+    /// ============================================================================
+    /// STORAGE CONFIGURATION
+    /// ============================================================================
+    ///
+    /// Storage engine type (VIPER, SST, etc.)
     #[prost(enumeration = "StorageEngine", tag = "4")]
     pub storage_engine: i32,
-    /// Primary/default algorithm
-    #[prost(enumeration = "IndexingAlgorithm", tag = "5")]
-    pub primary_indexing_algorithm: i32,
-    /// Native typed filterable column specs
-    #[prost(message, repeated, tag = "6")]
-    pub filterable_columns: ::prost::alloc::vec::Vec<FilterableColumnSpec>,
-    /// MULTIPLE index configurations
-    #[prost(message, repeated, tag = "7")]
-    pub index_configs: ::prost::alloc::vec::Vec<IndexConfig>,
-    /// Vector quantization configuration
-    #[prost(message, optional, tag = "8")]
-    pub quantization_config: ::core::option::Option<QuantizationConfig>,
-    /// Additional configuration for multiple indexes
+    /// Complete storage configuration (renamed from storage_engine_config)
+    #[prost(message, optional, tag = "5")]
+    pub storage_config: ::core::option::Option<StorageConfig>,
+    /// ============================================================================
+    /// INDEX CONFIGURATION
+    /// ============================================================================
     ///
-    /// Name of primary index to use for search
-    #[prost(string, tag = "9")]
-    pub primary_index_name: ::prost::alloc::string::String,
-    /// Auto-select best index per query
-    #[prost(bool, tag = "10")]
-    pub enable_automatic_index_selection: bool,
-    /// Metadata fields
+    /// Multiple index configurations
+    #[prost(message, repeated, tag = "6")]
+    pub index_configs: ::prost::alloc::vec::Vec<IndexConfig>,
+    /// Primary index name (renamed from primary_index_name)
+    #[prost(string, optional, tag = "7")]
+    pub primary_index: ::core::option::Option<::prost::alloc::string::String>,
+    /// Auto-select best index (renamed from enable_automatic_index_selection)
+    #[prost(bool, optional, tag = "8")]
+    pub auto_index_selection: ::core::option::Option<bool>,
+    /// ============================================================================
+    /// SCHEMA CONFIGURATION
+    /// ============================================================================
+    ///
+    /// Metadata columns for filtering
+    #[prost(message, repeated, tag = "9")]
+    pub filterable_columns: ::prost::alloc::vec::Vec<FilterableColumnSpec>,
+    /// Vector quantization (renamed from quantization_config)
+    #[prost(message, optional, tag = "10")]
+    pub quantization: ::core::option::Option<QuantizationConfig>,
+    /// ============================================================================
+    /// METADATA
+    /// ============================================================================
     ///
     /// Human-readable description
     #[prost(string, optional, tag = "11")]
@@ -198,24 +218,9 @@ pub struct CollectionConfig {
     /// Tags for categorization
     #[prost(string, repeated, tag = "12")]
     pub tags: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
-    /// Owner/creator of the collection
+    /// Owner/creator
     #[prost(string, optional, tag = "13")]
     pub owner: ::core::option::Option<::prost::alloc::string::String>,
-    /// Compression configuration (field 14)
-    ///
-    /// Per-collection compression settings
-    #[prost(message, optional, tag = "14")]
-    pub compression: ::core::option::Option<CompressionConfig>,
-    /// Storage location (field 15) - optional, if not provided, system picks from config
-    ///
-    /// Base storage URL (e.g., "file:///data/disk1")
-    #[prost(string, optional, tag = "15")]
-    pub storage_location: ::core::option::Option<::prost::alloc::string::String>,
-    /// Storage optimization hints (field 16)
-    ///
-    /// Hints for automatic optimization
-    #[prost(message, optional, tag = "16")]
-    pub optimization_hints: ::core::option::Option<StorageOptimizationHints>,
 }
 /// Advanced index configuration with per-collection customization
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -473,26 +478,240 @@ pub struct CompressionConfig {
     #[prost(bool, optional, tag = "9")]
     pub dynamic_block_sizing: ::core::option::Option<bool>,
 }
-/// Storage optimization hints to guide compression selection
+/// ============================================================================
+/// STORAGE CONFIGURATION - Complete storage settings for a collection
+/// ============================================================================
 #[derive(serde::Serialize, serde::Deserialize)]
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
-pub struct StorageOptimizationHints {
+pub struct StorageConfig {
+    /// Storage location and persistence
+    ///
+    /// Override default storage path (e.g., "s3://bucket/path")
+    #[prost(string, optional, tag = "1")]
+    pub storage_location: ::core::option::Option<::prost::alloc::string::String>,
+    /// Whether data persists after restart (default: true)
+    #[prost(bool, optional, tag = "2")]
+    pub persistent: ::core::option::Option<bool>,
+    /// Compression configuration
+    ///
+    /// Compression settings
+    #[prost(message, optional, tag = "3")]
+    pub compression: ::core::option::Option<CompressionConfig>,
+    /// Optimization hints to guide automatic configuration
+    ///
     /// Expected access pattern
-    #[prost(enumeration = "AccessPattern", tag = "1")]
-    pub access_pattern: i32,
+    #[prost(enumeration = "AccessPattern", optional, tag = "4")]
+    pub access_pattern: ::core::option::Option<i32>,
     /// Data density characteristics
-    #[prost(enumeration = "DataDensity", tag = "2")]
-    pub data_density: i32,
+    #[prost(enumeration = "DataDensity", optional, tag = "5")]
+    pub data_density: ::core::option::Option<i32>,
     /// Whether data is frequently updated
-    #[prost(bool, tag = "3")]
-    pub frequent_updates: bool,
+    #[prost(bool, optional, tag = "6")]
+    pub frequent_updates: ::core::option::Option<bool>,
     /// Expected collection size in GB
-    #[prost(int64, optional, tag = "4")]
+    #[prost(int64, optional, tag = "7")]
     pub expected_size_gb: ::core::option::Option<i64>,
     /// Read/write ratio (1.0 = balanced)
-    #[prost(float, optional, tag = "5")]
+    #[prost(float, optional, tag = "8")]
     pub read_write_ratio: ::core::option::Option<f32>,
+    /// Quick presets for common use cases
+    ///
+    /// "maximum_performance", "balanced", "memory_constrained", "cloud_optimized", "real_time", "archive"
+    #[prost(string, optional, tag = "9")]
+    pub preset: ::core::option::Option<::prost::alloc::string::String>,
+    /// Master optimization control
+    ///
+    /// Master switch (default: true)
+    #[prost(bool, optional, tag = "10")]
+    pub enable_all_optimizations: ::core::option::Option<bool>,
+    /// Specific configuration overrides (when you need fine control)
+    ///
+    /// Common to VIPER, NOVA
+    #[prost(message, optional, tag = "11")]
+    pub parquet_writer: ::core::option::Option<ParquetWriterSettings>,
+    /// Cloud storage optimization
+    #[prost(message, optional, tag = "12")]
+    pub footer_cache: ::core::option::Option<FooterCacheSettings>,
+    /// Adaptive writer strategy
+    #[prost(message, optional, tag = "13")]
+    pub hybrid_writer: ::core::option::Option<HybridWriterSettings>,
+    /// Engine-specific settings
+    ///
+    /// SST-specific
+    #[prost(message, optional, tag = "14")]
+    pub sst_settings: ::core::option::Option<SstEngineSettings>,
+    /// VIPER-specific
+    #[prost(message, optional, tag = "15")]
+    pub viper_settings: ::core::option::Option<ViperEngineSettings>,
+    /// NOVA-specific
+    #[prost(message, optional, tag = "16")]
+    pub nova_settings: ::core::option::Option<NovaEngineSettings>,
+}
+/// Parquet writer settings - matches TOML configuration
+#[derive(serde::Serialize, serde::Deserialize)]
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct ParquetWriterSettings {
+    #[prost(int32, optional, tag = "1")]
+    pub row_group_size: ::core::option::Option<i32>,
+    #[prost(int32, optional, tag = "2")]
+    pub page_size: ::core::option::Option<i32>,
+    #[prost(bool, optional, tag = "3")]
+    pub enable_bloom_filters: ::core::option::Option<bool>,
+    #[prost(float, optional, tag = "4")]
+    pub bloom_filter_fpp: ::core::option::Option<f32>,
+    #[prost(string, repeated, tag = "5")]
+    pub bloom_filter_columns: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+    #[prost(bool, optional, tag = "6")]
+    pub enable_column_statistics: ::core::option::Option<bool>,
+    #[prost(bool, optional, tag = "7")]
+    pub enable_page_index: ::core::option::Option<bool>,
+    #[prost(bool, optional, tag = "8")]
+    pub enable_column_index: ::core::option::Option<bool>,
+    #[prost(bool, optional, tag = "9")]
+    pub enable_offset_index: ::core::option::Option<bool>,
+    #[prost(int32, optional, tag = "10")]
+    pub page_index_granularity: ::core::option::Option<i32>,
+    #[prost(bool, optional, tag = "11")]
+    pub enable_dictionary: ::core::option::Option<bool>,
+    #[prost(float, optional, tag = "12")]
+    pub dictionary_threshold: ::core::option::Option<f32>,
+    #[prost(bool, optional, tag = "13")]
+    pub enable_delta_encoding: ::core::option::Option<bool>,
+    #[prost(bool, optional, tag = "14")]
+    pub enable_byte_stream_split: ::core::option::Option<bool>,
+    #[prost(bool, optional, tag = "15")]
+    pub enable_pq_sorting: ::core::option::Option<bool>,
+    #[prost(int32, optional, tag = "16")]
+    pub pq_sorting_segments: ::core::option::Option<i32>,
+    #[prost(int32, optional, tag = "17")]
+    pub pq_sorting_codebook_size: ::core::option::Option<i32>,
+    #[prost(bool, optional, tag = "18")]
+    pub enable_native_metadata: ::core::option::Option<bool>,
+    #[prost(int32, optional, tag = "19")]
+    pub metadata_inference_samples: ::core::option::Option<i32>,
+    #[prost(int32, optional, tag = "20")]
+    pub write_batch_size: ::core::option::Option<i32>,
+    #[prost(bool, optional, tag = "21")]
+    pub id_less_storage: ::core::option::Option<bool>,
+}
+/// Footer cache settings for cloud storage optimization
+#[derive(serde::Serialize, serde::Deserialize)]
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct FooterCacheSettings {
+    #[prost(bool, optional, tag = "1")]
+    pub enable: ::core::option::Option<bool>,
+    #[prost(int64, optional, tag = "2")]
+    pub max_entries: ::core::option::Option<i64>,
+    #[prost(int64, optional, tag = "3")]
+    pub ttl_seconds: ::core::option::Option<i64>,
+    #[prost(int64, optional, tag = "4")]
+    pub time_to_idle_seconds: ::core::option::Option<i64>,
+    #[prost(bool, optional, tag = "5")]
+    pub enable_persistence: ::core::option::Option<bool>,
+    #[prost(string, optional, tag = "6")]
+    pub persistence_path: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(bool, optional, tag = "7")]
+    pub enable_prefetch: ::core::option::Option<bool>,
+    #[prost(int64, optional, tag = "8")]
+    pub prefetch_threshold: ::core::option::Option<i64>,
+    #[prost(int64, optional, tag = "9")]
+    pub warming_interval_seconds: ::core::option::Option<i64>,
+    #[prost(bool, optional, tag = "10")]
+    pub compression: ::core::option::Option<bool>,
+    #[prost(int32, optional, tag = "11")]
+    pub compression_level: ::core::option::Option<i32>,
+}
+/// Hybrid writer settings for adaptive performance
+#[derive(serde::Serialize, serde::Deserialize)]
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct HybridWriterSettings {
+    #[prost(bool, optional, tag = "1")]
+    pub enable: ::core::option::Option<bool>,
+    /// "streaming", "batch", "adaptive"
+    #[prost(string, optional, tag = "2")]
+    pub initial_mode: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(bool, optional, tag = "3")]
+    pub enable_auto_switch: ::core::option::Option<bool>,
+    #[prost(int32, optional, tag = "4")]
+    pub mode_switch_threshold: ::core::option::Option<i32>,
+    #[prost(int32, optional, tag = "5")]
+    pub pattern_window_size: ::core::option::Option<i32>,
+    #[prost(float, optional, tag = "6")]
+    pub streaming_threshold: ::core::option::Option<f32>,
+    #[prost(int32, optional, tag = "7")]
+    pub batch_threshold: ::core::option::Option<i32>,
+    #[prost(int32, optional, tag = "8")]
+    pub max_buffer_size: ::core::option::Option<i32>,
+    #[prost(int64, optional, tag = "9")]
+    pub buffer_time_limit_seconds: ::core::option::Option<i64>,
+    #[prost(bool, optional, tag = "10")]
+    pub enable_concurrent_writes: ::core::option::Option<bool>,
+    #[prost(int32, optional, tag = "11")]
+    pub max_concurrent_writers: ::core::option::Option<i32>,
+    #[prost(bool, optional, tag = "12")]
+    pub optimize_row_group_size: ::core::option::Option<bool>,
+    #[prost(int32, optional, tag = "13")]
+    pub min_row_group_size: ::core::option::Option<i32>,
+    #[prost(int32, optional, tag = "14")]
+    pub max_row_group_size: ::core::option::Option<i32>,
+}
+/// SST-specific engine settings
+#[derive(serde::Serialize, serde::Deserialize)]
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct SstEngineSettings {
+    #[prost(bool, optional, tag = "1")]
+    pub enable_bloom_filters: ::core::option::Option<bool>,
+    #[prost(float, optional, tag = "2")]
+    pub bloom_filter_fpp: ::core::option::Option<f32>,
+    #[prost(enumeration = "CompressionAlgorithm", optional, tag = "3")]
+    pub compression: ::core::option::Option<i32>,
+    #[prost(int32, optional, tag = "4")]
+    pub compression_level: ::core::option::Option<i32>,
+    #[prost(int64, optional, tag = "5")]
+    pub write_buffer_size: ::core::option::Option<i64>,
+    #[prost(int32, optional, tag = "6")]
+    pub max_write_buffers: ::core::option::Option<i32>,
+    #[prost(int32, optional, tag = "7")]
+    pub block_size_kb: ::core::option::Option<i32>,
+    #[prost(bool, optional, tag = "8")]
+    pub dynamic_block_sizing: ::core::option::Option<bool>,
+}
+/// VIPER-specific engine settings
+#[derive(serde::Serialize, serde::Deserialize)]
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct ViperEngineSettings {
+    #[prost(bool, optional, tag = "1")]
+    pub inherit_global_settings: ::core::option::Option<bool>,
+    /// Additional VIPER-specific overrides
+    #[prost(bool, optional, tag = "2")]
+    pub enable_columnar_compression: ::core::option::Option<bool>,
+    #[prost(bool, optional, tag = "3")]
+    pub enable_vector_quantization: ::core::option::Option<bool>,
+    #[prost(int32, optional, tag = "4")]
+    pub vector_chunk_size: ::core::option::Option<i32>,
+    #[prost(bool, optional, tag = "5")]
+    pub enable_lazy_loading: ::core::option::Option<bool>,
+}
+/// NOVA-specific engine settings
+#[derive(serde::Serialize, serde::Deserialize)]
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct NovaEngineSettings {
+    #[prost(bool, optional, tag = "1")]
+    pub inherit_global_settings: ::core::option::Option<bool>,
+    /// Additional NOVA-specific overrides
+    #[prost(bool, optional, tag = "2")]
+    pub enable_real_time_mode: ::core::option::Option<bool>,
+    #[prost(int32, optional, tag = "3")]
+    pub streaming_buffer_size: ::core::option::Option<i32>,
+    #[prost(bool, optional, tag = "4")]
+    pub prefer_low_latency: ::core::option::Option<bool>,
 }
 /// Comprehensive quantization configuration with storage-aware strategies
 /// DESIGN DECISION: Quantization is ON by default for 95% I/O reduction and 50-80% storage savings
@@ -525,7 +744,7 @@ pub struct QuantizationConfig {
     pub training_sample_size: ::core::option::Option<i32>,
     /// Min acceptable quality (default: 0.95)
     #[prost(float, optional, tag = "6")]
-    pub quality_threshold: ::core::option::Option<f32>,
+    pub min_quality: ::core::option::Option<f32>,
     /// Progressive search settings (for hierarchical SST layout)
     ///
     /// Use multi-tier filtering (default: true)
@@ -620,7 +839,7 @@ pub struct Collection {
     #[prost(message, optional, tag = "3")]
     pub stats: ::core::option::Option<CollectionStats>,
     #[prost(int64, tag = "4")]
-    pub created_at: i64,
+    pub timestamp: i64,
     #[prost(int64, tag = "5")]
     pub updated_at: i64,
     #[prost(message, optional, tag = "6")]
@@ -669,7 +888,7 @@ pub struct SearchResult {
     pub rank: i32,
     /// Similarity score
     #[prost(float, tag = "5")]
-    pub score: f32,
+    pub similarity: f32,
     /// Distance value
     #[prost(float, tag = "6")]
     pub distance: f32,
@@ -887,9 +1106,7 @@ pub struct IncludeFields {
     #[prost(bool, tag = "2")]
     pub metadata: bool,
     #[prost(bool, tag = "3")]
-    pub score: bool,
-    #[prost(bool, tag = "4")]
-    pub rank: bool,
+    pub similarity: bool,
 }
 /// Quantization parameter types for SearchParams
 ///

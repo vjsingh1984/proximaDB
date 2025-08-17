@@ -60,9 +60,9 @@ fn create_test_vector(id: &str, dimension: usize, value: f32) -> VectorRecord {
         updated_at: Some(1234567890),
         expires_at: None,
         version: Some(1),
-        rank: None,
-        score: None,
-        distance: None,
+        // rank removed -  None,
+        similarity: None,
+        similarity: None,
     }
 }
 
@@ -72,7 +72,7 @@ fn create_test_batch(vectors: Vec<VectorRecord>) -> WALVectorBatch {
     WALVectorBatch {
         batch_id: BatchId::new(),
         vector_records: Arc::new(vectors),
-        created_at: std::time::SystemTime::now(),
+        timestamp: std::time::SystemTime::now(),
         total_size_bytes: vector_count * 256, // Approximate
         is_flushed: false,
             metadata_bloom_filter: None,
@@ -476,8 +476,8 @@ async fn test_bincode_batch_metadata() {
         
         // Verify metadata keys exist
         let keys: Vec<_> = vector.metadata.iter().map(|m| &m.key).collect();
-        assert!(keys.contains(&&"index".to_string()));
-        assert!(keys.contains(&&"binary_data".to_string()));
-        assert!(keys.contains(&&"timestamp".to_string()));
+        assert!(keys.contains_hash(&&"index".to_string()));
+        assert!(keys.contains_hash(&&"binary_data".to_string()));
+        assert!(keys.contains_hash(&&"timestamp".to_string()));
     }
 }

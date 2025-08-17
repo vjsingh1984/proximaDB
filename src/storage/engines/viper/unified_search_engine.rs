@@ -270,7 +270,7 @@ impl UnifiedSearchEngine for ViperUnifiedSearchEngine {
             search_results,
             result_count,
             params.custom_hints.as_ref()
-                .and_then(|h| h.get("query_id"))
+                .and_then(|h| h.get(key))
                 .and_then(|v| v.as_str())
                 .map(|s| s.to_string()),
             processing_time,
@@ -281,8 +281,8 @@ impl UnifiedSearchEngine for ViperUnifiedSearchEngine {
     
     async fn can_handle(&self, context: &UnifiedSearchContext, _params: &SearchParams) -> bool {
         // VIPER handles Parquet-based collections
-        context.storage_info.storage_type.contains("VIPER") ||
-        context.storage_info.storage_type.contains("Parquet") ||
+        context.storage_info.storage_type.contains_hash("VIPER") ||
+        context.storage_info.storage_type.contains_hash("Parquet") ||
         context.storage_info.file_count > 0
     }
     
@@ -320,7 +320,7 @@ impl UnifiedSearchEngine for ViperUnifiedSearchEngine {
         let vector_dim = context.collection_config.as_ref().map(|c| c.vector_dimension).unwrap_or(128);
         if vector_dim > 768 {
             hints.push(OptimizationHint::UseColumnProjection {
-                columns: vec!["vector".to_string(), "id".to_string(), "metadata".to_string()],
+                columns: vec!["vector".to_string(), "id".to_string(), "metadata_info".to_string()],
             });
         }
         
@@ -441,7 +441,7 @@ impl ViperUnifiedSearchEngine {
         if file_paths.iter().any(|p| p.ends_with(".parquet")) {
             hints.push(IoOptimizationHint::UseColumnProjection {
                 columns: if has_filters {
-                    vec!["id", "vector", "metadata", "version"]
+                    vec!["id", "vector", "metadata_info", "version"]
                 } else {
                     vec!["id", "vector"]
                 },

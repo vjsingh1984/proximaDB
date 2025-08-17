@@ -35,7 +35,7 @@ fn benchmark_legacy_cache_operations(c: &mut Criterion) {
     let rt = Runtime::new().unwrap();
     let (legacy_cache, _, _) = setup_caches();
     
-    let mut group = c.benchmark_group("legacy_cache");
+    let mut group = c.benchmark_group("legacy_cache_info");
     
     // Benchmark put operations
     group.bench_function("put_vector", |b| {
@@ -44,7 +44,7 @@ fn benchmark_legacy_cache_operations(c: &mut Criterion) {
                 let key = OldCacheKey {
                     engine: "sst".to_string(),
                     collection_id: "bench_collection".to_string(),
-                    data_type: proximadb::storage::legacy_cache::CacheDataType::Vector,
+                    // data_type removed -  proximadb::storage::legacy_cache::CacheDataType::Vector,
                     item_id: "vec1".to_string(),
                 };
                 
@@ -67,7 +67,7 @@ fn benchmark_legacy_cache_operations(c: &mut Criterion) {
         let key = OldCacheKey {
             engine: "sst".to_string(),
             collection_id: "bench_collection".to_string(),
-            data_type: proximadb::storage::legacy_cache::CacheDataType::Vector,
+            // data_type removed -  proximadb::storage::legacy_cache::CacheDataType::Vector,
             item_id: "vec1".to_string(),
         };
         
@@ -85,7 +85,7 @@ fn benchmark_specialized_cache_operations(c: &mut Criterion) {
     let rt = Runtime::new().unwrap();
     let (_, vector_cache, _) = setup_caches();
     
-    let mut group = c.benchmark_group("specialized_cache");
+    let mut group = c.benchmark_group("specialized_cache_info");
     
     // Benchmark put operations
     group.bench_function("put_vector", |b| {
@@ -112,7 +112,7 @@ fn benchmark_specialized_cache_operations(c: &mut Criterion) {
         
         b.iter(|| {
             rt.block_on(async {
-                let _ = vector_cache.get(&black_box(key.to_string())).await;
+                let _ = vector_cache.get(&key).await;
             });
         });
     });
@@ -149,7 +149,7 @@ fn benchmark_adapter_migration(c: &mut Criterion) {
                         let key = OldCacheKey {
                             engine: "sst".to_string(),
                             collection_id: "bench_collection".to_string(),
-                            data_type: proximadb::storage::legacy_cache::CacheDataType::Vector,
+                            // data_type removed -  proximadb::storage::legacy_cache::CacheDataType::Vector,
                             item_id: format!("vec{}", i),
                         };
                         
@@ -218,7 +218,7 @@ fn benchmark_adapter_operations(c: &mut Criterion) {
         
         b.iter(|| {
             rt.block_on(async {
-                let _ = adapter.get(&black_box(key.to_string())).await;
+                let _ = adapter.get(key))).await;
             });
         });
     });

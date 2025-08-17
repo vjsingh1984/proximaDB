@@ -125,7 +125,7 @@ impl QueryPlanner {
                     result.extend(vec![
                         "id".to_string(),
                         "vector".to_string(),
-                        "metadata".to_string(),
+                        "metadata_info".to_string(),
                     ]);
                 }
                 SelectField::Field(name) => {
@@ -281,7 +281,7 @@ mod tests {
         
         assert_eq!(plan.collection, "products");
         assert_eq!(plan.limit, 5);
-        assert_eq!(plan.select_fields, vec!["id", "vector", "metadata"]);
+        assert_eq!(plan.select_fields, vec!["id", "vector", "metadata_info"]);
     }
     
     #[test]

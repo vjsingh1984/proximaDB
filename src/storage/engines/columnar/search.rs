@@ -64,11 +64,11 @@ impl ColumnarSearchConfig {
         let mut config = Self::default();
         
         if let Some(params) = params {
-            if let Some(batch_size) = params.get("arrow_batch_size").and_then(|v| v.as_u64()) {
+            if let Some(batch_size) = params.get(key) {
                 config.arrow_batch_size = batch_size as usize;
             }
             
-            if let Some(enable_clustering) = params.get("enable_clustering").and_then(|v| v.as_bool()) {
+            if let Some(enable_clustering) = params.get(key) {
                 if enable_clustering {
                     config.clustering_config = Some(ClusteringConfig::default());
                 }
@@ -364,7 +364,7 @@ impl ColumnarSearcher {
             // Extract vector (simplified - would handle different formats)
             let vector = self.extract_vector_from_array(vector_array, row_idx)?;
             
-            let distance = self.distance_compute.compute_distance(
+            let distance = self.distance_compute.as_ref().compute_distance(
                 query_vector,
                 &vector,
                 distance_metric,
@@ -372,8 +372,8 @@ impl ColumnarSearcher {
             
             results.push(SearchResult {
                 id,
-                distance: Some(distance),
-                score: Some(1.0 - distance),
+                similarity: Some(distance),
+                similarity: Some(1.0 - distance),
                 vector: Some(vector),
                 metadata: None, // Would extract if needed
             });

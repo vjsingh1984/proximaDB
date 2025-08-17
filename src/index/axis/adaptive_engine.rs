@@ -12,7 +12,7 @@ use tokio::sync::RwLock;
 
 use super::{
     AxisConfig, CollectionAnalyzer, MigrationDecision,
-    strategy::{OptimizationConfig, OptimizationGoal, CollectionStatistics, QueryPatterns, IndexStrategyBuilder},
+    // strategy removed - :{OptimizationConfig, OptimizationGoal, CollectionStatistics, QueryPatterns, IndexStrategyBuilder},
     types::{DataType, IndexAlgorithm, IndexSpecification, IndexSelectionStrategy},
 };
 
@@ -467,7 +467,7 @@ impl AdaptiveIndexEngine {
         Ok(IndexSelectionStrategy {
             indexes: vec![
                 IndexSpecification {
-                    data_type: DataType::Identifier,
+                    // data_type removed -  DataType::Identifier,
                     algorithm: IndexAlgorithm::BTree { max_keys_per_node: 256 },
                     name: Some("default_id".to_string()),
                     is_primary: false,
@@ -578,7 +578,7 @@ impl IndexStrategySelector {
         characteristics: &CollectionCharacteristics,
     ) -> Result<IndexSelectionStrategy> {
         let optimization_config = self.optimization_configs
-            .get(&strategy_type)
+            .get(key)
             .ok_or_else(|| anyhow::anyhow!("No config for strategy type: {:?}", strategy_type))?;
 
         // Convert characteristics to builder format

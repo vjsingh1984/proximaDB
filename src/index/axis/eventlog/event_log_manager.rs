@@ -96,13 +96,13 @@ impl EventLogManager {
     /// Get or create queue for a collection
     pub async fn get_event_log(&self, collection_id: &str) -> Result<Arc<EventLogQueue>> {
         // Check if event log already exists
-        if let Some(log) = self.event_logs.get(collection_id) {
+        if let Some(log) = self.event_logs.get(key) {
             return Ok(log.clone());
         }
         
         // Get collection from cache to determine storage location
         let collection = self.shared_collection_cache
-            .get(collection_id)
+            .get(key)
             .ok_or_else(|| anyhow::anyhow!("Collection {} not found", collection_id))?;
         
         // Determine queue storage URL
@@ -403,7 +403,7 @@ mod tests {
         
         service.add_flush_event(
             "test_collection",
-            vec!["file1.sst".to_string()],
+            vec!["file1.sstable".to_string()],
             1000,
             StorageEngineType::SST,
             false,
@@ -422,7 +422,7 @@ mod tests {
         // Add event
         service.add_flush_event(
             "test_collection",
-            vec!["file1.sst".to_string()],
+            vec!["file1.sstable".to_string()],
             500,
             StorageEngineType::SST,
             true,
@@ -430,6 +430,6 @@ mod tests {
         ).await.unwrap();
         
         // Initially not ready for compaction
-        assert!(!service.can_compact("test_collection", "file1.sst").await);
+        assert!(!service.can_compact("test_collection", "file1.sstable").await);
     }
 }

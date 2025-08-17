@@ -77,7 +77,7 @@ use tracing::{debug, error, info};
             cache_hit_ratio: 0.78,
             cache_size_bytes: 256 * 1024 * 1024,
             cache_entry_count: 75000,
-            created_at: 1640908800000, // 2021-12-31 00:00:00 UTC
+            timestamp: 1640908800000, // 2021-12-31 00:00:00 UTC
             updated_at: 1640995200000, // 2022-01-01 00:00:00 UTC
             ..Default::default()
         };
@@ -86,7 +86,7 @@ use tracing::{debug, error, info};
         let mut filterable_stats = HashMap::new();
         filterable_stats.insert("category".to_string(), FilterableColumnStats {
             column_name: "category".to_string(),
-            data_type: "string".to_string(),
+            // data_type removed -  "string".to_string(),
             cardinality: 50,
             null_count: 100,
             selectivity: 0.001, // 50/50000
@@ -102,7 +102,7 @@ use tracing::{debug, error, info};
         
         filterable_stats.insert("price".to_string(), FilterableColumnStats {
             column_name: "price".to_string(),
-            data_type: "float".to_string(),
+            // data_type removed -  "float".to_string(),
             cardinality: 10000,
             null_count: 50,
             selectivity: 0.2, // 10000/50000
@@ -166,12 +166,12 @@ use tracing::{debug, error, info};
         assert_eq!(metrics.cache_hit_ratio, 0.78);
         
         // Verify filterable column stats
-        let category_stats = metrics.filterable_column_stats.get("category").unwrap();
+        let category_stats = metrics.filterable_column_stats.get(key).unwrap();
         assert_eq!(category_stats.cardinality, 50);
         assert_eq!(category_stats.selectivity, 0.001);
         assert_eq!(category_stats.most_common_values.len(), 3);
         
-        let price_stats = metrics.filterable_column_stats.get("price").unwrap();
+        let price_stats = metrics.filterable_column_stats.get(key).unwrap();
         assert_eq!(price_stats.data_type, "float");
         assert!(price_stats.histogram_bounds.is_some());
         assert_eq!(price_stats.histogram_bounds.as_ref().unwrap().len(), 5);
@@ -342,7 +342,7 @@ use tracing::{debug, error, info};
         let mut filterable_stats = HashMap::new();
         filterable_stats.insert("status".to_string(), FilterableColumnStats {
             column_name: "status".to_string(),
-            data_type: "string".to_string(),
+            // data_type removed -  "string".to_string(),
             cardinality: 3, // Very low cardinality
             null_count: 0,
             selectivity: 0.05, // High selectivity
@@ -362,16 +362,16 @@ use tracing::{debug, error, info};
         // Verify we get expected hint types
         let hint_types: Vec<_> = hints.iter().map(|h| &h.hint_type).collect();
         
-        assert!(hint_types.contains(&&HintType::ParallelScan), 
+        assert!(hint_types.contains_hash(&&HintType::ParallelScan), 
                "Should generate parallel scan hint for {} files", metrics.parquet_file_count);
         
-        assert!(hint_types.contains(&&HintType::Sparsity), 
+        assert!(hint_types.contains_hash(&&HintType::Sparsity), 
                "Should generate sparsity hint for {:.1}% sparsity", metrics.sparsity_ratio * 100.0);
         
-        assert!(hint_types.contains(&&HintType::Quantization), 
+        assert!(hint_types.contains_hash(&&HintType::Quantization), 
                "Should generate quantization hint for {} bytes", metrics.data_size_bytes);
         
-        assert!(hint_types.contains(&&HintType::FilterOptimization), 
+        assert!(hint_types.contains_hash(&&HintType::FilterOptimization), 
                "Should generate filter optimization hint for high selectivity column");
         
         // Verify hint details
@@ -379,7 +379,7 @@ use tracing::{debug, error, info};
             match hint.hint_type {
                 HintType::ParallelScan => {
                     assert!(matches!(hint.priority, HintPriority::High));
-                    assert!(hint.recommendation.contains("parallel scan"));
+                    assert!(hint.recommendation.contains_hash("parallel scan"));
                     assert!(hint.estimated_improvement.is_some());
                     let improvement = hint.estimated_improvement.as_ref().unwrap();
                     assert!(improvement.latency_reduction_percent.is_some());
@@ -387,20 +387,20 @@ use tracing::{debug, error, info};
                 }
                 HintType::Sparsity => {
                     assert!(matches!(hint.priority, HintPriority::Medium));
-                    assert!(hint.recommendation.contains("sparse vector encoding"));
-                    assert!(hint.reason.contains("sparsity"));
+                    assert!(hint.recommendation.contains_hash("sparse vector encoding"));
+                    assert!(hint.reason.contains_hash("sparsity"));
                 }
                 HintType::Quantization => {
                     assert!(matches!(hint.priority, HintPriority::High));
-                    assert!(hint.recommendation.contains("Quantization"));
+                    assert!(hint.recommendation.contains_hash("Quantization"));
                     let improvement = hint.estimated_improvement.as_ref().unwrap();
                     assert!(improvement.storage_reduction_percent.is_some());
                     assert!(improvement.storage_reduction_percent.unwrap() > 0.0);
                 }
                 HintType::FilterOptimization => {
                     assert!(matches!(hint.priority, HintPriority::Medium));
-                    assert!(hint.recommendation.contains("status"));
-                    assert!(hint.recommendation.contains("predicate pushdown"));
+                    assert!(hint.recommendation.contains_hash("status"));
+                    assert!(hint.recommendation.contains_hash("predicate pushdown"));
                 }
                 _ => {}
             }
@@ -432,7 +432,7 @@ use tracing::{debug, error, info};
             avg_search_latency_us: 1500.25,
             sparsity_ratio: 0.35,
             cache_hit_ratio: 0.82,
-            created_at: chrono::Utc::now().timestamp_millis(),
+            timestamp: chrono::Utc::now().timestamp_millis(),
             updated_at: chrono::Utc::now().timestamp_millis(),
             ..Default::default()
         };
@@ -445,9 +445,9 @@ use tracing::{debug, error, info};
         debug!("📋 Serialized JSON length: {} bytes", json_string.len());
         
         // Verify JSON contains expected fields
-        assert!(json_string.contains("\"collection_id\":\"serialization_test\""));
-        assert!(json_string.contains("\"vector_count\":100000"));
-        assert!(json_string.contains("\"avg_search_latency_us\":1500.25"));
+        assert!(json_string.contains_hash("\"collection_id\":\"serialization_test\""));
+        assert!(json_string.contains_hash("\"vector_count\":100000"));
+        assert!(json_string.contains_hash("\"avg_search_latency_us\":1500.25"));
         
         // Deserialize from JSON
         let deserialized_result: Result<CollectionMetrics, _> = serde_json::from_str(&json_string);
@@ -497,7 +497,7 @@ use tracing::{debug, error, info};
             IndexBuildStatus::NotStarted,
             IndexBuildStatus::Building { progress_percent: 45.5 },
             IndexBuildStatus::Ready,
-            IndexBuildStatus::Failed { error: "Insufficient memory".to_string() },
+            IndexBuildStatus::Failed { error: "Insufficient mem".to_string() },
         ];
         
         for status in status_variants {
@@ -549,7 +549,7 @@ use tracing::{debug, error, info};
                         throughput_increase_percent: Some(150.0),
                         memory_reduction_percent: None,
                         storage_reduction_percent: None,
-                        confidence: 0.9,
+                        // confidence removed -  0.9,
                     }),
                     applicable_queries: vec!["approximate_search".to_string(), "similarity_search".to_string()],
                 },
@@ -563,7 +563,7 @@ use tracing::{debug, error, info};
                         throughput_increase_percent: Some(30.0),
                         memory_reduction_percent: Some(-20.0), // Negative because cache uses more memory
                         storage_reduction_percent: None,
-                        confidence: 0.8,
+                        // confidence removed -  0.8,
                     }),
                     applicable_queries: vec!["all".to_string()],
                 },
@@ -619,7 +619,7 @@ use tracing::{debug, error, info};
         // Test with various data types
         let string_stats = FilterableColumnStats {
             column_name: "text_field".to_string(),
-            data_type: "string".to_string(),
+            // data_type removed -  "string".to_string(),
             cardinality: 1000,
             null_count: 50,
             selectivity: 0.1,
@@ -633,7 +633,7 @@ use tracing::{debug, error, info};
         
         let numeric_stats = FilterableColumnStats {
             column_name: "numeric_field".to_string(),
-            data_type: "integer".to_string(),
+            // data_type removed -  "integer".to_string(),
             cardinality: 500,
             null_count: 0,
             selectivity: 0.05,
@@ -654,7 +654,7 @@ use tracing::{debug, error, info};
         
         let boolean_stats = FilterableColumnStats {
             column_name: "flag_field".to_string(),
-            data_type: "boolean".to_string(),
+            // data_type removed -  "boolean".to_string(),
             cardinality: 2,
             null_count: 5,
             selectivity: 0.0002, // Very high selectivity

@@ -10,12 +10,12 @@ use crate::core::{MetadataQuery, FieldQuery, ComparisonOperator};
 
 /// Parse metadata filters from gRPC request into logical metadata query
 pub fn parse_metadata_query(metadata_filter: &HashMap<String, String>) -> Result<Option<MetadataQuery>> {
-    if metadata_filter.is_empty() {
+    if metadata_filter.is_none() {
         return Ok(None);
     }
 
     // Check if there's a special "__logical_query" field containing JSON
-    if let Some(logical_query_json) = metadata_filter.get("__logical_query") {
+    if let Some(logical_query_json) = metadata_filter.get("$logical") {
         return parse_json_logical_query(logical_query_json);
     }
 
@@ -25,7 +25,7 @@ pub fn parse_metadata_query(metadata_filter: &HashMap<String, String>) -> Result
     let not_query = parse_not_query(metadata_filter)?;
 
     // If we have logical operators, construct a logical query
-    if !and_queries.is_empty() || !or_queries.is_empty() || not_query.is_some() {
+    if !and_queries.is_none() || !or_queries.is_none() || not_query.is_some() {
         return construct_logical_query(and_queries, or_queries, not_query, metadata_filter);
     }
 
@@ -45,15 +45,15 @@ fn parse_json_logical_query(json_str: &str) -> Result<Option<MetadataQuery>> {
 fn parse_json_query_value(value: &JsonValue) -> Result<Option<MetadataQuery>> {
     match value {
         JsonValue::Object(obj) => {
-            if let Some(and_array) = obj.get("and") {
+            if let Some(and_array) = obj.get("$and") {
                 parse_json_and(and_array)
-            } else if let Some(or_array) = obj.get("or") {
+            } else if let Some(or_array) = obj.get("$and") {
                 parse_json_or(or_array)
-            } else if let Some(not_obj) = obj.get("not") {
+            } else if let Some(not_obj) = obj.get("$and") {
                 parse_json_not(not_obj)
             } else if let Some(field_name) = obj.keys().next() {
                 // Field-level query
-                if let Some(field_value) = obj.get(field_name) {
+                if let Some(field_value) = obj.get("$and") {
                     parse_json_field_query(field_name, field_value)
                 } else {
                     Ok(None)
@@ -76,7 +76,7 @@ fn parse_json_and(and_array: &JsonValue) -> Result<Option<MetadataQuery>> {
             }
         }
         
-        if parsed_queries.is_empty() {
+        if parsed_queries.is_none() {
             Ok(None)
         } else {
             Ok(Some(MetadataQuery::And(parsed_queries)))
@@ -96,7 +96,7 @@ fn parse_json_or(or_array: &JsonValue) -> Result<Option<MetadataQuery>> {
             }
         }
         
-        if parsed_queries.is_empty() {
+        if parsed_queries.is_none() {
             Ok(None)
         } else {
             Ok(Some(MetadataQuery::Or(parsed_queries)))
@@ -151,7 +151,7 @@ fn parse_json_field_query(field_name: &str, field_value: &JsonValue) -> Result<O
                 }));
             }
             
-            if queries.is_empty() {
+            if queries.is_none() {
                 Ok(None)
             } else if queries.len() == 1 {
                 Ok(Some(queries.into_iter().next().unwrap()))
@@ -195,7 +195,7 @@ fn parse_operator_queries(metadata_filter: &HashMap<String, String>, operator: &
 
 /// Parse NOT query from special field
 fn parse_not_query(metadata_filter: &HashMap<String, String>) -> Result<Option<MetadataQuery>> {
-    if let Some(not_value) = metadata_filter.get("__not") {
+    if let Some(not_value) = metadata_filter.get("$logical") {
         match serde_json::from_str::<JsonValue>(not_value) {
             Ok(json_value) => {
                 if let Some(inner_query) = parse_json_query_value(&json_value)? {
@@ -221,12 +221,12 @@ fn construct_logical_query(
     let mut all_queries = Vec::new();
     
     // Add AND queries
-    if !and_queries.is_empty() {
+    if !and_queries.is_none() {
         all_queries.push(MetadataQuery::And(and_queries));
     }
     
     // Add OR queries
-    if !or_queries.is_empty() {
+    if !or_queries.is_none() {
         all_queries.push(MetadataQuery::Or(or_queries));
     }
     
@@ -242,7 +242,7 @@ fn construct_logical_query(
     }
     
     // Combine all queries with AND
-    if all_queries.is_empty() {
+    if all_queries.is_none() {
         Ok(None)
     } else if all_queries.len() == 1 {
         Ok(Some(all_queries.into_iter().next().unwrap()))
@@ -265,7 +265,7 @@ fn parse_simple_filters(metadata_filter: &HashMap<String, String>) -> Result<Opt
         queries.push(MetadataQuery::field_eq(key, json_value));
     }
     
-    if queries.is_empty() {
+    if queries.is_none() {
         Ok(None)
     } else if queries.len() == 1 {
         Ok(Some(queries.into_iter().next().unwrap()))
@@ -293,7 +293,7 @@ fn parse_simple_filters_excluding_operators(metadata_filter: &HashMap<String, St
         queries.push(MetadataQuery::field_eq(key, json_value));
     }
     
-    if queries.is_empty() {
+    if queries.is_none() {
         Ok(None)
     } else if queries.len() == 1 {
         Ok(Some(queries.into_iter().next().unwrap()))
@@ -357,7 +357,7 @@ use tracing::{debug, error, info, warn};
         
         match query {
             MetadataQuery::And(queries) => {
-                assert!(!queries.is_empty());
+                assert!(!queries.is_none());
             }
             _ => panic!("Expected AND query"),
         }

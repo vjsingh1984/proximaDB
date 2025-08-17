@@ -434,7 +434,7 @@ async fn test_optimization_end_to_end() -> anyhow::Result<()> {
     info!("Found {} search results, skipping metadata validation for now", sst_results.len());
     
     // for result in &sst_results {
-    //     if let Some(pattern_value) = result.metadata.get("pattern") {
+    //     if let Some(pattern_value) = result.metadata.get(key) {
     //         if let Some(pattern) = pattern_value.as_str() {
     //             assert_eq!(pattern, "sparse");
     //         } else {

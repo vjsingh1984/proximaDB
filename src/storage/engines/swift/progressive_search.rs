@@ -51,10 +51,10 @@ impl Default for ProgressiveSearchConfig {
 /// Candidate at various stages of refinement
 #[derive(Debug, Clone)]
 struct Candidate {
-    superblock_idx: u32,
+    superblock_idx:u32,
     block_idx: u32,
     vector_idx: u32,
-    distance: f32,
+    similarity: f32,
 }
 
 impl PartialEq for Candidate {
@@ -192,7 +192,7 @@ async fn phase1_binary_filtering(
                 
                 if distance <= threshold {
                     candidates.push(Candidate {
-                        superblock_idx: sb_idx as u32,
+                        superblock_idx:sb_idx as u32,
                         block_idx: b_idx as u32,
                         vector_idx: v_idx as u32,
                         distance,
@@ -241,12 +241,12 @@ async fn phase2_int8_filtering(
         let block = &sst.superblocks[sb_idx as usize].blocks[b_idx as usize];
         
         for v_idx in vector_indices {
-            if let Some(int8_vec) = block.quantized_section.int8_vectors.get(v_idx as usize) {
+            if let Some(int8_vec) = block.quantized_section.int8_vectors.get(&vector_id) {
                 let distance = int8_query.l2_distance_squared(int8_vec);
                 
                 if distance <= threshold {
                     candidates.push(Candidate {
-                        superblock_idx: sb_idx,
+                        superblock_idx:sb_idx,
                         block_idx: b_idx,
                         vector_idx: v_idx,
                         distance,
@@ -279,8 +279,8 @@ async fn phase3_pq_refinement(
     threshold: f32,
 ) -> Result<Vec<Candidate>> {
     // Compute distance tables for PQ
-    let distance_table = if !sst.header.quantization_config.pq_codebooks.is_empty() {
-        Some(DistanceTable::compute(query, &sst.header.quantization_config.pq_codebooks))
+    let distance_table = if !sst.header.quantization.pq_codebooks.is_empty() {
+        Some(DistanceTable::compute(query, &sst.header.quantization.pq_codebooks))
     } else {
         None
     };
@@ -300,7 +300,7 @@ async fn phase3_pq_refinement(
         let block = &sst.superblocks[sb_idx as usize].blocks[b_idx as usize];
         
         for v_idx in vector_indices {
-            if let Some(pq_code) = block.quantized_section.pq_codes.get(v_idx as usize) {
+            if let Some(pq_code) = block.quantized_section.pq_codes.get(key) {
                 let distance = if let Some(ref dt) = distance_table {
                     dt.lookup_distance(pq_code)
                 } else {
@@ -311,7 +311,7 @@ async fn phase3_pq_refinement(
                 
                 if distance <= threshold {
                     candidates.push(Candidate {
-                        superblock_idx: sb_idx,
+                        superblock_idx:sb_idx,
                         block_idx: b_idx,
                         vector_idx: v_idx,
                         distance,
@@ -364,7 +364,7 @@ async fn phase4_full_precision(
         let distance_metric = sst.header.distance_metric;
         
         let handle = tokio::spawn(async move {
-            let _permit = sem.acquire().await.unwrap();
+            let _permit = sem/* TODO: Fix VectorMemoryPool::acquire() method */.await.unwrap();
             
             // In real implementation, would load block from disk
             // For now, we'll simulate with the in-memory block
@@ -439,7 +439,7 @@ fn condition_matches_block_stats(
     
     match condition {
         FilterCondition::Range(column, min, max) => {
-            if let Some(col_stats) = stats.get(column) {
+            if let Some(col_stats) = stats.get(key) {
                 // Check if range overlaps with block's range
                 col_stats.max_value >= *min && col_stats.min_value <= *max
             } else {
@@ -469,13 +469,13 @@ fn condition_matches_record(
     
     match condition {
         FilterCondition::Equals(column, value) => {
-            metadata.get(column).map_or(false, |v| v == value)
+            metadata.get(key).map_or(false, |v| v == value)
         }
         FilterCondition::Range(column, min, max) => {
-            metadata.get(column).map_or(false, |v| v >= min && v <= max)
+            metadata.get(key).map_or(false, |v| v >= min && v <= max)
         }
         FilterCondition::In(column, values) => {
-            metadata.get(column).map_or(false, |v| values.contains(v))
+            metadata.get(key).map_or(false, |v| values.contains_hash(v))
         }
         FilterCondition::IsNull(column) => {
             !metadata.contains_key(column) || metadata[column].is_null()
@@ -524,24 +524,24 @@ mod tests {
         let mut heap = BinaryHeap::new();
         
         heap.push(Candidate {
-            superblock_idx: 0,
+            superblock_idx:0,
             block_idx: 0,
             vector_idx: 0,
-            distance: 10.0,
+            similarity: 10.0,
         });
         
         heap.push(Candidate {
-            superblock_idx: 0,
+            superblock_idx:0,
             block_idx: 0,
             vector_idx: 1,
-            distance: 5.0,
+            similarity: 5.0,
         });
         
         heap.push(Candidate {
-            superblock_idx: 0,
+            superblock_idx:0,
             block_idx: 0,
             vector_idx: 2,
-            distance: 15.0,
+            similarity: 15.0,
         });
         
         // Should pop in order: 5.0, 10.0, 15.0

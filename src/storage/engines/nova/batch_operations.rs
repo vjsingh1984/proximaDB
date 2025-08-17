@@ -70,7 +70,7 @@ impl RowGroupCache {
     }
     
     async fn get(&self, rg_id: usize) -> Option<Arc<RecordBatch>> {
-        self.cache.write().await.get(&rg_id).cloned()
+        self.cache.write().await.get(key).cloned()
     }
     
     async fn put(&self, rg_id: usize, batch: Arc<RecordBatch>) {
@@ -179,11 +179,11 @@ async fn load_and_extract_records(
         let schema = viper.schema.clone();
         
         let handle = tokio::spawn(async move {
-            let _permit = sem.acquire().await.unwrap();
+            let _permit = sem/* TODO: Fix VectorMemoryPool::acquire() method */.await.unwrap();
             
             // Check cache or load row group
             let batch = if let Some(ref cache) = cache {
-                if let Some(cached_batch) = cache.get(rg_id).await {
+                if let Some(cached_batch) = cache.get(&rg_id).await {
                     debug!("Row group {} found in cache", rg_id);
                     cached_batch
                 } else {
@@ -194,7 +194,7 @@ async fn load_and_extract_records(
                     batch
                 }
             } else {
-                debug!("Loading row group {} without cache", rg_id);
+                debug!("Loading row group {} without cache_info", rg_id);
                 Arc::new(load_row_group(rg_id, &projection, &schema).await?)
             };
             
@@ -317,7 +317,7 @@ pub async fn delete_records_batch(
         }
     }
     
-    info!("Marked {} records for deletion", deleted);
+    info!("Marked {} records for deletion_info", deleted);
     Ok(deleted)
 }
 
@@ -391,7 +391,7 @@ pub async fn prefetch_row_groups(
     
     for rg_id in row_group_ids {
         // Skip if already cached
-        if cache.get(rg_id).await.is_some() {
+        if cache.get(&key) {
             continue;
         }
         
@@ -400,7 +400,7 @@ pub async fn prefetch_row_groups(
         let schema = viper.schema.clone();
         
         let handle = tokio::spawn(async move {
-            let _permit = sem.acquire().await.unwrap();
+            let _permit = sem/* TODO: Fix VectorMemoryPool::acquire() method */.await.unwrap();
             
             match load_row_group(rg_id, &vec![], &schema).await {
                 Ok(batch) => {
@@ -527,7 +527,7 @@ mod tests {
             time_ms: 150,
         };
         
-        assert_eq!(stats.hit_rate(), 0.6);
+        assert_eq!(stats.hit_rate_percent(), 0.6);
         assert_eq!(stats.found_rate(), 0.95);
     }
     

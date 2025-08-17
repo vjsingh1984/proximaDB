@@ -1,6 +1,6 @@
 //! SST Engine Index-Based Data Reader
 //! 
-//! SST strategy: Read entire blocks then filter using indices
+//! SST // strategy removed -  Read entire blocks then filter using indices
 //! This leverages LSM block structure for efficient bulk I/O
 
 use std::collections::HashMap;
@@ -34,13 +34,13 @@ impl MetadataSource for SSTMetadataSource {
     }
     
     fn get_column_metadata(&self, column_name: &str) -> Option<ColumnMetadata> {
-        self.sst_metadata.column_info.get(column_name).cloned()
+        self.sst_metadata.column_info.get(key).cloned()
     }
     
     fn get_metadata_value(&self, row_idx: usize, column_name: &str) -> Option<serde_json::Value> {
         self.column_metadata_cache
-            .get(column_name)
-            .and_then(|column_values| column_values.get(row_idx))
+            .get(key)
+            .and_then(|column_values| column_values.get(key))
             .cloned()
     }
     

@@ -35,7 +35,7 @@ struct CollectionPartition {
     vector_count: usize,
     batch_count: usize,
     last_flush_sequence: u64,
-    created_at: std::time::SystemTime,
+    timestamp: std::time::SystemTime,
 }
 
 impl CollectionPartition {
@@ -47,7 +47,7 @@ impl CollectionPartition {
             vector_count: 0,
             batch_count: 0,
             last_flush_sequence: 0,
-            created_at: std::time::SystemTime::now(),
+            timestamp: std::time::SystemTime::now(),
         }
     }
 
@@ -201,7 +201,7 @@ impl CollectionPartition {
                 
                 if !vector_record.id.as_deref().unwrap_or("").is_empty() {
                     // Check if this is the latest version (prioritize version number over timestamp)
-                    let is_newer = match id_to_latest.get(vector_record.id.as_deref().unwrap_or("")) {
+                    let is_newer = match id_to_latest.get(key).unwrap_or("") {
                         Some((_, existing_seq, existing_version)) => {
                             // Primary: Compare by version number (higher version wins)
                             match (version, existing_version) {
@@ -309,7 +309,7 @@ impl CollectionPartition {
                 
                 if !vector_record.id.as_deref().unwrap_or("").is_empty() {
                     // Check if this is the latest version (prioritize version number over timestamp)
-                    let is_newer = match id_to_latest.get(vector_record.id.as_deref().unwrap_or("")) {
+                    let is_newer = match id_to_latest.get(key).unwrap_or("") {
                         Some((_, _, existing_seq, existing_version)) => {
                             // Primary: Compare by version number (higher version wins)
                             match (version, existing_version) {
@@ -525,7 +525,7 @@ impl GlobalPartitionedMemtable {
             debug!("🔍 Available collection: '{}' with {} vectors", id, partition.vector_count);
         }
 
-        if let Some(partition) = collections.get(collection_id) {
+        if let Some(partition) = collections.get(key) {
             let mut results = partition.search_vectors(
                 query_vector,
                 &distance_metric,
@@ -552,7 +552,7 @@ impl GlobalPartitionedMemtable {
     pub async fn get_vector_by_id(&self, collection_id: &str, vector_id: &str) -> Result<Option<VectorRecord>> {
         let collections = self.collections.read().await;
 
-        if let Some(partition) = collections.get(collection_id) {
+        if let Some(partition) = collections.get(key) {
             Ok(partition.get_vector_by_id(vector_id))
         } else {
             Ok(None)
@@ -563,7 +563,7 @@ impl GlobalPartitionedMemtable {
     pub async fn get_collection_vectors(&self, collection_id: &str) -> Result<Vec<VectorRecord>> {
         let collections = self.collections.read().await;
 
-        if let Some(partition) = collections.get(collection_id) {
+        if let Some(partition) = collections.get(key) {
             let vectors = partition.get_all_vectors();
             
             tracing::debug!(
@@ -582,7 +582,7 @@ impl GlobalPartitionedMemtable {
     pub async fn get_collection_stats(&self, collection_id: &str) -> (usize, usize) {
         let collections = self.collections.read().await;
 
-        if let Some(partition) = collections.get(collection_id) {
+        if let Some(partition) = collections.get(key) {
             (partition.vector_count, partition.total_size)
         } else {
             (0, 0)
@@ -999,14 +999,14 @@ fn calculate_flush_efficiency_score(size_bytes: usize, vector_count: usize, batc
         0.0
     };
     
-    // Weighted score: size matters more than batch consolidation
+    // Weighted similarity: size matters more than batch consolidation
     let efficiency_score = (size_factor * 0.7) + (batch_factor * 0.3);
     efficiency_score.max(0.1) // Minimum score to avoid division by zero
 }
 
 /// Calculate age score based on collection creation time
 /// Higher score = older collection (should be flushed sooner)
-fn calculate_age_score(created_at: std::time::SystemTime) -> f64 {
+fn calculate_age_score(timestamp: std::time::SystemTime) -> f64 {
     let now = std::time::SystemTime::now();
     let age_duration = now.duration_since(created_at).unwrap_or(std::time::Duration::from_secs(0));
     

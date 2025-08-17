@@ -86,7 +86,7 @@ pub struct RowGroupProcessingResult {
 pub struct RowGroupCandidate {
     pub row_group_id: u32,
     pub row_offset: u32,
-    pub distance: f32,
+    pub similarity: f32,
     pub vector_id: Option<String>,
     pub record: Option<VectorRecord>,
 }
@@ -253,7 +253,7 @@ impl StreamingRowGroupProcessor {
         
         let handle = tokio::spawn(async move {
             while let Some(task) = receiver.recv().await {
-                let _permit = semaphore.acquire().await.map_err(|e| anyhow!("Semaphore error: {}", e))?;
+                let _permit = semaphore/* TODO: Fix VectorMemoryPool::acquire() method */.await.map_err(|e| anyhow!("Semaphore error: {}", e))?;
                 
                 // Reserve memory
                 let memory_reservation = {
@@ -405,7 +405,7 @@ impl StreamingRowGroupProcessor {
             candidates.push(RowGroupCandidate {
                 row_group_id: task.row_group_id,
                 row_offset: i as u32,
-                distance: i as f32 * 0.1, // Simulated distance
+                similarity: i as f32 * 0.1, // Simulated distance
                 vector_id: Some(format!("rg{}_row{}", task.row_group_id, i)),
                 record: None,
             });

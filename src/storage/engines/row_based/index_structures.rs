@@ -168,7 +168,7 @@ pub struct LevelStatistics {
 pub struct IndexConfiguration {
     /// Basic settings
     pub index_type: IndexType,
-    pub enable_compression: bool,
+    pub compression: bool,
     pub enable_caching: bool,
     
     /// Bloom filter settings
@@ -341,7 +341,7 @@ impl RowBasedIdIndex {
     pub async fn lookup(&self, key: &str) -> Option<BlockLocation> {
         // Quick bloom filter check
         if !self.bloom_filters.is_empty() {
-            let exists = self.bloom_filters.iter().any(|bloom| bloom.contains(key.as_bytes()));
+            let exists = self.bloom_filters.iter().any(|bloom| bloom.contains_hash(key.as_bytes()));
             if !exists {
                 return None;
             }
@@ -447,7 +447,7 @@ impl RowBasedIdIndex {
         // Start from root and navigate down
         for level in self.hierarchical_levels.iter().rev() {
             if let Some(ref bloom) = level.bloom_filter {
-                if !bloom.contains(key.as_bytes()) {
+                if !bloom.contains_hash(key.as_bytes()) {
                     continue;
                 }
             }
@@ -580,7 +580,7 @@ impl Default for IndexConfiguration {
     fn default() -> Self {
         Self {
             index_type: IndexType::Hybrid,
-            enable_compression: true,
+            compression: true,
             enable_caching: true,
             bloom_config: BloomFilterConfig::default(),
             max_memory_usage: 256 * 1024 * 1024, // 256MB

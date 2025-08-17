@@ -76,7 +76,7 @@ async fn test_compression_for_data(
     
     // Test UNCOMPRESSED first with 256KB blocks to see vector splitting with quantization
     let mut config_uncompressed = env_uncompressed.sst_config.clone();
-    config_uncompressed.compression = "none".to_string();
+    config_uncompressed.storage_config.as_ref().and_then(|s| s.compression.as_ref()) = "none".to_string();
     config_uncompressed.compression_level = 0;
     config_uncompressed.block_size_kb = 256; // Use 256KB blocks for better quantization clustering
     
@@ -108,7 +108,7 @@ async fn test_compression_for_data(
     
     // Test COMPRESSED with 256KB blocks for better quantization clustering
     let mut config_compressed = env_compressed.sst_config.clone();
-    config_compressed.compression = algorithm.to_string();
+    config_compressed.storage_config.as_ref().and_then(|s| s.compression.as_ref()) = algorithm.to_string();
     config_compressed.compression_level = level;
     config_compressed.block_size_kb = 256; // Use 256KB blocks to see vector grouping with quantization
     
@@ -138,7 +138,7 @@ async fn test_compression_for_data(
                 _ | "none" => proximadb::proto::proximadb::CompressionAlgorithm::CompressionNone,
             };
             
-            config.compression = Some(proximadb::proto::proximadb::CompressionConfig {
+            config.storage_config.as_ref().and_then(|s| s.compression.as_ref()) = Some(proximadb::proto::proximadb::CompressionConfig {
                 algorithm: algorithm_enum as i32,
                 level: Some(level),
                 adaptive: false,
@@ -319,11 +319,11 @@ async fn test_compression_algorithms_and_levels() -> anyhow::Result<()> {
             algo.to_string()
         };
         
-        let dense_ratio = results.get("DENSE")
+        let dense_ratio = results.get(key)
             .and_then(|v| v.iter().find(|(a, _)| a.starts_with(algo)).map(|(_, r)| r))
             .unwrap_or(&1.0);
         
-        let sparse_ratio = results.get("SPARSE")
+        let sparse_ratio = results.get(key)
             .and_then(|v| v.iter().find(|(a, _)| a.starts_with(algo)).map(|(_, r)| r))
             .unwrap_or(&1.0);
         
@@ -334,14 +334,14 @@ async fn test_compression_algorithms_and_levels() -> anyhow::Result<()> {
     info!("Note: Lower ratio is better (1.0 = no compression)");
     
     // Verify key expectations
-    if let Some(sparse_results) = results.get("SPARSE") {
+    if let Some(sparse_results) = results.get(key) {
         if let Some((_, zstd_ratio)) = sparse_results.iter().find(|(a, _)| a == "zstd-3") {
             assert!(*zstd_ratio < 0.5, 
                 "ZSTD should achieve >50% compression on sparse data. Got ratio: {}", zstd_ratio);
         }
     }
     
-    if let Some(dense_results) = results.get("DENSE") {
+    if let Some(dense_results) = results.get(key) {
         if let Some((_, none_ratio)) = dense_results.iter().find(|(a, _)| a == "none") {
             assert!(*none_ratio >= 0.99 && *none_ratio <= 1.01, 
                 "No compression should have ratio ~1.0. Got: {}", none_ratio);

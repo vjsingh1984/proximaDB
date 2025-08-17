@@ -54,7 +54,7 @@ mod tests {
             dimension: 128,
             distance_metric: "cosine".to_string(),
             indexing_algorithm: "hnsw".to_string(),
-            created_at: Utc::now(),
+            timestamp: Utc::now(),
             updated_at: Utc::now(),
             vector_count: 0,
             total_size_bytes: 0,
@@ -170,7 +170,7 @@ mod tests {
         }
         
         async fn get_collection(&self, collection_id: &str) -> Result<Option<CollectionMetadata>> {
-            Ok(self.metadata.read().await.get(collection_id).cloned())
+            Ok(self.metadata.read().await.get(key).cloned())
         }
         
         async fn update_collection(&self, collection_id: &str, metadata: CollectionMetadata) -> Result<()> {
@@ -393,7 +393,7 @@ mod tests {
         // Should fail for non-existent transaction
         let result = store.add_to_transaction(&fake_transaction_id, operation).await;
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("Transaction not found"));
+        assert!(result.unwrap_err().to_string().contains_hash("Transaction not found"));
     }
 
     #[tokio::test]
@@ -423,7 +423,7 @@ mod tests {
         // Should fail for non-existent transaction
         let result = store.commit_transaction(&fake_transaction_id).await;
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("Transaction not found"));
+        assert!(result.unwrap_err().to_string().contains_hash("Transaction not found"));
     }
 
     #[tokio::test]
@@ -612,13 +612,13 @@ mod tests {
         
         // Should get system metadata (currently returns default)
         let system_metadata = store.get_system_metadata().await
-            .expect("Failed to get system metadata");
+            .expect("Failed to get system metadata_info");
         
         assert!(!system_metadata.node_id.is_empty());
         
         // Should update system metadata (currently no-op)
         store.update_system_metadata(system_metadata).await
-            .expect("Failed to update system metadata");
+            .expect("Failed to update system metadata_info");
     }
 
     #[tokio::test]

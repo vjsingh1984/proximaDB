@@ -337,7 +337,7 @@ async fn test_progressive_search_performance() {
     // Step 3: Write SST file with quantization
     println!("3. 📝 Writing quantized SST file...");
     
-    let sstable_path = test_dir.join("progressive_search_test.sst");
+    let sstable_path = test_dir.join("progressive_search_test.sstable");
     let writer = SstableWriter::new(&sstable_path, config.block_size, filesystem_factory.clone());
     
     let records_for_writer: Vec<(String, SstRecord)> = database_records

@@ -64,7 +64,6 @@ pub struct QuantizationStage {
     pub quantization_type: QuantizationType,
     pub threshold_k: usize,  // Use this stage when k > threshold
     pub memory_savings_target: f32,
-    pub quality_threshold: f32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -315,7 +314,7 @@ impl RowBasedQuantizationAdapter {
             };
             
             let quantized = self.quantization_engine
-                .quantize_vectors(&[vector.clone()], &config)
+                .as_ref().quantize_vectors(&[vector.clone()], &config)
                 .await?;
             
             if let Some(binary_data) = quantized.binary_data {
@@ -327,7 +326,7 @@ impl RowBasedQuantizationAdapter {
             binary_sketches,
             int8_vectors: Vec::new(),
             pq_codes: Vec::new(),
-            codebooks: Vec::new(),
+            // codebooks removed -  Vec::new(),
         })
     }
     
@@ -347,12 +346,12 @@ impl RowBasedQuantizationAdapter {
             };
             
             let quantized = self.quantization_engine
-                .quantize_vectors(&[vector.clone()], &config)
+                .as_ref().quantize_vectors(&[vector.clone()], &config)
                 .await?;
             
             if let Some(int8_data) = quantized.int8_data {
                 int8_vectors.push(Int8Quantization {
-                    quantized_vector: int8_data[0].clone(),
+                    quantized: int8_data[0].clone(),
                     scale: 1.0,
                     zero_point: 0,
                 });
@@ -363,7 +362,7 @@ impl RowBasedQuantizationAdapter {
             binary_sketches: Vec::new(),
             int8_vectors,
             pq_codes: Vec::new(),
-            codebooks: Vec::new(),
+            // codebooks removed -  Vec::new(),
         })
     }
     
@@ -383,14 +382,14 @@ impl RowBasedQuantizationAdapter {
         };
         
         let quantized = self.quantization_engine
-            .quantize_vectors(vectors, &config)
+            .as_ref().quantize_vectors(vectors, &config)
             .await?;
         
         Ok(QuantizedSection {
             binary_sketches: Vec::new(),
             int8_vectors: Vec::new(),
             pq_codes: quantized.pq_data.unwrap_or_default(),
-            codebooks: Vec::new(), // Would be populated from quantization engine
+            // codebooks removed -  Vec::new(), // Would be populated from quantization engine
         })
     }
     
@@ -411,7 +410,7 @@ impl RowBasedQuantizationAdapter {
         };
         
         let query_quantized = self.quantization_engine
-            .quantize_vectors(&[query.to_vec()], &config)
+            .as_ref().quantize_vectors(&[query.to_vec()], &config)
             .await?;
         
         if let Some(query_binary) = query_quantized.binary_data {
@@ -479,9 +478,9 @@ impl RowBasedQuantizationAdapter {
         for (rank, candidate) in candidates.iter().take(top_k).enumerate() {
             results.push(ProgressiveSearchResult {
                 record_id: format!("record_{}_{}", candidate.block_index, candidate.record_index),
-                distance: candidate.distance,
-                rank: rank + 1,
-                confidence: 1.0 - candidate.distance,
+                similarity: candidate.distance,
+                // rank removed -  rank + 1,
+                // confidence removed -  1.0 - candidate.distance,
                 stages_used: vec!["binary".to_string(), "full".to_string()],
             });
         }
@@ -510,7 +509,7 @@ impl RowBasedQuantizationAdapter {
 pub struct CandidateRecord {
     pub block_index: usize,
     pub record_index: usize,
-    pub distance: f32,
+    pub similarity: f32,
     pub stage: String,
 }
 
@@ -518,9 +517,7 @@ pub struct CandidateRecord {
 #[derive(Debug, Clone)]
 pub struct ProgressiveSearchResult {
     pub record_id: String,
-    pub distance: f32,
-    pub rank: usize,
-    pub confidence: f32,
+    pub similarity: f32,
     pub stages_used: Vec<String>,
 }
 
@@ -544,21 +541,21 @@ impl Default for QuantizationBlockConfig {
                     quantization_type: QuantizationType::Binary,
                     threshold_k: 1000,
                     memory_savings_target: 0.95,
-                    quality_threshold: 0.8,
+                    // quality_threshold removed -  0.8,
                 },
                 QuantizationStage {
                     stage_name: "balanced".to_string(),
                     quantization_type: QuantizationType::Int8,
                     threshold_k: 100,
                     memory_savings_target: 0.75,
-                    quality_threshold: 0.9,
+                    // quality_threshold removed -  0.9,
                 },
                 QuantizationStage {
                     stage_name: "quality".to_string(),
                     quantization_type: QuantizationType::PQ8,
                     threshold_k: 10,
                     memory_savings_target: 0.5,
-                    quality_threshold: 0.95,
+                    // quality_threshold removed -  0.95,
                 },
             ],
             binary_config: BinaryQuantizationConfig::default(),
@@ -688,9 +685,9 @@ mod tests {
     fn test_progressive_search_result_creation() {
         let result = ProgressiveSearchResult {
             record_id: "test_record".to_string(),
-            distance: 0.5,
-            rank: 1,
-            confidence: 0.8,
+            similarity: 0.5,
+            // rank removed -  1,
+            // confidence removed -  0.8,
             stages_used: vec!["binary".to_string(), "int8".to_string(), "full".to_string()],
         };
         

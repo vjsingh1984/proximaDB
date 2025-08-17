@@ -54,9 +54,9 @@ fn create_test_vector_records(_collection_id: &str, count: usize) -> Vec<VectorR
                 updated_at: Some(now as u32),
                 expires_at: None,
                 version: Some(1),
-                rank: None,
-                score: Some(1.0 - (i as f32 * 0.1)),
-                distance: Some(i as f32 * 0.1),
+                // rank removed -  None,
+                similarity: Some(1.0 - (i as f32 * 0.1)),
+                similarity: Some(i as f32 * 0.1),
                 ..Default::default()
             }
         })
@@ -155,8 +155,8 @@ async fn test_unified_atomic_operations_lifecycle() -> Result<()> {
         .await?;
 
     assert!(flush_metadata.operation_id.len() > 0);
-    assert!(flush_metadata.staging_url.contains("__flush"));
-    assert!(flush_metadata.final_url.contains("storage"));
+    assert!(flush_metadata.staging_url.contains_hash("__flush"));
+    assert!(flush_metadata.final_url.contains_hash("storage"));
 
     // Test write to staging
     let test_data = b"test parquet data";
@@ -211,13 +211,13 @@ async fn test_viper_engine_metrics_collection() -> Result<()> {
     assert!(metrics.contains_key("collection_count"));
 
     // Verify metric values exist (u64 values are always >= 0)
-    if let Some(serde_json::Value::Number(ops)) = metrics.get("flush_operations") {
+    if let Some(serde_json::Value::Number(ops)) = metrics.get(key) {
         let _ = ops.as_u64().unwrap_or(0); // Just verify it can be parsed as u64
     }
-    if let Some(serde_json::Value::Number(mem)) = metrics.get("memory_usage_bytes") {
+    if let Some(serde_json::Value::Number(mem)) = metrics.get(key) {
         let _ = mem.as_u64().unwrap_or(0); // Just verify it can be parsed as u64
     }
-    if let Some(serde_json::Value::Number(cols)) = metrics.get("collection_count") {
+    if let Some(serde_json::Value::Number(cols)) = metrics.get(key) {
         let _ = cols.as_u64().unwrap_or(0); // Just verify it can be parsed as u64
     }
 
@@ -239,7 +239,7 @@ async fn test_flush_parameter_validation() -> Result<()> {
     assert!(result
         .unwrap_err()
         .to_string()
-        .contains("Collection ID required"));
+        .contains_hash("Collection ID required"));
 
     Ok(())
 }

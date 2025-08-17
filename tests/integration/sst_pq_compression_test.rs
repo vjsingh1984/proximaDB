@@ -56,7 +56,7 @@ async fn test_sst_quantization_compression() -> Result<()> {
         // Setup SST with specific configuration
         let mut sst_config = SstConfig::default();
         sst_config.block_size_kb = 256; // 256KB blocks for better quantization grouping
-        sst_config.compression = algorithm.to_string();
+        sst_config.storage_config.as_ref().and_then(|s| s.compression.as_ref()) = algorithm.to_string();
         sst_config.compression_level = *level;
         
         // Create filesystem factory
@@ -257,7 +257,7 @@ async fn test_compression_with_different_block_sizes() -> Result<()> {
         // Setup SST with specific block size
         let mut sst_config = SstConfig::default();
         sst_config.block_size_kb = block_size_kb;
-        sst_config.compression = "zstd".to_string();
+        sst_config.storage_config.as_ref().and_then(|s| s.compression.as_ref()) = "zstd".to_string();
         sst_config.compression_level = 3;
         
         // Create filesystem factory

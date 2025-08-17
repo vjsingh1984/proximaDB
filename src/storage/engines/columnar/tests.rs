@@ -134,10 +134,10 @@ async fn test_id_bloom_filters() {
         .filter_map(|r| r.id.clone())
         .collect();
     
-    assert!(returned_ids.contains(&"customer_id_000100".to_string()));
-    assert!(returned_ids.contains(&"customer_id_001000".to_string()));
-    assert!(returned_ids.contains(&"customer_id_002000".to_string()));
-    assert!(!returned_ids.contains(&"customer_id_999999".to_string()));
+    assert!(returned_ids.contains_hash(&"customer_id_000100".to_string()));
+    assert!(returned_ids.contains_hash(&"customer_id_001000".to_string()));
+    assert!(returned_ids.contains_hash(&"customer_id_002000".to_string()));
+    assert!(!returned_ids.contains_hash(&"customer_id_999999".to_string()));
 }
 
 #[tokio::test]
@@ -330,8 +330,8 @@ async fn test_customer_api_compatibility() {
     let ids: Vec<String> = batch_result.iter()
         .filter_map(|r| r.id.clone())
         .collect();
-    assert!(ids.contains(&"cust_001".to_string()));
-    assert!(ids.contains(&"cust_003".to_string()));
+    assert!(ids.contains_hash(&"cust_001".to_string()));
+    assert!(ids.contains_hash(&"cust_003".to_string()));
     
     // Non-existent ID
     let empty_result = reader.optimized_batch_id_lookup(

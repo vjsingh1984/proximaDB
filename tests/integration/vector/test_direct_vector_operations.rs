@@ -506,10 +506,10 @@ async fn test_metrics_and_health() {
     assert!(metrics.contains_key("memtable_size"));
     
     // Verify metrics have reasonable values
-    let insert_count = metrics.get("insert_count").unwrap();
+    let insert_count = metrics.get(key).unwrap();
     assert!(*insert_count >= 50.0);
     
-    let search_count = metrics.get("search_count").unwrap();
+    let search_count = metrics.get(key).unwrap();
     assert!(*search_count >= 1.0);
 }
 

@@ -40,7 +40,7 @@ impl RestServer {
         bind_addr: SocketAddr,
         unified_handlers: Arc<UnifiedHandlers>,
         max_request_size_mb: Option<u64>,
-        enable_compression: bool,
+        compression: bool,
     ) -> Self {
         let state = AppState {
             unified_handlers,

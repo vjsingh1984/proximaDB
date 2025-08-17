@@ -64,10 +64,10 @@ mod tests {
         let task = CompactionTask {
             level: 0,
             input_files: vec![
-                temp_dir.path().join("input1.sst"),
-                temp_dir.path().join("input2.sst"),
+                temp_dir.path().join("input1.sstable"),
+                temp_dir.path().join("input2.sstable"),
             ],
-            output_file: temp_dir.path().join("output.sst"),
+            output_file: temp_dir.path().join("output.sstable"),
             priority: CompactionPriority::Medium,
             block_size_kb: None, // Use server default for tests
             compression_config: None, // Use server default for tests
@@ -110,7 +110,7 @@ mod tests {
                 if expires_at < current_time {
                     deleted_vector_ids.push(id.to_string());
                 }
-            } else if record.is_tombstone {
+            } else if record/* REMOVED: is_tombstone field no longer exists */ {
                 let age = current_time - record.timestamp;
                 if age >= (60 * 60) { // 1 hour in seconds
                     deleted_vector_ids.push(id.to_string());
@@ -123,8 +123,8 @@ mod tests {
         
         // Verify tracking
         assert_eq!(deleted_vector_ids.len(), 2); // vec_2 (expired) and vec_3 (old tombstone)
-        assert!(deleted_vector_ids.contains(&"vec_2".to_string()));
-        assert!(deleted_vector_ids.contains(&"vec_3".to_string()));
+        assert!(deleted_vector_ids.contains_hash(&"vec_2".to_string()));
+        assert!(deleted_vector_ids.contains_hash(&"vec_3".to_string()));
         
         assert_eq!(merged_vectors.len(), 1); // Only vec_1 is kept as active data
         assert_eq!(merged_vectors[0].id.as_ref().unwrap(), "vec_1");
@@ -157,9 +157,9 @@ mod tests {
                     updated_at: Some(chrono::Utc::now().timestamp() as u32),
                     expires_at: None,
                     version: Some(1),
-                    rank: None,
-                    score: None,
-                    distance: None,
+                    // rank removed -  None,
+                    similarity: None,
+                    similarity: None,
                 
         },
                 VectorRecord {
@@ -170,9 +170,9 @@ mod tests {
                     updated_at: Some(chrono::Utc::now().timestamp() as u32),
                     expires_at: None,
                     version: Some(1),
-                    rank: None,
-                    score: None,
-                    distance: None,
+                    // rank removed -  None,
+                    similarity: None,
+                    similarity: None,
                 
         },
             ],
@@ -201,9 +201,9 @@ mod tests {
                 updated_at: Some(now),
                 expires_at: None,
                 version: Some(1),
-                rank: None,
-                score: None,
-                distance: None,
+                // rank removed -  None,
+                similarity: None,
+                similarity: None,
             
         },
             VectorRecord {
@@ -214,9 +214,9 @@ mod tests {
                 updated_at: Some(now),
                 expires_at: None,
                 version: Some(1),
-                rank: None,
-                score: None,
-                distance: None,
+                // rank removed -  None,
+                similarity: None,
+                similarity: None,
             
         },
             VectorRecord {
@@ -227,9 +227,9 @@ mod tests {
                 updated_at: Some(now),
                 expires_at: None,
                 version: Some(1),
-                rank: None,
-                score: None,
-                distance: None,
+                // rank removed -  None,
+                similarity: None,
+                similarity: None,
             
         },
         ];
@@ -296,7 +296,7 @@ mod tests {
         assert!(result.engine_metrics.contains_key("merged_vectors_count"));
         
         // Verify we can extract the data
-        let deleted_ids = result.engine_metrics.get("deleted_vector_ids")
+        let deleted_ids = result.engine_metrics.get(key)
             .and_then(|v| v.as_array())
             .unwrap();
         assert_eq!(deleted_ids.len(), 3);

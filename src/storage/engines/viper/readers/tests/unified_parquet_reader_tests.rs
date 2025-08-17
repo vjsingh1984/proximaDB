@@ -156,8 +156,8 @@ mod tests {
         // Extract fields from filter
         let fields = extract_filter_fields(&filter);
         assert_eq!(fields.len(), 2);
-        assert!(fields.contains(&"status".to_string()));
-        assert!(fields.contains(&"priority".to_string()));
+        assert!(fields.contains_hash(&"status".to_string()));
+        assert!(fields.contains_hash(&"priority".to_string()));
     }
 
     // Helper function to extract fields from filter
@@ -408,9 +408,9 @@ use tracing::{debug, error, info};
                 updated_at: Some(chrono::Utc::now().timestamp() as u32),
                 expires_at: None,
                 version: Some(1),
-                rank: None,
-                score: Some(i as f32),
-                distance: None,
+                // rank removed -  None,
+                similarity: Some(i as f32),
+                similarity: None,
                 ..Default::default()
             };
             vectors.push(vector);
@@ -630,9 +630,9 @@ use tracing::{debug, error, info};
             updated_at: Some(chrono::Utc::now().timestamp() as u32),
             expires_at: None,
             version: Some(1),
-            rank: None,
-            score: None,
-            distance: None,
+            // rank removed -  None,
+            similarity: None,
+            similarity: None,
         
         };
         

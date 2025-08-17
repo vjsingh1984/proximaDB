@@ -141,7 +141,6 @@ pub struct ProcessedUpdate {
     pub event_id: String,
     pub index_name: String,
     pub success: bool,
-    pub error_message: Option<String>,
 }
 
 /// Service health information

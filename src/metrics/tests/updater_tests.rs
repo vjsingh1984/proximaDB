@@ -94,7 +94,7 @@ use tracing::{debug, error, info};
         };
         
         // Record compaction metrics
-        let result = updater.record_compaction("test_collection_compaction", compaction_update).await;
+        let result = updater.record_compaction("test_collection_compaction_info", compaction_update).await;
         assert!(result.is_ok(), "Failed to record compaction metrics: {:?}", result);
         
         // Allow some time for async processing
@@ -102,11 +102,11 @@ use tracing::{debug, error, info};
         
         // Verify metrics were stored
         let store = updater.get_store();
-        let metrics = store.get_collection_metrics("test_collection_compaction").await.unwrap();
+        let metrics = store.get_collection_metrics("test_collection_compaction_info").await.unwrap();
         assert!(metrics.is_some(), "Compaction metrics should be stored");
         
         let collection_metrics = metrics.unwrap();
-        assert_eq!(collection_metrics.collection_id, "test_collection_compaction");
+        assert_eq!(collection_metrics.collection_id, "test_collection_compaction_info");
         assert!(collection_metrics.total_compactions > 0);
         assert!(collection_metrics.last_compaction_duration_ms > 0);
         

@@ -232,7 +232,7 @@ fn test_mvcc_integration_tombstone_handling() {
     assert_eq!(deduplicated.len(), 1);
     assert_eq!(deduplicated[0].id, "doc4");
     assert_eq!(deduplicated[0].version, Some(2));
-    assert_eq!(deduplicated[0].metadata.get("is_deleted"), Some(&json!(true)));
+    assert_eq!(deduplicated[0].metadata.get(key), Some(&json!(true)));
     
     debug!("✅ MVCC tombstone handling test passed");
 }

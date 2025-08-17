@@ -38,7 +38,7 @@ mod tests {
             refinement_config: None,
             max_results: 10,
             enable_acceleration: true,
-            quality_threshold: None,
+            // quality_threshold removed -  None,
             collection_id: Uuid::new_v4(),
             engine_type: EngineType::PRISM,
         };
@@ -162,7 +162,7 @@ mod tests {
                 vector: (0..dimension).map(|j| (i + j) as f32 * 0.1).collect(),
                 metadata: HashMap::new(),
                 version: 1,
-                created_at: chrono::Utc::now(),
+                timestamp: chrono::Utc::now(),
                 updated_at: Some(chrono::Utc::now()),
             });
         }
@@ -259,7 +259,7 @@ pub mod test_utils {
             refinement_config: None,
             max_results: 10,
             enable_acceleration: true,
-            quality_threshold: Some(0.8),
+            // quality_threshold removed -  Some(0.8),
             collection_id: uuid::Uuid::new_v4(),
             engine_type: EngineType::PRISM,
         }

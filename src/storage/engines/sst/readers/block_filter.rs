@@ -204,8 +204,8 @@ impl IntelligentBlockFilter {
             MetadataFilter::Equals(value) => {
                 // Check if value is within min/max range
                 if let (Some(min), Some(max)) = (
-                    index_entry.metadata_min_values.get(column),
-                    index_entry.metadata_max_values.get(column),
+                    index_entry.metadata_min_values.get(key),
+                    index_entry.metadata_max_values.get(key),
                 ) {
                     // If value is outside [min, max], block can be skipped
                     if !Self::value_in_range(value, min, max) {
@@ -217,8 +217,8 @@ impl IntelligentBlockFilter {
             MetadataFilter::Range(filter_min, filter_max) => {
                 // Check if ranges overlap
                 if let (Some(block_min), Some(block_max)) = (
-                    index_entry.metadata_min_values.get(column),
-                    index_entry.metadata_max_values.get(column),
+                    index_entry.metadata_min_values.get(key),
+                    index_entry.metadata_max_values.get(key),
                 ) {
                     // No overlap if block_max < filter_min or block_min > filter_max
                     if Self::compare_json_values(block_max, filter_min) == std::cmp::Ordering::Less ||
@@ -231,8 +231,8 @@ impl IntelligentBlockFilter {
             MetadataFilter::In(values) => {
                 // Check if any value could be in block's range
                 if let (Some(min), Some(max)) = (
-                    index_entry.metadata_min_values.get(column),
-                    index_entry.metadata_max_values.get(column),
+                    index_entry.metadata_min_values.get(key),
+                    index_entry.metadata_max_values.get(key),
                 ) {
                     let any_in_range = values.iter().any(|v| Self::value_in_range(v, min, max));
                     if !any_in_range {
@@ -243,7 +243,7 @@ impl IntelligentBlockFilter {
             
             MetadataFilter::NotNull => {
                 // Check if all values are null
-                if let Some(null_count) = index_entry.metadata_null_counts.get(column) {
+                if let Some(null_count) = index_entry.metadata_null_counts.get(key) {
                     // This would require knowing total records in block
                     // For now, we can't skip based on this alone
                 }
@@ -251,7 +251,7 @@ impl IntelligentBlockFilter {
             
             MetadataFilter::IsNull => {
                 // Check if there are any nulls
-                if let Some(null_count) = index_entry.metadata_null_counts.get(column) {
+                if let Some(null_count) = index_entry.metadata_null_counts.get(key) {
                     if *null_count == 0 {
                         return Ok(false);
                     }

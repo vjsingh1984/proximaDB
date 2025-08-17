@@ -389,19 +389,19 @@ mod tests {
         bitmap.insert(100);
 
         // Test membership
-        assert!(bitmap.contains(1));
-        assert!(bitmap.contains(5));
-        assert!(bitmap.contains(10));
-        assert!(bitmap.contains(100));
-        assert!(!bitmap.contains(2));
-        assert!(!bitmap.contains(50));
+        assert!(bitmap.contains_hash(1));
+        assert!(bitmap.contains_hash(5));
+        assert!(bitmap.contains_hash(10));
+        assert!(bitmap.contains_hash(100));
+        assert!(!bitmap.contains_hash(2));
+        assert!(!bitmap.contains_hash(50));
 
         // Test cardinality
         assert_eq!(bitmap.cardinality(), 4);
 
         // Test removal
         bitmap.remove(5);
-        assert!(!bitmap.contains(5));
+        assert!(!bitmap.contains_hash(5));
         assert_eq!(bitmap.cardinality(), 3);
     }
 
@@ -420,11 +420,11 @@ mod tests {
         let union = bitmap1.union(&bitmap2);
 
         assert_eq!(union.cardinality(), 5);
-        assert!(union.contains(1));
-        assert!(union.contains(2));
-        assert!(union.contains(3));
-        assert!(union.contains(5));
-        assert!(union.contains(6));
+        assert!(union.contains_hash(1));
+        assert!(union.contains_hash(2));
+        assert!(union.contains_hash(3));
+        assert!(union.contains_hash(5));
+        assert!(union.contains_hash(6));
     }
 
     #[test]
@@ -443,11 +443,11 @@ mod tests {
         let intersection = bitmap1.intersection(&bitmap2);
 
         assert_eq!(intersection.cardinality(), 2);
-        assert!(intersection.contains(3));
-        assert!(intersection.contains(5));
-        assert!(!intersection.contains(1));
-        assert!(!intersection.contains(7));
-        assert!(!intersection.contains(9));
+        assert!(intersection.contains_hash(3));
+        assert!(intersection.contains_hash(5));
+        assert!(!intersection.contains_hash(1));
+        assert!(!intersection.contains_hash(7));
+        assert!(!intersection.contains_hash(9));
     }
 
     #[test]
@@ -473,18 +473,18 @@ mod tests {
         // Test single field queries
         let electronics = index.query_equals("category", "electronics").unwrap();
         assert_eq!(electronics.cardinality(), 2);
-        assert!(electronics.contains(0));
-        assert!(electronics.contains(2));
+        assert!(electronics.contains_hash(0));
+        assert!(electronics.contains_hash(2));
 
         let active = index.query_equals("status", "active").unwrap();
         assert_eq!(active.cardinality(), 2);
-        assert!(active.contains(0));
-        assert!(active.contains(1));
+        assert!(active.contains_hash(0));
+        assert!(active.contains_hash(1));
 
         // Test intersection (AND query)
         let active_electronics = index.intersect_all(&[electronics, active]);
         assert_eq!(active_electronics.cardinality(), 1);
-        assert!(active_electronics.contains(0));
+        assert!(active_electronics.contains_hash(0));
 
         // Test IN query
         let categories = index

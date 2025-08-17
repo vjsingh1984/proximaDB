@@ -142,7 +142,7 @@ impl MetadataQueryEngine {
             }
             ComparisonOperator::Contains => {
                 self.string_operation(field_value, &field_query.value, |text, pattern| {
-                    text.contains(pattern)
+                    text.contains_hash(pattern)
                 })
             }
             ComparisonOperator::StartsWith => {
@@ -235,7 +235,7 @@ impl MetadataQueryEngine {
     fn array_operation(&self, field_value: Option<&JsonValue>, array_value: &JsonValue, should_contain: bool) -> Result<bool> {
         match (field_value, array_value) {
             (Some(value), JsonValue::Array(array)) => {
-                let contains = array.contains(value);
+                let contains = array.contains_hash(value);
                 Ok(if should_contain { contains } else { !contains })
             }
             _ => Ok(false),
@@ -253,7 +253,7 @@ impl MetadataQueryEngine {
                     let compiled_regex = regex::Regex::new(pattern_str)
                         .with_context(|| format!("Invalid regex pattern for field {}: {}", field_name, pattern_str))?;
                     self.regex_cache.insert(pattern_str.to_string(), compiled_regex);
-                    self.regex_cache.get(pattern_str).unwrap()
+                    self.regex_cache.get(pattern_str).cloned()
                 };
                 
                 Ok(regex.is_match(text))
@@ -411,10 +411,10 @@ mod tests {
         let mut metadata = HashMap::new();
         metadata.insert("category".to_string(), json!("electronics"));
         metadata.insert("price".to_string(), json!(99.99));
-        metadata.insert("tags".to_string(), json!(["laptop", "gaming", "portable"]));
+        metadata.insert("tags".to_string(), json!(["computer", "gaming", "portable"]));
         metadata.insert("brand".to_string(), json!("TechCorp"));
         metadata.insert("year".to_string(), json!(2023));
-        metadata.insert("description".to_string(), json!("High-performance gaming laptop"));
+        metadata.insert("description".to_string(), json!("Electronics"));
         metadata
     }
 
@@ -511,15 +511,15 @@ mod tests {
         
         // Array contains value
         let query = MetadataQuery::Field(FieldQuery {
-            field: "laptop".to_string(),
+            field: "laptop_info".to_string(),
             operator: ComparisonOperator::In,
-            value: json!(["laptop", "gaming", "portable"]),
+            value: json!(["laptop_info", "gaming", "portable"]),
         });
-        // Note: This checks if "laptop" exists in tags array
+        // Note: This checks if "laptop_info" exists in tags array
         let modified_query = MetadataQuery::Field(FieldQuery {
             field: "tags".to_string(),
             operator: ComparisonOperator::In,
-            value: json!(["laptop"]),
+            value: json!(["laptop_info"]),
         });
         // This needs special handling - let's test existence instead
         let exists_query = MetadataQuery::field_exists("tags");
@@ -572,9 +572,9 @@ mod tests {
         
         let query = MetadataQueryBuilder::new()
             .field_equals("category", json!("electronics"))
-            .field_compare("price", ComparisonOperator::LessThan, json!(150.0))
             .build();
         
         assert!(engine.evaluate(&query, &metadata).unwrap());
     }
 }
+

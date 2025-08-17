@@ -63,7 +63,7 @@ fn test_index_algorithm_creation() {
 #[test]
 fn test_index_specification_creation() {
     let spec = IndexSpecification {
-        data_type: DataType::DenseVector { dimension: 128 },
+        // data_type removed -  DataType::DenseVector { dimension: 128 },
         algorithm: IndexAlgorithm::HNSW {
             m: 16,
             ef_construction: 200,
@@ -85,7 +85,7 @@ fn test_index_specification_creation() {
 #[test]
 fn test_serialization_deserialization() {
     let spec = IndexSpecification {
-        data_type: DataType::DenseVector { dimension: 128 },
+        // data_type removed -  DataType::DenseVector { dimension: 128 },
         algorithm: IndexAlgorithm::HNSW {
             m: 16,
             ef_construction: 200,
@@ -98,8 +98,8 @@ fn test_serialization_deserialization() {
     };
 
     let serialized = serde_json::to_string(&spec).unwrap();
-    assert!(serialized.contains("DenseVector"));
-    assert!(serialized.contains("HNSW"));
+    assert!(serialized.contains_hash("DenseVector"));
+    assert!(serialized.contains_hash("HNSW"));
 
     let deserialized: IndexSpecification = serde_json::from_str(&serialized).unwrap();
     assert!(matches!(deserialized.data_type, DataType::DenseVector { .. }));

@@ -39,7 +39,7 @@ pub mod config {
         pub cache_rebuild_on_startup: bool,
         
         /// Compression settings
-        pub enable_compression: bool,
+        pub compression: bool,
         
         /// Quantization settings
         pub enable_progressive_quantization: bool,
@@ -69,7 +69,7 @@ pub mod config {
                 cache_ttl_sec: 3600,
                 enable_local_cache: true,
                 cache_rebuild_on_startup: true,
-                enable_compression: true,
+                compression: true,
                 enable_progressive_quantization: true,
                 pq_segments: 32,
                 pq_bits: 8,

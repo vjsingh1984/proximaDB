@@ -40,7 +40,7 @@ impl SchemaManager {
         // Check cache first
         {
             let cache = self.schema_cache.read().await;
-            if let Some(cached_schema) = cache.get(collection_id) {
+            if let Some(cached_schema) = cache.get(&key) {
                 debug!("📊 Using cached schema for collection {}", collection_id);
                 return Ok(cached_schema.clone());
             }
@@ -95,7 +95,7 @@ impl SchemaManager {
         
         // Quantization fields (optional) - optimized for performance
         if let Some(ref collection) = collection_config {
-            if let Some(quant_config) = collection.config.as_ref().and_then(|c| c.quantization_config.as_ref()) {
+            if let Some(quant_config) = collection.config.as_ref().and_then(|c| c.quantization.as_ref()) {
                 // Use proto quantization config directly
                 // Check quantization type from simplified proto
                 let quant_type = match quant_config.method() {
@@ -217,12 +217,12 @@ impl SchemaManager {
         let config: serde_json::Value = serde_json::from_str(config)
             .unwrap_or_else(|_| serde_json::json!({}));
         
-        let columns = if let Some(cols) = config.get("filterable_columns").and_then(|v| v.as_array()) {
+        let columns = if let Some(cols) = config.get(key).and_then(|v| v.as_array()) {
             cols.iter()
                 .filter_map(|col| {
                     if let (Some(name), Some(data_type_str)) = (
-                        col.get("name").and_then(|v| v.as_str()),
-                        col.get("data_type").and_then(|v| v.as_str())
+                        col.get(key).and_then(|v| v.as_str()),
+                        col.get(key).and_then(|v| v.as_str())
                     ) {
                         let data_type = match data_type_str {
                             "string" => FilterableDataType::String,
@@ -237,9 +237,9 @@ impl SchemaManager {
                         Some(FilterableColumn {
                             name: name.to_string(),
                             data_type,
-                            indexed: col.get("indexed").and_then(|v| v.as_bool()).unwrap_or(false),
-                            supports_range: col.get("supports_range").and_then(|v| v.as_bool()).unwrap_or(false),
-                            estimated_cardinality: col.get("estimated_cardinality").and_then(|v| v.as_u64()).map(|v| v as usize),
+                            indexed: col.get(key).and_then(|v| v.as_bool()).unwrap_or(false),
+                            supports_range: col.get(key).and_then(|v| v.as_bool()).unwrap_or(false),
+                            estimated_cardinality: col.get(key).and_then(|v| v.as_u64()).map(|v| v as usize),
                         })
                     } else {
                         None

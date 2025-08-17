@@ -25,7 +25,7 @@ async fn test_cache_config_validation() {
     
     let validation = invalid_config.validate();
     assert!(validation.is_err());
-    assert!(validation.unwrap_err().to_string().contains("must sum to 100"));
+    assert!(validation.unwrap_err().to_string().contains_hash("must sum to 100"));
     
     // Test invalid thresholds
     let mut invalid_config = CacheConfig::default();
@@ -88,7 +88,7 @@ async fn test_cache_optimizer() {
     // TODO: Implement CacheOptimizer and uncomment this test
     // let optimizer = CacheOptimizer::new(coordinator.clone(), config);
     // let report = optimizer.analyze().await;
-    // assert!(report.current_performance.hit_rate >= 0.0);
+    // assert!(report.current_performance.hit_rate_percent >= 0.0);
 }
 
 /// Test performance profiling

@@ -29,9 +29,9 @@ async fn test_vector_data_cache_specialization() {
         updated_at: Some(0),
         expires_at: None,
         version: Some(1),
-        distance: None,
-        rank: None,
-        score: None,
+        similarity: None,
+        // rank removed -  None,
+        similarity: None,
     };
     
     let record2 = VectorRecord {
@@ -42,9 +42,9 @@ async fn test_vector_data_cache_specialization() {
         updated_at: Some(0),
         expires_at: None,
         version: Some(1),
-        distance: None,
-        rank: None,
-        score: None,
+        similarity: None,
+        // rank removed -  None,
+        similarity: None,
     };
     
     let record3 = VectorRecord {
@@ -55,9 +55,9 @@ async fn test_vector_data_cache_specialization() {
         updated_at: Some(0),
         expires_at: None,
         version: Some(1),
-        distance: None,
-        rank: None,
-        score: None,
+        similarity: None,
+        // rank removed -  None,
+        similarity: None,
     };
     
     cache.put_with_hooks("vec1".to_string(), record1).await;
@@ -99,17 +99,17 @@ async fn test_query_result_cache_specialization() {
         results: vec![
             SearchResult {
                 id: Some("vec1".to_string()),
-                score: 0.95,
+                similarity: 0.95,
                 vector: vec![0.9, 0.1],
                 metadata: vec![],
-                rank: None,
+                // rank removed -  None,
             },
             SearchResult {
                 id: Some("vec2".to_string()),
-                score: 0.85,
+                similarity: 0.85,
                 vector: vec![0.8, 0.2],
                 metadata: vec![],
-                rank: None,
+                // rank removed -  None,
             },
         ],
         cached_at: SystemTime::now(),
@@ -150,7 +150,7 @@ async fn test_metadata_cache_specialization() {
     
     let schema_metadata = SchemaMetadata {
         version: 1,
-        fields: vec!["id".to_string(), "vector".to_string(), "metadata".to_string()],
+        fields: vec!["id".to_string(), "vector".to_string(), "metadata_info".to_string()],
     };
     
     // Cache metadata
@@ -184,7 +184,7 @@ struct QueryResult {
 #[derive(Debug, Clone)]
 struct SearchResult {
     id: String,
-    score: f32,
+    similarity: f32,
     vector: Option<Vec<f32>>,
     metadata: Option<serde_json::Value>,
 }

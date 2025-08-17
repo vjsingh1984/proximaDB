@@ -37,8 +37,8 @@ mod tests {
         CollectionContext {
             file_path: "/tmp/lsm".to_string(),
             sstable_files: vec![
-                "/tmp/lsm/sst_001.sst".to_string(),
-                "/tmp/lsm/sst_002.sst".to_string(),
+                "/tmp/lsm/sst_001.sstable".to_string(),
+                "/tmp/lsm/sst_002.sstable".to_string(),
             ],
             total_vectors: 10000,
             metadata_columns: vec!["category".to_string(), "status".to_string()],
@@ -91,7 +91,7 @@ mod tests {
     #[tokio::test]
     async fn test_metadata_bloom_filter() {
         let config = BloomFilterConfig {
-            strategy: crate::core::bloom::BloomStrategy::Composite,
+            // strategy removed -  crate::core::bloom::BloomStrategy::Composite,
             expected_items: 100,
             ..Default::default()
         };

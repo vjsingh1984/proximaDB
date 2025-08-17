@@ -251,7 +251,7 @@ struct PQDistanceTable {
     distance_metric: DistanceMetric,
     
     /// Creation timestamp for cache eviction
-    created_at: std::time::Instant,
+    timestamp: std::time::Instant,
     
     /// Access count for LFU eviction
     access_count: std::sync::atomic::AtomicUsize,
@@ -294,7 +294,7 @@ struct Int8DistanceTable {
 #[derive(Debug, Clone)]
 pub struct QuantizedDistanceResult {
     /// Computed distance
-    pub distance: f32,
+    pub similarity: f32,
     
     /// Quality estimate (0.0 = low quality, 1.0 = exact)
     pub quality_estimate: f32,
@@ -378,7 +378,7 @@ impl QuantizedDistanceCalculator {
     pub async fn compute_distance(
         &self,
         query: &[f32],
-        quantized_vector: &QuantizedVectorData,
+        quantized: &QuantizedVectorData,
         format: SelectedFormat,
     ) -> Result<QuantizedDistanceResult> {
         let start_time = std::time::Instant::now();
@@ -488,7 +488,7 @@ impl QuantizedDistanceCalculator {
     pub async fn compute_progressive_distance(
         &self,
         query: &[f32],
-        quantized_vector: &QuantizedVectorData,
+        quantized: &QuantizedVectorData,
         target_quality: f32,
     ) -> Result<QuantizedDistanceResult> {
         if !self.config.approximation.enable_progressive_refinement {
@@ -558,7 +558,7 @@ impl QuantizedDistanceCalculator {
               computation_time, stages.len(), current_quality);
         
         Ok(QuantizedDistanceResult {
-            distance: final_distance,
+            similarity: final_distance,
             quality_estimate: current_quality,
             method: ComputationMethod::ProgressiveRefinement { stages },
             metrics: DistanceMetrics {
@@ -606,7 +606,7 @@ impl QuantizedDistanceCalculator {
         // Check cache for precomputed tables
         let distance_table = {
             let tables = self.int8_distance_tables.read().unwrap();
-            tables.tables.get(&cache_key).cloned()
+            tables.tables.get(key).cloned()
         };
         
         let table = if let Some(table) = distance_table {
@@ -636,7 +636,7 @@ impl QuantizedDistanceCalculator {
         // Check cache for precomputed distance table
         let distance_table = {
             let cache = self.pq_distance_cache.read().unwrap();
-            cache.tables.get(&codebook_hash).cloned()
+            cache.tables.get(key).cloned()
         };
         
         let (table, cache_hit) = if let Some(table) = distance_table {
@@ -991,7 +991,7 @@ impl PQDistanceTable {
             num_subvectors,
             num_centroids,
             distance_metric,
-            created_at: std::time::Instant::now(),
+            timestamp: std::time::Instant::now(),
             access_count: std::sync::atomic::AtomicUsize::new(1),
         })
     }

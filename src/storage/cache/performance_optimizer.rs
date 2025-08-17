@@ -135,7 +135,7 @@ impl CacheOptimizer {
         let cache_metrics = self.orchestrator.metrics();
         use crate::metrics::cache::{TierMetrics, MemoryMetrics, EvictionMetrics, CoordinationMetrics};
         let metrics = CacheMetricsSnapshot {
-            overall_hit_rate: cache_metrics.hit_rate(),
+            overall_hit_rate: cache_metrics.hit_rate_percent(),
             l1_metrics: TierMetrics {
                 hits: cache_metrics.tier_hits(crate::storage::cache::backend::CacheTier::L1),
                 misses: cache_metrics.tier_misses(crate::storage::cache::backend::CacheTier::L1),
@@ -209,14 +209,14 @@ impl CacheOptimizer {
             hints.push(OptimizationHint {
                 category: "memory".to_string(),
                 severity: HintSeverity::High,
-                message: "Low hit rate suggests insufficient cache memory".to_string(),
+                message: "Low hit rate suggests insufficient cache mem".to_string(),
                 action: Some("Increase total_memory_mb in configuration".to_string()),
             });
         }
         
         // Tier optimization hints
         if config.global.enable_tiered_storage {
-            if metrics.l1_metrics.hit_rate < 0.8 && metrics.l2_metrics.hit_rate > 0.5 {
+            if metrics.l1_metrics.hit_rate_percent < 0.8 && metrics.l2_metrics.hit_rate_percent > 0.5 {
                 hints.push(OptimizationHint {
                     category: "tiering".to_string(),
                     severity: HintSeverity::Medium,
@@ -319,7 +319,7 @@ impl CacheOptimizer {
             hit_rate_improvement: predicted_hit_rate - current_hit_rate,
             latency_reduction_percent: predicted_latency_reduction * 100.0,
             memory_savings_mb: 0, // Would calculate based on efficiency improvements
-            confidence: 0.75, // Simplified confidence score
+            // confidence removed -  0.75, // Simplified confidence score
         }
     }
     
@@ -329,7 +329,7 @@ impl CacheOptimizer {
         let cache_metrics = self.orchestrator.metrics();
         use crate::metrics::cache::{TierMetrics, MemoryMetrics, EvictionMetrics, CoordinationMetrics};
         let metrics_before = CacheMetricsSnapshot {
-            overall_hit_rate: cache_metrics.hit_rate(),
+            overall_hit_rate: cache_metrics.hit_rate_percent(),
             l1_metrics: TierMetrics {
                 hits: cache_metrics.tier_hits(crate::storage::cache::backend::CacheTier::L1),
                 misses: cache_metrics.tier_misses(crate::storage::cache::backend::CacheTier::L1),
@@ -517,7 +517,6 @@ pub struct PredictedImprovement {
     pub hit_rate_improvement: f64,
     pub latency_reduction_percent: f64,
     pub memory_savings_mb: usize,
-    pub confidence: f64,
 }
 
 /// Helper function to determine if eviction policy should change

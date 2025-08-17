@@ -298,7 +298,7 @@ impl StorageEngineAdapter for PRISMAdapter {
                 vector: vec![0.0; 128], // Placeholder vector
                 metadata: HashMap::new(),
                 version: 1,
-                created_at: chrono::Utc::now(),
+                timestamp: chrono::Utc::now(),
                 updated_at: Some(chrono::Utc::now()),
             });
         }
@@ -475,7 +475,7 @@ impl StorageEngineAdapter for NOVAAdapter {
                 vector: vec![0.0; 256], // NOVA typically handles larger vectors
                 metadata: HashMap::new(),
                 version: 1,
-                created_at: chrono::Utc::now(),
+                timestamp: chrono::Utc::now(),
                 updated_at: Some(chrono::Utc::now()),
             });
         }
@@ -569,7 +569,7 @@ macro_rules! create_simple_adapter {
                 _dataset_size: usize,
                 target_recall: f32,
             ) -> AdapterResult<StorageFormat> {
-                // Simple strategy: high recall uses FP32, otherwise INT8
+                // Simple // strategy removed -  high recall uses FP32, otherwise INT8
                 if target_recall > 0.95 {
                     Ok(StorageFormat::FP32)
                 } else {
@@ -623,7 +623,7 @@ macro_rules! create_simple_adapter {
                         vector: vec![0.0; 128],
                         metadata: HashMap::new(),
                         version: 1,
-                        created_at: chrono::Utc::now(),
+                        timestamp: chrono::Utc::now(),
                         updated_at: Some(chrono::Utc::now()),
                     });
                 }

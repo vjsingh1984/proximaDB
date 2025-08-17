@@ -128,7 +128,7 @@ pub struct TempDirectoryConfig {
     pub temp_suffix: String, // Default: "___temp"
 
     /// Compaction temp suffix
-    pub compaction_suffix: String, // Default: "___compaction"
+    pub compaction_suffix: String, // Default: "___compaction_info"
 
     /// Flush temp suffix  
     pub flush_suffix: String, // Default: "___flushed"
@@ -142,7 +142,7 @@ impl Default for TempDirectoryConfig {
         Self {
             use_same_directory: true,
             temp_suffix: "___temp".to_string(),
-            compaction_suffix: "___compaction".to_string(),
+            compaction_suffix: "___compaction_info".to_string(),
             flush_suffix: "___flushed".to_string(),
             cleanup_on_startup: true,
         }
@@ -185,7 +185,7 @@ impl StorageLayoutConfig {
             base_paths: vec![
                 // Disk 1: Primary disk (NVMe SSD) with metadata
                 StorageBasePath {
-                    base_dir: PathBuf::from("/data/proximadb"),
+                    base_dir: PathBuf::from("/data/proxima"),
                     instance_id: 1,
                     mount_point: Some("/data".to_string()),
                     disk_type: DiskType::NvmeSsd { max_iops: 100000 },
@@ -198,7 +198,7 @@ impl StorageLayoutConfig {
                 },
                 // Disk 2: Secondary disk (SATA SSD) for distribution
                 StorageBasePath {
-                    base_dir: PathBuf::from("/data/proximadb"),
+                    base_dir: PathBuf::from("/data/proxima"),
                     instance_id: 2,
                     mount_point: Some("/data2".to_string()),
                     disk_type: DiskType::SataSsd { max_iops: 75000 },
@@ -215,7 +215,7 @@ impl StorageLayoutConfig {
             temp_config: TempDirectoryConfig {
                 use_same_directory: true,
                 temp_suffix: "___temp".to_string(),
-                compaction_suffix: "___compaction".to_string(),
+                compaction_suffix: "___compaction_info".to_string(),
                 flush_suffix: "___flushed".to_string(),
                 cleanup_on_startup: true,
             },
@@ -279,7 +279,7 @@ impl StoragePathResolver {
         Ok(base_path
             .base_dir
             .join(instance_id.to_string())
-            .join("metadata"))
+            .join("metadata_info"))
     }
 
     /// Get temp directory for specific operation type
@@ -394,7 +394,7 @@ impl StoragePathResolver {
             }
 
             CollectionAssignmentStrategy::Manual { assignments } => assignments
-                .get(collection_uuid)
+                .get(key)
                 .copied()
                 .unwrap_or(self.config.base_paths[0].instance_id),
         };
@@ -486,7 +486,7 @@ mod tests {
             storage_path,
             PathBuf::from("/data/proximadb/1/store/test-uuid-123")
         );
-        assert_eq!(metadata_path, PathBuf::from("/data/proximadb/1/metadata"));
+        assert_eq!(metadata_path, PathBuf::from("/data/proximadb/1/meta"));
     }
 
     #[test]
@@ -494,14 +494,14 @@ mod tests {
         let config = StorageLayoutConfig {
             base_paths: vec![
                 StorageBasePath {
-                    base_dir: PathBuf::from("/data/proximadb"),
+                    base_dir: PathBuf::from("/data/proxima"),
                     instance_id: 1,
                     mount_point: None,
                     disk_type: DiskType::NvmeSsd { max_iops: 100000 },
                     capacity_config: CapacityConfig::default(),
                 },
                 StorageBasePath {
-                    base_dir: PathBuf::from("/data/proximadb"),
+                    base_dir: PathBuf::from("/data/proxima"),
                     instance_id: 2,
                     mount_point: None,
                     disk_type: DiskType::SataSsd { max_iops: 50000 },

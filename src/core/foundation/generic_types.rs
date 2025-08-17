@@ -56,7 +56,7 @@ pub struct GenericMetadata<T> {
     pub id: String,
     pub data: T,
     pub version: u64,
-    pub created_at: DateTime<Utc>,
+    pub timestamp: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
     pub tags: Vec<String>,
     pub properties: HashMap<String, serde_json::Value>,
@@ -72,7 +72,7 @@ where
             id,
             data,
             version: 1,
-            created_at: now,
+            timestamp: now,
             updated_at: now,
             tags: Vec::new(),
             properties: HashMap::new(),
@@ -164,7 +164,6 @@ where
 pub struct GenericResult<T> {
     pub success: bool,
     pub data: Option<T>,
-    pub error_message: Option<String>,
     pub error_code: Option<String>,
     pub processing_time_us: Option<u64>,
     pub metadata: HashMap<String, serde_json::Value>,
@@ -178,18 +177,17 @@ where
         Self {
             success: true,
             data: Some(data),
-            error_message: None,
+            // error_message removed -  None,
             error_code: None,
             processing_time_us: None,
             metadata: HashMap::new(),
         }
     }
     
-    pub fn error(error_message: String) -> Self {
+    pub fn error() -> Self {
         Self {
             success: false,
             data: None,
-            error_message: Some(error_message),
             error_code: None,
             processing_time_us: None,
             metadata: HashMap::new(),

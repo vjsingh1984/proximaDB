@@ -45,7 +45,7 @@ async fn test_end_to_end_cache_system() {
         config.get_cache_memory_bytes("index_structure")
     ));
     let metadata_cache = Arc::new(MetadataStore::new(
-        config.get_cache_memory_bytes("metadata")
+        config.get_cache_memory_bytes("metadata_info")
     ));
     
     // Register caches with orchestrator
@@ -190,9 +190,9 @@ async fn test_cache_under_memory_pressure() {
             updated_at: Some(0),
             expires_at: None,
             version: Some(1),  // Option<u32>
-            distance: None,
-            rank: None,
-            score: None,
+            similarity: None,
+            // rank removed -  None,
+            similarity: None,
             // No collection_id or created_at fields
         };
         vector_cache.put_with_hooks(format!("pressure_vec_{}", i), record).await;
@@ -214,9 +214,9 @@ async fn test_cache_under_memory_pressure() {
         updated_at: Some(0),
         expires_at: None,
         version: Some(1),  // Option<u32>
-        distance: None,
-        rank: None,
-        score: None,
+        similarity: None,
+        // rank removed -  None,
+        similarity: None,
         // No collection_id or created_at fields
     };
     vector_cache.put_with_hooks("test".to_string(), test_record.clone()).await;
@@ -291,9 +291,9 @@ async fn simulate_vector_workload(
             timestamp: 0,
             updated_at: Some(0),
             expires_at: None,
-            distance: None,
-            rank: None,
-            score: None,
+            similarity: None,
+            // rank removed -  None,
+            similarity: None,
             ..Default::default()
         };
         

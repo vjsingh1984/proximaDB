@@ -26,9 +26,9 @@ fn create_vector_record(
         updated_at: Some(now as u32),
         expires_at,
         version,
-        rank: None,
-        score: None,
-        distance: None,
+        // rank removed -  None,
+        similarity: None,
+        similarity: None,
     }
 }
 
@@ -47,7 +47,7 @@ fn create_wal_batch(
     WALVectorBatch {
         batch_id: BatchId::new(),
         vector_records: Arc::new(vectors),
-        created_at: std::time::SystemTime::now(),
+        timestamp: std::time::SystemTime::now(),
         total_size_bytes: 1024, // Approximate
         is_flushed: false,
             metadata_bloom_filter: None,

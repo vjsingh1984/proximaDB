@@ -179,7 +179,7 @@ mod tests {
         
         let result = accelerator.matrix_multiply(&a, &b).await;
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("incompatible"));
+        assert!(result.unwrap_err().contains_hash("incompatible"));
     }
     
     #[tokio::test]
@@ -233,7 +233,7 @@ mod tests {
         
         // In most test environments, ROCm won't be available
         if result.is_err() {
-            assert!(result.unwrap_err().contains("ROCm"));
+            assert!(result.unwrap_err().contains_hash("ROCm"));
         }
         
         assert!(!accelerator.is_available());
@@ -306,7 +306,7 @@ mod tests {
         
         // Test Debug trait
         let debug_str = format!("{:?}", info);
-        assert!(debug_str.contains("Test CPU"));
+        assert!(debug_str.contains_hash("Test CPU"));
         
         // Test Clone trait
         let cloned = info.clone();

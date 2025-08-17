@@ -53,7 +53,7 @@ pub struct ViperSpecificConfig {
 struct CollectionMetadata {
     collection_id: String,
     dimension: usize,
-    quantization_config: Option<QuantizationConfig>,
+    quantization: Option<QuantizationConfig>,
     filterable_columns: Vec<FilterableColumnSpec>,
     schema: Arc<arrow_schema::Schema>,
     compression_metadata: crate::storage::engines::columnar::CompressionMetadata,
@@ -209,14 +209,14 @@ impl ViperUnifiedEngine {
             
             progressive_results.push(ProgressiveResult {
                 vector_id: format!("vector_{}", i),
-                distance: result.distance,
+                similarity: result.distance,
                 quality_achieved: result.quality_estimate,
-                computation_method: result.method,
+                // computation_method removed -  result.method,
                 computation_time_us: result.metrics.computation_time_us,
             });
             
             // Track stages used
-            if let crate::storage::engines::columnar::ComputationMethod::ProgressiveRefinement { stages } = result.method {
+            if let crate::compute::distance_computation::quantized::ComputationMethod::ProgressiveRefinement { stages } = result.method {
                 stages_completed.extend(stages);
             }
         }
@@ -289,18 +289,18 @@ impl ViperUnifiedEngine {
         // Check cache first
         {
             let cache = self.collection_cache.read().await;
-            if let Some(metadata) = cache.get(collection_id) {
+            if let Some(metadata) = cache.get(&key) {
                 return Ok(metadata.clone());
             }
         }
         
         // Create new metadata (in real implementation, this would load from collection service)
         let dimension = 768; // Placeholder
-        let quantization_config = Some(QuantizationConfig::default());
+        let quantization = Some(QuantizationConfig::default());
         let filterable_columns = vec![
             FilterableColumnSpec {
                 name: "category".to_string(),
-                data_type: FilterableDataType::String,
+                // data_type removed -  FilterableDataType::String,
                 nullable: true,
                 indexed: false,
                 estimated_cardinality: Some(100),
@@ -311,14 +311,14 @@ impl ViperUnifiedEngine {
         let (schema, compression_metadata) = self.common_ops.generate_schema(
             collection_id,
             dimension,
-            quantization_config.as_ref(),
+            quantization.as_ref(),
             &filterable_columns,
         ).await?;
         
         let metadata = CollectionMetadata {
             collection_id: collection_id.to_string(),
             dimension,
-            quantization_config,
+            quantization,
             filterable_columns,
             schema,
             compression_metadata,
@@ -337,7 +337,7 @@ impl ViperUnifiedEngine {
     /// Get existing collection metadata
     async fn get_collection_metadata(&self, collection_id: &str) -> Result<CollectionMetadata> {
         let cache = self.collection_cache.read().await;
-        cache.get(collection_id)
+        cache.get(cache_key).cloned()
             .cloned()
             .ok_or_else(|| anyhow::anyhow!("Collection metadata not found: {}", collection_id))
     }
@@ -369,15 +369,15 @@ impl ViperUnifiedEngine {
         _collection_id: &str,
         _metadata: &CollectionMetadata,
         _filter: Option<&SearchFilter>,
-    ) -> Result<Vec<crate::storage::engines::columnar::QuantizedVectorData>> {
+    ) -> Result<Vec<crate::compute::distance_computation::quantized::QuantizedVectorData>> {
         // This would load actual quantized data from Parquet files
         // For now, return placeholder data
         
         let placeholder_data = vec![
-            crate::storage::engines::columnar::QuantizedVectorData {
+            crate::compute::distance_computation::quantized::QuantizedVectorData {
                 fp32: Some(vec![1.0; 768]),
                 binary: Some(vec![0xFF; 96]), // 768 bits = 96 bytes
-                int8: Some(crate::storage::engines::columnar::distance::Int8VectorData {
+                int8: Some(crate::compute::distance_computation::quantized::Int8VectorData {
                     values: vec![100; 768],
                     scale: 0.01,
                     zero_point: 0,
@@ -394,24 +394,24 @@ impl ViperUnifiedEngine {
     fn determine_viper_search_format(
         &self,
         metadata: &CollectionMetadata,
-    ) -> crate::storage::engines::columnar::SelectedFormat {
+    ) -> crate::compute::distance_computation::quantized::SelectedFormat {
         // VIPER-specific format selection logic
         if self.viper_config.optimize_for_append {
             // For append-heavy workloads, prioritize speed
-            crate::storage::engines::columnar::SelectedFormat::Binary
-        } else if metadata.quantization_config.as_ref()
+            crate::compute::distance_computation::quantized::SelectedFormat::Binary
+        } else if metadata.quantization.as_ref()
             .map(|q| q.enable_int8)
             .unwrap_or(false) {
-            crate::storage::engines::columnar::SelectedFormat::INT8
+            crate::compute::distance_computation::quantized::SelectedFormat::INT8
         } else {
-            crate::storage::engines::columnar::SelectedFormat::FP32
+            crate::compute::distance_computation::quantized::SelectedFormat::FP32
         }
     }
     
     /// Apply VIPER-specific search result processing
     async fn apply_viper_search_optimizations(
         &self,
-        distance_results: Vec<crate::storage::engines::columnar::QuantizedDistanceResult>,
+        distance_results: Vec<crate::compute::distance_computation::quantized::QuantizedDistanceResult>,
         top_k: usize,
     ) -> Result<Vec<SearchResultItem>> {
         // Sort by distance and take top_k
@@ -423,9 +423,9 @@ impl ViperUnifiedEngine {
             .enumerate()
             .map(|(i, result)| SearchResultItem {
                 vector_id: format!("vector_{}", i),
-                distance: result.distance,
+                similarity: result.distance,
                 quality_estimate: result.quality_estimate,
-                computation_method: result.method,
+                // computation_method removed -  result.method,
             })
             .collect();
         
@@ -461,16 +461,15 @@ pub struct SearchResult {
     pub results: Vec<SearchResultItem>,
     pub total_time_ms: f64,
     pub vectors_evaluated: usize,
-    pub format_used: crate::storage::engines::columnar::SelectedFormat,
+    pub format_used: crate::compute::distance_computation::quantized::SelectedFormat,
 }
 
 /// Individual search result item
 #[derive(Debug)]
 pub struct SearchResultItem {
     pub vector_id: String,
-    pub distance: f32,
+    pub similarity: f32,
     pub quality_estimate: f32,
-    pub computation_method: crate::storage::engines::columnar::ComputationMethod,
 }
 
 /// Progressive search result
@@ -486,9 +485,8 @@ pub struct ProgressiveSearchResult {
 #[derive(Debug)]
 pub struct ProgressiveResult {
     pub vector_id: String,
-    pub distance: f32,
+    pub similarity: f32,
     pub quality_achieved: f32,
-    pub computation_method: crate::storage::engines::columnar::ComputationMethod,
     pub computation_time_us: f64,
 }
 

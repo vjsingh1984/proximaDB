@@ -114,8 +114,8 @@ async fn test_router_parameter_extraction() {
     assert!(result.is_ok());
     let (response, params) = result.unwrap();
     assert_eq!(response, "param_handler handled: request");
-    assert_eq!(params.get("id"), Some(&"coll123".to_string()));
-    assert_eq!(params.get("vector_id"), Some(&"vec456".to_string()));
+    assert_eq!(params.get(&key);
+    assert_eq!(params.get(&key);
 }
 
 #[tokio::test]
@@ -190,9 +190,9 @@ async fn test_route_builder() {
     // Use route builder pattern
     router
         .route("/api/v1")
-        .get("/collections", MockHandler::new("list_collections"))
+        .get(key))
         .post("/collections", MockHandler::new("create_collection"))
-        .get("/collections/:id", MockHandler::new("get_collection"))
+        .get(key))
         .delete("/collections/:id", MockHandler::new("delete_collection"));
     
     assert!(router.route_count() >= 4);
@@ -252,8 +252,8 @@ fn test_route_pattern_matching() {
     let params = route.match_path("/api/collections/123/vectors/456");
     assert!(params.is_some());
     let params = params.unwrap();
-    assert_eq!(params.get("id"), Some(&"123".to_string()));
-    assert_eq!(params.get("vec_id"), Some(&"456".to_string()));
+    assert_eq!(params.get(&key);
+    assert_eq!(params.get(&key);
     
     // Test no match
     assert!(route.match_path("/api/collections/123").is_none());

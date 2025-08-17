@@ -49,7 +49,7 @@ impl ProximaDbGrpcService {
 
             let filestore_config = FilestoreMetadataConfig {
                 storage_url: config.storage_url.clone(),
-                enable_compression: true,
+                compression: true,
                 enable_snapshots: true,
                 snapshot_threshold: 1000,
                 keep_snapshots: 5,
@@ -191,7 +191,7 @@ impl ProximaDb for ProximaDbGrpcService {
 
                 // Debug log the received config
                 debug!("📊 gRPC CREATE received config: name={}, dimension={}, distance_metric={}, storage_engine={}, indexing_algorithm={}", 
-                    config.name, config.dimension, config.distance_metric, config.storage_engine, config.primary_indexing_algorithm);
+                    config.name, config.dimension, config.distance_metric, config.storage_engine, config.primary_index);
 
                 // Parse proto types to native types - using proto enum directly
                 let _distance_metric = match crate::proto::proximadb::DistanceMetric::try_from(config.distance_metric) {
@@ -207,7 +207,7 @@ impl ProximaDb for ProximaDbGrpcService {
                     _ => crate::proto::proximadb::StorageEngine::Viper,
                 };
                 
-                let _indexing_algorithm = match crate::proto::proximadb::IndexingAlgorithm::try_from(config.primary_indexing_algorithm) {
+                let _indexing_algorithm = match crate::proto::proximadb::IndexingAlgorithm::try_from(config.primary_index) {
                     Ok(algo) => algo,
                     _ => crate::proto::proximadb::IndexingAlgorithm::Hnsw,
                 };
@@ -234,7 +234,7 @@ impl ProximaDb for ProximaDbGrpcService {
                         affected_count: 1,
                         total_count: None,
                         metadata: std::collections::HashMap::new(),
-                        error_message: None,
+                        // error_message removed -  None,
                         error_code: None,
                         processing_time_us: result.processing_time_us,
                     }))
@@ -247,7 +247,7 @@ impl ProximaDb for ProximaDbGrpcService {
                         affected_count: 0,
                         total_count: None,
                         metadata: std::collections::HashMap::new(),
-                        error_message: result.error_message,
+                        // error_message removed -  result.error_message,
                         error_code: result.error_code,
                         processing_time_us: result.processing_time_us,
                     }))
@@ -279,7 +279,7 @@ impl ProximaDb for ProximaDbGrpcService {
                         affected_count: 1,
                         total_count: None,
                         metadata: std::collections::HashMap::new(),
-                        error_message: None,
+                        // error_message removed -  None,
                         error_code: None,
                         processing_time_us: processing_time,
                     }))
@@ -292,7 +292,7 @@ impl ProximaDb for ProximaDbGrpcService {
                         affected_count: 0,
                         total_count: None,
                         metadata: std::collections::HashMap::new(),
-                        error_message: Some(format!("Collection '{}' not found", collection_id)),
+                        // error_message removed -  Some(format!("Collection '{}' not found", collection_id)),
                         error_code: Some("COLLECTION_NOT_FOUND".to_string()),
                         processing_time_us: processing_time,
                     }))
@@ -321,7 +321,7 @@ impl ProximaDb for ProximaDbGrpcService {
                     affected_count: total_count,
                     total_count: Some(total_count),
                     metadata: std::collections::HashMap::new(),
-                    error_message: None,
+                    // error_message removed -  None,
                     error_code: None,
                     processing_time_us: processing_time,
                 }))
@@ -348,7 +348,7 @@ impl ProximaDb for ProximaDbGrpcService {
                         affected_count: 1,
                         total_count: None,
                         metadata: std::collections::HashMap::new(),
-                        error_message: None,
+                        // error_message removed -  None,
                         error_code: None,
                         processing_time_us: result.processing_time_us,
                     }))
@@ -361,7 +361,7 @@ impl ProximaDb for ProximaDbGrpcService {
                         affected_count: 0,
                         total_count: None,
                         metadata: std::collections::HashMap::new(),
-                        error_message: result.error_message,
+                        // error_message removed -  result.error_message,
                         error_code: result.error_code,
                         processing_time_us: result.processing_time_us,
                     }))
@@ -440,9 +440,9 @@ impl ProximaDb for ProximaDbGrpcService {
                         owner: owner.unwrap_or(None),
                         filterable_columns: vec![],
                         index_configs: vec![],
-                        quantization_config: None,
-                        primary_index_name: String::new(),
-                        enable_automatic_index_selection: false,
+                        quantization: None,
+                        primary_index: String::new(),
+                        auto_index_selection: false,
                         compression: None,  // SDK-driven (2025-08-06)
                         optimization_hints: None,  // SDK-driven (2025-08-06)
                         storage_location: None,  // Optional storage location
@@ -476,7 +476,7 @@ impl ProximaDb for ProximaDbGrpcService {
                         affected_count: 1,
                         total_count: None,
                         metadata: std::collections::HashMap::new(),
-                        error_message: None,
+                        // error_message removed -  None,
                         error_code: None,
                         processing_time_us: result.processing_time_us,
                     }))
@@ -539,7 +539,7 @@ impl ProximaDb for ProximaDbGrpcService {
                             affected_count: 1,
                             total_count: Some(1),
                             metadata,
-                            error_message: None,
+                            // error_message removed -  None,
                             error_code: None,
                             processing_time_us: processing_time,
                         }))
@@ -632,7 +632,7 @@ impl ProximaDb for ProximaDbGrpcService {
             "queries": req.queries.iter().map(|q| q.vector.clone()).collect::<Vec<_>>(),
             "top_k": req.top_k,
             "include_vectors": include_vectors,
-            "include_metadata": include_metadata,
+            "include_metadata_info": include_metadata,
             "metadata_filters": metadata_filters,
             "distance_metric": req.distance_metric_override.unwrap_or(1),
             "index_algorithm": 1, // Default to HNSW
@@ -804,9 +804,9 @@ impl ProximaDb for ProximaDbGrpcService {
                         compact.results.into_iter().map(|r| crate::core::search::SearchResult {
                             id: r.id.clone().unwrap_or_default(),
                             vector_id: r.id.clone(),
-                            score: r.score,
-                            distance: None, // Not provided in compact format
-                            rank: r.rank.map(|rank| rank as u16),
+                            similarity: r.score,
+                            similarity: None, // Not provided in compact format
+                            // rank removed -  r.rank.map(|rank| rank as u16),
                             vector: if include_vectors && !r.vector.is_empty() { Some(r.vector) } else { None },
                             metadata: if include_metadata && !r.metadata.is_empty() {
                                 crate::core::proto_metadata_helper::proto_metadata_to_json(&r.metadata)
@@ -820,7 +820,7 @@ impl ProximaDb for ProximaDbGrpcService {
                             version: None,
                             timestamp: None,
                             index_path: None,
-                            created_at: None,
+                            timestamp: None,
                         }).collect()
                     },
                     _ => vec![]
@@ -863,7 +863,7 @@ impl ProximaDb for ProximaDbGrpcService {
                         )
                     ),
                     vector_ids: vec![],
-                    error_message: None,
+                    // error_message removed -  None,
                     error_code: None,
                     result_info: Some(ResultMetadata {
                         result_count,
@@ -882,7 +882,7 @@ impl ProximaDb for ProximaDbGrpcService {
                         "score": result.score, // Unified distance score
                         "distance": result.distance, // Raw distance value
                         "vector": if include_vectors { Some(&result.vector) } else { None },
-                        "metadata": if include_metadata { Some(&result.metadata) } else { None },
+                        "metadata_info": if include_metadata { Some(&result.metadata) } else { None },
                         "rank": result.rank,
                         "algorithm_used": result.debug_info.as_ref().map(|d| d.algorithm.as_str())
                     })
@@ -1003,7 +1003,7 @@ impl ProximaDb for ProximaDbGrpcService {
                         )
                     ),
                     vector_ids: vec![],
-                    error_message: None,
+                    // error_message removed -  None,
                     error_code: None,
                     result_info: Some(ResultMetadata {
                         result_count,
@@ -1097,7 +1097,7 @@ impl ProximaDb for ProximaDbGrpcService {
                             "id": result.id,
                             "score": result.score,
                             "vector": if include_vectors { Some(&result.vector) } else { None },
-                            "metadata": if include_metadata { Some(&result.metadata) } else { None },
+                            "metadata_info": if include_metadata { Some(&result.metadata) } else { None },
                             "rank": result.rank
                         })
                     }).collect::<Vec<_>>()
@@ -1156,7 +1156,7 @@ impl ProximaDb for ProximaDbGrpcService {
                     ),
                 ),
                 vector_ids: vec![], // Not applicable for search
-                error_message: None,
+                // error_message removed -  None,
                 error_code: None,
                 result_info: Some(ResultMetadata {
                     result_count: 0, // Client needs to parse Avro to get count
@@ -1184,20 +1184,20 @@ impl ProximaDb for ProximaDbGrpcService {
 
             // Convert results to gRPC format
             let results = search_results
-                .get("results")
+                .get(key)
                 .and_then(|r| r.as_array())
                 .unwrap_or(&vec![])
                 .iter()
                 .map(|result| SearchResult {
                     id: result
-                        .get("id")
+                        .get(key)
                         .and_then(|v| v.as_str())
                         .unwrap_or("")
                         .to_string(),
-                    score: result.get("score").and_then(|v| v.as_f64()).unwrap_or(0.0) as f32,
+                    similarity: result.get(key).and_then(|v| v.as_f64()).unwrap_or(0.0) as f32,
                     vector: if include_vectors {
                         result
-                            .get("vector")
+                            .get(key)
                             .and_then(|v| v.as_array())
                             .map(|arr| {
                                 arr.iter()
@@ -1210,7 +1210,7 @@ impl ProximaDb for ProximaDbGrpcService {
                     },
                     metadata: if include_metadata {
                         result
-                            .get("metadata")
+                            .get(key)
                             .and_then(|m| m.as_object())
                             .map(|obj| {
                                 obj.iter()
@@ -1238,16 +1238,16 @@ impl ProximaDb for ProximaDbGrpcService {
                     } else {
                         vec![]
                     },
-                    rank: 0, // Default rank value
-                    distance: result.get("distance").and_then(|v| v.as_f64()).unwrap_or(0.0) as f32,
-                    version: result.get("version").and_then(|v| v.as_u64()).map(|v| v as u32),
-                    timestamp: result.get("timestamp").and_then(|v| v.as_u64()).map(|v| v as u32),
-                    collection_id: result.get("collection_id").and_then(|v| v.as_str()).map(|s| s.to_string()),
+                    // rank removed -  0, // Default rank value
+                    similarity: result.get(key).and_then(|v| v.as_f64()).unwrap_or(0.0) as f32,
+                    version: result.get(key).and_then(|v| v.as_u64()).map(|v| v as u32),
+                    timestamp: result.get(key).and_then(|v| v.as_u64()).map(|v| v as u32),
+                    collection_id: result.get(key).and_then(|v| v.as_str()).map(|s| s.to_string()),
                 })
                 .collect();
 
             let total_results = search_results
-                .get("total_count")
+                .get(key)
                 .and_then(|v| v.as_i64())
                 .unwrap_or(0);
 
@@ -1269,7 +1269,7 @@ impl ProximaDb for ProximaDbGrpcService {
                     search_algorithm_used: Some("HNSW".to_string()),
                 })),
                 vector_ids: vec![], // Not applicable for search
-                error_message: None,
+                // error_message removed -  None,
                 error_code: None,
                 result_info: Some(ResultMetadata {
                     result_count: total_results,

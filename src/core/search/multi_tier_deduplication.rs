@@ -21,7 +21,7 @@ use crate::core::search::mvcc_resolution::MvccResolver;
 /// A search candidate from a specific storage tier awaiting deduplication
 pub struct TieredSearchCandidate {
     pub vector_record: VectorRecord,
-    pub score: f32,
+    pub similarity: f32,
     pub tier: StorageTier,
     pub engine: DeduplicationStorageEngine,
     pub timestamp: DateTime<Utc>,
@@ -218,7 +218,7 @@ impl MultiTierDeduplicator {
                             }
                         }
                         None => {
-                            tracing::debug!("🔍 Simple filter mismatch: {} not found in metadata", key);
+                            tracing::debug!("🔍 Simple filter mismatch: {} not found in metadata_info", key);
                             return false; // Required metadata key missing
                         }
                     }
@@ -406,12 +406,12 @@ use tracing::{debug, error, info, warn};
                 updated_at: Some(now.timestamp() as u32),
                 expires_at: None,
                 version: Some(1),
-                rank: None,
-                score: None,
-                distance: None,
+                // rank removed -  None,
+                similarity: None,
+                similarity: None,
             
         },
-            score: 0.5,
+            similarity: 0.5,
             tier: StorageTier::Compacted,
             engine: DeduplicationStorageEngine::VIPER,
             timestamp: now,
@@ -429,17 +429,17 @@ use tracing::{debug, error, info, warn};
                 updated_at: Some(now.timestamp() as u32),
                 expires_at: None,
                 version: Some(2),
-                rank: None,
-                score: None,
-                distance: None,
+                // rank removed -  None,
+                similarity: None,
+                similarity: None,
             
         },
-            score: 0.4,
+            similarity: 0.4,
             tier: StorageTier::Flushed,
             engine: DeduplicationStorageEngine::SST,
             timestamp: now,
             sequence: 200,
-            file_path: Some("/data/flushed.sst".to_string()),
+            file_path: Some("/data/flushed.sstable".to_string()),
         };
         
         // Add unflushed result (should override flushed)
@@ -452,12 +452,12 @@ use tracing::{debug, error, info, warn};
                 updated_at: Some(now.timestamp() as u32),
                 expires_at: None,
                 version: Some(3),
-                rank: None,
-                score: None,
-                distance: None,
+                // rank removed -  None,
+                similarity: None,
+                similarity: None,
             
         },
-            score: 0.3,
+            similarity: 0.3,
             tier: StorageTier::Unflushed,
             engine: DeduplicationStorageEngine::WAL,
             timestamp: now,
@@ -492,12 +492,12 @@ use tracing::{debug, error, info, warn};
                 updated_at: Some(now.timestamp() as u32),
                 expires_at: None,
                 version: Some(1),
-                rank: None,
-                score: None,
-                distance: None,
+                // rank removed -  None,
+                similarity: None,
+                similarity: None,
             
         },
-            score: 0.5,
+            similarity: 0.5,
             tier: StorageTier::Unflushed,
             engine: DeduplicationStorageEngine::WAL,
             timestamp: now,
@@ -514,12 +514,12 @@ use tracing::{debug, error, info, warn};
                 updated_at: Some(now.timestamp() as u32),
                 expires_at: None,
                 version: Some(2), // Higher version
-                rank: None,
-                score: None,
-                distance: None,
+                // rank removed -  None,
+                similarity: None,
+                similarity: None,
             
         },
-            score: 0.4,
+            similarity: 0.4,
             tier: StorageTier::Unflushed,
             engine: DeduplicationStorageEngine::WAL,
             timestamp: now,
@@ -557,11 +557,11 @@ use tracing::{debug, error, info, warn};
                     updated_at: Some(now.timestamp() as u32),
                     expires_at: None,
                     version: Some(1),
-                    rank: None,
-                    score: None,
-                    distance: None,
+                    // rank removed -  None,
+                    similarity: None,
+                    similarity: None,
                 },
-                score: i as f32,
+                similarity: i as f32,
                 tier: StorageTier::Unflushed,
                 engine: DeduplicationStorageEngine::WAL,
                 timestamp: now,
@@ -602,11 +602,11 @@ use tracing::{debug, error, info, warn};
                     updated_at: Some(now.timestamp() as u32),
                     expires_at: None,
                     version: Some(1),
-                    rank: None,
-                    score: None,
-                    distance: None,
+                    // rank removed -  None,
+                    similarity: None,
+                    similarity: None,
                 },
-                score: (5 - i) as f32, // Reverse scores - best results come last
+                similarity: (5 - i) as f32, // Reverse scores - best results come last
                 tier: StorageTier::Unflushed,
                 engine: DeduplicationStorageEngine::WAL,
                 timestamp: now,

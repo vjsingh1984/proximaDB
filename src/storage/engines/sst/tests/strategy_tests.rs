@@ -56,8 +56,8 @@ mod tests {
         let mut metadata_stats = DataBlockMetadata {
             min_key: records.first().map(|r| r.id.clone()).unwrap_or_default(),
             max_key: records.last().map(|r| r.id.clone()).unwrap_or_default(),
-            min_timestamp: records.iter().map(|r| r.timestamp).min().unwrap_or(0),
-            max_timestamp: records.iter().map(|r| r.timestamp).max().unwrap_or(0),
+            // min_timestamp removed -  records.iter().map(|r| r.timestamp).min().unwrap_or(0),
+            // max_timestamp removed -  records.iter().map(|r| r.timestamp).max().unwrap_or(0),
             record_count: records.len() as u32,
             null_count: 0,
             metadata_columns: vec!["category".to_string(), "score".to_string()],
@@ -135,7 +135,7 @@ mod tests {
     #[tokio::test]
     async fn test_full_scan_strategy_validation() {
         let temp_dir = TempDir::new().unwrap();
-        let sst_path = temp_dir.path().join("test_full_scan.sst").to_str().unwrap().to_string();
+        let sst_path = temp_dir.path().join("test_full_scan.sstable").to_str().unwrap().to_string();
         
         // Create hierarchical SST file
         create_hierarchical_sst_file(&sst_path).await.unwrap();
@@ -178,7 +178,7 @@ mod tests {
     #[tokio::test]
     async fn test_filtered_scan_strategy_validation() {
         let temp_dir = TempDir::new().unwrap();
-        let sst_path = temp_dir.path().join("test_filtered.sst").to_str().unwrap().to_string();
+        let sst_path = temp_dir.path().join("test_filtered.sstable").to_str().unwrap().to_string();
         
         create_hierarchical_sst_file(&sst_path).await.unwrap();
         
@@ -218,7 +218,7 @@ mod tests {
     #[tokio::test]
     async fn test_range_scan_strategy_validation() {
         let temp_dir = TempDir::new().unwrap();
-        let sst_path = temp_dir.path().join("test_range.sst").to_str().unwrap().to_string();
+        let sst_path = temp_dir.path().join("test_range.sstable").to_str().unwrap().to_string();
         
         create_hierarchical_sst_file(&sst_path).await.unwrap();
         
@@ -263,7 +263,7 @@ mod tests {
     #[tokio::test]
     async fn test_point_lookup_strategy_validation() {
         let temp_dir = TempDir::new().unwrap();
-        let sst_path = temp_dir.path().join("test_point.sst").to_str().unwrap().to_string();
+        let sst_path = temp_dir.path().join("test_point.sstable").to_str().unwrap().to_string();
         
         create_hierarchical_sst_file(&sst_path).await.unwrap();
         
@@ -294,7 +294,7 @@ mod tests {
     #[tokio::test]
     async fn test_compaction_strategy_validation() {
         let temp_dir = TempDir::new().unwrap();
-        let sst_path = temp_dir.path().join("test_compaction.sst").to_str().unwrap().to_string();
+        let sst_path = temp_dir.path().join("test_compaction.sstable").to_str().unwrap().to_string();
         
         create_hierarchical_sst_file(&sst_path).await.unwrap();
         
@@ -314,7 +314,7 @@ mod tests {
         let records = reader.read_with_strategy(&strategy).await.unwrap();
         
         // Validate compaction results
-        assert_eq!(records.len(), 300, "Should stream all records for compaction");
+        assert_eq!(records.len(), 300, "Should stream all records for compaction_info");
         
         // Verify no duplicates
         let mut seen = std::collections::HashSet::new();
@@ -326,7 +326,7 @@ mod tests {
     #[tokio::test]
     async fn test_block_level_filtering_validation() {
         let temp_dir = TempDir::new().unwrap();
-        let sst_path = temp_dir.path().join("test_block_filter.sst").to_str().unwrap().to_string();
+        let sst_path = temp_dir.path().join("test_block_filter.sstable").to_str().unwrap().to_string();
         
         create_hierarchical_sst_file(&sst_path).await.unwrap();
         
@@ -371,7 +371,7 @@ mod tests {
         use crate::proto::proximadb::{MetadataItem, metadata_item};
         
         let temp_dir = TempDir::new().unwrap();
-        let sst_path = temp_dir.path().join("test_metadata_stats.sst").to_str().unwrap().to_string();
+        let sst_path = temp_dir.path().join("test_metadata_stats.sstable").to_str().unwrap().to_string();
         
         // Create SST with specific metadata patterns
         use crate::storage::persistence::filesystem::FilesystemConfig;
@@ -447,13 +447,13 @@ mod tests {
         
         // Block 0 should have scores 0-49
         let block0 = reader.read_data_block_async(0, ReadMode::Buffered).await.unwrap();
-        assert_eq!(block0.metadata_stats.min_values.get("score").unwrap(), &serde_json::Value::String("0".to_string()));
-        assert_eq!(block0.metadata_stats.max_values.get("score").unwrap(), &serde_json::Value::String("49".to_string()));
+        assert_eq!(block0.metadata_stats.min_values.get(key).unwrap(), &serde_json::Value::String("0".to_string()));
+        assert_eq!(block0.metadata_stats.max_values.get(key).unwrap(), &serde_json::Value::String("49".to_string()));
         
         // Block 1 should have scores 50-99
         let block1 = reader.read_data_block_async(1, ReadMode::Buffered).await.unwrap();
-        assert_eq!(block1.metadata_stats.min_values.get("score").unwrap(), &serde_json::Value::String("50".to_string()));
-        assert_eq!(block1.metadata_stats.max_values.get("score").unwrap(), &serde_json::Value::String("99".to_string()));
+        assert_eq!(block1.metadata_stats.min_values.get(key).unwrap(), &serde_json::Value::String("50".to_string()));
+        assert_eq!(block1.metadata_stats.max_values.get(key).unwrap(), &serde_json::Value::String("99".to_string()));
         
         // Test metadata-based filtering using statistics
         let predicate = FilterPredicate {
@@ -475,7 +475,7 @@ mod tests {
     #[tokio::test]
     async fn test_bloom_filter_effectiveness() {
         let temp_dir = TempDir::new().unwrap();
-        let sst_path = temp_dir.path().join("test_bloom.sst").to_str().unwrap().to_string();
+        let sst_path = temp_dir.path().join("test_bloom.sstable").to_str().unwrap().to_string();
         
         create_hierarchical_sst_file(&sst_path).await.unwrap();
         
@@ -511,7 +511,7 @@ mod tests {
     #[tokio::test]
     async fn test_random_block_access_validation() {
         let temp_dir = TempDir::new().unwrap();
-        let sst_path = temp_dir.path().join("test_random_access.sst").to_str().unwrap().to_string();
+        let sst_path = temp_dir.path().join("test_random_access.sstable").to_str().unwrap().to_string();
         
         create_hierarchical_sst_file(&sst_path).await.unwrap();
         
@@ -548,7 +548,7 @@ mod tests {
     #[tokio::test]
     async fn test_streaming_iterator_validation() {
         let temp_dir = TempDir::new().unwrap();
-        let sst_path = temp_dir.path().join("test_streaming.sst").to_str().unwrap().to_string();
+        let sst_path = temp_dir.path().join("test_streaming.sstable").to_str().unwrap().to_string();
         
         create_hierarchical_sst_file(&sst_path).await.unwrap();
         
@@ -580,7 +580,7 @@ mod tests {
     #[tokio::test]
     async fn test_compression_handling_validation() {
         let temp_dir = TempDir::new().unwrap();
-        let sst_path = temp_dir.path().join("test_compression.sst").to_str().unwrap().to_string();
+        let sst_path = temp_dir.path().join("test_compression.sstable").to_str().unwrap().to_string();
         
         // Create SST with compression
         use crate::storage::persistence::filesystem::FilesystemConfig;

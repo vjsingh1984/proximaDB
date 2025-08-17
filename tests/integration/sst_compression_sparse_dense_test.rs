@@ -48,7 +48,7 @@ async fn test_compression_sparse_data() -> anyhow::Result<()> {
     
     // Test with compression enabled
     let mut config_compressed = base_env.sst_config.clone();
-    config_compressed.compression = "zstd".to_string();
+    config_compressed.storage_config.as_ref().and_then(|s| s.compression.as_ref()) = "zstd".to_string();
     config_compressed.compression_level = 3;
     
     let compressed_engine = SstStorage::new(
@@ -63,7 +63,7 @@ async fn test_compression_sparse_data() -> anyhow::Result<()> {
     // Add compression config to the collection config
     if let Some(ref mut collection) = flush_params.collection_config {
         if let Some(ref mut config) = collection.config {
-            config.compression = Some(proximadb::proto::proximadb::CompressionConfig {
+            config.storage_config.as_ref().and_then(|s| s.compression.as_ref()) = Some(proximadb::proto::proximadb::CompressionConfig {
                 algorithm: proximadb::proto::proximadb::CompressionAlgorithm::CompressionZstd as i32,
                 level: Some(3),
                 adaptive: false,
@@ -89,7 +89,7 @@ async fn test_compression_sparse_data() -> anyhow::Result<()> {
     tokio::fs::create_dir_all(base_env.get_sst_data_directory()).await?;
     
     let mut config_uncompressed = base_env.sst_config.clone();
-    config_uncompressed.compression = "none".to_string();
+    config_uncompressed.storage_config.as_ref().and_then(|s| s.compression.as_ref()) = "none".to_string();
     
     let uncompressed_engine = SstStorage::new(
         config_uncompressed,
@@ -159,7 +159,7 @@ async fn test_compression_dense_data() -> anyhow::Result<()> {
     
     // Test with compression enabled
     let mut config_compressed = base_env.sst_config.clone();
-    config_compressed.compression = "zstd".to_string();
+    config_compressed.storage_config.as_ref().and_then(|s| s.compression.as_ref()) = "zstd".to_string();
     config_compressed.compression_level = 3;
     
     let compressed_engine = SstStorage::new(
@@ -174,7 +174,7 @@ async fn test_compression_dense_data() -> anyhow::Result<()> {
     // Add compression config to the collection config
     if let Some(ref mut collection) = flush_params.collection_config {
         if let Some(ref mut config) = collection.config {
-            config.compression = Some(proximadb::proto::proximadb::CompressionConfig {
+            config.storage_config.as_ref().and_then(|s| s.compression.as_ref()) = Some(proximadb::proto::proximadb::CompressionConfig {
                 algorithm: proximadb::proto::proximadb::CompressionAlgorithm::CompressionZstd as i32,
                 level: Some(3),
                 adaptive: false,
@@ -200,7 +200,7 @@ async fn test_compression_dense_data() -> anyhow::Result<()> {
     tokio::fs::create_dir_all(base_env.get_sst_data_directory()).await?;
     
     let mut config_uncompressed = base_env.sst_config.clone();
-    config_uncompressed.compression = "none".to_string();
+    config_uncompressed.storage_config.as_ref().and_then(|s| s.compression.as_ref()) = "none".to_string();
     
     let uncompressed_engine = SstStorage::new(
         config_uncompressed,

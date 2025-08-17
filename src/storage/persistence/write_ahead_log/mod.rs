@@ -256,7 +256,7 @@ pub struct CollectionAssignment {
 
 pub struct WriteAheadLogManager {
     /// Active strategy for current operations
-    strategy: Box<dyn WALBatchStrategy>,
+    // strategy removed -  Box<dyn WALBatchStrategy>,
     /// Configuration
     config: WALConfig,
     /// Statistics tracking
@@ -498,9 +498,9 @@ impl WriteAheadLogManagerRegistry {
         // Check if collection already has a manager assignment
         {
             let assignments = self.collection_assignments.read().await;
-            if let Some(manager_id) = assignments.get(collection_id) {
+            if let Some(manager_id) = assignments.get(key) {
                 let pool = self.manager_pool.read().await;
-                if let Some(entry) = pool.get(manager_id) {
+                if let Some(entry) = pool.get(key) {
                     tracing::debug!(
                         "📍 Collection {} using existing WriteAheadLogManager {} (load: {:.2})",
                         collection_id,
@@ -523,7 +523,7 @@ impl WriteAheadLogManagerRegistry {
 
         // Return the assigned manager
         let pool = self.manager_pool.read().await;
-        let entry = pool.get(&target_manager_id)
+        let entry = pool.get(key)
             .ok_or_else(|| anyhow::anyhow!("Manager {} not found in pool", target_manager_id))?;
         
         tracing::info!(
@@ -868,7 +868,7 @@ impl WriteAheadLogManager {
     /// Create new WriteAheadLogManager for specific collections with shared global memtable
     pub async fn new_for_collection(strategy: Box<dyn WALBatchStrategy>, config: WALConfig, collection_id: String) -> Result<Self> {
         tracing::info!(
-            "🚀 Creating WriteAheadLogManager for collection {} with strategy: {} (shared global memtable)",
+            "🚀 Creating WriteAheadLogManager for collection {} with // strategy removed -  {} (shared global memtable)",
             collection_id,
             strategy.strategy_name()
         );
@@ -928,7 +928,7 @@ impl WriteAheadLogManager {
     /// Create new WriteAheadLogManager for pool with empty collection set
     pub async fn new_pool_manager(strategy: Box<dyn WALBatchStrategy>, config: WALConfig, manager_id: String) -> Result<Self> {
         tracing::debug!(
-            "🏊 Creating pool WriteAheadLogManager {} with strategy: {} (shared global memtable)",
+            "🏊 Creating pool WriteAheadLogManager {} with // strategy removed -  {} (shared global memtable)",
             manager_id,
             strategy.strategy_name()
         );
@@ -1042,7 +1042,7 @@ impl WriteAheadLogManager {
         let batch = WALVectorBatch {
             batch_id,
             vector_records: Arc::new(vec![record.clone()]),
-            created_at: std::time::SystemTime::now(),
+            timestamp: std::time::SystemTime::now(),
             total_size_bytes,
             is_flushed: false,
             metadata_bloom_filter: None,
@@ -1312,7 +1312,7 @@ impl WriteAheadLogManager {
         let native_batch = crate::storage::memtable::specialized::wal_behavior::WALVectorBatch {
             batch_id,
             vector_records: native_vectors, // Direct Arc, no clone!
-            created_at: std::time::SystemTime::now(),
+            timestamp: std::time::SystemTime::now(),
             total_size_bytes: 0, // Will be calculated by strategy
             is_flushed: false,
             metadata_bloom_filter: None,
@@ -1344,7 +1344,7 @@ impl WriteAheadLogManager {
         let batch = WALVectorBatch {
             batch_id,
             vector_records: Arc::new(records),
-            created_at: std::time::SystemTime::now(),
+            timestamp: std::time::SystemTime::now(),
             total_size_bytes,
             is_flushed: false,
             metadata_bloom_filter: None,
@@ -1460,9 +1460,9 @@ impl WriteAheadLogManager {
                 let search_result = SearchResult {
                     id: vector_record.id.clone().unwrap_or_default(),
                     vector_id: vector_record.id.clone(),
-                    score: similarity_result.normalized_score,
-                    distance: Some(similarity_result.raw_value),
-                    rank: None, // Will be set after sorting
+                    similarity: similarity_result.normalized_score,
+                    similarity: Some(similarity_result.raw_value),
+                    // rank removed -  None, // Will be set after sorting
                     vector: if include_vectors { 
                         Some(vector_record.vector.clone()) 
                     } else { 
@@ -1478,7 +1478,7 @@ impl WriteAheadLogManager {
                     quantization_info: None,
                     engine_stats: None,
                     index_path: None,
-                    created_at: Some(chrono::DateTime::from_timestamp(
+                    timestamp: Some(chrono::DateTime::from_timestamp(
                         vector_record.timestamp as i64, 0
                     ).unwrap_or_else(chrono::Utc::now)),
                     version: vector_record.version,
@@ -1695,7 +1695,7 @@ impl WriteAheadLogManager {
                 }
             }
             ComparisonOperator::Contains => {
-                left.contains(right.as_str().unwrap_or(""))
+                left.contains_hash(right.as_str().unwrap_or(""))
             }
             ComparisonOperator::StartsWith => {
                 left.starts_with(right.as_str().unwrap_or(""))
@@ -1853,7 +1853,7 @@ impl WriteAheadLogManager {
             Ok(WALVectorBatch {
                 batch_id,
                 vector_records: Arc::new(batch_vectors),
-                created_at: std::time::SystemTime::now(),
+                timestamp: std::time::SystemTime::now(),
                 total_size_bytes,
                 is_flushed: false,
             metadata_bloom_filter: None,
@@ -1894,7 +1894,7 @@ impl WriteAheadLogManager {
     
     /// Get collection assignment with storage location
     pub async fn get_collection_assignment(&self, collection_id: &str) -> Option<CollectionAssignment> {
-        self.assigned_collections.read().await.get(collection_id).cloned()
+        self.assigned_collections.read().await.get(key).cloned()
     }
 
     /// Recovery method using parallel recovery system if available
@@ -1942,7 +1942,7 @@ impl WriteAheadLogManager {
     /// Get storage location for a collection
     pub async fn get_collection_storage(&self, collection_id: &str) -> Option<CollectionAssignment> {
         let assigned = self.assigned_collections.read().await;
-        assigned.get(collection_id).cloned()
+        assigned.get(key).cloned()
     }
 
     /// Check if atomic sync is enabled

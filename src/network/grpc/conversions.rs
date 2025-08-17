@@ -8,7 +8,7 @@ impl From<NativeSearchResult> for ProtoSearchResult {
     fn from(native: NativeSearchResult) -> Self {
         ProtoSearchResult {
             id: native.id,
-            score: native.score,
+            similarity: native.score,
             vector: native.vector.unwrap_or_default(),
             metadata: native.metadata
                 .into_iter()
@@ -31,8 +31,8 @@ impl From<NativeSearchResult> for ProtoSearchResult {
                     }
                 })
                 .collect(),
-            rank: native.rank.map(|r| r as i32).unwrap_or(0),
-            distance: native.distance.unwrap_or(0.0),
+            // rank removed -  native.rank.map(|r| r as i32).unwrap_or(0),
+            similarity: native.distance.unwrap_or(0.0),
             version: None,
             timestamp: None,
             collection_id: None,
@@ -44,7 +44,7 @@ impl From<&NativeSearchResult> for ProtoSearchResult {
     fn from(native: &NativeSearchResult) -> Self {
         ProtoSearchResult {
             id: native.id.clone(),
-            score: native.score,
+            similarity: native.score,
             vector: native.vector.clone().unwrap_or_default(),
             metadata: native.metadata
                 .iter()
@@ -67,8 +67,8 @@ impl From<&NativeSearchResult> for ProtoSearchResult {
                     }
                 })
                 .collect(),
-            rank: native.rank.map(|r| r as i32).unwrap_or(0),
-            distance: native.distance.unwrap_or(0.0),
+            // rank removed -  native.rank.map(|r| r as i32).unwrap_or(0),
+            similarity: native.distance.unwrap_or(0.0),
             version: None,
             timestamp: None,
             collection_id: None,

@@ -206,7 +206,7 @@ async fn test_isolated_sst_multi_batch_flush_compaction() -> Result<()> {
         while let Some(entry) = dir_entries.next_entry().await? {
             if let Ok(metadata) = entry.metadata().await {
                 let file_name = entry.file_name().to_string_lossy().to_string();
-                if file_name.ends_with(".sst") {
+                if file_name.ends_with(".sstable") {
                     sst_file_count += 1;
                     println!("📄 Found SST file: {} ({} bytes)", file_name, metadata.len());
                 }

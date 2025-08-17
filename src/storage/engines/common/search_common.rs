@@ -279,7 +279,7 @@ impl UniversalSearchPipeline {
         
         for mut result in candidates {
             if let Some(ref vector) = result.vector {
-                let distance = self.distance_compute.compute_distance(
+                let distance = self.distance_compute.as_ref().compute_distance(
                     query_vector,
                     vector,
                     &config.distance_metric,
@@ -389,7 +389,7 @@ impl UniversalSearchPipeline {
         let mut results = Vec::with_capacity(records.len());
         
         for record in records {
-            let distance = self.distance_compute.compute_distance(
+            let distance = self.distance_compute.as_ref().compute_distance(
                 query_vector,
                 &record.vector,
                 &DistanceMetric::Cosine, // Use default for now
@@ -397,11 +397,11 @@ impl UniversalSearchPipeline {
             
             results.push(SearchResult {
                 id: record.id.unwrap_or_default(),
-                distance: distance,
+                similarity: distance,
                 vector: record.vector,
                 metadata: record.metadata,
-                score: 1.0 - distance, // Convert distance to similarity score
-                rank: 0, // Default rank
+                similarity: 1.0 - distance, // Convert distance to similarity score
+                // rank removed -  0, // Default rank
                 version: record.updated_at,
                 timestamp: Some(record.timestamp),
                 collection_id: None, // Default collection_id

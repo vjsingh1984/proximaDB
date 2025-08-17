@@ -1,0 +1,569 @@
+use arrow::array::{ArrayRef, Int32Array, StringArray};
+use arrow::datatypes::{DataType, Schema};
+use arrow::ipc::{reader::StreamReader, writer::StreamWriter};
+use arrow::record_batch::RecordBatch;
+use bloomfilter::Bloom;
+use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};
+use serde::{Deserialize, Serialize};
+use std::fs::File;
+use std::io::{Read, Write};
+use std::simd::{i32x16, Simd};
+use rayon::prelude::*;
+
+// Header structure for metadata
+#[derive(Serialize, Deserialize)]
+struct ArtusHeader {
+    schema: String,
+    metadata: std::collections::HashMap<String, ColumnMetadata>,
+}
+
+#[derive(Serialize, Deserialize)]
+struct ColumnMetadata {
+    row_count: usize,
+    min: Option<i32>, // Simplified to i32 for example
+    max: Option<i32>,
+    bloom_filter_path: Option<String>,
+}
+
+// Artus file reader/writer
+struct ArtusFile {
+    filename: String,
+    schema: Option<Schema>,
+}
+
+impl ArtusFile {
+    pub fn new(filename: &str) -> Self {
+        ArtusFile {
+            filename: filename.to_string(),
+            schema: None,
+        }
+    }
+
+    pub fn write(&mut self, batch: &RecordBatch, encodings: &std::collections::HashMap<String, String>) -> std::io::Result<()> {
+        let schema = batch.schema();
+        self.schema = Some(schema.clone());
+        let mut metadata = std::collections::HashMap::new();
+
+        // Generate metadata for each column
+        for (i, col_name) in schema.fields().iter().map(|f| f.name()).enumerate() {
+            let array = batch.column(i);
+            let meta = Self::generate_metadata(array, col_name, encodings.get(col_name))?;
+            metadata.insert(col_name.to_string(), meta);
+        }
+
+        // Write header and data
+        let mut file = File::create(&self.filename)?;
+        let header = ArtusHeader {
+            schema: format!("{:?}", schema),
+            metadata,
+        };
+        let header_bytes = serde_json::to_string(&header)?.into_bytes();
+        file.write_u32::<BigEndian>(header_bytes.len() as u32)?;
+        file.write_all(&header_bytes)?;
+
+        // Write columns with specified encodings (parallelized)
+        batch.columns().par_iter().enumerate().try_for_each(|(i, array)| {
+            let col_name = schema.field(i).name();
+            let encoding = encodings.get(col_name).map(|s| s.as_str()).unwrap_or("plain");
+            let encoded = match encoding {
+                "dictionary" => Self::encode_dictionary_simd(array)?,
+                "delta" => Self::encode_delta_simd(array)?,
+                _ => array.clone(),
+            };
+            let batch = RecordBatch::try_new(schema.clone(), vec![encoded])?;
+            let mut sink = Vec::new();
+            {
+                let mut writer = StreamWriter::try_new(&mut sink, &schema)?;
+                writer.write(&batch)?;
+                writer.finish()?;
+            }
+            file.write_all(&sink)?;
+            Ok::<_, std::io::Error>(())
+        })?;
+
+        Ok(())
+    }
+
+    pub fn read(&self, predicates: Option<Vec<Predicate>>) -> std::io::Result<RecordBatch> {
+        let predicates = predicates.unwrap_or_default();
+        let mut file = File::open(&self.filename)?;
+        
+        // Read header
+        let header_len = file.read_u32::<BigEndian>()? as usize;
+        let mut header_bytes = vec![0u8; header_len];
+        file.read_exact(&mut header_bytes)?;
+        let header: ArtusHeader = serde_json::from_slice(&header_bytes)?;
+        let schema = Schema::try_from(header.schema.as_str())?; // Simplified parsing
+        let metadata = header.metadata;
+
+        // Filter columns based on predicates
+        let columns_to_read = Self::filter_columns(&schema, &predicates, &metadata);
+
+        // Read columns (parallelized)
+        let arrays: Vec<_> = schema.fields().par_iter().enumerate().map(|(i, field)| {
+            let col_name = field.name();
+            if columns_to_read.contains(col_name) && Self::should_read_column(col_name, &predicates, &metadata) {
+                // Read column data (Arrow IPC)
+                let reader = StreamReader::try_new(&mut file, None).unwrap();
+                let batch = reader.into_iter().next().unwrap().unwrap();
+                batch.column(i).clone()
+            } else {
+                // Return null array for skipped columns
+                arrow::array::make_null_array(field.data_type().clone(), metadata[col_name].row_count)
+            }
+        }).collect();
+
+        RecordBatch::try_new(schema, arrays).map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))
+    }
+
+    fn generate_metadata(array: &ArrayRef, col_name: &str, encoding: Option<&String>) -> std::io::Result<ColumnMetadata> {
+        let row_count = array.len();
+        let (min, max) = match array.data_type() {
+            DataType::Int32 => {
+                let arr = array.as_any().downcast_ref::<Int32Array>().unwrap();
+                let values = arr.values();
+                let min = values.iter().min().copied();
+                let max = values.iter().max().copied();
+                (min, max)
+            }
+            _ => (None, None), // Add other types as needed
+        };
+
+        let bloom_filter_path = if encoding == Some(&"dictionary".to_string()) {
+            let mut bloom = Bloom::new(0.01, row_count);
+            if let Some(arr) = array.as_any().downcast_ref::<StringArray>() {
+                for val in arr.iter().flatten() {
+                    bloom.set(val);
+                }
+            }
+            let path = format!("{}_bloom.bf", col_name);
+            bloom.save(&path)?;
+            Some(path)
+        } else {
+            None
+        };
+
+        Ok(ColumnMetadata {
+            row_count,
+            min,
+            max,
+            bloom_filter_path,
+        })
+    }
+
+    fn encode_dictionary_simd(array: &ArrayRef) -> std::io::Result<ArrayRef> {
+        // Simplified dictionary encoding with SIMD bit-packing
+        if let Some(arr) = array.as_any().downcast_ref::<StringArray>() {
+            let mut unique: Vec<String> = arr.iter().flatten().collect::<std::collections::HashSet<_>>().into_iter().collect();
+            unique.sort(); // Dictionary values
+            let mut indices = vec![0i32; arr.len()];
+
+            // SIMD-accelerated dictionary lookup (simplified)
+            let chunk_size = 16;
+            for i in (0..arr.len()).step_by(chunk_size) {
+                let chunk_end = std::cmp::min(i + chunk_size, arr.len());
+                let values = &arr.values()[i..chunk_end];
+                let mut simd_indices = i32x16::splat(0);
+                for (j, val) in values.iter().enumerate().take(chunk_size) {
+                    if let Some(v) = val {
+                        let idx = unique.iter().position(|u| u == v).unwrap() as i32;
+                        simd_indices[j] = idx;
+                    }
+                }
+                for (j, idx) in simd_indices.as_array().iter().enumerate().take(chunk_end - i) {
+                    indices[i + j] = *idx;
+                }
+            }
+
+            Ok(Arc::new(Int32Array::from(indices)) as ArrayRef)
+        } else {
+            Ok(array.clone())
+        }
+    }
+
+    fn encode_delta_simd(array: &ArrayRef) -> std::io::Result<ArrayRef> {
+        // SIMD-accelerated delta encoding for sorted int32
+        if let Some(arr) = array.as_any().downcast_ref::<Int32Array>() {
+            let values = arr.values();
+            let mut deltas = vec![0i32; values.len()];
+            deltas[0] = values[0]; // First value unchanged
+
+            // Process in SIMD chunks
+            let chunk_size = 16;
+            for i in (0..values.len() - 1).step_by(chunk_size) {
+                let chunk_end = std::cmp::min(i + chunk_size, values.len() - 1);
+                let chunk = &values[i..chunk_end + 1];
+                let next_chunk = &values[i + 1..chunk_end + 2];
+                let v1 = i32x16::from_slice(&chunk);
+                let v2 = i32x16::from_slice(&next_chunk);
+                let delta = v2 - v1;
+                for (j, d) in delta.as_array().iter().enumerate().take(chunk_end - i) {
+                    deltas[i + j + 1] = *d;
+                }
+            }
+
+            Ok(Arc::new(Int32Array::from(deltas)) as ArrayRef)
+        } else {
+            Ok(array.clone())
+        }
+    }
+
+    fn filter_columns(schema: &Schema, predicates: &[Predicate], metadata: &std::collections::HashMap<String, ColumnMetadata>) -> Vec<String> {
+        let mut columns = std::collections::HashSet::new();
+        for pred in predicates {
+            columns.insert(pred.column.clone());
+        }
+        if columns.is_empty() {
+            schema.fields().iter().map(|f| f.name().to_string()).collect()
+        } else {
+            columns.into_iter().collect()
+        }
+    }
+
+    fn should_read_column(col_name: &str, predicates: &[Predicate], metadata: &std::collections::HashMap<String, ColumnMetadata>) -> bool {
+        let meta = match metadata.get(col_name) {
+            Some(m) => m,
+            None => return true,
+        };
+
+        for pred in predicates {
+            if pred.column != col_name {
+                continue;
+            }
+            let value = pred.value;
+            match pred.op.as_str() {
+                ">" => {
+                    if let Some(max) = meta.max {
+                        if value > max {
+                            return false;
+                        }
+                    }
+                }
+                "<" => {
+                    if let Some(min) = meta.min {
+                        if value < min {
+                            return false;
+                        }
+                    }
+                }
+                "=" => {
+                    if let (Some(min), Some(max)) = (meta.min, meta.max) {
+                        if value < min || value > max {
+                            return false;
+                        }
+                    }
+                    if let Some(path) = &meta.bloom_filter_path {
+                        let bloom = Bloom::from_file(path).unwrap();
+                        if !bloom.check(&value.to_string()) {
+                            return false;
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+        true
+    }
+}
+
+// Simplified predicate structure
+#[derive(Clone)]
+struct Predicate {
+    column: String,
+    op: String,
+    value: i32, // Simplified to i32
+}
+
+// Example usage
+fn main() -> std::io::Result<()> {
+    use std::sync::Arc;
+
+    // Create sample data
+    let schema = Schema::new(vec![
+        arrow::datatypes::Field::new("id", DataType::Int32, false),
+        arrow::datatypes::Field::new("name", DataType::Utf8, false),
+    ]);
+    let batch = RecordBatch::try_new(
+        Arc::new(schema.clone()),
+        vec![
+            Arc::new(Int32Array::from(vec![1, 2, 3, 4, 5])) as ArrayRef,
+            Arc::new(StringArray::from(vec!["Alice", "Bob", "Charlie", "David", "Eve"])) as ArrayRef,
+        ],
+    )?;
+
+    // Write to Artus file
+    let mut encodings = std::collections::HashMap::new();
+    encodings.insert("name".to_string(), "dictionary".to_string());
+    let mut artus = ArtusFile::new("sample.artus");
+    artus.write(&batch, &encodings)?;
+
+    // Read with predicate
+    let predicates = vec![Predicate {
+        column: "id".to_string(),
+        op: ">".to_string(),
+        value: 2,
+    }];
+    let result = artus.read(Some(predicates))?;
+    println!("{:?}", result);
+
+    Ok(())
+}    Review this initial google paer based artus reader and writer implementation review and further optimized and improve it for vector database storage engine where vectors are kept on cloud store so pruning using read ranges is important and required for bandwidth reduction and lower latecy and reuced i/o for eprformance and high qps . suggest additional improvements. remember metadata such as index, text, chunking_method, pageno etc is very important and should be kept as list of map (k,v) along side vector as well so supporting complextype is important too. refine it
+ChatGPT said:
+
+Your initial implementation of an Arrow-based Artus file format with SIMD and Bloom filter optimizations is a strong foundation for building a high-performance data storage engine. However, adapting it to function effectively as a vector database storage layer, especially for cloud-based vector storage, requires architectural improvements and enhancements, particularly in:
+
+I/O minimization
+
+Predicate pushdown
+
+Complex metadata support
+
+Vector-aware optimizations
+
+Cloud-read efficiency (e.g., prefetching, range reads, compression)
+
+✅ High-Level Review of Current Implementation
+✔ Strengths:
+
+SIMD optimizations for dictionary and delta encoding
+
+Bloom filters for equality filtering
+
+Metadata-rich headers with min/max pruning
+
+Parallel column processing using rayon
+
+Arrow IPC format support (standardized, efficient)
+
+❌ Limitations for Vector DB Use Case:
+
+No support for range-based pruning (especially important for cloud reads)
+
+No handling for vector columns (e.g., embeddings as Float32Array, typically 128/256 dims)
+
+Metadata model too limited (single min/max, lacks support for chunk/page-level stats)
+
+Doesn’t handle complex metadata or structured types (e.g., List<Map<key, value>>)
+
+Lack of indexing (e.g., IVF, HNSW, Flat) support or reference
+
+Lacks a strategy for cloud prefetching or offset-based partial reads
+
+No support for versioning or appendable block storage
+
+SIMD used only for encoding, not for vector operations or comparisons
+
+🔧 Core Improvements & Optimizations
+1. ✅ Introduce a Multi-Level Metadata Index
+
+Replace flat ColumnMetadata with multi-level metadata per chunk/page, including:
+
+struct ColumnMetadata {
+    pages: Vec<PageMetadata>,
+    global_min: Option<i32>,
+    global_max: Option<i32>,
+    bloom_filter_path: Option<String>,
+}
+
+struct PageMetadata {
+    offset: u64,           // Byte offset in file/cloud
+    length: u64,           // Length of page
+    min: Option<i32>,      // Page min
+    max: Option<i32>,      // Page max
+    row_count: usize,
+    metadata: HashMap<String, String>, // Chunk-specific metadata
+}
+
+Benefits:
+
+Allows page-level pruning
+
+Enables range-based prefetching (minimize cloud I/O)
+
+Critical for vector chunk selection
+
+2. ✅ Support Cloud Range Reads & Prefetching
+
+In the read() method:
+
+Detect cloud file (gs://, s3://, etc.)
+
+Use cloud SDK to perform HTTP Range GETs
+
+Fetch only relevant pages using offset & length from PageMetadata
+
+Example using reqwest or tokio for async I/O
+
+let client = reqwest::Client::new();
+let resp = client.get(cloud_url)
+    .header("Range", format!("bytes={}-{}", start, end))
+    .send()
+    .await?;
+
+3. ✅ Vector-Aware Chunking and Metadata
+
+If vectors are stored as FixedSizeList(Float32, 128):
+
+Track chunk-level metadata:
+
+index: HNSW, IVF_FLAT, etc.
+
+chunking_method: KMeans, Range, Random
+
+pageno: logical block number
+
+centroid: optional vector centroid (for pruning)
+
+Update PageMetadata with:
+
+struct VectorPageMetadata {
+    index_type: String,
+    pageno: usize,
+    centroid: Option<Vec<f32>>, // for fast cluster pruning
+    metadata: HashMap<String, String>,
+}
+
+4. ✅ Predicate Pruning for Vector + Metadata
+
+Extend Predicate to support:
+
+enum PredicateValue {
+    Int(i32),
+    Str(String),
+    Float(f32),
+    Vector(Vec<f32>), // for ANN vector filtering
+}
+
+struct Predicate {
+    column: String,
+    op: String,         // e.g., ">", "<", "=", "cosine_sim >"
+    value: PredicateValue,
+}
+
+
+Implement vector pruning strategies like:
+
+if pred.column == "embedding" && pred.op.starts_with("cosine_sim") {
+    if let Some(centroid) = page.centroid {
+        let sim = cosine_similarity(&pred.value, &centroid);
+        if sim < threshold {
+            return false;
+        }
+    }
+}
+
+5. ✅ Support Complex Types & Metadata Per Row
+
+To support List<Map<k,v>> (e.g., metadata: List<Map<String, String>>):
+
+Update schema handling to support Arrow nested types
+
+During metadata generation and storage, flatten/map as needed:
+
+Useful for text search, vector-to-text associations, etc.
+
+Add support for logical types like:
+
+let field = Field::new("metadata", DataType::List(
+    Box::new(Field::new("entry", DataType::Struct(vec![
+        Field::new("key", DataType::Utf8, false),
+        Field::new("value", DataType::Utf8, false),
+    ]), true))
+), true);
+
+6. ✅ Indexing Support (External or Inline)
+
+Add optional support for:
+
+Inline Flat/IVF/HNSW index as Arrow-compatible metadata
+
+Or external reference to index (e.g., Faiss index on S3)
+
+struct VectorIndex {
+    index_type: String,
+    file: Option<String>, // path to saved index
+    dimension: usize,
+}
+
+7. ✅ Compression Support (Zstd, LZ4)
+
+Compress each page independently before writing to file or cloud:
+
+use zstd::stream::{encode_all, decode_all};
+
+let compressed = encode_all(&raw_bytes[..], 3)?;
+
+
+Store in PageMetadata whether compressed and which codec used.
+
+8. ✅ Read/Write Format Upgrade Plan
+
+Change the format to:
+
+[HeaderLength][Header JSON][Page 1][Page 2]...[IndexBlock]
+
+
+Each page has offset/length tracked in PageMetadata
+
+Final IndexBlock could store summary of all pages for fast seeking
+
+🧠 Example Enhanced Header JSON
+{
+  "schema": "...",
+  "vector_index": {
+    "index_type": "IVF",
+    "dimension": 128,
+    "file": "sample.index"
+  },
+  "columns": {
+    "embedding": {
+      "pages": [
+        {
+          "offset": 1024,
+          "length": 4096,
+          "pageno": 0,
+          "centroid": [0.01, 0.02, ...],
+          "metadata": {"chunking_method": "kmeans"}
+        }
+      ]
+    },
+    "metadata": {
+      "pages": [
+        {
+          "offset": 5120,
+          "length": 2048,
+          "row_count": 100,
+          "metadata": {"source": "docs"}
+        }
+      ]
+    }
+  }
+}
+
+✅ Final Suggestions
+🔄 API Enhancements
+
+Add ArtusReader::read_with_range(start: usize, end: usize) for range reads
+
+Add ArtusReader::search_vector(query: &[f32], top_k: usize) (vector search)
+
+Add ArtusWriter::write_vector_batch(...) with custom chunking and indexing
+
+🧪 Testing Strategy
+
+Use Arrow integration tests with FixedSizeList
+
+Validate vector filtering with synthetic clusters
+
+Benchmark cloud range read latency and bandwidth savings
+
+✅ Summary
+Area	Enhancement
+Metadata	Page-level stats, complex types, centroids
+Cloud Efficiency	Byte-range reads, page pruning, compression
+Vector Support	Chunking, indexing, centroid-based pruning
+Pruning	Range filters, cosine similarity, bloom filters per page
+Extensibility	Schema with nested maps, index pointers, external vector storage
+SIMD Usage	Could be extended to fast similarity calc (AVX512)
+
+Would you like me to generate a cleaned-up optimized Rust codebase for this new ArtusVectorFile abstraction with the enhancements above?

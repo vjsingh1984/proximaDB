@@ -429,7 +429,10 @@ class ProximaDBClient:
             dimension=proto_collection.config.dimension,
             distance_metric=self._proto_to_pydantic_distance_metric(proto_collection.config.distance_metric),
             storage_engine=self._proto_to_pydantic_storage_engine(proto_collection.config.storage_engine),
-            primary_indexing_algorithm=self._proto_to_pydantic_indexing_algorithm(proto_collection.config.primary_indexing_algorithm),
+            storage_config=proto_collection.config.storage_config if proto_collection.config.HasField('storage_config') else None,
+            quantization=proto_collection.config.quantization if proto_collection.config.HasField('quantization') else None,
+            primary_index=proto_collection.config.primary_index if proto_collection.config.primary_index else None,
+            auto_index_selection=proto_collection.config.auto_index_selection if proto_collection.config.auto_index_selection else None,
             description=proto_collection.config.description if proto_collection.config.description else None,
             tags=list(proto_collection.config.tags) if proto_collection.config.tags else None,
             owner=proto_collection.config.owner if proto_collection.config.owner else None,
@@ -490,7 +493,6 @@ class ProximaDBClient:
             dimension=config.dimension,
             distance_metric=self._pydantic_to_proto_distance_metric(config.distance_metric),
             storage_engine=self._pydantic_to_proto_storage_engine(config.storage_engine),
-            primary_indexing_algorithm=self._pydantic_to_proto_indexing_algorithm(config.primary_indexing_algorithm),
         )
         
         if config.description:
@@ -500,11 +502,21 @@ class ProximaDBClient:
         if config.owner:
             proto_config.owner = config.owner
         
-        # Handle quantization config
-        if config.quantization_config:
-            proto_config.quantization_config.CopyFrom(
-                self._pydantic_to_proto_quantization_config(config.quantization_config)
+        # Handle new field names
+        if config.primary_index:
+            proto_config.primary_index = config.primary_index
+        if config.auto_index_selection is not None:
+            proto_config.auto_index_selection = config.auto_index_selection
+        
+        # Handle quantization config (renamed field)
+        if config.quantization:
+            proto_config.quantization.CopyFrom(
+                self._pydantic_to_proto_quantization_config(config.quantization)
             )
+        
+        # Handle storage config
+        if config.storage_config:
+            proto_config.storage_config.CopyFrom(config.storage_config)
         
         return proto_config
     
@@ -623,15 +635,53 @@ class ProximaDBClient:
         config: Optional[CollectionConfig] = None,
         **kwargs
     ) -> Collection:
-        """Create a new vector collection"""
+        """Create a new vector collection with optional storage engine configuration
+        
+        Args:
+            name: Collection name
+            config: Full collection configuration including storage_engine_config
+            **kwargs: Additional configuration parameters
+            
+        Examples:
+            # Simple collection with defaults
+            client.create_collection("my_vectors", dimension=768)
+            
+            # Collection with storage optimization hints
+            from proximadb.models import CollectionConfig, StorageEngineConfig, AccessPattern
+            config = CollectionConfig(
+                name="optimized_vectors",
+                dimension=768,
+                storage_engine_config=StorageEngineConfig(
+                    access_pattern=AccessPattern.READ_HEAVY,
+                    expected_size_gb=100,
+                    preset="cloud_optimized"
+                )
+            )
+            client.create_collection(config=config)
+            
+            # Collection with specific Parquet settings
+            config = CollectionConfig(
+                name="custom_vectors",
+                dimension=768,
+                storage_engine_config=StorageEngineConfig(
+                    enable_all_optimizations=True,
+                    parquet_writer=ParquetWriterSettings(
+                        enable_bloom_filters=True,
+                        enable_pq_sorting=True,
+                        row_group_size=50000
+                    )
+                )
+            )
+            client.create_collection(config=config)
+        """
         if config is None:
             config = CollectionConfig(name=name, **kwargs)
         
         if self._active_protocol == Protocol.GRPC:
             proto_config = self._pydantic_to_proto_collection_config(config)
             # Note: gRPC client expects individual parameters, not the full config
-            # Compression config is embedded in the proto_config but needs to be passed
-            # through the collection metadata on the server side
+            # Compression and storage_engine_config are embedded in the proto_config
+            # and passed through the collection metadata on the server side
             response = self._client.create_collection(
                 name=config.name,
                 dimension=config.dimension,

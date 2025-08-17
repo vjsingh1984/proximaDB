@@ -41,7 +41,7 @@ impl MockCollectionService {
             return Err(anyhow::anyhow!("Mock collection service failed"));
         }
         
-        Ok(self.index_configs.lock().unwrap().get(collection_id).cloned())
+        Ok(self.index_configs.lock().unwrap().get(key).cloned())
     }
 }
 
@@ -57,16 +57,16 @@ fn create_test_vector(id: &str, _collection_id: &str, dimension: usize) -> Vecto
             timestamp: 0,
             updated_at: None,
             expires_at: None,
-            distance: None,
-            rank: None,
-            score: None,
+            similarity: None,
+            // rank removed -  None,
+            similarity: None,
         },
             proximadb::MetadataItem {
                 key: "score".to_string(),
                 value: Some(crate::proto::proximadb::metadata_item::Value::StringValue("0.95".to_string())),
             },
         ],
-        created_at: Utc::now().timestamp_micros(),
+        timestamp: Utc::now().timestamp_micros(),
         expires_at: None,
     }
 }
@@ -77,13 +77,13 @@ fn create_expired_vector(id: &str, _collection_id: &str, dimension: usize) -> Ve
         id: Some(id.to_string()),
         vector: (0..dimension).map(|i| i as f32 / 100.0).collect(),
         metadata: vec![],
-        created_at: Utc::now().timestamp_micros(),
+        timestamp: Utc::now().timestamp_micros(),
         expires_at: Some(Utc::now().timestamp_millis() - 1000), // Expired 1 second ago,
             timestamp: 0,
             updated_at: None,
-            distance: None,
-            rank: None,
-            score: None,
+            similarity: None,
+            // rank removed -  None,
+            similarity: None,
         }
 }
 
@@ -92,12 +92,12 @@ fn create_test_strategy() -> IndexSelectionStrategy {
     IndexSelectionStrategy {
         indexes: vec![
             IndexSpecification {
-                data_type: DataType::DenseVector { dimension: 128 },
+                // data_type removed -  DataType::DenseVector { dimension: 128 },
                 algorithm: IndexAlgorithm::HNSW,
                 configuration: HashMap::new(),
             },
             IndexSpecification {
-                data_type: DataType::Metadata,
+                // data_type removed -  DataType::Metadata,
                 algorithm: IndexAlgorithm::BTree,
                 configuration: HashMap::new(),
             },
@@ -540,7 +540,7 @@ mod migration_tests {
         let migrations = manager.active_migrations.read().await;
         assert!(migrations.contains_key("test_collection"));
         
-        let migration_status = migrations.get("test_collection").unwrap();
+        let migration_status = migrations.get(key).unwrap();
         assert_eq!(migration_status.migration_id, migration_id);
         assert_eq!(migration_status.progress_percentage, 0.0);
     }
