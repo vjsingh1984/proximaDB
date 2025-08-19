@@ -382,14 +382,22 @@ impl UnifiedHandlers {
                 // Convert VectorRecord to proto SearchVectorRecord (no metadata conversion loss)
                 let proto_result = crate::proto::proximadb::SearchVectorRecord {
                     id: vector_record.id.unwrap_or_else(|| "unknown".to_string()),
-                    rank: 1, // Single result for get_vector
                     score: 1.0, // Perfect match for get_vector
-                    similarity: 1.0, // Perfect match for get_vector
+                    similarity: Some(1.0), // Perfect match for get_vector
                     vector: if include_vector { vector_record.vector } else { vec![] },
-                    metadata: if include_metadata { vector_record.metadata } else { vec![] },
+                    metadata: if include_metadata { 
+                        // Convert HashMap to MetadataItem vector
+                        vector_record.metadata.into_iter()
+                            .map(|(k, v)| crate::proto::proximadb::MetadataItem {
+                                key: k,
+                                value: v.to_string(),
+                            })
+                            .collect()
+                    } else { 
+                        vec![] 
+                    },
                     version: vector_record.updated_at,
                     timestamp: Some(vector_record.timestamp),
-                    collection_id: None, // Will be set by caller
                 };
                 
                 Ok(VectorOperationResponse {
@@ -521,14 +529,17 @@ impl UnifiedHandlers {
                     
                     crate::proto::proximadb::SearchVectorRecord {
                         id: result.id.unwrap_or_else(|| format!("result_{}", index)),
-                        rank: (index + 1) as i32, // 1-based ranking
-                        score: 0.0, // VectorRecord doesn't have score, use default
-                        similarity: 0.0, // VectorRecord doesn't have similarity, use default
+                        score: result.similarity.unwrap_or(0.0), // Use similarity as score if available
+                        similarity: result.similarity, // Pass through similarity
                         vector,
-                        metadata,
+                        metadata: metadata.into_iter()
+                            .map(|(k, v)| crate::proto::proximadb::MetadataItem {
+                                key: k,
+                                value: v.to_string(),
+                            })
+                            .collect(),
                         version: result.version,
                         timestamp: Some(result.timestamp),
-                        collection_id: None,
                     }
                 }).collect();
                 

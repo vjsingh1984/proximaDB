@@ -415,7 +415,7 @@ impl RowBasedIdIndex {
             
             let bloom_filter = if config.bloom_per_level {
                 Some(SstableBloomFilter::new(
-                    crate::core::bloom::factory::BloomFilterConfig::default(),
+                    crate::core::config::BloomFilterConfig::default(),
                     vec![],
                     vec![],
                     crate::storage::engines::sst::bloom_filter::BloomFilterStats::default(),
