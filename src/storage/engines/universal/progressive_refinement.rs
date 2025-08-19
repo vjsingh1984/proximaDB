@@ -578,7 +578,7 @@ impl ProgressiveRefinementPipeline {
         let int8_data: Vec<i8> = data.iter().map(|&b| b as i8).collect();
         
         Ok(QuantizedVectorData::Int8(Int8VectorData {
-            data: int8_data,
+            values: int8_data,
             scale: 1.0,
             zero_point: 0,
         }))
@@ -592,8 +592,8 @@ impl ProgressiveRefinementPipeline {
         
         Ok(QuantizedVectorData::PQ(PQVectorData {
             codes,
-            segments,
-            bits: 8,
+            codebook: vec![vec![0.0; 8]; segments], // Placeholder codebook
+            codebook_hash: 0, // Placeholder hash
         }))
     }
     

@@ -86,7 +86,7 @@ impl RowBasedUtilities {
                 config.indexing.bloom_filter_per_block = true;
             }
             WorkloadType::MemoryConstrained => {
-                config.quantization.enable_progressive_quantization = true;
+                config.quantization.enable_progressive = true;
                 config.compression.compression_level = 6; // Better compression
                 config.performance.cache_size_bytes = 256 * 1024 * 1024; // 256MB
             }

@@ -376,7 +376,7 @@ pub mod utils {
         let block_size = calculate_optimal_block_size(
             config.dimension,
             config.records_per_block,
-            config.storage.as_ref().and_then(|s| s.compression.as_ref()).compression_ratio_estimate,
+            config.compression.global_compression.compression_ratio,
         );
         
         let blocks_in_memory = config.performance.cache_size_bytes / block_size;
@@ -400,7 +400,7 @@ pub mod utils {
         match workload_type {
             WorkloadType::HighThroughputWrite => {
                 // Optimize for writes
-                config.storage.as_ref().and_then(|s| s.compression.as_ref()).compression_level = 1; // Fast compression
+                config.compression.global_compression.algorithm = CompressionAlgorithm::Lz4; // Fast compression
                 config.performance.max_concurrent_operations = 16;
                 config.records_per_block = 4000; // Larger blocks
             }
@@ -416,8 +416,8 @@ pub mod utils {
             WorkloadType::LargeScale => {
                 // Optimize for scale
                 config.superblock_size_target = 2 * 1024 * 1024 * 1024; // 2GB
-                config.storage.as_ref().and_then(|s| s.compression.as_ref()).compression_level = 6; // Better compression
-                config.quantization.enable_aggressive_quantization = true;
+                config.compression.global_compression.algorithm = CompressionAlgorithm::Zstd; // Better compression
+                config.quantization.enable_progressive = true; // Enable progressive quantization
             }
         }
         

@@ -294,8 +294,7 @@ impl StorageEngineAdapter for PRISMAdapter {
         let mut vectors = Vec::new();
         for &id in vector_ids {
             vectors.push(VectorRecord {
-                id: id.to_string(),
-                collection_id: collection_id.to_string(),
+                id: Some(id.to_string()),
                 vector: vec![0.0; 128], // Placeholder vector
                 metadata: HashMap::new(),
                 timestamp: chrono::Utc::now().timestamp() as i64,
@@ -474,8 +473,7 @@ impl StorageEngineAdapter for NOVAAdapter {
         let mut vectors = Vec::new();
         for &id in vector_ids {
             vectors.push(VectorRecord {
-                id: id.to_string(),
-                collection_id: collection_id.to_string(),
+                id: Some(id.to_string()),
                 vector: vec![0.0; 256], // NOVA typically handles larger vectors
                 metadata: HashMap::new(),
                 timestamp: chrono::Utc::now().timestamp() as i64,
