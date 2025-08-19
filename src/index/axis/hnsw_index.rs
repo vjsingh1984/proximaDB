@@ -176,7 +176,7 @@ impl AxisHnswIndex {
         };
         
         Ok(Self {
-            collection_id,
+            collection_id: collection_id.clone(),
             config,
             distance_computer,
             
@@ -257,7 +257,7 @@ impl AxisHnswIndex {
             // Zero-overhead vector access with O(1) lookup
             if let Some(external_id) = self.id_mapping.get_external(ep) {
                 let vectors = self.vectors.read().unwrap();
-                if let Some(view) = vectors.get(&vector_id) {
+                if let Some(view) = vectors.get(external_id) {
                     let vector_data = view.as_f32().unwrap_or(&[]);
                     let dist = self.distance_computer.calculate_distance(query, vector_data, &self.config.distance_metric).rank_value;
                     
@@ -278,15 +278,15 @@ impl AxisHnswIndex {
             }
             
             // Explore neighbors of current node using DashMap
-            if let Some(neighbors) = self.layers.get(key) {
+            if let Some(neighbors) = self.layers.get(&curr_node) {
                 for &neighbor in neighbors.value() {
-                    if !visited.contains_hash(&neighbor) {
+                    if !visited.contains(&neighbor) {
                         visited.insert(neighbor);
                         
                         // Zero-overhead vector access for neighbors
                         if let Some(external_id) = self.id_mapping.get_external(neighbor) {
                             let vectors = self.vectors.read().unwrap();
-                            if let Some(view) = vectors.get(&vector_id) {
+                            if let Some(view) = vectors.get(external_id) {
                                 let vector_data = view.as_f32().unwrap_or(&[]);
                                 let dist = self.distance_computer.calculate_distance(query, vector_data, &self.config.distance_metric).rank_value;
                                 
@@ -429,7 +429,7 @@ impl AxisVectorIndex for AxisHnswIndex {
         top_k: usize,
         filter: Option<&HashMap<String, String>>,  // Metadata filter, not VectorRecord
     ) -> Result<Vec<(String, f32)>> {
-        self.search_with_filter(query, top_k).await
+        self.search_with_filter(query, top_k, None).await
     }
 
     async fn remove(&self, id: &str) -> Result<()> {
@@ -605,7 +605,10 @@ impl AxisHnswIndex {
     /// Estimate memory usage in bytes
     fn estimate_memory_usage(&self) -> usize {
         // USING UTILS: Get vector storage memory usage
-        let vector_memory = self.vectors.memory_usage();
+        let vector_memory = {
+            let vectors = self.vectors.read().unwrap();
+            vectors.memory_usage()
+        };
         
         // USING UTILS: Get ID mapping memory usage
         let id_mapping_memory = memory::dashmap_overhead::<String, usize>(self.id_mapping.len())
@@ -626,7 +629,7 @@ impl AxisHnswIndex {
     
     /// Set extraction mode for EventLog-based async index updates
     pub fn set_extraction_mode(&mut self, mode: ExtractionMode) {
-        self.extraction_mode = mode;
+        self.extraction_mode = mode.clone();
         info!("Extraction mode set to {:?} for HNSW index in collection: {:?}", mode, self.collection_id);
     }
     
@@ -679,7 +682,7 @@ impl AxisHnswIndex {
     
     /// NEW: Get preferred vector representation for queue consumption
     pub fn extraction_mode(&self) -> ExtractionMode {
-        self.extraction_mode
+        self.extraction_mode.clone()
     }
     
     /// NEW: Check if quantized vectors are available for search acceleration

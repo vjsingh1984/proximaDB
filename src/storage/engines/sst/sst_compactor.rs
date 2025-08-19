@@ -16,7 +16,7 @@ use super::readers::unified_sstable_reader::{
 };
 use crate::storage::persistence::filesystem::{FilesystemFactory, FileSystem};
 use crate::core::search::mvcc_resolution::MvccResolver;
-use crate::storage::quantization::{SstQuantizationAdapter, sst_adapter::SimilarityCluster};
+// Quantization now handled by unified compute module
 use anyhow::Result;
 use std::collections::{BinaryHeap, HashMap};
 use std::cmp::{Ordering, Reverse};
@@ -88,7 +88,7 @@ pub enum CompactionSortStrategy {
     /// Sort by timestamp (newest first)
     ByTimestamp,
     /// Sort by PQ similarity for better compression and progressive search
-    ByPQSimilarity(Arc<SstQuantizationAdapter>),
+    ByPQSimilarity(Arc<crate::compute::quantization::storage_engine::StorageQuantizationEngine>),
     /// Custom comparator function
     Custom(Arc<dyn Fn(&VectorRecord, &VectorRecord) -> Ordering + Send + Sync>),
 }
@@ -191,9 +191,9 @@ impl SstCompactor {
     /// Create compactor with PQ-based sorting for better compression
     pub fn with_pq_sorting(
         mut self,
-        quantization_adapter: Arc<SstQuantizationAdapter>,
+        quantization_engine: Arc<crate::compute::quantization::storage_engine::StorageQuantizationEngine>,
     ) -> Self {
-        self.sort_strategy = CompactionSortStrategy::ByPQSimilarity(quantization_adapter);
+        self.sort_strategy = CompactionSortStrategy::ByPQSimilarity(quantization_engine);
         self
     }
     
@@ -729,8 +729,8 @@ impl SstCompactor {
                 let mut sorted_records = Vec::with_capacity(records.len());
                 for &index in &sorted_indices {
                     if index < records.len() {
-                        let mut record = records[index].clone();
-                        0 /* TODO: VectorRecord no longer has level field */ = level; // Update level for compaction
+                        let record = records[index].clone();
+                        // TODO: VectorRecord no longer has level field, use version instead
                         sorted_records.push(record);
                     }
                 }
@@ -746,8 +746,7 @@ impl SstCompactor {
                     
                     for (i, record) in records.into_iter().enumerate() {
                         if !used[i] {
-                            let mut record = record;
-                            0 /* TODO: VectorRecord no longer has level field */ = level;
+                            // TODO: VectorRecord no longer has level field, use version instead
                             sorted_records.push(record);
                         }
                     }
@@ -818,7 +817,7 @@ impl SstCompactor {
         let mut all_stats = Vec::new();
 
         for level in 0..max_level {
-            if let Some(files) = level_files.get(key) {
+            if let Some(files) = level_files.get(&level) {
                 if files.len() >= 4 { // Compact when 4+ files at a level
                     let output_file = format!("level_{}_compacted_{}.sstable", 
                         level + 1, chrono::Utc::now().timestamp_millis());
@@ -904,7 +903,6 @@ mod tests {
     use crate::compute::quantization::unified::{UnifiedQuantizationEngine, InMemoryCodebookStore};
     use crate::compute::quantization::storage_engine::{StorageQuantizationEngine, StorageQuantizationConfig};
     use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
-    use crate::storage::quantization::SstQuantizationAdapter;
     use crate::storage::quantization::sst_adapter::SstQuantizationConfig;
 
     #[tokio::test]
@@ -946,7 +944,27 @@ mod tests {
         ));
         
         let sst_config = SstQuantizationConfig::default();
-        let adapter = Arc::new(SstQuantizationAdapter::new(base_engine, sst_config));
+        // Create storage quantization engine
+        let distance_compute = Arc::new(crate::compute::distance_computation::engine::UnifiedDistanceCompute::default());
+        let codebook_store = Arc::new(crate::compute::quantization::unified::InMemoryCodebookStore::new());
+        let unified_engine = Arc::new(crate::compute::quantization::unified::UnifiedQuantizationEngine::new(
+            distance_compute.clone(),
+            codebook_store,
+        ));
+        
+        let storage_config = crate::compute::quantization::storage_engine::StorageQuantizationConfig {
+            primary_level: Some(crate::compute::quantization::unified::UnifiedQuantizationLevel::pq8(32)),
+            filter_level: Some(crate::compute::quantization::unified::UnifiedQuantizationLevel::binary()),
+            fast_level: Some(crate::compute::quantization::unified::UnifiedQuantizationLevel::int8()),
+            distance_metric: crate::compute::distance_computation::engine::DistanceMetric::Cosine,
+            enable_progressive: true,
+            filter_threshold: 100.0,
+        };
+        
+        let quantization_engine = Arc::new(crate::compute::quantization::storage_engine::StorageQuantizationEngine::new(
+            unified_engine,
+            storage_config,
+        ));
         
         // Create filesystem factory
         let filesystem_factory = Arc::new(

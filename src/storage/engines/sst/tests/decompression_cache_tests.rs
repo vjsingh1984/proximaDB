@@ -31,7 +31,7 @@ mod tests {
         };
         
         // Test miss
-        assert!(cache.get(&key);
+        assert!(cache.get(&key).await.is_some());
         
         // Test put and hit
         let block = DataBlock::new(1, vec![]);
@@ -39,7 +39,7 @@ mod tests {
             .await
             .unwrap();
         
-        assert!(cache.get(&key);
+        assert!(cache.get(&key).await.is_some());
         
         // Check stats
         let stats = cache.get_stats().await;
@@ -127,7 +127,7 @@ mod tests {
                 block_id: i,
                 block_offset: i as u64 * 1000,
             };
-            assert!(cache.get(&key);
+            assert!(cache.get(&key).await.is_some());
         }
         
         // Check that blocks from second file are still there
@@ -137,7 +137,7 @@ mod tests {
                 block_id: i,
                 block_offset: i as u64 * 1000,
             };
-            assert!(cache.get(&key);
+            assert!(cache.get(&key).await.is_some());
         }
     }
 
@@ -179,7 +179,7 @@ mod tests {
                 block_id: 0,
                 block_offset: 0,
             };
-            assert!(cache.get(&key);
+            assert!(cache.get(&key).await.is_some());
         }
         
         // Check that collection2 blocks are still there
@@ -189,7 +189,7 @@ mod tests {
                 block_id: 0,
                 block_offset: 0,
             };
-            assert!(cache.get(&key);
+            assert!(cache.get(&key).await.is_some());
         }
     }
 
@@ -263,7 +263,7 @@ mod tests {
                 block_id: i,
                 block_offset: 0,
             };
-            assert!(cache.get(&key);
+            assert!(cache.get(&key).await.is_some());
         }
     }
 
@@ -323,13 +323,13 @@ mod tests {
         cache.put(key.clone(), block, None).await.unwrap();
         
         // Verify it's cached
-        assert!(cache.get(&key);
+        assert!(cache.get(&key).await.is_some());
         
         // Clear cache
         cache.clear().await;
         
         // Verify it's gone
-        assert!(cache.get(&key);
+        assert!(cache.get(&key).await.is_some());
         assert_eq!(cache.get_current_size().await, 0);
     }
 }

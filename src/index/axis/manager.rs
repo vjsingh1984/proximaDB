@@ -166,7 +166,7 @@ impl AxisManager {
     /// Insert a vector with adaptive indexing and quantization support
     pub async fn insert(&self, collection_id: &str, vector: &VectorRecord) -> Result<()> {
 
-        // Ensure we have a strategy for this collection
+        // Ensure we have a search_strategy for this collection
         self.ensure_collection_strategy(collection_id).await?;
 
         // Check if vector is expired (MVCC support) - direct field access
@@ -180,7 +180,7 @@ impl AxisManager {
         // Get collection config for quantization settings
         // First try shared cache, then fall back to collection service
         let collection = if let Some(cache) = &self.shared_collection_cache {
-            cache.get(cache_key).cloned()
+            cache.get(collection_id).cloned()
         } else if let Some(collection_service) = &self.collection_service {
             collection_service.get_collection(collection_id).await.ok().flatten()
                 .map(|c| Arc::new(c))
@@ -210,8 +210,8 @@ impl AxisManager {
             vector.clone()
         };
 
-        // Insert into appropriate indexes based on current strategy
-        let strategy = self.get_collection_strategy(collection_id).await?;
+        // Insert into appropriate indexes based on current search_strategy
+        let search_strategy = self.get_collection_strategy(collection_id).await?;
 
         // Insert into global ID index if ID is present
         if let Some(id) = &processed_vector.id {
@@ -222,8 +222,8 @@ impl AxisManager {
             }
         }
 
-        // Insert into other indexes based on strategy
-        for index_spec in &strategy.indexes {
+        // Insert into other indexes based on search_strategy
+        for index_spec in &search_strategy.indexes {
             match index_spec.data_type {
                 DataType::Metadata => {
                     self.metadata_index.insert(&processed_vector).await?;
@@ -242,7 +242,7 @@ impl AxisManager {
         let mut metrics = self.metrics.write().await;
         metrics.total_vectors_indexed += 1;
 
-        // Check if we should evaluate strategy change
+        // Check if we should evaluate search_strategy change
         self.maybe_evaluate_strategy(collection_id).await?;
 
         Ok(())
@@ -258,15 +258,15 @@ impl AxisManager {
             return Ok(());
         }
 
-        // Ensure we have a strategy for this collection
+        // Ensure we have a search_strategy for this collection
         self.ensure_collection_strategy(collection_id).await?;
 
         // Remove from indexes
-        let strategy = self.get_collection_strategy(collection_id).await?;
+        let search_strategy = self.get_collection_strategy(collection_id).await?;
 
         self.global_id_index.remove(&vector_id).await?;
 
-        for index_spec in &strategy.indexes {
+        for index_spec in &search_strategy.indexes {
             match index_spec.data_type {
                 DataType::Metadata => {
                     self.metadata_index.remove(&vector_id).await?;
@@ -286,13 +286,13 @@ impl AxisManager {
 
     /// Query vectors using adaptive indexes
     pub async fn query(&self, query: HybridQuery) -> Result<QueryResult> {
-        // Execute query using current strategy
+        // Execute query using current search_strategy
         let collection_id = &query.collection_id;
 
-        // Ensure we have a strategy for this collection
+        // Ensure we have a search_strategy for this collection
         self.ensure_collection_strategy(collection_id).await?;
 
-        let strategy = self.get_collection_strategy(collection_id).await?;
+        let search_strategy = self.get_collection_strategy(collection_id).await?;
 
         // Use join engine to combine results from multiple indexes
         let results = self
@@ -321,7 +321,7 @@ impl AxisManager {
 
         Ok(QueryResult {
             results: active_results,
-            strategy_used: strategy,
+            strategy_used: search_strategy,
             execution_time_ms: 0, // TODO: Track actual time
         })
     }
@@ -362,7 +362,7 @@ impl AxisManager {
             }
             MigrationDecision::Stay { reason } => {
                 debug!(
-                    "AXIS: Collection {} staying with current // strategy removed -  {}",
+                    "AXIS: Collection {} staying with current // search_strategy removed -  {}",
                     collection_id, reason
                 );
             }
@@ -371,7 +371,7 @@ impl AxisManager {
         Ok(())
     }
 
-    /// Start migration to new indexing strategy
+    /// Start migration to new indexing search_strategy
     async fn start_migration(
         &self,
         collection_id: &str,
@@ -413,7 +413,7 @@ impl AxisManager {
 
             match result {
                 Ok(migration_result) => {
-                    // Update strategy
+                    // Update search_strategy
                     let mut strategies = collection_strategies.write().await;
                     strategies.insert(collection_id.to_string(), migration_result.new_strategy);
 
@@ -447,7 +447,7 @@ impl AxisManager {
         Ok(())
     }
 
-    /// Ensure collection has an indexing strategy
+    /// Ensure collection has an indexing search_strategy
     pub async fn ensure_collection_strategy(&self, collection_id: &str) -> Result<()> {
         let strategies = self.collection_strategies.read().await;
         if strategies.contains_key(collection_id) {
@@ -455,18 +455,18 @@ impl AxisManager {
         }
         drop(strategies);
 
-        // Analyze collection and select initial strategy
+        // Analyze collection and select initial search_strategy
         let characteristics = self
             .adaptive_engine
             .analyze_collection(collection_id)
             .await?;
-        let strategy = self
+        let search_strategy = self
             .adaptive_engine
             .recommend_strategy(&characteristics)
             .await?;
 
         let mut strategies = self.collection_strategies.write().await;
-        strategies.insert(collection_id.to_string(), strategy);
+        strategies.insert(collection_id.to_string(), search_strategy);
 
         // Update metrics
         let mut metrics = self.metrics.write().await;
@@ -476,25 +476,25 @@ impl AxisManager {
     }
 
 
-    /// Get current strategy for collection
+    /// Get current search_strategy for collection
     pub async fn get_collection_strategy(&self, collection_id: &str) -> Result<IndexSelectionStrategy> {
         let strategies = self.collection_strategies.read().await;
         strategies
-            .get(key)
+            .get(collection_id)
             .cloned()
-            .ok_or_else(|| anyhow::anyhow!("No strategy found for collection {}", collection_id))
+            .ok_or_else(|| anyhow::anyhow!("No search_strategy found for collection {}", collection_id))
     }
 
-    /// Update collection strategy
-    pub async fn update_collection_strategy(&self, collection_id: &str, strategy: IndexSelectionStrategy) -> Result<()> {
+    /// Update collection search_strategy
+    pub async fn update_collection_strategy(&self, collection_id: &str, search_strategy: IndexSelectionStrategy) -> Result<()> {
         let mut strategies = self.collection_strategies.write().await;
-        strategies.insert(collection_id.to_string(), strategy);
+        strategies.insert(collection_id.to_string(), search_strategy);
         Ok(())
     }
 
 
 
-    /// Maybe evaluate if strategy should change
+    /// Maybe evaluate if search_strategy should change
     async fn maybe_evaluate_strategy(&self, _collection_id: &str) -> Result<()> {
         // TODO: Implement periodic evaluation logic
         // For now, we'll rely on explicit analyze_and_optimize calls
@@ -507,7 +507,7 @@ impl AxisManager {
         collection_id: &str,
     ) -> Option<MigrationStatus> {
         let migrations = self.active_migrations.read().await;
-        migrations.get(key).cloned()
+        migrations.get(collection_id).cloned()
     }
 
     /// Get current metrics
@@ -557,11 +557,11 @@ impl AxisManager {
         &self,
         collection_id: &str,
     ) -> Result<CollectionStats> {
-        let strategy = self.get_collection_strategy(collection_id).await?;
+        let search_strategy = self.get_collection_strategy(collection_id).await?;
 
         Ok(CollectionStats {
             collection_id: collection_id.to_string(),
-            strategy_type: strategy.indexes.first()
+            strategy_type: search_strategy.indexes.first()
                 .map(|idx| idx.data_type)
                 .unwrap_or(DataType::DenseVector { dimension: 0 }),
             total_vectors: 0,    // TODO: Implement actual counting
@@ -589,7 +589,7 @@ impl AxisManager {
             file_path
         );
 
-        // Ensure we have a strategy for this collection
+        // Ensure we have a search_strategy for this collection
         self.ensure_collection_strategy(collection_id).await?;
 
         // Update file reference in global ID index
@@ -597,9 +597,9 @@ impl AxisManager {
             .update_file_reference(vector_id, file_path)
             .await?;
 
-        // Update file references in secondary indexes based on strategy
-        let strategy = self.get_collection_strategy(collection_id).await?;
-        for index_spec in &strategy.indexes {
+        // Update file references in secondary indexes based on search_strategy
+        let search_strategy = self.get_collection_strategy(collection_id).await?;
+        for index_spec in &search_strategy.indexes {
             match index_spec.data_type {
                 DataType::Metadata => {
                     self.metadata_index
@@ -645,7 +645,7 @@ impl AxisManager {
             new_files
         );
 
-        // Ensure we have a strategy for this collection
+        // Ensure we have a search_strategy for this collection
         self.ensure_collection_strategy(collection_id).await?;
 
         // For now, we'll do a simple file reference update

@@ -7,6 +7,21 @@ use std::collections::HashMap;
 
 use super::progressive_refinement::RefinementStage;
 
+/// Cache eviction policy
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum CacheEvictionPolicy {
+    /// Least Recently Used
+    LRU,
+    /// Least Frequently Used  
+    LFU,
+    /// First In First Out
+    FIFO,
+    /// Random eviction
+    Random,
+    /// Time-based TTL eviction
+    TTL,
+}
+
 /// Main configuration for the universal adapter
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UniversalAdapterConfig {
@@ -106,7 +121,7 @@ pub struct CacheConfig {
     pub ttl_seconds: u64,
     
     /// Eviction policy
-    pub eviction_policy: super::quantized_calculator::CacheEvictionPolicy,
+    pub eviction_policy: CacheEvictionPolicy,
     
     /// Enable cache compression
     pub compression: bool,
@@ -196,7 +211,7 @@ impl Default for CacheConfig {
         Self {
             max_entries: 1000,
             ttl_seconds: 3600, // 1 hour
-            eviction_policy: super::quantized_calculator::CacheEvictionPolicy::LRU,
+            eviction_policy: CacheEvictionPolicy::LRU,
             compression: false,
             enable_cache_warming: true,
             max_memory_mb: 256,

@@ -106,11 +106,11 @@ impl ZeroOverheadVector {
     
     /// Create from quantized vector - zero overhead
     #[inline]
-    pub fn from_quantized(id: &str, quantized: &[u8]) -> Result<Self> {
+    pub fn from_quantized(id: &str, quantized_vector: &[u8]) -> Result<Self> {
         let id_bytes = id.as_bytes();
         
-        let mut data = Vec::with_capacity(quantized.len() + id_bytes.len());
-        data.extend_from_slice(quantized);
+        let mut data = Vec::with_capacity(quantized_vector.len() + id_bytes.len());
+        data.extend_from_slice(quantized_vector);
         data.extend_from_slice(id_bytes);
         
         Ok(Self { data })
@@ -253,13 +253,13 @@ impl ZeroOverheadCollection {
     }
     
     /// Add quantized vector
-    pub fn add_quantized(&mut self, id: String, quantized: &[u8]) -> Result<()> {
+    pub fn add_quantized(&mut self, id: String, quantized_vector: &[u8]) -> Result<()> {
         let expected_size = self.config.vector_size_bytes();
-        if quantized.len() != expected_size {
+        if quantized_vector.len() != expected_size {
             return Err(anyhow!("Quantized vector size mismatch"));
         }
         
-        let zero_overhead = ZeroOverheadVector::from_quantized(&id, quantized)?;
+        let zero_overhead = ZeroOverheadVector::from_quantized(&id, quantized_vector)?;
         let index = self.vectors.len();
         self.vectors.push(zero_overhead);
         self.id_index.insert(id, index);
@@ -269,7 +269,7 @@ impl ZeroOverheadCollection {
     /// Get vector by ID with zero-copy access
     #[inline]
     pub fn get(&self, id: &str) -> Option<VectorView> {
-        self.id_index.get(key).map(|index| {
+        self.id_index.get(id).map(|index| {
             VectorView {
                 vector: &self.vectors[*index],
                 config: &self.config,

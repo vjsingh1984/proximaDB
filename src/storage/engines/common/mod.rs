@@ -5,9 +5,11 @@
 pub mod search_common;
 #[deprecated(since = "0.2.0", note = "Use unified_query_optimizer module instead")]
 pub mod metadata_filters;
-pub mod quantization_common;
+// NOTE: quantization_common and quantization_adapter have been removed
+// All engines now use the unified quantization engine from compute module directly
 pub mod compression_common;
 pub mod search_modes;
+pub mod progressive_search;
 // TODO: Create these modules when needed:
 // pub mod performance_config;
 // pub mod validation_common;
@@ -17,7 +19,6 @@ pub mod search_modes;
 
 // Synergy adapters - Bridge universal abstractions with existing implementations
 pub mod compression_adapter;
-pub mod quantization_adapter;
 
 // DEPRECATED: These types now live in unified_query_optimizer
 // Re-exported here for backward compatibility only
@@ -26,10 +27,7 @@ pub use metadata_filters::{
     UniversalMetadataFilter, UniversalFilterCondition, UniversalFilterLogic,
     FilterableColumn, ColumnStatistics, ColumnDataType,
 };
-pub use quantization_common::{
-    UniversalQuantizationConfig, UniversalQuantizationLevel, UniversalQuantizationStats,
-    ProgressiveQuantizationStage, QuantizationCapabilities,
-};
+// NOTE: Quantization exports removed - use compute::quantization module directly
 pub use compression_common::{
     UniversalCompressionConfig, CompressionCapabilities, CompressionStrategy,
     CompressionStats, AdaptiveCompressionSettings,
@@ -65,10 +63,7 @@ pub use compression_adapter::{
     UniversalCompressionAdapter, CompressedData, CompressionMetadata,
     CompressionPerformanceStats,
 };
-pub use quantization_adapter::{
-    UniversalQuantizationAdapter, ProgressiveQuantizationResult, 
-    StageQuantizationResult, SearchResult, QuantizationPerformanceStats,
-};
+// Quantization now handled by unified compute module
 
 // Search pipeline re-exports
 pub use search_common::{
@@ -126,7 +121,7 @@ pub struct UniversalEngineConfig {
     pub performance: UniversalPerformanceConfig,
     
     /// Quantization settings
-    pub quantization: UniversalQuantizationConfig,
+    pub quantization: crate::compute::quantization::storage_engine::StorageQuantizationConfig,
     
     /// Compression settings
     pub compression: UniversalCompressionConfig,
@@ -570,7 +565,7 @@ impl Default for UniversalEngineConfig {
             distance_metric: DistanceMetric::Cosine,
             storage_config: UniversalStorageConfig::default(),
             performance: UniversalPerformanceConfig::default(),
-            quantization: UniversalQuantizationConfig::default(),
+            quantization: crate::compute::quantization::storage_engine::StorageQuantizationConfig::default(),
             compression: UniversalCompressionConfig::default(),
             validation: UniversalValidationConfig::default(),
             batch_operations: UniversalBatchConfig::default(),
@@ -759,12 +754,12 @@ pub mod utils {
         }
         
         // Hardware-specific optimizations
-        if hardware.total_memory_gb() > 64 {
+        if hardware.memory.total_memory / (1024 * 1024 * 1024) > 64 {
             config.performance.cache_size_bytes = 8 * 1024 * 1024 * 1024; // 8GB
         }
         
-        if hardware.cpu.core_count() > 16 {
-            config.performance.max_concurrent_operations = hardware.cpu.core_count();
+        if hardware.cpu.physical_cores > 16 {
+            config.performance.max_concurrent_operations = hardware.cpu.physical_cores;
         }
         
         config

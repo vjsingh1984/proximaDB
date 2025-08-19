@@ -13,7 +13,7 @@ use crate::storage::persistence::filesystem::{FileSystem, FilesystemFactory};
 use crate::compute::distance_computation::DistanceMetric;
 
 use super::{
-    SstFile, SuperBlock, DataBlock, MetadataFilter,
+    SwiftFile, SuperBlock, DataBlock, MetadataFilter,
     id_index::RecordLocation,
     hierarchical_blocks::BitSet,
 };
@@ -81,7 +81,7 @@ pub struct UnifiedSwiftReader {
     config: SwiftReaderConfig,
     
     /// Cached file header (minimal overhead, frequently accessed)
-    cached_header: Option<super::SstHeader>,
+    cached_header: Option<super::SwiftHeader>,
     
     /// Cached superblock metadata (avoid repeated cloud API calls)
     cached_superblock_metadata: Arc<RwLock<HashMap<u32, SuperBlockMetadata>>>,
@@ -153,7 +153,7 @@ impl UnifiedSwiftReader {
     }
     
     /// Get header (from cache)
-    pub fn header(&self) -> Result<&super::SstHeader> {
+    pub fn header(&self) -> Result<&super::SwiftHeader> {
         self.cached_header.as_ref()
             .ok_or_else(|| anyhow!("Header not loaded"))
     }
@@ -161,7 +161,7 @@ impl UnifiedSwiftReader {
     /// Read with specific strategy
     pub async fn read_with_strategy(
         &self,
-        // strategy removed -  SwiftReadStrategy,
+        strategy: SwiftReadStrategy,
     ) -> Result<SwiftReadResult> {
         match strategy {
             SwiftReadStrategy::StreamAll => self.stream_all().await,
@@ -266,10 +266,11 @@ impl UnifiedSwiftReader {
         }
         
         // Step 4: Coalesce nearby reads to minimize API calls
+        let original_request_count = range_requests.len();
         let coalesced_requests = self.coalesce_range_requests(range_requests)?;
         
         debug!("Coalesced {} requests into {} for efficiency",
-            range_requests.len(), coalesced_requests.len());
+            original_request_count, coalesced_requests.len());
         
         // Step 5: Execute reads in parallel (respecting max concurrency)
         let read_results = self.execute_parallel_reads(coalesced_requests).await?;
@@ -491,7 +492,7 @@ impl UnifiedSwiftReader {
     
     // Helper methods
     
-    fn deserialize_header(&self, data: &[u8]) -> Result<super::SstHeader> {
+    fn deserialize_header(&self, data: &[u8]) -> Result<super::SwiftHeader> {
         // Implementation depends on header serialization format
         unimplemented!("Header deserialization")
     }
@@ -538,7 +539,7 @@ impl UnifiedSwiftReader {
     
     async fn get_superblock_metadata(&self, sb_id: u32) -> Result<SuperBlockMetadata> {
         let metadata = self.load_superblock_metadata().await?;
-        metadata.get(key)
+        metadata.get(&sb_id)
             .cloned()
             .ok_or_else(|| anyhow!("Superblock {} not found", sb_id))
     }

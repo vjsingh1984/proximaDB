@@ -438,7 +438,7 @@ impl RecoveryManager {
     ) -> Result<crate::storage::traits::FlushResult> {
         // Get the storage engine for this collection
         let engines = storage_engines.read().await;
-        let engine = engines.get(key)
+        let engine = engines.get(&file_info.collection_id)
             .ok_or_else(|| anyhow::anyhow!(
                 "No storage engine registered for collection {}",
                 file_info.collection_id

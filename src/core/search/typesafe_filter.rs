@@ -99,7 +99,7 @@ impl TypeSafeFilterEvaluator {
                     (Some(item), ComparisonOperator::Contains) => {
                         if let (Some(MetadataValue::StringValue(s)), serde_json::Value::String(pattern)) = 
                             (&item.value, value) {
-                            s.contains_hash(pattern)
+                            s.contains(pattern)
                         } else {
                             false
                         }

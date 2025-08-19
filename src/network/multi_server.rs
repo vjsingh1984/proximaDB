@@ -247,11 +247,11 @@ impl TLSConfig {
                     let cert_str = String::from_utf8_lossy(&cert_data);
                     let key_str = String::from_utf8_lossy(&key_data);
 
-                    cert_str.contains_hash("-----BEGIN CERTIFICATE-----")
-                        && cert_str.contains_hash("-----END CERTIFICATE-----")
-                        && (key_str.contains_hash("-----BEGIN PRIVATE KEY-----")
-                            || key_str.contains_hash("-----BEGIN RSA PRIVATE KEY-----")
-                            || key_str.contains_hash("-----BEGIN EC PRIVATE KEY-----"))
+                    cert_str.contains("-----BEGIN CERTIFICATE-----")
+                        && cert_str.contains("-----END CERTIFICATE-----")
+                        && (key_str.contains("-----BEGIN PRIVATE KEY-----")
+                            || key_str.contains("-----BEGIN RSA PRIVATE KEY-----")
+                            || key_str.contains("-----BEGIN EC PRIVATE KEY-----"))
                 }
                 _ => false,
             }
@@ -441,8 +441,18 @@ impl SharedServices {
                     index_configs: vec![],
                     quantization: Some(crate::proto::proximadb::QuantizationConfig {
                         enabled: true,  // Quantization enabled by default
-                        enable_progressive_search: Some(true),  // Progressive search enabled by default
-                        ..Default::default()
+                        strategy: crate::proto::proximadb::quantization_config::Strategy::SmartDefaults as i32,
+                        custom_levels: vec![],
+                        enable_progressive_search: true,  // Progressive search enabled by default
+                        binary_filter_selectivity: 0.3,
+                        int8_ranking_selectivity: 0.1,
+                        pq_ranking_selectivity: 0.05,
+                        training_sample_size: 10000,
+                        quality_threshold: 0.95,
+                        enable_adaptive_training: true,
+                        optimize_for_storage: false,
+                        optimize_for_memory: false,
+                        enable_simd_acceleration: true,
                     }),
                     storage_config: metadata.storage_assignment.as_ref().map(|sa| {
                         crate::proto::proximadb::StorageConfig {
@@ -466,7 +476,7 @@ impl SharedServices {
                         index_size_bytes: metadata.total_size_bytes as i64,
                         data_size_bytes: metadata.total_size_bytes as i64,
                     }),
-                    timestamp: metadata.created_at.timestamp_millis(),
+                    timestamp: metadata.timestamp.timestamp_millis(),
                     updated_at: metadata.updated_at.timestamp_millis(),
                     storage_assignment: metadata.storage_assignment.as_ref().map(|sa| {
                         crate::proto::proximadb::StorageAssignment {
@@ -533,7 +543,7 @@ impl SharedServices {
         let storage_ref = storage.read().await;
         let recovered_collections = storage_ref.get_recovered_collections_metadata().await?;
         
-        if recovered_collections.is_none() {
+        if recovered_collections.is_empty() {
             info!("📋 SharedServices: No collections found for vector recovery");
             return Ok(());
         }
@@ -660,7 +670,8 @@ impl MultiServer {
                 crate::proto::proximadb::proxima_db_server::ProximaDbServer::new(grpc_handler);
 
             // Apply compression if enabled
-            let grpc_service = if self.config.grpc_config.enable_compression {
+            // Compression disabled by default (field doesn't exist in config)
+            let grpc_service = if false {
                 use tonic::codec::CompressionEncoding;
                 info!("🗜️  gRPC compression enabled (gzip)");
                 grpc_service
@@ -710,7 +721,8 @@ impl MultiServer {
             let unified_handlers = services.unified_handlers.clone();
 
             let api_config = self.config.api_config.clone();
-            let enable_compression = self.config.http_config.enable_compression;
+            // Compression disabled by default (field doesn't exist in config)
+            let enable_compression = false;
             let rest_handle = tokio::spawn(async move {
                 use crate::network::rest::server::RestServer;
 
@@ -765,7 +777,7 @@ impl MultiServer {
     /// Get server status
     pub async fn get_status(&self) -> ServerStatus {
         let handles = self.server_handles.lock().await;
-        let servers_running = !handles.is_none();
+        let servers_running = !handles.is_empty();
 
         ServerStatus {
             http_running: self.config.http_config.enable_rest && servers_running,

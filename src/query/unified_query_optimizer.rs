@@ -369,11 +369,11 @@ impl UnifiedQueryOptimizer {
         let optimization_time = start.elapsed();
         
         debug!(
-            "✅ Unified optimization complete in {:?}: {} steps, est. latency {}ms, confidence {:.2}",
+            "✅ Unified optimization complete in {:?}: {} steps, est. latency {}ms, recall {:.2}",
             optimization_time,
             execution_steps.len(),
             performance_estimate.estimated_latency_ms,
-            performance_estimate.confidence
+            performance_estimate.estimated_recall
         );
         
         Ok(UnifiedExecutionPlan {
@@ -403,13 +403,31 @@ impl UnifiedQueryOptimizer {
                 if filter_selectivity < 0.1 && search_cost > 100.0 {
                     // High selectivity filter first
                     trace!("Strategy: Filter-first (selectivity={:.2})", filter_selectivity);
-                    steps.push(self.create_execution_plan(cost_analysis)?);
-                    steps.push(self.create_execution_plan(cost_analysis)?);
+                    steps.push(ExecutionStep::MetadataFilter {
+                        conditions: self.extract_filter_conditions(cost_analysis)?,
+                        execution_method: self.select_filter_execution_method(cost_analysis)?,
+                        estimated_selectivity: cost_analysis.filter_selectivity.unwrap_or(1.0),
+                        estimated_cost: cost_analysis.filter_cost.unwrap_or(0.0),
+                    });
+                    steps.push(ExecutionStep::VectorSearch {
+                        execution_method: self.select_search_method(cost_analysis)?,
+                        quantization_strategy: self.select_quantization_strategy(cost_analysis),
+                        candidates: cost_analysis.query.top_k * 10,
+                    });
                 } else if filter_selectivity > 0.5 && search_cost < 10.0 {
                     // Low selectivity filter - search first
                     trace!("Strategy: Search-first (filter selectivity too low)");
-                    steps.push(self.create_execution_plan(cost_analysis)?);
-                    steps.push(self.create_execution_plan(cost_analysis)?);
+                    steps.push(ExecutionStep::VectorSearch {
+                        execution_method: self.select_search_method(cost_analysis)?,
+                        quantization_strategy: self.select_quantization_strategy(cost_analysis),
+                        candidates: cost_analysis.query.top_k * 10,
+                    });
+                    steps.push(ExecutionStep::MetadataFilter {
+                        conditions: self.extract_filter_conditions(cost_analysis)?,
+                        execution_method: self.select_filter_execution_method(cost_analysis)?,
+                        estimated_selectivity: cost_analysis.filter_selectivity.unwrap_or(1.0),
+                        estimated_cost: cost_analysis.filter_cost.unwrap_or(0.0),
+                    });
                 } else {
                     // COMBINED EXECUTION - Optimal for most cases
                     trace!("Strategy: Combined filter+search execution");
@@ -422,11 +440,20 @@ impl UnifiedQueryOptimizer {
             }
             (true, false) => {
                 // Filter only
-                steps.push(self.create_execution_plan(cost_analysis)?);
+                steps.push(ExecutionStep::MetadataFilter {
+                    conditions: self.extract_filter_conditions(cost_analysis)?,
+                    execution_method: self.select_filter_execution_method(cost_analysis)?,
+                    estimated_selectivity: cost_analysis.filter_selectivity.unwrap_or(1.0),
+                    estimated_cost: cost_analysis.filter_cost.unwrap_or(0.0),
+                });
             }
             (false, true) => {
                 // Search only
-                steps.push(self.create_execution_plan(cost_analysis)?);
+                steps.push(ExecutionStep::VectorSearch {
+                    execution_method: self.select_search_method(cost_analysis)?,
+                    quantization_strategy: self.select_quantization_strategy(cost_analysis),
+                    candidates: cost_analysis.query.top_k * 10,
+                });
             }
             _ => {
                 // No-op or scan
@@ -860,6 +887,102 @@ impl UnifiedQueryOptimizer {
         })
     }
     
+    /// Extract filter conditions from cost analysis
+    fn extract_filter_conditions(&self, cost_analysis: &CostAnalysis) -> Result<Vec<FilterCondition>> {
+        let mut conditions = Vec::new();
+        
+        // Extract conditions from the query filter if present
+        if let Some(filter) = &cost_analysis.query.filter {
+            // Create basic filter conditions from the filter
+            for (key, value) in &filter.metadata {
+                conditions.push(FilterCondition::Equals {
+                    column: key.clone(),
+                    value: value.clone(),
+                });
+            }
+        }
+        
+        Ok(conditions)
+    }
+    
+    /// Select filter execution method based on cost analysis
+    fn select_filter_execution_method(&self, cost_analysis: &CostAnalysis) -> Result<FilterExecutionMethod> {
+        // Choose method based on cost and filter selectivity
+        // TODO: Add dataset_size to CostAnalysis or pass it separately
+        let estimated_dataset_size = (cost_analysis.total_cost * 10000.0) as usize; // Rough estimate
+        
+        let method = if estimated_dataset_size < 10000 {
+            FilterExecutionMethod::SequentialScan
+        } else if cost_analysis.filter_selectivity.unwrap_or(1.0) < 0.1 {
+            FilterExecutionMethod::IndexLookup
+        } else if estimated_dataset_size > 100000 {
+            FilterExecutionMethod::ParallelScan { num_threads: 4 }
+        } else {
+            FilterExecutionMethod::BitmapScan
+        };
+        
+        Ok(method)
+    }
+    
+    /// Select search method based on cost analysis
+    fn select_search_method(&self, cost_analysis: &CostAnalysis) -> Result<SearchExecutionMethod> {
+        // Choose search method based on estimated dataset size and available indexes
+        // TODO: Add dataset_size to CostAnalysis or pass it separately
+        let estimated_dataset_size = (cost_analysis.total_cost * 10000.0) as usize; // Rough estimate
+        
+        let method = if estimated_dataset_size < 10000 {
+            // Small dataset - direct FP32 search
+            SearchExecutionMethod::DirectFP32
+        } else if estimated_dataset_size < 100000 {
+            // Medium dataset - progressive search
+            SearchExecutionMethod::Progressive {
+                stages: vec![
+                    ProgressiveStage {
+                        algorithm: SearchAlgorithm::BinaryFilter,
+                        candidates: cost_analysis.query.top_k * 100,
+                    },
+                    ProgressiveStage {
+                        algorithm: SearchAlgorithm::QuantizedSearch,
+                        candidates: cost_analysis.query.top_k * 10,
+                    },
+                    ProgressiveStage {
+                        algorithm: SearchAlgorithm::ExactSearch,
+                        candidates: cost_analysis.query.top_k,
+                    },
+                ],
+            }
+        } else if cost_analysis.has_indexes {
+            // Large dataset with indexes
+            SearchExecutionMethod::IndexBased {
+                index_type: IndexType::HNSW, // Default to HNSW for now
+            }
+        } else {
+            // Large dataset without indexes - quantized only
+            SearchExecutionMethod::QuantizedOnly {
+                quantization_type: QuantizationType::PQ8,
+            }
+        };
+        
+        Ok(method)
+    }
+    
+    /// Select quantization strategy based on cost analysis
+    fn select_quantization_strategy(&self, cost_analysis: &CostAnalysis) -> Option<QuantizationStrategy> {
+        // Use quantization for large datasets
+        // TODO: Add dataset_size to CostAnalysis or pass it separately
+        let estimated_dataset_size = (cost_analysis.total_cost * 10000.0) as usize; // Rough estimate
+        
+        if estimated_dataset_size > 100000 {
+            Some(QuantizationStrategy {
+                quantization_type: QuantizationType::PQ,
+                use_two_stage: true,
+                candidate_multiplier: 10,
+            })
+        } else {
+            None
+        }
+    }
+    
     /// Build cost analysis (stub implementation)
     fn build_cost_analysis(&self, _context: &UnifiedQueryContext<'_>, _analysis: &QueryAnalysis) -> Result<CostAnalysis> {
         Ok(CostAnalysis {
@@ -967,10 +1090,7 @@ impl UnifiedCostModel {
         Self {
             // strategies: HashMap::new(), // TODO: Restore when CostStrategy trait is available
             historical_costs: Arc::new(parking_lot::RwLock::new(HashMap::new())),
-            hardware: Arc::new(
-                crate::core::hardware_capabilities::HardwareCapabilities::detect()
-                    .unwrap_or_default()
-            ),
+            hardware: crate::core::hardware_capabilities::get_hardware_capabilities(),
         }
     }
 }

@@ -21,7 +21,7 @@ impl EngineCapabilities {
     /// Check if a compression algorithm is supported by a given storage engine
     pub fn is_compression_supported(engine: StorageEngine, algorithm: CompressionAlgorithm) -> bool {
         let supported = Self::get_supported_compression_algorithms(engine);
-        supported.contains_hash(&algorithm)
+        supported.contains(&algorithm)
     }
     
     /// Get all supported compression algorithms for a storage engine
@@ -86,7 +86,7 @@ impl EngineCapabilities {
         ];
         
         for algo in all_algorithms {
-            if !supported.contains_hash(&algo) {
+            if !supported.contains(&algo) {
                 unsupported.push(algo);
             }
         }

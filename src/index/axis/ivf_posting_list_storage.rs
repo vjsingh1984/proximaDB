@@ -191,7 +191,7 @@ impl PostingListStorage {
                         updated_at: None,
                         expires_at: None,
                         version: None,
-                        quantized: None,
+                        quantized_vector: None,
                     });
                 }
                 
@@ -238,7 +238,7 @@ impl PostingListStorage {
         match self {
             PostingListStorage::Memory { cache } => {
                 // Deserialize from bincode in memory
-                if let Some(bytes) = cache.get(&key) {
+                if let Some(bytes) = cache.get(&cluster_id) {
                     let list: PostingList = bincode::deserialize(&bytes)?;
                     Ok(Some(list))
                 } else {
@@ -374,14 +374,14 @@ impl TieredPostingListManager {
     /// Get posting list with tier-aware loading
     pub async fn get(&self, cluster_id: usize) -> Result<Option<PostingList>> {
         // Try memory first
-        if let Some(list) = self.memory_storage.get(key).await? {
+        if let Some(list) = self.memory_storage.get(cluster_id).await? {
             self.access_tracker.insert(cluster_id, std::time::SystemTime::now());
             return Ok(Some(list));
         }
         
         // Try disk if available
         if let Some(ref disk) = self.disk_storage {
-            if let Some(list) = disk.get(key).await? {
+            if let Some(list) = disk.get(cluster_id).await? {
                 // Promote to memory
                 self.memory_storage.put(cluster_id, list.clone()).await?;
                 self.access_tracker.insert(cluster_id, std::time::SystemTime::now());
@@ -392,7 +392,7 @@ impl TieredPostingListManager {
         
         // Try cloud if available
         if let Some(ref cloud) = self.cloud_storage {
-            if let Some(list) = cloud.get(key).await? {
+            if let Some(list) = cloud.get(cluster_id).await? {
                 // Promote to memory (and optionally disk)
                 self.memory_storage.put(cluster_id, list.clone()).await?;
                 if let Some(ref disk) = self.disk_storage {
@@ -436,7 +436,7 @@ impl TieredPostingListManager {
             let evict_count = MAX_MEMORY_LISTS / 10;
             for (cluster_id, _) in access_times.iter().take(evict_count) {
                 // Get posting list from memory
-                if let Some(list) = self.memory_storage.get(key).await? {
+                if let Some(list) = self.memory_storage.get(*cluster_id).await? {
                     // Demote to disk (convert from bincode to SST/VIPER)
                     if let Some(ref disk) = self.disk_storage {
                         disk.put(*cluster_id, list).await?;

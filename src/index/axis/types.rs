@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 pub struct ClusterAssignment {
     pub vector_id: u32,
     pub cluster_id: u32,
-    pub distance: f32,
+    pub similarity: f32,
 }
 
 /// What kind of data are we indexing?
@@ -119,6 +119,7 @@ pub enum TokenFilter {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct IndexSpecification {
     /// What data are we indexing
+    pub data_type: DataType,
     
     /// How are we indexing it
     pub algorithm: IndexAlgorithm,

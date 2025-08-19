@@ -581,7 +581,7 @@ where
     }
 
     pub fn contains(&self, key: &K) -> bool {
-        self.inner.contains_hash(key)
+        self.inner.contains_key(key)
     }
 
     pub fn len(&self) -> usize {

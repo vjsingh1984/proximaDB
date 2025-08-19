@@ -1,64 +1,91 @@
-// Columnar progressive search for VIPER
-// Leverages Parquet's columnar format for efficient similarity search
+// NOVA Columnar Search - Progressive columnar search with Parquet optimization
+// Implements UnifiedStorageEngine's search_vectors_unified interface
+// Similar to VIPER but with NOVA-specific optimizations for analytics workloads
 
 use anyhow::{anyhow, Result};
-use arrow_array::array::{ArrayRef, Float32Array, BinaryArray, StringArray};
-// Arrow compute functions are not in arrow_array, would need arrow crate
-// For now, implement comparisons manually
-use arrow_array::record_batch::RecordBatch;
-use parquet::arrow::arrow_reader::ParquetRecordBatchReader;
-use parquet::arrow::ProjectionMask;
-use std::cmp::Ordering;
-use std::collections::BinaryHeap;
+use arrow_array::{ArrayRef, Float32Array, StringArray, RecordBatch};
+use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
+use std::collections::{BinaryHeap, HashMap};
 use std::sync::Arc;
-use tokio::sync::Semaphore;
-use tracing::{debug, info};
+use tokio::sync::{mpsc, RwLock, Semaphore};
+use tracing::{debug, info, warn};
 
 use crate::core::VectorRecord;
-use crate::compute::distance_computation::DistanceMetric;
-use super::{NovaFile, MetadataFilter, FilterCondition};
-use super::quantized_columns::{BinarySketch, Int8Vector, PQCode, DistanceTable};
+use crate::compute::distance_computation::{DistanceMetric, engine::UnifiedDistanceCompute};
+use crate::proto::proximadb::{SearchResult, SearchVectorRecord};
+use crate::storage::engines::columnar::{
+    UnifiedParquetReader, ColumnarConfig, MetadataFilter, FilterCondition,
+};
 
-/// Configuration for columnar progressive search
+use super::{
+    NovaFile, 
+    hierarchical_stats::{SuperBlock, EnhancedRowGroupStats},
+    progressive_search::{ProgressiveColumnarSearch, ProgressiveSearchConfig},
+    streaming_processor::{StreamingRowGroupProcessor, StreamingConfig},
+    zone_maps::AdvancedZoneMap,
+};
+
+/// Configuration for columnar search in NOVA
 #[derive(Debug, Clone)]
 pub struct ColumnarSearchConfig {
-    /// Expansion factors for each level
-    pub binary_expansion: usize,
-    pub int8_expansion: usize,
-    pub pq_expansion: usize,
+    /// Enable predicate pushdown to Parquet
+    pub enable_predicate_pushdown: bool,
     
-    /// Distance thresholds
-    pub binary_threshold: f32,
-    pub int8_threshold: f32,
-    pub pq_threshold: f32,
+    /// Enable row group pruning based on statistics
+    pub enable_row_group_pruning: bool,
     
-    /// Row group parallelism
-    pub max_concurrent_row_groups: usize,
-    
-    /// Column projection optimization
+    /// Enable column projection
     pub enable_projection: bool,
     
-    /// Predicate pushdown
-    pub enable_pushdown: bool,
+    /// Enable progressive search stages
+    pub enable_progressive_search: bool,
+    
+    /// Enable streaming for memory efficiency
+    pub enable_streaming: bool,
+    
+    /// Maximum candidates to process
+    pub max_candidates: usize,
+    
+    /// Search mode
+    pub search_mode: SearchMode,
+    
+    /// Memory budget in bytes
+    pub memory_budget: Option<usize>,
+    
+    /// Latency budget in milliseconds
+    pub latency_budget_ms: Option<u64>,
 }
 
 impl Default for ColumnarSearchConfig {
     fn default() -> Self {
         Self {
-            binary_expansion: 10,
-            int8_expansion: 5,
-            pq_expansion: 2,
-            binary_threshold: 100.0,
-            int8_threshold: 50.0,
-            pq_threshold: 10.0,
-            max_concurrent_row_groups: 4,
+            enable_predicate_pushdown: true,
+            enable_row_group_pruning: true,
             enable_projection: true,
-            enable_pushdown: true,
+            enable_progressive_search: true,
+            enable_streaming: true,
+            max_candidates: 10000,
+            search_mode: SearchMode::Progressive,
+            memory_budget: Some(1024 * 1024 * 1024), // 1GB default
+            latency_budget_ms: Some(1000), // 1 second default
         }
     }
 }
 
-/// Candidate during progressive refinement
+/// Search modes for NOVA
+#[derive(Debug, Clone, PartialEq)]
+pub enum SearchMode {
+    /// Full precision search (no quantization)
+    FullPrecision,
+    /// Progressive search with quantization stages
+    Progressive,
+    /// Streaming search for large datasets
+    Streaming,
+    /// Hybrid mode (adaptive based on query)
+    Hybrid,
+}
+
+/// Search candidate for columnar processing
 #[derive(Debug, Clone)]
 struct SearchCandidate {
     row_group_id: usize,
@@ -69,578 +96,906 @@ struct SearchCandidate {
 
 impl PartialEq for SearchCandidate {
     fn eq(&self, other: &Self) -> bool {
-        self.distance == other.distance
+        self.similarity == other.similarity
     }
 }
 
 impl Eq for SearchCandidate {}
 
 impl PartialOrd for SearchCandidate {
-    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        // Reverse for min-heap
-        other.distance.partial_cmp(&self.distance)
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        // Reverse for min-heap (best candidates first)
+        other.similarity.partial_cmp(&self.similarity)
     }
 }
 
 impl Ord for SearchCandidate {
-    fn cmp(&self, other: &Self) -> Ordering {
-        self.partial_cmp(other).unwrap_or(Ordering::Equal)
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.partial_cmp(other).unwrap_or(std::cmp::Ordering::Equal)
     }
 }
 
-/// Main columnar progressive search
-pub async fn search_columnar_progressive(
-    viper: &ViperFile,
-    query: &[f32],
-    top_k: usize,
-    filter: Option<MetadataFilter>,
-) -> Result<Vec<VectorRecord>> {
-    let config = ColumnarSearchConfig::default();
-    
-    info!(
-        "Starting columnar progressive search for top-{} with dimension {}",
-        top_k,
-        query.len()
-    );
-    
-    // Phase 1: Binary filtering on row groups
-    let binary_candidates = phase1_binary_columnar(
-        viper,
-        query,
-        top_k * config.binary_expansion,
-        &filter,
-        config.binary_threshold,
-    ).await?;
-    
-    debug!("Phase 1: {} binary candidates", binary_candidates.len());
-    
-    if binary_candidates.is_empty() {
-        return Ok(Vec::new());
-    }
-    
-    // Phase 2: INT8 refinement
-    let int8_candidates = phase2_int8_columnar(
-        viper,
-        query,
-        binary_candidates,
-        top_k * config.int8_expansion,
-        config.int8_threshold,
-    ).await?;
-    
-    debug!("Phase 2: {} INT8 candidates", int8_candidates.len());
-    
-    if int8_candidates.is_empty() {
-        return Ok(Vec::new());
-    }
-    
-    // Phase 3: PQ refinement
-    let pq_candidates = phase3_pq_columnar(
-        viper,
-        query,
-        int8_candidates,
-        top_k * config.pq_expansion,
-        config.pq_threshold,
-    ).await?;
-    
-    debug!("Phase 3: {} PQ candidates", pq_candidates.len());
-    
-    // Phase 4: Full precision reranking
-    let final_results = phase4_full_precision_columnar(
-        viper,
-        query,
-        pq_candidates,
-        top_k,
-        filter,
-        config.max_concurrent_row_groups,
-    ).await?;
-    
-    info!("Columnar search complete: {} results", final_results.len());
-    
-    Ok(final_results)
+/// Main columnar search implementation for NOVA
+pub struct NovaColumnarSearch {
+    config: ColumnarSearchConfig,
+    parquet_reader: Arc<UnifiedParquetReader>,
+    distance_compute: Arc<UnifiedDistanceCompute>,
+    progressive_search: Option<Arc<ProgressiveColumnarSearch>>,
+    streaming_processor: Option<Arc<StreamingRowGroupProcessor>>,
 }
 
-/// Phase 1: Binary filtering using columnar binary sketches
-async fn phase1_binary_columnar(
-    viper: &ViperFile,
-    query: &[f32],
-    n_candidates: usize,
-    filter: &Option<MetadataFilter>,
-    threshold: f32,
-) -> Result<Vec<SearchCandidate>> {
-    let binary_query = BinarySketch::from_vector(query, 0.0);
-    let mut candidates = BinaryHeap::new();
+impl NovaColumnarSearch {
+    /// Create new columnar search engine
+    pub async fn new(
+        config: ColumnarSearchConfig,
+        parquet_reader: Arc<UnifiedParquetReader>,
+        distance_compute: Arc<UnifiedDistanceCompute>,
+    ) -> Result<Self> {
+        // Initialize progressive search if enabled
+        let progressive_search = if config.enable_progressive_search {
+            let prog_config = ProgressiveSearchConfig::from(&config);
+            // Create quantization engine for progressive search
+            let quant_distance_compute = Arc::new(UnifiedDistanceCompute::default());
+            let quant_config = crate::compute::quantization::storage_engine::StorageQuantizationConfig::default();
+            let quantization_engine = Arc::new(crate::compute::quantization::storage_engine::StorageQuantizationEngine::new(
+                Arc::new(crate::compute::quantization::UnifiedQuantizationEngine::default()),
+                quant_distance_compute.clone(),
+                quant_config,
+            ));
+            Some(Arc::new(ProgressiveColumnarSearch::new(
+                prog_config,
+                DistanceMetric::Euclidean, // Default, will be overridden per search
+                quant_distance_compute,
+                quantization_engine,
+            )))
+        } else {
+            None
+        };
+        
+        // Initialize streaming processor if enabled
+        let streaming_processor = if config.enable_streaming {
+            let stream_config = StreamingConfig::from(&config);
+            Some(Arc::new(StreamingRowGroupProcessor::new(stream_config)))
+        } else {
+            None
+        };
+        
+        Ok(Self {
+            config,
+            parquet_reader,
+            distance_compute,
+            progressive_search,
+            streaming_processor,
+        })
+    }
     
-    // Process each row group
-    for (rg_idx, row_group) in viper.row_groups.iter().enumerate() {
-        // Apply metadata filter at row group level
-        if let Some(f) = filter {
-            if !row_group_matches_filter(row_group, f) {
+    /// Main entry point for NOVA's unified search
+    pub async fn search_nova(
+        &self,
+        nova_file: &NovaFile,
+        query_vector: &[f32],
+        top_k: usize,
+        distance_metric: DistanceMetric,
+        filter: Option<&MetadataFilter>,
+        search_params: Option<&serde_json::Value>,
+    ) -> Result<Vec<(VectorRecord, f32)>> {
+        info!(
+            "NOVA columnar search: dimension={}, top_k={}, mode={:?}",
+            query_vector.len(), top_k, self.config.search_mode
+        );
+        
+        // Select search strategy based on mode
+        match self.config.search_mode {
+            SearchMode::Progressive => {
+                self.search_progressive(nova_file, query_vector, top_k, distance_metric, filter).await
+            }
+            SearchMode::Streaming => {
+                self.search_streaming(nova_file, query_vector, top_k, distance_metric, filter).await
+            }
+            SearchMode::FullPrecision => {
+                self.search_full_precision(nova_file, query_vector, top_k, distance_metric, filter).await
+            }
+            SearchMode::Hybrid => {
+                self.search_hybrid(nova_file, query_vector, top_k, distance_metric, filter).await
+            }
+        }
+    }
+    
+    /// Progressive search with quantization stages
+    async fn search_progressive(
+        &self,
+        nova_file: &NovaFile,
+        query_vector: &[f32],
+        top_k: usize,
+        distance_metric: DistanceMetric,
+        filter: Option<&MetadataFilter>,
+    ) -> Result<Vec<(VectorRecord, f32)>> {
+        let progressive_search = self.progressive_search.as_ref()
+            .ok_or_else(|| anyhow!("Progressive search not initialized"))?;
+        
+        debug!("Starting progressive search with {} stages", 4);
+        
+        // Stage 1: Binary filtering
+        let binary_candidates = self.binary_filter_stage(
+            nova_file,
+            query_vector,
+            top_k * 100, // Expand for binary stage
+            distance_metric,
+            filter,
+        ).await?;
+        
+        // Stage 2: INT8 filtering
+        let int8_candidates = self.int8_filter_stage(
+            nova_file,
+            query_vector,
+            &binary_candidates,
+            top_k * 20, // Narrow down
+            distance_metric,
+        ).await?;
+        
+        // Stage 3: PQ filtering
+        let pq_candidates = self.pq_filter_stage(
+            nova_file,
+            query_vector,
+            &int8_candidates,
+            top_k * 5, // Further narrow
+            distance_metric,
+        ).await?;
+        
+        // Stage 4: Full precision reranking
+        let final_results = self.full_precision_stage(
+            nova_file,
+            query_vector,
+            &pq_candidates,
+            top_k,
+            distance_metric,
+        ).await?;
+        
+        Ok(final_results)
+    }
+    
+    /// Streaming search for memory efficiency
+    async fn search_streaming(
+        &self,
+        nova_file: &NovaFile,
+        query_vector: &[f32],
+        top_k: usize,
+        distance_metric: DistanceMetric,
+        filter: Option<&MetadataFilter>,
+    ) -> Result<Vec<(VectorRecord, f32)>> {
+        let streaming_processor = self.streaming_processor.as_ref()
+            .ok_or_else(|| anyhow!("Streaming processor not initialized"))?;
+        
+        info!("Starting streaming search across {} row groups", nova_file.row_groups.len());
+        
+        // Create streaming context
+        let (tx, mut rx) = mpsc::channel(100);
+        let semaphore = Arc::new(Semaphore::new(4)); // Limit concurrent row groups
+        
+        // Process row groups in parallel with backpressure
+        let mut handles = Vec::new();
+        for (rg_idx, row_group) in nova_file.row_groups.iter().enumerate() {
+            if !self.should_process_row_group(row_group, filter)? {
                 continue;
             }
+            
+            let sem = semaphore.clone();
+            let tx = tx.clone();
+            let query = query_vector.to_vec();
+            let metric = distance_metric.clone();
+            let file_path = nova_file.metadata.collection_id.clone();
+            
+            let handle = tokio::spawn(async move {
+                let _permit = sem.acquire().await.unwrap();
+                
+                // Process row group with streaming
+                let candidates = process_row_group_streaming(
+                    &file_path,
+                    rg_idx,
+                    &query,
+                    metric,
+                    top_k * 2,
+                ).await;
+                
+                if let Ok(candidates) = candidates {
+                    let _ = tx.send(candidates).await;
+                }
+            });
+            
+            handles.push(handle);
         }
         
-        // Load binary column for this row group
-        let binary_column = load_binary_column(viper, rg_idx).await?;
+        // Drop original sender to close channel when done
+        drop(tx);
         
-        // Compute distances for all vectors in row group
-        for (row_idx, binary_data) in binary_column.iter().enumerate() {
-            let sketch = deserialize_binary_sketch(binary_data);
-            let distance = binary_query.hamming_distance(&sketch) as f32;
-            
-            if distance <= threshold {
-                candidates.push(SearchCandidate {
-                    row_group_id: rg_idx,
-                    row_offset: row_idx as u32,
-                    distance,
-                    vector_id: None,
+        // Collect results with priority queue for top-k
+        let mut heap = BinaryHeap::new();
+        while let Some(candidates) = rx.recv().await {
+            for (record, distance) in candidates {
+                heap.push(SearchCandidate {
+                    row_group_id: 0,
+                    row_offset: 0,
+                    similarity: 1.0 - distance, // Convert distance to similarity
+                    vector_id: record.id.clone(),
                 });
                 
-                // Keep only top candidates
-                if candidates.len() > n_candidates {
-                    candidates.pop();
+                // Keep only top candidates in memory
+                if heap.len() > top_k * 2 {
+                    heap.pop();
                 }
             }
         }
-    }
-    
-    // Convert to vector
-    let mut result = Vec::new();
-    while let Some(candidate) = candidates.pop() {
-        result.push(candidate);
-    }
-    result.reverse();
-    
-    Ok(result)
-}
-
-/// Phase 2: INT8 filtering using columnar INT8 vectors
-async fn phase2_int8_columnar(
-    viper: &ViperFile,
-    query: &[f32],
-    binary_candidates: Vec<SearchCandidate>,
-    n_candidates: usize,
-    threshold: f32,
-) -> Result<Vec<SearchCandidate>> {
-    let int8_query = Int8Vector::from_vector(query);
-    let mut candidates = BinaryHeap::new();
-    
-    // Group candidates by row group for efficient column loading
-    let mut grouped = std::collections::HashMap::new();
-    for candidate in binary_candidates {
-        grouped.entry(candidate.row_group_id)
-            .or_insert_with(Vec::new)
-            .push(candidate.row_offset);
-    }
-    
-    // Process each row group
-    for (rg_idx, row_offsets) in grouped {
-        // Load INT8 columns for this row group
-        let (int8_column, scales, zero_points) = load_int8_columns(viper, rg_idx).await?;
         
-        // Check specific rows
-        for row_offset in row_offsets {
-            let int8_data = &int8_column[row_offset as usize];
-            let scale = scales[row_offset as usize];
-            let zero_point = zero_points[row_offset as usize];
+        // Wait for all tasks to complete
+        for handle in handles {
+            let _ = handle.await;
+        }
+        
+        // Extract final results
+        let mut results = Vec::new();
+        while let Some(candidate) = heap.pop() {
+            if results.len() >= top_k {
+                break;
+            }
             
-            let int8_vec = Int8Vector {
-                values: deserialize_int8_vector(int8_data),
-                scale,
-                zero_point,
-            };
-            
-            let distance = int8_query.l2_distance_squared(&int8_vec);
-            
-            if distance <= threshold {
-                candidates.push(SearchCandidate {
-                    row_group_id: rg_idx,
-                    row_offset,
-                    distance,
-                    vector_id: None,
-                });
-                
-                if candidates.len() > n_candidates {
-                    candidates.pop();
-                }
+            // Load full record for final results
+            if let Some(record) = self.load_record_by_id(nova_file, &candidate.vector_id).await? {
+                results.push((record, 1.0 - candidate.similarity));
             }
         }
-    }
-    
-    // Convert to vector
-    let mut result = Vec::new();
-    while let Some(candidate) = candidates.pop() {
-        result.push(candidate);
-    }
-    result.reverse();
-    
-    Ok(result)
-}
-
-/// Phase 3: PQ refinement using columnar PQ codes
-async fn phase3_pq_columnar(
-    viper: &ViperFile,
-    query: &[f32],
-    int8_candidates: Vec<SearchCandidate>,
-    n_candidates: usize,
-    threshold: f32,
-) -> Result<Vec<SearchCandidate>> {
-    // Compute distance table for PQ
-    let distance_table = if !viper.quantized_columns.pq_column.as_ref()
-        .map(|pq| pq.codebooks.is_empty()).unwrap_or(true) {
         
-        let pq_info = viper.quantized_columns.pq_column.as_ref().unwrap();
-        Some(DistanceTable::compute(query, &pq_info.codebooks))
-    } else {
-        None
-    };
-    
-    let mut candidates = BinaryHeap::new();
-    
-    // Group by row group
-    let mut grouped = std::collections::HashMap::new();
-    for candidate in int8_candidates {
-        grouped.entry(candidate.row_group_id)
-            .or_insert_with(Vec::new)
-            .push(candidate.row_offset);
+        results.reverse(); // Best first
+        Ok(results)
     }
     
-    // Process each row group
-    for (rg_idx, row_offsets) in grouped {
-        // Load PQ column
-        let pq_column = load_pq_column(viper, rg_idx).await?;
+    /// Full precision search without quantization
+    async fn search_full_precision(
+        &self,
+        nova_file: &NovaFile,
+        query_vector: &[f32],
+        top_k: usize,
+        distance_metric: DistanceMetric,
+        filter: Option<&MetadataFilter>,
+    ) -> Result<Vec<(VectorRecord, f32)>> {
+        debug!("Full precision search across {} row groups", nova_file.row_groups.len());
         
-        for row_offset in row_offsets {
-            let pq_data = &pq_column[row_offset as usize];
-            let pq_code = deserialize_pq_code(pq_data);
+        let mut all_candidates = Vec::new();
+        
+        // Process each row group
+        for (rg_idx, row_group) in nova_file.row_groups.iter().enumerate() {
+            if !self.should_process_row_group(row_group, filter)? {
+                continue;
+            }
             
-            let distance = if let Some(ref dt) = distance_table {
-                dt.lookup_distance(&pq_code)
+            // Load row group with projection
+            let projection = if self.config.enable_projection {
+                Some(vec!["id".to_string(), "vector".to_string()])
             } else {
-                // Fallback to INT8 distance
-                candidate.distance
+                None
             };
             
-            if distance <= threshold {
-                candidates.push(SearchCandidate {
-                    row_group_id: rg_idx,
-                    row_offset,
-                    distance,
-                    vector_id: None,
-                });
+            let batch = self.parquet_reader.read_row_groups_projected(
+                &nova_file.metadata.collection_id,
+                &[rg_idx],
+                projection.as_deref(),
+            ).await?;
+            
+            // Compute distances for all vectors in batch
+            for batch in batch {
+                let candidates = self.compute_batch_distances(
+                    &batch,
+                    query_vector,
+                    distance_metric,
+                    rg_idx,
+                )?;
                 
-                if candidates.len() > n_candidates {
-                    candidates.pop();
-                }
+                all_candidates.extend(candidates);
+            }
+        }
+        
+        // Sort and take top-k
+        all_candidates.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
+        all_candidates.truncate(top_k);
+        
+        // Load full records
+        let mut results = Vec::new();
+        for (candidate, distance) in all_candidates.iter() {
+            if let Some(record) = self.load_record_by_id(nova_file, &candidate.vector_id).await? {
+                results.push((record, *distance));
+            }
+        }
+        
+        Ok(results)
+    }
+    
+    /// Hybrid search with adaptive strategy selection
+    async fn search_hybrid(
+        &self,
+        nova_file: &NovaFile,
+        query_vector: &[f32],
+        top_k: usize,
+        distance_metric: DistanceMetric,
+        filter: Option<&MetadataFilter>,
+    ) -> Result<Vec<(VectorRecord, f32)>> {
+        // Analyze query characteristics
+        let query_complexity = self.analyze_query_complexity(query_vector, filter);
+        let dataset_size = nova_file.metadata.num_vectors;
+        
+        // Select strategy based on analysis
+        let strategy = if dataset_size > 1_000_000 && query_complexity > 0.5 {
+            SearchMode::Streaming // Large dataset, complex query
+        } else if dataset_size > 100_000 {
+            SearchMode::Progressive // Medium dataset
+        } else {
+            SearchMode::FullPrecision // Small dataset
+        };
+        
+        info!("Hybrid search selected strategy: {:?}", strategy);
+        
+        // Execute selected strategy
+        match strategy {
+            SearchMode::Progressive => {
+                self.search_progressive(nova_file, query_vector, top_k, distance_metric, filter).await
+            }
+            SearchMode::Streaming => {
+                self.search_streaming(nova_file, query_vector, top_k, distance_metric, filter).await
+            }
+            _ => {
+                self.search_full_precision(nova_file, query_vector, top_k, distance_metric, filter).await
             }
         }
     }
     
-    // Convert to vector
-    let mut result = Vec::new();
-    while let Some(candidate) = candidates.pop() {
-        result.push(candidate);
-    }
-    result.reverse();
+    // Helper methods for progressive stages
     
-    Ok(result)
-}
-
-/// Phase 4: Full precision reranking with columnar vectors
-async fn phase4_full_precision_columnar(
-    viper: &ViperFile,
-    query: &[f32],
-    pq_candidates: Vec<SearchCandidate>,
-    top_k: usize,
-    filter: Option<MetadataFilter>,
-    max_concurrent: usize,
-) -> Result<Vec<VectorRecord>> {
-    let semaphore = Arc::new(Semaphore::new(max_concurrent));
-    let mut handles = Vec::new();
-    
-    // Group by row group for efficient loading
-    let mut grouped = std::collections::HashMap::new();
-    for candidate in pq_candidates {
-        grouped.entry(candidate.row_group_id)
-            .or_insert_with(Vec::new)
-            .push(candidate.row_offset);
-    }
-    
-    // Process row groups in parallel
-    for (rg_idx, row_offsets) in grouped {
-        let sem = semaphore.clone();
-        let query = query.to_vec();
-        let filter = filter.clone();
-        let distance_metric = viper.metadata.distance_metric;
+    async fn binary_filter_stage(
+        &self,
+        nova_file: &NovaFile,
+        query_vector: &[f32],
+        max_candidates: usize,
+        distance_metric: DistanceMetric,
+        filter: Option<&MetadataFilter>,
+    ) -> Result<Vec<SearchCandidate>> {
+        debug!("Binary filter stage: max_candidates={}", max_candidates);
         
-        let handle = tokio::spawn(async move {
-            let _permit = sem/* TODO: Fix VectorMemoryPool::acquire() method */.await.unwrap();
-            
-            // Load full precision vectors and IDs
-            let (vectors, ids) = load_full_vectors_and_ids(rg_idx, &row_offsets).await?;
-            
-            let mut results = Vec::new();
-            for (idx, row_offset) in row_offsets.iter().enumerate() {
-                let vector = &vectors[idx];
-                let id = &ids[idx];
-                
-                let distance = compute_distance(&query, vector, distance_metric);
-                
-                let record = VectorRecord {
-                    id: Some(id.clone()),
-                    vector: vector.clone(),
-                    metadata: None, // Would load metadata if needed
-                    timestamp: 0,
-                    updated_at: None,
-                    expires_at: None,
-                    version: None,
-                };
-                
-                results.push((record, distance));
-            }
-            
-            Ok::<Vec<(VectorRecord, f32)>, anyhow::Error>(results)
-        });
+        // Check if binary column exists
+        if nova_file.quantized_columns.binary_column.is_none() {
+            return Ok(Vec::new());
+        }
         
-        handles.push(handle);
-    }
-    
-    // Collect all results
-    let mut all_results = Vec::new();
-    for handle in handles {
-        let row_group_results = handle.await??;
-        all_results.extend(row_group_results);
-    }
-    
-    // Apply final metadata filter if needed
-    if let Some(f) = filter {
-        all_results.retain(|(record, _)| {
-            record_matches_filter(record, &f)
-        });
-    }
-    
-    // Sort by distance and take top-k
-    all_results.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
-    all_results.truncate(top_k);
-    
-    Ok(all_results.into_iter().map(|(r, _)| r).collect())
-}
-
-// Helper functions
-
-async fn load_binary_column(_viper: &ViperFile, _rg_idx: usize) -> Result<Vec<Vec<u8>>> {
-    // In production, load from Parquet file
-    Ok(vec![vec![0u8; 96]; 1000]) // Placeholder
-}
-
-async fn load_int8_columns(_viper: &ViperFile, _rg_idx: usize) -> Result<(Vec<Vec<u8>>, Vec<f32>, Vec<i8>)> {
-    // In production, load from Parquet file
-    Ok((
-        vec![vec![0u8; 768]; 1000],
-        vec![1.0; 1000],
-        vec![0i8; 1000],
-    ))
-}
-
-async fn load_pq_column(_viper: &ViperFile, _rg_idx: usize) -> Result<Vec<Vec<u8>>> {
-    // In production, load from Parquet file
-    Ok(vec![vec![0u8; 16]; 1000]) // Placeholder
-}
-
-async fn load_full_vectors_and_ids(_rg_idx: usize, row_offsets: &[u32]) -> Result<(Vec<Vec<f32>>, Vec<String>)> {
-    // In production, load from Parquet file
-    let vectors = row_offsets.iter()
-        .map(|_| vec![0.0f32; 768])
-        .collect();
-    
-    let ids = row_offsets.iter()
-        .map(|offset| format!("id_{:08}", offset))
-        .collect();
-    
-    Ok((vectors, ids))
-}
-
-fn deserialize_binary_sketch(data: &[u8]) -> BinarySketch {
-    let mut bits = Vec::new();
-    for chunk in data.chunks(8) {
-        let mut word = 0u64;
-        for (i, &byte) in chunk.iter().enumerate() {
-            word |= (byte as u64) << (i * 8);
-        }
-        bits.push(word);
-    }
-    
-    BinarySketch {
-        bits,
-        dimension: data.len() * 8,
-    }
-}
-
-fn deserialize_int8_vector(data: &[u8]) -> Vec<i8> {
-    data.iter().map(|&b| b as i8).collect()
-}
-
-fn deserialize_pq_code(data: &[u8]) -> PQCode {
-    PQCode {
-        codes: data.to_vec(),
-        n_subspaces: data.len() as u8,
-    }
-}
-
-fn row_group_matches_filter(_row_group: &parquet::file::metadata::RowGroupMetaData, _filter: &MetadataFilter) -> bool {
-    // In production, check row group statistics against filter
-    true
-}
-
-fn record_matches_filter(record: &VectorRecord, filter: &MetadataFilter) -> bool {
-    if let Some(metadata) = &record.metadata {
-        for condition in &filter.conditions {
-            if !condition_matches(condition, metadata) {
-                return false;
-            }
-        }
-    }
-    true
-}
-
-fn condition_matches(condition: &FilterCondition, metadata: &std::collections::HashMap<String, serde_json::Value>) -> bool {
-    match condition {
-        FilterCondition::Equals(column, value) => {
-            metadata.get(key).map_or(false, |v| v == value)
-        }
-        FilterCondition::Range(column, min, max) => {
-            metadata.get(key).map_or(false, |v| v >= min && v <= max)
-        }
-        FilterCondition::In(column, values) => {
-            metadata.get(key).map_or(false, |v| values.contains_hash(v))
-        }
-        FilterCondition::IsNull(column) => {
-            !metadata.contains_key(column) || metadata[column].is_null()
-        }
-        FilterCondition::IsNotNull(column) => {
-            metadata.contains_key(column) && !metadata[column].is_null()
-        }
-    }
-}
-
-fn compute_distance(a: &[f32], b: &[f32], metric: DistanceMetric) -> f32 {
-    match metric {
-        DistanceMetric::Euclidean => {
-            a.iter()
-                .zip(b.iter())
-                .map(|(x, y)| (x - y).powi(2))
-                .sum::<f32>()
-                .sqrt()
-        }
-        DistanceMetric::Cosine => {
-            let dot: f32 = a.iter().zip(b.iter()).map(|(x, y)| x * y).sum();
-            let norm_a: f32 = a.iter().map(|x| x.powi(2)).sum::<f32>().sqrt();
-            let norm_b: f32 = b.iter().map(|x| x.powi(2)).sum::<f32>().sqrt();
-            1.0 - (dot / (norm_a * norm_b))
-        }
-        DistanceMetric::DotProduct => {
-            -a.iter().zip(b.iter()).map(|(x, y)| x * y).sum::<f32>()
-        }
-        _ => {
-            // Fallback to Euclidean
-            a.iter()
-                .zip(b.iter())
-                .map(|(x, y)| (x - y).powi(2))
-                .sum::<f32>()
-                .sqrt()
-        }
-    }
-}
-
-/// Optimized columnar search using projection and pushdown
-pub async fn search_columnar_optimized(
-    viper: &ViperFile,
-    query: &[f32],
-    top_k: usize,
-    filter: Option<MetadataFilter>,
-) -> Result<Vec<VectorRecord>> {
-    let config = ColumnarSearchConfig::default();
-    
-    // Build projection mask - only load needed columns
-    let projection = build_projection_mask(&config, &filter);
-    
-    // Build predicate for pushdown
-    let predicates = build_predicates(&filter);
-    
-    info!(
-        "Optimized columnar search with projection: {} columns, predicates: {}",
-        projection.len(),
-        predicates.len()
-    );
-    
-    // Use optimized search path
-    search_with_optimizations(
-        viper,
-        query,
-        top_k,
-        projection,
-        predicates,
-        config,
-    ).await
-}
-
-fn build_projection_mask(config: &ColumnarSearchConfig, filter: &Option<MetadataFilter>) -> Vec<String> {
-    let mut columns = vec!["id".to_string(), "vector".to_string()];
-    
-    if config.enable_projection {
-        // Add quantized columns based on search phases
-        columns.push("vector_binary".to_string());
-        columns.push("vector_int8".to_string());
-        columns.push("vector_pq".to_string());
+        // Compute binary sketch of query
+        let query_binary = compute_binary_sketch(query_vector);
         
-        // Add metadata columns used in filter
-        if let Some(f) = filter {
-            for condition in &f.conditions {
-                match condition {
-                    FilterCondition::Equals(col, _) |
-                    FilterCondition::Range(col, _, _) |
-                    FilterCondition::In(col, _) |
-                    FilterCondition::IsNull(col) |
-                    FilterCondition::IsNotNull(col) => {
-                        columns.push(col.clone());
+        let mut candidates = BinaryHeap::new();
+        
+        // Process each row group's binary column
+        for (rg_idx, _row_group) in nova_file.row_groups.iter().enumerate() {
+            // Load binary column only
+            let batch = self.parquet_reader.read_row_groups_projected(
+                &nova_file.metadata.collection_id,
+                &[rg_idx],
+                Some(&["vector_binary".to_string()]),
+            ).await?;
+            
+            // Compute Hamming distances
+            for batch in batch {
+                if let Some(binary_col) = batch.column_by_name("vector_binary") {
+                    // Process binary vectors
+                    for row_idx in 0..batch.num_rows() {
+                        let hamming_distance = compute_hamming_distance(&query_binary, binary_col, row_idx);
+                        
+                        candidates.push(SearchCandidate {
+                            row_group_id: rg_idx,
+                            row_offset: row_idx as u32,
+                            similarity: 1.0 - (hamming_distance as f32 / 256.0),
+                            vector_id: None,
+                        });
+                        
+                        if candidates.len() > max_candidates {
+                            candidates.pop();
+                        }
                     }
                 }
             }
         }
+        
+        Ok(candidates.into_sorted_vec())
     }
     
-    columns
+    async fn int8_filter_stage(
+        &self,
+        nova_file: &NovaFile,
+        query_vector: &[f32],
+        candidates: &[SearchCandidate],
+        max_candidates: usize,
+        distance_metric: DistanceMetric,
+    ) -> Result<Vec<SearchCandidate>> {
+        debug!("INT8 filter stage: input={}, max={}", candidates.len(), max_candidates);
+        
+        if nova_file.quantized_columns.int8_column.is_none() {
+            return Ok(candidates.to_vec());
+        }
+        
+        // Quantize query to INT8
+        let query_int8 = quantize_to_int8(query_vector);
+        
+        let mut refined_candidates = BinaryHeap::new();
+        
+        // Group candidates by row group for batch processing
+        let mut grouped: HashMap<usize, Vec<&SearchCandidate>> = HashMap::new();
+        for candidate in candidates {
+            grouped.entry(candidate.row_group_id)
+                .or_insert_with(Vec::new)
+                .push(candidate);
+        }
+        
+        // Process each row group
+        for (rg_idx, group_candidates) in grouped {
+            // Load INT8 column
+            let batch = self.parquet_reader.read_row_groups_projected(
+                &nova_file.metadata.collection_id,
+                &[rg_idx],
+                Some(&["vector_int8".to_string()]),
+            ).await?;
+            
+            // Compute INT8 distances for candidates
+            for batch in batch {
+                if let Some(int8_col) = batch.column_by_name("vector_int8") {
+                    for candidate in &group_candidates {
+                        let int8_distance = compute_int8_distance(
+                            &query_int8,
+                            int8_col,
+                            candidate.row_offset as usize,
+                        );
+                        
+                        refined_candidates.push(SearchCandidate {
+                            row_group_id: candidate.row_group_id,
+                            row_offset: candidate.row_offset,
+                            similarity: 1.0 - int8_distance,
+                            vector_id: candidate.vector_id.clone(),
+                        });
+                        
+                        if refined_candidates.len() > max_candidates {
+                            refined_candidates.pop();
+                        }
+                    }
+                }
+            }
+        }
+        
+        Ok(refined_candidates.into_sorted_vec())
+    }
+    
+    async fn pq_filter_stage(
+        &self,
+        nova_file: &NovaFile,
+        query_vector: &[f32],
+        candidates: &[SearchCandidate],
+        max_candidates: usize,
+        distance_metric: DistanceMetric,
+    ) -> Result<Vec<SearchCandidate>> {
+        debug!("PQ filter stage: input={}, max={}", candidates.len(), max_candidates);
+        
+        if nova_file.quantized_columns.pq_column.is_none() {
+            return Ok(candidates.to_vec());
+        }
+        
+        // Prepare PQ distance table for query
+        let pq_table = compute_pq_distance_table(query_vector, 32, 256);
+        
+        let mut refined_candidates = BinaryHeap::new();
+        
+        // Group by row group
+        let mut grouped: HashMap<usize, Vec<&SearchCandidate>> = HashMap::new();
+        for candidate in candidates {
+            grouped.entry(candidate.row_group_id)
+                .or_insert_with(Vec::new)
+                .push(candidate);
+        }
+        
+        // Process each row group
+        for (rg_idx, group_candidates) in grouped {
+            // Load PQ column
+            let batch = self.parquet_reader.read_row_groups_projected(
+                &nova_file.metadata.collection_id,
+                &[rg_idx],
+                Some(&["vector_pq".to_string()]),
+            ).await?;
+            
+            // Compute PQ distances
+            for batch in batch {
+                if let Some(pq_col) = batch.column_by_name("vector_pq") {
+                    for candidate in &group_candidates {
+                        let pq_distance = compute_pq_distance(
+                            &pq_table,
+                            pq_col,
+                            candidate.row_offset as usize,
+                        );
+                        
+                        refined_candidates.push(SearchCandidate {
+                            row_group_id: candidate.row_group_id,
+                            row_offset: candidate.row_offset,
+                            similarity: 1.0 - pq_distance,
+                            vector_id: candidate.vector_id.clone(),
+                        });
+                        
+                        if refined_candidates.len() > max_candidates {
+                            refined_candidates.pop();
+                        }
+                    }
+                }
+            }
+        }
+        
+        Ok(refined_candidates.into_sorted_vec())
+    }
+    
+    async fn full_precision_stage(
+        &self,
+        nova_file: &NovaFile,
+        query_vector: &[f32],
+        candidates: &[SearchCandidate],
+        top_k: usize,
+        distance_metric: DistanceMetric,
+    ) -> Result<Vec<(VectorRecord, f32)>> {
+        debug!("Full precision stage: input={}, top_k={}", candidates.len(), top_k);
+        
+        let mut final_results = Vec::new();
+        
+        // Group by row group
+        let mut grouped: HashMap<usize, Vec<&SearchCandidate>> = HashMap::new();
+        for candidate in candidates {
+            grouped.entry(candidate.row_group_id)
+                .or_insert_with(Vec::new)
+                .push(candidate);
+        }
+        
+        // Process each row group
+        for (rg_idx, group_candidates) in grouped {
+            // Load full vectors
+            let batch = self.parquet_reader.read_row_groups_projected(
+                &nova_file.metadata.collection_id,
+                &[rg_idx],
+                None, // Load all columns for final stage
+            ).await?;
+            
+            // Compute exact distances
+            for batch in batch {
+                for candidate in group_candidates {
+                    if let Some(record) = self.extract_record_from_batch(
+                        &batch,
+                        candidate.row_offset as usize,
+                    )? {
+                        let distance = self.distance_compute.calculate_distance(
+                            query_vector,
+                            &record.vector,
+                            &distance_metric,
+                        )?;
+                        
+                        final_results.push((record, distance));
+                    }
+                }
+            }
+        }
+        
+        // Sort and take top-k
+        final_results.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
+        final_results.truncate(top_k);
+        
+        Ok(final_results)
+    }
+    
+    // Helper methods
+    
+    fn should_process_row_group(
+        &self,
+        row_group: &parquet::file::metadata::RowGroupMetaData,
+        filter: Option<&MetadataFilter>,
+    ) -> Result<bool> {
+        if !self.config.enable_row_group_pruning {
+            return Ok(true);
+        }
+        
+        // Check row group statistics against filter
+        if let Some(filter) = filter {
+            // Implement row group pruning logic based on statistics
+            // For now, return true (process all)
+            Ok(true)
+        } else {
+            Ok(true)
+        }
+    }
+    
+    fn compute_batch_distances(
+        &self,
+        batch: &RecordBatch,
+        query_vector: &[f32],
+        distance_metric: DistanceMetric,
+        row_group_id: usize,
+    ) -> Result<Vec<(SearchCandidate, f32)>> {
+        let mut candidates = Vec::new();
+        
+        // Get vector column
+        let vector_col = batch.column_by_name("vector")
+            .ok_or_else(|| anyhow!("Vector column not found"))?;
+        
+        // Get ID column if available
+        let id_col = batch.column_by_name("id")
+            .and_then(|col| col.as_any().downcast_ref::<StringArray>());
+        
+        // Process each row
+        for row_idx in 0..batch.num_rows() {
+            // Extract vector (simplified - would need proper conversion)
+            let vector = extract_vector_from_column(vector_col, row_idx)?;
+            
+            // Compute distance
+            let distance = self.distance_compute.calculate_distance(
+                query_vector,
+                &vector,
+                &distance_metric,
+            )?;
+            
+            let vector_id = id_col.map(|arr| arr.value(row_idx).to_string());
+            
+            candidates.push((
+                SearchCandidate {
+                    row_group_id,
+                    row_offset: row_idx as u32,
+                    similarity: 1.0 - distance,
+                    vector_id,
+                },
+                distance,
+            ));
+        }
+        
+        Ok(candidates)
+    }
+    
+    async fn load_record_by_id(
+        &self,
+        nova_file: &NovaFile,
+        vector_id: &Option<String>,
+    ) -> Result<Option<VectorRecord>> {
+        if let Some(id) = vector_id {
+            // Use ID index or scan to find record
+            // Simplified implementation
+            Ok(Some(VectorRecord {
+                id: Some(id.clone()),
+                vector: vec![0.0; nova_file.metadata.dimension],
+                metadata: vec![],
+                timestamp: 0,
+                updated_at: None,
+                expires_at: None,
+                version: None,
+                quantized_vector: None,
+            }))
+        } else {
+            Ok(None)
+        }
+    }
+    
+    fn extract_record_from_batch(
+        &self,
+        batch: &RecordBatch,
+        row_idx: usize,
+    ) -> Result<Option<VectorRecord>> {
+        if row_idx >= batch.num_rows() {
+            return Ok(None);
+        }
+        
+        // Extract ID
+        let id = batch.column_by_name("id")
+            .and_then(|col| col.as_any().downcast_ref::<StringArray>())
+            .map(|arr| arr.value(row_idx).to_string());
+        
+        // Extract vector
+        let vector = batch.column_by_name("vector")
+            .map(|col| extract_vector_from_column(col, row_idx))
+            .transpose()?
+            .unwrap_or_default();
+        
+        // Extract other fields as needed
+        Ok(Some(VectorRecord {
+            id,
+            vector,
+            metadata: vec![],
+            timestamp: 0,
+            updated_at: None,
+            expires_at: None,
+            version: None,
+            quantized_vector: None,
+        }))
+    }
+    
+    fn analyze_query_complexity(&self, query_vector: &[f32], filter: Option<&MetadataFilter>) -> f32 {
+        let mut complexity = 0.0;
+        
+        // Check vector sparsity
+        let non_zero = query_vector.iter().filter(|&&v| v != 0.0).count();
+        complexity += (non_zero as f32) / (query_vector.len() as f32);
+        
+        // Check filter complexity
+        if let Some(filter) = filter {
+            complexity += filter.conditions.len() as f32 * 0.1;
+        }
+        
+        complexity.min(1.0)
+    }
 }
 
-fn build_predicates(filter: &Option<MetadataFilter>) -> Vec<FilterCondition> {
-    filter.as_ref()
-        .map(|f| f.conditions.clone())
-        .unwrap_or_default()
+// Helper functions for quantization stages
+
+fn compute_binary_sketch(vector: &[f32]) -> Vec<u8> {
+    let mut sketch = Vec::with_capacity(vector.len() / 8);
+    for chunk in vector.chunks(8) {
+        let mut byte = 0u8;
+        for (i, &val) in chunk.iter().enumerate() {
+            if val > 0.0 {
+                byte |= 1 << i;
+            }
+        }
+        sketch.push(byte);
+    }
+    sketch
 }
 
-async fn search_with_optimizations(
-    viper: &ViperFile,
-    query: &[f32],
-    top_k: usize,
-    projection: Vec<String>,
-    predicates: Vec<FilterCondition>,
-    config: ColumnarSearchConfig,
-) -> Result<Vec<VectorRecord>> {
-    // Implementation would use projection and predicates
-    // to optimize Parquet reading
-    search_columnar_progressive(
-        viper,
-        query,
-        top_k,
-        Some(MetadataFilter {
-            conditions: predicates,
-            logic: super::FilterLogic::And,
-        }),
-    ).await
+fn compute_hamming_distance(query: &[u8], column: &ArrayRef, row_idx: usize) -> u32 {
+    // Simplified - would extract binary from column and compute Hamming distance
+    0
+}
+
+fn quantize_to_int8(vector: &[f32]) -> Vec<i8> {
+    // Find min/max for scaling
+    let min = vector.iter().fold(f32::INFINITY, |a, &b| a.min(b));
+    let max = vector.iter().fold(f32::NEG_INFINITY, |a, &b| a.max(b));
+    let scale = 255.0 / (max - min);
+    
+    vector.iter()
+        .map(|&v| ((v - min) * scale - 128.0) as i8)
+        .collect()
+}
+
+fn compute_int8_distance(query: &[i8], column: &ArrayRef, row_idx: usize) -> f32 {
+    // Simplified - would extract INT8 vector and compute distance
+    0.0
+}
+
+fn compute_pq_distance_table(vector: &[f32], segments: usize, codes: usize) -> Vec<Vec<f32>> {
+    // Simplified - would compute actual PQ distance table
+    vec![vec![0.0; codes]; segments]
+}
+
+fn compute_pq_distance(table: &[Vec<f32>], column: &ArrayRef, row_idx: usize) -> f32 {
+    // Simplified - would extract PQ codes and compute distance using table
+    0.0
+}
+
+fn extract_vector_from_column(column: &ArrayRef, row_idx: usize) -> Result<Vec<f32>> {
+    // Try Float32Array first
+    if let Some(float_array) = column.as_any().downcast_ref::<Float32Array>() {
+        if !float_array.is_null(row_idx) {
+            // For now, return a placeholder
+            // In production, would properly extract the vector
+            return Ok(vec![float_array.value(row_idx); 768]);
+        }
+    }
+    
+    // Try other formats (FixedSizeBinary, etc.)
+    // Placeholder implementation
+    Ok(vec![0.0; 768])
+}
+
+async fn process_row_group_streaming(
+    file_path: &str,
+    row_group_idx: usize,
+    query_vector: &[f32],
+    distance_metric: DistanceMetric,
+    max_candidates: usize,
+) -> Result<Vec<(VectorRecord, f32)>> {
+    // Simplified streaming processing
+    // In production, would stream through row group with memory bounds
+    Ok(Vec::new())
+}
+
+// Extension methods for config conversion
+
+impl From<&ColumnarSearchConfig> for ProgressiveSearchConfig {
+    fn from(config: &ColumnarSearchConfig) -> Self {
+        ProgressiveSearchConfig {
+            binary_config: Default::default(),
+            int8_config: Default::default(),
+            pq_config: Default::default(),
+            full_precision_config: Default::default(),
+            streaming_config: StreamingConfig::from(config),
+            cost_based_ordering: true,
+            adaptive_thresholds: true,
+            enable_superblock_pruning: true,
+            quality_target: 0.95,
+            latency_budget_ms: config.latency_budget_ms,
+            memory_budget_bytes: config.memory_budget,
+        }
+    }
+}
+
+impl From<&ColumnarSearchConfig> for StreamingConfig {
+    fn from(config: &ColumnarSearchConfig) -> Self {
+        StreamingConfig {
+            max_memory_bytes: config.memory_budget.unwrap_or(1024 * 1024 * 1024),
+            prefetch_queue_size: 2,
+            max_concurrent_processors: 4,
+            processing_timeout: std::time::Duration::from_secs(30),
+            batch_size: 1000,
+            enable_backpressure: true,
+            backpressure_threshold: 0.8,
+        }
+    }
+}
+
+impl ColumnarSearchConfig {
+    /// Create config from search parameters
+    pub fn from_params(params: Option<&serde_json::Value>) -> Self {
+        if let Some(params) = params {
+            // Parse parameters from JSON
+            let mut config = Self::default();
+            
+            if let Some(mode) = params.get("search_mode").and_then(|v| v.as_str()) {
+                config.search_mode = match mode {
+                    "progressive" => SearchMode::Progressive,
+                    "streaming" => SearchMode::Streaming,
+                    "full_precision" => SearchMode::FullPrecision,
+                    "hybrid" => SearchMode::Hybrid,
+                    _ => SearchMode::Progressive,
+                };
+            }
+            
+            if let Some(max) = params.get("max_candidates").and_then(|v| v.as_u64()) {
+                config.max_candidates = max as usize;
+            }
+            
+            if let Some(budget) = params.get("memory_budget_mb").and_then(|v| v.as_u64()) {
+                config.memory_budget = Some((budget * 1024 * 1024) as usize);
+            }
+            
+            config
+        } else {
+            Self::default()
+        }
+    }
+}
+
+// Helper function to build projection mask based on filter
+fn build_projection_mask(config: &ColumnarSearchConfig, filter: &Option<MetadataFilter>) -> Vec<String> {
+    let mut projection = vec!["id".to_string(), "vector".to_string()];
+    
+    // Add quantized columns if progressive search is enabled
+    if config.enable_progressive_search {
+        projection.push("vector_binary".to_string());
+        projection.push("vector_int8".to_string());
+        projection.push("vector_pq".to_string());
+    }
+    
+    // Add columns referenced in filter
+    if let Some(filter) = filter {
+        for condition in &filter.conditions {
+            match condition {
+                FilterCondition::Equals(field, _) |
+                FilterCondition::Range(field, _, _) => {
+                    if !projection.contains(field) {
+                        projection.push(field.clone());
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    
+    projection
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::BinaryHeap;
     
     #[test]
     fn test_candidate_ordering() {
@@ -667,10 +1022,10 @@ mod tests {
             vector_id: None,
         });
         
-        // Should pop in order: 5.0, 10.0, 15.0
-        assert_eq!(heap.pop().unwrap().distance, 5.0);
-        assert_eq!(heap.pop().unwrap().distance, 10.0);
-        assert_eq!(heap.pop().unwrap().distance, 15.0);
+        // Should pop in order: 5.0, 10.0, 15.0 (lowest similarity first for min-heap)
+        assert_eq!(heap.pop().unwrap().similarity, 5.0);
+        assert_eq!(heap.pop().unwrap().similarity, 10.0);
+        assert_eq!(heap.pop().unwrap().similarity, 15.0);
     }
     
     #[test]
@@ -681,15 +1036,13 @@ mod tests {
                 FilterCondition::Equals("category".to_string(), serde_json::json!("electronics")),
                 FilterCondition::Range("price".to_string(), serde_json::json!(10.0), serde_json::json!(100.0)),
             ],
-            logic: super::FilterLogic::And,
         });
         
         let projection = build_projection_mask(&config, &filter);
-        
-        assert!(projection.contains_hash(&"id".to_string()));
-        assert!(projection.contains_hash(&"vector".to_string()));
-        assert!(projection.contains_hash(&"vector_binary".to_string()));
-        assert!(projection.contains_hash(&"category".to_string()));
-        assert!(projection.contains_hash(&"price".to_string()));
+        assert!(projection.contains(&"id".to_string()));
+        assert!(projection.contains(&"vector".to_string()));
+        assert!(projection.contains(&"vector_binary".to_string()));
+        assert!(projection.contains(&"category".to_string()));
+        assert!(projection.contains(&"price".to_string()));
     }
 }

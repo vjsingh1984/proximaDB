@@ -114,11 +114,11 @@ impl NativeMetadataHandler {
         }
         
         // Infer types based on statistics
-        for (field_name, stats) in &self.field_stats {
-            let field_type = self.infer_field_type(field_name, stats)?;
-            self.field_types.insert(field_name.clone(), field_type);
+        for (field, stats) in &self.field_stats {
+            let field_type = self.infer_field_type(field, stats)?;
+            self.field_types.insert(field.clone(), field_type);
             
-            debug!("Inferred type for '{}': {:?}", field_name, self.field_types[field_name]);
+            debug!("Inferred type for '{}': {:?}", field, self.field_types[field]);
         }
         
         // Build optimized schema
@@ -183,10 +183,10 @@ impl NativeMetadataHandler {
     }
     
     /// Infer field type from statistics
-    fn infer_field_type(&self, field_name: &str, stats: &FieldStatistics) -> Result<MetadataFieldType> {
+    fn infer_field_type(&self, field: &str, stats: &FieldStatistics) -> Result<MetadataFieldType> {
         // Handle common field optimizations
         if self.use_common_field_optimization {
-            if let Some(field_type) = self.get_common_field_type(field_name) {
+            if let Some(field_type) = self.get_common_field_type(field) {
                 return Ok(field_type);
             }
         }
@@ -236,40 +236,40 @@ impl NativeMetadataHandler {
     }
     
     /// Get optimized type for common metadata fields
-    fn get_common_field_type(&self, field_name: &str) -> Option<MetadataFieldType> {
-        let name_lower = field_name.to_lowercase();
+    fn get_common_field_type(&self, field: &str) -> Option<MetadataFieldType> {
+        let name_lower = field.to_lowercase();
         
         // Boolean fields
-        if name_lower.contains_hash("enabled") || name_lower.contains_hash("active") || 
-           name_lower.contains_hash("deleted") || name_lower.contains_hash("verified") ||
+        if name_lower.contains("enabled") || name_lower.contains("active") || 
+           name_lower.contains("deleted") || name_lower.contains("verified") ||
            name_lower.starts_with("is_") || name_lower.starts_with("has_") {
             return Some(MetadataFieldType::Boolean);
         }
         
         // Integer fields
-        if name_lower.contains_hash("count") || name_lower.contains_hash("size") ||
-           name_lower.contains_hash("index") || name_lower.contains_hash("position") ||
+        if name_lower.contains("count") || name_lower.contains("size") ||
+           name_lower.contains("index") || name_lower.contains("position") ||
            name_lower.ends_with("_id") || name_lower.ends_with("_num") {
             return Some(MetadataFieldType::Integer);
         }
         
         // Float fields
-        if name_lower.contains_hash("score") || name_lower.contains_hash("rating") ||
-           name_lower.contains_hash("price") || name_lower.contains_hash("weight") ||
-           name_lower.contains_hash("confidence") || name_lower.contains_hash("probability") {
+        if name_lower.contains("score") || name_lower.contains("rating") ||
+           name_lower.contains("price") || name_lower.contains("weight") ||
+           name_lower.contains("confidence") || name_lower.contains("probability") {
             return Some(MetadataFieldType::Float);
         }
         
         // List fields
-        if name_lower.contains_hash("tags") || name_lower.contains_hash("categories") ||
-           name_lower.contains_hash("keywords") || name_lower.contains_hash("labels") ||
+        if name_lower.contains("tags") || name_lower.contains("categories") ||
+           name_lower.contains("keywords") || name_lower.contains("labels") ||
            name_lower.ends_with("_list") || name_lower.ends_with("_array") {
             return Some(MetadataFieldType::List(Box::new(MetadataFieldType::String)));
         }
         
         // Map fields
-        if name_lower.contains_hash("properties") || name_lower.contains_hash("attributes") ||
-           name_lower.contains_hash("settings") || name_lower.contains_hash("config") ||
+        if name_lower.contains("properties") || name_lower.contains("attributes") ||
+           name_lower.contains("settings") || name_lower.contains("config") ||
            name_lower.ends_with("_map") || name_lower.ends_with("_dict") {
             return Some(MetadataFieldType::Map(Box::new(MetadataFieldType::String)));
         }
@@ -281,8 +281,8 @@ impl NativeMetadataHandler {
     fn build_native_schema(&self) -> Result<Arc<Schema>> {
         let mut fields = Vec::new();
         
-        for (field_name, field_type) in &self.field_types {
-            let arrow_field = self.create_arrow_field(field_name, field_type)?;
+        for (field, field_type) in &self.field_types {
+            let arrow_field = self.create_arrow_field(field, field_type)?;
             fields.push(arrow_field);
         }
         
@@ -328,13 +328,13 @@ impl NativeMetadataHandler {
         let mut arrays = HashMap::new();
         
         // Process each field
-        for (field_name, field_type) in &self.field_types {
+        for (field, field_type) in &self.field_types {
             let values: Vec<Option<&JsonValue>> = metadata_batch.iter()
-                .map(|metadata| metadata.get(key))
+                .map(|metadata| metadata.get(field))
                 .collect();
             
-            let array = self.build_typed_array(field_name, field_type, &values)?;
-            arrays.insert(field_name.clone(), array);
+            let array = self.build_typed_array(field, field_type, &values)?;
+            arrays.insert(field.clone(), array);
         }
         
         // Build fallback JSON array for unmapped fields
@@ -347,7 +347,7 @@ impl NativeMetadataHandler {
     /// Build typed array from values
     fn build_typed_array(
         &self,
-        field_name: &str,
+        field: &str,
         field_type: &MetadataFieldType,
         values: &[Option<&JsonValue>]
     ) -> Result<ArrayRef> {
@@ -589,7 +589,7 @@ impl NativeMetadataQueryOptimizer {
         let mut json_predicates = Vec::new();
         
         for (field, value) in filter {
-            if let Some(field_type) = self.field_types.get(key) {
+            if let Some(field_type) = self.field_types.get(field) {
                 match field_type {
                     MetadataFieldType::String | MetadataFieldType::Boolean |
                     MetadataFieldType::Integer | MetadataFieldType::Float => {
@@ -619,10 +619,12 @@ impl NativeMetadataQueryOptimizer {
             }
         }
         
+        let pushdown_ratio = native_predicates.len() as f64 / filter.len() as f64;
+        
         Ok(OptimizedFilter {
             native_predicates,
             json_predicates,
-            pushdown_ratio: native_predicates.len() as f64 / filter.len() as f64,
+            pushdown_ratio,
         })
     }
 }

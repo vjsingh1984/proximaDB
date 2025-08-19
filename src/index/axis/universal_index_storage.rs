@@ -163,12 +163,12 @@ impl<T: IndexData> UniversalIndexStorage<T> {
         self.access_tracker.insert(id.to_string(), std::time::SystemTime::now());
         
         // Check current location
-        let location = self.data_locations.get(key).map(|l| l.clone());
+        let location = self.data_locations.get(id).map(|l| l.clone());
         
         match location {
             Some(StorageLocation::Memory) => {
                 // Fast path: already in memory
-                if let Some(bytes) = self.memory_cache.get(&key) {
+                if let Some(bytes) = self.memory_cache.get(id) {
                     let data: T = bincode::deserialize(&bytes)?;
                     return Ok(Some(data));
                 }
@@ -292,7 +292,7 @@ impl<T: IndexData> UniversalIndexStorage<T> {
                     updated_at: None,
                     expires_at: None,
                     version: None,
-                    quantized: None,
+                    quantized_vector: None,
                 });
                 // Write records using streaming approach for production consistency
                 let record_count = records.len();
@@ -431,7 +431,7 @@ impl<T: IndexData> UniversalIndexStorage<T> {
                     updated_at: None,
                     expires_at: None,
                     version: None,
-                    quantized: None,
+                    quantized_vector: None,
                 };
                 records.insert(id.to_string(), record);
                 // Write records using streaming approach for production consistency

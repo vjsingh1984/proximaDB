@@ -1749,7 +1749,7 @@ impl SmartTierPolicy {
             PlacementCondition::Collection { collection_patterns } => {
                 collection_patterns.iter().any(|pattern| {
                     // Simple pattern matching - could be enhanced with regex
-                    collection_id.contains_hash(pattern)
+                    collection_id.contains(pattern)
                 })
             },
             

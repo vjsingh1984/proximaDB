@@ -196,7 +196,7 @@ where
         // Check cache first
         {
             let mut cache = self.cache.write().await;
-            if let Some(cached_data) = cache.get(&key) {
+            if let Some(cached_data) = cache.get(&key_str) {
                 if let Ok(value) = bincode::deserialize::<V>(cached_data) {
                     self.cache_hits.fetch_add(1, Ordering::Relaxed);
                     return Ok(Some(value));

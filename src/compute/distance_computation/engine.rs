@@ -342,7 +342,7 @@ impl Default for UnifiedDistanceCompute {
             hardware_backend: preferred_backend,
             gpu_accelerator,
             preferred_backend,
-            gpu_enabled: caps.config.enable_gpu_distance,
+            gpu_enabled: caps.config.enable_gpu_similarity,
         }
     }
 }

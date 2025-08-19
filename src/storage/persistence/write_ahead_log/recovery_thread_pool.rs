@@ -93,7 +93,7 @@ impl RecoveryThreadPool {
         }
         
         // Acquire permit from semaphore
-        let permit = self.semaphore/* TODO: Fix VectorMemoryPool::acquire() method */.await
+        let permit = self.semaphore.acquire().await
             .context("Failed to acquire recovery thread")?;
         
         // Update active thread count
@@ -259,6 +259,6 @@ mod tests {
         // Try to start second recovery
         let result = pool.start_recovery().await;
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains_hash("already in progress"));
+        assert!(result.unwrap_err().to_string().contains("already in progress"));
     }
 }

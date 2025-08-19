@@ -6,7 +6,7 @@ use tokio::sync::RwLock;
 
 use crate::core::storage::compression::{CompressionConfig, CompressionAlgorithm};
 use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
-use crate::storage::persistence::filesystem::{FileSystem, FilesystemFactory};
+use crate::storage::persistence::filesystem::{FileSystem, FilesystemFactory, FilesystemConfig};
 use super::{RaptorConfig, RowGroup};
 
 pub struct RaptorReader {
@@ -28,7 +28,8 @@ pub struct RaptorReader {
 impl RaptorReader {
     pub async fn new(base_path: String, config: RaptorConfig) -> Result<Self> {
         // Initialize filesystem using factory
-        let filesystem = FilesystemFactory::create(&base_path).await?;
+        let filesystem_factory = FilesystemFactory::new(FilesystemConfig::default()).await?;
+        let filesystem = Arc::from(filesystem_factory.get_filesystem(&base_path)?);
         
         // Initialize compression config
         let compression_config = CompressionConfig {
@@ -47,8 +48,7 @@ impl RaptorReader {
         };
         
         // Initialize distance calculator using unified implementation
-        let distance_config = crate::compute::distance_computation::engine::UnifiedDistanceConfig::default();
-        let distance_calculator = Arc::new(UnifiedDistanceCompute::new(distance_config)?);
+        let distance_calculator = Arc::new(UnifiedDistanceCompute::default());
         
         Ok(Self {
             base_path,
@@ -112,12 +112,12 @@ impl RaptorReader {
                 // Use unified distance calculator with SIMD
                 let mut distances = Vec::new();
                 for vector in &vectors {
-                    let dist = self.distance_calculator.calculate_distance(
+                    let sim = self.distance_calculator.calculate_distance(
                         query,
                         vector,
                         &crate::compute::distance_computation::DistanceMetric::Cosine,
                     );
-                    distances.push(dist);
+                    distances.push(sim.normalized_score);
                 }
                 distances
             };
@@ -127,14 +127,14 @@ impl RaptorReader {
                 all_results.push(ReaderSearchResult {
                     rowgroup_id: rg_id,
                     row_index: i,
-                    distance: *distance,
+                    similarity: *distance,
                     vector_id: self.get_vector_id(&batch, i)?,
                 });
             }
         }
         
         // Sort and take top k
-        all_results.sort_by(|a, b| a.distance.partial_cmp(&b.distance).unwrap());
+        all_results.sort_by(|a, b| a.similarity.partial_cmp(&b.similarity).unwrap());
         all_results.truncate(k);
         
         Ok(all_results)
@@ -151,6 +151,7 @@ impl RaptorReader {
         // Use filesystem abstraction for cloud-aware range reads
         let path = format!("{}/data.raptor", self.base_path);
         self.filesystem.read_range(&path, offset, size).await
+            .map_err(|e| anyhow::anyhow!("Failed to read range: {}", e))
     }
     
     async fn read_full_file_section(&self, offset: u64, size: u64) -> Result<Vec<u8>> {
@@ -224,12 +225,12 @@ impl RaptorReader {
         // Use quantization engine for distance computation (simplified)
         let mut distances = Vec::new();
         for vector in vectors {
-            let dist = self.distance_calculator.calculate_distance(
+            let sim = self.distance_calculator.calculate_distance(
                 query,
                 vector,
                 &crate::compute::distance_computation::DistanceMetric::Cosine,
             );
-            distances.push(dist);
+            distances.push(sim.normalized_score);
         }
         Ok(distances)
     }
@@ -283,6 +284,6 @@ impl RaptorReader {
 pub struct ReaderSearchResult {
     pub rowgroup_id: u32,
     pub row_index: usize,
-    pub distance: f32,
+    pub similarity: f32,
     pub vector_id: String,
 }

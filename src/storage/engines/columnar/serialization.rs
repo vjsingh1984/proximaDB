@@ -326,10 +326,13 @@ impl ColumnarSerializer {
         
         let quantization_engine = if config.quantization.is_some() {
             let quant_config = StorageQuantizationConfig::default(); // TODO: Convert from QuantizationConfig
+            let unified_engine = Arc::new(crate::compute::quantization::UnifiedQuantizationEngine::new());
+            let distance_compute = Arc::new(crate::compute::distance_computation::engine::UnifiedDistanceCompute::default());
             Some(Arc::new(StorageQuantizationEngine::new(
+                unified_engine,
+                distance_compute,
                 quant_config,
-                hardware_caps.clone(),
-            )?))
+            )))
         } else {
             None
         };
@@ -368,7 +371,7 @@ impl ColumnarSerializer {
             (&self.quantization_engine, &self.config.quantization) {
             
             let quant_start = std::time::Instant::now();
-            let quantized_data = self.as_ref().quantize_vectors(&vectors, engine).await?;
+            let quantized_data = self.quantize_vectors(&vectors, engine).await?;
             quantization_time = quant_start.elapsed().as_secs_f64() * 1000.0;
             
             let binary = if quant_config.enable_binary {
@@ -460,19 +463,25 @@ impl ColumnarSerializer {
         
         let vectors = match selected_format {
             SelectedFormat::FP32 => {
-                self.deserialize_fp32_vectors(arrays.get(key).unwrap())?
+                let vector_key = "vector";
+                self.deserialize_fp32_vectors(arrays.get(vector_key).unwrap())?
             },
             SelectedFormat::Binary => {
-                self.deserialize_binary_vectors(arrays.get(key).unwrap()).await?
+                let binary_key = "vector_binary";
+                self.deserialize_binary_vectors(arrays.get(binary_key).unwrap()).await?
             },
             SelectedFormat::INT8 => {
-                let vector_array = arrays.get(key).unwrap();
-                let scale_array = arrays.get(key).unwrap();
-                let zero_point_array = arrays.get(key).unwrap();
+                let vector_key = "vector_int8";
+                let scale_key = "int8_scale";
+                let zero_point_key = "int8_zero_point";
+                let vector_array = arrays.get(vector_key).unwrap();
+                let scale_array = arrays.get(scale_key).unwrap();
+                let zero_point_array = arrays.get(zero_point_key).unwrap();
                 self.deserialize_int8_vectors(vector_array, scale_array, zero_point_array)?
             },
             SelectedFormat::PQ => {
-                self.deserialize_pq_vectors(arrays.get(key).unwrap()).await?
+                let pq_key = "vector_pq";
+                self.deserialize_pq_vectors(arrays.get(pq_key).unwrap()).await?
             },
         };
         
@@ -480,7 +489,7 @@ impl ColumnarSerializer {
         let records = vectors.into_iter()
             .enumerate()
             .map(|(i, vector)| VectorRecord {
-                id: format!("record_{}", i), // Placeholder - would come from ID column
+                id: Some(format!("record_{}", i)), // Placeholder - would come from ID column
                 vector,
                 timestamp: chrono::Utc::now().timestamp() as u32,
                 ..Default::default()
@@ -523,10 +532,14 @@ impl ColumnarSerializer {
         let byte_buffer: &[u8] = cast_slice(&buffer);
         let fixed_size = dimension * 4; // 4 bytes per f32
         
-        let array = FixedSizeBinaryArray::try_new_from_iter(
-            (0..vectors.len()).map(|i| {
-                Some(&byte_buffer[i * fixed_size..(i + 1) * fixed_size])
-            })
+        let values: Vec<Option<&[u8]>> = (0..vectors.len())
+            .map(|i| Some(&byte_buffer[i * fixed_size..(i + 1) * fixed_size]))
+            .collect();
+        
+        let array = FixedSizeBinaryArray::try_new(
+            fixed_size as i32,
+            values.into_iter().flatten().collect::<Vec<_>>().concat().into(),
+            None
         )?;
         
         // Return buffer to pool
@@ -559,12 +572,12 @@ impl ColumnarSerializer {
         
         for (i, vector) in vectors.iter().enumerate() {
             let record = VectorRecord {
-                id: format!("temp_{}", i),
+                id: Some(format!("temp_{}", i)),
                 vector: vector.to_vec(),
                 ..Default::default()
             };
             
-            let quantized = engine.quantize_vector(&record).await
+            let quantized = engine.quantize_single(&record.vector, &record.id).await
                 .context("Failed to quantize vector")?;
             
             quantized_data.push(quantized);
@@ -576,7 +589,7 @@ impl ColumnarSerializer {
     /// Serialize binary quantized vectors
     fn serialize_binary_vectors(&self, quantized_data: &[StorageQuantizedData]) -> Result<ArrayRef> {
         let binary_size = (self.config.dimension + 7) / 8;
-        let mut builder = FixedSizeBinaryBuilder::new(binary_size);
+        let mut builder = FixedSizeBinaryBuilder::new(binary_size as i32);
         
         for data in quantized_data {
             if let Some(ref filter_quant) = data.filter {
@@ -597,7 +610,7 @@ impl ColumnarSerializer {
     
     /// Serialize INT8 quantized vectors
     fn serialize_int8_vectors(&self, quantized_data: &[StorageQuantizedData]) -> Result<(ArrayRef, ArrayRef, ArrayRef)> {
-        let mut vector_builder = FixedSizeBinaryBuilder::new(self.config.dimension);
+        let mut vector_builder = FixedSizeBinaryBuilder::new(self.config.dimension as i32);
         let mut scale_builder = Float32Builder::with_capacity(quantized_data.len());
         let mut zero_point_builder = Int8Builder::with_capacity(quantized_data.len());
         
@@ -611,13 +624,9 @@ impl ColumnarSerializer {
                 
                 vector_builder.append_value(int8_data)?;
                 
-                // Extract scale and zero point from metadata (simplified)
-                let scale = fast_quant.metadata.get(key)
-                    .and_then(|v| v.as_f64())
-                    .unwrap_or(1.0) as f32;
-                let zero_point = fast_quant.metadata.get(key)
-                    .and_then(|v| v.as_i64())
-                    .unwrap_or(0) as i8;
+                // Extract scale and zero point from metadata
+                let scale = fast_quant.metadata.scale;
+                let zero_point = fast_quant.metadata.zero_point;
                 
                 scale_builder.append_value(scale);
                 zero_point_builder.append_value(zero_point);
@@ -641,7 +650,7 @@ impl ColumnarSerializer {
             .map(|q| q.pq_segments as usize)
             .unwrap_or(16);
         
-        let mut builder = FixedSizeBinaryBuilder::new(pq_size);
+        let mut builder = FixedSizeBinaryBuilder::new(pq_size as i32);
         
         for data in quantized_data {
             if let Some(ref primary_quant) = data.primary {
@@ -777,17 +786,17 @@ impl ColumnarSerializer {
                 }
             },
             FormatPreference::Specific(format) => {
-                let column_name = match format {
+                let name = match format {
                     SelectedFormat::FP32 => "vector",
                     SelectedFormat::Binary => "vector_binary",
                     SelectedFormat::INT8 => "vector_int8",
                     SelectedFormat::PQ => "vector_pq",
                 };
                 
-                if arrays.contains_key(column_name) {
+                if arrays.contains_key(name) {
                     Ok(format)
                 } else {
-                    Err(anyhow::anyhow!("Requested format {} not available", column_name))
+                    Err(anyhow::anyhow!("Requested format {} not available", name))
                 }
             },
         }
@@ -804,9 +813,10 @@ impl ColumnarSerializer {
                 let mut vectors = Vec::with_capacity(fixed_array.len());
                 
                 for i in 0..fixed_array.len() {
-                    if let Some(bytes) = fixed_array.value_data(i) {
+                    if !fixed_array.is_null(i) {
+                        let bytes = fixed_array.value(i);
                         let floats: &[f32] = try_cast_slice(bytes)
-                            .context("Failed to cast bytes to f32 slice")?;
+                            .map_err(|e| anyhow::anyhow!("Failed to cast bytes to f32 slice: {}", e))?;
                         vectors.push(floats.to_vec());
                     } else {
                         return Err(anyhow::anyhow!("Null vector found at index {}", i));
@@ -873,13 +883,13 @@ impl ColumnarSerializer {
         let mut vectors = Vec::with_capacity(int8_array.len());
         
         for i in 0..int8_array.len() {
-            if let (Some(int8_bytes), Some(scale), Some(zero_point)) = (
-                int8_array.value_data(i),
-                scale_array.value(i),
-                zero_point_array.value(i),
-            ) {
+            if !int8_array.is_null(i) && !scale_array.is_null(i) && !zero_point_array.is_null(i) {
+                let int8_bytes = int8_array.value(i);
+                let scale = scale_array.value(i);
+                let zero_point = zero_point_array.value(i);
+                
                 let int8_values: &[i8] = try_cast_slice(int8_bytes)
-                    .context("Failed to cast bytes to i8 slice")?;
+                    .map_err(|e| anyhow::anyhow!("Failed to cast bytes to i8 slice: {}", e))?;
                 
                 let fp32_vector: Vec<f32> = int8_values.iter()
                     .map(|&val| (val as f32 - zero_point as f32) * scale)

@@ -226,7 +226,7 @@ impl HybridParquetWriter {
         });
         
         let mut writer = Self {
-            config,
+            config: config.clone(),
             current_mode: Arc::new(RwLock::new(config.initial_mode)),
             streaming_writer: Arc::new(Mutex::new(streaming_writer)),
             buffer: Arc::new(RwLock::new(Vec::new())),
@@ -308,7 +308,8 @@ impl HybridParquetWriter {
     
     /// Write in batch mode
     async fn write_batch(&self, records: Vec<VectorRecord>) -> Result<()> {
-        trace!("Writing {} records in batch mode", records.len());
+        let records_len = records.len();
+        trace!("Writing {} records in batch mode", records_len);
         
         // Add to buffer
         {
@@ -322,7 +323,7 @@ impl HybridParquetWriter {
             }
         }
         
-        self.stats.batch_writes.fetch_add(records.len() as u64, Ordering::Relaxed);
+        self.stats.batch_writes.fetch_add(records_len as u64, Ordering::Relaxed);
         Ok(())
     }
     

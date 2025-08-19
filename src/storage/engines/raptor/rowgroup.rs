@@ -97,6 +97,16 @@ impl RowGroupManager {
             total_rows: 0,
         }
     }
+
+    /// Get immutable reference to rowgroups
+    pub fn rowgroups(&self) -> &Vec<RowGroup> {
+        &self.rowgroups
+    }
+
+    /// Get mutable reference to rowgroups
+    pub fn rowgroups_mut(&mut self) -> &mut Vec<RowGroup> {
+        &mut self.rowgroups
+    }
     
     pub fn add_rowgroup(&mut self, batch: &RecordBatch, config: &super::RaptorConfig) -> Result<RowGroup> {
         let row_count = batch.num_rows();
@@ -268,7 +278,7 @@ impl RowGroupManager {
     }
     
     fn predicate_matches_stats(&self, predicate: &Predicate, stats: &ColumnStats) -> bool {
-        match &predicate.op.as_str() {
+        match predicate.op.as_str() {
             ">" => {
                 if let Some(max) = &stats.max_value {
                     !self.value_less_than(&predicate.value, max)

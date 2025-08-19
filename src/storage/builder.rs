@@ -291,13 +291,13 @@ impl StorageSystemBuilder {
 
     /// Configure data compression
     pub fn with_data_compression(mut self, config: DataCompressionConfig) -> Self {
-        self.config.data_storage.storage.as_ref().and_then(|s| s.compression.as_ref()) = config;
+        self.config.data_storage.compression = config;
         self
     }
 
     /// Enable high compression for data
     pub fn with_high_data_compression(mut self) -> Self {
-        self.config.data_storage.storage.as_ref().and_then(|s| s.compression.as_ref()) = DataCompressionConfig {
+        self.config.data_storage.compression = DataCompressionConfig {
             compress_vectors: true,
             compress_metadata: true,
             vector_compression: VectorCompressionAlgorithm::OPQ,
@@ -309,7 +309,7 @@ impl StorageSystemBuilder {
 
     /// Configure fast data compression
     pub fn with_fast_data_compression(mut self) -> Self {
-        self.config.data_storage.storage.as_ref().and_then(|s| s.compression.as_ref()) = DataCompressionConfig {
+        self.config.data_storage.compression = DataCompressionConfig {
             compress_vectors: true,
             compress_metadata: true,
             vector_compression: VectorCompressionAlgorithm::PQ,
@@ -321,7 +321,7 @@ impl StorageSystemBuilder {
 
     /// Disable data compression
     pub fn without_data_compression(mut self) -> Self {
-        self.config.data_storage.storage.as_ref().and_then(|s| s.compression.as_ref()) = DataCompressionConfig {
+        self.config.data_storage.compression = DataCompressionConfig {
             compress_vectors: false,
             compress_metadata: false,
             vector_compression: VectorCompressionAlgorithm::None,
@@ -357,7 +357,8 @@ impl StorageSystemBuilder {
 
     /// Configure WAL compression
     pub fn with_wal_compression(mut self, algorithm: CompressionAlgorithm) -> Self {
-        self.config.wal_system.storage.as_ref().and_then(|s| s.compression.as_ref()).algorithm = algorithm;
+        // TODO: Update WAL compression configuration when storage field is available
+        // self.config.wal_system.compression = Some(algorithm);
         self
     }
 
@@ -595,7 +596,7 @@ impl StorageSystemBuilder {
         // Generate recommendations
         let recommendations =
             super::validation::ConfigValidator::generate_recommendations(&self.config);
-        if !recommendations.is_none() {
+        if !recommendations.is_empty() {
             tracing::info!("💡 Configuration recommendations:");
             for rec in &recommendations {
                 tracing::info!("   - {}", rec);
@@ -701,7 +702,7 @@ impl std::fmt::Debug for StorageSystem {
             .field("data_urls_count", &self.config.data_storage.data_urls.len())
             .field(
                 "compression_enabled",
-                &self.config.data_storage.storage.as_ref().and_then(|s| s.compression.as_ref()).compress_vectors,
+                &self.config.data_storage.compression.compress_vectors,
             )
             .field(
                 "zero_copy_enabled",
@@ -736,7 +737,7 @@ use tracing::{debug, error, info};
             builder.config.wal_system.memtable.memtable_type,
             MemTableType::BTree
         );
-        assert!(builder.config.data_storage.storage.as_ref().and_then(|s| s.compression.as_ref()).compress_vectors);
+        assert!(builder.config.data_storage.compression.compress_vectors);
     }
 
     #[tokio::test]

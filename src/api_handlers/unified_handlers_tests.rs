@@ -274,7 +274,7 @@ mod tests {
         assert_eq!(record.version, Some(2));
         assert_eq!(record.rank.unwrap(), 1);
         assert_eq!(record.score.unwrap(), 0.95);
-        assert_eq!(record.distance.unwrap(), 0.1);
+        assert_eq!(record.similarity.unwrap(), 0.1);
     }
 
     #[test]

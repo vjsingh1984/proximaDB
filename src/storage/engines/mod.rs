@@ -17,6 +17,7 @@ pub mod common; // Universal engine infrastructure shared across all engines
 pub mod factory; // Engine factory for creating instances
 pub mod migration; // Engine migration utilities
 pub mod universal; // Universal distance adapter system with PQ and INT8 optimizations
+pub mod progressive_search_trait; // Trait for progressive quantization-aware search
 // pub mod hybrid; // Future implementation
 
 // Re-export main engine types

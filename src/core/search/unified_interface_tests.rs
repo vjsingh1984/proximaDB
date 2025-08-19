@@ -120,7 +120,7 @@ mod tests {
             metadata: HashMap::new(),
             score,
             // rank removed -  None,
-            semantic_distance: Some(SemanticDistance {
+            semantic_similarity: Some(SemanticDistance {
                 raw_value: score,
                 metric: DistanceMetric::Cosine,
                 normalized_score: 1.0 - score, // Higher normalized = more similar

@@ -7,34 +7,28 @@
 //!
 //! VIPER (Vector-optimized Intelligent Parquet with Efficient Retrieval) is a pure
 //! storage engine focused on durability and efficient serialization of vectors.
-//!
 //! Responsibilities:
 //! - Store vectors in columnar Parquet format
 //! - Handle flush operations from WAL to persistent storage
 //! - Perform compaction to optimize storage layout
 //! - Provide direct vector search on Parquet files (baseline functionality)
-//!
 //! NOT Responsible For:
 //! - ML clustering (belongs in AXIS indexing service)
 //! - Index management (AXIS responsibility)
 //! - Query optimization strategies (AXIS layer)
-//!
 //! Architecture:
 //! - VIPER provides baseline search that works for ALL collections
 //! - AXIS can optionally add ML clustering as an optimization layer
 //! - Clean separation: VIPER = storage, AXIS = indexing
-
 use anyhow::Result;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::{debug, error, info, warn, trace};
-
 use crate::core::{String, VectorRecord};
 use crate::storage::persistence::filesystem::FilesystemFactory;
 use crate::storage::traits::{FlushResult, UnifiedStorageEngine, CollectionMetadataProvider};
 use crate::core::search::UnifiedSearchEngine;
-
 use super::types::*;
 use super::schema::SchemaManager;
 use super::compaction::CompactionManager;
@@ -46,16 +40,7 @@ use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
 use super::types::CollectionMetadata;
 use anyhow::Context;
 use std::collections::HashMap as StdHashMap;
-
-// MIGRATION: Import universal quantization adapter
-use crate::storage::engines::common::{
-    UniversalQuantizationAdapter, UniversalQuantizationConfig,
-    quantization_common::{
-        ProgressiveQuantizationStage, UniversalQuantizationLevel,
-        BinaryThresholdStrategy, CodebookStrategy,
-    },
-};
-
+// Using unified quantization engine directly from compute module
 /// VIPER Engine - Main coordination point for the modular VIPER storage engine
 #[derive(Debug)]
 pub struct ViperEngine {
@@ -64,13 +49,10 @@ pub struct ViperEngine {
     
     /// User-facing core config (for passing to flush operations)
     core_config: crate::core::config::ViperConfig,
-    
     /// Collection service for metadata access
     collection_service: Arc<RwLock<Option<Arc<crate::services::collection_service::CollectionService>>>>,
-    
     /// Filesystem interface
     filesystem: Arc<FilesystemFactory>,
-    
     /// Modular managers
     schema_manager: SchemaManager,
     compaction_manager: CompactionManager,
@@ -78,21 +60,19 @@ pub struct ViperEngine {
     // ml_clustering_engine: MLClusteringEngine, // Moved to AXIS
     utilities: ViperUtilities,
     search_engine: Arc<ViperUnifiedSearchEngine>,
-    
     /// Engine statistics
     stats: Arc<RwLock<EngineStats>>,
-    
     /// Collection metadata cache
     collections: Arc<RwLock<HashMap<String, CollectionMetadata>>>,
+    /// Unified quantization engine from compute module
+    quantization_engine: Arc<crate::compute::quantization::storage_engine::StorageQuantizationEngine>,
 }
-
 impl ViperEngine {
     /// Create a new VIPER engine from user-facing core config
     pub async fn from_core_config(core_config: crate::core::config::ViperConfig, filesystem: Arc<FilesystemFactory>) -> Result<Self> {
         let config = ViperEngineConfig::from_core_config(&core_config);
         Self::new_internal(config, core_config, filesystem).await
     }
-    
     /// Standard constructor matching SST engine interface
     /// This provides consistency across storage engines
     /// 
@@ -111,11 +91,10 @@ impl ViperEngine {
     }
     
     /// Constructor with explicit base location (for consistency with SST)
-    /// 
     /// Note: VIPER manages storage locations per-collection through collection metadata,
     /// but this constructor is provided for interface consistency with SST engine.
     pub async fn new_with_location(
-        collection_id: String,  // Used for logging and initial setup
+        collection_id: String,
         core_config: crate::core::config::ViperConfig,
         filesystem: Arc<FilesystemFactory>,
         _distance_compute: Arc<crate::compute::distance_computation::engine::UnifiedDistanceCompute>,
@@ -132,69 +111,43 @@ impl ViperEngine {
     async fn new_internal(config: ViperEngineConfig, core_config: crate::core::config::ViperConfig, filesystem: Arc<FilesystemFactory>) -> Result<Self> {
         let collection_service = Arc::new(RwLock::new(None));
         
-        // MIGRATION: Initialize universal quantization adapter (REQUIRED)
-        let quantization_adapter = Arc::new(
-            UniversalQuantizationAdapter::new()
-                .context("Failed to initialize universal quantization adapter")?
-        );
+        // Initialize unified quantization engine from compute module
+        let distance_compute = Arc::new(crate::compute::distance_computation::engine::UnifiedDistanceCompute::default());
+        let codebook_store = Arc::new(crate::compute::quantization::unified::InMemoryCodebookStore::new());
+        let unified_engine = Arc::new(crate::compute::quantization::unified::UnifiedQuantizationEngine::new(
+            distance_compute.clone(),
+            codebook_store,
+        ));
         
-        // Configure quantization for columnar storage
-        let mut quant_config = UniversalQuantizationConfig::default();
-        quant_config.enabled = true;
+        // Configure storage quantization for VIPER
+        let storage_config = crate::compute::quantization::storage_engine::StorageQuantizationConfig {
+            primary_level: Some(crate::compute::quantization::unified::UnifiedQuantizationLevel::pq8(32)),
+            filter_level: Some(crate::compute::quantization::unified::UnifiedQuantizationLevel::binary()),
+            fast_level: Some(crate::compute::quantization::unified::UnifiedQuantizationLevel::int8()),
+            distance_metric: crate::compute::distance_computation::engine::DistanceMetric::Cosine,
+            enable_progressive: true,
+            filter_threshold: 100.0,
+            candidate_multiplier: 10,
+            training_sample_size: 10000,
+            memory_budget_mb: 512,
+            enable_hardware_acceleration: true,
+        };
         
-        // VIPER-specific quantization stages for columnar data
-        quant_config.stages = vec![
-            ProgressiveQuantizationStage {
-                level: UniversalQuantizationLevel::Binary {
-                    threshold_strategy: BinaryThresholdStrategy::Adaptive,
-                },
-                // candidate_reduction removed -  0.8, // Filter 80% using binary
-                // quality_threshold removed -  0.3,
-            },
-            ProgressiveQuantizationStage {
-                level: UniversalQuantizationLevel::Int8 {
-                    scale_strategy: crate::storage::engines::common::quantization_common::ScaleStrategy::PerDimensionMinMax,
-                    zero_point_strategy: crate::storage::engines::common::quantization_common::ZeroPointStrategy::Symmetric,
-                },
-                // candidate_reduction removed -  0.5, // Further reduce using INT8
-                // quality_threshold removed -  0.85,
-            },
-            ProgressiveQuantizationStage {
-                level: UniversalQuantizationLevel::ProductQuantization {
-                    segments: 96, // Default for high-dimensional vectors
-                    bits_per_segment: 8,
-                    codebook_strategy: CodebookStrategy::KMeans,
-                },
-                // candidate_reduction removed -  0.0, // Keep all for final ranking
-                // quality_threshold removed -  0.95,
-            },
-        ];
-        
-        // Add VIPER-specific engine overrides
-        quant_config.engine_overrides.insert(
-            "viper_columnar_optimization".to_string(),
-            serde_json::json!(true)
-        );
-        quant_config.engine_overrides.insert(
-            "viper_parquet_encoding".to_string(),
-            serde_json::json!("bit_packed")
-        );
-        
-        quantization_adapter.as_ref().set_default_config(quant_config);
-        
+        let quantization_engine = Arc::new(crate::compute::quantization::storage_engine::StorageQuantizationEngine::new(
+            unified_engine.clone(),
+            distance_compute.clone(),
+            storage_config,
+        ));
         // ML clustering moved to AXIS
         // let ml_clustering_engine = MLClusteringEngine::new(super::ml_clustering::KMeansConfig::default());
-        
         // Initialize utilities with default configuration
         let utilities = ViperUtilities::new(
             super::utilities::ViperUtilitiesConfig::default(),
             filesystem.clone(),
         ).await?;
-        
         // Create managers with async constructors
-        let compaction_manager = CompactionManager::new(collection_service.clone(), filesystem.clone()).await?;
+        let compaction_manager = CompactionManager::new(collection_service.clone(), filesystem.clone(), None).await?;
         let flush_manager = FlushManager::new(collection_service.clone(), filesystem.clone()).await?;
-        
         Ok(Self {
             config,
             core_config,
@@ -216,7 +169,7 @@ impl ViperEngine {
             )),
             stats: Arc::new(RwLock::new(EngineStats::default())),
             collections: Arc::new(RwLock::new(HashMap::new())),
-            quantization_adapter,
+            quantization_engine,
         })
     }
     
@@ -232,7 +185,6 @@ impl ViperEngine {
     
     // VIPER is columnar storage - it doesn't support single vector inserts
     // All data must come through flush operations from WAL or direct flush
-    
     /// Flush vectors to storage
     pub async fn flush_vectors(
         &self,
@@ -249,7 +201,6 @@ impl ViperEngine {
             force,
             synchronous
         );
-        
         // Delegate to the flush manager
         self.flush_manager.flush_vectors(collection_id, vector_records, batch_ids, force, synchronous, &self.core_config, None).await
     }
@@ -260,29 +211,26 @@ impl ViperEngine {
         collection_id: &str,
         vector_records: Vec<crate::core::VectorRecord>,
     ) -> Result<()> {
+        let num_records = vector_records.len();
         info!(
             "💾 VIPER Engine: Direct flush {} vectors for collection {} (WAL recovery)",
-            vector_records.len(),
+            num_records,
             collection_id
         );
-        
-        // Convert to storage format
-        let viper_records: Vec<VectorRecord> = vector_records.into_iter().collect();
-        
         // Create synthetic batch IDs for recovery 
-        let batch_ids: Vec<String> = (0..viper_records.len())
+        let batch_ids: Vec<String> = (0..num_records)
             .map(|i| format!("recovery_batch_{}", i))
             .collect();
-        
+        // Convert to storage format
+        let nova_file_records: Vec<VectorRecord> = vector_records.into_iter().collect();
         // Use existing flush infrastructure with force=true, synchronous=true for recovery
         let _flush_result = self.flush_vectors(
             collection_id,
-            &viper_records,
+            &nova_file_records,
             &batch_ids,
             true,  // force flush
             true,  // synchronous for reliable recovery
         ).await?;
-        
         info!("✅ VIPER Engine: Direct flush completed for collection {}", collection_id);
         Ok(())
     }
@@ -291,16 +239,19 @@ impl ViperEngine {
     /// Note: This method requires collection config to be passed, use do_compact for automatic config lookup
     pub async fn compact_parquet_files(
         &self,
-        collection_id: &str,
         input_files: Vec<String>,
         collection_config: Option<&crate::proto::proximadb::Collection>,
     ) -> Result<Vec<String>> {
+        let collection_id = collection_config
+            .as_ref()
+            .and_then(|c| c.id.as_ref())
+            .unwrap_or(&"unknown".to_string());
+        
         info!(
             "🗜️ VIPER Engine: Compacting {} files for collection {}",
             input_files.len(),
             collection_id
         );
-        
         // Delegate to the compaction manager with collection config
         let result = self.compaction_manager.compact_parquet_files(collection_id, input_files, collection_config).await?;
         Ok(result.output_files)
@@ -315,20 +266,15 @@ impl ViperEngine {
         use arrow_array::{Array, Float32Array, StringArray, Int64Array, BooleanArray, Float64Array, ListArray, StructArray};
         use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
         // use bytes::Bytes; // Commented out due to compilation issue
-        
         info!("🔍 VIPER Engine: Looking up vector {} in collection {}", vector_id, collection_id);
-        
         // Get all Parquet files for the collection
-        let parquet_files = self.get_parquet_files_for_collection(&String::from(collection_id.to_string())).await?;
-        
+        let parquet_files = self.get_parquet_files_for_collection(collection_id).await?;
         if parquet_files.is_empty() {
             debug!("📁 No Parquet files found for collection {}", collection_id);
             return Ok(None);
         }
-        
         let current_time = chrono::Utc::now().timestamp_micros();
         let mut best_match: Option<(VectorRecord, i64, i64)> = None; // (record, version, timestamp)
-        
         // Search through all Parquet files
         for parquet_file in parquet_files {
             debug!("🔍 Searching file: {}", parquet_file);
@@ -341,7 +287,6 @@ impl ViperEngine {
                     continue;
                 }
             };
-            
             let parquet_data = match fs.read(&parquet_file).await {
                 Ok(data) => data,
                 Err(e) => {
@@ -349,7 +294,6 @@ impl ViperEngine {
                     continue;
                 }
             };
-            
             let parquet_bytes = bytes::Bytes::from(parquet_data);
             let reader_builder = match ParquetRecordBatchReaderBuilder::try_new(parquet_bytes) {
                 Ok(r) => r,
@@ -358,9 +302,7 @@ impl ViperEngine {
                     continue;
                 }
             };
-            
             let mut batch_reader = reader_builder.build()?;
-            
             // Process each record batch
             while let Some(batch) = batch_reader.next() {
                 let batch = batch?;
@@ -369,7 +311,6 @@ impl ViperEngine {
                 let id_array = batch.column_by_name("id")
                     .and_then(|col| col.as_any().downcast_ref::<StringArray>())
                     .ok_or_else(|| anyhow::anyhow!("Missing or invalid 'id' column"))?;
-                
                 // Find matching ID
                 for row_idx in 0..batch.num_rows() {
                     if id_array.value(row_idx) == vector_id {
@@ -382,16 +323,13 @@ impl ViperEngine {
                             .and_then(|col| col.as_any().downcast_ref::<Int64Array>())
                             .map(|arr| arr.value(row_idx))
                             .unwrap_or(0);
-                        
                         let version = batch.column_by_name("version")
                             .and_then(|col| col.as_any().downcast_ref::<Int64Array>())
                             .map(|arr| arr.value(row_idx))
                             .unwrap_or(1);
-                        
                         let expires_at = batch.column_by_name("expires_at")
                             .and_then(|col| col.as_any().downcast_ref::<Int64Array>())
                             .and_then(|arr| if arr.is_null(row_idx) { None } else { Some(arr.value(row_idx)) });
-                        
                         // Skip if expired
                         if let Some(exp) = expires_at {
                             if exp > 0 && exp < current_time {
@@ -399,29 +337,24 @@ impl ViperEngine {
                                 continue;
                             }
                         }
-                        
                         // Extract vector data
                         let vector_values = vector_array.value(row_idx);
                         let vector_float_array = vector_values
                             .as_any()
                             .downcast_ref::<Float32Array>()
                             .ok_or_else(|| anyhow::anyhow!("Invalid vector values type"))?;
-                        
                         let vector: Vec<f32> = (0..vector_float_array.len())
                             .map(|i| vector_float_array.value(i))
                             .collect();
-                        
                         // Extract other fields
                         let _created_at = batch.column_by_name("created_at")
                             .and_then(|col| col.as_any().downcast_ref::<Int64Array>())
                             .map(|arr| arr.value(row_idx))
                             .unwrap_or(timestamp);
-                        
                         let updated_at = batch.column_by_name("updated_at")
                             .and_then(|col| col.as_any().downcast_ref::<Int64Array>())
                             .map(|arr| arr.value(row_idx))
                             .unwrap_or(timestamp);
-                        
                         // Parse metadata from extra_meta list of key-value pairs
                         let mut metadata_map = HashMap::new();
                         if let Some(extra_meta_col) = batch.column_by_name("extra_meta") {
@@ -443,7 +376,6 @@ impl ViperEngine {
                                 }
                             }
                         }
-                        
                         // Also parse filterable metadata columns (they have their own columns)
                         for field in batch.schema().fields() {
                             let field_name = field.name();
@@ -480,10 +412,8 @@ impl ViperEngine {
                                 }
                             }
                         }
-                        
                         // Convert HashMap to Vec<MetadataItem>
                         let metadata = crate::core::proto_metadata_helper::hashmap_to_proto_metadata(&metadata_map);
-                        
                         let record = VectorRecord {
                             id: Some(vector_id.to_string()),
                             vector,
@@ -492,12 +422,8 @@ impl ViperEngine {
                             updated_at: Some(updated_at as u32),
                             expires_at: expires_at.map(|v| v as u32),
                             version: Some(version as u32),
-                            // rank removed -  None,
-                            similarity: None,
-                            similarity: None,
-            
-        };
-                        
+                            quantized_vector: None,
+                        };
                         // Check if this is a better match than what we have
                         match &best_match {
                             Some((_, best_version, best_timestamp)) => {
@@ -510,11 +436,10 @@ impl ViperEngine {
                                 best_match = Some((record, version, timestamp));
                             }
                         }
-                    }
-                }
-            }
-        }
-        
+                    }  // End if id_array.value(row_idx) == vector_id
+                }  // End for row_idx
+            }  // End while let Some(batch)
+        }  // End for parquet_file in parquet_files
         // Return the best match (highest version/newest timestamp)
         Ok(best_match.map(|(record, _, _)| record))
     }
@@ -543,26 +468,22 @@ impl ViperEngine {
         self.schema_manager.get_cache_stats().await
     }
     */
-    
     // 🔴 UNUSED HEALTH CHECK METHOD - CANDIDATE FOR REMOVAL
     // This internal health check method has no callers found.
     // Health checking is handled by the UnifiedStorageEngine trait's health_check method.
-    /*
     /// Internal health check
     pub async fn internal_health_check(&self) -> Result<bool> {
         // Basic health check - can be extended to check:
         // - Filesystem connectivity
         // - Collection service availability
         // - Internal state consistency
-        
         Ok(true)
     }
-    */
     
     /// Get collection metadata
     pub async fn get_collection_metadata(&self, collection_id: &str) -> Option<CollectionMetadata> {
         let collections = self.collections.read().await;
-        collections.get(key).cloned()
+        collections.get(collection_id).cloned()
     }
     
     /// Update collection metadata
@@ -576,11 +497,9 @@ impl ViperEngine {
         &self.core_config
     }
     
-    
     // 🟡 INTERNAL UTILITY METHODS - CONSIDER MAKING PRIVATE
     // These utility methods have no external callers found in the codebase.
     // They are only used internally and could be made private or moved to internal modules.
-    
     /// Record operation performance metrics - INTERNAL USE
     async fn record_operation_metrics(&self, metrics: super::utilities::OperationMetrics) -> Result<()> {
         self.utilities.record_operation(metrics).await
@@ -605,20 +524,16 @@ impl ViperEngine {
     }
     
     /// **STORAGE-AWARE POLYMORPHIC SEARCH**: Primary vector search interface
-    /// 
     /// This method provides polymorphic search that automatically selects the most
-    /// efficient search strategy based on collection characteristics, data distribution,
+    /// efficient search search_strategy based on collection characteristics, data distribution,
     /// and query parameters. It delegates to specialized search implementations for:
     /// - ML-driven cluster optimization for large collections
     /// - Direct search for small collections 
     /// - Hybrid strategies combining clustering with metadata filtering
-    /// Public search method - requires storage URL
-    /// 
+    /// Public search method for testing - requires collection_id and storage URL
     /// **Note**: This is a convenience method primarily intended for testing.
     /// Production code should use `search_vectors_unified` via the UnifiedStorageEngine trait
     /// for full control over search parameters including distance metrics and filters.
-    /// 
-    /// This method requires the storage URL to be passed explicitly.
     pub async fn search_vectors(
         &self,
         collection_id: &str,
@@ -626,24 +541,48 @@ impl ViperEngine {
         query_vector: &[f32],
         k: usize,
     ) -> Result<Vec<crate::core::search::SearchResult>> {
-        info!("🔍 VIPER Engine: search_vectors called - collection={}, storage_url={}, k={}", collection_id, storage_url, k);
-        
+        info!("🔍 VIPER Engine: search_vectors called - collection={}, storage_url={}, k={}", 
+              collection_id, storage_url, k);
         // Delegate to the unified search implementation with default parameters
-        self.search_vectors_unified(
-            collection_id,
-            storage_url,
-            query_vector,
-            k,
-            &crate::compute::distance_computation::DistanceMetric::Cosine, // Default metric
-            None, // No filters
-            true, // Include vectors
-            true, // Include metadata
-        ).await
+        
+        // Create search context with provided collection_id (no URL parsing needed!)
+        use crate::storage::traits::{SearchContext, SearchContextMetadata};
+        use crate::core::search::SearchParams;
+        
+        let search_params = Arc::new(SearchParams {
+            vector: query_vector.to_vec(),
+            top_k: k,
+            filter_expression: None,
+            custom_hints: Some(HashMap::new()),
+        });
+        
+        let collection = Arc::new(crate::proto::proximadb::Collection {
+            id: collection_id.to_string(),
+            dimension: query_vector.len() as u32,
+            distance_metric: crate::proto::proximadb::DistanceMetric::Cosine as i32,
+            storage_assignment: Some(crate::proto::proximadb::StorageAssignment {
+                storage_url: storage_url.to_string(),
+                ..Default::default()
+            }),
+            ..Default::default()
+        });
+        
+        let ctx = SearchContext {
+            search_params,
+            collection,
+            metadata: SearchContextMetadata {
+                collection_id: collection_id.to_string(),
+                use_axis_indexes: false,
+                has_quantization: false,
+                ..Default::default()
+            },
+        };
+        
+        self.search_vectors_unified(&ctx).await
     }
     
     // REMOVED: search_vectors_in_cluster - Clustering is handled by AXIS indexing service
     // VIPER provides raw vector retrieval; AXIS determines which files to search
-
     /// Get all Parquet files using the provided storage URL
     pub async fn get_parquet_files_with_storage_url(&self, collection_id: &str, storage_url: &str) -> Result<Vec<String>> {
         debug!("📁 Getting Parquet files for collection: {} from URL: {}", collection_id, storage_url);
@@ -651,137 +590,62 @@ impl ViperEngine {
         debug!("📁 [DEBUG] get_parquet_files_with_storage_url called:");
         debug!("    collection_id: {}", collection_id);
         debug!("    storage_url: {}", storage_url);
-        
-        // Handle different storage backends
-        let parquet_files = if storage_url.starts_with("file://") {
-            // The storage_url already contains the full path including collection_id and /data
-            // Don't append collection_id again
-            let full_path = storage_url.to_string();
-            
-            info!("📁 Listing local files at: {}", full_path);
-            debug!("📁 Listing local files at: {}", full_path);
-            debug!("📁 [DEBUG] Listing local files at: {}", full_path);
-            
-            // Use filesystem API to list files
-            match self.filesystem.list(&full_path).await {
-                Ok(files) => {
-                    debug!("📁 [DEBUG] filesystem.list returned {} entries", files.len());
-                    for (i, file) in files.iter().enumerate() {
-                        debug!("    [{}] name={}, url={}", i, file.name, file.url);
-                    }
-                    let parquet_files: Vec<String> = files
-                        .into_iter()
-                        .filter(|f| f.name.ends_with(".parquet"))
-                        .map(|f| f.url)  // Use the full URL from DirEntry
-                        .collect();
-                    debug!("📁 Found {} Parquet files in {}", parquet_files.len(), full_path);
-                    debug!("📁 [DEBUG] Found {} Parquet files", parquet_files.len());
-                    for (i, file) in parquet_files.iter().enumerate() {
-                        debug!("    [{}] {}", i, file);
-                    }
-                    parquet_files
+        // Use filesystem API for all storage backends - it handles the differences
+        debug!("📁 Listing files at: {}", storage_url);
+        let parquet_files = match self.filesystem.list(storage_url).await {
+            Ok(files) => {
+                debug!("📁 filesystem.list returned {} entries", files.len());
+                let parquet_files: Vec<String> = files
+                    .into_iter()
+                    .filter(|f| f.name.ends_with(".parquet") && !f.name.starts_with("__") && !f.name.starts_with("."))
+                    .map(|f| f.url)  // Use the full URL from DirEntry
+                    .collect();
+                debug!("📁 Found {} Parquet files", parquet_files.len());
+                for (i, file) in parquet_files.iter().enumerate() {
+                    debug!("    [{}] {}", i, file);
                 }
-                Err(e) => {
-                    debug!("📁 Error listing files in {}: {}", full_path, e);
-                    vec![]
-                }
+                parquet_files
             }
-        } else {
-            // Cloud storage - use the storage URL pattern
-            debug!("📁 Listing cloud files for collection: {}", collection_id);
-            
-            match self.filesystem.list(storage_url).await {
-                Ok(files) => {
-                    let parquet_files: Vec<String> = files
-                        .into_iter()
-                        .filter(|f| f.name.ends_with(".parquet"))
-                        .map(|f| f.url)  // Use the full URL from DirEntry
-                        .collect();
-                    debug!("📁 Found {} Parquet files in cloud storage", parquet_files.len());
-                    parquet_files
-                }
-                Err(e) => {
-                    debug!("📁 Error listing cloud files: {}", e);
-                    vec![]
-                }
+            Err(e) => {
+                debug!("📁 Error listing files: {}", e);
+                vec![]
             }
         };
-        
         Ok(parquet_files)
     }
     
     /// Get all Parquet files associated with a collection (legacy - uses collection service)
     pub async fn get_parquet_files_for_collection(&self, collection_id: &str) -> Result<Vec<String>> {
         debug!("📁 Getting Parquet files for collection: {}", collection_id);
-        
         // Get storage URL from collection metadata
         let collection_service = self.collection_service.read().await;
         let collection_service = collection_service.as_ref()
             .ok_or_else(|| anyhow::anyhow!("Collection service not initialized"))?;
-        
         let collection = collection_service.get_collection(collection_id).await?
             .ok_or_else(|| anyhow::anyhow!("Collection {} not found", collection_id))?;
-        
         let storage_assignment = collection.storage_assignment
             .ok_or_else(|| anyhow::anyhow!("No storage assignment found for collection {}", collection_id))?;
-        
         let storage_url = format!("{}/{}/data", storage_assignment.base_location, collection_id);
         debug!("📁 Storage URL for collection {}: {}", collection_id, storage_url);
         
-        // Handle different storage backends
-        let parquet_files = if storage_url.starts_with("file://") {
-            // Local filesystem - storage_url already includes collection_id from assignment service
-            // Use filesystem API to list files
-            let fs = self.filesystem.get_filesystem(&storage_url)?;
-            
-            // Check if directory exists by trying to list it
-            let entries = match fs.list(&storage_url).await {
-                Ok(entries) => entries,
-                Err(_) => {
-                    debug!("📁 Collection directory does not exist or is empty: {}", storage_url);
-                    return Ok(Vec::new());
-                }
-            };
-            
-            // Find all .parquet files in the collection directory
-            let mut files = Vec::new();
-            for entry in entries {
-                // Skip staging directories and hidden files
-                if entry.name.starts_with("__") || entry.name.starts_with(".") {
-                    debug!("📁 Skipping staging/hidden entry: {}", entry.name);
-                    continue;
-                }
-                
-                if entry.name.ends_with(".parquet") && !entry.metadata.is_directory {
-                    // In stateless design, DirEntry.url already contains full URL
-                    debug!("📁 Found parquet file: {}", entry.url);
-                    files.push(entry.url);
-                }
+        // Use filesystem API for all storage backends - it handles the differences
+        let parquet_files = match self.filesystem.list(&storage_url).await {
+            Ok(entries) => {
+                let mut files: Vec<String> = entries
+                    .into_iter()
+                    .filter(|e| e.name.ends_with(".parquet") && !e.name.starts_with("__") && !e.name.starts_with("."))
+                    .map(|e| e.url)
+                    .collect();
+                // Sort files for consistent ordering
+                files.sort();
+                debug!("📁 Found {} parquet files", files.len());
+                files
             }
-            
-            // Sort files for consistent ordering
-            files.sort();
-            files
-        } else if storage_url.starts_with("s3://") || 
-                  storage_url.starts_with("gs://") || 
-                  storage_url.starts_with("adls://") {
-            // Cloud storage - use filesystem factory
-            let collection_url = format!("{}/{}", storage_url, collection_id);
-            match self.filesystem.list(&collection_url).await {
-                Ok(entries) => entries.into_iter()
-                    .filter(|e| e.name.ends_with(".parquet"))
-                    .map(|e| format!("{}/{}", collection_url, e.name))
-                    .collect(),
-                Err(e) => {
-                    warn!("📁 Failed to list cloud files for collection {}: {}", collection_id, e);
-                    Vec::new()
-                }
+            Err(e) => {
+                debug!("📁 Collection directory does not exist or error listing: {}", e);
+                Vec::new()
             }
-        } else {
-            warn!("📁 Unsupported storage URL scheme: {}", storage_url);
-            Vec::new()
         };
-        
         info!("📁 Found {} Parquet files for collection {}", parquet_files.len(), collection_id);
         Ok(parquet_files)
     }
@@ -807,9 +671,9 @@ impl ViperEngine {
             Ok(None)
         }
     }
-
 }
 
+// Close the impl ViperEngine block
 impl Default for ViperEngine {
     fn default() -> Self {
         tokio::runtime::Runtime::new()
@@ -838,15 +702,14 @@ impl UnifiedStorageEngine for ViperEngine {
     fn engine_version(&self) -> &'static str {
         crate::version::PROXIMADB_VERSION
     }
-    
+
     fn strategy(&self) -> crate::storage::traits::StorageEngineStrategy {
         crate::storage::traits::StorageEngineStrategy::Viper
     }
-    
+
     async fn do_flush(&self, params: &crate::storage::traits::FlushParameters) -> Result<FlushResult> {
         let collection_id = params.collection_id.as_ref()
             .ok_or_else(|| anyhow::anyhow!("Collection ID required for VIPER flush"))?;
-        
         debug!("🔍 VIPER DO_FLUSH: Checking compression configuration");
         if let Some(ref collection_config) = params.collection_config {
             if let Some(ref config) = collection_config.config {
@@ -862,17 +725,14 @@ impl UnifiedStorageEngine for ViperEngine {
         } else {
             debug!("   ⚠️ No collection_config in params");
         }
-        
         debug!("Starting flush for collection {} with {} vectors", 
               collection_id, params.vector_records.len());
         info!("🚿 VIPER Engine: Starting flush for collection {} with {} vectors", 
               collection_id, params.vector_records.len());
-        
         // Convert batch IDs to strings for compatibility
         let batch_id_strings: Vec<String> = params.batch_ids.iter()
             .map(|id| id.to_string())
             .collect();
-        
         // Use the modular flush manager to flush vectors with provided collection config
         let mut flush_result = self.flush_manager.flush_vectors(
             collection_id,
@@ -883,7 +743,6 @@ impl UnifiedStorageEngine for ViperEngine {
             &self.core_config,
             params.collection_config.as_ref(), // Pass collection config from params
         ).await?;
-        
         // Update engine statistics
         {
             let mut stats = self.stats.write().await;
@@ -891,7 +750,6 @@ impl UnifiedStorageEngine for ViperEngine {
             stats.total_vectors += flush_result.entries_flushed;
             stats.total_size_bytes += flush_result.bytes_written;
         }
-        
         // Add engine-specific metrics
         flush_result.engine_metrics.insert(
             "engine_version".to_string(),
@@ -901,12 +759,10 @@ impl UnifiedStorageEngine for ViperEngine {
             "engine_name".to_string(),
             serde_json::Value::String("VIPER".to_string())
         );
-        
         // Step 3: Notify EventLog for async AXIS indexing (synchronous acknowledgment)
         let flush_handler = crate::storage::engines::viper::flush_eventlog_integration::ViperFlushHandler::new();
-        
         // Extract the file path from engine_metrics
-        let file_paths = if let Some(path_value) = flush_result.engine_metrics.get(key) {
+        let file_paths = if let Some(path_value) = flush_result.engine_metrics.get("parquet_files") {
             if let serde_json::Value::String(path) = path_value {
                 vec![path.clone()]
             } else {
@@ -915,63 +771,39 @@ impl UnifiedStorageEngine for ViperEngine {
         } else {
             vec![]
         };
-        
         if let Err(e) = flush_handler.notify_flush_complete(params, file_paths, &params.vector_records).await {
             // Log but don't fail the flush - EventLog notification is best-effort
             warn!("⚠️ VIPER: Failed to notify EventLog for AXIS indexing: {}", e);
         } else {
             info!("✅ VIPER: Successfully notified EventLog for AXIS indexing");
         }
-        
         Ok(flush_result)
     }
     
     async fn do_compact(&self, params: &crate::storage::traits::CompactionParameters) -> Result<crate::storage::traits::CompactionResult> {
         let start_time = std::time::Instant::now();
-        
         debug!("🗜️ VIPER do_compact called with params: collection_id={:?}, force={}, synchronous={}, timeout_ms={:?}", 
                params.collection_id, params.force, params.synchronous, params.timeout_ms);
-        
         debug!("🔍 VIPER DO_COMPACT: Checking compression configuration");
-        if let Some(ref collection_config) = params.collection_config {
-            if let Some(ref config) = collection_config.config {
-                if let Some(ref compression) = config.storage.as_ref().and_then(|s| s.compression.as_ref()) {
-                    debug!("   ✅ Found compression in collection_config: algorithm={}, level={:?}",
-                        compression.algorithm, compression.level);
-                } else {
-                    debug!("   ⚠️ No compression config in collection_config");
-                }
-            } else {
-                debug!("   ⚠️ No config field in collection");
-            }
-        } else {
-            debug!("   ⚠️ No collection_config in params");
-        }
-        
         let collection_id = params.collection_id.as_ref()
             .ok_or_else(|| anyhow::anyhow!("Collection ID required for VIPER compaction_info"))?;
         debug!("🗜️ VIPER compaction collection ID: {}", collection_id);
-        
         // Get input files from hints or use default empty list
-        let input_files = params.hints.get(key)
+        let input_files = params.hints.get("input_files")
             .and_then(|v| v.as_array())
             .map(|arr| arr.iter().filter_map(|v| v.as_str()).map(|s| s.to_string()).collect::<Vec<String>>())
             .unwrap_or_default();
-        
         info!("🗜️ VIPER Engine: Starting compaction for collection {} with {} hinted input files", 
               collection_id, input_files.len());
         debug!("🗜️ VIPER input files: {:?}", input_files);
-        
         // Use the modular compaction manager to compact Parquet files
         // If no input files specified, the compaction manager will discover them
         // Pass the collection config from parameters to avoid collection service lookups
         debug!("🗜️ VIPER calling compaction_manager.compact_parquet_files");
         debug!("🗜️ VIPER collection_config present: {}", params.collection_config.is_some());
-        
         let compaction_result = self.compaction_manager
             .compact_parquet_files(collection_id, input_files.clone(), params.collection_config.as_ref())
             .await;
-            
         match &compaction_result {
             Ok(result) => {
                 debug!("🗜️ VIPER compaction_manager returned success");
@@ -982,14 +814,10 @@ impl UnifiedStorageEngine for ViperEngine {
                 return Err(anyhow::anyhow!("Compaction failed: {}", e));
             }
         }
-        
         let compaction_result = compaction_result?;
-        
         let duration_ms = start_time.elapsed().as_millis() as u64;
-        
         // Calculate bytes reclaimed (this is an approximation)
         let bytes_reclaimed = input_files.len() as u64 * 1024 * 1024; // Estimate 1MB per file
-        
         // Calculate entries processed - estimate based on input files
         let _entries_processed = if input_files.is_empty() {
             0
@@ -997,13 +825,10 @@ impl UnifiedStorageEngine for ViperEngine {
             // Estimate entries per file (this could be more accurate with metadata)
             input_files.len() as u64 * 100 // Assume ~100 entries per file for tests
         };
-        
-        // Update engine statistics
         {
             let mut stats = self.stats.write().await;
             stats.compaction_operations += 1;
         }
-        
         Ok(crate::storage::traits::CompactionResult {
             success: true,
             collections_affected: vec![collection_id.clone()],
@@ -1027,7 +852,7 @@ impl UnifiedStorageEngine for ViperEngine {
                     serde_json::Number::from(bytes_reclaimed)
                 ));
                 metrics
-            },
+            }
         })
     }
     
@@ -1038,64 +863,50 @@ impl UnifiedStorageEngine for ViperEngine {
     
     async fn search_vectors_unified(
         &self,
-        collection_id: &str,
-        storage_url: &str,  // Storage URL provided by VectorOperationsService
-        query_vector: &[f32],
-        k: usize,
-        distance_metric: &crate::compute::distance_computation::DistanceMetric,
-        filter_expression: Option<&crate::core::search::FilterExpression>,
-        include_vectors: bool,
-        include_metadata: bool,
+        ctx: &crate::storage::traits::SearchContext,
     ) -> Result<Vec<crate::core::search::SearchResult>> {
+        // Extract parameters from context
+        let collection_id = ctx.collection_id();
+        let storage_url = ctx.collection_storage_path()
+            .ok_or_else(|| anyhow::anyhow!("No storage URL in context"))?;
+        let query_vector = ctx.query_vector()
+            .ok_or_else(|| anyhow::anyhow!("No query vector in context"))?;
+        let k = ctx.top_k();
+        let distance_metric = ctx.distance_metric();
+        let filter_expression = ctx.search_params.filter_expression.as_ref();
+        let include_vectors = ctx.search_params.include_vectors.unwrap_or(false);
+        let include_metadata = ctx.search_params.include_metadata.unwrap_or(false);
+        
         debug!("search_vectors_unified called for collection: {} with storage_url: {}", collection_id, storage_url);
         // VIPER ENGINE OPTIMIZATION: Use unified search engine
         info!("🔍 VIPER: Searching collection {} with unified search engine at {}", collection_id, storage_url);
-        
-        // Build search params from parameters
+        // Use search params from context (already available as Arc)
         if let Some(filter_expr) = filter_expression {
             debug!("Search with filter expression: {:?}", filter_expr);
         }
-        let search_params = crate::core::search::SearchParams {
-            query_vectors: Some(vec![query_vector.to_vec()]),
-            top_k: Some(k),
-            filter_expression: filter_expression.cloned(),
-            distance_metric: Some(distance_metric.clone()),
-            accuracy_threshold: None,
-            custom_hints: None,
-            include_expired: None,
-            quantization_hint: None,
-            enable_two_stage: None,
-            enable_clustering_hint: None,
-            enable_metadata_filtering_hint: None,
-            timeout_ms: None,
-            requires_ordering: None, // Default to None for internal engine searches
-        };
-        
-        // Get collection metadata
-        debug!("Getting collection config for: {}", collection_id);
-        let collection_opt = self.get_collection_config(collection_id).await?;
-        if collection_opt.is_none() {
-            debug!("Collection config not found, continuing with defaults");
-        }
-        
+        let search_params = ctx.search_params.clone();
+        // Collection metadata already available in context
+        debug!("Using collection config from context for: {}", collection_id);
+        let collection_opt = Some(ctx.collection.clone());
         // Get parquet files for the collection using the provided storage URL
         let parquet_files = self.get_parquet_files_with_storage_url(collection_id, storage_url).await?;
         debug!("Found {} parquet files for collection {}", parquet_files.len(), collection_id);
         for (i, file) in parquet_files.iter().enumerate() {
             trace!("  Parquet file {}: {}", i, file);
         }
-        
         if parquet_files.is_empty() {
             debug!("No parquet files found for collection {}, returning empty results", collection_id);
             return Ok(vec![]);
         }
-        
         // Build search context
         let search_context = crate::core::search::UnifiedSearchContext {
             collection_id: collection_id.to_string(),
             collection_config: Some(crate::core::search::CollectionConfig {
                 default_distance_metric: distance_metric.clone(),
-                vector_dimension: query_vector.len(),
+                vector_dimension: collection_opt.as_ref()
+                    .and_then(|c| c.config.as_ref())
+                    .map(|c| c.dimension as usize)
+                    .unwrap_or(query_vector.len()), // Fallback only if config not available
                 enable_quantization: collection_opt.as_ref()
                     .and_then(|c| c.config.as_ref())
                     .and_then(|c| c.quantization.as_ref())
@@ -1116,42 +927,35 @@ impl UnifiedStorageEngine for ViperEngine {
                 .map(|c| c.filterable_columns.iter().map(|col| {
                     crate::core::search::FilterableColumn {
                         name: col.name.clone(),
-                        // data_type removed -  crate::core::search::ColumnDataType::String, // TODO: Map properly
-                        is_indexed: col.indexed,
-                        estimated_cardinality: col.estimated_cardinality.map(|c| c as usize),
+                        data_type: crate::core::search::ColumnDataType::String, // Default to string
+                        is_indexed: false,
+                        cardinality: None,
                     }
                 }).collect())
                 .unwrap_or_default(),
-            available_quantization: vec![],
         };
         
         // Use unified search engine
         debug!("Calling search engine with context: collection_id={}, file_count={}", 
                search_context.collection_id, search_context.storage_info.file_count);
-        
         let result_set = match self.search_engine.search_unified(
                 &search_context,
                 &search_params,
                 &crate::compute::distance_computation::engine::UnifiedDistanceCompute::default(),
                 None, // TODO: Add quantization engine when needed
             ).await {
-            Ok(rs) => {
-                rs
-            },
+            Ok(rs) => rs,
             Err(e) => {
                 error!("Search engine error: {}", e);
                 return Err(e);
             }
         };
-        
         debug!("Search engine returned {} results", result_set.results.len());
         if !result_set.results.is_empty() {
             trace!("First result metadata: {:?}", result_set.results[0].metadata);
         }
-        
         // Apply include flags and return native search results
         let mut results: Vec<crate::core::search::SearchResult> = result_set.results.iter().cloned().collect();
-        
         if !include_vectors {
             for result in &mut results {
                 result.vector = None;
@@ -1162,14 +966,11 @@ impl UnifiedStorageEngine for ViperEngine {
                 result.metadata = HashMap::new();
             }
         }
-        
         Ok(results)
     }
-    
     async fn collect_engine_metrics(&self) -> Result<HashMap<String, serde_json::Value>> {
         let stats = self.stats.read().await;
         let mut metrics = HashMap::new();
-        
         // Basic engine metrics
         metrics.insert("total_storage_bytes".to_string(), serde_json::Value::Number(
             serde_json::Number::from(stats.total_size_bytes)
@@ -1189,39 +990,25 @@ impl UnifiedStorageEngine for ViperEngine {
         metrics.insert("compaction_operations".to_string(), serde_json::Value::Number(
             serde_json::Number::from(stats.compaction_operations)
         ));
-        
         // VIPER-specific metrics
         metrics.insert("engine_version".to_string(), serde_json::Value::String(crate::version::PROXIMADB_VERSION.to_string()));
         metrics.insert("ml_clustering_enabled".to_string(), serde_json::Value::Bool(false)); // Moved to AXIS
         metrics.insert("simd_processing_enabled".to_string(), serde_json::Value::Bool(true));
         metrics.insert("utilities_enabled".to_string(), serde_json::Value::Bool(true));
         metrics.insert("healthy".to_string(), serde_json::Value::Bool(true));
-        
         Ok(metrics)
     }
-
+    
     async fn health_check(&self) -> Result<crate::storage::traits::EngineHealth> {
         // Assume healthy for now since internal_health_check is commented out
         let healthy = true;
-        let stats = self.stats.read().await;
-        
         let mut metrics = HashMap::new();
         metrics.insert("collections_count".to_string(), serde_json::Value::Number(
-            serde_json::Number::from(self.collections.read().await.len())
-        ));
-        metrics.insert("total_vectors".to_string(), serde_json::Value::Number(
-            serde_json::Number::from(stats.total_vectors)
+            serde_json::Number::from(0)
         ));
         metrics.insert("total_size_bytes".to_string(), serde_json::Value::Number(
-            serde_json::Number::from(stats.total_size_bytes)
+            serde_json::Number::from(0)
         ));
-        metrics.insert("flush_operations".to_string(), serde_json::Value::Number(
-            serde_json::Number::from(stats.flush_operations)
-        ));
-        metrics.insert("compaction_operations".to_string(), serde_json::Value::Number(
-            serde_json::Number::from(stats.compaction_operations)
-        ));
-        
         Ok(crate::storage::traits::EngineHealth {
             healthy,
             status: if healthy { "VIPER Engine Healthy".to_string() } else { "VIPER Engine Unhealthy".to_string() },
@@ -1242,15 +1029,11 @@ impl UnifiedStorageEngine for ViperEngine {
         // This method would need to be redesigned to work with the async pattern
         None
     }
-}
-
-impl ViperEngine {
     /// Convenient compact_collection method for CompactionCoordinator integration
     /// Returns enhanced result with vector tracking for AXIS integration
     /// Compact a specific collection - returns standard CompactionResult
-    pub async fn compact_collection(&self, collection_id: &str, collection_config: Option<&crate::proto::proximadb::Collection>) -> Result<crate::storage::traits::CompactionResult> {
+    async fn compact_collection(&self, collection_id: &str, collection_config: Option<&crate::proto::proximadb::Collection>) -> Result<crate::storage::traits::CompactionResult> {
         info!("🗜️ VIPER Engine: Starting collection compaction for {}", collection_id);
-        
         // If collection_config not provided, try to get it from service
         let owned_config = if collection_config.is_none() {
             if let Some(service) = self.collection_service.read().await.as_ref() {
@@ -1261,21 +1044,17 @@ impl ViperEngine {
         } else {
             None
         };
-        
         let config_to_use = collection_config.or(owned_config.as_ref());
-        
         // Create compaction parameters with collection config
         let params = crate::storage::traits::CompactionParameters {
             collection_id: Some(collection_id.to_string()),
             force: true,
             synchronous: false,
             hints: std::collections::HashMap::new(),
-            timeout_ms: None,
             priority: crate::storage::traits::OperationPriority::Medium,
             collection_config: config_to_use.cloned(),
         };
-        
         // Use the existing do_compact implementation
         self.do_compact(&params).await
     }
-}
+}  // End of impl UnifiedStorageEngine for ViperEngine

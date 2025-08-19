@@ -165,15 +165,25 @@ struct PredictedPerformance {
     estimated_latency_ms: u64,
     estimated_memory: usize,
     estimated_candidates: usize,
-    // confidence removed -  f32,
 }
 
 impl StreamingSearchEngine {
-    /// Create a new streaming search engine
-    pub fn new(config: StreamingSearchConfig, distance_metric: DistanceMetric) -> Self {
+    /// Create new streaming search engine
+    pub fn new(config: StreamingSearchConfig) -> Self {
+        // Create dependencies for progressive search
+        let distance_compute = Arc::new(crate::compute::distance_computation::engine::UnifiedDistanceCompute::default());
+        let quant_config = crate::compute::quantization::storage_engine::StorageQuantizationConfig::default();
+        let quantization_engine = Arc::new(crate::compute::quantization::storage_engine::StorageQuantizationEngine::new(
+            Arc::new(crate::compute::quantization::UnifiedQuantizationEngine::default()),
+            distance_compute.clone(),
+            quant_config,
+        ));
+        
         let progressive_search = ProgressiveColumnarSearch::new(
             config.progressive_config.clone(),
-            distance_metric,
+            crate::core::DistanceMetric::Euclidean, // Default metric
+            distance_compute,
+            quantization_engine,
         );
         
         let streaming_processor = StreamingRowGroupProcessor::new(
@@ -239,15 +249,13 @@ impl StreamingSearchEngine {
         ).await?;
         let progressive_duration = progressive_start.elapsed();
         
-        // Phase 4: Result optimization and quality validation
-        let optimized_results = self.optimize_and_validate_results(
-            progressive_result.results,
-            &query_characteristics,
-        ).await?;
+        // Extract fields we need before moving results
+        let row_groups_scanned = progressive_result.row_groups_scanned;
+        let superblocks_pruned = progressive_result.superblocks_pruned;
+        let memory_peak_usage = progressive_result.memory_peak_usage;
         
+        // Phase 5: Performance tracking and adaptation (before moving results)
         let total_latency_ms = overall_start.elapsed().as_millis() as u64;
-        
-        // Phase 5: Performance tracking and adaptation
         self.update_performance_tracking(
             &query_id,
             &query_characteristics,
@@ -255,22 +263,30 @@ impl StreamingSearchEngine {
             total_latency_ms,
         ).await?;
         
-        // Calculate streaming metrics
+        // Calculate streaming metrics before moving results
         let streaming_metrics = StreamingMetrics {
-            row_groups_scanned: progressive_result.row_groups_scanned,
+            row_groups_scanned,
             row_groups_pruned: superblocks.len() - pruned_superblocks.len(),
-            superblocks_pruned: progressive_result.superblocks_pruned,
+            superblocks_pruned,
             parallel_efficiency: self.calculate_parallel_efficiency(&progressive_result),
             memory_efficiency: self.calculate_memory_efficiency(&progressive_result),
             io_efficiency: self.calculate_io_efficiency(&progressive_result),
         };
         
-        // Calculate quality scores
+        // Calculate efficiency score before moving results
         let efficiency_score = self.calculate_efficiency_score(&progressive_result, &streaming_metrics);
+        
+        // Phase 4: Result optimization and quality validation (move results here)
+        let optimized_results = self.optimize_and_validate_results(
+            progressive_result.results.clone(),
+            &query_characteristics,
+        ).await?;
+        
+        // Calculate quality score after optimization
         let quality_score = self.calculate_quality_score(&optimized_results, &query_characteristics);
         
         info!(
-            "Unified streaming search completed: query_id={}, latency={}ms, results={}, efficiency={:.2}, quality={:.2}",
+            "Unified streaming search completed: query_id={}, latency={}ms, results={}, efficiency={:.2}, quality_level={:.2}",
             query_id,
             total_latency_ms,
             optimized_results.len(),
@@ -284,7 +300,7 @@ impl StreamingSearchEngine {
             streaming_metrics,
             zone_map_metrics,
             total_latency_ms,
-            memory_peak_usage: progressive_result.memory_peak_usage,
+            memory_peak_usage,
             efficiency_score,
             quality_score,
         })
@@ -371,7 +387,7 @@ impl StreamingSearchEngine {
             intersection_tests += 1;
             
             // Check cache for advanced zone map
-            let cache_key = format!("sb_{}", superblock.id);
+            let key = format!("sb_{}", superblock.id);
             let advanced_zone_map = {
                 let cache = self.zone_maps_cache.read().await;
                 if let Some(zone_map) = cache.get(&key) {
@@ -446,8 +462,8 @@ impl StreamingSearchEngine {
         
         // Validate result quality if enabled
         if self.config.enable_query_profiling {
-            let quality = self.validate_result_quality(&results, characteristics).await?;
-            debug!("Result quality validation: {:.3}", quality);
+            let quality_level = self.validate_result_quality(&results, characteristics).await?;
+            debug!("Result quality_level validation: {:.3}", quality_level);
         }
         
         // Apply final ranking optimizations
@@ -478,12 +494,12 @@ impl StreamingSearchEngine {
             precision: None, // Would be calculated with ground truth
         };
         
-        tracker.record_query_execution(query_id, characteristics, actual_performance);
-        
-        // Update adaptive thresholds
+        // Update adaptive thresholds before moving actual_performance
         if self.config.enable_adaptive_thresholds {
             tracker.update_adaptive_thresholds(&actual_performance);
         }
+        
+        tracker.record_query_execution(query_id, characteristics, actual_performance);
         
         Ok(())
     }
@@ -562,7 +578,7 @@ impl StreamingSearchEngine {
         if results.is_empty() {
             0.0
         } else {
-            0.8 // Assume 80% quality without ground truth
+            0.8 // Assume 80% quality_level without ground truth
         }
     }
     
@@ -625,7 +641,7 @@ impl PerformanceTracker {
             start_time: Instant::now(),
             end_time: Some(Instant::now()),
             query_characteristics: characteristics.clone(),
-            actual_performance: Some(performance),
+            actual_performance: Some(performance.clone()),
             predicted_performance: None,
         };
         
@@ -655,11 +671,11 @@ impl PerformanceTracker {
         // Update thresholds based on performance
         if performance.latency_ms > 1000 {
             // Increase pruning aggressiveness
-            let current = self.adaptive_thresholds.get(key).unwrap_or(&0.5);
+            let current = self.adaptive_thresholds.get("pruning_threshold").unwrap_or(&0.5);
             self.adaptive_thresholds.insert("pruning_threshold".to_string(), (current * 1.1).min(0.9));
         } else if performance.latency_ms < 100 {
             // Decrease pruning aggressiveness for better quality
-            let current = self.adaptive_thresholds.get(key).unwrap_or(&0.5);
+            let current = self.adaptive_thresholds.get("pruning_threshold").unwrap_or(&0.5);
             self.adaptive_thresholds.insert("pruning_threshold".to_string(), (current * 0.9).max(0.1));
         }
     }

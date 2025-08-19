@@ -295,7 +295,7 @@ impl WALFlushCoordinator {
                 engines.keys().collect::<Vec<_>>()
             );
             engines
-                .get(key)
+                .get(&engine_type)
                 .ok_or_else(|| anyhow::anyhow!("Storage engine {} not registered", engine_type))?
                 .clone()
         };
@@ -545,14 +545,14 @@ impl WALFlushCoordinator {
     /// Get flush state for a collection
     pub async fn get_flush_state(&self, collection_id: &str) -> Option<FlushState> {
         let flush_states = self.flush_states.read().await;
-        flush_states.get(key).cloned()
+        flush_states.get(collection_id).cloned()
     }
 
     /// Check if a collection uses disk WAL
     pub async fn uses_disk_wal(&self, collection_id: &str) -> bool {
         let flush_states = self.flush_states.read().await;
         flush_states
-            .get(key)
+            .get(collection_id)
             .map(|state| state.uses_disk_wal)
             .unwrap_or(true) // Default to disk WAL
     }
@@ -561,7 +561,7 @@ impl WALFlushCoordinator {
     pub async fn get_pending_flushes(&self, collection_id: &str) -> Vec<PendingFlush> {
         let flush_states = self.flush_states.read().await;
         flush_states
-            .get(key)
+            .get(collection_id)
             .map(|state| state.pending_flushes.values().cloned().collect())
             .unwrap_or_default()
     }

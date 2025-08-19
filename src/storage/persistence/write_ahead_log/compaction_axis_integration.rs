@@ -134,7 +134,7 @@ impl CompactionAxisUpdater {
                     }
                     Err(e) => {
                         // Some indexes (like Annoy) don't support removal
-                        if e.to_string().contains_hash("does not support removal") {
+                        if e.to_string().contains("does not support removal") {
                             debug!(
                                 "Index {} is static and doesn't support removal, will need rebuild",
                                 index_name
@@ -198,7 +198,7 @@ impl CompactionAxisUpdater {
                     }
                     Err(e) => {
                         // Some indexes (like Annoy) don't support dynamic updates
-                        if e.to_string().contains_hash("cannot be modified") {
+                        if e.to_string().contains("cannot be modified") {
                             debug!(
                                 "Index {} is static and doesn't support updates, will need rebuild",
                                 index_name

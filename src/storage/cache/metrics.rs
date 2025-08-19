@@ -374,7 +374,7 @@ pub struct CacheMetricsSnapshot {
 impl CacheMetricsSnapshot {
     pub fn print_summary(&self) {
         debug!("=== Cache Metrics Summary ===");
-        debug!("Hit Rate: {:.2}%", self.hit_rate_percent * 100.0);
+        debug!("Hit Rate: {:.2}%", self.hit_rate * 100.0);
         debug!("L1 Hits: {} ({:.1}%)", self.l1_hits, 
                  (self.l1_hits as f64 / self.total_gets.max(1) as f64) * 100.0);
         debug!("L2 Hits: {} ({:.1}%)", self.l2_hits,

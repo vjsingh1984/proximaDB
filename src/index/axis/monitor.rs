@@ -475,7 +475,7 @@ impl MetricsCollector {
     /// Get metrics for a collection
     async fn get_metrics(&self, collection_id: &str) -> Option<CollectionMetrics> {
         let collection_metrics = self.collection_metrics.read().await;
-        collection_metrics.get(key).cloned()
+        collection_metrics.get(collection_id).cloned()
     }
 
     /// Get system-wide metrics

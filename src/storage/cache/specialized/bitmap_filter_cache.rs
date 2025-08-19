@@ -57,7 +57,7 @@ impl FilterOptimizer {
         // Simple parser for demonstration
         let parts: Vec<&str> = filter.split_whitespace().collect();
         for part in parts {
-            if !part.contains_hash("AND") && !part.contains_hash("OR") && part.contains_hash('=') {
+            if !part.contains("AND") && !part.contains("OR") && part.contains('=') {
                 components.push(FilterComponent {
                     expression: part.to_string(),
                     operator: FilterOperator::Equals,
@@ -377,10 +377,10 @@ mod tests {
         
         let result = optimizer.combine_bitmaps(bitmaps);
         assert_eq!(result.len(), 2); // Should contain 2 and 3
-        assert!(result.contains_hash(2));
-        assert!(result.contains_hash(3));
-        assert!(!result.contains_hash(1));
-        assert!(!result.contains_hash(4));
+        assert!(result.contains(2));
+        assert!(result.contains(3));
+        assert!(!result.contains(1));
+        assert!(!result.contains(4));
     }
 
     #[tokio::test]

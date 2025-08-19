@@ -114,7 +114,7 @@ impl SingleCollectionIndex {
         let name = record.config.as_ref().map(|c| c.name.clone()).unwrap_or_default();
         
         // Check if this is an update (collection exists)
-        let old_name = self.entries.get(key).map(|e| e.name_key.clone());
+        let old_name = self.entries.get(&uuid).map(|e| e.name_key.clone());
         
         // Update primary index
         let entry = CollectionIndexEntry::new(record);
@@ -166,7 +166,7 @@ impl SingleCollectionIndex {
     /// Get collection by UUID - O(1) primary key lookup
     pub fn get_by_uuid(&self, uuid: &str) -> Option<Arc<Collection>> {
         let start = std::time::Instant::now();
-        let result = self.entries.get(key).map(|entry| entry.record.clone());
+        let result = self.entries.get(uuid).map(|entry| entry.record.clone());
 
         // Update metrics
         let elapsed = start.elapsed().as_nanos() as u64;
@@ -188,7 +188,10 @@ impl SingleCollectionIndex {
 
         // O(1) lookup in secondary index
         let result = self.name_to_uuid.get(name)
-            .and_then(|uuid| self.entries.get(uuid))
+            .and_then(|uuid| {
+                let uuid_str: &str = uuid.as_ref();
+                self.entries.get(uuid_str)
+            })
             .map(|entry| entry.record.clone());
 
         // Update metrics
@@ -207,7 +210,7 @@ impl SingleCollectionIndex {
 
     /// Get UUID by name - O(1) lookup using secondary index
     pub fn get_uuid_by_name(&self, name: &str) -> Option<String> {
-        self.name_to_uuid.get(key).map(|uuid| uuid.clone())
+        self.name_to_uuid.get(name).map(|uuid| uuid.clone())
     }
 
     /// Check if collection exists by UUID - O(1)
@@ -305,7 +308,7 @@ impl SingleCollectionIndex {
             .iter()
             .filter(|entry| entry.key().starts_with(prefix))
             .filter_map(|entry| {
-                self.entries.get(key)
+                self.entries.get(entry.value())
                     .map(|e| e.record.clone())
             })
             .collect()

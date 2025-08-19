@@ -333,7 +333,7 @@ impl StreamingSearchService {
                     let search_result = SearchResult {
                         id: result.id.clone().unwrap_or_default(),
                         vector_id: result.id.clone(),
-                        similarity: 1.0, // TODO: Calculate actual score
+                        score: 1.0, // TODO: Calculate actual score
                         similarity: None,
                         // rank removed -  None,
                         vector: Some(result.vector.clone()),
@@ -427,7 +427,7 @@ impl StreamingSearchService {
                     let result = SearchResult {
                         id: record.id.clone().unwrap_or_default(),
                         vector_id: record.id.clone(),
-                        similarity: similarity.normalized_score,
+                        score: similarity.normalized_score,
                         similarity: Some(similarity.rank_value),
                         // rank removed -  None,
                         vector: Some(record.vector.clone()),
@@ -437,13 +437,13 @@ impl StreamingSearchService {
                             candidates_evaluated: 0,
                             processing_time_us: 0, // TODO: Add timing
                         }),
-                        semantic_distance: Some(similarity),
+                        semantic_similarity: Some(similarity),
                         quantization_info: None,
                         engine_stats: None,
                         version: record.version,
                         timestamp: Some(record.timestamp),
                         index_path: None,
-                        timestamp: Some(chrono::DateTime::from_timestamp(record.timestamp as i64, 0).unwrap_or_else(chrono::Utc::now)),
+                        // timestamp_datetime removed - duplicate field
                     };
                     
                     results.push(result);

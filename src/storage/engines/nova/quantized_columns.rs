@@ -5,19 +5,15 @@
 use anyhow::{anyhow, Result};
 use arrow_array::array::{ArrayRef, BinaryArray, Float32Array, Int8Array, UInt8Array};
 use arrow_schema::{DataType, Field};
-use arrow_array::record_batch::RecordBatch;
+use arrow_array::RecordBatch;
 use parquet::arrow::ArrowWriter;
 use parquet::file::properties::{WriterProperties, WriterVersion};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
+use tracing::debug;
 
 // MIGRATION: Import universal quantization types
-use crate::storage::engines::common::{
-    UniversalQuantizationAdapter,
-    UniversalQuantizationConfig,
-    quantization_common::{
-    },
-};
+// Use unified quantization from compute module
 
 // Define quantization types locally for now
 #[derive(Debug, Clone)]
@@ -143,16 +139,16 @@ impl QuantizedColumnBuilder {
         self.vectors.extend(vectors);
     }
     
-    /// Build all quantized columns using universal adapter
-    pub fn build_with_adapter(
+    /// Build all quantized columns using unified quantization engine
+    pub async fn build_with_unified_engine(
         &self,
-        adapter: &UniversalQuantizationAdapter,
-        config: &UniversalQuantizationConfig,
+        quantization_engine: &crate::compute::quantization::storage_engine::StorageQuantizationEngine,
+        config: &crate::compute::quantization::storage_engine::StorageQuantizationConfig,
     ) -> Result<QuantizedColumns> {
         let start_time = std::time::Instant::now();
         
-        // Use universal adapter for quantization
-        let result = adapter.quantize_progressive(&self.vectors, config)?;
+        // Use unified quantization engine
+        let quantized_batch = quantization_engine.quantize_batch(&self.vectors, config).await?;
         
         let mut columns = QuantizedColumns {
             binary_column: None,
@@ -162,49 +158,57 @@ impl QuantizedColumnBuilder {
             num_vectors: self.vectors.len(),
         };
         
-        // Extract columnar quantized representations from result
-        if !result.quantized_vectors.is_empty() {
-            // Collect binary sketches if present
-            let binary_data: Vec<Vec<u8>> = result.quantized_vectors.iter()
-                .filter_map(|qv| qv.binary_sketch.clone())
-                .collect();
-            if !binary_data.is_empty() {
-                columns.binary_column = Some(BinaryColumn {
-                    data: binary_data,
-                    bits_per_vector: self.dimension,
-                });
-            }
-            
-            // Collect INT8 vectors if present
-            let int8_data: Vec<Int8Vector> = result.quantized_vectors.iter()
-                .filter_map(|qv| qv.int8_vector.as_ref().map(|v| Int8Vector {
-                    values: v.values.clone(),
-                    scale: v.scale,
-                    zero_point: v.zero_point as i8,
-                }))
-                .collect();
-            if !int8_data.is_empty() {
-                columns.int8_column = Some(Int8Column {
-                    vectors: int8_data,
-                });
-            }
-            
-            // Collect PQ codes if present
-            let pq_data: Vec<PQCode> = result.quantized_vectors.iter()
-                .filter_map(|qv| qv.pq_code.as_ref().map(|pq| PQCode {
-                    codes: pq.codes.clone(),
-                }))
-                .collect();
-            if !pq_data.is_empty() {
-                columns.pq_column = Some(PQColumn {
-                    codes: pq_data,
-                    // codebooks removed -  Vec::new(), // Would be populated from adapter
-                });
+        // Process quantized results from unified engine
+        let mut binary_sketches = Vec::new();
+        let mut int8_vectors = Vec::new();
+        let mut pq_codes = Vec::new();
+        
+        for quantized_vector in quantized_batch {
+            for data in quantized_vector {
+                match data {
+                    crate::compute::quantization::storage_engine::StorageQuantizedData::Binary(bits) => {
+                        binary_sketches.push(BinarySketch { bits });
+                    }
+                    crate::compute::quantization::storage_engine::StorageQuantizedData::Int8 { values, scale, zero_point } => {
+                        int8_vectors.push(Int8Vector { values, scale, zero_point });
+                    }
+                    crate::compute::quantization::storage_engine::StorageQuantizedData::ProductQuantized { codes, codebook_id } => {
+                        pq_codes.push(PQCode { codes });
+                    }
+                }
             }
         }
         
-        // Calculate statistics
+        // Populate columns
+        if !binary_sketches.is_empty() {
+            columns.binary_column = Some(BinaryQuantizedColumn {
+                sketches: binary_sketches,
+                bits_per_vector: (self.dimension + 63) / 64 * 64,
+                threshold: config.filter_threshold,
+            });
+        }
+        
+        if !int8_vectors.is_empty() {
+            columns.int8_column = Some(Int8QuantizedColumn {
+                vectors: int8_vectors.clone(),
+                scales: int8_vectors.iter().map(|v| v.scale).collect(),
+                zero_points: int8_vectors.iter().map(|v| v.zero_point).collect(),
+                global_scale: int8_vectors.first().map(|v| v.scale),
+                global_zero_point: int8_vectors.first().map(|v| v.zero_point),
+            });
+        }
+        
+        if !pq_codes.is_empty() {
+            columns.pq_column = Some(PQQuantizedColumn {
+                codes: pq_codes,
+                segments: 8, // Default PQ segments
+                bits_per_segment: 8, // Default PQ bits
+                codebooks: vec![], // Codebooks are managed by the unified engine
+            });
+        }
+        
         let quantization_time_ms = start_time.elapsed().as_millis() as u64;
+        debug!("Quantization completed in {}ms", quantization_time_ms);
         
         Ok(columns)
     }
@@ -244,12 +248,23 @@ impl QuantizedColumnBuilder {
     
     /// Build binary quantized column
     fn build_binary_column(&self) -> Result<BinaryQuantizedColumn> {
+        // TODO: Delegate to unified quantization module for consistency
+        // For now, using direct implementation to avoid breaking API changes
         let mut sketches = Vec::new();
-        let bits_per_vector = (self.dimension + 63) / 64 * 64; // Round up to multiple of 64
+        let bits_per_vector = (self.dimension + 63) / 64 * 64;
         
         for vector in &self.vectors {
-            let sketch = BinarySketch::from_vector(vector, self.config.binary_threshold);
-            sketches.push(sketch);
+            let bits = vector.iter()
+                .map(|&v| if v > self.config.binary_threshold { 1u8 } else { 0u8 })
+                .collect::<Vec<u8>>()
+                .chunks(8)
+                .map(|chunk| {
+                    chunk.iter().enumerate().fold(0u8, |acc, (i, &bit)| {
+                        acc | (bit << i)
+                    })
+                })
+                .collect();
+            sketches.push(BinarySketch { bits });
         }
         
         Ok(BinaryQuantizedColumn {
@@ -261,31 +276,29 @@ impl QuantizedColumnBuilder {
     
     /// Build INT8 quantized column
     fn build_int8_column(&self) -> Result<Int8QuantizedColumn> {
-        // Calculate global scale for all vectors
-        let mut global_min = f32::INFINITY;
-        let mut global_max = f32::NEG_INFINITY;
-        
-        for vector in &self.vectors {
-            for &value in vector {
-                global_min = global_min.min(value);
-                global_max = global_max.max(value);
-            }
-        }
-        
-        let global_scale = (global_max - global_min) / 255.0;
-        let global_zero_point = (-global_min / global_scale).round() as i8;
-        
-        // Quantize all vectors
+        // Simple INT8 quantization implementation
         let mut quantized_vectors = Vec::new();
         let mut scales = Vec::new();
         let mut zero_points = Vec::new();
         
         for vector in &self.vectors {
-            let int8_vec = Int8Vector::from_vector(vector);
-            scales.push(int8_vec.scale);
-            zero_points.push(int8_vec.zero_point);
+            let min_val = vector.iter().fold(f32::INFINITY, |a, &b| a.min(b));
+            let max_val = vector.iter().fold(f32::NEG_INFINITY, |a, &b| a.max(b));
+            let scale = (max_val - min_val) / 255.0;
+            let zero_point = (-min_val / scale).round() as i8;
+            
+            let values: Vec<i8> = vector.iter()
+                .map(|&v| ((v - min_val) / scale - 128.0) as i8)
+                .collect();
+            
+            let int8_vec = Int8Vector { values, scale, zero_point };
+            scales.push(scale);
+            zero_points.push(zero_point);
             quantized_vectors.push(int8_vec);
         }
+        
+        let global_scale = scales.first().copied();
+        let global_zero_point = zero_points.first().copied();
         
         Ok(Int8QuantizedColumn {
             vectors: quantized_vectors,

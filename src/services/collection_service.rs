@@ -84,37 +84,59 @@ impl CollectionService {
         let mut enriched_config = config.clone();
         
         // Ensure storage_config exists and set compression within it
-        if enriched_config.storage.is_none() {
-            enriched_config.storage = Some(crate::proto::proximadb::StorageConfig {
+        if enriched_config.storage_config.is_none() {
+            enriched_config.storage_config = Some(crate::proto::proximadb::StorageConfig {
                 enable_all_optimizations: Some(true),  // All optimizations on by default
                 ..Default::default()
             });
         }
         
         // Resolve compression within storage_config
-        if let Some(ref mut storage_cfg) = enriched_config.storage {
-            storage_cfg.as_ref().and_then(|s| s.compression.as_ref()) = self.resolve_compression_config(
-                storage_cfg.as_ref().and_then(|s| s.compression.as_ref()).as_ref(),
+        if let Some(ref mut storage_cfg) = enriched_config.storage_config {
+            let resolved_compression = self.resolve_compression_config(
+                storage_cfg.compression.as_ref(),
                 config.storage_engine,
             );
+            storage_cfg.compression = resolved_compression;
         }
         
         // Add default quantization configuration if not provided
-        // Quantization is enabled by default for all engines (VIPER, SST, NOVA, SWIFT, PRISM)
+        // Use smart defaults based on vector dimension for optimal performance
         if enriched_config.quantization.is_none() {
-            enriched_config.quantization = Some(crate::proto::proximadb::QuantizationConfig {
-                enabled: true,  // Enable quantization by default
-                enable_progressive_search: Some(true),  // Enable progressive search by default
-                method: Some(crate::proto::proximadb::quantization_config::Method::Adaptive as i32), // Auto-select based on dimension
-                ..Default::default()
-            });
-            info!("🎯 Enabling default quantization with progressive search for collection '{}'", config.name);
+            use crate::compute::quantization::QuantizationSmartDefaults;
+            
+            match QuantizationSmartDefaults::generate_for_dimension(config.dimension as u32) {
+                Ok(smart_config) => {
+                    enriched_config.quantization = Some(smart_config);
+                    info!("🧠 Generated smart quantization defaults for collection '{}' (dimension: {})", 
+                        config.name, config.dimension);
+                },
+                Err(e) => {
+                    warn!("⚠️ Failed to generate smart defaults, using fallback: {}", e);
+                    // Fallback to simple default
+                    enriched_config.quantization = Some(crate::proto::proximadb::QuantizationConfig {
+                        enabled: true,
+                        strategy: crate::proto::proximadb::quantization_config::Strategy::SmartDefaults as i32,
+                        custom_levels: vec![],
+                        enable_progressive_search: true,
+                        binary_filter_selectivity: 0.3,
+                        int8_ranking_selectivity: 0.1,
+                        pq_ranking_selectivity: 0.05,
+                        training_sample_size: 10000,
+                        quality_threshold: 0.95,
+                        enable_adaptive_training: true,
+                        optimize_for_storage: false,
+                        optimize_for_memory: false,
+                        enable_simd_acceleration: true,
+                    });
+                }
+            }
         }
 
         // Validate compression algorithm is supported by the storage engine
         // SDK defines compression config in collection metadata and it drives datablock compression
-        if let Some(ref storage_cfg) = enriched_config.storage {
-            if let Some(ref compression) = storage_cfg.as_ref().and_then(|s| s.compression.as_ref()) {
+        if let Some(ref storage_cfg) = enriched_config.storage_config {
+            if let Some(ref compression) = storage_cfg.compression {
             use crate::storage::engine_capabilities::EngineCapabilities;
             use crate::proto::proximadb::CompressionAlgorithm;
             
@@ -128,19 +150,17 @@ impl CollectionService {
                     let unsupported = EngineCapabilities::get_unsupported_compression_algorithms(engine);
                     return Ok(CollectionServiceResponse::error(
                         format!(
-                            "Compression algorithm {:?} is not supported by {} engine. Unsupported algorithms: {:?}",
+                            "UNSUPPORTED_COMPRESSION: Compression algorithm {:?} is not supported by {} engine. Unsupported algorithms: {:?}",
                             algorithm,
                             engine_name,
                             unsupported
                         ),
-                        "UNSUPPORTED_COMPRESSION".to_string(),
                         start_time.elapsed().as_micros() as i64,
                     ));
                 }
             } else {
                 return Ok(CollectionServiceResponse::error(
-                    format!("Invalid compression algorithm: {}", compression.algorithm),
-                    "INVALID_COMPRESSION".to_string(),
+                    format!("INVALID_COMPRESSION: Invalid compression algorithm: {}", compression.algorithm),
                     start_time.elapsed().as_micros() as i64,
                 ));
             }
@@ -148,10 +168,9 @@ impl CollectionService {
         }
 
         // Input validation
-        if config.name.is_none() {
+        if config.name.is_empty() {
             return Ok(CollectionServiceResponse::error(
-                "Collection name cannot be empty".to_string(),
-                "INVALID_NAME".to_string(),
+                "INVALID_NAME: Collection name cannot be empty".to_string(),
                 start_time.elapsed().as_micros() as i64,
             ));
         }
@@ -159,16 +178,14 @@ impl CollectionService {
         // Validate collection name length to prevent collision with IDs
         if config.name.len() < 8 {
             return Ok(CollectionServiceResponse::error(
-                "Collection name must be at least 8 characters long".to_string(),
-                "INVALID_NAME_LENGTH".to_string(),
+                "INVALID_NAME_LENGTH: Collection name must be at least 8 characters long".to_string(),
                 start_time.elapsed().as_micros() as i64,
             ));
         }
         
         if config.dimension == 0 || config.dimension > 1_000_000 {
             return Ok(CollectionServiceResponse::error(
-                "Invalid dimension: must be between 1 and 1,000,000".to_string(),
-                "INVALID_DIMENSION".to_string(),
+                "INVALID_DIMENSION: Invalid dimension: must be between 1 and 1,000,000".to_string(),
                 start_time.elapsed().as_micros() as i64,
             ));
         }
@@ -206,14 +223,14 @@ impl CollectionService {
         let now = chrono::Utc::now().timestamp_micros();
         
         // Get storage location - use provided or pick randomly from config
-        let base_location = if let Some(ref storage_config) = enriched_config.storage {
+        let base_location = if let Some(ref storage_config) = enriched_config.storage_config {
             if let Some(ref location) = storage_config.storage_location {
                 // User provided storage location
                 location.clone()
             } else {
                 // Pick randomly from configured locations
                 use rand::seq::SliceRandom;
-                self.storage.storage_locations
+                self.storage_config.storage_locations
                     .choose(&mut rand::thread_rng())
                     .ok_or_else(|| anyhow::anyhow!("No storage locations configured"))?
                     .url
@@ -222,7 +239,7 @@ impl CollectionService {
         } else {
             // Pick randomly from configured locations
             use rand::seq::SliceRandom;
-            self.storage.storage_locations
+            self.storage_config.storage_locations
                 .choose(&mut rand::thread_rng())
                 .ok_or_else(|| anyhow::anyhow!("No storage locations configured"))?
                 .url
@@ -748,13 +765,13 @@ impl CollectionService {
                 if new_config.description.is_some() {
                     existing_config.description = new_config.description;
                 }
-                if !new_config.tags.is_none() {
+                if !new_config.tags.is_empty() {
                     existing_config.tags = new_config.tags;
                 }
                 if new_config.owner.is_some() {
                     existing_config.owner = new_config.owner;
                 }
-                if !new_config.filterable_columns.is_none() {
+                if !new_config.filterable_columns.is_empty() {
                     existing_config.filterable_columns = new_config.filterable_columns;
                 }
                 // Add other fields as needed
@@ -854,8 +871,7 @@ impl CollectionService {
             Some(c) => c,
             None => {
                 return Ok(CollectionServiceResponse::error(
-                    format!("Collection '{}' not found", identifier),
-                    "COLLECTION_NOT_FOUND".to_string(),
+                    format!("COLLECTION_NOT_FOUND: Collection '{}' not found", identifier),
                     start_time.elapsed().as_micros() as i64,
                 ));
             }
@@ -865,12 +881,12 @@ impl CollectionService {
         let mut updated_collection = collection.clone();
         if let Some(ref mut config) = updated_collection.config {
             // Ensure storage_config exists
-            if config.storage.is_none() {
-                config.storage = Some(crate::proto::proximadb::StorageConfig::default());
+            if config.storage_config.is_none() {
+                config.storage_config = Some(crate::proto::proximadb::StorageConfig::default());
             }
             // Set compression in storage_config
-            if let Some(ref mut storage_config) = config.storage {
-                storage_config.as_ref().and_then(|s| s.compression.as_ref()) = Some(compression.clone());
+            if let Some(ref mut storage_config) = config.storage_config {
+                storage_config.compression = Some(compression.clone());
             }
         }
         
@@ -897,7 +913,7 @@ impl CollectionService {
 
     /// Validate collection configuration
     fn validate_collection_config(&self, config: &CollectionConfig) -> Result<()> {
-        if config.name.is_none() {
+        if config.name.is_empty() {
             return Err(anyhow::anyhow!("Collection name cannot be empty"));
         }
 

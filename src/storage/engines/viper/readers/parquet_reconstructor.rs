@@ -73,6 +73,7 @@ pub struct ColumnChunkData {
     pub compression: CompressionType,
     pub uncompressed_size: usize,
     pub row_count: usize,
+    pub storage: Option<StorageInfo>,
 }
 
 #[derive(Debug, Clone)]
@@ -84,6 +85,11 @@ pub enum CompressionType {
     Brotli,
     Lz4,
     Zstd,
+}
+
+#[derive(Debug, Clone)]
+pub struct StorageInfo {
+    pub compression: Option<CompressionType>,
 }
 
 impl ParquetReconstructor {
@@ -235,6 +241,7 @@ impl ParquetReconstructor {
                 compression: self.detect_compression(&seek.range)?,
                 uncompressed_size: seek.range.length as usize, // Approximation
                 row_count: 0, // Will be determined during parsing
+                storage: None,
             };
             
             grouped.entry(seek.range.row_group_idx)
@@ -266,6 +273,7 @@ impl ParquetReconstructor {
                 compression: CompressionType::None, // Would be detected from metadata
                 uncompressed_size: data_len,
                 row_count: 0,
+                storage: None,
             };
             
             column_chunks.push(chunk_data);
@@ -318,8 +326,8 @@ impl ParquetReconstructor {
         ];
         
         for column_name in required_columns {
-            if let Some(parsed_column) = parsed_columns.get(key) {
-                fields.push(Field::new(&column_name, parsed_column.data_type.clone(), false));
+            if let Some(parsed_column) = parsed_columns.get(&column_name) {
+                fields.push(Field::new(&column_name, parsed_column.array.data_type().clone(), false));
                 arrays.push(parsed_column.array.clone());
             } else {
                 // Create empty array for missing columns
@@ -438,9 +446,7 @@ impl ParquetReconstructor {
                 updated_at: Some(chrono::Utc::now().timestamp() as u32),
                 expires_at: None,
                 version: Some(1),
-                // rank removed -  None,
-                similarity: None,
-                similarity: None,
+                quantized_vector: None,
             
         });
         }
@@ -456,11 +462,11 @@ impl ParquetReconstructor {
     }
 
     fn decompress_column_data(&self, chunk_data: &ColumnChunkData) -> Result<Vec<u8>> {
-        match chunk_data.storage.as_ref().and_then(|s| s.compression.as_ref()) {
+        match chunk_data.compression {
             CompressionType::None => Ok(chunk_data.data.clone()),
             _ => {
                 // TODO: Implement decompression for other formats
-                warn!("⚠️ Compression {:?} not implemented, returning raw data", chunk_data.storage.as_ref().and_then(|s| s.compression.as_ref()));
+                warn!("⚠️ Compression {:?} not implemented, returning raw data", chunk_data.compression);
                 Ok(chunk_data.data.clone())
             }
         }

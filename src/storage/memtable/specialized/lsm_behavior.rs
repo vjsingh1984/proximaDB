@@ -158,7 +158,7 @@ where
         // Check bloom filter first (negative lookup optimization)
         {
             let bloom = self.bloom_filter.read().await;
-            if !bloom.contains_hash(key) {
+            if !bloom.contains(key) {
                 // Definitely not present
                 let mut metrics = self.lsm_metrics.write().await;
                 metrics.bloom_filter_hits += 1;
@@ -683,13 +683,13 @@ mod tests {
         bloom.insert("key3");
 
         // Test positive cases
-        assert!(bloom.contains_hash("key1"));
-        assert!(bloom.contains_hash("key2"));
-        assert!(bloom.contains_hash("key3"));
+        assert!(bloom.contains("key1"));
+        assert!(bloom.contains("key2"));
+        assert!(bloom.contains("key3"));
 
         // Test negative case (might have false positives)
         // This test might occasionally fail due to false positives
-        let not_present = bloom.contains_hash("nonexistent_key");
+        let not_present = bloom.contains("nonexistent_key");
         // We can't assert false because of possible false positives
     }
 }

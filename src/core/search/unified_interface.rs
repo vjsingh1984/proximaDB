@@ -189,7 +189,7 @@ impl UnifiedSearchOrchestrator {
             results: all_results.into(),
             total_count,
             query_id: params.custom_hints.as_ref()
-                .and_then(|h| h.get(key))
+                .and_then(|h| h.get("query_id"))
                 .and_then(|v| v.as_str())
                 .map(|s| s.to_string()),
             processing_time_us: total_processing_time,
@@ -295,11 +295,9 @@ impl UnifiedSearchOrchestrator {
         results: &mut Vec<SearchResult>,
         params: &SearchParams,
     ) -> Result<()> {
-        // Sort by semantic distance rank_value (lower = better)
+        // Sort by score (higher = better, so reverse order)
         results.sort_by(|a, b| {
-            let rank_a = a.semantic_distance.as_ref().map(|s| s.rank_value).unwrap_or(f32::INFINITY);
-            let rank_b = b.semantic_distance.as_ref().map(|s| s.rank_value).unwrap_or(f32::INFINITY);
-            rank_a.partial_cmp(&rank_b).unwrap_or(std::cmp::Ordering::Equal)
+            b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal)
         });
         
         // Limit to requested k
@@ -307,10 +305,8 @@ impl UnifiedSearchOrchestrator {
             results.truncate(k);
         }
         
-        // Assign final ranks
-        for (i, result) in results.iter_mut().enumerate() {
-            result.rank = Some((i + 1) as u16);
-        }
+        // Note: Rank is not a field in SearchResult anymore
+        // Rank is implicit from the position in the results vector
         
         Ok(())
     }

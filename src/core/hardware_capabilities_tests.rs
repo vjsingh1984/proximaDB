@@ -271,7 +271,7 @@ mod tests {
             enable_simd: false,
             enable_avx512: false,
             enable_gpu_parsing: false,
-            enable_gpu_distance: false,
+            enable_gpu_similarity: false,
             gpu_min_vector_size: 1000000, // Very high threshold
             gpu_min_batch_size: 1000000,  // Very high threshold
         };

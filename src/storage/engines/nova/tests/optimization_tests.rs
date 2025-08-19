@@ -201,8 +201,6 @@ mod progressive_search_tests {
             row_group_id: 0,
             row_offset: 0,
             similarity: 10.0,
-            // confidence removed -  0.8,
-            stage: ProcessingStage::BinaryFilter,
             vector_id: None,
             record: None,
         });
@@ -211,15 +209,13 @@ mod progressive_search_tests {
             row_group_id: 0,
             row_offset: 1,
             similarity: 5.0,
-            // confidence removed -  0.8,
-            stage: ProcessingStage::BinaryFilter,
             vector_id: None,
             record: None,
         });
         
-        // Min-heap: smallest distance first
-        assert_eq!(heap.pop().unwrap().distance, 5.0);
-        assert_eq!(heap.pop().unwrap().distance, 10.0);
+        // Min-heap: smallest similarity first
+        assert_eq!(heap.pop().unwrap().similarity, 5.0);
+        assert_eq!(heap.pop().unwrap().similarity, 10.0);
     }
 
     #[test]

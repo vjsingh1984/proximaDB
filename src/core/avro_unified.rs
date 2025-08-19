@@ -141,7 +141,6 @@ impl VectorRecord {
             version: None,
             // rank removed -  None,
             similarity: None,
-            similarity: None,
         
         }
     }
@@ -165,7 +164,6 @@ impl VectorRecord {
             expires_at: None,
             version: None,
             // rank removed -  None,
-            similarity: None,
             similarity: None,
         }
     }
@@ -213,7 +211,7 @@ impl VectorRecord {
         record.put("version", self.version.map(Value::Long).unwrap_or(Value::Union(0, Box::new(Value::Null))));
         record.put("rank", self.rank.map(Value::Int).unwrap_or(Value::Union(0, Box::new(Value::Null))));
         record.put("score", self.score.map(Value::Float).unwrap_or(Value::Union(0, Box::new(Value::Null))));
-        record.put("distance", self.distance.map(Value::Float).unwrap_or(Value::Union(0, Box::new(Value::Null))));
+        record.put("distance", self.similarity.map(Value::Float).unwrap_or(Value::Union(0, Box::new(Value::Null))));
         
         writer.append(record)?;
         writer.flush()?;
@@ -268,7 +266,7 @@ impl VectorRecord {
             vector: Some(self.vector.clone()),
             metadata: self.metadata.clone(),
             debug_info: None,
-            semantic_distance: None,
+            semantic_similarity: None,
             quantization_info: None,
             engine_stats: None,
             index_path: None,

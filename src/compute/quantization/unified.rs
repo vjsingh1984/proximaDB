@@ -136,6 +136,140 @@ impl UnifiedQuantizationEngine {
         }
     }
     
+    /// Quantize a vector with multiple levels based on parsed config
+    pub async fn quantize_with_config(
+        &self,
+        vector: &[f32],
+        config: &crate::storage::traits::ParsedQuantizationConfig,
+    ) -> Result<Vec<QuantizedVector>> {
+        let mut quantized_vectors = Vec::new();
+        
+        // Convert QuantizationLevel to UnifiedQuantizationLevel for each configured level
+        for level in &config.progressive_levels {
+            // Create UnifiedQuantizationLevel from QuantizationLevel
+            let unified_level = self.convert_to_unified_level(level)?;
+            let quantized = self.quantize(vector, &unified_level).await?;
+            quantized_vectors.push(quantized);
+        }
+        
+        Ok(quantized_vectors)
+    }
+    
+    /// Convert QuantizationLevel to UnifiedQuantizationLevel
+    fn convert_to_unified_level(&self, level: &crate::storage::traits::QuantizationLevel) -> Result<UnifiedQuantizationLevel> {
+        use crate::storage::traits::QuantizationType;
+        
+        let level_type = match level.quantization_type {
+            QuantizationType::None => Some(QuantizationLevelType::None(NoQuantization {})),
+            QuantizationType::Binary => Some(QuantizationLevelType::Binary(BinaryQuantization {
+                threshold: None,
+                sign_based: false,
+            })),
+            QuantizationType::Scalar => Some(QuantizationLevelType::Scalar(ScalarQuantization {
+                bits: level.bits as i32,
+                scale: 1.0,
+                offset: 0.0,
+            })),
+            QuantizationType::Product => Some(QuantizationLevelType::Pq(ProductQuantization {
+                num_subvectors: level.num_subvectors.map(|n| n as i32),
+                bits_per_code: Some(level.bits as i32),
+                codebook_id: Some(format!("pq_{}_{}", level.level_id, level.bits)),
+            })),
+            QuantizationType::Uniform => Some(QuantizationLevelType::Uniform(UniformQuantization {
+                bits: level.bits as i32,
+                scale: None,
+                offset: None,
+            })),
+            QuantizationType::Custom => Some(QuantizationLevelType::Custom(CustomQuantization {
+                parameters: serde_json::Value::Null,
+            })),
+        };
+        
+        Ok(UnifiedQuantizationLevel {
+            level_type,
+            bits_per_dimension: Some(level.bits as i32),
+        })
+    }
+    
+    /// Calculate progressive distance using quantization config
+    pub async fn calculate_progressive_distance(
+        &self,
+        query: &[f32],
+        quantized_vectors: &[QuantizedVector],
+        config: &crate::storage::traits::ParsedQuantizationConfig,
+        metric: &DistanceMetric,
+        top_k: usize,
+    ) -> Result<Vec<SimilarityResult>> {
+        if !config.progressive_search_enabled || quantized_vectors.is_empty() {
+            // Fallback to regular distance calculation
+            return self.calculate_batch_distances(query, quantized_vectors, metric).await;
+        }
+        
+        let mut candidates = (0..quantized_vectors.len()).collect::<Vec<_>>();
+        
+        // Progressive filtering through quantization levels
+        for (level_idx, level) in config.progressive_levels.iter().enumerate() {
+            if candidates.is_empty() {
+                break;
+            }
+            
+            // Calculate distances at this quantization level
+            let mut level_results = Vec::new();
+            for &idx in &candidates {
+                let distance = self.calculate_distance(
+                    query,
+                    &quantized_vectors[idx],
+                    metric
+                ).await?;
+                level_results.push((idx, distance));
+            }
+            
+            // Sort by distance
+            level_results.sort_by(|a, b| {
+                a.1.rank_value.partial_cmp(&b.1.rank_value)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            });
+            
+            // Apply selectivity for this level (except last level)
+            if level_idx < config.progressive_levels.len() - 1 {
+                use crate::storage::traits::QuantizationType;
+                let selectivity = match level.quantization_type {
+                    QuantizationType::Binary => config.binary_filter_selectivity,
+                    QuantizationType::Scalar if level.bits == 8 => {
+                        config.int8_ranking_selectivity
+                    }
+                    QuantizationType::Product => config.pq_ranking_selectivity,
+                    _ => 1.0, // No filtering for other types
+                };
+                
+                let keep_count = ((candidates.len() as f32 * selectivity).ceil() as usize)
+                    .max(top_k)
+                    .min(candidates.len());
+                    
+                candidates = level_results.iter()
+                    .take(keep_count)
+                    .map(|(idx, _)| *idx)
+                    .collect();
+                    
+                debug!(
+                    "Progressive search at level {:?}: {} -> {} candidates",
+                    level.quantization_type,
+                    level_results.len(),
+                    candidates.len()
+                );
+            } else {
+                // Last level - return top-k results
+                return Ok(level_results.into_iter()
+                    .take(top_k)
+                    .map(|(_, result)| result)
+                    .collect());
+            }
+        }
+        
+        // Should not reach here if levels are configured correctly
+        Ok(Vec::new())
+    }
+    
     /// Quantize a vector using the specified quantization level
     pub async fn quantize(
         &self,
@@ -188,13 +322,13 @@ impl UnifiedQuantizationEngine {
     pub async fn calculate_distance(
         &self,
         query: &[f32],
-        quantized: &QuantizedVector,
+        quantized_vector: &QuantizedVector,
         metric: &DistanceMetric,
     ) -> Result<SimilarityResult> {
-        match &quantized.quantization_level.level_type {
+        match &quantized_vector.quantization_level.level_type {
             None | Some(QuantizationLevelType::None(_)) => {
                 // Direct FP32 comparison
-                let vector = self.dequantize_fp32(&quantized.data)?;
+                let vector = self.dequantize_fp32(&quantized_vector.data)?;
                 Ok(self.distance_compute.calculate_distance(query, &vector, metric))
             }
             
@@ -206,12 +340,12 @@ impl UnifiedQuantizationEngine {
                 let codebook = self.codebook_store.get_codebook(codebook_id).await?
                     .context("Codebook not found")?;
                     
-                self.calculate_pq_distance_async(query, quantized, &codebook, metric)
+                self.calculate_pq_distance_async(query, quantized_vector, &codebook, metric)
             }
             
             _ => {
                 // Dequantize and compute
-                let vector = self.dequantize(quantized).await?;
+                let vector = self.dequantize(quantized_vector).await?;
                 Ok(self.distance_compute.calculate_distance(query, &vector, metric))
             }
         }
@@ -450,20 +584,109 @@ impl UnifiedQuantizationEngine {
         Ok(centroids)
     }
 
+    /// Quantize vector to binary representation
+    pub fn quantize_to_binary(&self, vector: &[f32]) -> Result<Vec<u8>> {
+        self.quantize_to_binary_with_threshold(vector, None)
+    }
+    
+    /// Quantize vector to binary with custom threshold
+    pub fn quantize_to_binary_with_threshold(&self, vector: &[f32], threshold: Option<f32>) -> Result<Vec<u8>> {
+        let threshold = threshold.unwrap_or(0.0);
+        let mut binary = vec![0u8; (vector.len() + 7) / 8];
+        
+        for (i, &value) in vector.iter().enumerate() {
+            if value > threshold {
+                let byte_idx = i / 8;
+                let bit_idx = i % 8;
+                binary[byte_idx] |= 1 << bit_idx;
+            }
+        }
+        
+        Ok(binary)
+    }
+    
+    /// Quantize vector to INT8 representation
+    pub fn quantize_to_int8(&self, vector: &[f32]) -> Result<Vec<u8>> {
+        // Find min and max for scaling
+        let (min_val, max_val) = vector.iter()
+            .fold((f32::INFINITY, f32::NEG_INFINITY), |(min, max), &v| {
+                (min.min(v), max.max(v))
+            });
+        
+        let range = max_val - min_val;
+        let scale = if range > 0.0 { 255.0 / range } else { 1.0 };
+        
+        let quantized: Vec<u8> = vector.iter()
+            .map(|&v| {
+                let normalized = (v - min_val) * scale;
+                normalized.round().clamp(0.0, 255.0) as u8
+            })
+            .collect();
+        
+        Ok(quantized)
+    }
+    
+    /// Quantize vector to Product Quantization
+    pub fn quantize_to_pq(
+        &self,
+        vector: &[f32],
+        num_subvectors: usize,
+        bits_per_code: u32,
+    ) -> Result<Vec<u8>> {
+        let dimension = vector.len();
+        let subvector_dim = (dimension + num_subvectors - 1) / num_subvectors;
+        let bytes_per_code = ((bits_per_code + 7) / 8) as usize;
+        let mut codes = Vec::with_capacity(num_subvectors * bytes_per_code);
+        
+        for i in 0..num_subvectors {
+            let start = i * subvector_dim;
+            let end = (start + subvector_dim).min(dimension);
+            let subvector = &vector[start..end];
+            
+            // For now, use simple quantization (in production, would use trained codebook)
+            // This is a placeholder that quantizes each subvector to a code
+            let code = self.simple_pq_encode(subvector, bits_per_code)?;
+            codes.extend_from_slice(&code);
+        }
+        
+        Ok(codes)
+    }
+    
+    /// Simple PQ encoding (placeholder for actual codebook-based encoding)
+    fn simple_pq_encode(&self, subvector: &[f32], bits_per_code: u32) -> Result<Vec<u8>> {
+        let num_centroids = 1 << bits_per_code;
+        let bytes_per_code = ((bits_per_code + 7) / 8) as usize;
+        
+        // Simple hash-based code assignment (placeholder)
+        let mut hash = 0u32;
+        for &val in subvector {
+            hash = hash.wrapping_mul(31).wrapping_add(val.to_bits());
+        }
+        let code = (hash % num_centroids) as u64;
+        
+        // Convert to bytes
+        let mut bytes = vec![0u8; bytes_per_code];
+        for i in 0..bytes_per_code {
+            bytes[i] = ((code >> (i * 8)) & 0xFF) as u8;
+        }
+        
+        Ok(bytes)
+    }
+    
     /// Dequantize back to approximate FP32 vector
-    pub async fn dequantize(&self, quantized: &QuantizedVector) -> Result<Vec<f32>> {
-        match &quantized.quantization_level.level_type {
+    pub async fn dequantize(&self, quantized_vector: &QuantizedVector) -> Result<Vec<f32>> {
+        match &quantized_vector.quantization_level.level_type {
             None | Some(QuantizationLevelType::None(_)) => {
-                self.dequantize_fp32(&quantized.data)
+                self.dequantize_fp32(&quantized_vector.data)
             }
             
             Some(QuantizationLevelType::Scalar(s)) => {
-                self.dequantize_scalar(&quantized.data, s.bits as u8, s.scale, s.offset)
+                self.dequantize_scalar(&quantized_vector.data, s.bits as u8, s.scale, s.offset)
             }
             
             Some(QuantizationLevelType::Uniform(u)) => {
                 self.dequantize_uniform(
-                    &quantized.data, 
+                    &quantized_vector.data, 
                     u.bits as u8, 
                     u.scale.unwrap_or(1.0), 
                     u.offset.unwrap_or(0.0)
@@ -471,7 +694,7 @@ impl UnifiedQuantizationEngine {
             }
             
             _ => {
-                anyhow::bail!("Dequantization not implemented for {:?}", quantized.quantization_level)
+                anyhow::bail!("Dequantization not implemented for {:?}", quantized_vector.quantization_level)
             }
         }
     }
@@ -642,7 +865,7 @@ impl UnifiedQuantizationEngine {
     pub fn calculate_pq_distance_async(
         &self,
         query: &[f32],
-        quantized: &QuantizedVector,
+        quantized_vector: &QuantizedVector,
         codebook: &Codebook,
         metric: &DistanceMetric,
     ) -> Result<SimilarityResult> {
@@ -652,7 +875,7 @@ impl UnifiedQuantizationEngine {
         
         let mut total_distance = 0.0;
         
-        for (i, &code) in quantized.data.iter().enumerate() {
+        for (i, &code) in quantized_vector.data.iter().enumerate() {
             let start = i * subvector_dim;
             let end = (start + subvector_dim).min(query.len());
             let query_subvec = &query[start..end];
@@ -889,12 +1112,12 @@ impl UnifiedQuantizationEngine {
     }
     
     /// Synchronous dequantize for use in distance calculations
-    fn dequantize_sync(&self, quantized: &QuantizedVector) -> Result<Vec<f32>> {
+    fn dequantize_sync(&self, quantized_vector: &QuantizedVector) -> Result<Vec<f32>> {
         // For now, use a simple implementation
         // In production, this would use async runtime or cached results
-        match &quantized.quantization_level.level_type {
+        match &quantized_vector.quantization_level.level_type {
             None | Some(QuantizationLevelType::None(_)) => {
-                Ok(self.bytes_to_f32(&quantized.data))
+                Ok(self.bytes_to_f32(&quantized_vector.data))
             }
             _ => {
                 // TODO: Implement sync dequantization for other types
@@ -935,13 +1158,13 @@ pub struct QuantizationMetadata {
 
 /// In-memory codebook store for testing
 pub struct InMemoryCodebookStore {
-    // codebooks removed -  Arc<tokio::sync::RwLock<std::collections::HashMap<String, Codebook>>>,
+    codebooks: Arc<tokio::sync::RwLock<std::collections::HashMap<String, Codebook>>>,
 }
 
 impl InMemoryCodebookStore {
     pub fn new() -> Self {
         Self {
-            // codebooks removed -  Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
+            codebooks: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
         }
     }
 }

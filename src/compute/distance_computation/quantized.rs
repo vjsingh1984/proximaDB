@@ -5,7 +5,7 @@
 //! distance computation infrastructure and provides specialized implementations 
 //! for binary, INT8, and PQ quantization with proper data types.
 
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tracing::{info, trace};
@@ -245,6 +245,19 @@ pub struct DistanceMetrics {
     pub operation_count: usize,
 }
 
+impl Default for DistanceMetrics {
+    fn default() -> Self {
+        Self {
+            computation_time_us: 0.0,
+            simd_used: false,
+            cache_hits: 0,
+            cache_misses: 0,
+            memory_bandwidth_mb_s: 0.0,
+            operation_count: 0,
+        }
+    }
+}
+
 /// Optimized distance calculator for quantized data
 pub struct QuantizedDistanceCalculator {
     /// Configuration
@@ -396,7 +409,7 @@ impl QuantizedDistanceCalculator {
     /// Create new distance calculator
     pub fn new(config: QuantizedDistanceConfig) -> Result<Self> {
         let hardware_caps = get_hardware_capabilities();
-        let distance_engine = Arc::new(UnifiedDistanceCompute::new(hardware_caps.clone()));
+        let distance_engine = Arc::new(UnifiedDistanceCompute::new(DistanceMetric::Cosine));
         
         let pq_distance_cache = Arc::new(std::sync::RwLock::new(PQDistanceCache {
             tables: std::collections::HashMap::new(),
@@ -429,7 +442,7 @@ impl QuantizedDistanceCalculator {
     pub async fn compute_distance(
         &self,
         query: &[f32],
-        quantized: &QuantizedVectorData,
+        quantized_vector: &QuantizedVectorData,
         format: SelectedFormat,
     ) -> Result<QuantizedDistanceResult> {
         let start_time = std::time::Instant::now();
@@ -438,9 +451,9 @@ impl QuantizedDistanceCalculator {
         
         trace!("Computing distance using format: {:?}", format);
         
-        let (distance, quality_estimate, method) = match format {
+        let (similarity, quality_estimate, method) = match format {
             SelectedFormat::FP32 => {
-                let fp32_data = quantized.fp32.as_ref()
+                let fp32_data = quantized_vector.fp32.as_ref()
                     .ok_or_else(|| anyhow::anyhow!("FP32 data not available"))?;
                 
                 let result = self.distance_engine.calculate_distance(
@@ -453,15 +466,34 @@ impl QuantizedDistanceCalculator {
             },
             
             SelectedFormat::Binary => {
-                let binary_data = quantized.binary.as_ref()
+                let binary_data = quantized_vector.binary.as_ref()
                     .ok_or_else(|| anyhow::anyhow!("Binary data not available"))?;
                 
-                let distance = self.compute_binary_distance(query, binary_data)?;
-                (distance, 0.7, ComputationMethod::BinaryApproximation) // ~70% quality estimate for binary
+                let similarity = self.compute_binary_distance(query, binary_data)?;
+                
+                // Calculate quality based on dimension
+                // Binary quantization preserves more information in higher dimensions
+                // due to the concentration of measure phenomenon
+                let dimension = query.len();
+                let quality_estimate = if dimension < 64 {
+                    0.60  // Low dimension: 60% quality (more information loss)
+                } else if dimension < 128 {
+                    0.65  // Small dimension: 65% quality
+                } else if dimension < 256 {
+                    0.70  // Medium dimension: 70% quality
+                } else if dimension < 512 {
+                    0.75  // Large dimension: 75% quality
+                } else if dimension < 1024 {
+                    0.80  // Very large dimension: 80% quality
+                } else {
+                    0.85  // Huge dimension: 85% quality (binary works well at scale)
+                };
+                
+                (similarity, quality_estimate, ComputationMethod::BinaryApproximation)
             },
             
             SelectedFormat::INT8 => {
-                let int8_data = quantized.int8.as_ref()
+                let int8_data = quantized_vector.int8.as_ref()
                     .ok_or_else(|| anyhow::anyhow!("INT8 data not available"))?;
                 
                 // Use native INT8 distance computation from unified engine
@@ -480,7 +512,7 @@ impl QuantizedDistanceCalculator {
             },
             
             SelectedFormat::PQ => {
-                let pq_data = quantized.pq.as_ref()
+                let pq_data = quantized_vector.pq.as_ref()
                     .ok_or_else(|| anyhow::anyhow!("PQ data not available"))?;
                 
                 // Use native PQ distance computation from unified engine
@@ -510,7 +542,7 @@ impl QuantizedDistanceCalculator {
         trace!("Distance computation completed in {:.2}μs", computation_time);
         
         Ok(QuantizedDistanceResult {
-            distance,
+            similarity,
             quality_estimate,
             method,
             metrics,
@@ -552,13 +584,13 @@ impl QuantizedDistanceCalculator {
     pub async fn compute_progressive_distance(
         &self,
         query: &[f32],
-        quantized: &QuantizedVectorData,
+        quantized_vector: &QuantizedVectorData,
         target_quality: f32,
     ) -> Result<QuantizedDistanceResult> {
         if !self.config.approximation.enable_progressive_refinement {
             // Fall back to highest quality available
-            let format = self.select_best_format(quantized);
-            return self.compute_distance(query, quantized, format).await;
+            let format = self.select_best_format(quantized_vector);
+            return self.compute_distance(query, quantized_vector, format).await;
         }
         
         let start_time = std::time::Instant::now();
@@ -569,10 +601,10 @@ impl QuantizedDistanceCalculator {
         trace!("Starting progressive distance computation (target quality: {:.2})", target_quality);
         
         // Stage 1: Binary filtering (if available and quality target allows)
-        if let Some(_binary_data) = &quantized.binary {
+        if let Some(_binary_data) = &quantized_vector.binary {
             if current_quality < target_quality {
-                let result = self.compute_distance(query, quantized, SelectedFormat::Binary).await?;
-                final_distance = result.distance;
+                let result = self.compute_distance(query, quantized_vector, SelectedFormat::Binary).await?;
+                final_distance = result.similarity;
                 current_quality = result.quality_estimate;
                 stages.push("Binary".to_string());
                 
@@ -581,10 +613,10 @@ impl QuantizedDistanceCalculator {
         }
         
         // Stage 2: INT8 approximation (if available and needed)
-        if let Some(_int8_data) = &quantized.int8 {
+        if let Some(_int8_data) = &quantized_vector.int8 {
             if current_quality < target_quality {
-                let result = self.compute_distance(query, quantized, SelectedFormat::INT8).await?;
-                final_distance = result.distance;
+                let result = self.compute_distance(query, quantized_vector, SelectedFormat::INT8).await?;
+                final_distance = result.similarity;
                 current_quality = result.quality_estimate;
                 stages.push("INT8".to_string());
                 
@@ -593,10 +625,10 @@ impl QuantizedDistanceCalculator {
         }
         
         // Stage 3: PQ approximation (if available and needed)
-        if let Some(_pq_data) = &quantized.pq {
+        if let Some(_pq_data) = &quantized_vector.pq {
             if current_quality < target_quality {
-                let result = self.compute_distance(query, quantized, SelectedFormat::PQ).await?;
-                final_distance = result.distance;
+                let result = self.compute_distance(query, quantized_vector, SelectedFormat::PQ).await?;
+                final_distance = result.similarity;
                 current_quality = result.quality_estimate;
                 stages.push("PQ".to_string());
                 
@@ -605,10 +637,23 @@ impl QuantizedDistanceCalculator {
         }
         
         // Stage 4: Full precision (if available and needed)
-        if let Some(_fp32_data) = &quantized.fp32 {
+        if let Some(_fp32_data) = &quantized_vector.fp32 {
             if current_quality < target_quality {
-                let result = self.compute_distance(query, quantized, SelectedFormat::FP32).await?;
-                final_distance = result.distance;
+                // For FP32, we need to use the distance engine directly
+                let fp32_vector = quantized_vector.fp32.as_ref()
+                    .ok_or_else(|| anyhow!("FP32 data not available"))?;
+                let similarity = self.distance_engine.calculate_distance(
+                    query,
+                    fp32_vector,
+                    &DistanceMetric::Cosine, // Use default metric
+                );
+                let result = QuantizedDistanceResult {
+                    similarity: similarity.normalized_score,
+                    quality_estimate: 1.0,
+                    method: ComputationMethod::ExactFP32,
+                    metrics: DistanceMetrics::default(),
+                };
+                final_distance = result.similarity;
                 current_quality = result.quality_estimate;
                 stages.push("FP32".to_string());
                 
@@ -746,7 +791,7 @@ impl QuantizedDistanceCalculator {
     fn should_use_simd(&self, dimension: usize) -> bool {
         self.config.simd_optimization.enable_simd 
             && dimension >= self.config.simd_optimization.simd_threshold
-            && self.hardware_caps.has_simd_support()
+            && self.hardware_caps.has_simd()
     }
     
     fn should_use_batch_processing(&self, batch_size: usize) -> bool {
@@ -946,7 +991,7 @@ impl HammingLookupTable {
         
         Ok(Self {
             hamming_weights,
-            has_popcnt: hardware_caps.has_simd_support(), // Simplified check
+            has_popcnt: hardware_caps.has_simd(), // Simplified check
         })
     }
 }
@@ -1057,9 +1102,9 @@ mod tests {
             pq: None,
         };
         
-        let result = calculator.compute_distance(&query, &quantized_data, SelectedFormat::FP32).await.unwrap();
+        let result = calculator.compute_distance(&query, &quantized_data, SelectedFormat::Binary).await.unwrap();
         
-        assert!(result.distance >= 0.0);
+        assert!(result.similarity >= 0.0);
         assert_eq!(result.quality_estimate, 1.0);
         assert!(matches!(result.method, ComputationMethod::ExactFP32));
         assert!(result.metrics.computation_time_us > 0.0);

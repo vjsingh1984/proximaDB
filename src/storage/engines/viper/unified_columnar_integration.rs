@@ -154,7 +154,7 @@ impl ViperUnifiedEngine {
         let distance_results = self.common_ops.compute_batch_distances(
             &query_vector,
             &quantized_vectors,
-            Some(format_preference),
+            Some(format_preference.clone()),
         ).await.context("Failed to compute distances")?;
         
         // Apply VIPER-specific result processing
@@ -186,7 +186,7 @@ impl ViperUnifiedEngine {
     ) -> Result<ProgressiveSearchResult> {
         let start_time = std::time::Instant::now();
         
-        debug!("Progressive search on collection: {} (target quality: {:.2})", 
+        debug!("Progressive search on collection: {} (target quality_level: {:.2})", 
                collection_id, target_quality);
         
         let collection_metadata = self.get_collection_metadata(collection_id).await?;
@@ -209,7 +209,7 @@ impl ViperUnifiedEngine {
             
             progressive_results.push(ProgressiveResult {
                 vector_id: format!("vector_{}", i),
-                similarity: result.distance,
+                similarity: result.similarity,
                 quality_achieved: result.quality_estimate,
                 // computation_method removed -  result.method,
                 computation_time_us: result.metrics.computation_time_us,
@@ -226,12 +226,18 @@ impl ViperUnifiedEngine {
         info!("Progressive search completed in {:.2}ms with {} stages", 
               total_time, stages_completed.len());
         
+        let average_quality = if !progressive_results.is_empty() {
+            progressive_results.iter()
+                .map(|r| r.quality_achieved)
+                .sum::<f32>() / progressive_results.len() as f32
+        } else {
+            0.0
+        };
+        
         Ok(ProgressiveSearchResult {
             results: progressive_results,
             total_time_ms: total_time,
-            average_quality: progressive_results.iter()
-                .map(|r| r.quality_achieved)
-                .sum::<f32>() / progressive_results.len() as f32,
+            average_quality,
             stages_used: stages_completed,
         })
     }
@@ -289,7 +295,7 @@ impl ViperUnifiedEngine {
         // Check cache first
         {
             let cache = self.collection_cache.read().await;
-            if let Some(metadata) = cache.get(&key) {
+            if let Some(metadata) = cache.get(collection_id) {
                 return Ok(metadata.clone());
             }
         }
@@ -337,7 +343,7 @@ impl ViperUnifiedEngine {
     /// Get existing collection metadata
     async fn get_collection_metadata(&self, collection_id: &str) -> Result<CollectionMetadata> {
         let cache = self.collection_cache.read().await;
-        cache.get(cache_key).cloned()
+        cache.get(collection_id).cloned()
             .cloned()
             .ok_or_else(|| anyhow::anyhow!("Collection metadata not found: {}", collection_id))
     }
@@ -416,14 +422,14 @@ impl ViperUnifiedEngine {
     ) -> Result<Vec<SearchResultItem>> {
         // Sort by distance and take top_k
         let mut sorted_results = distance_results;
-        sorted_results.sort_by(|a, b| a.distance.partial_cmp(&b.distance).unwrap());
+        sorted_results.sort_by(|a, b| a.similarity.partial_cmp(&b.similarity).unwrap());
         
         let viper_results = sorted_results.into_iter()
             .take(top_k)
             .enumerate()
             .map(|(i, result)| SearchResultItem {
                 vector_id: format!("vector_{}", i),
-                similarity: result.distance,
+                similarity: result.similarity,
                 quality_estimate: result.quality_estimate,
                 // computation_method removed -  result.method,
             })

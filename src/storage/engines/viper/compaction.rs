@@ -82,7 +82,7 @@ impl ViperFilenameGenerator {
     /// Returns level 0 for files that don't follow the naming convention
     pub fn parse_level_from_filename(filename: &str) -> u32 {
         if let Some(captures) = regex::Regex::new(r"^level(\d+)_").unwrap().captures(filename) {
-            captures.get(key).unwrap().as_str().parse().unwrap_or(0)
+            captures.get(1).unwrap().as_str().parse().unwrap_or(0)
         } else {
             0 // Treat legacy files as level 0
         }
@@ -96,7 +96,7 @@ impl ViperFilenameGenerator {
     /// Parse timestamp from filename for ordering
     pub fn parse_timestamp_from_filename(filename: &str) -> u64 {
         if let Some(captures) = regex::Regex::new(r"level\d+_(\d+)_").unwrap().captures(filename) {
-            captures.get(key).unwrap().as_str().parse().unwrap_or(0)
+            captures.get(1).unwrap().as_str().parse().unwrap_or(0)
         } else {
             0
         }
@@ -194,6 +194,9 @@ impl CompactionManager {
             max_concurrent_per_collection: 1,
             global_max_concurrent: 3,
             operation_timeout: std::time::Duration::from_secs(1800), // 30 minutes for VIPER
+            queue_aware_compaction: true,
+            max_queue_wait: std::time::Duration::from_secs(120), // 2 minutes for VIPER
+            urgency_threshold: 0.75,
         };
         
         let orchestrator = Some(Arc::new(CompactionOrchestrator::new(
@@ -735,7 +738,7 @@ impl CompactionManager {
                         true
                     } else if let Some(ref id_str) = record_id {
                         // Use centralized MVCC resolution for version merging logic
-                        if let Some(existing_record) = latest_records.get(key) {
+                        if let Some(existing_record) = latest_records.get(record_id) {
                             // Create temporary VectorRecord instances for comparison
                             let existing_vector_record = VectorRecord {
                                 id: Some(id_str.clone()),
@@ -745,9 +748,7 @@ impl CompactionManager {
                                 metadata: vec![],
                                 updated_at: existing_record.timestamp.map(|t| t as u32),
                                 expires_at: None,
-                                // rank removed -  None,
-                                similarity: None,
-                                similarity: None,
+                                quantized_vector: None,
                             
         };
                             
@@ -759,9 +760,7 @@ impl CompactionManager {
                                 metadata: vec![],
                                 updated_at: record_timestamp.map(|t| t as u32),
                                 expires_at: None,
-                                // rank removed -  None,
-                                similarity: None,
-                                similarity: None,
+                                quantized_vector: None,
                             
         };
                             
@@ -952,7 +951,8 @@ impl CompactionManager {
                 // Extract compression configuration from collection metadata
                 let writer_props = if let Some(ref collection) = collection_config {
                     if let Some(ref config) = collection.config {
-                        if let Some(ref compression) = config.storage.as_ref().and_then(|s| s.compression.as_ref()) {
+                        if let Some(ref storage_config) = config.storage_config {
+                            if let Some(ref compression) = storage_config.compression {
                             use crate::proto::proximadb::CompressionAlgorithm;
                             use parquet::file::properties::WriterProperties;
                             
@@ -996,8 +996,12 @@ impl CompactionManager {
                             Some(WriterProperties::builder()
                                 .set_compression(parquet_compression)
                                 .build())
+                            } else {
+                                debug!("   ⚠️ No compression config in storage_config");
+                                None
+                            }
                         } else {
-                            debug!("   ⚠️ No compression config in collection");
+                            debug!("   ⚠️ No storage config in collection");
                             None
                         }
                     } else {
@@ -1212,14 +1216,15 @@ impl CompactionManager {
         use arrow_array::{StringArray, Int64Array, Int8Array, Float32Array, BooleanArray};
         use arrow_schema::DataType;
         
-        trace!("extract_column_value: row {}, type {:?}", row_idx, data_type);
+        let column_data_type = column.data_type();
+        trace!("extract_column_value: row {}, type {:?}", row_idx, column_data_type);
         
         if column.is_null(row_idx) {
             trace!("  -> NULL value");
             return Ok(serde_json::Value::Null);
         }
         
-        match data_type {
+        match column_data_type {
             DataType::Utf8 => {
                 let array = column.as_any().downcast_ref::<StringArray>()
                     .ok_or_else(|| anyhow::anyhow!("Failed to downcast to StringArray"))?;
@@ -1333,8 +1338,8 @@ impl CompactionManager {
         
         // Collect data for each column
         for record in records {
-            for (field_name, values) in &mut column_builders {
-                let value = record.get(key)
+            for (field, values) in &mut column_builders {
+                let value = record.get(field)
                     .cloned()
                     .unwrap_or(serde_json::Value::Null);
                 values.push(value);

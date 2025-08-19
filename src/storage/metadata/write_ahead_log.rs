@@ -79,7 +79,7 @@ impl Default for MetadataWALConfig {
         base_config.memtable.mvcc_versions_retained = 10;
 
         // Use Snappy for fast compression (metadata needs fast read/write)
-        base_config.storage.as_ref().and_then(|s| s.compression.as_ref()).algorithm = CompressionAlgorithm::Snappy;
+        base_config.compression.algorithm = CompressionAlgorithm::Snappy;
 
         // Configuration optimized for metadata operations
 
@@ -271,9 +271,9 @@ impl MetadataWriteAheadLogManager {
             let cache = self.metadata_cache.read().await;
             let timestamps = self.cache_timestamps.read().await;
 
-            if let Some(metadata) = cache.get(&key) {
+            if let Some(metadata) = cache.get(collection_id) {
                 // Check TTL
-                if let Some(timestamp) = timestamps.get(key) {
+                if let Some(timestamp) = timestamps.get(collection_id) {
                     let age = Utc::now().signed_duration_since(*timestamp);
                     if age.num_seconds() < self.config.cache_ttl_seconds as i64 {
                         let mut stats = self.stats.write().await;
@@ -493,7 +493,7 @@ impl MetadataWriteAheadLogManager {
                 updated_at: Some(current_time_secs),
                 expires_at: Some(current_time_secs.saturating_sub(1)), // Mark as expired (logical delete)
                 version: Some(1),
-                quantized: None,
+                quantized_vector: None,
             
         };
 
@@ -609,9 +609,7 @@ impl MetadataWriteAheadLogManager {
             updated_at: Some(timestamp_secs),
             expires_at: None,
             version: Some(1),
-            // rank removed -  None,
-            similarity: None,
-            similarity: None,
+            quantized_vector: None,
         })
     }
 

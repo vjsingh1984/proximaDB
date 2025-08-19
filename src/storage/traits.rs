@@ -10,7 +10,27 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::sync::Arc;
 use crate::proto::proximadb::Collection;
+
+/// Performance tier hint for storage engines
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum PerformanceTier {
+    /// Hot data - keep in memory/SSD, optimize for latency
+    Hot,
+    /// Warm data - balance between latency and cost
+    Warm,
+    /// Cold data - optimize for cost, higher latency acceptable
+    Cold,
+    /// Archive data - minimal access, maximum compression
+    Archive,
+}
+
+impl Default for PerformanceTier {
+    fn default() -> Self {
+        Self::Warm
+    }
+}
 // Core types imported as needed in implementations
 
 /// Strategy enum for selecting storage engine type
@@ -22,6 +42,12 @@ pub enum StorageEngineStrategy {
     Lsm,
     /// PRISM: Progressive Retrieval through Indexed Storage Management (Memory-optimized)
     Prism,
+    /// SWIFT: Storage With Instant Fast Traversal (Hierarchical superblock architecture)
+    Swift,
+    /// NOVA: Next-gen Optimized Vector Analytics (Columnar with quantization)
+    Nova,
+    /// RAPTOR: Rapid Access Parallel Tiered Object Retrieval (Experimental)
+    Raptor,
     /// Hybrid: Uses VIPER for vectors, LSM for metadata (Future)
     Hybrid,
 }
@@ -94,17 +120,13 @@ pub trait UnifiedStorageEngine: Send + Sync {
     /// Each engine implements its own optimizations:
     /// - VIPER: Columnar predicate pushdown, Parquet filtering, ML clustering
     /// - LSM: Bloom filter hints, range scans, SSTable optimizations
-    /// This abstraction allows each engine to leverage its unique capabilities
+    /// - SST: Hierarchical bloom filters, progressive quantization
+    /// - NOVA: Extended Parquet statistics, aggressive pruning
+    /// 
+    /// Uses SearchContext which provides zero-copy access via Arc references
     async fn search_vectors_unified(
         &self,
-        collection_id: &str,
-        storage_url: &str,  // Storage URL for collection data location
-        query_vector: &[f32],
-        k: usize,
-        distance_metric: &crate::compute::distance_computation::DistanceMetric,
-        filter_expression: Option<&crate::core::search::FilterExpression>,
-        include_vectors: bool,
-        include_metadata: bool,
+        ctx: &SearchContext,
     ) -> Result<Vec<crate::core::search::SearchResult>>;
     
     /// Compact a specific collection's data
@@ -141,6 +163,10 @@ pub trait UnifiedStorageEngine: Send + Sync {
             StorageEngineStrategy::Viper => true, // VIPER supports collection-level ops
             StorageEngineStrategy::Lsm => false,  // LSM operates on entire tree
             StorageEngineStrategy::Hybrid => true, // Hybrid supports collection-level ops
+            StorageEngineStrategy::Prism => true, // Prism supports collection-level ops
+            StorageEngineStrategy::Swift => true, // SWIFT supports collection-level ops
+            StorageEngineStrategy::Nova => true, // NOVA supports collection-level ops
+            StorageEngineStrategy::Raptor => true, // RAPTOR supports collection-level ops
         }
     }
 
@@ -149,6 +175,10 @@ pub trait UnifiedStorageEngine: Send + Sync {
             StorageEngineStrategy::Viper => true, // VIPER has atomic staging operations
             StorageEngineStrategy::Lsm => false,  // LSM has eventual consistency
             StorageEngineStrategy::Hybrid => true, // Hybrid provides atomic guarantees
+            StorageEngineStrategy::Prism => true, // Prism provides atomic guarantees
+            StorageEngineStrategy::Swift => true, // SWIFT provides atomic guarantees
+            StorageEngineStrategy::Nova => true, // NOVA provides atomic guarantees
+            StorageEngineStrategy::Raptor => false, // RAPTOR uses eventual consistency
         }
     }
 
@@ -465,6 +495,26 @@ pub trait UnifiedStorageEngine: Send + Sync {
                 let stats = self.get_engine_stats().await?;
                 Ok(stats.memory_usage_bytes > 100 * 1024 * 1024)
             }
+            StorageEngineStrategy::Prism => {
+                // Prism: use LSM heuristics
+                let stats = self.get_engine_stats().await?;
+                Ok(stats.memory_usage_bytes > 64 * 1024 * 1024)
+            }
+            StorageEngineStrategy::Swift => {
+                // SWIFT: use SST-like heuristics
+                let stats = self.get_engine_stats().await?;
+                Ok(stats.memory_usage_bytes > 64 * 1024 * 1024) // 64MB default
+            }
+            StorageEngineStrategy::Nova => {
+                // NOVA: use columnar heuristics
+                let stats = self.get_engine_stats().await?;
+                Ok(stats.memory_usage_bytes > 128 * 1024 * 1024) // 128MB default
+            }
+            StorageEngineStrategy::Raptor => {
+                // RAPTOR: aggressive flushing
+                let stats = self.get_engine_stats().await?;
+                Ok(stats.memory_usage_bytes > 32 * 1024 * 1024) // 32MB default
+            }
         }
     }
 
@@ -477,7 +527,7 @@ pub trait UnifiedStorageEngine: Send + Sync {
                 // Engine-specific logic would go in metrics
                 Ok(stats
                     .engine_specific
-                    .get(key)
+                    .get("vector_count")
                     .and_then(|v| v.as_u64())
                     .unwrap_or(0)
                     > 10)
@@ -487,13 +537,51 @@ pub trait UnifiedStorageEngine: Send + Sync {
                 let stats = self.get_engine_stats().await?;
                 Ok(stats
                     .engine_specific
-                    .get(key)
+                    .get("index_count")
                     .and_then(|v| v.as_bool())
                     .unwrap_or(false))
             }
             StorageEngineStrategy::Hybrid => {
                 // Hybrid: check both strategies
                 self.should_flush(collection_id).await
+            }
+            StorageEngineStrategy::Prism => {
+                // Prism: use LSM compaction strategy
+                let stats = self.get_engine_stats().await?;
+                Ok(stats
+                    .engine_specific
+                    .get("index_count")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false))
+            }
+            StorageEngineStrategy::Swift => {
+                // SWIFT: compact based on file count
+                let stats = self.get_engine_stats().await?;
+                Ok(stats
+                    .engine_specific
+                    .get("file_count")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0)
+                    > 5)
+            }
+            StorageEngineStrategy::Nova => {
+                // NOVA: compact when row groups exceed threshold
+                let stats = self.get_engine_stats().await?;
+                Ok(stats
+                    .engine_specific
+                    .get("row_group_count")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0)
+                    > 20)
+            }
+            StorageEngineStrategy::Raptor => {
+                // RAPTOR: adaptive compaction
+                let stats = self.get_engine_stats().await?;
+                Ok(stats
+                    .engine_specific
+                    .get("needs_compaction")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false))
             }
         }
     }
@@ -510,31 +598,31 @@ pub trait UnifiedStorageEngine: Send + Sync {
             engine_name: self.engine_name().to_string(),
             engine_version: self.engine_version().to_string(),
             total_storage_bytes: engine_metrics
-                .get(key)
+                .get("collection_id")
                 .and_then(|v| v.as_u64())
                 .unwrap_or(0),
             memory_usage_bytes: engine_metrics
-                .get(key)
+                .get("dimension")
                 .and_then(|v| v.as_u64())
                 .unwrap_or(0),
             collection_count: engine_metrics
-                .get(key)
+                .get("engine_type")
                 .and_then(|v| v.as_u64())
                 .unwrap_or(0) as usize,
             last_flush: engine_metrics
-                .get(key)
+                .get("created_at")
                 .and_then(|v| v.as_i64())
                 .and_then(|ts| DateTime::from_timestamp_millis(ts)),
             last_compaction: engine_metrics
-                .get(key)
+                .get("updated_at")
                 .and_then(|v| v.as_i64())
                 .and_then(|ts| DateTime::from_timestamp_millis(ts)),
             pending_flushes: engine_metrics
-                .get(key)
+                .get("is_active")
                 .and_then(|v| v.as_u64())
                 .unwrap_or(0),
             pending_compactions: engine_metrics
-                .get(key)
+                .get("metadata")
                 .and_then(|v| v.as_u64())
                 .unwrap_or(0),
             engine_specific: engine_metrics,
@@ -550,19 +638,19 @@ pub trait UnifiedStorageEngine: Send + Sync {
 
         let healthy = stats
             .engine_specific
-            .get(key)
+            .get("is_healthy")
             .and_then(|v| v.as_bool())
             .unwrap_or(true);
 
         let error_count = stats
             .engine_specific
-            .get(key)
+            .get("error_count")
             .and_then(|v| v.as_u64())
             .unwrap_or(0) as usize;
 
         let warnings = stats
             .engine_specific
-            .get(key)
+            .get("warnings")
             .and_then(|v| v.as_array())
             .map(|arr| {
                 arr.iter()
@@ -700,6 +788,9 @@ pub struct FlushParameters {
     
     /// Collection configuration to avoid redundant lookups
     pub collection_config: Option<Collection>,
+    
+    /// Estimated size in bytes for metrics tracking
+    pub estimated_size: usize,
 }
 
 /// Flexible compaction parameters that work for both engine types
@@ -725,6 +816,9 @@ pub struct CompactionParameters {
     
     /// Collection configuration to avoid redundant lookups
     pub collection_config: Option<Collection>,
+    
+    /// Estimated input size in bytes for metrics tracking
+    pub estimated_input_size: usize,
 }
 
 /// Operation priority levels
@@ -737,35 +831,386 @@ pub enum OperationPriority {
     Critical = 3,
 }
 
-/// Search parameters with collection configuration
+/// Search context that bundles immutable references to search parameters
+/// and collection configuration for zero-copy access during search operations.
+/// 
+/// Design principles:
+/// - Immutable: All references are read-only during search
+/// - Zero-copy: Uses Arc for shared ownership without cloning
+/// - Cache-friendly: Collection comes directly from cache as Arc
+/// - Extensible: Additional context can be added as needed
+#[derive(Debug, Clone)]
+pub struct SearchContext {
+    /// Original search parameters (immutable reference)
+    pub search_params: Arc<crate::core::search::SearchParams>,
+    
+    /// Collection configuration from cache (immutable reference)
+    /// Contains storage_assignment with storage URL
+    pub collection: Arc<Collection>,
+    
+    /// Additional context that might be needed during search
+    /// (can be extended without breaking existing code)
+    pub metadata: SearchContextMetadata,
+}
+
+/// Parsed quantization configuration for efficient progressive search
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ParsedQuantizationConfig {
+    /// Strategy being used (SmartDefaults, CustomLevels, etc.)
+    pub strategy: crate::proto::proximadb::quantization_config::Strategy,
+    
+    /// Whether progressive search is enabled
+    pub progressive_search_enabled: bool,
+    
+    /// Ordered quantization levels for progressive refinement  
+    pub progressive_levels: Vec<QuantizationLevel>,
+    
+    /// Search stage selectivity thresholds
+    pub binary_filter_selectivity: f32,
+    pub int8_ranking_selectivity: f32,
+    pub pq_ranking_selectivity: f32,
+    
+    /// Quality and performance settings
+    pub quality_threshold: f32,
+    pub training_sample_size: i32,
+    pub enable_simd_acceleration: bool,
+    pub optimize_for_storage: bool,
+    pub optimize_for_memory: bool,
+}
+
+/// Individual quantization level for progressive search
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct QuantizationLevel {
+    /// Level identifier (e.g., "binary", "int8", "pq8")
+    pub level_id: String,
+    
+    /// Quantization type
+    pub quantization_type: QuantizationType,
+    
+    /// Bits per element
+    pub bits: i32,
+    
+    /// Search priority (0 = first filter)
+    pub search_priority: i32,
+    
+    /// PQ-specific settings
+    pub num_subvectors: Option<i32>,
+    
+    /// Minimum recall for this level
+    pub min_recall: f32,
+}
+
+/// Quantization type enumeration
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub enum QuantizationType {
+    Binary,
+    Scalar,
+    Product,
+    Uniform,
+    None,
+}
+
+/// Additional metadata for search context
+/// Contains all information storage engines need - no additional cache lookups required
 #[derive(Debug, Clone, Default)]
-pub struct SearchParams {
-    /// Target collection ID
+pub struct SearchContextMetadata {
+    /// Collection ID extracted for convenience
     pub collection_id: String,
     
-    /// Query vector
-    pub query_vector: Vec<f32>,
+    /// Whether this search should use AXIS indexes
+    pub use_axis_indexes: bool,
     
-    /// Number of results to return
-    pub k: usize,
+    /// Whether progressive quantization is available
+    pub has_quantization: bool,
     
-    /// Distance metric to use
+    /// Dimension of vectors in this collection
+    pub dimension: usize,
+    
+    /// Distance metric for the collection
     pub distance_metric: crate::compute::distance_computation::DistanceMetric,
     
-    /// Optional metadata filters
-    pub metadata_filters: Option<HashMap<String, serde_json::Value>>,
+    /// Storage engine strategy for this collection
+    pub storage_strategy: StorageEngineStrategy,
     
-    /// Include vectors in results
-    pub include_vectors: bool,
+    /// Base storage path for this collection (extracted from storage_assignment)
+    pub storage_path: String,
     
-    /// Include metadata in results
-    pub include_metadata: bool,
+    /// Parsed quantization configuration for progressive search
+    pub quantization_config: Option<ParsedQuantizationConfig>,
     
-    /// Collection configuration to avoid redundant lookups
-    pub collection_config: Option<Collection>,
+    /// Collection size estimates for strategy selection
+    pub estimated_vector_count: u64,
+    pub estimated_size_bytes: u64,
     
-    /// Engine-specific hints
-    pub hints: HashMap<String, serde_json::Value>,
+    /// Performance hints for engines
+    pub performance_tier: PerformanceTier,
+    pub compression_enabled: bool,
+    pub quantization_enabled: bool,
+}
+
+impl SearchContext {
+    /// Parse quantization config into ready-to-use format for progressive search
+    fn parse_quantization_config(
+        quant_config: &crate::proto::proximadb::QuantizationConfig,
+        dimension: u32,
+    ) -> Option<ParsedQuantizationConfig> {
+        use crate::proto::proximadb::quantization_level::QuantizationType as ProtoQuantType;
+        
+        if !quant_config.enabled {
+            return None;
+        }
+        
+        // Parse or generate progressive levels
+        let progressive_levels = if quant_config.custom_levels.is_empty() {
+            // Use smart defaults if no custom levels provided
+            if let Ok(smart_config) = crate::compute::quantization::QuantizationSmartDefaults::generate_for_dimension(dimension) {
+                Self::parse_proto_levels(&smart_config.custom_levels)
+            } else {
+                Vec::new()
+            }
+        } else {
+            Self::parse_proto_levels(&quant_config.custom_levels)
+        };
+        
+        Some(ParsedQuantizationConfig {
+            strategy: quant_config.strategy(),
+            progressive_search_enabled: quant_config.enable_progressive_search,
+            progressive_levels,
+            binary_filter_selectivity: quant_config.binary_filter_selectivity,
+            int8_ranking_selectivity: quant_config.int8_ranking_selectivity,
+            pq_ranking_selectivity: quant_config.pq_ranking_selectivity,
+            quality_threshold: quant_config.quality_threshold,
+            training_sample_size: quant_config.training_sample_size,
+            enable_simd_acceleration: quant_config.enable_simd_acceleration,
+            optimize_for_storage: quant_config.optimize_for_storage,
+            optimize_for_memory: quant_config.optimize_for_memory,
+        })
+    }
+    
+    /// Parse proto levels into internal format
+    fn parse_proto_levels(proto_levels: &[crate::proto::proximadb::QuantizationLevel]) -> Vec<QuantizationLevel> {
+        use crate::proto::proximadb::quantization_level::QuantizationType as ProtoQuantType;
+        
+        let mut levels: Vec<_> = proto_levels
+            .iter()
+            .map(|level| {
+                let quantization_type = match level.r#type() {
+                    ProtoQuantType::Binary => QuantizationType::Binary,
+                    ProtoQuantType::Scalar => QuantizationType::Scalar,
+                    ProtoQuantType::Product => QuantizationType::Product,
+                    ProtoQuantType::Uniform => QuantizationType::Uniform,
+                    ProtoQuantType::None => QuantizationType::None,
+                };
+                
+                QuantizationLevel {
+                    level_id: level.level_id.clone(),
+                    quantization_type,
+                    bits: level.bits,
+                    search_priority: level.search_priority.unwrap_or(0),
+                    num_subvectors: level.num_subvectors,
+                    min_recall: level.min_recall.unwrap_or(0.8),
+                }
+            })
+            .collect();
+        
+        // Sort by search priority for progressive search
+        levels.sort_by_key(|l| l.search_priority);
+        levels
+    }
+    
+    /// Create a new search context from cached components
+    pub fn new(
+        search_params: Arc<crate::core::search::SearchParams>,
+        collection: Arc<Collection>,
+    ) -> Self {
+        // Extract metadata once during context creation
+        let config = collection.config.as_ref();
+        let storage_assignment = collection.storage_assignment.as_ref();
+        
+        let metadata = SearchContextMetadata {
+            collection_id: collection.id.clone().unwrap_or_default(),
+            use_axis_indexes: config
+                .and_then(|c| c.index_config.as_ref())
+                .map(|_| true)
+                .unwrap_or(false),
+            has_quantization: config
+                .and_then(|c| c.quantization.as_ref())
+                .is_some(),
+            dimension: config
+                .map(|c| c.dimension as usize)
+                .unwrap_or(0),
+            distance_metric: config
+                .and_then(|c| c.distance_metric)
+                .map(|dm| dm.into())
+                .unwrap_or(crate::compute::distance_computation::DistanceMetric::Cosine),
+            storage_strategy: config
+                .and_then(|c| c.storage.as_ref())
+                .and_then(|s| s.engine.as_ref())
+                .map(|e| match e.as_str() {
+                    "VIPER" => StorageEngineStrategy::Viper,
+                    "SST" => StorageEngineStrategy::Lsm,
+                    "PRISM" => StorageEngineStrategy::Prism,
+                    _ => StorageEngineStrategy::Viper,
+                })
+                .unwrap_or_default(),
+            storage_path: storage_assignment
+                .map(|sa| sa.base_location.clone())
+                .unwrap_or_default(),
+            estimated_vector_count: config
+                .map(|c| c.estimated_vector_count.unwrap_or(0))
+                .unwrap_or(0),
+            estimated_size_bytes: config
+                .map(|c| c.estimated_size_bytes.unwrap_or(0))
+                .unwrap_or(0),
+            performance_tier: config
+                .and_then(|c| c.storage.as_ref())
+                .and_then(|s| s.performance_tier.as_ref())
+                .map(|pt| match pt.as_str() {
+                    "hot" => PerformanceTier::Hot,
+                    "warm" => PerformanceTier::Warm,
+                    "cold" => PerformanceTier::Cold,
+                    "archive" => PerformanceTier::Archive,
+                    _ => PerformanceTier::Warm,
+                })
+                .unwrap_or_default(),
+            compression_enabled: config
+                .and_then(|c| c.storage.as_ref())
+                .and_then(|s| s.compression.as_ref())
+                .map(|_| true)
+                .unwrap_or(false),
+            quantization_enabled: config
+                .and_then(|c| c.quantization.as_ref())
+                .map(|_| true)
+                .unwrap_or(false),
+            // Parse quantization config for progressive search
+            quantization_config: config
+                .and_then(|c| c.quantization.as_ref())
+                .and_then(|qc| Self::parse_quantization_config(qc, config.map(|c| c.dimension as u32).unwrap_or(0))),
+        };
+        
+        Self {
+            search_params,
+            collection,
+            metadata,
+        }
+    }
+    
+    /// Get the query vector (convenience method)
+    pub fn query_vector(&self) -> Option<&[f32]> {
+        self.search_params.query_vectors.as_ref()
+            .and_then(|vecs| vecs.first())
+            .map(|v| v.as_slice())
+    }
+    
+    /// Get top_k value with fallback to default
+    pub fn top_k(&self) -> usize {
+        self.search_params.top_k.unwrap_or(10)
+    }
+    
+    /// Get distance metric (pre-computed from collection config)
+    pub fn distance_metric(&self) -> crate::compute::distance_computation::DistanceMetric {
+        // Use search params override if provided, otherwise use pre-computed value
+        self.search_params.distance_metric.unwrap_or(self.metadata.distance_metric)
+    }
+    
+    /// Get dimension from metadata (pre-computed)
+    pub fn dimension(&self) -> usize {
+        self.metadata.dimension
+    }
+    
+    /// Check if progressive search is enabled
+    pub fn is_progressive_search_enabled(&self) -> bool {
+        self.metadata.quantization_config
+            .as_ref()
+            .map(|qc| qc.progressive_search_enabled)
+            .unwrap_or(false)
+    }
+    
+    /// Get progressive quantization levels ordered by search priority
+    pub fn get_progressive_levels(&self) -> Option<&[QuantizationLevel]> {
+        self.metadata.quantization_config
+            .as_ref()
+            .map(|qc| qc.progressive_levels.as_slice())
+    }
+    
+    /// Get binary filter selectivity for progressive search
+    pub fn binary_filter_selectivity(&self) -> f32 {
+        self.metadata.quantization_config
+            .as_ref()
+            .map(|qc| qc.binary_filter_selectivity)
+            .unwrap_or(0.3)
+    }
+    
+    /// Check if SIMD acceleration should be used
+    pub fn use_simd_acceleration(&self) -> bool {
+        self.metadata.quantization_config
+            .as_ref()
+            .map(|qc| qc.enable_simd_acceleration)
+            .unwrap_or(true)
+    }
+    
+    /// Get the parsed quantization config
+    pub fn quantization_config(&self) -> Option<&ParsedQuantizationConfig> {
+        self.metadata.quantization_config.as_ref()
+    }
+    
+    /// Check if quantization is enabled (pre-computed)
+    pub fn has_quantization(&self) -> bool {
+        self.metadata.has_quantization
+    }
+    
+    /// Get storage path (pre-computed from storage assignment)
+    pub fn storage_path(&self) -> &str {
+        &self.metadata.storage_path
+    }
+    
+    /// Get storage strategy (pre-computed)
+    pub fn storage_strategy(&self) -> StorageEngineStrategy {
+        self.metadata.storage_strategy.clone()
+    }
+    
+    /// Get performance tier hint (pre-computed)
+    pub fn performance_tier(&self) -> PerformanceTier {
+        self.metadata.performance_tier.clone()
+    }
+    
+    /// Get collection size estimates (pre-computed)
+    pub fn estimated_vector_count(&self) -> u64 {
+        self.metadata.estimated_vector_count
+    }
+    
+    /// Get estimated collection size in bytes (pre-computed)
+    pub fn estimated_size_bytes(&self) -> u64 {
+        self.metadata.estimated_size_bytes
+    }
+    
+    /// Check if compression is enabled (pre-computed)
+    pub fn compression_enabled(&self) -> bool {
+        self.metadata.compression_enabled
+    }
+    
+    /// Check if quantization is enabled (pre-computed)
+    pub fn quantization_enabled(&self) -> bool {
+        self.metadata.quantization_enabled
+    }
+    
+    /// Get collection ID (pre-computed)
+    pub fn collection_id(&self) -> &str {
+        &self.metadata.collection_id
+    }
+    
+    /// Get storage URL from collection's storage assignment
+    pub fn storage_url(&self) -> Option<&str> {
+        self.collection.storage_assignment.as_ref()
+            .and_then(|sa| sa.base_url.as_deref())
+    }
+    
+    /// Get collection-specific storage path
+    pub fn collection_storage_path(&self) -> Option<String> {
+        self.storage_url().map(|base| {
+            format!("{}/{}", base, self.collection_id())
+        })
+    }
 }
 
 /// Unified flush result that accommodates different engine types

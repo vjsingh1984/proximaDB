@@ -2,6 +2,12 @@
 //!
 //! This module provides a single, optimized reader that automatically selects
 //! the best strategy based on query characteristics and storage type.
+//!
+//! TODO: Consider merging with columnar::UnifiedParquetReader
+//! This is a VIPER-specific implementation that duplicates some functionality
+//! from the shared columnar module. Future refactoring should merge these
+//! implementations to reduce code duplication while preserving VIPER-specific
+//! optimizations.
 
 use anyhow::Result;
 use std::collections::{HashMap, HashSet};
@@ -141,7 +147,7 @@ pub struct SeekRange {
     pub offset: usize,
     pub length: usize,
     pub row_group_idx: usize,
-    pub column_name: String,
+    pub name: String,
 }
 
 /// Vector position for precise access
@@ -278,10 +284,10 @@ impl UnifiedParquetReader {
         let search_analysis = self.analyze_search_params(params, collection_context).await?;
         
         // 2. Select reading strategy based on SearchParams directly
-        let strategy = self.strategy_selector.select_strategy_for_search(params, &search_analysis).await?;
+        let search_strategy = self.strategy_selector.select_strategy_for_search(params, &search_analysis).await?;
         
         // 3. Execute optimized search with selected strategy
-        let vectors = self.execute_optimized_search(query_vector, params, collection_context, &strategy).await?;
+        let vectors = self.execute_optimized_search(query_vector, params, collection_context, &search_strategy).await?;
         
         // 4. Calculate similarity using unified distance compute
         let search_results = self.calculate_search_results(query_vector, vectors, params, &distance_compute).await?;
@@ -322,7 +328,7 @@ impl UnifiedParquetReader {
            file_path.starts_with("adls://") || file_path.starts_with("wasb://") {
             // Cloud storage with native HTTP range support
             ReadStrategy::NativeRangeRead
-        } else if file_path.starts_with("file://") || !file_path.contains_hash("://") {
+        } else if file_path.starts_with("file://") || !file_path.contains("://") {
             // Local filesystem - use seek operations
             ReadStrategy::SeekBasedRead
         } else if file_path.starts_with("hdfs://") {
@@ -452,9 +458,9 @@ impl UnifiedParquetReader {
             columns.insert("vector".to_string());
         } else if accuracy_requirement < 0.90 {
             // Fast approximate search -> use best available quantization
-            if context.quantization_columns.contains_hash(&"vector_pq8".to_string()) {
+            if context.quantization_columns.contains(&"vector_pq8".to_string()) {
                 columns.insert("vector_pq8".to_string());
-            } else if context.quantization_columns.contains_hash(&"vector_pq4".to_string()) {
+            } else if context.quantization_columns.contains(&"vector_pq4".to_string()) {
                 columns.insert("vector_pq4".to_string());
             } else {
                 columns.insert("vector".to_string());
@@ -559,7 +565,7 @@ impl UnifiedParquetReader {
         query_vector: &[f32],
         params: &crate::core::search::SearchParams,
         context: &CollectionContext,
-        // strategy removed -  &ReadingStrategy,
+        strategy: &ReadingStrategy,
     ) -> Result<Vec<VectorRecord>> {
         match strategy {
             ReadingStrategy::DirectArrow { use_column_projection, .. } => {
@@ -615,8 +621,8 @@ impl UnifiedParquetReader {
         // Sort by distance (lower = better) and limit to k
         results.sort_by(|a, b| {
             // Use distance if available, otherwise use inverted score
-            let a_sort_value = a.distance.unwrap_or(1.0 - a.score);
-            let b_sort_value = b.distance.unwrap_or(1.0 - b.score);
+            let a_sort_value = a.similarity.unwrap_or(1.0 - a.score);
+            let b_sort_value = b.similarity.unwrap_or(1.0 - b.score);
             a_sort_value.partial_cmp(&b_sort_value).unwrap_or(std::cmp::Ordering::Equal)
         });
         
@@ -810,18 +816,18 @@ impl UnifiedParquetReader {
                 // These are stored as separate columns during flush for efficient filtering
                 let schema = batch.schema();
                 for field in schema.fields() {
-                    let field_name = field.name();
+                    let field = field.name();
                     // Skip known system columns
-                    if field_name == "id" || field_name == "collection_id" || 
-                       field_name == "vector" || field_name == "version" || 
-                       field_name == "timestamp" || field_name == "updated_at" || 
-                       field_name == "expires_at" || field_name == "extra_meta" ||
-                       field_name.starts_with("vector_") {
+                    if field == "id" || field == "collection_id" || 
+                       field == "vector" || field == "version" || 
+                       field == "timestamp" || field == "updated_at" || 
+                       field == "expires_at" || field == "extra_meta" ||
+                       field.starts_with("vector_") {
                         continue;
                     }
                     
                     // This is likely a filterable metadata column
-                    if let Ok(idx) = schema.index_of(field_name) {
+                    if let Ok(idx) = schema.index_of(field) {
                         let column = batch.column(idx);
                         let mut value_str = String::new();
                         
@@ -845,12 +851,12 @@ impl UnifiedParquetReader {
                         }
                         
                         if !value_str.is_empty() {
-                            debug!("📖 Extracted filterable metadata: {} = {}", field_name, value_str);
+                            debug!("📖 Extracted filterable metadata: {} = {}", field, value_str);
                             // Determine the appropriate typed value based on the column type
                             let metadata_item = if let Some(bool_array) = column.as_any().downcast_ref::<arrow_array::BooleanArray>() {
                                 if bool_array.is_valid(row_idx) {
                                     crate::proto::proximadb::MetadataItem {
-                                        key: field_name.to_string(),
+                                        key: field.to_string(),
                                         value: Some(crate::proto::proximadb::metadata_item::Value::BoolValue(bool_array.value(row_idx))),
                                     }
                                 } else {
@@ -859,7 +865,7 @@ impl UnifiedParquetReader {
                             } else if let Some(int_array) = column.as_any().downcast_ref::<arrow_array::Int64Array>() {
                                 if int_array.is_valid(row_idx) {
                                     crate::proto::proximadb::MetadataItem {
-                                        key: field_name.to_string(),
+                                        key: field.to_string(),
                                         value: Some(crate::proto::proximadb::metadata_item::Value::NumberValue(int_array.value(row_idx) as f64)),
                                     }
                                 } else {
@@ -868,7 +874,7 @@ impl UnifiedParquetReader {
                             } else if let Some(float_array) = column.as_any().downcast_ref::<arrow_array::Float64Array>() {
                                 if float_array.is_valid(row_idx) {
                                     crate::proto::proximadb::MetadataItem {
-                                        key: field_name.to_string(),
+                                        key: field.to_string(),
                                         value: Some(crate::proto::proximadb::metadata_item::Value::NumberValue(float_array.value(row_idx))),
                                     }
                                 } else {
@@ -877,7 +883,7 @@ impl UnifiedParquetReader {
                             } else {
                                 // Default to string value
                                 crate::proto::proximadb::MetadataItem {
-                                    key: field_name.to_string(),
+                                    key: field.to_string(),
                                     value: Some(crate::proto::proximadb::metadata_item::Value::StringValue(value_str)),
                                 }
                             };
@@ -985,13 +991,13 @@ impl UnifiedParquetReader {
         debug!("📖 Trying to extract vector from columns: {:?}", vector_columns);
         
         // Try each vector column in order
-        for col_name in vector_columns {
-            if let Ok(idx) = batch.schema().index_of(col_name) {
+        for name in vector_columns {
+            if let Ok(idx) = batch.schema().index_of(name) {
                 let column = batch.column(idx);
-                debug!("📖 Found column '{}' at index {}", col_name, idx);
+                debug!("📖 Found column '{}' at index {}", name, idx);
                 
                 // Handle different vector representations
-                if col_name == "vector" {
+                if name == "vector" {
                     // Standard FP32 vector
                     if let Some(list_array) = column.as_any().downcast_ref::<arrow_array::ListArray>() {
                         if list_array.is_valid(row_idx) {
@@ -1004,11 +1010,11 @@ impl UnifiedParquetReader {
                             }
                         }
                     }
-                } else if col_name.contains_hash("pq") {
+                } else if name.contains("pq") {
                     // Quantized vector - would need dequantization
                     // For now, return empty vector as placeholder
                     // In real implementation, would call quantization engine to dequantize
-                    warn!("Quantized vector dequantization not yet implemented for column: {}", col_name);
+                    warn!("Quantized vector dequantization not yet implemented for column: {}", name);
                     return Ok(vec![0.0; 128]); // Placeholder dimension
                 }
             }
@@ -1070,19 +1076,19 @@ impl UnifiedParquetReader {
             // Extract metadata values from columns for this row
             let schema = batch.schema();
             for field in schema.fields() {
-                let field_name = field.name();
+                let field = field.name();
                 
                 // Skip system columns - only extract filterable metadata columns
-                if field_name == "id" || field_name == "collection_id" || 
-                   field_name == "vector" || field_name == "version" || 
-                   field_name == "timestamp" || field_name == "updated_at" || 
-                   field_name == "expires_at" || field_name == "extra_meta" ||
-                   field_name.starts_with("vector_") {
+                if field == "id" || field == "collection_id" || 
+                   field == "vector" || field == "version" || 
+                   field == "timestamp" || field == "updated_at" || 
+                   field == "expires_at" || field == "extra_meta" ||
+                   field.starts_with("vector_") {
                     continue;
                 }
                 
                 // Extract column value based on type
-                if let Ok(col_idx) = schema.index_of(field_name) {
+                if let Ok(col_idx) = schema.index_of(field) {
                     let column = batch.column(col_idx);
                     
                     // Convert column value to JSON for filter evaluation
@@ -1115,7 +1121,7 @@ impl UnifiedParquetReader {
                         serde_json::Value::Null
                     };
                     
-                    row_metadata.insert(field_name.to_string(), json_value);
+                    row_metadata.insert(field.to_string(), json_value);
                 }
             }
             
@@ -1133,7 +1139,7 @@ impl UnifiedParquetReader {
     pub fn filter_row_groups(
         &self,
         metadata: &parquet::file::metadata::ParquetMetaData,
-        column_name: &str,
+        field: &str,
         min_value: Option<&str>,
         max_value: Option<&str>,
     ) -> Vec<usize> {
@@ -1143,12 +1149,12 @@ impl UnifiedParquetReader {
         let schema = metadata.file_metadata().schema_descr();
         let column_idx = schema.columns()
             .iter()
-            .position(|col| col.name() == column_name);
+            .position(|col| col.name() == field);
         
         if let Some(col_idx) = column_idx {
             // Check each row group's statistics
             for (rg_idx, rg) in metadata.row_groups().iter().enumerate() {
-                if let Some(col_chunk) = rg.columns().get(key) {
+                if let Some(col_chunk) = rg.columns().get(col_idx) {
                     if let Some(stats) = col_chunk.statistics() {
                         // Check if row group might contain matching values
                         if self.check_statistics(stats, min_value, max_value) {
@@ -1211,7 +1217,7 @@ impl UnifiedParquetReader {
         let mut ranges = Vec::new();
         
         for &rg_idx in row_groups {
-            if let Some(rg) = metadata.row_groups().get(key) {
+            if let Some(rg) = metadata.row_groups().get(rg_idx) {
                 // Calculate the byte range for this row group
                 let start = rg.columns().iter()
                     .map(|col| col.file_offset() as u64)
@@ -1285,11 +1291,11 @@ impl UnifiedParquetReader {
         
         // For each row group
         for &rg_idx in row_groups {
-            if let Some(rg) = metadata.row_groups().get(key) {
+            if let Some(rg) = metadata.row_groups().get(rg_idx) {
                 // For each requested column
                 for &col_name in columns {
-                    if let Some(&col_idx) = column_indices.get(key) {
-                        if let Some(col_chunk) = rg.columns().get(key) {
+                    if let Some(&col_idx) = column_indices.get(col_name) {
+                        if let Some(col_chunk) = rg.columns().get(col_idx) {
                             // Column chunk is already the metadata
                             // Calculate byte range for this column chunk
                             let dict_offset = col_chunk.dictionary_page_offset().unwrap_or(0) as u64;
@@ -1376,9 +1382,7 @@ impl UnifiedParquetReader {
                 updated_at: None,
                 expires_at: None,
                 version: None,
-                similarity: Some(0.1 * i as f32),
-                // rank removed -  Some(i as i32),
-                similarity: Some(1.0 - (0.1 * i as f32)),
+                quantized_vector: None,
             };
             vectors.push(vector);
         }
@@ -1473,10 +1477,10 @@ impl UnifiedParquetReader {
                         FilterValue::GreaterThanOrEqual(expected) => matches!(self.compare_values(actual_value, expected), std::cmp::Ordering::Greater | std::cmp::Ordering::Equal),
                         FilterValue::LessThan(expected) => self.compare_values(actual_value, expected) == std::cmp::Ordering::Less,
                         FilterValue::LessThanOrEqual(expected) => matches!(self.compare_values(actual_value, expected), std::cmp::Ordering::Less | std::cmp::Ordering::Equal),
-                        FilterValue::In(values) => values.contains_hash(actual_value),
-                        FilterValue::NotIn(values) => !values.contains_hash(actual_value),
+                        FilterValue::In(values) => values.contains(actual_value),
+                        FilterValue::NotIn(values) => !values.contains(actual_value),
                         FilterValue::Contains(s) => {
-                            actual_value.as_str().map_or(false, |v| v.contains_hash(s))
+                            actual_value.as_str().map_or(false, |v| v.contains(s))
                         }
                         FilterValue::StartsWith(s) => {
                             actual_value.as_str().map_or(false, |v| v.starts_with(s))
@@ -1485,7 +1489,7 @@ impl UnifiedParquetReader {
                             actual_value.as_str().map_or(false, |v| v.ends_with(s))
                         }
                         FilterValue::Range(range) => {
-                            actual_value.as_i64().map_or(false, |v| range.contains_hash(&v))
+                            actual_value.as_i64().map_or(false, |v| range.contains(&v))
                         }
                         _ => false,
                     }

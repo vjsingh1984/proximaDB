@@ -21,6 +21,7 @@
 pub use crate::api_handlers;
 pub mod handlers;
 pub mod server;
+pub mod progressive_search_handler;
 
 
 pub use api_handlers::*;

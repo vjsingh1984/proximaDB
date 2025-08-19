@@ -399,6 +399,7 @@ pub struct ProductQuantizer {
     /// Dimension per subspace
     pub subspace_dim: usize,
     /// Codebook for each subspace (256 centroids per subspace)
+    pub codebooks: Vec<Vec<Vec<f32>>>,
     /// Number of bits per code (usually 8)
     pub bits_per_code: usize,
 }
@@ -409,7 +410,7 @@ impl ProductQuantizer {
         Self {
             n_subspaces,
             subspace_dim,
-            // codebooks removed -  vec![vec![vec![0.0; subspace_dim]; 256]; n_subspaces],
+            codebooks: vec![vec![vec![0.0; subspace_dim]; 256]; n_subspaces],
             bits_per_code: 8,
         }
     }
@@ -1056,7 +1057,7 @@ impl UnifiedIvfIndex {
                         updated_at: None,
                         expires_at: None,
                         version: None,
-                        quantized: None,
+                        quantized_vector: None,
                     })
                     .collect();
                 let model = engine.train_model(&self.collection_id, vector_data).await?;
@@ -1104,7 +1105,7 @@ impl UnifiedIvfIndex {
         let key = PartitionedKey::new(self.collection_id.clone(), cluster_id);
         
         // Get or create posting list
-        let mut posting_list = match self.posting_lists.get(&cluster_id).await {
+        let mut posting_list = match self.posting_lists.get(&key).await {
             Some(list) => list,
             None => PostingList {
                 cluster_id,
@@ -1203,13 +1204,13 @@ impl UnifiedIvfIndex {
             let key = PartitionedKey::new(self.collection_id.clone(), cluster_id);
             
             // This access may promote the posting list to memory
-            if let Some(posting_list) = self.posting_lists.get(&cluster_id).await {
+            if let Some(posting_list) = self.posting_lists.get(&key).await {
                 // Search within posting list
                 for vector_id in &posting_list.vector_ids {
                     // Get vector from zero-overhead collection
-                    if let Some(collection_entry) = self.vectors.get(&vector_id) {
+                    if let Some(collection_entry) = self.vectors.get(vector_id) {
                         let collection = collection_entry.read().unwrap();
-                        if let Some(view) = collection.get(key) {
+                        if let Some(view) = collection.get(vector_id) {
                             let vector_data = view.as_f32().unwrap_or(&[]);
                             let distance = self.distance_compute.calculate_distance(query, vector_data, &DistanceMetric::Euclidean).rank_value;
                             candidates.push((vector_id.clone(), distance));
@@ -1255,7 +1256,7 @@ impl UnifiedIvfIndex {
     /// Prefetch correlated clusters
     async fn prefetch_correlated_clusters(&self, clusters: &[(usize, f32)]) {
         for (cluster_id, _) in clusters {
-            if let Some(correlations) = self.access_correlations.get(key) {
+            if let Some(correlations) = self.access_correlations.get(cluster_id) {
                 for (corr_cluster, score) in correlations.value() {
                     if *score > 0.7 { // High correlation threshold
                         let key = PartitionedKey::new(self.collection_id.clone(), *corr_cluster);
@@ -1263,7 +1264,7 @@ impl UnifiedIvfIndex {
                         // Trigger async prefetch
                         let store = self.posting_lists.clone();
                         tokio::spawn(async move {
-                            let _ = store.get(key).await;
+                            let _ = store.get(&key).await;
                         });
                     }
                 }
@@ -1461,7 +1462,7 @@ impl UnifiedIvfIndex {
     
     /// NEW: Get preferred vector representation for queue consumption
     pub fn preferred_extraction_mode(&self) -> ExtractionMode {
-        self.preferred_extraction_mode
+        self.preferred_extraction_mode.clone()
     }
     
     /// NEW: Check if quantized vectors are available for search acceleration
@@ -1512,7 +1513,7 @@ impl crate::index::axis::index_factory::AxisVectorIndex for UnifiedIvfIndex {
     async fn add(&self, id: String, vector_data: Vec<f32>) -> Result<()> {
         // Direct vector addition - no VectorRecord overhead
         // Clean API: just ID and vector data
-        self.add_vector(id, vector_data).await
+        self.add_vector(id, vector_data, None).await
     }
     
     async fn search(

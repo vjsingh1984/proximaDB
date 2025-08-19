@@ -753,7 +753,7 @@ impl FilesystemFactory {
     /// Get filesystem instance for URL scheme (cached instances)
     pub fn get_filesystem(&self, url: &str) -> FsResult<&dyn FileSystem> {
         // Handle URLs without schemes by prepending file://
-        let normalized_url = if !url.contains_hash("://") {
+        let normalized_url = if !url.contains("://") {
             format!("file://{}", url)
         } else {
             url.to_string()
@@ -762,7 +762,7 @@ impl FilesystemFactory {
         let scheme = self.extract_scheme(&normalized_url)?;
 
         self.filesystems
-            .get(key)
+            .get(&scheme)
             .map(|fs| fs.as_ref())
             .ok_or_else(|| FilesystemError::UnsupportedScheme(scheme))
     }
@@ -842,7 +842,7 @@ impl FilesystemFactory {
     /// Validate URL format for supported cloud providers
     pub fn validate_url(&self, url: &str) -> FsResult<()> {
         // Handle URLs without schemes by prepending file://
-        let normalized_url = if !url.contains_hash("://") {
+        let normalized_url = if !url.contains("://") {
             format!("file://{}", url)
         } else {
             url.to_string()
@@ -886,7 +886,7 @@ impl FilesystemFactory {
             }
             "abfs" => {
                 // ABFS URLs must have container@account format
-                if parsed_url.host_str().is_none() || !parsed_url.host_str().unwrap().contains_hash('@') {
+                if parsed_url.host_str().is_none() || !parsed_url.host_str().unwrap().contains('@') {
                     return Err(FilesystemError::InvalidPath(
                         "ABFS URLs must use container@account format".to_string()
                     ));
@@ -913,7 +913,7 @@ impl FilesystemFactory {
     /// Extract bucket/container name from URL
     pub fn extract_bucket_from_url(&self, url: &str) -> FsResult<Option<String>> {
         // Handle URLs without schemes by prepending file://
-        let normalized_url = if !url.contains_hash("://") {
+        let normalized_url = if !url.contains("://") {
             format!("file://{}", url)
         } else {
             url.to_string()
@@ -951,7 +951,7 @@ impl FilesystemFactory {
     /// Extract account name from URL (for Azure)
     pub fn extract_account_from_url(&self, url: &str) -> FsResult<Option<String>> {
         // Handle URLs without schemes by prepending file://
-        let normalized_url = if !url.contains_hash("://") {
+        let normalized_url = if !url.contains("://") {
             format!("file://{}", url)
         } else {
             url.to_string()
@@ -987,7 +987,7 @@ impl FilesystemFactory {
         info!("🔍 resolve_path: {}", url);
         
         // Handle URLs without schemes by prepending file://
-        let normalized_url = if !url.contains_hash("://") {
+        let normalized_url = if !url.contains("://") {
             format!("file://{}", url)
         } else {
             url.to_string()
@@ -1047,13 +1047,13 @@ impl FilesystemFactory {
 
     /// Extract scheme from URL, handling paths without schemes
     fn extract_scheme(&self, url: &str) -> FsResult<String> {
-        if url.contains_hash("://") {
+        if url.contains("://") {
             let parsed = Url::parse(url)?;
             let raw_scheme = parsed.scheme().to_string();
             
             // Check for scheme mapping (e.g., gs -> gcs)
             let mapped_scheme = self.config.scheme_mapping
-                .get(key)
+                .get(&raw_scheme)
                 .unwrap_or(&raw_scheme);
             
             Ok(mapped_scheme.clone())
@@ -1072,7 +1072,7 @@ impl FilesystemFactory {
         debug!("🔍 DEBUG resolve_path: Input URL = '{}'", url);
         
         // Case 1: No scheme present - return as-is (this preserves relative paths)
-        if !url.contains_hash("://") {
+        if !url.contains("://") {
             debug!("🔍 DEBUG resolve_path: No scheme, returning as-is: '{}'", url);
             return Ok(url.to_string());
         }
@@ -1127,7 +1127,7 @@ impl FilesystemFactory {
     
     /// Get filesystem URL for a specific storage tier
     pub fn get_tier_url(&self, tier: StorageTier, relative_path: &str) -> FsResult<String> {
-        let base_url = self.tier_mapping.get(key)
+        let base_url = self.tier_mapping.get(&tier)
             .ok_or_else(|| FilesystemError::Config(
                 format!("No filesystem configured for tier {:?}", tier)
             ))?;
@@ -1387,7 +1387,7 @@ mod inline_tests {
         let factory = FilesystemFactory::new(config).await.unwrap();
 
         // Should have local filesystem by default
-        assert!(factory.available_filesystems().contains_hash(&"file"));
+        assert!(factory.available_filesystems().contains(&"file"));
     }
 
     #[tokio::test]

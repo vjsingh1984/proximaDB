@@ -91,7 +91,7 @@ impl UltraCompactVector {
     }
     
     /// Create from quantized vector - just concatenate quantized + id
-    pub fn from_quantized(id: &str, quantized: &[u8]) -> Result<Self> {
+    pub fn from_quantized(id: &str, quantized_vector: &[u8]) -> Result<Self> {
         let id_bytes = id.as_bytes();
         
         let mut data = Vec::with_capacity(quantized.len() + id_bytes.len());
@@ -203,7 +203,7 @@ impl UltraCompactCollection {
     }
     
     /// Add quantized vector
-    pub fn add_quantized(&mut self, id: String, quantized: &[u8]) -> Result<()> {
+    pub fn add_quantized(&mut self, id: String, quantized_vector: &[u8]) -> Result<()> {
         if quantized.len() != self.quantized_size() {
             return Err(anyhow!("Quantized vector size mismatch"));
         }

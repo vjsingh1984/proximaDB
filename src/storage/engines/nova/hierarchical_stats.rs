@@ -243,10 +243,10 @@ impl SuperBlock {
         &self,
         query: &[f32],
         distance_metric: DistanceMetric,
-        max_distance: f32,
+        max_similarity: f32,
     ) -> bool {
         // Use zone map for quick pruning
-        self.zone_map.intersects_query(query, distance_metric, max_distance)
+        self.zone_map.intersects_query(query, distance_metric, max_similarity)
     }
     
     /// Estimate search cost for this SuperBlock
@@ -259,7 +259,7 @@ impl SuperBlock {
     /// Get ordered row groups by estimated search cost
     pub fn get_ordered_row_groups(&self, enhanced_stats: &[EnhancedRowGroupStats]) -> Vec<u32> {
         let mut row_group_costs: Vec<(u32, f32)> = enhanced_stats.iter()
-            .filter(|stats| self.row_groups.contains_hash(&stats.row_group_id))
+            .filter(|stats| self.row_groups.contains(&stats.row_group_id))
             .map(|stats| (stats.row_group_id, stats.search_cost_estimate.estimated_latency_ms))
             .collect();
         
@@ -448,17 +448,17 @@ impl ZoneMap {
         &self,
         query: &[f32],
         distance_metric: DistanceMetric,
-        max_distance: f32,
+        max_similarity: f32,
     ) -> bool {
         match distance_metric {
-            DistanceMetric::Euclidean => self.intersects_euclidean(query, max_distance),
-            DistanceMetric::Cosine => self.intersects_cosine(query, max_distance),
-            DistanceMetric::DotProduct => self.intersects_dot_product(query, max_distance),
+            DistanceMetric::Euclidean => self.intersects_euclidean(query, max_similarity),
+            DistanceMetric::Cosine => self.intersects_cosine(query, max_similarity),
+            DistanceMetric::DotProduct => self.intersects_dot_product(query, max_similarity),
             _ => true, // Conservative: assume intersection for unknown metrics
         }
     }
     
-    fn intersects_euclidean(&self, query: &[f32], max_distance: f32) -> bool {
+    fn intersects_euclidean(&self, query: &[f32], max_similarity: f32) -> bool {
         let mut min_distance_sq = 0.0;
         
         for (i, &q) in query.iter().enumerate() {
@@ -479,16 +479,16 @@ impl ZoneMap {
             // If q is within [min_val, max_val], it contributes 0 to min distance
         }
         
-        min_distance_sq.sqrt() <= max_distance
+        min_distance_sq.sqrt() <= max_similarity
     }
     
-    fn intersects_cosine(&self, query: &[f32], max_distance: f32) -> bool {
+    fn intersects_cosine(&self, query: &[f32], max_similarity: f32) -> bool {
         // For cosine distance, we need to be more conservative
         // Use norm bounds as a rough approximation
         let query_norm: f32 = query.iter().map(|x| x * x).sum::<f32>().sqrt();
         
         // Very rough approximation - could be improved with tighter bounds
-        let min_possible_cosine = 1.0 - max_distance;
+        let min_possible_cosine = 1.0 - max_similarity;
         let max_possible_dot = query_norm * self.norm_bounds.1;
         let min_possible_dot = query_norm * self.norm_bounds.0;
         
@@ -496,7 +496,7 @@ impl ZoneMap {
         max_possible_dot >= min_possible_cosine * query_norm * self.norm_bounds.0
     }
     
-    fn intersects_dot_product(&self, query: &[f32], max_distance: f32) -> bool {
+    fn intersects_dot_product(&self, query: &[f32], max_similarity: f32) -> bool {
         // For dot product (as distance, so negative dot product)
         // We want to check if any vector in this zone could have dot product >= -max_distance
         
@@ -517,7 +517,7 @@ impl ZoneMap {
             }
         }
         
-        -max_possible_dot <= max_distance
+        -max_possible_dot <= max_similarity
     }
 }
 
@@ -603,14 +603,6 @@ mod tests {
                     cpu_cost: 20.0,
                     memory_cost: 15.0,
                     estimated_latency_ms: 50.0,
-                    // confidence removed -  0.8,
-                },
-                access_stats: AccessStats {
-                    access_count: 0,
-                    last_access: chrono::Utc::now(),
-                    avg_selectivity: 0.5,
-                    cache_hit_rate: 0.0,
-                    access_frequency: 0.0,
                 },
             },
         ];

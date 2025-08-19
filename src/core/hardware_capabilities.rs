@@ -32,7 +32,7 @@ use crate::core::config::HardwareConfig;
 
 // GPU types with feature gating
 #[cfg(feature = "gpu")]
-use crate::compute::gpu_distance::{GpuBackend, GpuDevice};
+use crate::compute::gpu_similarity::{GpuBackend, GpuDevice};
 
 #[cfg(not(feature = "gpu"))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -351,7 +351,7 @@ impl HardwareCapabilities {
         #[cfg(feature = "gpu")]
         {
             // Try to detect GPU using our existing infrastructure
-            match crate::compute::gpu_distance::detect_best_gpu() {
+            match crate::compute::gpu_similarity::detect_best_gpu() {
                 Ok(gpu_accel) => {
                     let backend = match gpu_accel.backend() {
                         HardwareBackend::CUDA => GpuBackend::CUDA,
@@ -472,7 +472,7 @@ impl HardwareCapabilities {
     
     /// Check if GPU is available for distance calculations
     pub fn has_gpu_distance(&self) -> bool {
-        self.has_gpu() && self.config.enable_gpu_distance
+        self.has_gpu() && self.config.enable_gpu_acceleration
     }
     
     /// Check if GPU is available for SQL parsing

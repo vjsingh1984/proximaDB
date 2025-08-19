@@ -326,7 +326,7 @@ mod tests {
         assert!(health_result.is_ok(), "Health check should succeed");
         
         let health_data = health_result.unwrap();
-        assert!(!health_data.is_none(), "Health check should return data");
+        assert!(!health_data.is_null(), "Health check should return data");
     }
 
     #[tokio::test]

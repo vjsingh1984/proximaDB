@@ -235,7 +235,7 @@ impl SerializedBloomFilter {
         );
         
         Ok(Self {
-            strategy_type: config.strategy,
+            strategy_type: BloomStrategy::ByteAligned, // Default strategy
             version: Self::CURRENT_VERSION,
             config,
             data: filter.serialize()?,

@@ -94,6 +94,7 @@ pub struct CollectionMetrics {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FilterableColumnStats {
     pub column_name: String,
+    pub data_type: String,             // Data type of the column
     pub cardinality: i64,              // Number of distinct values
     pub null_count: i64,               // Number of null values
     pub selectivity: f32,              // cardinality / total_count (0.0-1.0)

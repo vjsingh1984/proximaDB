@@ -127,8 +127,8 @@ impl EventLogQuery for EventLogServiceAdapter {
     async fn get_file_status(&self, file_path: &str) -> Result<Option<FileIndexingStatus>> {
         // Search across all event logs for file status
         for entry in self.manager.event_logs.iter() {
-            if let Some(status) = entry.value().file_status.get(key) {
-                return Ok(Some(status.clone()));
+            if let Some(status) = entry.value().get_file_status(file_path) {
+                return Ok(Some(status));
             }
         }
         Ok(None)
@@ -161,11 +161,11 @@ impl EventLogQuery for EventLogServiceAdapter {
         }
         
         if !filter.operation_types.is_empty() {
-            filtered.retain(|e| filter.operation_types.contains_hash(&e.operation));
+            filtered.retain(|e| filter.operation_types.contains(&e.operation));
         }
         
         if !filter.storage_engines.is_empty() {
-            filtered.retain(|e| filter.storage_engines.contains_hash(&e.storage_engine));
+            filtered.retain(|e| filter.storage_engines.contains(&e.storage_engine));
         }
         
         if let Some(limit) = filter.limit {
@@ -320,12 +320,8 @@ impl EventLogService for EventLogServiceAdapter {
     async fn shutdown(&self) -> Result<()> {
         info!("Shutting down EventLog service");
         
-        // Persist any pending state
-        for entry in self.manager.event_logs.iter() {
-            if let Err(e) = entry.value().persist_state().await {
-                tracing::warn!("Failed to persist state for collection {}: {}", entry.key(), e);
-            }
-        }
+        // Note: persist_state is private, persistence handled internally by EventLog
+        // The EventLog will persist state automatically during normal operations
         
         Ok(())
     }

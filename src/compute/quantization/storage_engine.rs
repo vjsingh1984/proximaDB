@@ -12,7 +12,7 @@ use dashmap::DashMap;
 
 use super::unified::{
     UnifiedQuantizationEngine, UnifiedQuantizationLevel,
-    Codebook, QuantizedVector, QuantizationMetadata,
+    QuantizedVector, QuantizationMetadata,
     QuantizationLevelType, BinaryQuantization,
 };
 use crate::compute::distance_computation::engine::{
@@ -147,7 +147,7 @@ pub struct StorageQuantizationEngine {
     /// Configuration
     config: StorageQuantizationConfig,
     /// Cached codebooks
-    // codebooks removed -  Arc<DashMap<String, Arc<Codebook>>>,
+    codebooks: Arc<DashMap<String, Arc<Vec<Vec<f32>>>>>,
     /// Hardware capabilities
     hardware: Option<HardwareBackend>,
 }
@@ -185,7 +185,7 @@ impl StorageQuantizationEngine {
             unified_engine,
             distance_compute,
             config,
-            // codebooks removed -  Arc::new(DashMap::new()),
+            codebooks: Arc::new(DashMap::new()),
             hardware,
         }
     }
@@ -576,14 +576,14 @@ impl StorageQuantizationEngine {
     }
     
     /// Calculate storage savings
-    pub fn calculate_savings(&self, original_size: usize, quantized: &[StorageQuantizedData]) -> f32 {
-        if quantized.is_empty() || original_size == 0 {
+    pub fn calculate_savings(&self, original_size: usize, quantized_vector: &[StorageQuantizedData]) -> f32 {
+        if quantized_vector.is_empty() || original_size == 0 {
             return 0.0;
         }
         
         let mut total_quantized = 0usize;
         
-        for data in quantized {
+        for data in quantized_vector {
             if let Some(ref primary) = data.primary {
                 total_quantized += primary.data.len();
             }

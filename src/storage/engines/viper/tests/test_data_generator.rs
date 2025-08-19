@@ -778,7 +778,7 @@ use tracing::{debug, error, info};
             let quantized_distance = distance_compute.calculate_distance(&sparse_query, int8_vec, &DistanceMetric::Cosine);
             let error = (original_distance.rank_value - quantized_distance.rank_value).abs();
             
-            debug!("  INT8 vector {} - error: {:.4} (original: {:.4}, quantized: {:.4})", 
+            debug!("  INT8 vector {} - error: {:.4} (original: {:.4}, quantized_vector: {:.4})", 
                 idx, error, original_distance.rank_value, quantized_distance.rank_value);
                 
             // INT8 should maintain reasonable accuracy

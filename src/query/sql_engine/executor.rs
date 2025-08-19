@@ -239,7 +239,7 @@ mod tests {
         };
         
         let json = serde_json::to_string(&row).unwrap();
-        assert!(json.contains_hash("vec_1"));
-        assert!(json.contains_hash("0.95"));
+        assert!(json.contains("vec_1"));
+        assert!(json.contains("0.95"));
     }
 }

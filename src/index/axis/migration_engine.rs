@@ -319,7 +319,7 @@ impl IndexMigrationEngine {
         to: IndexSelectionStrategy,
     ) -> Result<MigrationResult> {
         // Acquire resource permit
-        let _permit = self.resource_limiter/* TODO: Fix VectorMemoryPool::acquire() method */.await?;
+        let _permit = self.resource_limiter.acquire().await?;
 
         // Create migration plan
         let plan = self.create_migration_plan(collection_id, from.clone(), to.clone())?;

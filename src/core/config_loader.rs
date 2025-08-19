@@ -143,7 +143,7 @@ impl ConfigLoader {
         // Helper function to resolve a path string to absolute
         let resolve_path = |path_str: &str| -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
             // Skip if it's already a URL or absolute path
-            if path_str.contains_hash("://") || Path::new(path_str).is_absolute() {
+            if path_str.contains("://") || Path::new(path_str).is_absolute() {
                 return Ok(path_str.to_string());
             }
             
@@ -197,7 +197,7 @@ impl ConfigLoader {
         
         // Helper to convert file path to file:// URL
         let to_file_url = |path_str: &str| -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
-            if path_str.starts_with("file://") || path_str.contains_hash("://") {
+            if path_str.starts_with("file://") || path_str.contains("://") {
                 Ok(path_str.to_string())
             } else {
                 let resolved = resolve_path(path_str)?;

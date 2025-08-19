@@ -79,7 +79,7 @@ impl MetricsExporter for PrometheusExporter {
         // Cache metrics
         writeln!(output, "# HELP cache_overall_hit_rate Overall cache hit rate")?;
         writeln!(output, "# TYPE cache_overall_hit_rate gauge")?;
-        writeln!(output, "cache_overall_hit_rate {}", metrics.cache.hit_rate_percent)?;
+        writeln!(output, "cache_overall_hit_rate {}", metrics.cache.hit_rate)?;
         
         writeln!(output, "# HELP cache_evictions_per_second Cache evictions per second")?;
         writeln!(output, "# TYPE cache_evictions_per_second gauge")?;

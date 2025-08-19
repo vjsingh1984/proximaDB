@@ -122,7 +122,7 @@ impl UnifiedCollectionIndex {
         let start = std::time::Instant::now();
         let result = self
             .collections
-            .get(key)
+            .get(uuid)
             .map(|entry| entry.value().clone());
 
         // Update metrics
@@ -144,7 +144,7 @@ impl UnifiedCollectionIndex {
         let start = std::time::Instant::now();
 
         // Two-step O(1) lookup: name -> UUID -> record
-        let result = self.name_to_uuid.get(key).and_then(|uuid_entry| {
+        let result = self.name_to_uuid.get(name).and_then(|uuid_entry| {
             self.collections
                 .get(uuid_entry.value())
                 .map(|record_entry| record_entry.value().clone())
@@ -167,7 +167,7 @@ impl UnifiedCollectionIndex {
     /// Get UUID by name - O(1) - Optimized for storage operations that need UUID
     pub fn get_uuid_by_name(&self, name: &str) -> Option<String> {
         self.name_to_uuid
-            .get(key)
+            .get(name)
             .map(|entry| entry.value().clone())
     }
 

@@ -288,6 +288,7 @@ impl RowBasedCompressionConfig {
     
     /// Get compression settings for specific dimension
     pub fn get_vector_settings(&self, dimension: usize) -> CompressionSettings {
+        let key = &dimension;
         self.vector_compression
             .dimension_thresholds
             .get(key)
@@ -369,9 +370,9 @@ impl RowBasedCompressionConfig {
     fn get_simd_optimal_algorithm(&self, hardware: &HardwareCapabilities) -> Option<CompressionAlgorithm> {
         let simd_algos = &self.vector_compression.hardware_optimizations.simd_algorithms;
         
-        if hardware.has_avx512() && simd_algos.contains_hash(&CompressionAlgorithm::Lz4) {
+        if hardware.has_avx512() && simd_algos.contains(&CompressionAlgorithm::Lz4) {
             Some(CompressionAlgorithm::Lz4)
-        } else if hardware.has_avx2() && simd_algos.contains_hash(&CompressionAlgorithm::Snappy) {
+        } else if hardware.cpu.features.avx2_support && simd_algos.contains(&CompressionAlgorithm::Snappy) {
             Some(CompressionAlgorithm::Snappy)
         } else {
             None

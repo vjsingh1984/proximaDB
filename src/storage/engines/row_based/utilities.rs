@@ -36,12 +36,9 @@ impl RowBasedUtilities {
             }
             
             // Calculate quantized data size
-            total_quantized_bytes += block.quantized_section.binary_sketches.len() * 
-                block.quantized_section.binary_sketches.get(key).map(|s| s.data.len()).unwrap_or(0);
-            total_quantized_bytes += block.quantized_section.int8_vectors.len() * 
-                block.quantized_section.int8_vectors.get(&vector_id).map(|v| v.quantized_vector.len()).unwrap_or(0);
-            total_quantized_bytes += block.quantized_section.pq_codes.len() * 
-                block.quantized_section.pq_codes.get(key).map(|c| c.len()).unwrap_or(0);
+            if let Some(ref quantized_vecs) = block.quantized_vectors {
+                total_quantized_bytes += quantized_vecs.iter().map(|v| v.len()).sum::<usize>();
+            }
             
             // Calculate index size (rough estimate)
             total_index_bytes += block.block_id.as_bytes().len() * 2; // ID in index structures
@@ -80,7 +77,7 @@ impl RowBasedUtilities {
         match workload.workload_type {
             WorkloadType::HighThroughput => {
                 config.records_per_block = 4000; // Larger blocks for throughput
-                config.storage.as_ref().and_then(|s| s.compression.as_ref()).compression_level = 1; // Fast compression
+                config.compression.compression_level = 1; // Fast compression
                 config.performance.max_concurrent_operations = 16;
             }
             WorkloadType::LowLatency => {
@@ -90,7 +87,7 @@ impl RowBasedUtilities {
             }
             WorkloadType::MemoryConstrained => {
                 config.quantization.enable_progressive_quantization = true;
-                config.storage.as_ref().and_then(|s| s.compression.as_ref()).compression_level = 6; // Better compression
+                config.compression.compression_level = 6; // Better compression
                 config.performance.cache_size_bytes = 256 * 1024 * 1024; // 256MB
             }
             WorkloadType::AnalyticsHeavy => {
@@ -101,17 +98,17 @@ impl RowBasedUtilities {
         }
         
         // Adjust based on hardware
-        if hardware.total_memory_gb() > 32 {
+        if hardware.memory.total_memory / (1024 * 1024 * 1024) > 32 {
             config.performance.cache_size_bytes = 2 * 1024 * 1024 * 1024; // 2GB cache
         }
         
-        if hardware.cpu.core_count() > 8 {
-            config.performance.max_concurrent_operations = hardware.cpu.core_count();
+        if hardware.cpu.logical_cores > 8 {
+            config.performance.max_concurrent_operations = hardware.cpu.logical_cores;
         }
         
-        if hardware.has_nvme_storage() {
-            config.performance.io_buffer_size = 1024 * 1024; // 1MB for NVMe
-        }
+        // NVMe detection would require checking actual storage devices
+        // For now, use a conservative buffer size
+        config.performance.io_buffer_size = 256 * 1024; // 256KB default
         
         config
     }
@@ -174,15 +171,16 @@ impl RowBasedUtilities {
     pub fn optimize_vector_layout(
         vectors: &[Vec<f32>],
         hardware: &HardwareCapabilities,
+        dimension: usize,  // From CollectionConfig
     ) -> OptimizedVectorLayout {
-        let dimension = vectors.get(&vector_id).map(|v| v.len()).unwrap_or(0);
+        // Dimension comes from collection config, not from vectors
         
         // Determine optimal SIMD alignment
         let simd_width = if hardware.has_avx512() {
             16 // 512 bits / 32 bits per float
-        } else if hardware.has_avx2() {
+        } else if hardware.cpu.features.avx2_support {
             8  // 256 bits / 32 bits per float
-        } else if hardware.has_sse() {
+        } else if hardware.cpu.features.sse42_support {
             4  // 128 bits / 32 bits per float
         } else {
             1  // No SIMD
@@ -642,7 +640,6 @@ mod tests {
         
         let blocks = vec![super::RowBasedDataBlock::new(
             records,
-            crate::storage::engines::sst::quantization::QuantizedSection::default(),
             super::block_structures::BlockCompressionConfig::default(),
         )];
         
@@ -687,11 +684,11 @@ mod tests {
     #[test]
     fn test_filename_generation() {
         let sst_filename = FilenameGenerator::generate_sst_filename(3);
-        assert!(sst_filename.contains_hash("L3_"));
+        assert!(sst_filename.contains("L3_"));
         assert!(sst_filename.ends_with(".sstable"));
         
         let swift_filename = FilenameGenerator::generate_swift_filename(2);
-        assert!(swift_filename.contains_hash("L2_"));
+        assert!(swift_filename.contains("L2_"));
         assert!(swift_filename.ends_with(".swift"));
         
         let level = FilenameGenerator::parse_level_from_filename(&sst_filename);

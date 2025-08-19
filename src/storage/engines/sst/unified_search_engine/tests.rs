@@ -105,7 +105,7 @@ fn create_mock_search_results(count: usize) -> Vec<crate::core::search::SearchRe
                 map
             },
             debug_info: None,
-            semantic_distance: None,
+            semantic_similarity: None,
             quantization_info: None,
             engine_stats: None,
             index_path: None,
@@ -418,7 +418,7 @@ mod search_tests {
                         map
                     },
                     debug_info: None,
-                    semantic_distance: None,
+                    semantic_similarity: None,
                     quantization_info: None,
                     engine_stats: None,
                     index_path: None,
@@ -582,7 +582,7 @@ mod helper_methods_tests {
                     map
                 },
                 debug_info: None,
-                semantic_distance: None,
+                semantic_similarity: None,
                 quantization_info: None,
                 engine_stats: None,
                 index_path: None,
@@ -601,7 +601,7 @@ mod helper_methods_tests {
                     map
                 },
                 debug_info: None,
-                semantic_distance: None,
+                semantic_similarity: None,
                 quantization_info: None,
                 engine_stats: None,
                 index_path: None,
@@ -620,7 +620,7 @@ mod helper_methods_tests {
                     map
                 },
                 debug_info: None,
-                semantic_distance: None,
+                semantic_similarity: None,
                 quantization_info: None,
                 engine_stats: None,
                 index_path: None,
@@ -707,7 +707,7 @@ mod edge_case_tests {
                 vector: None,
                 metadata: vec![], // No version metadata
                 debug_info: None,
-                semantic_distance: None,
+                semantic_similarity: None,
                 quantization_info: None,
                 engine_stats: None,
                 index_path: None,

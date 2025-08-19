@@ -145,7 +145,7 @@ impl MetricsQueryService {
     ) -> Result<serde_json::Value> {
         // Check cache first
         let cache = self.cache.read().await;
-        if let Some(cached) = cache.collections.get(key) {
+        if let Some(cached) = cache.collections.get(collection_id) {
             if self.is_cache_valid(cached.cached_at, cached.ttl_seconds) {
                 debug!("Returning cached metrics for collection {}", collection_id);
                 return self.format_metrics_response(

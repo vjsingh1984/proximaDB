@@ -383,7 +383,7 @@ impl EngineMigrator {
         &self,
         plan: &CollectionMigrationPlan,
     ) -> Result<u64> {
-        let _permit = self.semaphore/* TODO: Fix VectorMemoryPool::acquire() method */.await?;
+        let _permit = self.semaphore.acquire()/* TODO: Fix VectorMemoryPool::acquire() method */.await?;
         
         // In production, would:
         // 1. Read all records from source engine

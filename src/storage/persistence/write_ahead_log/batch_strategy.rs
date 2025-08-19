@@ -353,9 +353,7 @@ pub trait WALBatchStrategy: Send + Sync + std::fmt::Debug {
                         updated_at: None,
                         expires_at: None,
                         version: search_result.version,
-                        // rank removed -  search_result.rank.map(|r| r as i32),
-                        similarity: Some(search_result.score),
-                        similarity: search_result.distance,
+                        quantized_vector: None,
                     };
                     (search_result.id, search_result.score, vector_record)
                 })
@@ -766,8 +764,7 @@ pub trait WALBatchStrategy: Send + Sync + std::fmt::Debug {
             expires_at: Some((chrono::Utc::now().timestamp() + (30 * 24 * 60 * 60)) as u32), // 30 days
             version: None, // None for tombstone
             // rank removed -  None,
-            similarity: None,
-            similarity: None,
+            quantized_vector: None,
             
         };
 
@@ -923,7 +920,7 @@ pub trait WALBatchStrategy: Send + Sync + std::fmt::Debug {
             // Get collection statistics from GlobalPartitionedMemtable
             let stats = wal_behavior.get_stats().await?;
             
-            if let Some(collection_stats) = stats.get(key) {
+            if let Some(collection_stats) = stats.get(collection_id) {
                 // Check thresholds: memory size, entry count, or time-based
                 let memory_threshold_mb = 100; // 100MB threshold
                 let entry_threshold = 10000; // 10K entries threshold

@@ -67,6 +67,7 @@ pub enum RefinementStrategy {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProgressiveRefinementConfig {
     /// Refinement strategy
+    pub search_strategy: RefinementStrategy,
     
     /// Number of candidates to keep at each stage
     pub candidates_per_stage: HashMap<RefinementStage, usize>,
@@ -183,7 +184,7 @@ impl Default for ProgressiveRefinementConfig {
         quality_thresholds.insert(RefinementStage::FP32, 0.95);
         
         Self {
-            // strategy removed -  RefinementStrategy::AdaptiveSkipping { confidence_threshold: 0.8 },
+            search_strategy: RefinementStrategy::AdaptiveSkipping { confidence_threshold: 0.8 },
             candidates_per_stage,
             quality_thresholds,
             enable_parallel_processing: true,
@@ -233,7 +234,7 @@ impl ProgressiveRefinementPipeline {
         for &stage in &self.stages {
             let stage_start_time = std::time::Instant::now();
             
-            let target_count = config.candidates_per_stage.get(key)
+            let target_count = config.candidates_per_stage.get(&stage)
                 .copied()
                 .unwrap_or(current_candidates.len().min(100));
             
@@ -267,7 +268,7 @@ impl ProgressiveRefinementPipeline {
                    stage, stage_time, current_candidates.len());
             
             // Check for early termination
-            if let RefinementStrategy::EarlyTermination { target_count, quality_threshold } = config.strategy {
+            if let RefinementStrategy::EarlyTermination { target_count, quality_threshold } = config.search_strategy {
                 if current_candidates.len() <= target_count && stage_result.quality_score >= quality_threshold {
                     trace!("Early termination triggered at stage {:?}", stage);
                     break;
@@ -425,7 +426,7 @@ impl ProgressiveRefinementPipeline {
             ).await?;
             
             if let Some(result) = results.first() {
-                scored_candidates.push((candidate.clone(), result.distance));
+                scored_candidates.push((candidate.clone(), result.similarity));
                 distance_calculations += 1;
             }
         }
@@ -441,7 +442,7 @@ impl ProgressiveRefinementPipeline {
         Ok(StageResult {
             refined_candidates,
             distance_calculations,
-            quality_score: 0.8, // INT8 provides good quality
+            quality_score: 0.8, // INT8 provides good quality_level
         })
     }
     
@@ -474,7 +475,7 @@ impl ProgressiveRefinementPipeline {
             ).await?;
             
             if let Some(result) = results.first() {
-                scored_candidates.push((candidate.clone(), result.distance));
+                scored_candidates.push((candidate.clone(), result.similarity));
                 distance_calculations += 1;
             }
         }
@@ -490,7 +491,7 @@ impl ProgressiveRefinementPipeline {
         Ok(StageResult {
             refined_candidates,
             distance_calculations,
-            quality_score: 0.9, // PQ provides high quality
+            quality_score: 0.9, // PQ provides high quality_level
         })
     }
     
@@ -537,7 +538,7 @@ impl ProgressiveRefinementPipeline {
         Ok(StageResult {
             refined_candidates,
             distance_calculations,
-            quality_score: 1.0, // FP32 provides perfect quality
+            quality_score: 1.0, // FP32 provides perfect quality_level
         })
     }
     

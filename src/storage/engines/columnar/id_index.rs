@@ -264,10 +264,10 @@ impl ColumnarIdIndex {
     pub async fn lookup(&self, id: &str) -> Option<ParquetLocation> {
         // Quick bloom filter check first
         for (idx, bloom) in self.bloom_filters.iter().enumerate() {
-            if bloom.contains_hash(id) {
+            if bloom.contains(id) {
                 // Potential match in this row group
                 let map = self.id_to_location.read().await;
-                if let Some(location) = map.get(key) {
+                if let Some(location) = map.get(id) {
                     return Some(location.clone());
                 }
             }
@@ -278,7 +278,7 @@ impl ColumnarIdIndex {
     /// Batch lookup for multiple IDs
     pub async fn lookup_batch(&self, ids: &[String]) -> Vec<Option<ParquetLocation>> {
         let map = self.id_to_location.read().await;
-        ids.iter().map(|id| map.get(key).cloned()).collect()
+        ids.iter().map(|id| map.get(id).cloned()).collect()
     }
     
     /// Find row groups that might contain an ID
@@ -287,7 +287,7 @@ impl ColumnarIdIndex {
         
         for (idx, rg_index) in self.row_group_index.iter().enumerate() {
             // Check bloom filter
-            if self.bloom_filters[idx].contains_hash(id) {
+            if self.bloom_filters[idx].contains(id) {
                 // Check ID range
                 if id >= &rg_index.id_range.0 && id <= &rg_index.id_range.1 {
                     candidates.push(idx);
@@ -465,14 +465,14 @@ mod tests {
         }
         
         // Test contains
-        assert!(bloom.contains_hash("id_0050"));
-        assert!(bloom.contains_hash("id_0099"));
-        assert!(!bloom.contains_hash("id_0500")); // Probably false
+        assert!(bloom.contains("id_0050"));
+        assert!(bloom.contains("id_0099"));
+        assert!(!bloom.contains("id_0500")); // Probably false
         
         // Test false positive rate
         let mut false_positives = 0;
         for i in 1000..2000 {
-            if bloom.contains_hash(&format!("id_{:04}", i)) {
+            if bloom.contains(&format!("id_{:04}", i)) {
                 false_positives += 1;
             }
         }

@@ -12,6 +12,7 @@
 //! - Metrics and monitoring integration
 
 use anyhow::{anyhow, Result};
+use chrono::{DateTime, Utc};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -223,6 +224,7 @@ impl ParquetFooterCache {
         self.update_stats(|s| s.total_requests += 1).await;
         
         // Try cache first
+        let key = file_path.to_string();
         if let Some(mut footer) = self.cache.get(&key).await {
             // Validate cache entry
             if let Ok((file_size, modified_time)) = self.get_file_metadata(file_path).await {
@@ -259,7 +261,8 @@ impl ParquetFooterCache {
     
     /// Preload footer into cache (for warming)
     pub async fn preload_footer(&self, file_path: &str) -> Result<()> {
-        if self.cache.get(&key) {
+        let key = file_path.to_string();
+        if self.cache.get(&key).await.is_some() {
             return Ok(()); // Already cached
         }
         
@@ -310,7 +313,7 @@ impl ParquetFooterCache {
     /// Invalidate all cache entries
     pub async fn invalidate_all(&self) {
         info!("Invalidating all cache entries");
-        self.cache.invalidate_all().await;
+        self.cache.invalidate_all();
         
         let mut size_cache = self.file_size_cache.write().await;
         size_cache.clear();
@@ -326,7 +329,8 @@ impl ParquetFooterCache {
         
         // Update dynamic stats
         result.cache_size = self.cache.entry_count();
-        result.hit_rate_percent = if result.total_requests > 0 {
+        // hit_rate_percent field removed, use hit_rate instead
+        result.hit_rate = if result.total_requests > 0 {
             result.hit_count as f64 / result.total_requests as f64
         } else {
             0.0
@@ -380,7 +384,9 @@ impl ParquetFooterCache {
         // Check file size cache first
         {
             let size_cache = self.file_size_cache.read().await;
-            if let Some(&(size, modified)) = size_cache.get(&key) {
+            let key = file_path;
+            let key_string = key.to_string();
+            if let Some(&(size, modified)) = size_cache.get(&key_string) {
                 return Ok((size, modified));
             }
         }
@@ -390,10 +396,17 @@ impl ParquetFooterCache {
         let metadata = fs.metadata(file_path).await?;
         
         // For mock implementation, return reasonable values
-        let file_size = metadata.get(key).and_then(|v| v.as_u64()).unwrap_or(1024);
-        let modified_time = metadata.get(key)
-            .and_then(|v| v.as_u64())
-            .map(|ts| UNIX_EPOCH + Duration::from_secs(ts))
+        let size_field = "size";
+        let modified_field = "modified";
+        // Use FileMetadata fields directly
+        let file_size = metadata.size;
+        let modified_time = metadata.modified
+            .map(|dt| {
+                // Convert DateTime<Utc> to SystemTime
+                use chrono::TimeZone;
+                let timestamp = dt.timestamp();
+                UNIX_EPOCH + Duration::from_secs(timestamp as u64)
+            })
             .unwrap_or_else(SystemTime::now);
         
         Ok((file_size, modified_time))
@@ -430,10 +443,12 @@ impl ParquetFooterCache {
         }
         
         // Check if file is accessed frequently enough
+        let key = file_path;
+        let key = file_path.to_string();
         if let Some(footer) = self.cache.get(&key).await {
             if footer.access_count >= self.config.prefetch_threshold {
                 let mut queue = self.prefetch_queue.write().await;
-                if !queue.contains_hash(&file_path.to_string()) {
+                if !queue.contains(&file_path.to_string()) {
                     queue.push(file_path.to_string());
                     debug!("Added {} to prefetch queue", file_path);
                 }
@@ -485,7 +500,10 @@ impl ParquetFooterCache {
     /// Persist cache to disk
     async fn persist_cache(&self) -> Result<()> {
         if let Some(path) = &self.config.persistence_path {
-            let entries: Vec<_> = self.cache.iter().map(|(k, v)| (k, v)).collect();
+            // Convert Arc<String> to String for serialization
+            let entries: Vec<(String, CachedFooter)> = self.cache.iter()
+                .map(|(k, v)| ((*k).clone(), v.clone()))
+                .collect();
             let data = bincode::serialize(&entries)?;
             tokio::fs::write(path, data).await?;
             debug!("Persisted {} cache entries to {}", entries.len(), path);
@@ -524,7 +542,8 @@ impl ParquetFooterCache {
                 if !files_to_prefetch.is_empty() {
                     debug!("Processing {} prefetch candidates", files_to_prefetch.len());
                     for file_path in files_to_prefetch {
-                        if cache.cache.get(&key) {
+                        // Check if not already in cache before prefetching
+                        if cache.cache.get(&file_path).await.is_none() {
                             if let Err(e) = cache.preload_footer(&file_path).await {
                                 warn!("Prefetch failed for {}: {}", file_path, e);
                             }
@@ -570,7 +589,7 @@ impl ParquetFooterCache {
                 // For now, just log statistics
                 let stats = cache.get_stats().await;
                 debug!("Cache stats: hit_rate={:.2}%, size={}, prefetch_count={}", 
-                       stats.hit_rate_percent * 100.0, stats.cache_size, stats.prefetch_count);
+                       stats.hit_rate * 100.0, stats.cache_size, stats.prefetch_count);
             }
         });
         
@@ -650,7 +669,7 @@ impl ParquetFooterCache {
             .collect();
         
         files.sort_by_key(|(_, last_access)| std::cmp::Reverse(*last_access));
-        files.into_iter().take(count).map(|(path, _)| path).collect()
+        files.into_iter().take(count).map(|(path, _)| (*path).clone()).collect()
     }
     
     /// Get frequently accessed files from cache
@@ -660,7 +679,7 @@ impl ParquetFooterCache {
             .collect();
         
         files.sort_by_key(|(_, access_count)| std::cmp::Reverse(*access_count));
-        files.into_iter().take(count).map(|(path, _)| path).collect()
+        files.into_iter().take(count).map(|(path, _)| (*path).clone()).collect()
     }
     
     /// Find files matching patterns
@@ -737,7 +756,7 @@ mod tests {
         
         // Test custom warming strategy
         let files = vec!["test1.parquet".to_string(), "test2.parquet".to_string()];
-        let strategy = WarmingStrategy::Custom { files };
+        let search_strategy = WarmingStrategy::Custom { files };
         
         // This will fail since files don't exist, but tests the interface
         let _ = cache.warm_cache(strategy).await;

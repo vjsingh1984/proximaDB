@@ -310,7 +310,7 @@ impl CompactionCoordinator {
     async fn should_trigger_compaction(&self, collection_id: &str) -> Result<bool> {
         let states = self.collection_states.read().await;
         let default_state = CollectionCompactionState::default();
-        let state = states.get(key).unwrap_or(&default_state);
+        let state = states.get(collection_id).unwrap_or(&default_state);
         
         // Don't trigger if already in progress
         if state.compaction_in_progress {
@@ -398,7 +398,7 @@ impl CompactionCoordinator {
         let preferred_engine = {
             let states = self.collection_states.read().await;
             states
-                .get(key)
+                .get(&collection_id)
                 .map(|s| s.preferred_engine.clone())
                 .unwrap_or_else(|| "VIPER".to_string())
         };
@@ -656,7 +656,7 @@ impl CompactionCoordinator {
     /// Get collection state
     pub async fn get_collection_state(&self, collection_id: &str) -> Option<CollectionCompactionState> {
         let states = self.collection_states.read().await;
-        states.get(key).cloned()
+        states.get(collection_id).cloned()
     }
     
     /// Manual compaction trigger (for testing or admin operations)

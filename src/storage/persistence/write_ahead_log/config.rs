@@ -431,7 +431,7 @@ impl WALConfig {
         let mut config = Self::default();
         config.strategy_type = WriteBufferStrategyType::BincodeBatch; // Faster serialization
         config.memtable.memtable_type = MemTableType::HashMap; // Fastest writes for unordered data
-        config.storage.as_ref().and_then(|s| s.compression.as_ref()).algorithm = CompressionAlgorithm::Lz4; // Faster compression
+        config.compression.algorithm = CompressionAlgorithm::Lz4; // Faster compression
         config.performance.memory_flush_size_bytes = 256 * 1024 * 1024; // 256MB
         config.performance.batch_threshold = 500; // Larger batches
         config.performance.sync_mode = SyncMode::PerBatch; // Less frequent syncing
@@ -442,8 +442,8 @@ impl WALConfig {
     pub fn low_latency() -> Self {
         let mut config = Self::default();
         config.memtable.memtable_type = MemTableType::HashMap; // Fastest point lookups
-        config.storage.as_ref().and_then(|s| s.compression.as_ref()).compress_memory = false; // Faster memory access
-        config.storage.as_ref().and_then(|s| s.compression.as_ref()).compress_disk = false; // Faster disk reads
+        config.compression.compress_memory = false; // Faster memory access
+        config.compression.compress_disk = false; // Faster disk reads
         config.performance.memory_flush_size_bytes = 32 * 1024 * 1024; // 32MB smaller memory footprint
         config.performance.sync_mode = SyncMode::Always; // Immediate consistency
         config
@@ -453,9 +453,9 @@ impl WALConfig {
     pub fn storage_optimized() -> Self {
         let mut config = Self::default();
         config.memtable.memtable_type = MemTableType::BTree; // Most memory-efficient
-        config.storage.as_ref().and_then(|s| s.compression.as_ref()).algorithm = CompressionAlgorithm::Zstd; // Better compression
-        config.storage.as_ref().and_then(|s| s.compression.as_ref()).compress_memory = true; // Compress everything
-        config.storage.as_ref().and_then(|s| s.compression.as_ref()).min_compress_size = 64; // Compress smaller entries
+        config.compression.algorithm = CompressionAlgorithm::Zstd; // Better compression
+        config.compression.compress_memory = true; // Compress everything
+        config.compression.min_compress_size = 64; // Compress smaller entries
         config.performance.disk_segment_size = 512 * 1024 * 1024; // Larger segments
         config
     }
@@ -465,7 +465,7 @@ impl WALConfig {
         let mut config = Self::default();
         config.memtable.memtable_type = MemTableType::BTree; // Excellent range scan performance
         config.strategy_type = WriteBufferStrategyType::AvroBatch; // Schema evolution for analytics
-        config.storage.as_ref().and_then(|s| s.compression.as_ref()).algorithm = CompressionAlgorithm::Snappy; // Balanced compression
+        config.compression.algorithm = CompressionAlgorithm::Snappy; // Balanced compression
         config.performance.memory_flush_size_bytes = 64 * 1024 * 1024; // 64MB moderate memory usage
         config
     }
@@ -475,7 +475,7 @@ impl WALConfig {
         let mut config = Self::default();
         config.memtable.memtable_type = MemTableType::Art; // Excellent concurrency
         config.strategy_type = WriteBufferStrategyType::BincodeBatch; // Fast serialization
-        config.storage.as_ref().and_then(|s| s.compression.as_ref()).algorithm = CompressionAlgorithm::Lz4; // Fast compression
+        config.compression.algorithm = CompressionAlgorithm::Lz4; // Fast compression
         config.memtable.enable_concurrency = true;
         config
     }
@@ -485,7 +485,7 @@ impl WALConfig {
         &self,
         collection_id: &str,
     ) -> CollectionEffectiveConfig {
-        let overrides = self.collection_overrides.get(key);
+        let overrides = self.collection_overrides.get(collection_id);
 
         CollectionEffectiveConfig {
             memory_flush_size_bytes: overrides
@@ -495,8 +495,8 @@ impl WALConfig {
                 .and_then(|o| o.disk_segment_size)
                 .unwrap_or(self.performance.disk_segment_size),
             compression: overrides
-                .and_then(|o| o.storage.as_ref().and_then(|s| s.compression.as_ref()).clone())
-                .unwrap_or_else(|| self.storage.as_ref().and_then(|s| s.compression.as_ref()).clone()),
+                .and_then(|o| o.compression.clone())
+                .or_else(|| self.compression.clone()),
             default_ttl_days: overrides.and_then(|o| o.default_ttl_days),
         }
     }

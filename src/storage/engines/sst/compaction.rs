@@ -29,7 +29,7 @@ use crate::storage::Result;
 use crate::storage::transaction_coordinator::{TransactionCoordinator, StagingConfig, TransactionStageType};
 use crate::storage::engines::sst::readers::unified_sstable_reader::UnifiedSstableReader;
 use crate::storage::persistence::filesystem::FilesystemFactory;
-use crate::storage::quantization::SstQuantizationAdapter;
+// Quantization now handled by unified compute module
 // Import unified level-based compaction framework
 use crate::storage::common::*;
 use crate::storage::common::compaction_utils::{CompactionTaskBuilder, StorageEngineType as CompactionEngineType};
@@ -205,6 +205,9 @@ impl CompactionManager {
             max_concurrent_per_collection: 1,
             global_max_concurrent: 4,
             operation_timeout: std::time::Duration::from_secs(3600),
+            queue_aware_compaction: true,
+            max_queue_wait: std::time::Duration::from_secs(60),
+            urgency_threshold: 0.8,
         };
         
         let orchestrator = Some(Arc::new(CompactionOrchestrator::new(
@@ -227,14 +230,30 @@ impl CompactionManager {
         })
     }
     
-    /// Enable PQ-based sorting for better compression during compaction
-    pub async fn with_quantization_sorting(
-        mut self,
-        quantization_adapter: Arc<SstQuantizationAdapter>,
-    ) -> Result<Self> {
-        // Update the SST compactor to use PQ-based sorting
+    // Quantization sorting now handled by unified compute module
+    pub async fn with_quantization_sorting(mut self) -> Result<Self> {
+        // PQ-based sorting is now integrated directly into the compactor
+        // using the unified quantization engine
         if let Some(ref mut compactor) = self.sst_compactor {
-            // We need to create a new compactor with the PQ sorting strategy
+            // Create unified quantization engine for PQ-based sorting
+            let distance_compute = Arc::new(crate::compute::distance_computation::engine::UnifiedDistanceCompute::default());
+            let codebook_store = Arc::new(crate::compute::quantization::unified::InMemoryCodebookStore::new());
+            let unified_engine = Arc::new(crate::compute::quantization::unified::UnifiedQuantizationEngine::new(
+                distance_compute,
+                codebook_store,
+            ));
+            // Create distance compute engine
+            let distance_compute = Arc::new(crate::compute::distance_computation::engine::UnifiedDistanceCompute::new(
+                crate::compute::distance_computation::engine::DistanceMetric::Cosine,
+            ));
+            // Create quantization config
+            let quant_config = crate::compute::quantization::storage_engine::StorageQuantizationConfig::default();
+            let quantization_engine = Arc::new(crate::compute::quantization::storage_engine::StorageQuantizationEngine::new(
+                unified_engine,
+                distance_compute,
+                quant_config,
+            ));
+            
             let new_compactor = Arc::new(
                 SstCompactor::with_block_size(
                     self.filesystem_factory.clone(),
@@ -242,7 +261,7 @@ impl CompactionManager {
                         Arc::new(MvccResolver::new())
                     }),
                     self.config.block_size_kb,
-                ).with_pq_sorting(quantization_adapter)
+                ).with_pq_sorting(quantization_engine)
             );
             
             self.sst_compactor = Some(new_compactor);
@@ -1337,9 +1356,10 @@ impl Drop for CompactionManager {
 }
 
 // Test module for vector tracking during compaction
-#[cfg(test)]
-#[path = "compaction_vector_tracking_tests.rs"]
-mod vector_tracking_tests;
+// TODO: Missing test file - compaction_vector_tracking_tests.rs
+// #[cfg(test)]
+// #[path = "compaction_vector_tracking_tests.rs"]
+// mod vector_tracking_tests;
 
 #[cfg(test)]
 mod tests {

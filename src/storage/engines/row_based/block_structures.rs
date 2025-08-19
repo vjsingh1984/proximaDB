@@ -4,22 +4,55 @@
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use uuid::Uuid;
 
 use crate::core::{VectorRecord, compression::CompressionAlgorithm};
 use crate::storage::engines::sst::bloom_filter::SstableBloomFilter;
-use crate::storage::engines::sst::quantization_compat::QuantizedSection;
+// Quantization now handled by unified compute module
+
+/// Quantized section for hierarchical storage
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct QuantizedSection {
+    pub binary_vectors: Option<Vec<Vec<u8>>>,
+    pub int8_vectors: Option<Vec<Vec<i8>>>,
+    pub pq_vectors: Option<Vec<Vec<u8>>>,
+    pub codebooks: Option<Vec<Vec<f32>>>,
+}
+
+/// Block metadata statistics
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BlockMetadataStats {
+    pub unique_keys: u32,
+    pub null_values: u32,
+    pub avg_value_size: f32,
+    pub compression_ratio: f32,
+}
 
 /// Shared data block structure for row-based engines
 #[derive(Debug, Clone)]
 pub struct RowBasedDataBlock {
-    /// Block identification
-    pub block_id: Uuid,
+    /// Block identification - u32 supports 4.3 billion blocks (4.3 trillion vectors)
+    /// This is sufficient for 34+ petabytes of storage
+    /// 
+    /// Rationale for 4-byte u32 (future-proofing for larger files):
+    /// - With 384D vectors: ~2KB per vector (1.6KB data + 0.4KB metadata)
+    /// - 1MB blocks hold ~500 vectors
+    /// - 100GB file = 100,000 blocks (well within u32's limit)
+    /// - u16 (65,536) would be insufficient for large files
+    /// - u32 provides conservative headroom even though files rarely exceed 10GB in practice
+    pub block_id: u32,
+    
+    /// Sequence number for ordering (used by SST and Swift)
     pub sequence_number: u64,
     
     /// Data organization
     pub records: Vec<VectorRecord>,
-    pub quantized_section: QuantizedSection,
+    /// Quantized vectors using unified engine
+    pub quantized_vectors: Option<Vec<Vec<u8>>>,
+    /// Quantization level used
+    pub quantization_level: Option<crate::compute::quantization::unified::UnifiedQuantizationLevel>,
+    
+    /// Quantized section for hierarchical storage (SST/Swift specific)
+    pub quantized_section: Option<QuantizedSection>,
     
     /// Block metadata
     pub metadata: RowBasedBlockMetadata,
@@ -27,13 +60,30 @@ pub struct RowBasedDataBlock {
     /// Compression information
     pub compression_config: BlockCompressionConfig,
     
+    /// Direct compression algorithm field (for SST compatibility)
+    pub compression_algorithm: CompressionAlgorithm,
+    
+    /// Uncompressed size (for SST compatibility)
+    pub uncompressed_size: u64,
+    
     /// Index structures
     pub bloom_filter: Option<SstableBloomFilter>,
+    
+    /// Additional bloom filter field for SST (block-level bloom)
+    pub block_bloom_filter: Option<SstableBloomFilter>,
+    
+    /// ID and timestamp ranges
     pub id_range: (String, String),
     pub timestamp_range: (i64, i64),
     
     /// Performance tracking
     pub statistics: BlockStatistics,
+    
+    /// Metadata statistics (for SST compatibility)
+    pub metadata_stats: Option<BlockMetadataStats>,
+    
+    /// Track if block has deletes (for SST compatibility)
+    pub has_deletes: bool,
 }
 
 /// Block metadata shared between engines
@@ -65,7 +115,7 @@ pub struct RowBasedBlockMetadata {
 /// Column statistics for optimization
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ColumnStatistics {
-    pub column_name: String,
+    pub name: String,
     pub null_count: u32,
     pub distinct_count: u32,
     pub min_value: Option<serde_json::Value>,
@@ -141,7 +191,7 @@ pub struct SuperBlock {
     /// SuperBlock-level indexes
     pub centroid: Option<Vec<f32>>,
     pub quantized_signature: Vec<u8>,
-    pub bloom_filter: SstableBloomFilter,
+    pub bloom_filter: Option<SstableBloomFilter>,
     
     /// Performance optimization
     pub layout: BlockLayout,
@@ -212,7 +262,7 @@ pub enum AccessPatternType {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BlockLocation {
     pub superblock_id: u32,
-    pub block_id: Uuid,
+    pub block_id: u32,
     pub block_offset: u64,
     pub record_offset: u32,
     pub estimated_load_time_ms: f32,
@@ -222,11 +272,11 @@ impl RowBasedDataBlock {
     /// Create a new data block
     pub fn new(
         records: Vec<VectorRecord>,
-        quantized_section: QuantizedSection,
         compression_config: BlockCompressionConfig,
     ) -> Self {
         let record_count = records.len() as u32;
-        let block_id = Uuid::new_v4();
+        // Use a simple counter or provided ID - will be set properly by the writer
+        let block_id = 0u32;
         
         // Calculate ID range
         let mut ids: Vec<String> = records
@@ -249,18 +299,25 @@ impl RowBasedDataBlock {
             (*timestamps.iter().min().unwrap(), *timestamps.iter().max().unwrap())
         };
         
+        // Check for deletes (tombstone records)
+        let has_deletes = records.iter().any(|r| r.metadata.iter().any(|kv| 
+            kv.key == "_deleted" && kv.value.as_str() == Some("true")
+        ));
+        
         Self {
             block_id,
-            sequence_number: 0,
-            records,
-            quantized_section,
+            sequence_number: 0, // Will be set by writer
+            records: records.clone(),
+            quantized_vectors: None,
+            quantization_level: None,
+            quantized_section: None,
             metadata: RowBasedBlockMetadata {
                 record_count,
                 size_bytes: 0, // Will be calculated
                 compressed_size: 0,
                 timestamp: chrono::Utc::now().timestamp(),
                 compaction_level: 0,
-                has_deletes: false,
+                has_deletes,
                 has_updates: false,
                 version_range: (0, 0),
                 column_stats: HashMap::new(),
@@ -268,17 +325,22 @@ impl RowBasedDataBlock {
                 data_checksum: 0,
                 metadata_checksum: 0,
             },
-            compression_config,
+            compression_config: compression_config.clone(),
+            compression_algorithm: compression_config.algorithm,
+            uncompressed_size: 0, // Will be calculated during compression
             bloom_filter: None,
+            block_bloom_filter: None,
             id_range,
             timestamp_range,
             statistics: BlockStatistics::default(),
+            metadata_stats: None,
+            has_deletes,
         }
     }
     
     /// Get record by index
     pub fn get_record(&self, index: usize) -> Option<&VectorRecord> {
-        self.records/* TODO: Fix Option::get() - use indexing or as_ref() */
+        self.records.get(index)
     }
     
     /// Find record by ID
@@ -291,7 +353,7 @@ impl RowBasedDataBlock {
     /// Check if block contains ID (using bloom filter if available)
     pub fn contains_id(&self, id: &str) -> bool {
         if let Some(ref bloom) = self.bloom_filter {
-            bloom.contains_hash(id.as_bytes())
+            bloom.contains(id.as_bytes())
         } else {
             self.find_record_by_id(id).is_some()
         }
@@ -300,8 +362,9 @@ impl RowBasedDataBlock {
     /// Get memory usage estimate
     pub fn memory_usage_bytes(&self) -> usize {
         let records_size = self.records.len() * std::mem::size_of::<VectorRecord>();
-        let quantized_size = self.quantized_section.binary_sketches.len() * 
-            self.quantized_section.binary_sketches.get(key).map(|v| v.len()).unwrap_or(0);
+        let quantized_size = self.quantized_vectors.as_ref()
+            .map(|qv| qv.iter().map(|v| v.len()).sum())
+            .unwrap_or(0);
         let metadata_size = std::mem::size_of::<RowBasedBlockMetadata>();
         
         records_size + quantized_size + metadata_size
@@ -334,7 +397,7 @@ impl SuperBlock {
             timestamp_range: (0, 0),
             centroid: None,
             quantized_signature: Vec::new(),
-            bloom_filter: SstableBloomFilter::new_default(),
+            bloom_filter: None,
             layout: BlockLayout::default(),
             access_pattern: AccessPattern::default(),
         }
@@ -447,10 +510,50 @@ impl Default for AccessPattern {
     }
 }
 
+impl Default for QuantizedSection {
+    fn default() -> Self {
+        Self {
+            binary_vectors: None,
+            int8_vectors: None,
+            pq_vectors: None,
+            codebooks: None,
+        }
+    }
+}
+
+impl Default for BlockMetadataStats {
+    fn default() -> Self {
+        Self {
+            unique_keys: 0,
+            null_values: 0,
+            avg_value_size: 0.0,
+            compression_ratio: 1.0,
+        }
+    }
+}
+
+impl Default for RowBasedBlockMetadata {
+    fn default() -> Self {
+        Self {
+            record_count: 0,
+            size_bytes: 0,
+            compressed_size: 0,
+            timestamp: chrono::Utc::now().timestamp(),
+            compaction_level: 0,
+            has_deletes: false,
+            has_updates: false,
+            version_range: (0, 0),
+            column_stats: HashMap::new(),
+            quantization_stats: QuantizationStatistics::default(),
+            data_checksum: 0,
+            metadata_checksum: 0,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::storage::engines::sst::quantization::QuantizedSection;
     
     #[test]
     fn test_data_block_creation() {
@@ -469,16 +572,9 @@ mod tests {
             },
         ];
         
-        let quantized_section = QuantizedSection {
-            binary_sketches: vec![vec![0b10101010], vec![0b01010101]],
-            int8_vectors: vec![vec![127, -128, 0], vec![64, -64, 32]],
-            pq_codes: vec![vec![1, 2, 3], vec![4, 5, 6]],
-            // codebooks removed -  Vec::new(),
-        };
-        
         let compression_config = BlockCompressionConfig::default();
         
-        let block = RowBasedDataBlock::new(records, quantized_section, compression_config);
+        let block = RowBasedDataBlock::new(records, compression_config);
         
         assert_eq!(block.metadata.record_count, 2);
         assert_eq!(block.id_range.0, "vec_1");
@@ -492,7 +588,6 @@ mod tests {
         
         let block = RowBasedDataBlock::new(
             vec![VectorRecord::default()],
-            QuantizedSection::default(),
             BlockCompressionConfig::default(),
         );
         
@@ -514,7 +609,6 @@ mod tests {
         
         let block = RowBasedDataBlock::new(
             records,
-            QuantizedSection::default(),
             BlockCompressionConfig::default(),
         );
         

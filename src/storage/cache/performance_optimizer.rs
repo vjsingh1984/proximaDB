@@ -216,7 +216,7 @@ impl CacheOptimizer {
         
         // Tier optimization hints
         if config.global.enable_tiered_storage {
-            if metrics.l1_metrics.hit_rate_percent < 0.8 && metrics.l2_metrics.hit_rate_percent > 0.5 {
+            if metrics.l1_metrics.hit_rate < 0.8 && metrics.l2_metrics.hit_rate > 0.5 {
                 hints.push(OptimizationHint {
                     category: "tiering".to_string(),
                     severity: HintSeverity::Medium,

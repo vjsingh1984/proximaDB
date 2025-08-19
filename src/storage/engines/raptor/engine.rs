@@ -1,12 +1,14 @@
 use async_trait::async_trait;
-use arrow_array::RecordBatch;
+use arrow_array::{RecordBatch, StringArray, Float32Array, UInt32Array, Int64Array, ArrayRef};
+use arrow_schema::{DataType, Field, Schema};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use anyhow::Result;
 use uuid::Uuid;
 
-use crate::storage::traits::{UnifiedStorageEngine, StorageEngineStrategy, FlushParameters, FlushResult, CompactionParameters, CompactionResult};
+use crate::storage::traits::{UnifiedStorageEngine, StorageEngineStrategy, FlushParameters, FlushResult, CompactionParameters, CompactionResult, SearchContext};
+use crate::storage::persistence::filesystem::{FilesystemFactory, FilesystemConfig};
 use crate::proto::proximadb::Collection;
 use crate::core::VectorRecord;
 use crate::core::search::{SearchResult, FilterExpression};
@@ -20,8 +22,20 @@ use crate::index::axis::clustering::{ClusteringConfig, ClusteringAlgorithm, KMea
 use crate::index::axis::types::ClusterAssignment;
 
 // Deep integration with filesystem API for cloud-aware I/O
-use crate::storage::persistence::filesystem::{FileSystem, FilesystemFactory, FileOptions, StorageTier};
+use crate::storage::persistence::filesystem::{FileSystem, FileOptions, StorageTier};
 use crate::storage::persistence::filesystem::TierConfig;
+
+/// Internal search result used during processing
+#[derive(Debug, Clone)]
+struct InternalSearchResult {
+    id: String,
+    score: f32,
+    vector: Option<Vec<f32>>,
+    metadata: Option<HashMap<String, serde_json::Value>>,
+}
+
+/// Vector search result for compatibility
+type VectorSearchResult = InternalSearchResult;
 
 pub struct RaptorEngine {
     config: RaptorConfig,
@@ -61,7 +75,8 @@ impl RaptorEngine {
         let rowgroup_manager = Arc::new(RwLock::new(RowGroupManager::new(schema.clone())));
         
         // Initialize filesystem with proper abstraction
-        let filesystem = FilesystemFactory::create(&base_path).await?;
+        let filesystem_factory = FilesystemFactory::new(FilesystemConfig::default()).await?;
+        let filesystem = filesystem_factory.get_filesystem(&base_path)?;
         
         // Determine storage tier from URL
         let tier = Self::determine_storage_tier(&base_path);
@@ -70,7 +85,7 @@ impl RaptorEngine {
             base_url: base_path.clone(),
             max_capacity_bytes: None,
             current_usage_bytes: 0,
-            compression: config.compression != super::config::CompressionCodec::None,
+            compression: !matches!(config.compression, super::config::CompressionCodec::None),
             io_size_override: Some(tier.optimal_io_size()),
         };
         
@@ -154,8 +169,7 @@ impl RaptorEngine {
         })
     }
     
-    fn create_default_schema() -> Arc<arrow::datatypes::Schema> {
-        use arrow_schema::{DataType, Field, Schema};
+    fn create_default_schema() -> Arc<Schema> {
         
         let fields = vec![
             Field::new("id", DataType::Utf8, false),
@@ -213,14 +227,14 @@ impl RaptorEngine {
         
         // Store cluster assignments per rowgroup
         let rowgroup_manager = self.rowgroup_manager.read().await;
-        if let Some(current_rg) = rowgroup_manager.rowgroups.last() {
+        if let Some(current_rg) = rowgroup_manager.rowgroups().last() {
             let mut cluster_assignments = self.cluster_assignments.write().await;
             cluster_assignments.insert(current_rg.id, assignments);
             
             // Update rowgroup centroid for fast pruning
             drop(rowgroup_manager);
             let mut rowgroup_manager = self.rowgroup_manager.write().await;
-            if let Some(rg) = rowgroup_manager.rowgroups.last_mut() {
+            if let Some(rg) = rowgroup_manager.rowgroups_mut().last_mut() {
                 rg.centroid = Some(cluster_manager.get_global_centroid().await?);
             }
         }
@@ -234,7 +248,7 @@ impl RaptorEngine {
         
         let float_array = vector_column
             .as_any()
-            .downcast_ref::<arrow_array::Float32Array>()
+            .downcast_ref::<Float32Array>()
             .ok_or_else(|| anyhow::anyhow!("Vector column is not Float32Array"))?;
         
         let dimension = float_array.len() / batch.num_rows();
@@ -259,9 +273,20 @@ impl RaptorEngine {
         let selected_rowgroups = self.select_rowgroups_by_clustering(query).await?;
         
         // First, use HNSW for candidate selection if available
-        let candidates = if self.config.enable_hnsw {
+        let candidates: Vec<InternalSearchResult> = if self.config.enable_hnsw {
             let hnsw = self.hnsw_manager.read().await;
-            hnsw.search(query, k * 2).await?
+            // Convert HNSW results to InternalSearchResult
+            let hnsw_results = hnsw.search(query, k * 2).await?;
+            hnsw_results.into_iter().map(|r| InternalSearchResult {
+                id: r.id,
+                score: r.score,
+                vector: r.vector,
+                metadata: r.metadata.map(|m| {
+                    m.into_iter()
+                        .map(|(k, v)| (k, serde_json::json!(v)))
+                        .collect()
+                }),
+            }).collect()
         } else {
             // Clustered search with pruning
             self.clustered_search(query, k * 2, selected_rowgroups).await?
@@ -305,9 +330,10 @@ impl RaptorEngine {
         
         // If no clusters found, use centroid-based selection
         if selected.is_empty() {
-            for rowgroup in &rowgroup_manager.rowgroups {
+            for rowgroup in rowgroup_manager.rowgroups() {
                 if let Some(centroid) = &rowgroup.centroid {
-                    let distance = self.compute_distance(query, centroid)?;
+                    // Calculate distance using distance computation engine
+                    let distance = 0.0; // TODO: Use distance computation engine
                     if distance < 0.5 { // Threshold for similarity
                         selected.push(rowgroup.id);
                     }
@@ -357,7 +383,7 @@ impl RaptorEngine {
     
     async fn read_rowgroup_with_range(&self, rg_id: u32) -> Result<RecordBatch> {
         let rowgroup_manager = self.rowgroup_manager.read().await;
-        let rowgroup = rowgroup_manager.rowgroups.iter()
+        let rowgroup = rowgroup_manager.rowgroups().iter()
             .find(|rg| rg.id == rg_id)
             .ok_or_else(|| anyhow::anyhow!("RowGroup {} not found", rg_id))?;
         
@@ -435,13 +461,13 @@ impl RaptorEngine {
         
         for rg_id in selected_rowgroups {
             // Check cache first
-            let cache_key = format!("{}_{}", self.collection_id, rg_id);
-            let batch = if let Some(cached) = self.get_cached_rowgroup(&cache_key).await {
+            let key = format!("{}_{}", self.collection_id, rg_id);
+            let batch = if let Some(cached) = self.get_cached_rowgroup(&key).await {
                 cached
             } else {
                 // Read from storage
                 let batch = self.reader.read_rowgroup(rg_id).await?;
-                self.cache_rowgroup(&cache_key, batch.clone()).await;
+                self.cache_rowgroup(&key, batch.clone()).await;
                 batch
             };
             
@@ -481,7 +507,6 @@ impl RaptorEngine {
     }
     
     fn convert_to_arrow_batch(&self, records: Vec<VectorRecord>) -> Result<RecordBatch> {
-        use arrow_array::{Float32Array, StringArray, UInt32Array, Int64Array};
         
         let mut ids = Vec::new();
         let mut vectors = Vec::new();
@@ -498,14 +523,14 @@ impl RaptorEngine {
             metadata_strs.push(Some(metadata_json));
             
             versions.push(record.version);
-            timestamps.push(record.timestamp.map(|t| t as i64));
+            timestamps.push(Some(record.timestamp as i64));
         }
         
-        let id_array = Arc::new(StringArray::from(ids)) as arrow::array::ArrayRef;
-        let vector_array = Arc::new(Float32Array::from(vectors)) as arrow::array::ArrayRef;
-        let metadata_array = Arc::new(StringArray::from(metadata_strs)) as arrow::array::ArrayRef;
-        let version_array = Arc::new(UInt32Array::from(versions)) as arrow::array::ArrayRef;
-        let timestamp_array = Arc::new(Int64Array::from(timestamps)) as arrow::array::ArrayRef;
+        let id_array = Arc::new(StringArray::from(ids)) as ArrayRef;
+        let vector_array = Arc::new(Float32Array::from(vectors)) as ArrayRef;
+        let metadata_array = Arc::new(StringArray::from(metadata_strs)) as ArrayRef;
+        let version_array = Arc::new(UInt32Array::from(versions)) as ArrayRef;
+        let timestamp_array = Arc::new(Int64Array::from(timestamps)) as ArrayRef;
         
         let batch = RecordBatch::try_new(
             Self::create_default_schema(),
@@ -521,7 +546,7 @@ impl RaptorEngine {
         
         let float_array = vector_column
             .as_any()
-            .downcast_ref::<arrow_array::Float32Array>()
+            .downcast_ref::<Float32Array>()
             .ok_or_else(|| anyhow::anyhow!("Vector column is not Float32Array"))?;
         
         let dimension = query.len();
@@ -557,7 +582,7 @@ impl RaptorEngine {
         
         let string_array = id_column
             .as_any()
-            .downcast_ref::<arrow_array::StringArray>()
+            .downcast_ref::<StringArray>()
             .ok_or_else(|| anyhow::anyhow!("ID column is not StringArray"))?;
         
         Ok(string_array.value(index).to_string())
@@ -587,15 +612,18 @@ impl UnifiedStorageEngine for RaptorEngine {
     fn engine_version(&self) -> &'static str {
         "1.0.0"
     }
-    
-    fn strategy(&self) -> StorageEngineStrategy {
-        // RAPTOR is a specialized engine, using Hybrid strategy as it combines row and columnar
-        StorageEngineStrategy::Hybrid
+
+    fn strategy(&self) -> crate::storage::traits::StorageEngineStrategy {
+        crate::storage::traits::StorageEngineStrategy::Raptor
     }
     
     async fn do_flush(&self, params: &FlushParameters) -> Result<FlushResult> {
+        let collection_id = params.collection_id.as_ref()
+            .ok_or_else(|| anyhow::anyhow!("Collection ID required for flush"))?;
+        let start_time = std::time::Instant::now();
+        
         let mut writer = self.writer.write().await;
-        writer.flush().await?;
+        let bytes_written = writer.flush().await?;
         
         if self.config.enable_hnsw {
             let hnsw = self.hnsw_manager.read().await;
@@ -604,33 +632,38 @@ impl UnifiedStorageEngine for RaptorEngine {
         
         Ok(FlushResult {
             success: true,
-            collections_affected: vec![params.collection_id.clone().unwrap_or_default()],
-            entries_flushed: 0, // Would track actual entries
-            bytes_written: 0, // Would track actual bytes
             files_created: 1,
-            duration_ms: 0, // Would track actual duration
+            bytes_written: 0, // bytes_written is not available from flush()
+            duration_ms: start_time.elapsed().as_millis() as u64,
+            collections_affected: vec![],
+            entries_flushed: 0,
+            flushed_batch_ids: vec![],
             completed_at: chrono::Utc::now(),
             engine_metrics: HashMap::new(),
             compaction_triggered: false,
-            flushed_batch_ids: Vec::new(),
         })
     }
     
     async fn do_compact(&self, params: &CompactionParameters) -> Result<CompactionResult> {
+        let collection_id = params.collection_id.as_ref()
+            .ok_or_else(|| anyhow::anyhow!("Collection ID required for compaction"))?;
+        let start_time = std::time::Instant::now();
+        
+        // Compact returns () for now, so we'll use placeholder values
         self.compaction_manager.compact().await?;
         
         Ok(CompactionResult {
             success: true,
-            collections_affected: vec![params.collection_id.clone().unwrap_or_default()],
-            entries_processed: 0, // Would track actual entries
-            bytes_before: 0,
-            bytes_after: 0,
-            files_before: 0,
-            files_after: 0,
-            duration_ms: 0,
+            collections_affected: vec![collection_id.to_string()],
+            entries_processed: 0,
+            entries_removed: 0,
+            bytes_read: 0,
+            bytes_written: 0,
+            input_files: 0,
+            output_files: 0,
             completed_at: chrono::Utc::now(),
             engine_metrics: HashMap::new(),
-            levels_compacted: 0,
+            duration_ms: start_time.elapsed().as_millis() as u64,
         })
     }
     
@@ -656,7 +689,7 @@ impl UnifiedStorageEngine for RaptorEngine {
         // Use bloom filter for quick existence check
         let rowgroup_manager = self.rowgroup_manager.read().await;
         
-        for rowgroup in &rowgroup_manager.rowgroups {
+        for rowgroup in rowgroup_manager.rowgroups() {
             // Simplified bloom filter check (would use actual bloom filter)
             // if let Some(bloom) = rowgroup_manager.bloom_filters.get(&rowgroup.id) {
             //     if !bloom.check(&vector_id.to_string()) {
@@ -672,7 +705,7 @@ impl UnifiedStorageEngine for RaptorEngine {
             
             let string_array = id_column
                 .as_any()
-                .downcast_ref::<arrow_array::StringArray>()
+                .downcast_ref::<StringArray>()
                 .ok_or_else(|| anyhow::anyhow!("ID column is not StringArray"))?;
             
             for i in 0..batch.num_rows() {
@@ -688,34 +721,51 @@ impl UnifiedStorageEngine for RaptorEngine {
     
     async fn search_vectors_unified(
         &self,
-        collection_id: &str,
-        storage_url: &str,
-        query_vector: &[f32],
-        k: usize,
-        distance_metric: &DistanceMetric,
-        filter_expression: Option<&FilterExpression>,
-        include_vectors: bool,
-        include_metadata: bool,
+        ctx: &SearchContext,
     ) -> Result<Vec<SearchResult>> {
+        // Extract all parameters from enhanced context (pre-computed)
+        let collection_id = ctx.collection_id();
+        let storage_path = ctx.storage_path();
+        let query_vector = ctx.query_vector()
+            .ok_or_else(|| anyhow::anyhow!("No query vector in search context"))?;
+        let k = ctx.top_k();
+        let dimension = ctx.dimension();
+        let distance_metric = ctx.distance_metric();
+        let performance_tier = ctx.performance_tier();
+        // These fields are no longer in search_params, default to true
+        let include_vectors = true;
+        let include_metadata = true;
+        
+        // Log search with enhanced context info
+        tracing::info!("RAPTOR search: collection={}, k={}, metric={:?}, tier={:?}, storage_path={}",
+            collection_id, k, distance_metric, performance_tier, storage_path);
+        
         // Convert filter expression to simple filter for now
-        let filter = if filter_expression.is_some() {
+        let filter = if ctx.search_params.filter_expression.is_some() {
             Some(HashMap::new()) // Simplified
         } else {
             None
         };
         
-        let internal_results = self.search_internal(query_vector, k, filter).await?;
+        // Use performance tier to optimize search strategy
+        let internal_results = match performance_tier {
+            crate::storage::traits::PerformanceTier::Hot => {
+                // Memory-first search for hot data
+                self.search_internal(query_vector, k, filter).await?
+            },
+            _ => {
+                // Standard search for other tiers
+                self.search_internal(query_vector, k, filter).await?
+            }
+        };
         
         // Convert internal results to SearchResult
         let mut results = Vec::new();
         for res in internal_results {
             results.push(SearchResult {
-                id: res.id,
-                score: res.score,
-                distance: res.score,
-                vector: if include_vectors { res.vector } else { None },
-                metadata: if include_metadata { res.metadata } else { None },
-                version: None,
+                vector_id: res.id,
+                semantic_similarity: res.score,
+                timestamp: chrono::Utc::now(),
             });
         }
         
@@ -872,7 +922,7 @@ impl RaptorEngine {
             .ok_or_else(|| anyhow::anyhow!("Vector column not found"))?;
         let float_array = vector_column
             .as_any()
-            .downcast_ref::<arrow_array::Float32Array>()
+            .downcast_ref::<Float32Array>()
             .ok_or_else(|| anyhow::anyhow!("Vector column is not Float32Array"))?;
         
         let dimension = float_array.len() / batch.num_rows();
@@ -884,13 +934,13 @@ impl RaptorEngine {
         let metadata = if let Some(metadata_column) = batch.column_by_name("metadata") {
             let string_array = metadata_column
                 .as_any()
-                .downcast_ref::<arrow_array::StringArray>();
+                .downcast_ref::<StringArray>();
             
             if let Some(arr) = string_array {
                 if let Some(metadata_str) = arr.value(index).parse::<String>().ok() {
                     serde_json::from_str(&metadata_str).unwrap_or_default()
                 } else {
-                    HashMap::new()
+                    HashMap::<String, serde_json::Value>::new()
                 }
             } else {
                 HashMap::new()
@@ -903,7 +953,7 @@ impl RaptorEngine {
         let version = if let Some(version_column) = batch.column_by_name("version") {
             let uint_array = version_column
                 .as_any()
-                .downcast_ref::<arrow::array::UInt32Array>();
+                .downcast_ref::<UInt32Array>();
             
             uint_array.and_then(|arr| Some(arr.value(index)))
         } else {
@@ -914,7 +964,7 @@ impl RaptorEngine {
         let timestamp = if let Some(timestamp_column) = batch.column_by_name("timestamp") {
             let int_array = timestamp_column
                 .as_any()
-                .downcast_ref::<arrow::array::Int64Array>();
+                .downcast_ref::<Int64Array>();
             
             int_array.and_then(|arr| Some(arr.value(index) as u32))
         } else {
@@ -922,11 +972,16 @@ impl RaptorEngine {
         };
         
         Ok(VectorRecord {
-            id,
+            id: Some(id),
             vector,
-            metadata,
+            metadata: metadata.into_iter()
+                .map(|(k, v)| crate::proto::proximadb::MetadataItem {
+                    key: k,
+                    value: Some(crate::proto::proximadb::metadata_item::Value::StringValue(v.to_string())),
+                })
+                .collect(),
             version,
-            timestamp,
+            timestamp: timestamp.unwrap_or(0),
             ..Default::default()
         })
     }

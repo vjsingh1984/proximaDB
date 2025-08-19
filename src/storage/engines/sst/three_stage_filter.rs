@@ -211,7 +211,7 @@ impl ThreeStageFilterPipeline {
         }
         
         for block in data_blocks {
-            if let Some(block_entries) = block_index_map.get(key) {
+            if let Some(block_entries) = block_index_map.get(&block.block_id) {
                 if self.block_might_contain_matches(filter_expr, block_entries)? {
                     debug!("📊 Stage 2: Block {} qualifies - adding to processing list", block.block_id);
                     qualifying_blocks.push(block.clone());
@@ -247,10 +247,10 @@ impl ThreeStageFilterPipeline {
                     .filter_map(|entry| {
                         // Check if this index entry has statistics for the field
                         if let (Some(min_val), Some(max_val)) = (
-                            entry.metadata_min_values.get(key),
-                            entry.metadata_max_values.get(key)
+                            entry.metadata_min_values.get(field),
+                            entry.metadata_max_values.get(field)
                         ) {
-                            Some((min_val, max_val, entry.metadata_null_counts.get(key).unwrap_or(&0)))
+                            Some((min_val, max_val, entry.metadata_null_counts.get(field).unwrap_or(&0)))
                         } else {
                             None
                         }
@@ -499,7 +499,7 @@ mod tests {
                 block_id: 0,
                 records: vec![
                     crate::storage::engines::sst::SstRecord {
-                        id: "vec1".to_string(),
+                        id: Some("vec1".to_string()),
                         vector: vec![0.1; 128],
                         metadata: vec![
                             crate::proto::proximadb::MetadataItem {
@@ -516,7 +516,7 @@ mod tests {
                         level: 0,
                     },
                     crate::storage::engines::sst::SstRecord {
-                        id: "vec2".to_string(),
+                        id: Some("vec2".to_string()),
                         vector: vec![0.2; 128],
                         metadata: vec![
                             crate::proto::proximadb::MetadataItem {
@@ -533,7 +533,7 @@ mod tests {
                         level: 0,
                     },
                     crate::storage::engines::sst::SstRecord {
-                        id: "vec3".to_string(),
+                        id: Some("vec3".to_string()),
                         vector: vec![0.3; 128],
                         metadata: vec![
                             crate::proto::proximadb::MetadataItem {
@@ -556,13 +556,8 @@ mod tests {
                 metadata_stats: crate::storage::engines::sst::DataBlockMetadata::default(),
                 block_bloom_filter: None,
                 has_deletes: false,
-                // Quantization is always part of SST blocks
-                quantized_section: crate::storage::engines::sst::QuantizedSection {
-                    pq_codes: vec![],
-                    binary_sketches: vec![],
-                    int8_vectors: None,
-                    int8_params: None,
-                },
+                quantized_vectors: None,
+                quantization_level: None,
             },
         ]
     }

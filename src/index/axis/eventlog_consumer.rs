@@ -201,7 +201,7 @@ impl AxisEventLogConsumer {
         // Get collection configuration
         debug!("[AXIS Consumer] Looking up collection {} in cache_info", event.collection_id);
         let collection = self.collection_cache
-            .get(key)
+            .get(&event.collection_id)
             .ok_or_else(|| {
                 error!("[AXIS Consumer] Collection {} not found in cache for event {}", event.collection_id, event_id);
                 anyhow::anyhow!("Collection {} not found", event.collection_id)
@@ -597,7 +597,7 @@ impl AxisEventLogConsumer {
                                 updated_at: vector_record.updated_at,
                                 expires_at: vector_record.expires_at,
                                 version: vector_record.version,
-                                quantized: if matches!(extraction_mode, ExtractionMode::QuantizedOnly | ExtractionMode::Both) {
+                                quantized_vector: if matches!(extraction_mode, ExtractionMode::QuantizedOnly | ExtractionMode::Both) {
                                     vector_record.quantized_vector.clone()
                                 } else {
                                     None

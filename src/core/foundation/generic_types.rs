@@ -103,7 +103,7 @@ where
     }
     
     fn created_at(&self) -> DateTime<Utc> {
-        self.created_at
+        self.timestamp
     }
     
     fn updated_at(&self) -> DateTime<Utc> {
@@ -218,7 +218,7 @@ where
     }
     
     fn error(&self) -> Option<&str> {
-        self.error_message.as_deref()
+        self.error_code.as_deref()
     }
     
     fn processing_time_us(&self) -> Option<u64> {

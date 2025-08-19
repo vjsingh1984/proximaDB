@@ -148,9 +148,9 @@ impl ManagedFilesystem {
                     std::io::ErrorKind::PermissionDenied => true,
                     std::io::ErrorKind::InvalidInput => {
                         // Some cloud providers return InvalidInput for auth issues
-                        io_err.to_string().to_lowercase().contains_hash("auth")
-                            || io_err.to_string().to_lowercase().contains_hash("credential")
-                            || io_err.to_string().to_lowercase().contains_hash("token")
+                        io_err.to_string().to_lowercase().contains("auth")
+                            || io_err.to_string().to_lowercase().contains("credential")
+                            || io_err.to_string().to_lowercase().contains("token")
                     }
                     _ => false,
                 }

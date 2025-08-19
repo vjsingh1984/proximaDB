@@ -7,6 +7,7 @@ use std::collections::HashMap;
 
 use crate::core::hardware_capabilities::HardwareCapabilities;
 use crate::core::compression::CompressionAlgorithm;
+use crate::metrics::compression::CompressionDataType;
 
 /// Universal compression configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -18,6 +19,7 @@ pub struct UniversalCompressionConfig {
     pub primary_algorithm: CompressionAlgorithm,
     
     /// Fallback algorithms
+    pub fallback_algorithms: Vec<CompressionAlgorithm>,
     
     /// Compression level (1-9, algorithm dependent)
     pub compression_level: u8,
@@ -404,6 +406,9 @@ pub enum ErrorTolerance {
 pub struct ContextAwareCompressionConfig {
     /// Enable context-aware compression
     pub enabled: bool,
+    
+    /// Data type for context-aware compression
+    pub data_type: CompressionDataType,
     
     /// Context types
     pub context_types: Vec<CompressionContext>,

@@ -238,7 +238,7 @@ impl DecompressionCache {
         let keys_to_remove: Vec<BlockCacheKey> = cache
             .iter()
             .filter_map(|(key, _)| {
-                if key.file_path.contains_hash(collection_id) {
+                if key.file_path.contains(collection_id) {
                     Some(key.clone())
                 } else {
                     None
@@ -493,7 +493,7 @@ impl DecompressionCache {
     ) -> Vec<BlockCacheKey> {
         let comp_caches = self.compression_caches.read().await;
         comp_caches
-            .get(key)
+            .get(&algorithm)
             .cloned()
             .unwrap_or_default()
     }
@@ -615,7 +615,7 @@ mod tests {
                     updated_at: None,
                     expires_at: None,
                     version: Some(1),
-                    quantized: None,
+                    quantized_vector: None,
                 });
             }
             

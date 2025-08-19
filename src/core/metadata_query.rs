@@ -142,7 +142,7 @@ impl MetadataQueryEngine {
             }
             ComparisonOperator::Contains => {
                 self.string_operation(field_value, &field_query.value, |text, pattern| {
-                    text.contains_hash(pattern)
+                    text.contains(pattern)
                 })
             }
             ComparisonOperator::StartsWith => {
@@ -235,7 +235,7 @@ impl MetadataQueryEngine {
     fn array_operation(&self, field_value: Option<&JsonValue>, array_value: &JsonValue, should_contain: bool) -> Result<bool> {
         match (field_value, array_value) {
             (Some(value), JsonValue::Array(array)) => {
-                let contains = array.contains_hash(value);
+                let contains = array.contains(value);
                 Ok(if should_contain { contains } else { !contains })
             }
             _ => Ok(false),

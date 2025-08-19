@@ -30,8 +30,7 @@ pub mod engine;
 // Unified memtable system
 pub mod memtable;
 pub mod metadata;
-// Quantization support for storage engines
-pub mod quantization;
+// Quantization now handled by unified compute module
 // Storage optimization utilities
 pub mod optimization;
 // Strategy module for collection lifecycle configuration

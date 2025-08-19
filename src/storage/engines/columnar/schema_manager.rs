@@ -418,6 +418,7 @@ impl ColumnarSchemaManager {
 #[derive(Debug, Clone, Hash)]
 pub struct FilterableColumn {
     pub name: String,
+    pub data_type: String,
     pub nullable: bool,
     pub indexed: bool,
 }

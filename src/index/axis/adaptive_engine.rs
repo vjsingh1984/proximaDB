@@ -12,7 +12,7 @@ use tokio::sync::RwLock;
 
 use super::{
     AxisConfig, CollectionAnalyzer, MigrationDecision,
-    // strategy removed - :{OptimizationConfig, OptimizationGoal, CollectionStatistics, QueryPatterns, IndexStrategyBuilder},
+    strategy::{OptimizationConfig, OptimizationGoal, CollectionStatistics, QueryPatterns, IndexStrategyBuilder},
     types::{DataType, IndexAlgorithm, IndexSpecification, IndexSelectionStrategy},
 };
 
@@ -578,7 +578,7 @@ impl IndexStrategySelector {
         characteristics: &CollectionCharacteristics,
     ) -> Result<IndexSelectionStrategy> {
         let optimization_config = self.optimization_configs
-            .get(key)
+            .get(&strategy_type)
             .ok_or_else(|| anyhow::anyhow!("No config for strategy type: {:?}", strategy_type))?;
 
         // Convert characteristics to builder format

@@ -70,7 +70,7 @@ impl LocalFileSystem {
         let path = FilesystemFactory::resolve_path(url)?;
         
         // Validate that it's a file URL if it has a scheme
-        if url.contains_hash("://") {
+        if url.contains("://") {
             use url::Url;
             let parsed_url = Url::parse(url)?;
             if parsed_url.scheme() != "file" {
@@ -416,7 +416,7 @@ impl FileSystem for LocalFileSystem {
         let bytes_to_read = std::cmp::min(length, file_size - offset) as usize;
         
         // Debug log for SSTable bloom filter issue
-        if path.contains_hash(".sstable") && offset < 1000 {
+        if path.contains(".sstable") && offset < 1000 {
             tracing::debug!(
                 "DEBUG LocalFS read_range: path={}, offset={}, length={}, file_size={}, bytes_to_read={}",
                 path, offset, length, file_size, bytes_to_read
@@ -788,8 +788,8 @@ use tracing::{debug, error, info};
         debug!("Entry URL: {}", entry_url);
         
         // The URL should be properly formatted without duplications
-        assert!(entry_url.contains_hash("test_metadata/current/test.txt"));
-        assert!(!entry_url.contains_hash("test_metadata/test_metadata_info"));
+        assert!(entry_url.contains("test_metadata/current/test.txt"));
+        assert!(!entry_url.contains("test_metadata/test_metadata_info"));
     }
 
     #[tokio::test]
@@ -925,10 +925,10 @@ use tracing::{debug, error, info};
         // List directory
         let entries = fs.list(relative_url).await.unwrap();
         assert_eq!(entries.len(), 1);
-        assert!(entries[0].url.contains_hash("test.txt"));
+        assert!(entries[0].url.contains("test.txt"));
         
         // Verify no path duplication in the URL
-        assert!(!entries[0].url.contains_hash("test_metadata/test_metadata_info"));
+        assert!(!entries[0].url.contains("test_metadata/test_metadata_info"));
         
         // Restore original directory
         std::env::set_current_dir(original_dir).unwrap();

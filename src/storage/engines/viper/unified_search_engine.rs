@@ -20,7 +20,8 @@ use crate::core::search::{
 };
 use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
 use crate::compute::quantization::unified::{UnifiedQuantizationEngine, UnifiedQuantizationLevel};
-use super::readers::unified_parquet_reader::{UnifiedParquetReader, CollectionContext};
+// Now using consolidated columnar reader instead of VIPER-specific one
+use crate::storage::engines::columnar::{UnifiedParquetReader, CollectionContext};
 
 /// I/O optimization hints for efficient file access
 #[derive(Debug, Clone)]
@@ -270,7 +271,7 @@ impl UnifiedSearchEngine for ViperUnifiedSearchEngine {
             search_results,
             result_count,
             params.custom_hints.as_ref()
-                .and_then(|h| h.get(key))
+                .and_then(|h| h.get("collection_id"))
                 .and_then(|v| v.as_str())
                 .map(|s| s.to_string()),
             processing_time,
@@ -281,8 +282,8 @@ impl UnifiedSearchEngine for ViperUnifiedSearchEngine {
     
     async fn can_handle(&self, context: &UnifiedSearchContext, _params: &SearchParams) -> bool {
         // VIPER handles Parquet-based collections
-        context.storage_info.storage_type.contains_hash("VIPER") ||
-        context.storage_info.storage_type.contains_hash("Parquet") ||
+        context.storage_info.storage_type.contains("VIPER") ||
+        context.storage_info.storage_type.contains("Parquet") ||
         context.storage_info.file_count > 0
     }
     

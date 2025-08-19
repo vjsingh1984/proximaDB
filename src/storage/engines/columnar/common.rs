@@ -29,10 +29,12 @@ use super::serialization::{
     ColumnarSerializer, ColumnarSerializationConfig, SerializationResult,
     FormatPreference,
 };
+// Use unified distance compute directly instead of obsolete QuantizedDistanceCalculator
 use crate::compute::distance_computation::{
-    QuantizedDistanceCalculator, QuantizedDistanceConfig, QuantizedVectorData,
-    SelectedFormat, QuantizedDistanceResult,
+    engine::UnifiedDistanceCompute,
+    DistanceMetric, SimilarityResult,
 };
+use crate::core::compression::CompressionAlgorithm;
 
 /// Common configuration for VIPER and NOVA engines
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -47,7 +49,7 @@ pub struct CommonColumnarConfig {
     pub serialization_config: SerializationOptimizationConfig,
     
     /// Distance computation settings
-    pub distance_config: DistanceComputationConfig,
+    // distance_config removed - engines use compute module directly
     
     /// Engine-specific optimizations
     pub engine_optimizations: EngineOptimizations,
@@ -423,8 +425,7 @@ pub struct CommonColumnarOperations {
     /// Serializer for transparent format conversion
     serializer: Arc<ColumnarSerializer>,
     
-    /// Distance calculator for quantized data
-    distance_calculator: Arc<QuantizedDistanceCalculator>,
+    // Distance computation removed - engines should use compute module directly
     
     /// Filesystem factory for I/O operations
     filesystem_factory: Arc<FilesystemFactory>,
@@ -539,15 +540,7 @@ impl CommonColumnarOperations {
         };
         let serializer = Arc::new(ColumnarSerializer::new(serialization_config)?);
         
-        // Initialize distance calculator
-        let distance_config = QuantizedDistanceConfig {
-            distance_metric: config.distance_config.default_distance_metric,
-            simd_optimization: config.distance_config.to_simd_optimization(),
-            cache_config: config.distance_config.to_cache_config(),
-            approximation: config.distance_config.to_approximation_config(),
-            hardware_preferences: config.distance_config.to_hardware_preferences(),
-        };
-        let distance_calculator = Arc::new(QuantizedDistanceCalculator::new(distance_config)?);
+        // Distance computation removed - use compute module directly in engines
         
         // Initialize metadata cache
         let metadata_cache = Arc::new(RwLock::new(MetadataCache {
@@ -566,7 +559,7 @@ impl CommonColumnarOperations {
             config,
             schema_builder,
             serializer,
-            distance_calculator,
+            // distance_compute removed - use compute module directly
             filesystem_factory,
             metadata_cache,
             performance_monitor,
@@ -660,107 +653,14 @@ impl CommonColumnarOperations {
     }
     
     /// Compute distance with quantized optimization
-    pub async fn compute_distance(
-        &self,
-        query: &[f32],
-        quantized: &QuantizedVectorData,
-        format_preference: Option<SelectedFormat>,
-    ) -> Result<QuantizedDistanceResult> {
-        let start_time = std::time::Instant::now();
-        
-        let format = format_preference.unwrap_or_else(|| {
-            // Auto-select best format based on available data
-            if quantized_vector.fp32.is_some() {
-                SelectedFormat::FP32
-            } else if quantized_vector.int8.is_some() {
-                SelectedFormat::INT8
-            } else if quantized_vector.pq.is_some() {
-                SelectedFormat::PQ
-            } else {
-                SelectedFormat::Binary
-            }
-        });
-        
-        let result = self.distance_calculator.compute_distance(query, quantized_vector, format).await?;
-        
-        let computation_time = start_time.elapsed().as_secs_f64() * 1000.0;
-        
-        // Update metrics
-        self.performance_monitor.record_distance_computation(
-            computation_time,
-            1, // Single vector
-        ).await;
-        
-        trace!("Distance computed in {:.2}ms with quality: {:.2}", 
-               computation_time, result.quality_estimate);
-        
-        Ok(result)
-    }
+    // Distance computation methods removed - use compute module directly
+    // Engines (NOVA, VIPER) should use:
+    // - crate::compute::distance_computation::engine::UnifiedDistanceCompute
+    // - crate::compute::quantization::storage_engine::StorageQuantizationEngine
     
-    /// Batch distance computation with optimization
-    pub async fn compute_batch_distances(
-        &self,
-        query: &[f32],
-        quantized_vectors: &[QuantizedVectorData],
-        format_preference: Option<SelectedFormat>,
-    ) -> Result<Vec<QuantizedDistanceResult>> {
-        let start_time = std::time::Instant::now();
-        
-        let format = format_preference.unwrap_or(SelectedFormat::FP32);
-        
-        debug!("Computing batch distances for {} vectors", quantized_vectors.len());
-        
-        let results = self.distance_calculator.compute_batch_distances(query, quantized_vectors, format).await?;
-        
-        let computation_time = start_time.elapsed().as_secs_f64() * 1000.0;
-        
-        // Update metrics
-        self.performance_monitor.record_distance_computation(
-            computation_time,
-            quantized_vectors.len(),
-        ).await;
-        
-        info!("Batch distance computation completed in {:.2}ms ({:.2} vectors/ms)", 
-              computation_time, quantized_vectors.len() as f64 / computation_time);
-        
-        Ok(results)
-    }
+    // Batch distance computation removed - use compute module directly
     
-    /// Progressive distance computation with quality optimization
-    pub async fn compute_progressive_distance(
-        &self,
-        query: &[f32],
-        quantized: &QuantizedVectorData,
-        target_quality: f32,
-    ) -> Result<QuantizedDistanceResult> {
-        let start_time = std::time::Instant::now();
-        
-        trace!("Computing progressive distance with target quality: {:.2}", target_quality);
-        
-        let result = self.distance_calculator.compute_progressive_distance(
-            query,
-            quantized_vector,
-            target_quality,
-        ).await?;
-        
-        let computation_time = start_time.elapsed().as_secs_f64() * 1000.0;
-        
-        // Update metrics
-        self.performance_monitor.record_distance_computation(
-            computation_time,
-            1,
-        ).await;
-        
-        debug!("Progressive distance computed in {:.2}ms with {} stages, final quality: {:.2}", 
-               computation_time, 
-               match &result.method {
-                   crate::compute::distance_computation::quantized::ComputationMethod::ProgressiveRefinement { stages } => stages.len(),
-                   _ => 1,
-               },
-               result.quality_estimate);
-        
-        Ok(result)
-    }
+    // Progressive distance computation removed - use compute module directly
     
     /// Load file metadata with caching
     pub async fn load_file_metadata<P: AsRef<Path>>(
@@ -897,12 +797,13 @@ impl CommonColumnarOperations {
         
         if cache.file_metadata.len() > max_entries {
             // Simple LRU eviction - remove oldest accessed entries
-            let mut entries: Vec<_> = cache.file_metadata.iter().collect();
-            entries.sort_by_key(|(_, cached)| cached.last_accessed);
+            let mut entries: Vec<_> = cache.file_metadata.iter().map(|(k, v)| (k.clone(), v.last_accessed)).collect();
+            entries.sort_by_key(|(_, last_accessed)| *last_accessed);
             
             let to_remove = entries.len() - max_entries;
-            for (path, _) in entries.iter().take(to_remove) {
-                cache.file_metadata.remove(*path);
+            let paths_to_remove: Vec<_> = entries.iter().take(to_remove).map(|(path, _)| path.clone()).collect();
+            for path in paths_to_remove {
+                cache.file_metadata.remove(&path);
             }
             
             debug!("Evicted {} metadata cache entries", to_remove);
@@ -961,11 +862,7 @@ impl PerformanceMonitor {
 }
 
 // Trait implementations for configuration conversions
-impl From<QuantizationConfig> for Option<QuantizationConfig> {
-    fn from(config: QuantizationConfig) -> Self {
-        Some(config)
-    }
-}
+// Note: Option<T> already has From<T> implementation in standard library
 
 // Extension trait implementations would go here to convert between different config types
 impl SerializationOptimizationConfig {
@@ -1019,7 +916,7 @@ impl Default for CommonColumnarConfig {
             base_config: ColumnarConfig::default(),
             schema_config: SchemaGenerationConfig::default(),
             serialization_config: SerializationOptimizationConfig::default(),
-            distance_config: DistanceComputationConfig::default(),
+            // distance_config removed
             engine_optimizations: EngineOptimizations::default(),
             monitoring_config: MonitoringConfig::default(),
         }
@@ -1365,4 +1262,73 @@ mod tests {
         assert_eq!(limits.pq_pool_max_vectors, 3000);
         assert_eq!(limits.max_vector_size_bytes, 64 * 1024);
     }
+}
+
+/// Map core compression algorithm to Parquet compression
+/// This is shared by both NOVA and VIPER engines for consistent compression handling
+pub fn map_core_to_parquet_compression(
+    algorithm: CompressionAlgorithm,
+    level: Option<i32>,
+) -> Result<parquet::basic::Compression> {
+    use parquet::basic::Compression;
+    
+    let compression = match algorithm {
+        CompressionAlgorithm::None => Compression::UNCOMPRESSED,
+        CompressionAlgorithm::Zstd => {
+            if let Some(lvl) = level {
+                Compression::ZSTD(parquet::basic::ZstdLevel::try_new(lvl)?)
+            } else {
+                Compression::ZSTD(parquet::basic::ZstdLevel::default())
+            }
+        }
+        CompressionAlgorithm::Lz4 => Compression::LZ4,
+        CompressionAlgorithm::Snappy => Compression::SNAPPY,
+        CompressionAlgorithm::Gzip => {
+            if let Some(lvl) = level {
+                Compression::GZIP(parquet::basic::GzipLevel::try_new(lvl as u32)?)
+            } else {
+                Compression::GZIP(parquet::basic::GzipLevel::default())
+            }
+        }
+        CompressionAlgorithm::Brotli => {
+            if let Some(lvl) = level {
+                Compression::BROTLI(parquet::basic::BrotliLevel::try_new(lvl as u32)?)
+            } else {
+                Compression::BROTLI(parquet::basic::BrotliLevel::default())
+            }
+        }
+        CompressionAlgorithm::Lz4Raw => Compression::LZ4_RAW,
+        CompressionAlgorithm::Lzo => Compression::LZO,
+        // Map unsupported algorithms to fallbacks
+        CompressionAlgorithm::Deflate | CompressionAlgorithm::Zlib => {
+            // Deflate/Zlib are similar to GZIP
+            if let Some(lvl) = level {
+                Compression::GZIP(parquet::basic::GzipLevel::try_new(lvl as u32)?)
+            } else {
+                Compression::GZIP(parquet::basic::GzipLevel::default())
+            }
+        }
+        CompressionAlgorithm::Lz4Hc => Compression::LZ4, // Use regular LZ4
+        CompressionAlgorithm::Xz | CompressionAlgorithm::Lzma => {
+            // XZ and LZMA provide high compression, map to ZSTD with high level
+            let high_level = level.unwrap_or(9).max(9);
+            Compression::ZSTD(parquet::basic::ZstdLevel::try_new(high_level)?)
+        }
+        CompressionAlgorithm::Bzip2 => {
+            // BZip2 provides good compression, map to Brotli
+            if let Some(lvl) = level {
+                Compression::BROTLI(parquet::basic::BrotliLevel::try_new(lvl as u32)?)
+            } else {
+                Compression::BROTLI(parquet::basic::BrotliLevel::default())
+            }
+        }
+        CompressionAlgorithm::Mixed => {
+            // Mixed compression - Use ZSTD level 3 as default for Parquet
+            // Per-column optimization will be handled at the writer level
+            info!("Using Mixed compression with ZSTD level 3 as base");
+            Compression::ZSTD(parquet::basic::ZstdLevel::try_new(3)?)
+        }
+    };
+    
+    Ok(compression)
 }

@@ -314,13 +314,13 @@ impl AdvancedZoneMap {
         &self,
         query: &[f32],
         distance_metric: DistanceMetric,
-        max_distance: f32,
+        max_similarity: f32,
         optimization_strategy: OptimizationStrategy,
     ) -> AdvancedIntersectionResult {
         let mut result = AdvancedIntersectionResult::default();
         
         // Start with basic zone map check
-        let basic_intersects = self.base_zone_map.intersects_query(query, distance_metric, max_distance);
+        let basic_intersects = self.base_zone_map.intersects_query(query, distance_metric, max_similarity);
         if !basic_intersects {
             result.intersects = false;
             result.confidence = 1.0;
@@ -330,19 +330,19 @@ impl AdvancedZoneMap {
         
         match optimization_strategy {
             OptimizationStrategy::Hierarchical => {
-                self.check_hierarchical_intersection(query, distance_metric, max_distance, &mut result)
+                self.check_hierarchical_intersection(query, distance_metric, max_similarity, &mut result)
             }
             OptimizationStrategy::Probabilistic => {
-                self.check_probabilistic_intersection(query, distance_metric, max_distance, &mut result)
+                self.check_probabilistic_intersection(query, distance_metric, max_similarity, &mut result)
             }
             OptimizationStrategy::Adaptive => {
-                self.check_adaptive_intersection(query, distance_metric, max_distance, &mut result)
+                self.check_adaptive_intersection(query, distance_metric, max_similarity, &mut result)
             }
             OptimizationStrategy::MultiScale => {
-                self.check_multi_scale_intersection(query, distance_metric, max_distance, &mut result)
+                self.check_multi_scale_intersection(query, distance_metric, max_similarity, &mut result)
             }
             OptimizationStrategy::Hybrid => {
-                self.check_hybrid_intersection(query, distance_metric, max_distance, &mut result)
+                self.check_hybrid_intersection(query, distance_metric, max_similarity, &mut result)
             }
         }
         
@@ -483,12 +483,12 @@ impl AdvancedZoneMap {
         &self,
         query: &[f32],
         distance_metric: DistanceMetric,
-        max_distance: f32,
+        max_similarity: f32,
         result: &mut AdvancedIntersectionResult,
     ) {
         // Check from coarsest to finest resolution
         for zone in self.hierarchical_zones.iter().rev() {
-            let intersects = zone.zone_map.intersects_query(query, distance_metric, max_distance);
+            let intersects = zone.zone_map.intersects_query(query, distance_metric, max_similarity);
             
             if !intersects {
                 result.intersects = false;
@@ -508,7 +508,7 @@ impl AdvancedZoneMap {
         &self,
         _query: &[f32],
         _distance_metric: DistanceMetric,
-        _max_distance: f32,
+        _max_similarity: f32,
         result: &mut AdvancedIntersectionResult,
     ) {
         if let Some(prob_zone) = &self.probabilistic_zone {
@@ -529,7 +529,7 @@ impl AdvancedZoneMap {
         &self,
         query: &[f32],
         distance_metric: DistanceMetric,
-        max_distance: f32,
+        max_similarity: f32,
         result: &mut AdvancedIntersectionResult,
     ) {
         if let Some(adaptive_zone) = &self.adaptive_zone {
@@ -551,10 +551,10 @@ impl AdvancedZoneMap {
         &self,
         query: &[f32],
         distance_metric: DistanceMetric,
-        max_distance: f32,
+        max_similarity: f32,
         result: &mut AdvancedIntersectionResult,
     ) {
-        if let Some(scaled_zone) = self.multi_scale_zones.get(key) {
+        if let Some(scaled_zone) = self.multi_scale_zones.get(&distance_metric) {
             // Use metric-specific optimized bounds
             let transformed_query = Self::transform_vector_for_metric(query, distance_metric);
             
@@ -562,7 +562,7 @@ impl AdvancedZoneMap {
             let intersects = self.check_transformed_intersection(
                 &transformed_query,
                 &scaled_zone.transformed_bounds,
-                max_distance,
+                max_similarity,
             );
             
             result.intersects = intersects;
@@ -578,7 +578,7 @@ impl AdvancedZoneMap {
         &self,
         query: &[f32],
         distance_metric: DistanceMetric,
-        max_distance: f32,
+        max_similarity: f32,
         result: &mut AdvancedIntersectionResult,
     ) {
         // Combine multiple strategies for best accuracy
@@ -586,12 +586,12 @@ impl AdvancedZoneMap {
         
         // Try hierarchical
         let mut hierarchical_result = AdvancedIntersectionResult::default();
-        self.check_hierarchical_intersection(query, distance_metric, max_distance, &mut hierarchical_result);
+        self.check_hierarchical_intersection(query, distance_metric, max_similarity, &mut hierarchical_result);
         sub_results.push(hierarchical_result);
         
         // Try multi-scale
         let mut multi_scale_result = AdvancedIntersectionResult::default();
-        self.check_multi_scale_intersection(query, distance_metric, max_distance, &mut multi_scale_result);
+        self.check_multi_scale_intersection(query, distance_metric, max_similarity, &mut multi_scale_result);
         sub_results.push(multi_scale_result);
         
         // Combine results using weighted voting
@@ -609,7 +609,7 @@ impl AdvancedZoneMap {
         &self,
         transformed_query: &[f32],
         bounds: &TransformedBounds,
-        max_distance: f32,
+        max_similarity: f32,
     ) -> bool {
         // Check intersection in transformed space
         let mut min_distance_sq = 0.0;
@@ -631,7 +631,7 @@ impl AdvancedZoneMap {
             }
         }
         
-        min_distance_sq.sqrt() <= max_distance
+        min_distance_sq.sqrt() <= max_similarity
     }
 }
 
@@ -670,6 +670,7 @@ pub struct AdvancedIntersectionResult {
     pub pruning_strategy: PruningStrategy,
     pub estimated_selectivity: Option<f32>,
     pub estimated_cost_savings: f32,
+    pub confidence: f32,
 }
 
 /// Pruning strategies
@@ -767,9 +768,9 @@ impl SelectivityModel {
         match self.model_type {
             ModelType::Linear => {
                 // Simple linear model: selectivity = a * norm + b * sparsity + c
-                let norm_factor = self.parameters.get(key).unwrap_or(&0.0);
-                let sparsity_factor = self.parameters.get(key).unwrap_or(&0.0);
-                let intercept = self.parameters.get(key).unwrap_or(&0.5);
+                let norm_factor = self.parameters.get("norm").unwrap_or(&0.0);
+                let sparsity_factor = self.parameters.get("sparsity").unwrap_or(&0.0);
+                let intercept = self.parameters.get("intercept").unwrap_or(&0.5);
                 
                 (norm_factor * characteristics.norm + sparsity_factor * characteristics.sparsity + intercept)
                     .max(0.0)
@@ -826,11 +827,7 @@ pub struct QueryPerformance {
     pub timestamp: chrono::DateTime<chrono::Utc>,
 }
 
-impl Default for DistanceMetric {
-    fn default() -> Self {
-        DistanceMetric::Euclidean
-    }
-}
+// Default implementation is provided by prost::Enumeration derive
 
 #[cfg(test)]
 mod tests {

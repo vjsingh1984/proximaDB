@@ -284,9 +284,7 @@ impl super::VectorBatchSerializer for AvroSerializer {
                                         Value::Int(ver) => Some(*ver as u32),
                                         _ => None,
                                     }),
-                                // rank removed -  None,
-                                similarity: None,
-                                similarity: None,
+                                quantized_vector: None,
                             });
                         }
                     }
@@ -322,9 +320,7 @@ mod tests {
             updated_at: Some(1234567890),
             expires_at: None,
             version: Some(1),
-            // rank removed -  None,
-            similarity: None,
-            similarity: None,
+            quantized_vector: None,
         }
     }
 

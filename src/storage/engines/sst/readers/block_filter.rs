@@ -101,7 +101,7 @@ impl BlockFilterStrategy {
 
 /// Intelligent block filter for DataBlock skipping
 pub struct IntelligentBlockFilter {
-    strategy: BlockFilterStrategy,
+    search_strategy: BlockFilterStrategy,
 }
 
 impl IntelligentBlockFilter {
@@ -129,14 +129,14 @@ impl IntelligentBlockFilter {
         global_bloom: Option<&SstableBloomFilter>,
     ) -> Result<bool> {
         // Skip all filtering for compaction
-        if self.strategy.skip_all_filtering || filter.query_type == QueryType::Compaction {
+        if self.search_strategy.skip_all_filtering || filter.query_type == QueryType::Compaction {
             trace!("🔄 Compaction mode: reading all blocks without filtering");
             return Ok(true);
         }
         
         // Check point query with bloom filter
         if let Some(ref target_id) = filter.target_id {
-            if self.strategy.use_bloom_filters {
+            if self.search_strategy.use_bloom_filters {
                 // Check global bloom first
                 if let Some(bloom) = global_bloom {
                     if !bloom.might_contain_key(target_id)? {
@@ -166,7 +166,7 @@ impl IntelligentBlockFilter {
         
         // Check range query with min/max
         if let Some((ref min_id, ref max_id)) = filter.id_range {
-            if self.strategy.use_min_max_stats {
+            if self.search_strategy.use_min_max_stats {
                 // Block's minimum key is after our max range
                 if &index_entry.key > max_id {
                     debug!("🚫 Block {} range: min key '{}' > max range '{}'", 
@@ -178,7 +178,7 @@ impl IntelligentBlockFilter {
         }
         
         // Check metadata filters with min/max statistics
-        if !filter.metadata_filters.is_empty() && self.strategy.use_min_max_stats {
+        if !filter.metadata_filters.is_empty() && self.search_strategy.use_min_max_stats {
             for (column, filter_value) in &filter.metadata_filters {
                 if !self.check_metadata_filter(index_entry, column, filter_value)? {
                     debug!("🚫 Block {} metadata filter: column '{}' doesn't match", 
@@ -204,8 +204,8 @@ impl IntelligentBlockFilter {
             MetadataFilter::Equals(value) => {
                 // Check if value is within min/max range
                 if let (Some(min), Some(max)) = (
-                    index_entry.metadata_min_values.get(key),
-                    index_entry.metadata_max_values.get(key),
+                    index_entry.metadata_min_values.get(column),
+                    index_entry.metadata_max_values.get(column),
                 ) {
                     // If value is outside [min, max], block can be skipped
                     if !Self::value_in_range(value, min, max) {
@@ -217,8 +217,8 @@ impl IntelligentBlockFilter {
             MetadataFilter::Range(filter_min, filter_max) => {
                 // Check if ranges overlap
                 if let (Some(block_min), Some(block_max)) = (
-                    index_entry.metadata_min_values.get(key),
-                    index_entry.metadata_max_values.get(key),
+                    index_entry.metadata_min_values.get(column),
+                    index_entry.metadata_max_values.get(column),
                 ) {
                     // No overlap if block_max < filter_min or block_min > filter_max
                     if Self::compare_json_values(block_max, filter_min) == std::cmp::Ordering::Less ||
@@ -231,8 +231,8 @@ impl IntelligentBlockFilter {
             MetadataFilter::In(values) => {
                 // Check if any value could be in block's range
                 if let (Some(min), Some(max)) = (
-                    index_entry.metadata_min_values.get(key),
-                    index_entry.metadata_max_values.get(key),
+                    index_entry.metadata_min_values.get(column),
+                    index_entry.metadata_max_values.get(column),
                 ) {
                     let any_in_range = values.iter().any(|v| Self::value_in_range(v, min, max));
                     if !any_in_range {
@@ -243,7 +243,7 @@ impl IntelligentBlockFilter {
             
             MetadataFilter::NotNull => {
                 // Check if all values are null
-                if let Some(null_count) = index_entry.metadata_null_counts.get(key) {
+                if let Some(null_count) = index_entry.metadata_null_counts.get(column) {
                     // This would require knowing total records in block
                     // For now, we can't skip based on this alone
                 }
@@ -251,7 +251,7 @@ impl IntelligentBlockFilter {
             
             MetadataFilter::IsNull => {
                 // Check if there are any nulls
-                if let Some(null_count) = index_entry.metadata_null_counts.get(key) {
+                if let Some(null_count) = index_entry.metadata_null_counts.get(column) {
                     if *null_count == 0 {
                         return Ok(false);
                     }

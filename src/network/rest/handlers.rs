@@ -40,7 +40,6 @@ use crate::proto::proximadb::{
     DistanceMetric, FilterableDataType, StorageConfig,
     ParquetWriterSettings, FooterCacheSettings, HybridWriterSettings,
     SstEngineSettings, ViperEngineSettings, NovaEngineSettings,
-    vector_operation_response::ResultPayload,
     HnswConfig, IvfConfig, FlatConfig, PqConfig, AnnoyConfig, LshConfig,
     FilterableColumnSpec, AccessPattern, DataDensity,
     CollectionRequest, CollectionOperation, VectorRecord, VectorBatchRequest,
@@ -799,7 +798,7 @@ pub async fn collection_operation(
         affected_count: proto_response.affected_count,
         total_count: proto_response.total_count,
         metadata: proto_response.metadata.into_iter().collect(),
-        // error_message removed -  proto_response.error_message,
+        error_message: None,
         error_code: proto_response.error_code,
         processing_time_us: proto_response.processing_time_us,
     };
@@ -880,7 +879,7 @@ pub async fn vector_batch(
         },
         results: None,
         vector_ids: proto_response.vector_ids,
-        // error_message removed -  proto_response.error_message,
+        error_message: None,
         error_code: proto_response.error_code,
     };
     
@@ -909,25 +908,18 @@ pub async fn vector_search(
         })?;
     
     // Convert proto response to REST response
-    let results = if let Some(result_payload) = proto_response.result_payload {
-        match result_payload {
-            ResultPayload::CompactResults(compact) => {
-                compact.results.into_iter()
-                    .map(|r| SearchVectorRecord {
-                        id: r.id.clone(),
-                        vector: r.vector,
-                        metadata: r.metadata,
-                        // rank removed -  r.rank,
-                        similarity: r.score,
-                        similarity: r.distance,
-                        version: r.version,
-                        timestamp: r.timestamp,
-                        collection_id: r.collection_id,
-                    })
-                    .collect()
-            }
-            _ => vec![],
-        }
+    let results = if let Some(search_result) = proto_response.results {
+        search_result.results.into_iter()
+            .map(|r| SearchVectorRecord {
+                id: r.id.clone(),
+                vector: r.vector,
+                metadata: r.metadata,
+                score: r.score,
+                similarity: r.similarity,
+                version: r.version,
+                timestamp: r.timestamp,
+            })
+            .collect()
     } else {
         vec![]
     };
@@ -956,7 +948,7 @@ pub async fn vector_search(
         },
         results: Some(results),
         vector_ids: vec![],
-        // error_message removed -  proto_response.error_message,
+        error_message: None,
         error_code: proto_response.error_code,
     };
     
@@ -980,9 +972,9 @@ pub async fn get_vector(
     ).await {
         Ok(response) => {
             if response.success {
-                // Extract the single result from compact results
-                if let Some(ResultPayload::CompactResults(results)) = response.result_payload {
-                    if let Some(result) = results.results.first() {
+                // Extract the single result from search results
+                if let Some(search_result) = response.results {
+                    if let Some(result) = search_result.results.first() {
                         let vector_response = VectorGetResponse {
                             id: result.id.clone(),
                             collection_id: collection_id.clone(),
@@ -1251,37 +1243,35 @@ fn convert_index_config_to_proto(config: IndexConfiguration) -> IndexConfig {
     }
 }
 
-/// Convert quantization config to proto (simplified)
+/// Convert quantization config to proto (new granular format)
 fn convert_quantization_config_to_proto(config: RestQuantizationConfig) -> QuantizationConfig {
-    // The proto has been simplified - map from complex REST structure to simple proto
-    let method = if let Some(sq) = &config.storage_quantization {
-        // Try to infer method from the level type in storage config
+    // Map from REST structure to new granular proto structure
+    let strategy = if let Some(sq) = &config.storage_quantization {
+        // Try to infer strategy from the level type in storage config
         match sq.level.as_str() {
-            "pq" | "pq4" | "pq8" => crate::proto::proximadb::quantization_config::Method::ProductQuantization,
-            "int8" | "scalar" => crate::proto::proximadb::quantization_config::Method::ScalarQuantization,
-            "binary" => crate::proto::proximadb::quantization_config::Method::BinaryQuantization,
-            _ => crate::proto::proximadb::quantization_config::Method::Adaptive,
+            "pq" | "pq4" | "pq8" | "int8" | "scalar" | "binary" => {
+                crate::proto::proximadb::quantization_config::Strategy::CustomLevels
+            },
+            _ => crate::proto::proximadb::quantization_config::Strategy::SmartDefaults,
         }
     } else {
-        crate::proto::proximadb::quantization_config::Method::Adaptive
+        crate::proto::proximadb::quantization_config::Strategy::SmartDefaults
     };
     
     QuantizationConfig {
         enabled: config.enabled,
-        method: Some(method as i32),
-        // Extract PQ settings from storage config if available
-        num_subvectors: config.storage_quantization.as_ref()
-            .and_then(|_| Some(16)), // Default to 16 subvectors
-        bits_per_subvector: config.storage_quantization.as_ref()
-            .and_then(|sq| match sq.level.as_str() {
-                "pq4" => Some(4),
-                "pq8" => Some(8),
-                _ => Some(8),
-            }),
-        training_sample_size: Some(10000),
-        // quality_threshold removed -  Some(0.95),
-        enable_progressive_search: Some(true),
-        binary_filter_threshold: Some(0.3),
+        strategy: strategy as i32,
+        custom_levels: vec![], // TODO: Convert REST levels to proto levels
+        enable_progressive_search: true,
+        binary_filter_selectivity: 0.3,
+        int8_ranking_selectivity: 0.1,
+        pq_ranking_selectivity: 0.05,
+        training_sample_size: 10000,
+        quality_threshold: 0.95,
+        enable_adaptive_training: true,
+        optimize_for_storage: false,
+        optimize_for_memory: false,
+        enable_simd_acceleration: true,
     }
 }
 
@@ -1736,7 +1726,7 @@ pub async fn delete_collection(
         affected_count: proto_response.affected_count,
         total_count: proto_response.total_count,
         metadata: proto_response.metadata.into_iter().collect(),
-        // error_message removed -  proto_response.error_message,
+        error_message: None,
         error_code: proto_response.error_code,
         processing_time_us: proto_response.processing_time_us,
     };
@@ -1777,7 +1767,7 @@ pub async fn delete_vectors(
             updated_at: Some((current_time / 1000) as u32),
             expires_at: Some((current_time / 1000) as u32), // Mark for deletion (convert ms to seconds)
             version: Some(1),
-            quantized: None,
+            quantized_vector: None,
         
         })
         .collect();
@@ -1824,7 +1814,7 @@ pub async fn delete_vectors(
         },
         results: None,
         vector_ids: proto_response.vector_ids,
-        // error_message removed -  proto_response.error_message,
+        error_message: None,
         error_code: proto_response.error_code,
     };
     

@@ -2,13 +2,12 @@
 //! Eliminates redundant JSON/Avro serialization
 
 use crate::core::search::results::SearchResult as NativeSearchResult;
-use crate::proto::proximadb::{SearchResult as ProtoSearchResult, MetadataItem};
+use crate::proto::proximadb::{SearchVectorRecord, SearchResult as ProtoSearchResult, MetadataItem};
 
-impl From<NativeSearchResult> for ProtoSearchResult {
+impl From<NativeSearchResult> for SearchVectorRecord {
     fn from(native: NativeSearchResult) -> Self {
-        ProtoSearchResult {
+        SearchVectorRecord {
             id: native.id,
-            similarity: native.score,
             vector: native.vector.unwrap_or_default(),
             metadata: native.metadata
                 .into_iter()
@@ -31,20 +30,18 @@ impl From<NativeSearchResult> for ProtoSearchResult {
                     }
                 })
                 .collect(),
-            // rank removed -  native.rank.map(|r| r as i32).unwrap_or(0),
-            similarity: native.distance.unwrap_or(0.0),
-            version: None,
-            timestamp: None,
-            collection_id: None,
+            score: native.score,
+            similarity: native.similarity,
+            version: native.version,
+            timestamp: native.timestamp,
         }
     }
 }
 
-impl From<&NativeSearchResult> for ProtoSearchResult {
+impl From<&NativeSearchResult> for SearchVectorRecord {
     fn from(native: &NativeSearchResult) -> Self {
-        ProtoSearchResult {
+        SearchVectorRecord {
             id: native.id.clone(),
-            similarity: native.score,
             vector: native.vector.clone().unwrap_or_default(),
             metadata: native.metadata
                 .iter()
@@ -67,21 +64,20 @@ impl From<&NativeSearchResult> for ProtoSearchResult {
                     }
                 })
                 .collect(),
-            // rank removed -  native.rank.map(|r| r as i32).unwrap_or(0),
-            similarity: native.distance.unwrap_or(0.0),
-            version: None,
-            timestamp: None,
-            collection_id: None,
+            score: native.score,
+            similarity: native.similarity,
+            version: native.version,
+            timestamp: native.timestamp,
         }
     }
 }
 
-/// Convert a vector of native search results directly to proto
+/// Convert a vector of native search results directly to proto SearchVectorRecord
 pub fn convert_search_results(
     native_results: Vec<NativeSearchResult>,
     include_vectors: bool,
     include_metadata: bool,
-) -> Vec<ProtoSearchResult> {
+) -> Vec<SearchVectorRecord> {
     native_results
         .into_iter()
         .map(|mut result| {
@@ -92,7 +88,7 @@ pub fn convert_search_results(
             if !include_metadata {
                 result.metadata.clear();
             }
-            ProtoSearchResult::from(result)
+            SearchVectorRecord::from(result)
         })
         .collect()
 }
@@ -102,11 +98,11 @@ pub fn convert_search_results_ref(
     native_results: &[NativeSearchResult],
     include_vectors: bool,
     include_metadata: bool,
-) -> Vec<ProtoSearchResult> {
+) -> Vec<SearchVectorRecord> {
     native_results
         .iter()
         .map(|result| {
-            let mut proto = ProtoSearchResult::from(result);
+            let mut proto = SearchVectorRecord::from(result);
             // Apply include flags
             if !include_vectors {
                 proto.vector.clear();

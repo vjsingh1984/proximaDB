@@ -1,6 +1,33 @@
-//! Vector Operations Service - Updated to use Consolidated Query Optimizer
+//! Vector Operations Service - Centralized Search Orchestration
 //! 
-//! This demonstrates the migration from separate optimizers to the unified system
+//! ARCHITECTURE OVERVIEW:
+//! ======================
+//! This service orchestrates all vector search operations across the system:
+//! 
+//! 1. **Unified Search Interface**: All storage engines implement `search_vectors_unified`
+//!    - VIPER: Uses columnar Parquet format with predicate pushdown
+//!    - NOVA: Extends Parquet with additional statistics for aggressive I/O pruning
+//!    - SST: Uses row-based format with bloom filters and hierarchical blocks
+//!    - SWIFT: Zero-overhead storage with progressive quantization
+//! 
+//! 2. **Shared Infrastructure**:
+//!    - `columnar/parquet_reader.rs`: Shared Parquet reader for VIPER and NOVA
+//!    - `compute/quantization/storage_engine.rs`: Common quantization for all engines
+//!    - `compute/distance_computation/engine.rs`: Unified distance computation
+//! 
+//! 3. **Progressive Search Pipeline**:
+//!    - Binary filtering (95% reduction)
+//!    - INT8 approximation (fast distance)
+//!    - PQ ranking (further refinement)
+//!    - Full precision (final results)
+//! 
+//! 4. **Engine-Specific Optimizations**:
+//!    - NOVA: Maintains additional stats beyond Parquet for aggressive pruning
+//!    - VIPER: Leverages Parquet column statistics and zone maps
+//!    - SST: Uses hierarchical bloom filters for block-level filtering
+//! 
+//! All searches flow through this service → storage engine's search_vectors_unified → 
+//! engine-specific optimizations → results
 
 use anyhow::Result;
 use std::sync::Arc;
@@ -34,6 +61,7 @@ impl VectorOperationsService {
         info!("🚀 Initializing VectorOperationsService with CONSOLIDATED optimizer");
         info!("   ✅ Eliminated ~650 lines of duplicate optimization code");
         info!("   ✅ Single optimizer handles both search and filtering");
+        info!("   ✅ Progressive quantization-aware search enabled");
         
         let optimizer_config = crate::query::unified_query_optimizer::UnifiedOptimizerConfig::default();
         
@@ -42,6 +70,99 @@ impl VectorOperationsService {
             query_optimizer: Arc::new(UnifiedQueryOptimizer::new(optimizer_config)),
             collection_cache: Arc::new(dashmap::DashMap::new()),
         }
+    }
+    
+    /// Execute progressive quantization-aware search
+    /// Uses the formula: k_stage = k · Π(1/r_i) for all subsequent stages
+    pub async fn progressive_search(
+        &self,
+        collection_id: &str,
+        query_vector: Vec<f32>,
+        k: usize,
+        scenario: Option<&str>,
+        custom_recalls: Option<crate::core::search::ProgressiveRecalls>,
+    ) -> Result<Vec<VectorRecord>> {
+        use crate::core::search::progressive_quantization::{
+            ProgressiveSearchConfig, SearchScenario, ObservedRecalls
+        };
+        
+        info!("🔄 Starting progressive quantization-aware search for collection {}", collection_id);
+        
+        // Get collection configuration
+        let collection = self.get_or_load_collection(collection_id).await?;
+        
+        // Configure progressive search based on scenario
+        let mut config = if let Some(scenario_str) = scenario {
+            match scenario_str {
+                "high_recall" => ProgressiveSearchConfig::for_scenario(SearchScenario::HighRecall),
+                "high_speed" => ProgressiveSearchConfig::for_scenario(SearchScenario::HighSpeed),
+                "low_memory" => ProgressiveSearchConfig::for_scenario(SearchScenario::LowMemory),
+                _ => ProgressiveSearchConfig::default(),
+            }
+        } else {
+            ProgressiveSearchConfig::default()
+        };
+        
+        // Apply custom recall rates if provided
+        if let Some(recalls) = custom_recalls {
+            if let Some(binary) = recalls.binary_recall {
+                config.binary_recall = binary;
+            }
+            if let Some(int8) = recalls.int8_recall {
+                config.int8_recall = int8;
+            }
+            if let Some(pq) = recalls.pq_recall {
+                config.pq_recall = pq;
+            }
+        }
+        
+        // Compute stage sizes using the formula
+        let stage_sizes = config.compute_stage_sizes(k);
+        
+        info!(
+            "📊 Progressive search stages - Binary: {}, INT8: {}, PQ: {}, FP32: {} (total: {})",
+            stage_sizes.binary_candidates,
+            stage_sizes.int8_candidates,
+            stage_sizes.pq_candidates,
+            stage_sizes.fp32_candidates,
+            stage_sizes.total_computations
+        );
+        
+        // Create search parameters with progressive search enabled
+        let search_params = crate::core::search::SearchParams {
+            query_vectors: Some(vec![query_vector]),
+            top_k: Some(k),
+            distance_metric: None,
+            filter_expression: None,
+            accuracy_threshold: None,
+            include_expired: Some(false),
+            timeout_ms: Some(30000), // 30s timeout
+            enable_two_stage: Some(true),
+            custom_hints: None,
+            enable_clustering_hint: Some(true),
+            enable_metadata_filtering_hint: Some(false),
+            quantization_hint: None,
+            runtime_hints: None,
+            requires_ordering: Some(true),
+            // Progressive search specific
+            enable_progressive_search: Some(true),
+            progressive_scenario: scenario.map(|s| s.to_string()),
+            progressive_recalls: Some(crate::core::search::ProgressiveRecalls {
+                binary_recall: Some(config.binary_recall),
+                int8_recall: Some(config.int8_recall),
+                pq_recall: Some(config.pq_recall),
+            }),
+            optimization_hint: scenario.map(|s| s.to_string()),
+        };
+        
+        // Execute with unified optimizer configured for progressive search
+        self.search_vectors_with_filters(
+            collection_id,
+            search_params.query_vectors.unwrap()[0].clone(),
+            k,
+            None,
+            OptimizationGoal::BalancedSpeedRecall,
+        ).await
     }
     
     /// Search vectors with optional metadata filtering - SIMPLIFIED!
@@ -75,6 +196,11 @@ impl VectorOperationsService {
             quantization_hint: None,
             runtime_hints: None,
             requires_ordering: None,
+            // Progressive search parameters
+            enable_progressive_search: Some(true), // Enable by default if quantization available
+            progressive_scenario: None,
+            progressive_recalls: None,
+            optimization_hint: Some(optimization_goal.to_string()),
         };
         
         let context = UnifiedQueryContext {
@@ -277,7 +403,7 @@ impl VectorOperationsService {
     // Helper methods (simplified for demonstration)
     
     async fn get_or_load_collection(&self, collection_id: &str) -> Result<Arc<Collection>> {
-        if let Some(cached) = self.collection_cache.get(&key) {
+        if let Some(cached) = self.collection_cache.get(&collection_id) {
             Ok(cached.clone())
         } else {
             // Load from storage
@@ -295,7 +421,7 @@ impl VectorOperationsService {
     async fn get_vector_count(&self, collection_id: &str) -> Result<usize> {
         let stats = self.storage_engine.get_collection_stats(collection_id).await?;
         // Stats is a serde_json::Value, extract the vector count
-        let count = stats.get(key)
+        let count = stats.get("vector_count")
             .and_then(|v| v.as_u64())
             .unwrap_or(0) as usize;
         Ok(count)
@@ -304,7 +430,7 @@ impl VectorOperationsService {
     async fn get_column_count(&self, collection_id: &str) -> Result<usize> {
         let meta = self.storage_engine.get_collection_metadata(collection_id).await?;
         // Meta is a serde_json::Value, extract the column count
-        let count = meta.get(key)
+        let count = meta.get("collection_id")
             .and_then(|v| v.as_u64())
             .unwrap_or(10) as usize; // Default to 10 columns
         Ok(count)

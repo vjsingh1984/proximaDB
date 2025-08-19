@@ -190,7 +190,7 @@ impl<K: Hash + Eq + Clone + Send + Sync> EvictionStrategy for ARCStrategy<K> {
             let t1_size = self.t1.read().unwrap().len();
             let t2_size = self.t2.read().unwrap().len();
             let cache_size = t1_size + t2_size;
-            result.hit_rate_percent = cache_size as f64 / self.cache_size as f64;
+            result.hit_rate = cache_size as f64 / self.cache_size as f64;
         }
         
         result

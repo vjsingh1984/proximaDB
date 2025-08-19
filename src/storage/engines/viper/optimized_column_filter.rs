@@ -129,7 +129,7 @@ impl VIPERColumnFilterEvaluator {
         match filter_expr {
             FilterExpression::Comparison { field, operator, value } => {
                 // Get column data from cache
-                if let Some(column_data) = self.column_cache.get(&key) {
+                if let Some(column_data) = self.column_cache.get(field) {
                     let mut qualifying_indices = Vec::new();
                     
                     debug!("🎯 Evaluating column '{}' with {} values", field, column_data.len());
@@ -208,20 +208,20 @@ impl VIPERColumnFilterEvaluator {
         parquet_file: &str, 
         required_columns: &HashSet<String>,
     ) -> Result<()> {
-        for column_name in required_columns {
-            if self.loaded_columns.contains_hash(column_name) {
-                debug!("🎯 Column '{}' already loaded", column_name);
+        for name in required_columns {
+            if self.loaded_columns.contains(name) {
+                debug!("🎯 Column '{}' already loaded", name);
                 continue;
             }
             
-            info!("🎯 Loading metadata column '{}' from {}", column_name, parquet_file);
+            info!("🎯 Loading metadata column '{}' from {}", name, parquet_file);
             
             // Use UnifiedParquetReader to read specific column
             let filesystem_config = crate::storage::persistence::filesystem::FilesystemConfig::default();
             let filesystem_factory = crate::storage::persistence::filesystem::FilesystemFactory::new(filesystem_config)
                 .await
                 .map_err(|e| anyhow::anyhow!("Failed to create filesystem factory: {}", e))?;
-            let reader = crate::storage::engines::viper::readers::unified_parquet_reader::UnifiedParquetReader::new(
+            let reader = crate::storage::engines::columnar::UnifiedParquetReader::new(
                 Arc::new(filesystem_factory)
             );
             
@@ -233,16 +233,16 @@ impl VIPERColumnFilterEvaluator {
             let mut column_values = Vec::new();
             for record in &all_records {
                 let metadata_map = crate::core::proto_metadata_helper::proto_metadata_to_json(&record.metadata);
-                let value = metadata_map.get(key)
+                let value = metadata_map.get(name)
                     .cloned()
                     .unwrap_or(serde_json::Value::Null);
                 column_values.push(value);
             }
             
-            self.column_cache.insert(column_name.clone(), column_values);
-            self.loaded_columns.insert(column_name.clone());
+            self.column_cache.insert(name.clone(), column_values);
+            self.loaded_columns.insert(name.clone());
             
-            debug!("🎯 Loaded {} values for column '{}'", all_records.len(), column_name);
+            debug!("🎯 Loaded {} values for column '{}'", all_records.len(), name);
         }
         
         Ok(())
@@ -345,7 +345,7 @@ pub struct VIPERCacheStats {
 
 /// Selective vector reader that uses qualifying indices
 pub struct VIPERSelectiveReader {
-    reader: crate::storage::engines::viper::readers::unified_parquet_reader::UnifiedParquetReader,
+    reader: crate::storage::engines::columnar::UnifiedParquetReader,
 }
 
 impl VIPERSelectiveReader {
@@ -357,7 +357,7 @@ impl VIPERSelectiveReader {
             .expect("Failed to create filesystem factory");
         
         Self {
-            reader: crate::storage::engines::viper::readers::unified_parquet_reader::UnifiedParquetReader::new(
+            reader: crate::storage::engines::columnar::UnifiedParquetReader::new(
                 Arc::new(filesystem_factory)
             ),
         }
@@ -386,7 +386,7 @@ impl VIPERSelectiveReader {
         
         let selected_records: Vec<VectorRecord> = qualifying_indices
             .iter()
-            .filter_map(|&idx| all_records.get(key).cloned())
+            .filter_map(|&idx| all_records.get(idx).cloned())
             .collect();
         
         let io_savings = if !all_records.is_empty() {

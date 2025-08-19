@@ -31,7 +31,7 @@ enum SstIoHint {
     /// Skip blocks based on index entries
     UseBlockIndex {
         enabled: bool,
-        skip_distance: usize,
+        skip_similarity: usize,
     },
     /// Cache frequently accessed blocks
     EnableBlockCache {
@@ -315,7 +315,7 @@ impl SstUnifiedSearchEngine {
         // Block index optimization for SSTable navigation
         hints.push(SstIoHint::UseBlockIndex {
             enabled: true,
-            skip_distance: if total_files > 10 { 4 } else { 2 },
+            skip_similarity: if total_files > 10 { 4 } else { 2 },
         });
         
         // Block caching for frequently accessed data
@@ -443,7 +443,7 @@ impl SstUnifiedSearchEngine {
                     debug!("🔍 SST SCAN: Checking file: '{}'", filename);
                     // 🔴 UNUSED - belongs_to_collection method doesn't exist
                     // if super::SstFilenameGenerator::belongs_to_collection(filename, &context.collection_id) {
-                    if filename.contains_hash(&context.collection_id) {  // Simple check instead
+                    if filename.contains(&context.collection_id) {  // Simple check instead
                         debug!("🔍 SST SCAN: ✅ MATCH - filename '{}' matches pattern", filename);
                         
                         // Extract level from filename using centralized utility

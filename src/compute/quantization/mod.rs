@@ -6,6 +6,7 @@
 pub mod types;
 pub mod unified;
 pub mod storage_engine;
+pub mod smart_defaults;
 
 pub use unified::{
     UnifiedQuantizationLevel, QuantizationLevelType,
@@ -18,5 +19,8 @@ pub use unified::{
 
 pub use storage_engine::{
     StorageQuantizationEngine, StorageQuantizationConfig, 
-    StorageQuantizedData, SearchStage
+};
+
+pub use smart_defaults::{
+    QuantizationSmartDefaults,
 };

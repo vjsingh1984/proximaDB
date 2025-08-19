@@ -67,7 +67,7 @@ impl PoolStats {
         info!("🏊 Memory Pool Statistics:");
         info!("   Acquisitions: {} (hits: {}, misses: {})", 
             self.total_acquisitions, self.cache_hits, self.cache_misses);
-        info!("   Hit rate: {:.1}%", self.hit_rate_percent() * 100.0);
+        info!("   Hit rate: {:.1}%", self.hit_rate() * 100.0);
         info!("   Pool size: {} (peak: {})", self.current_size, self.peak_size);
         info!("   Pool operations: {} grows, {} shrinks", self.pool_grows, self.pool_shrinks);
         info!("   Average buffer size: {} bytes", self.average_buffer_size);
@@ -408,9 +408,11 @@ impl VectorMemoryPool {
         vectors: &[Vec<f32>],
         config: &crate::core::serialization::VectorSerializationConfig,
     ) -> Result<Vec<u8>> {
-        let mut buffer = self.serialization_buffers/* TODO: Fix VectorMemoryPool::acquire() method */;
+        let mut pooled_buffer = self.serialization_buffers.acquire();
+        let buffer = pooled_buffer.get_mut();
         
-        // Estimate total size to minimize reallocations
+        // Clear the buffer and estimate total size to minimize reallocations
+        buffer.clear();
         let estimated_size = self.estimate_batch_size(vectors);
         buffer.reserve(estimated_size);
 
@@ -497,6 +499,35 @@ impl VectorMemoryPool {
         self.compression_buffers.cleanup();
         self.metadata_buffers.cleanup();
     }
+    
+    /// Get a f32 buffer from the pool
+    pub fn get_f32_buffer(&self, capacity: usize) -> PooledItem<Vec<f32>> {
+        let mut item = self.vector_buffers.acquire();
+        item.get_mut().clear();
+        item.get_mut().reserve(capacity);
+        item
+    }
+    
+    /// Get peak memory usage across all pools
+    pub fn peak_usage(&self) -> usize {
+        let stats = self.get_comprehensive_stats();
+        stats.total_peak_memory_bytes()
+    }
+    
+    /// Get memory efficiency across all pools
+    pub fn efficiency(&self) -> f32 {
+        let stats = self.get_comprehensive_stats();
+        stats.overall_efficiency()
+    }
+    
+    /// Get available bytes (estimated based on pool configuration)
+    pub fn available_bytes(&self) -> usize {
+        // Estimate based on pool configuration
+        // This is a rough estimate since pools can grow dynamically
+        let max_buffers = 100; // Typical max pool size
+        let avg_buffer_size = 64 * 1024; // 64KB average
+        max_buffers * avg_buffer_size
+    }
 }
 
 impl Default for VectorMemoryPool {
@@ -520,36 +551,36 @@ impl VectorPoolStats {
         
         info!("📝 Serialization Pool:");
         info!("   Hit rate: {:.1}%, Size: {} (peak: {})", 
-            self.serialization.hit_rate_percent() * 100.0,
+            self.serialization.hit_rate() * 100.0,
             self.serialization.current_size,
             self.serialization.peak_size);
             
         info!("🔢 Vector Pool:");
         info!("   Hit rate: {:.1}%, Size: {} (peak: {})", 
-            self.vector.hit_rate_percent() * 100.0,
+            self.vector.hit_rate() * 100.0,
             self.vector.current_size,
             self.vector.peak_size);
             
         info!("🗜️ Compression Pool:");
         info!("   Hit rate: {:.1}%, Size: {} (peak: {})", 
-            self.storage.as_ref().and_then(|s| s.compression.as_ref()).hit_rate_percent() * 100.0,
-            self.storage.as_ref().and_then(|s| s.compression.as_ref()).current_size,
-            self.storage.as_ref().and_then(|s| s.compression.as_ref()).peak_size);
+            self.compression.hit_rate() * 100.0,
+            self.compression.current_size,
+            self.compression.peak_size);
             
         info!("📋 Metadata Pool:");
         info!("   Hit rate: {:.1}%, Size: {} (peak: {})", 
-            self.metadata.hit_rate_percent() * 100.0,
+            self.metadata.hit_rate() * 100.0,
             self.metadata.current_size,
             self.metadata.peak_size);
 
         let total_acquisitions = self.serialization.total_acquisitions + 
                                 self.vector.total_acquisitions +
-                                self.storage.as_ref().and_then(|s| s.compression.as_ref()).total_acquisitions +
+                                self.compression.total_acquisitions +
                                 self.metadata.total_acquisitions;
                                 
         let total_hits = self.serialization.cache_hits +
                         self.vector.cache_hits +
-                        self.storage.as_ref().and_then(|s| s.compression.as_ref()).cache_hits +
+                        self.compression.cache_hits +
                         self.metadata.cache_hits;
 
         let overall_hit_rate = if total_acquisitions > 0 {
@@ -559,6 +590,36 @@ impl VectorPoolStats {
         };
 
         info!("🎯 Overall hit rate: {:.1}%", overall_hit_rate * 100.0);
+    }
+    
+    /// Get total peak memory usage in bytes
+    pub fn total_peak_memory_bytes(&self) -> usize {
+        // Estimate based on peak pool sizes and typical buffer sizes
+        let serialization_bytes = self.serialization.peak_size * 64 * 1024; // 64KB per buffer
+        let vector_bytes = self.vector.peak_size * 4 * 1024; // 4KB per buffer (1K f32s)
+        let compression_bytes = self.compression.peak_size * 32 * 1024; // 32KB per buffer
+        let metadata_bytes = self.metadata.peak_size * 4 * 1024; // 4KB per buffer
+        
+        serialization_bytes + vector_bytes + compression_bytes + metadata_bytes
+    }
+    
+    /// Get overall memory efficiency
+    pub fn overall_efficiency(&self) -> f32 {
+        let total_hits = self.serialization.cache_hits +
+                        self.vector.cache_hits +
+                        self.compression.cache_hits +
+                        self.metadata.cache_hits;
+                        
+        let total_acquisitions = self.serialization.total_acquisitions + 
+                                self.vector.total_acquisitions +
+                                self.compression.total_acquisitions +
+                                self.metadata.total_acquisitions;
+                                
+        if total_acquisitions > 0 {
+            (total_hits as f32 / total_acquisitions as f32)
+        } else {
+            0.0
+        }
     }
 }
 
@@ -645,7 +706,7 @@ mod tests {
         
         let stats = pool.stats();
         assert_eq!(stats.total_acquisitions, 10);
-        assert!(stats.hit_rate_percent() > 0.0);
+        assert!(stats.hit_rate() > 0.0);
         
         stats.print_summary();
     }

@@ -399,7 +399,7 @@ impl IndexRecoveryManager {
         collection_id: &str,
     ) -> Result<(), SerializationError> {
         // Look for checkpoint location
-        let checkpoint_path = if let Some(location) = self.checkpoint_locations.get(key) {
+        let checkpoint_path = if let Some(location) = self.checkpoint_locations.get(collection_id) {
             location.clone()
         } else {
             // Default checkpoint location
@@ -575,7 +575,7 @@ impl IndexRecoveryManager {
     
     /// Get recovery status for a collection
     pub fn get_recovery_status(&self, collection_id: &str) -> Option<RecoveryStatus> {
-        self.recovery_status.get(key).map(|s| s.clone())
+        self.recovery_status.get(collection_id).map(|s| s.clone())
     }
     
     /// Log recovery statistics

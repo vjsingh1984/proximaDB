@@ -166,7 +166,7 @@ impl CompactionFileDiscovery {
         level: u32,
         threshold: usize,
     ) -> bool {
-        if let Some(level_files) = filtered_files.compactable_files.get(key) {
+        if let Some(level_files) = filtered_files.compactable_files.get(&0) {
             let should_compact = level_files.len() >= threshold;
             
             if should_compact {
@@ -174,7 +174,7 @@ impl CompactionFileDiscovery {
                     "✅ COMPACTION: Level {} has {} compactable files (>= threshold {})",
                     level, level_files.len(), threshold
                 );
-            } else if filtered_files.pending_files.get(key).is_some() {
+            } else if filtered_files.pending_files.get(&0).is_some() {
                 debug!(
                     "⏸️ COMPACTION: Level {} has only {} compactable files (< threshold {}), some files pending",
                     level, level_files.len(), threshold
@@ -194,7 +194,7 @@ impl CompactionFileDiscovery {
         level: u32,
     ) -> Vec<String> {
         filtered_files.compactable_files
-            .get(key)
+            .get(&level)
             .map(|files| files.iter().map(|f| f.path.clone()).collect())
             .unwrap_or_default()
     }
@@ -234,7 +234,7 @@ impl CompactionTaskBuilder {
             "count" => file_discovery.should_trigger_compaction(&filtered_files, 0, config.l0_file_threshold),
             "size" => {
                 // Calculate total size at L0
-                let l0_total_size_mb = filtered_files.compactable_files.get(key)
+                let l0_total_size_mb = filtered_files.compactable_files.get(&0)
                     .map(|files| files.iter().map(|f| f.size_bytes / (1024 * 1024)).sum::<u64>() as usize)
                     .unwrap_or(0);
                 l0_total_size_mb >= config.l0_size_threshold_mb
@@ -242,7 +242,7 @@ impl CompactionTaskBuilder {
             "hybrid" | _ => {
                 // Use both count and size thresholds
                 let count_triggered = file_discovery.should_trigger_compaction(&filtered_files, 0, config.l0_file_threshold);
-                let l0_total_size_mb = filtered_files.compactable_files.get(key)
+                let l0_total_size_mb = filtered_files.compactable_files.get(&0)
                     .map(|files| files.iter().map(|f| f.size_bytes / (1024 * 1024)).sum::<u64>() as usize)
                     .unwrap_or(0);
                 let size_triggered = l0_total_size_mb >= config.l0_size_threshold_mb;
@@ -282,14 +282,14 @@ impl CompactionTaskBuilder {
             let should_compact = match config.strategy.as_str() {
                 "count" => file_discovery.should_trigger_compaction(&filtered_files, level, level_file_threshold),
                 "size" => {
-                    let level_total_size_mb = filtered_files.compactable_files.get(key)
+                    let level_total_size_mb = filtered_files.compactable_files.get(&level)
                         .map(|files| files.iter().map(|f| f.size_bytes / (1024 * 1024)).sum::<u64>() as usize)
                         .unwrap_or(0);
                     level_total_size_mb >= level_size_threshold_mb
                 }
                 "hybrid" | _ => {
                     let count_triggered = file_discovery.should_trigger_compaction(&filtered_files, level, level_file_threshold);
-                    let level_total_size_mb = filtered_files.compactable_files.get(key)
+                    let level_total_size_mb = filtered_files.compactable_files.get(&level)
                         .map(|files| files.iter().map(|f| f.size_bytes / (1024 * 1024)).sum::<u64>() as usize)
                         .unwrap_or(0);
                     let size_triggered = level_total_size_mb >= level_size_threshold_mb;
@@ -417,7 +417,7 @@ impl CompactionSelfHealing {
         let mut healed_files = Vec::new();
         
         for file in previous_pending {
-            if current_compactable.contains_hash(file) {
+            if current_compactable.contains(file) {
                 healed_files.push(file.clone());
             }
         }
@@ -457,7 +457,7 @@ mod tests {
         );
         
         assert_eq!(healed.len(), 2);
-        assert!(healed.contains_hash(&"file1.sstable".to_string()));
-        assert!(healed.contains_hash(&"file3.sstable".to_string()));
+        assert!(healed.contains(&"file1.sstable".to_string()));
+        assert!(healed.contains(&"file3.sstable".to_string()));
     }
 }

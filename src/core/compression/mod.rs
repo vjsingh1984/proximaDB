@@ -487,20 +487,20 @@ pub fn detect_column_type(column_name: &str, context: &CompressionContext) -> Co
     match context {
         CompressionContext::ParquetColumn => {
             // VIPER/NOVA columnar storage context
-            if name_lower.contains_hash("binary") || name_lower.contains_hash("bin_") {
+            if name_lower.contains("binary") || name_lower.contains("bin_") {
                 ColumnDataType::BinaryQuantized
-            } else if name_lower.contains_hash("int8") || name_lower.contains_hash("quantized_int8") {
+            } else if name_lower.contains("int8") || name_lower.contains("quantized_int8") {
                 ColumnDataType::Int8Quantized
-            } else if name_lower.contains_hash("pq") || name_lower.contains_hash("product_quantized") {
+            } else if name_lower.contains("pq") || name_lower.contains("product_quantized") {
                 ColumnDataType::ProductQuantized
-            } else if name_lower.contains_hash("vector") || name_lower.contains_hash("embedding") {
+            } else if name_lower.contains("vector") || name_lower.contains("embedding") {
                 ColumnDataType::FullPrecision
-            } else if name_lower == "id" || name_lower.contains_hash("_id") {
+            } else if name_lower == "id" || name_lower.contains("_id") {
                 ColumnDataType::Identifier
-            } else if name_lower.contains_hash("timestamp") || name_lower.contains_hash("created_at") 
-                     || name_lower.contains_hash("updated_at") {
+            } else if name_lower.contains("timestamp") || name_lower.contains("created_at") 
+                     || name_lower.contains("updated_at") {
                 ColumnDataType::Timestamp
-            } else if name_lower.contains_hash("metadata_info") || name_lower.contains_hash("extra_") {
+            } else if name_lower.contains("metadata_info") || name_lower.contains("extra_") {
                 ColumnDataType::Metadata
             } else {
                 ColumnDataType::Generic
@@ -508,9 +508,9 @@ pub fn detect_column_type(column_name: &str, context: &CompressionContext) -> Co
         }
         _ => {
             // For non-Parquet contexts, use generic detection
-            if name_lower == "id" || name_lower.contains_hash("_id") {
+            if name_lower == "id" || name_lower.contains("_id") {
                 ColumnDataType::Identifier
-            } else if name_lower.contains_hash("vector") {
+            } else if name_lower.contains("vector") {
                 ColumnDataType::FullPrecision
             } else {
                 ColumnDataType::Generic
@@ -889,7 +889,7 @@ mod tests {
         
         for algorithm in all_algorithms {
             let is_supported = is_parquet_supported(&algorithm);
-            let should_be_supported = parquet_supported.contains_hash(&algorithm);
+            let should_be_supported = parquet_supported.contains(&algorithm);
             
             assert_eq!(is_supported, should_be_supported, 
                 "Parquet support detection mismatch for {:?}", algorithm);

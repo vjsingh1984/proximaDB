@@ -52,14 +52,14 @@ pub fn avro_to_proto(avro_record: &AvroVectorRecord, _collection_id: &str) -> Pr
         .collect();
 
     ProtoVectorRecord {
-        id: if avro_record.id.is_none() { None } else { Some(avro_record.id.clone()) },
+        id: if avro_record.id.is_empty() { None } else { Some(avro_record.id.clone()) },
         vector: avro_record.vector.clone(),
         metadata,
         timestamp: (avro_record.timestamp / 1_000_000) as u32, // Convert microseconds to seconds
         updated_at: avro_record.updated_at.map(|v| (v / 1_000_000) as u32),
         expires_at: avro_record.expires_at.map(|v| (v / 1_000_000) as u32),
         version: avro_record.version.map(|v| v as u32),
-        quantized: None,
+        quantized_vector: None,
     }
 }
 
@@ -78,7 +78,6 @@ pub fn proto_to_avro(proto_record: &ProtoVectorRecord, collection_id: &str) -> A
         expires_at: proto_record.expires_at.map(|v| (v as i64) * 1_000_000),
         version: Some(proto_record.version.map(|v| v as i64).unwrap_or(1)),
         // rank removed -  None,
-        similarity: None,
         similarity: None,
     
         }
@@ -116,7 +115,6 @@ mod tests {
             expires_at: None,
             version: Some(1),
             // rank removed -  None,
-            similarity: None,
             similarity: None,
         
         };
@@ -163,7 +161,6 @@ mod tests {
             expires_at: None,
             version: Some(1),
             // rank removed -  None,
-            similarity: None,
             similarity: None,
         
         };

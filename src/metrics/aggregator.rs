@@ -84,7 +84,7 @@ impl MetricsAggregationEngine {
         end_time: i64,
     ) -> Result<AggregatedMetrics> {
         let data_points = self.time_series
-            .get(key)
+            .get(collection_id)
             .ok_or_else(|| anyhow::anyhow!("No data for collection {}", collection_id))?;
         
         let filtered: Vec<&CollectionMetrics> = data_points
@@ -151,7 +151,7 @@ impl MetricsAggregationEngine {
         metric_name: &str,
     ) -> Result<TrendAnalysis> {
         let data_points = self.time_series
-            .get(key)
+            .get(metric_name)
             .ok_or_else(|| anyhow::anyhow!("No data for collection {}", collection_id))?;
         
         if data_points.len() < 2 {

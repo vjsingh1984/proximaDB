@@ -37,7 +37,9 @@ pub struct UniversalCompressionAdapter {
 impl UniversalCompressionAdapter {
     /// Create new adapter with hardware detection
     pub fn new() -> Result<Self> {
-        let hardware = HardwareCapabilities::detect()?;
+        let hardware = HardwareCapabilities::detect_with_config(
+            crate::core::config::HardwareConfig::default()
+        )?;
         
         Ok(Self {
             provider: StandardCompression::default(),
@@ -78,9 +80,10 @@ impl UniversalCompressionAdapter {
         
         // Record performance statistics
         let compression_time = start_time.elapsed();
+        let compressed_size = compressed_bytes.len();
         self.performance_stats.record_compression(
             data.len(),
-            compressed_bytes.len(),
+            compressed_size,
             compression_time,
             optimized_algorithm.clone(),
         );
@@ -89,7 +92,7 @@ impl UniversalCompressionAdapter {
             data: compressed_bytes,
             algorithm: optimized_algorithm,
             original_size: data.len(),
-            compressed_size: compressed_bytes.len(),
+            compressed_size,
             compression_level: level,
             context,
             metadata: self.create_compression_metadata(config, compression_time),
@@ -179,18 +182,18 @@ impl UniversalCompressionAdapter {
         let data_analysis = self.analyze_data_characteristics(data);
         
         // Select algorithm based on adaptive strategy
-        let selected_algorithm = match adaptive_settings.strategy {
+        let selected_algorithm = match adaptive_settings.search_strategy {
             crate::storage::engines::common::compression_common::AdaptiveStrategy::DataDriven => {
-                self.select_data_driven_algorithm(&data_analysis, &adaptive_settings.fallback_algorithms)
+                self.select_data_driven_algorithm(&data_analysis)
             }
             crate::storage::engines::common::compression_common::AdaptiveStrategy::PerformanceDriven => {
-                self.select_performance_driven_algorithm(&data_analysis, &adaptive_settings.fallback_algorithms)
+                self.select_performance_driven_algorithm(&data_analysis)
             }
             crate::storage::engines::common::compression_common::AdaptiveStrategy::HardwareDriven => {
-                self.select_hardware_driven_algorithm(&data_analysis, &adaptive_settings.fallback_algorithms)
+                self.select_hardware_driven_algorithm(&data_analysis)
             }
             crate::storage::engines::common::compression_common::AdaptiveStrategy::HybridOptimization => {
-                self.select_hybrid_algorithm(&data_analysis, &adaptive_settings.fallback_algorithms)
+                self.select_hybrid_algorithm(&data_analysis)
             }
         };
         
@@ -270,7 +273,7 @@ impl UniversalCompressionAdapter {
         if characteristics.has_patterns {
             Some(CompressionAlgorithm::Snappy)
         } else {
-            fallback_algorithms.first().cloned()
+            Some(CompressionAlgorithm::Lz4) // Default fallback
         }
     }
     
@@ -298,13 +301,14 @@ impl UniversalCompressionAdapter {
         // fallback_algorithms removed -  &[CompressionAlgorithm],
     ) -> Option<CompressionAlgorithm> {
         // Use hardware-optimized algorithms when available
-        if self.hardware.has_avx2() {
+        if self.hardware.cpu.features.avx2_support {
             // LZ4 and Snappy have good SIMD optimizations
             Some(CompressionAlgorithm::Lz4)
-        } else if self.hardware.has_sse() {
+        } else if self.hardware.cpu.features.sse42_support {
             Some(CompressionAlgorithm::Snappy)
         } else {
-            fallback_algorithms.first().cloned()
+            // Default fallback
+            Some(CompressionAlgorithm::Lz4)
         }
     }
     
@@ -331,6 +335,7 @@ impl UniversalCompressionAdapter {
         ];
         
         for algorithm in candidates {
+            let key = &algorithm;
             let combined_score = 
                 data_score.get(key).unwrap_or(&0.0) * 0.4 +
                 perf_score.get(key).unwrap_or(&0.0) * 0.4 +
@@ -342,7 +347,7 @@ impl UniversalCompressionAdapter {
             }
         }
         
-        best_algorithm.or_else(|| fallback_algorithms.first().cloned())
+        best_algorithm.or_else(|| Some(CompressionAlgorithm::Snappy))
     }
     
     /// Score algorithms for data characteristics
@@ -388,12 +393,12 @@ impl UniversalCompressionAdapter {
     fn score_algorithm_for_hardware(&self) -> HashMap<CompressionAlgorithm, f64> {
         let mut scores = HashMap::new();
         
-        if self.hardware.has_avx2() {
+        if self.hardware.cpu.features.avx2_support {
             scores.insert(CompressionAlgorithm::Lz4, 0.9);
             scores.insert(CompressionAlgorithm::Snappy, 0.8);
             scores.insert(CompressionAlgorithm::Zstd, 0.6);
             scores.insert(CompressionAlgorithm::Gzip, 0.5);
-        } else if self.hardware.has_sse() {
+        } else if self.hardware.cpu.features.sse42_support {
             scores.insert(CompressionAlgorithm::Snappy, 0.8);
             scores.insert(CompressionAlgorithm::Lz4, 0.7);
             scores.insert(CompressionAlgorithm::Zstd, 0.5);

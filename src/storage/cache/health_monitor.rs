@@ -166,7 +166,7 @@ impl CacheMonitoringDashboard {
                 let cache_metrics = orchestrator.metrics();
                 use crate::metrics::cache::{TierMetrics, MemoryMetrics, EvictionMetrics, CoordinationMetrics};
                 let metrics = CacheMetricsSnapshot {
-                    overall_hit_rate: cache_metrics.hit_rate_percent(),
+                    overall_hit_rate: cache_metrics.hit_rate(),
                     l1_metrics: TierMetrics {
                         hits: cache_metrics.tier_hits(crate::storage::cache::backend::CacheTier::L1),
                         misses: cache_metrics.tier_misses(crate::storage::cache::backend::CacheTier::L1),
@@ -342,7 +342,7 @@ impl CacheMonitoringDashboard {
             suggestions.push("Consider increasing cache memory allocation".to_string());
         }
         
-        if metrics.l1_metrics.hit_rate_percent < 0.7 && self.config.global.enable_tiered_storage {
+        if metrics.l1_metrics.hit_rate < 0.7 && self.config.global.enable_tiered_storage {
             suggestions.push("L1 hit rate is low, consider adjusting tier thresholds".to_string());
         }
         

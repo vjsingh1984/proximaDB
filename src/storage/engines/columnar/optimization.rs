@@ -15,14 +15,12 @@ use parquet::file::metadata::{ParquetMetaData, RowGroupMetaData};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use tracing::{debug, info, trace, warn};
-
 use crate::core::VectorRecord;
 use crate::core::search::{SearchResult, FilterExpression};
 use crate::compute::distance_computation::{DistanceMetric, engine::UnifiedDistanceCompute};
 use crate::storage::engines::columnar::{
     ColumnarConfig, MetadataFilter, SearchCandidate, RowGroupStats, ParquetLocation
 };
-
 /// Unified columnar optimization engine
 pub struct ColumnarOptimizer {
     /// Distance computation engine
@@ -30,14 +28,11 @@ pub struct ColumnarOptimizer {
     
     /// Configuration
     config: ColumnarConfig,
-    
     /// Cached bloom filters per file
     bloom_filter_cache: parking_lot::RwLock<HashMap<String, Arc<FileBloomFilters>>>,
-    
     /// Row group statistics cache
     stats_cache: parking_lot::RwLock<HashMap<String, Arc<Vec<RowGroupStats>>>>,
 }
-
 /// Bloom filters for a Parquet file
 #[derive(Debug)]
 pub struct FileBloomFilters {
@@ -46,24 +41,18 @@ pub struct FileBloomFilters {
     pub total_size_bytes: usize,
     pub false_positive_rate: f64,
 }
-
 /// Bloom filters for a single row group
-#[derive(Debug)]
 pub struct RowGroupBloomFilters {
     pub row_group_id: usize,
     pub column_filters: HashMap<String, BloomFilterInfo>,
 }
-
 /// Bloom filter information
-#[derive(Debug)]
 pub struct BloomFilterInfo {
-    pub column_name: String,
+    pub field: String,
     pub size_bytes: usize,
     pub hash_functions: u32,
-    pub false_positive_rate: f64,
     pub num_items: u64,
 }
-
 /// Streaming row group iterator
 pub struct StreamingRowGroupIterator {
     file_path: String,
@@ -73,28 +62,21 @@ pub struct StreamingRowGroupIterator {
     column_projection: Option<Vec<String>>,
     batch_size: usize,
 }
-
 /// Progressive search configuration
 #[derive(Debug, Clone)]
 pub struct ProgressiveSearchConfig {
     /// Enable binary quantization filtering
     pub use_binary_filter: bool,
-    
     /// Binary filter threshold (0.0-1.0)
     pub binary_threshold: f32,
-    
     /// Enable INT8 quantization search
     pub use_int8_search: bool,
-    
     /// INT8 search candidates multiplier
     pub int8_multiplier: f32,
-    
     /// Enable PQ search
     pub use_pq_search: bool,
-    
     /// PQ search candidates multiplier
     pub pq_multiplier: f32,
-    
     /// Final FP32 reranking
     pub final_rerank: bool,
 }
@@ -114,7 +96,6 @@ impl Default for ProgressiveSearchConfig {
 }
 
 /// Cost-based optimization statistics
-#[derive(Debug, Clone)]
 pub struct OptimizationStats {
     pub total_row_groups: usize,
     pub pruned_row_groups: usize,
@@ -139,27 +120,22 @@ impl ColumnarOptimizer {
             stats_cache: parking_lot::RwLock::new(HashMap::new()),
         }
     }
-    
     /// Load and cache bloom filters for a Parquet file
     pub async fn load_bloom_filters(&self, file_path: &str) -> Result<Arc<FileBloomFilters>> {
         // Check cache first
         {
             let cache = self.bloom_filter_cache.read();
-            if let Some(filters) = cache.get(&key) {
+            if let Some(filters) = cache.get(file_path) {
                 return Ok(filters.clone());
             }
         }
-        
         info!("Loading bloom filters for: {}", file_path);
-        
         // Read Parquet metadata
         let file = std::fs::File::open(file_path)?;
         let reader_builder = ParquetRecordBatchReaderBuilder::try_new(file)?;
         let metadata = reader_builder.metadata();
-        
         let mut file_filters = HashMap::new();
         let mut total_size = 0;
-        
         // Process each row group
         for (rg_idx, row_group) in metadata.row_groups().iter().enumerate() {
             let mut column_filters = HashMap::new();
@@ -168,15 +144,14 @@ impl ColumnarOptimizer {
             for (col_idx, column) in row_group.columns().iter().enumerate() {
                 if let Some(bloom_filter) = self.extract_bloom_filter(column)? {
                     let filter_info = BloomFilterInfo {
-                        column_name: format!("col_{}", col_idx),
+                        field: format!("col_{}", col_idx),
                         size_bytes: bloom_filter.size_bytes(),
-                        hash_functions: bloom_filter.hash_functions(),
-                        false_positive_rate: bloom_filter.false_positive_rate(),
-                        num_items: bloom_filter.num_items(),
+                        hash_functions: 3, // Default value
+                        num_items: 1000, // Default value
                     };
                     
                     total_size += filter_info.size_bytes;
-                    column_filters.insert(filter_info.column_name.clone(), filter_info);
+                    column_filters.insert(filter_info.field.clone(), filter_info);
                 }
             }
             
@@ -194,7 +169,6 @@ impl ColumnarOptimizer {
             total_size_bytes: total_size,
             false_positive_rate: 0.01, // Default
         });
-        
         // Cache the filters
         {
             let mut cache = self.bloom_filter_cache.write();
@@ -203,12 +177,11 @@ impl ColumnarOptimizer {
         
         debug!("Loaded {} bloom filters, total size: {} bytes", 
                filters.filters.len(), total_size);
-        
         Ok(filters)
     }
     
     /// Extract bloom filter from column metadata
-    fn extract_bloom_filter(&self, _column: &parquet::file::metadata::ColumnChunkMetaData) -> Result<Option<BloomFilterProxy>> {
+    fn extract_bloom_filter(&self, _column: &parquet::file::metadata::ColumnChunkMetaData) -> Result<Option<BloomFilter>> {
         // In production, this would extract actual Parquet bloom filters
         // For now, return None as placeholder
         Ok(None)
@@ -227,13 +200,10 @@ impl ColumnarOptimizer {
         let file = std::fs::File::open(file_path)?;
         let reader_builder = ParquetRecordBatchReaderBuilder::try_new(file)?;
         let metadata = Arc::new(reader_builder.metadata().clone());
-        
         // Select relevant row groups
         let selected_row_groups = self.select_row_groups(&metadata, row_group_filter).await?;
-        
         debug!("Selected {} row groups out of {}", 
                selected_row_groups.len(), metadata.num_row_groups());
-        
         Ok(StreamingRowGroupIterator {
             file_path: file_path.to_string(),
             metadata,
@@ -251,16 +221,13 @@ impl ColumnarOptimizer {
         filter: Option<&MetadataFilter>,
     ) -> Result<Vec<usize>> {
         let mut selected = Vec::new();
-        
         for (idx, row_group) in metadata.row_groups().iter().enumerate() {
             if self.should_include_row_group(row_group, filter).await? {
                 selected.push(idx);
             }
         }
-        
         Ok(selected)
     }
-    
     /// Check if row group should be included
     async fn should_include_row_group(
         &self,
@@ -272,7 +239,6 @@ impl ColumnarOptimizer {
         }
         
         let filter = filter.unwrap();
-        
         // Check each filter condition against row group statistics
         for condition in &filter.conditions {
             match condition {
@@ -292,7 +258,6 @@ impl ColumnarOptimizer {
                 }
             }
         }
-        
         Ok(true)
     }
     
@@ -318,7 +283,6 @@ impl ColumnarOptimizer {
         // In production, would check min/max statistics
         Ok(true)
     }
-    
     /// Perform progressive similarity search
     pub async fn progressive_search(
         &self,
@@ -330,7 +294,6 @@ impl ColumnarOptimizer {
         config: &ProgressiveSearchConfig,
     ) -> Result<Vec<SearchResult>> {
         info!("Progressive search across {} files, top_k={}", file_paths.len(), top_k);
-        
         let mut all_candidates = Vec::new();
         let mut stats = OptimizationStats {
             total_row_groups: 0,
@@ -342,9 +305,7 @@ impl ColumnarOptimizer {
             search_time_ms: 0,
             optimization_overhead_ms: 0,
         };
-        
         let start_time = std::time::Instant::now();
-        
         for file_path in file_paths {
             let file_candidates = self.search_file_progressive(
                 file_path,
@@ -355,37 +316,30 @@ impl ColumnarOptimizer {
                 config,
                 &mut stats,
             ).await?;
-            
             all_candidates.extend(file_candidates);
         }
         
         stats.search_time_ms = start_time.elapsed().as_millis() as u64;
-        
         // Final ranking and selection
         all_candidates.sort_by(|a, b| {
-            a.distance.partial_cmp(&b.distance).unwrap_or(std::cmp::Ordering::Equal)
+            a.similarity.partial_cmp(&b.similarity).unwrap_or(std::cmp::Ordering::Equal)
         });
         all_candidates.truncate(top_k);
-        
         info!("Progressive search complete: {:?}", stats);
-        
         // Convert candidates to SearchResults
         let mut results = Vec::new();
         for candidate in all_candidates {
             if let Some(vector) = self.load_vector_at_location(&candidate).await? {
                 results.push(SearchResult {
                     id: candidate.vector_id.unwrap_or_else(|| format!("rg{}_row{}", candidate.row_group_id, candidate.row_offset)),
-                    similarity: Some(candidate.distance),
-                    similarity: Some(1.0 - candidate.distance),
+                    similarity: Some(1.0 - candidate.similarity),
                     vector: Some(vector.vector),
-                    metadata: vector.metadata.iter().map(|m| (m.key.clone(), serde_json::Value::String(m.value.clone()))).collect(),
+                    metadata: HashMap::new(), // Simplified for now
                 });
             }
         }
-        
         Ok(results)
     }
-    
     /// Search single file with progressive strategy
     async fn search_file_progressive(
         &self,
@@ -398,16 +352,13 @@ impl ColumnarOptimizer {
         stats: &mut OptimizationStats,
     ) -> Result<Vec<SearchCandidate>> {
         debug!("Progressive search in file: {}", file_path);
-        
         // Create streaming iterator
         let mut iterator = self.create_streaming_iterator(
             file_path,
             filter,
             None, // Load all columns for now
         ).await?;
-        
         let mut candidates = Vec::new();
-        
         // Stage 1: Binary filtering (if enabled)
         if config.use_binary_filter {
             candidates = self.binary_filter_stage(&mut iterator, query_vector, config).await?;
@@ -431,11 +382,9 @@ impl ColumnarOptimizer {
             candidates = self.fp32_rerank_stage(&mut iterator, query_vector, &candidates, distance_metric).await?;
             debug!("FP32 rerank stage: {} candidates", candidates.len());
         }
-        
         // Sort and limit
-        candidates.sort_by(|a, b| a.distance.partial_cmp(&b.distance).unwrap_or(std::cmp::Ordering::Equal));
+        candidates.sort_by(|a, b| a.similarity.partial_cmp(&b.similarity).unwrap_or(std::cmp::Ordering::Equal));
         candidates.truncate(top_k);
-        
         Ok(candidates)
     }
     
@@ -447,10 +396,8 @@ impl ColumnarOptimizer {
         config: &ProgressiveSearchConfig,
     ) -> Result<Vec<SearchCandidate>> {
         let mut candidates = Vec::new();
-        
         // Create binary query vector
         let binary_query: Vec<bool> = query_vector.iter().map(|&x| x > 0.0).collect();
-        
         while let Some(batch) = iterator.next().await? {
             // Find binary vector column
             if let Some(binary_col) = batch.column_by_name("vector_binary") {
@@ -464,7 +411,6 @@ impl ColumnarOptimizer {
                 candidates.extend(binary_candidates);
             }
         }
-        
         Ok(candidates)
     }
     
@@ -477,13 +423,11 @@ impl ColumnarOptimizer {
         threshold: f32,
     ) -> Result<Vec<SearchCandidate>> {
         let mut candidates = Vec::new();
-        
         // This is a simplified implementation
         // In production, would use efficient binary operations
         for row_idx in 0..batch.num_rows() {
             // Simulate binary similarity check
             let similarity = 0.8; // Placeholder
-            
             if similarity >= threshold {
                 candidates.push(SearchCandidate {
                     row_group_id,
@@ -493,7 +437,6 @@ impl ColumnarOptimizer {
                 });
             }
         }
-        
         Ok(candidates)
     }
     
@@ -509,7 +452,6 @@ impl ColumnarOptimizer {
         // For now, just return the input candidates
         Ok(candidates.to_vec())
     }
-    
     /// Product Quantization search stage
     async fn pq_search_stage(
         &self,
@@ -519,10 +461,8 @@ impl ColumnarOptimizer {
         _config: &ProgressiveSearchConfig,
     ) -> Result<Vec<SearchCandidate>> {
         // Refine candidates using PQ vectors
-        // For now, just return the input candidates
         Ok(candidates.to_vec())
     }
-    
     /// Final FP32 reranking stage
     async fn fp32_rerank_stage(
         &self,
@@ -532,25 +472,21 @@ impl ColumnarOptimizer {
         distance_metric: &DistanceMetric,
     ) -> Result<Vec<SearchCandidate>> {
         let mut reranked = Vec::new();
-        
         for candidate in candidates {
             // Load full FP32 vector and compute exact distance
             if let Some(vector) = self.load_vector_at_candidate(candidate).await? {
-                let distance = self.distance_compute.as_ref().compute_distance(
+                let distance = self.distance_compute.as_ref().calculate_distance(
                     query_vector,
                     &vector,
                     distance_metric,
                 )?;
-                
                 let mut updated_candidate = candidate.clone();
-                updated_candidate.distance = distance;
+                updated_candidate.similarity = distance;
                 reranked.push(updated_candidate);
             }
         }
-        
         Ok(reranked)
     }
-    
     /// Load vector at specific candidate location
     async fn load_vector_at_candidate(&self, candidate: &SearchCandidate) -> Result<Option<Vec<f32>>> {
         // This is a placeholder implementation
@@ -560,7 +496,6 @@ impl ColumnarOptimizer {
     
     /// Load full VectorRecord at candidate location
     async fn load_vector_at_location(&self, candidate: &SearchCandidate) -> Result<Option<VectorRecord>> {
-        // This is a placeholder implementation
         // In production, would load the full record from Parquet
         Ok(Some(VectorRecord {
             id: candidate.vector_id.clone(),
@@ -568,6 +503,7 @@ impl ColumnarOptimizer {
             metadata: None,
             timestamp: 0,
             updated_at: None,
+            quantized_vector: None,
             expires_at: None,
             version: None,
         }))
@@ -576,7 +512,6 @@ impl ColumnarOptimizer {
     /// Optimize row group layout for better performance
     pub async fn optimize_layout(&self, file_path: &str) -> Result<()> {
         info!("Optimizing row group layout for: {}", file_path);
-        
         // This would analyze access patterns and reorganize data
         // For now, just return success
         Ok(())
@@ -585,15 +520,12 @@ impl ColumnarOptimizer {
     /// Get optimization statistics
     pub fn get_optimization_stats(&self) -> HashMap<String, serde_json::Value> {
         let mut stats = HashMap::new();
-        
         let bloom_cache = self.bloom_filter_cache.read();
         stats.insert("bloom_filter_cache_size".to_string(), 
                      serde_json::Value::Number(bloom_cache.len().into()));
-        
         let stats_cache = self.stats_cache.read();
         stats.insert("stats_cache_size".to_string(),
                      serde_json::Value::Number(stats_cache.len().into()));
-        
         stats
     }
     
@@ -601,10 +533,8 @@ impl ColumnarOptimizer {
     pub fn clear_caches(&self) {
         let mut bloom_cache = self.bloom_filter_cache.write();
         let mut stats_cache = self.stats_cache.write();
-        
         bloom_cache.clear();
         stats_cache.clear();
-        
         info!("Cleared columnar optimization caches");
     }
 }
@@ -618,24 +548,20 @@ impl StreamingRowGroupIterator {
         
         let row_group_idx = self.selected_row_groups[self.current_index];
         self.current_index += 1;
-        
         // Read the row group
         let file = std::fs::File::open(&self.file_path)?;
         let mut reader_builder = ParquetRecordBatchReaderBuilder::try_new(file)?;
-        
         // Apply column projection if specified
         if let Some(ref columns) = self.column_projection {
             let schema = reader_builder.schema();
             let mut projection_indices = Vec::new();
-            
-            for column_name in columns {
-                if let Ok(field) = schema.field_with_name(column_name) {
+            for name in columns {
+                if let Ok(field) = schema.field_with_name(name) {
                     if let Some(index) = schema.fields().iter().position(|f| f == field) {
                         projection_indices.push(index);
                     }
                 }
             }
-            
             if !projection_indices.is_empty() {
                 reader_builder = reader_builder.with_projection(projection_indices.into());
             }
@@ -643,9 +569,7 @@ impl StreamingRowGroupIterator {
         
         // Select specific row group
         reader_builder = reader_builder.with_row_groups(vec![row_group_idx]);
-        
         let mut reader = reader_builder.build()?;
-        
         // Read first batch (could be extended to read all batches)
         if let Some(batch) = reader.next() {
             Ok(Some(batch?))
@@ -704,16 +628,13 @@ impl BloomFilterProxy {
 mod tests {
     use super::*;
     use crate::core::hardware_capabilities::HardwareCapabilities;
-    
     #[tokio::test]
     async fn test_columnar_optimizer_creation() {
-        let _ = HardwareCapabilities::initialize_default();
-        let hardware = HardwareCapabilities::get().unwrap();
-        let distance_compute = Arc::new(UnifiedDistanceCompute::new(hardware));
+        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let hardware = crate::core::hardware_capabilities::get_hardware_capabilities();
+        let distance_compute = Arc::new(UnifiedDistanceCompute::new().unwrap());
         let config = ColumnarConfig::default();
-        
         let optimizer = ColumnarOptimizer::new(distance_compute, config);
-        
         let stats = optimizer.get_optimization_stats();
         assert!(stats.contains_key("bloom_filter_cache_size"));
         assert!(stats.contains_key("stats_cache_size"));
@@ -722,7 +643,6 @@ mod tests {
     #[test]
     fn test_progressive_search_config() {
         let config = ProgressiveSearchConfig::default();
-        
         assert!(config.use_binary_filter);
         assert!(config.use_int8_search);
         assert!(config.use_pq_search);

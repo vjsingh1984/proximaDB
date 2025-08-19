@@ -218,7 +218,7 @@ impl MetadataIndex {
             if let Some(metadata) = record.metadata.as_ref() {
                 for (key, value) in metadata {
                     // Only index filterable columns
-                    if !self.filterable_columns.contains_hash(key) {
+                    if !self.filterable_columns.contains(key.as_str()) {
                         continue;
                     }
                     
@@ -370,16 +370,16 @@ impl MetadataIndex {
     }
     
     fn find_blocks_with_value(&self, column: &str, value: &serde_json::Value) -> Result<BitSet> {
-        if let Some(index) = self.column_indexes.get(key) {
+        if let Some(index) = self.column_indexes.get(column) {
             match index {
                 ColumnIndex::Inverted { value_to_blocks, .. } => {
-                    Ok(value_to_blocks.get(key)
+                    Ok(value_to_blocks.get(value)
                         .cloned()
                         .unwrap_or_else(|| BitSet::new(self.table_stats.total_blocks as usize)))
                 }
                 ColumnIndex::BTree { tree, .. } => {
                     let ordered = OrderedValue::from(value.clone());
-                    Ok(tree.get(key)
+                    Ok(tree.get(&ordered)
                         .cloned()
                         .unwrap_or_else(|| BitSet::new(self.table_stats.total_blocks as usize)))
                 }
@@ -391,7 +391,7 @@ impl MetadataIndex {
     }
     
     fn find_blocks_in_range(&self, column: &str, min: &serde_json::Value, max: &serde_json::Value) -> Result<BitSet> {
-        if let Some(ColumnIndex::BTree { tree, .. }) = self.column_indexes.get(key) {
+        if let Some(ColumnIndex::BTree { tree, .. }) = self.column_indexes.get(column) {
             let min_ordered = OrderedValue::from(min.clone());
             let max_ordered = OrderedValue::from(max.clone());
             

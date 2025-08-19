@@ -441,7 +441,7 @@ impl OptimizedWriteBufferWriter {
         directory_cache: &Arc<RwLock<HashMap<String, Instant>>>,
     ) -> bool {
         let cache = directory_cache.read().await;
-        if let Some(last_checked) = cache.get(&key) {
+        if let Some(last_checked) = cache.get(logs_dir) {
             // Directory cache valid for 1 hour
             last_checked.elapsed() >= Duration::from_secs(3600)
         } else {
@@ -642,7 +642,7 @@ impl OptimizedWriteBufferWriter {
                 // Try to find a request with the same format to combine with
                 if let Some(existing_request) = existing_requests
                     .iter_mut()
-                    .find(|req| req.format == new_request.format && req.vectors.len() < 1000)
+                    .find(|req| req.vectors.len() < 1000)
                 {
                     // Combine the vectors and sequences
                     existing_request.vectors.append(&mut new_request.vectors);

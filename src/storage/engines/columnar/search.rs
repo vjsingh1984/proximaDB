@@ -230,7 +230,7 @@ impl ColumnarSearcher {
         
         // 4. Sort and select top-k
         all_results.sort_by(|a, b| {
-            a.distance.partial_cmp(&b.distance).unwrap_or(std::cmp::Ordering::Equal)
+            a.similarity.partial_cmp(&b.similarity).unwrap_or(std::cmp::Ordering::Equal)
         });
         all_results.truncate(top_k);
         
@@ -364,7 +364,7 @@ impl ColumnarSearcher {
             // Extract vector (simplified - would handle different formats)
             let vector = self.extract_vector_from_array(vector_array, row_idx)?;
             
-            let distance = self.distance_compute.as_ref().compute_distance(
+            let distance = self.distance_compute.as_ref().calculate_distance(
                 query_vector,
                 &vector,
                 distance_metric,
@@ -442,7 +442,7 @@ impl ColumnarSearcher {
         
         // 3. Final ranking
         all_results.sort_by(|a, b| {
-            a.distance.partial_cmp(&b.distance).unwrap_or(std::cmp::Ordering::Equal)
+            a.similarity.partial_cmp(&b.similarity).unwrap_or(std::cmp::Ordering::Equal)
         });
         all_results.truncate(top_k);
         

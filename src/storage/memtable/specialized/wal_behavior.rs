@@ -135,7 +135,7 @@ impl BatchCoordinator {
 
     /// Get all unflushed batches for a collection
     fn get_unflushed_batches(&self, collection_id: &str) -> Vec<&WALVectorBatch> {
-        if let Some(collection_batches) = self.batches.get(key) {
+        if let Some(collection_batches) = self.batches.get(collection_id) {
             collection_batches
                 .values()
                 .filter(|batch| !batch.is_flushed)
@@ -469,8 +469,8 @@ impl WALBehaviorWrapper {
             let search_result = SearchResult {
                 id: vector_record.id.clone().unwrap_or_default(),
                 vector_id: vector_record.id.clone(),
+                score: similarity.raw_distance, // Add score field
                 similarity: similarity.rank_value,
-                similarity: None, // Score is already the similarity score
                 // rank removed -  Some((rank + 1) as u16),
                 vector: if include_vectors { 
                     Some(vector_record.vector.clone()) 
@@ -505,9 +505,8 @@ impl WALBehaviorWrapper {
                 engine_stats: None,
                 version: vector_record.version,
                 timestamp: Some(vector_record.timestamp),
-                semantic_distance: None,
+                semantic_similarity: None,
                 index_path: Some("wal_memtable".to_string()),
-                timestamp: Some(chrono::Utc::now()),
             };
             search_results.push(search_result);
         }
@@ -818,7 +817,7 @@ impl WALBehaviorWrapper {
     ) -> Result<crate::storage::persistence::write_ahead_log::WALStats> {
         let all_stats = WALBehaviorWrapper::get_stats(self).await?;
 
-        match all_stats.get(key) {
+        match all_stats.get(collection_id) {
             Some(stats) => Ok(stats.clone()),
             None => Ok(crate::storage::persistence::write_ahead_log::WALStats {
                 total_entries: 0,

@@ -47,7 +47,7 @@ pub struct HardwareConfig {
     
     /// Enable GPU for distance calculations (default: true)
     #[serde(default = "default_true")]
-    pub enable_gpu_distance: bool,
+    pub enable_gpu_similarity: bool,
     
     /// Minimum vector size to use GPU (default: 64)
     #[serde(default = "default_gpu_min_vector_size")]
@@ -78,7 +78,7 @@ impl Default for HardwareConfig {
             enable_simd: true,
             enable_avx512: true,
             enable_gpu_parsing: true,
-            enable_gpu_distance: true,
+            enable_gpu_similarity: true,
             gpu_min_vector_size: 64,
             gpu_min_batch_size: 100,
         }

@@ -66,34 +66,69 @@ impl StorageEngineFactory {
                 info!("Creating RAPTOR engine for hybrid strategy");
                 Self::create_raptor_default()
             }
+            StorageEngineStrategy::Swift => {
+                info!("Creating SWIFT engine");
+                Self::create_swift()
+            }
+            StorageEngineStrategy::Nova => {
+                info!("Creating NOVA engine");
+                Self::create_nova()
+            }
+            StorageEngineStrategy::Raptor => {
+                info!("Creating RAPTOR engine");
+                Self::create_raptor_default()
+            }
         }
     }
     
     /// Create VIPER engine
     fn create_viper() -> Result<Arc<dyn UnifiedStorageEngine>> {
         info!("Creating VIPER storage engine");
-        let engine = ViperEngine::new()?;
+        // VIPER needs async initialization, block on it for now
+        let runtime = tokio::runtime::Runtime::new()?;
+        let engine = runtime.block_on(async {
+            let filesystem_config = crate::storage::persistence::filesystem::FilesystemConfig::default();
+            let filesystem = Arc::new(crate::storage::persistence::filesystem::FilesystemFactory::new(filesystem_config).await?);
+            let viper_config = crate::core::config::ViperConfig::default();
+            let distance_compute = Arc::new(crate::compute::distance_computation::engine::UnifiedDistanceCompute::default());
+            ViperEngine::new(
+                "default".to_string(),  // Default collection ID
+                viper_config,
+                filesystem,
+                distance_compute,
+            ).await
+        })?;
         Ok(Arc::new(engine))
     }
     
     /// Create SST engine
     fn create_sst() -> Result<Arc<dyn UnifiedStorageEngine>> {
         info!("Creating SST storage engine");
-        let engine = SstStorage::new()?;
+        // SST needs async initialization, block on it for now
+        let runtime = tokio::runtime::Runtime::new()?;
+        let engine = runtime.block_on(async {
+            let sst_config = crate::core::config::SstConfig::default();
+            let filesystem_config = crate::storage::persistence::filesystem::FilesystemConfig::default();
+            let filesystem = Arc::new(crate::storage::persistence::filesystem::FilesystemFactory::new(filesystem_config).await?);
+            let distance_compute = Arc::new(crate::compute::distance_computation::engine::UnifiedDistanceCompute::default());
+            SstStorage::new(sst_config, filesystem, distance_compute).await
+        })?;
         Ok(Arc::new(engine))
     }
     
     /// Create SWIFT engine (Storage With Instant Fast Traversal)
     fn create_swift() -> Result<Arc<dyn UnifiedStorageEngine>> {
         info!("Creating SWIFT (Storage With Instant Fast Traversal) storage engine");
-        let engine = SwiftEngine::new()?;
+        let runtime = tokio::runtime::Runtime::new()?;
+        let engine = runtime.block_on(SwiftEngine::new())?;
         Ok(Arc::new(engine))
     }
     
     /// Create NOVA engine (Next-gen Optimized Vector Analytics)
     fn create_nova() -> Result<Arc<dyn UnifiedStorageEngine>> {
         info!("Creating NOVA (Next-gen Optimized Vector Analytics) storage engine");
-        let engine = NovaEngine::new()?;
+        let runtime = tokio::runtime::Runtime::new()?;
+        let engine = runtime.block_on(NovaEngine::new())?;
         Ok(Arc::new(engine))
     }
     

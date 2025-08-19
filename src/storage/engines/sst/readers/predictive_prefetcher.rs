@@ -227,8 +227,8 @@ impl PredictivePrefetcher {
         let mut predictions = Vec::new();
         
         // Sequential pattern prediction
-        if let Some(seq_pattern) = self.access_patterns.sequential_patterns.get(key) {
-            if seq_pattern.confidence > 0.7 {
+        if let Some(seq_pattern) = self.access_patterns.sequential_patterns.get(&current_key.file_path) {
+            if seq_pattern.access_count > 3 {  // Use access count as confidence metric
                 for i in 1..=self.config.prefetch_window {
                     let next_block_id = (current_key.block_id as i32 + seq_pattern.stride * i as i32) as u32;
                     let next_key = BlockCacheKey {
@@ -239,7 +239,7 @@ impl PredictivePrefetcher {
                     
                     predictions.push((
                         next_key,
-                        seq_pattern.confidence * (0.9_f64).powi(i as i32),
+                        0.8 * (0.9_f64).powi(i as i32),  // Use fixed confidence decay
                         PatternType::Sequential,
                     ));
                 }
@@ -247,7 +247,7 @@ impl PredictivePrefetcher {
         }
         
         // Random pattern prediction (hot blocks)
-        if let Some(rand_pattern) = self.access_patterns.random_patterns.get(key) {
+        if let Some(rand_pattern) = self.access_patterns.random_patterns.get(&current_key.file_path) {
             let mut hot_blocks: Vec<_> = rand_pattern.hot_blocks.iter().collect();
             hot_blocks.sort_by_key(|(_, count)| std::cmp::Reverse(**count));
             
@@ -288,7 +288,7 @@ impl PredictivePrefetcher {
         for (i, record) in history.iter().enumerate() {
             if record.key.file_path == current_key.file_path {
                 // Look at next accesses
-                if let Some(next_record) = history.get(key) {
+                if let Some(next_record) = history.get(i + 1) {
                     if next_record.key.file_path == current_key.file_path {
                         *pattern_scores.entry(next_record.key.block_id).or_insert(0.0) += 1.0;
                     }
@@ -371,7 +371,7 @@ impl PredictivePrefetcher {
     /// Detect access type
     async fn detect_access_type(&self, key: &BlockCacheKey) -> AccessType {
         if let Some(pattern) = self.access_patterns.sequential_patterns.get(key) {
-            if pattern.confidence > 0.7 {
+            if pattern.access_count > 3 {  // Use access count threshold
                 return AccessType::Sequential;
             }
         }
@@ -472,13 +472,14 @@ impl AccessPatternTracker {
             .and_modify(|pattern| {
                 let stride = record.key.block_id as i32 - pattern.last_block_id as i32;
                 if stride == pattern.stride && stride != 0 {
-                    pattern.confidence = (pattern.confidence * 0.9 + 0.1).min(1.0);
+                    // Consistent stride pattern detected
                     pattern.access_count += 1;
                 } else if pattern.access_count < 3 {
+                    // Update stride for new pattern
                     pattern.stride = stride;
-                    pattern.confidence = 0.5;
                 } else {
-                    pattern.confidence *= 0.8;
+                    // Pattern broken, reduce access count
+                    pattern.access_count = pattern.access_count.saturating_sub(1);
                 }
                 pattern.last_block_id = record.key.block_id;
                 pattern.last_access = record.timestamp;

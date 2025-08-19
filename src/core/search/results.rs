@@ -31,7 +31,7 @@ pub struct SearchResult {
     
     // Unified search pipeline integration
     /// Semantic distance information with metric awareness (replaces multiple adapters)
-    pub semantic_distance: Option<SimilarityResult>,
+    pub semantic_similarity: Option<SimilarityResult>,
     /// Quantization information if applicable
     pub quantization_info: Option<QuantizationInfo>,
     /// Engine-specific optimization stats (replaces multiple result types)
@@ -40,8 +40,8 @@ pub struct SearchResult {
     // Additional fields for compatibility with existing code
     /// Index path for result tracking
     pub index_path: Option<String>,
-    /// Creation timestamp
-    pub timestamp: Option<chrono::DateTime<chrono::Utc>>,
+    // Creation timestamp (as DateTime) - removed as duplicate, use the u32 timestamp instead
+    // pub timestamp: Option<chrono::DateTime<chrono::Utc>>,
 }
 
 /// Debug information for search results
@@ -65,7 +65,7 @@ pub struct QuantizationInfo {
     /// Accuracy retained (percentage)
     pub accuracy_retained: f32,
     /// Column name in Parquet file
-    pub column_name: Option<String>,
+    pub name: Option<String>,
 }
 
 /// Engine-specific optimization statistics
@@ -100,11 +100,11 @@ impl SearchResult {
             debug_info: None,
             version: None,
             timestamp: None,
-            semantic_distance: None,
+            semantic_similarity: None,
             quantization_info: None,
             engine_stats: None,
             index_path: None,
-            timestamp: None,
+            // timestamp: None, // Duplicate field removed
         }
     }
     
@@ -125,11 +125,11 @@ impl SearchResult {
             debug_info: None,
             version: None,
             timestamp: None,
-            semantic_distance: None,
+            semantic_similarity: None,
             quantization_info: None,
             engine_stats: None,
             index_path: None,
-            timestamp: None,
+            // timestamp: None, // Duplicate field removed
         }
     }
     
@@ -147,10 +147,10 @@ impl SearchResult {
     
     /// Add semantic distance information (eliminates adapter conversions)
     pub fn with_semantic_distance(mut self, semantic_distance: SimilarityResult) -> Self {
-        self.semantic_distance = Some(semantic_distance);
+        self.semantic_similarity = Some(semantic_distance.clone());
         // Update core score/distance fields for compatibility
         self.score = semantic_distance.normalized_score;
-        self.distance = Some(semantic_distance.rank_value);
+        self.similarity = Some(semantic_distance.rank_value);
         self
     }
     
@@ -170,26 +170,25 @@ impl SearchResult {
     pub fn from_semantic_distance(
         id: String,
         vector_id: Option<String>,
-        semantic_distance: SimilarityResult,
+        semantic_similarity: SimilarityResult,
         vector: Option<Vec<f32>>,
         metadata: HashMap<String, serde_json::Value>,
     ) -> Self {
         Self {
             id,
             vector_id,
-            similarity: semantic_distance.normalized_score,
-            similarity: Some(semantic_distance.rank_value),
+            score: semantic_similarity.normalized_score,
+            similarity: Some(semantic_similarity.rank_value),
             // rank removed -  None,
             vector,
             metadata,
             debug_info: None,
             version: None,
             timestamp: None,
-            semantic_distance: Some(semantic_distance),
+            semantic_similarity: Some(semantic_similarity),
             quantization_info: None,
             engine_stats: None,
             index_path: None,
-            timestamp: None,
         }
     }
     
@@ -206,11 +205,11 @@ impl SearchResult {
             debug_info: None,
             version: None,
             timestamp: None,
-            semantic_distance: None,
+            semantic_similarity: None,
             quantization_info: None,
             engine_stats: None,
             index_path: None,
-            timestamp: None,
+            // timestamp: None, // Duplicate field removed
         }
     }
 }

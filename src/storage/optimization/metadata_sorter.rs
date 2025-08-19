@@ -204,7 +204,7 @@ impl MetadataSorter {
         let mut key_count = 0;
         
         for sort_key in &self.config.primary_sort_keys {
-            if let Some(&cardinality) = stats.distinct_values_per_key.get(key) {
+            if let Some(&cardinality) = stats.distinct_values_per_key.get(sort_key) {
                 // Lower cardinality = better compression potential
                 let cardinality_ratio = cardinality as f64 / records.len() as f64;
                 let improvement = 1.0 - cardinality_ratio;

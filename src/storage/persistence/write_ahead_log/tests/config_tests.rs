@@ -67,8 +67,8 @@ mod tests {
             config.multi_disk.distribution_strategy,
             DiskDistributionStrategy::LoadBalanced
         );
-        assert!(!config.storage.as_ref().and_then(|s| s.compression.as_ref()).compress_memory);
-        assert!(config.storage.as_ref().and_then(|s| s.compression.as_ref()).compress_disk);
+        assert!(!&config.compression.compress_memory);
+        assert!(&config.compression.compress_disk);
     }
 
     #[tokio::test]
@@ -127,8 +127,8 @@ mod tests {
             config.multi_disk.distribution_strategy,
             DiskDistributionStrategy::Hash
         );
-        assert_eq!(config.storage.as_ref().and_then(|s| s.compression.as_ref()).algorithm, CompressionAlgorithm::Zstd);
-        assert!(config.storage.as_ref().and_then(|s| s.compression.as_ref()).compress_memory);
+        assert_eq!(&config.compression.algorithm, CompressionAlgorithm::Zstd);
+        assert!(&config.compression.compress_memory);
         assert_eq!(
             config.performance.memory_flush_size_bytes,
             128 * 1024 * 1024

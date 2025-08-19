@@ -423,7 +423,7 @@ impl TransactionCoordinator {
         
         // Get operation metadata from DashMap
         let metadata = self.active_operations
-            .get(key)
+            .get(operation_id)
             .ok_or_else(|| anyhow::anyhow!("Operation not found: {}", operation_id))?
             .clone();
 
@@ -482,7 +482,7 @@ impl TransactionCoordinator {
 
         // Get operation metadata from DashMap
         let metadata = self.active_operations
-            .get(key)
+            .get(operation_id)
             .ok_or_else(|| anyhow::anyhow!("Operation not found: {}", operation_id))?
             .clone();
 
@@ -612,7 +612,7 @@ impl TransactionCoordinator {
         );
 
         // Get operation metadata from DashMap
-        let metadata = self.active_operations.get(key).map(|entry| entry.clone());
+        let metadata = self.active_operations.get(operation_id).map(|entry| entry.clone());
 
         if let Some(metadata) = metadata {
             // Update status to failed
@@ -638,7 +638,7 @@ impl TransactionCoordinator {
         &self,
         operation_id: &OperationId,
     ) -> Option<TransactionalOperationStatus> {
-        self.active_operations.get(key).map(|entry| entry.status.clone())
+        self.active_operations.get(operation_id).map(|entry| entry.status.clone())
     }
 
     /// List active operations
@@ -916,7 +916,7 @@ impl TransactionCoordinator {
     /// Get transaction by ID
     async fn get_transaction(&self, tx_id: &str) -> Result<Arc<RwLock<ActiveTransaction>>> {
         self.transactions
-            .get(key)
+            .get(tx_id)
             .map(|entry| entry.value().clone())
             .ok_or_else(|| anyhow::anyhow!("Transaction {} not found", tx_id))
     }

@@ -128,7 +128,7 @@ impl SSTRowFilterEvaluator {
         record_id: &str,
         metadata: &[crate::proto::proximadb::MetadataItem],
     ) -> Result<HashMap<String, serde_json::Value>> {
-        if let Some(cached) = self.metadata_cache.get(&key) {
+        if let Some(cached) = self.metadata_cache.get(&record_id) {
             return Ok(cached.clone());
         }
         
@@ -149,7 +149,7 @@ impl SSTRowFilterEvaluator {
         cache_key: &str,
         metadata: &[crate::proto::proximadb::MetadataItem],
     ) -> Result<HashMap<String, serde_json::Value>> {
-        if let Some(cached) = self.metadata_cache.get(&key) {
+        if let Some(cached) = self.metadata_cache.get(&cache_key) {
             return Ok(cached.clone());
         }
         

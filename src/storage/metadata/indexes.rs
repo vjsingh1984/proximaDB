@@ -49,7 +49,7 @@ impl From<&Collection> for CollectionLookupResult {
             name: record.config.as_ref().map(|c| c.name.clone()).unwrap_or_default(),
             dimension: record.config.as_ref().map(|c| c.dimension).unwrap_or(0),
             distance_metric: format!("{:?}", record.config.as_ref().map(|c| c.distance_metric).unwrap_or(0)),
-            indexing_algorithm: format!("{:?}", record.config.as_ref().map(|c| c.primary_index).unwrap_or(0)),
+            indexing_algorithm: record.config.as_ref().and_then(|c| c.primary_index.clone()).unwrap_or_else(|| "None".to_string()),
             storage_engine: format!("{:?}", record.config.as_ref().map(|c| c.storage_engine).unwrap_or(0)),
             vector_count: record.stats.as_ref().map(|s| s.vector_count).unwrap_or(0),
             total_size_bytes: record.stats.as_ref().map(|s| s.data_size_bytes).unwrap_or(0),
@@ -137,7 +137,7 @@ impl MetadataMemoryIndexes {
         let record_arc = Arc::new(record.clone());
 
         // Remove old record if exists (for updates)
-        if let Some(old_record) = self.uuid_to_record.get(key) {
+        if let Some(old_record) = self.uuid_to_record.get(uuid) {
             self.remove_from_secondary_indexes(&old_record.value())
                 .await;
         }
@@ -180,7 +180,7 @@ impl MetadataMemoryIndexes {
         let start_time = std::time::Instant::now();
         let result = self
             .uuid_to_record
-            .get(key)
+            .get(uuid)
             .map(|entry| entry.value().clone());
 
         // Update statistics
@@ -201,7 +201,7 @@ impl MetadataMemoryIndexes {
     pub async fn get_by_name(&self, name: &str) -> Option<Arc<Collection>> {
         let start_time = std::time::Instant::now();
 
-        let result = if let Some(uuid) = self.name_to_uuid.get(key) {
+        let result = if let Some(uuid) = self.name_to_uuid.get(name) {
             self.uuid_to_record
                 .get(uuid)
                 .map(|entry| entry.value().clone())
@@ -226,7 +226,7 @@ impl MetadataMemoryIndexes {
     /// Get UUID by name - O(1) - Optimized for storage operations
     pub async fn get_uuid_by_name(&self, name: &str) -> Option<String> {
         self.name_to_uuid
-            .get(key)
+            .get(name)
             .map(|entry| entry.value().clone())
     }
 
@@ -244,7 +244,7 @@ impl MetadataMemoryIndexes {
             }
 
             for uuid in uuids {
-                if let Some(record) = self.uuid_to_record.get(key) {
+                if let Some(record) = self.uuid_to_record.get(uuid) {
                     results.push(CollectionLookupResult::from(record.value().as_ref()));
                 }
             }
@@ -266,9 +266,9 @@ impl MetadataMemoryIndexes {
         let mut results = Vec::new();
 
         let tag_index = self.tag_to_uuids.read().await;
-        if let Some(uuids) = tag_index.get(key) {
+        if let Some(uuids) = tag_index.get(tag) {
             for uuid in uuids {
-                if let Some(record) = self.uuid_to_record.get(key) {
+                if let Some(record) = self.uuid_to_record.get(uuid) {
                     results.push(CollectionLookupResult::from(record.value().as_ref()));
                 }
             }
@@ -295,7 +295,7 @@ impl MetadataMemoryIndexes {
         let size_index = self.size_index.read().await;
         for (_size, uuids) in size_index.range(min_size..=max_size) {
             for uuid in uuids {
-                if let Some(record) = self.uuid_to_record.get(key) {
+                if let Some(record) = self.uuid_to_record.get(uuid) {
                     results.push(CollectionLookupResult::from(record.value().as_ref()));
                 }
             }
@@ -315,7 +315,7 @@ impl MetadataMemoryIndexes {
         let time_index = self.created_time_index.read().await;
         for (_time, uuids) in time_index.range(start_time..=end_time) {
             for uuid in uuids {
-                if let Some(record) = self.uuid_to_record.get(key) {
+                if let Some(record) = self.uuid_to_record.get(uuid) {
                     results.push(CollectionLookupResult::from(record.value().as_ref()));
                 }
             }

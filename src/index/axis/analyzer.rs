@@ -273,7 +273,7 @@ impl CollectionAnalyzer {
         let tracker = self.query_tracker.read().await;
         let stats = tracker
             .query_stats
-            .get(key)
+            .get(collection_id)
             .cloned()
             .unwrap_or_default();
 
@@ -362,7 +362,7 @@ impl QueryPatternTracker {
     fn analyze_patterns(&self, collection_id: &str) -> QueryPatternAnalysis {
         let stats = self
             .query_stats
-            .get(key)
+            .get(collection_id)
             .cloned()
             .unwrap_or_default();
 
@@ -432,7 +432,7 @@ impl PerformanceMetricsCollector {
     /// Get current performance metrics
     async fn get_metrics(&self, collection_id: &str) -> Option<PerformanceMetrics> {
         let current = self.current_metrics.read().await;
-        current.get(key).cloned()
+        current.get(collection_id).cloned()
     }
 }
 
@@ -460,7 +460,7 @@ impl VectorCharacteristicsAnalyzer {
     /// Analyze vector characteristics for a collection
     async fn analyze_vectors(&self, collection_id: &str) -> Result<VectorCharacteristics> {
         let cached = self.cached_characteristics.read().await;
-        if let Some(chars) = cached.get(key) {
+        if let Some(chars) = cached.get(collection_id) {
             // Return cached if recent (within 1 hour)
             if Utc::now() - chars.last_analyzed < ChronoDuration::hours(1) {
                 return Ok(chars.clone());
@@ -488,9 +488,9 @@ impl VectorCharacteristicsAnalyzer {
 
         // Simulate basic analysis based on collection ID patterns
         let (vector_count, dimension, sparsity) = match collection_id {
-            id if id.contains_hash("small") => (1_000, 128, 0.1),
-            id if id.contains_hash("sparse") => (10_000, 512, 0.8),
-            id if id.contains_hash("large") => (100_000, 768, 0.2),
+            id if id.contains("small") => (1_000, 128, 0.1),
+            id if id.contains("sparse") => (10_000, 512, 0.8),
+            id if id.contains("large") => (100_000, 768, 0.2),
             _ => (10_000, 384, 0.3), // Default for test collections
         };
 
@@ -589,7 +589,7 @@ impl MetadataComplexityAnalyzer {
     /// Analyze metadata complexity for a collection
     async fn analyze_complexity(&self, collection_id: &str) -> Result<MetadataComplexity> {
         let cached = self.cached_complexity.read().await;
-        if let Some(complexity) = cached.get(key) {
+        if let Some(complexity) = cached.get(collection_id) {
             return Ok(complexity.clone());
         }
         drop(cached);
@@ -622,7 +622,7 @@ impl TemporalPatternDetector {
     /// Detect temporal patterns for a collection
     async fn detect_patterns(&self, collection_id: &str) -> TemporalPattern {
         let patterns = self.access_patterns.read().await;
-        if let Some(pattern) = patterns.get(key) {
+        if let Some(pattern) = patterns.get(collection_id) {
             return pattern.temporal_pattern.clone();
         }
 

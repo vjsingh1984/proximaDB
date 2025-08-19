@@ -394,7 +394,7 @@ impl StoragePathResolver {
             }
 
             CollectionAssignmentStrategy::Manual { assignments } => assignments
-                .get(key)
+                .get(collection_uuid)
                 .copied()
                 .unwrap_or(self.config.base_paths[0].instance_id),
         };

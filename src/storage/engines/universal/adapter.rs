@@ -17,7 +17,7 @@ use crate::compute::distance_computation::{
     QuantizedDistanceCalculator, QuantizedDistanceConfig, QuantizedDistanceResult,
     QuantizedVectorData, Int8VectorData, PQVectorData, SelectedFormat,
 };
-use crate::compute::quantization::{
+use crate::compute::quantization::storage_engine::{
     StorageQuantizationEngine, StorageQuantizationConfig, 
     StorageQuantizedData, SearchStage,
 };
@@ -26,9 +26,10 @@ use crate::core::{VectorRecord, hardware_capabilities::HardwareCapabilities};
 use super::{
     config::{UniversalAdapterConfig, ProgressiveRefinementConfig, CacheConfig},
     conversion::{StorageFormat, FormatConverter, ConversionResult},
+    distance_cache::{DistanceTableCache, DistanceTableKey},
     hardware_manager::{HardwareAccelerationManager, OptimizationStrategy},
     progressive_refinement::{ProgressiveRefinementPipeline, RefinementStage, QualityMetrics},
-    quantized_calculator::{UniversalQuantizedCalculator, DistanceTableCache},
+    quantized_calculator::UniversalQuantizedCalculator,
     storage_integration::{StorageEngineAdapter, EngineType},
 };
 
@@ -88,6 +89,7 @@ pub struct DistanceComputationRequest {
     pub enable_acceleration: bool,
     
     /// Target quality threshold (0.0-1.0)
+    pub quality_threshold: Option<f32>,
     
     /// Collection ID for context
     pub collection_id: Uuid,
@@ -210,8 +212,9 @@ impl UniversalDistanceAdapter {
         info!("Initializing Universal Distance Adapter v{}", super::UNIVERSAL_ADAPTER_VERSION);
         
         // Initialize hardware capabilities
-        let hardware_capabilities = HardwareCapabilities::detect()
-            .map_err(|e| AdapterError::HardwareAcceleration(format!("Failed to detect hardware: {}", e)))?;
+        let hardware_capabilities = HardwareCapabilities::detect_with_config(
+            crate::core::config::HardwareConfig::default()
+        ).map_err(|e| AdapterError::HardwareAcceleration(format!("Failed to detect hardware: {}", e)))?;
         
         // Initialize hardware acceleration manager
         let hardware_manager = Arc::new(HardwareAccelerationManager::new(
@@ -220,14 +223,13 @@ impl UniversalDistanceAdapter {
         ).await?);
         
         // Initialize unified distance compute engine
-        let distance_engine = Arc::new(UnifiedDistanceCompute::new()
-            .map_err(|e| AdapterError::DistanceComputation(format!("Failed to initialize distance engine: {}", e)))?);
+        let distance_engine = Arc::new(UnifiedDistanceCompute::default());
         
         // Initialize quantized distance calculator
         let quantized_calculator = Arc::new(UniversalQuantizedCalculator::new(
             &config,
             &hardware_capabilities,
-        ).await?);
+        ).await.map_err(|e| AdapterError::Configuration(e.to_string()))?);
         
         // Initialize progressive refinement pipeline
         let refinement_pipeline = Arc::new(ProgressiveRefinementPipeline::new(
@@ -237,10 +239,12 @@ impl UniversalDistanceAdapter {
         ).await?);
         
         // Initialize format converter
-        let format_converter = Arc::new(FormatConverter::new().await?);
+        let format_converter = Arc::new(FormatConverter::new().await
+            .map_err(|e| AdapterError::FormatConversion(e.to_string()))?);
         
         // Initialize distance table cache
-        let distance_cache = Arc::new(DistanceTableCache::new(&config.cache_config).await?);
+        let distance_cache = Arc::new(DistanceTableCache::new(&config.cache_config).await
+            .map_err(|e| AdapterError::Cache(e.to_string()))?);
         
         // Initialize storage engine adapters
         let engine_adapters = Arc::new(RwLock::new(HashMap::new()));
@@ -254,7 +258,7 @@ impl UniversalDistanceAdapter {
             format_converter,
             engine_adapters,
             distance_cache,
-            hardware_capabilities,
+            hardware_capabilities: hardware_capabilities.clone(),
         };
         
         // Initialize storage engine adapters
@@ -398,7 +402,7 @@ impl UniversalDistanceAdapter {
             total_computations: cache_stats.total_requests,
             hardware_acceleration_usage: hardware_stats.acceleration_usage_rate,
             supported_engines: self.get_supported_engines().await,
-            average_computation_time_us: hardware_stats.average_computation_time_us,
+            average_computation_time_us: hardware_stats.average_operation_time_us,
         })
     }
     
@@ -425,7 +429,7 @@ impl UniversalDistanceAdapter {
     
     async fn get_engine_adapter(&self, engine_type: &EngineType) -> AdapterResult<Arc<dyn StorageEngineAdapter>> {
         let adapters = self.engine_adapters.read().await;
-        adapters.get(key)
+        adapters.get(engine_type)
             .cloned()
             .ok_or_else(|| AdapterError::StorageEngineIntegration(
                 format!("No adapter found for engine type: {:?}", engine_type)
@@ -473,27 +477,47 @@ impl UniversalDistanceAdapter {
         
         for candidate in candidates {
             let quantized_data = match quantization_format {
-                SelectedFormat::Int8 => {
+                SelectedFormat::INT8 => {
                     // Convert to INT8 format
                     let int8_data = self.format_converter.to_int8(&candidate.data).await
                         .map_err(|e| AdapterError::FormatConversion(format!("INT8 conversion failed: {}", e)))?;
-                    QuantizedVectorData::Int8(Int8VectorData { data: int8_data, scale: 1.0, zero_point: 0 })
+                    QuantizedVectorData {
+                        fp32: Some(candidate.data.clone()),
+                        binary: None,
+                        int8: Some(int8_data),
+                        pq: None,
+                    }
                 },
-                SelectedFormat::PQ { segments, bits } => {
-                    // Convert to PQ format
-                    let pq_data = self.format_converter.to_pq(&candidate.data, *segments, *bits).await
+                SelectedFormat::PQ => {
+                    // Convert to PQ format - assuming default segments/bits
+                    let pq_data = self.format_converter.to_pq(&candidate.data, 16, 8).await
                         .map_err(|e| AdapterError::FormatConversion(format!("PQ conversion failed: {}", e)))?;
-                    QuantizedVectorData::PQ(PQVectorData { 
-                        codes: pq_data,
-                        segments: *segments,
-                        bits: *bits,
-                    })
+                    QuantizedVectorData {
+                        fp32: Some(candidate.data.clone()),
+                        binary: None,
+                        int8: None,
+                        pq: Some(pq_data),
+                    }
                 },
                 SelectedFormat::Binary => {
                     // Convert to binary format
                     let binary_data = self.format_converter.to_binary(&candidate.data).await
                         .map_err(|e| AdapterError::FormatConversion(format!("Binary conversion failed: {}", e)))?;
-                    QuantizedVectorData::Binary(binary_data)
+                    QuantizedVectorData {
+                        fp32: Some(candidate.data.clone()),
+                        binary: Some(binary_data),
+                        int8: None,
+                        pq: None,
+                    }
+                },
+                SelectedFormat::FP32 => {
+                    // Keep as FP32
+                    QuantizedVectorData {
+                        fp32: Some(candidate.data.clone()),
+                        binary: None,
+                        int8: None,
+                        pq: None,
+                    }
                 },
             };
             

@@ -531,8 +531,8 @@ use tracing::{debug, error, info};
         
         // Debug output
         for (i, result) in results.iter().enumerate() {
-            debug!("Result {}: id={}, distance={:?}, score={:?}, semantic_distance={:?}", 
-                     i, result.id, result.distance, result.score, result.semantic_distance);
+            debug!("Result {}: id={}, similarity={:?}, score={:?}, semantic_distance={:?}", 
+                     i, result.id, result.similarity, result.score, result.semantic_distance);
         }
         
         // Also print the actual vectors to verify they were correctly written

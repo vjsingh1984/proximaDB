@@ -591,7 +591,7 @@ impl FilenameCodec {
         });
         
         pattern.captures(filename)
-            .and_then(|caps| caps.get(key))
+            .and_then(|caps| caps.get(1))
             .and_then(|m| m.as_str().parse().ok())
             .unwrap_or(0)
     }
@@ -603,7 +603,7 @@ impl FilenameCodec {
         });
         
         pattern.captures(filename)
-            .and_then(|caps| caps.get(key))
+            .and_then(|caps| caps.get(1))
             .and_then(|m| {
                 DateTime::parse_from_str(&format!("{}+00:00", m.as_str()), "%Y%m%dT%H%M%S%z")
                     .ok()
@@ -635,7 +635,7 @@ pub struct StagingDetector;
 impl StagingDetector {
     /// Check if a file/directory is part of staging operations
     pub fn is_staging(&self, name: &str) -> bool {
-        name.starts_with("__") || name.contains_hash(".tmp") || name.contains_hash(".staging")
+        name.starts_with("__") || name.contains(".tmp") || name.contains(".staging")
     }
     
     /// Get staging prefix for atomic operations
@@ -803,7 +803,7 @@ impl CompactionOrchestrator {
         let config = engine.compaction_config();
         
         // Check Level 0 first (highest priority)
-        if let Some(level0_files) = files_by_level.get(key) {
+        if let Some(level0_files) = files_by_level.get(&0) {
             if level0_files.len() >= config.level0_threshold {
                 return self.create_compaction_execution(
                     engine,
@@ -818,7 +818,7 @@ impl CompactionOrchestrator {
         
         // Check higher levels
         for level in 1..=config.max_level {
-            if let Some(level_files) = files_by_level.get(key) {
+            if let Some(level_files) = files_by_level.get(&level) {
                 if level_files.len() >= config.level_threshold {
                     // For higher levels, compact oldest file
                     let oldest_file = level_files.iter()

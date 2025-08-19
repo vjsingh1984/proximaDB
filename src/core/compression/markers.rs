@@ -43,6 +43,7 @@ pub fn get_compression_marker(algorithm: &CompressionAlgorithm) -> u8 {
         CompressionAlgorithm::Lz4hc => MARKER_LZ4HC,
         CompressionAlgorithm::Lzma => MARKER_LZMA,
         CompressionAlgorithm::Lzo => MARKER_LZO,
+        CompressionAlgorithm::Mixed => MARKER_UNCOMPRESSED, // Mixed uses uncompressed marker
     }
 }
 

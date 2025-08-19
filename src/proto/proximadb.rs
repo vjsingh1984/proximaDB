@@ -58,9 +58,9 @@ pub struct VectorRecord {
     ///
     /// Pre-quantized vector data (avoids re-quantization)
     #[prost(bytes = "vec", optional, tag = "8")]
-    pub quantized: ::core::option::Option<::prost::alloc::vec::Vec<u8>>,
+    pub quantized_vector: ::core::option::Option<::prost::alloc::vec::Vec<u8>>,
 }
-/// Output record for search results - optimized for client consumption
+/// Output record for search results - aligned with core SearchResult
 #[derive(serde::Serialize, serde::Deserialize)]
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -74,28 +74,22 @@ pub struct SearchVectorRecord {
     /// Metadata (if requested)
     #[prost(message, repeated, tag = "3")]
     pub metadata: ::prost::alloc::vec::Vec<MetadataItem>,
-    /// Search-specific fields
+    /// Search-specific fields - aligned with core::search::SearchResult
     ///
-    /// Search result rank (1-based)
-    #[prost(int32, tag = "4")]
-    pub rank: i32,
-    /// Similarity score
-    #[prost(float, tag = "5")]
-    pub similarity: f32,
-    /// Distance value
-    #[prost(float, tag = "6")]
-    pub distance: f32,
+    /// Similarity score (higher = more similar)
+    #[prost(float, tag = "4")]
+    pub score: f32,
+    /// Alternative similarity value (if different from score)
+    #[prost(float, optional, tag = "5")]
+    pub similarity: ::core::option::Option<f32>,
     /// Optional fields for detailed results
     ///
     /// Version (if versioning enabled)
-    #[prost(uint32, optional, tag = "7")]
+    #[prost(uint32, optional, tag = "6")]
     pub version: ::core::option::Option<u32>,
     /// When record was created
-    #[prost(uint32, optional, tag = "8")]
+    #[prost(uint32, optional, tag = "7")]
     pub timestamp: ::core::option::Option<u32>,
-    /// Source collection (for multi-collection search)
-    #[prost(string, optional, tag = "9")]
-    pub collection_id: ::core::option::Option<::prost::alloc::string::String>,
 }
 /// Native typed metadata supporting multiple value types
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -620,7 +614,7 @@ pub struct FooterCacheSettings {
     #[prost(int64, optional, tag = "9")]
     pub warming_interval_seconds: ::core::option::Option<i64>,
     #[prost(bool, optional, tag = "10")]
-    pub compression: ::core::option::Option<bool>,
+    pub enable_compression: ::core::option::Option<bool>,
     #[prost(int32, optional, tag = "11")]
     pub compression_level: ::core::option::Option<i32>,
 }
@@ -713,50 +707,60 @@ pub struct NovaEngineSettings {
     #[prost(bool, optional, tag = "4")]
     pub prefer_low_latency: ::core::option::Option<bool>,
 }
-/// Comprehensive quantization configuration with storage-aware strategies
-/// DESIGN DECISION: Quantization is ON by default for 95% I/O reduction and 50-80% storage savings
-/// Uses same distance metric as CollectionConfig.distance_metric for consistency
 #[derive(serde::Serialize, serde::Deserialize)]
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct QuantizationConfig {
-    /// Quantization is enabled by default for I/O reduction and storage savings
-    /// Set enabled=false only if you have specific reasons (e.g., very small dimensions)
-    ///
-    /// Enable quantization (default: true in code)
+    /// Master quantization switch (default: true for all collections)
     #[prost(bool, tag = "1")]
     pub enabled: bool,
-    /// Quantization method (default: PRODUCT_QUANTIZATION)
-    #[prost(enumeration = "quantization_config::Method", optional, tag = "2")]
-    pub method: ::core::option::Option<i32>,
-    /// PQ-specific settings (used when method=PRODUCT_QUANTIZATION)
+    /// Default: SMART_DEFAULTS
+    #[prost(enumeration = "quantization_config::Strategy", tag = "2")]
+    pub strategy: i32,
+    /// Custom quantization levels (used when strategy=CUSTOM_LEVELS)
+    /// Maximum 5 levels for system protection and performance
+    #[prost(message, repeated, tag = "3")]
+    pub custom_levels: ::prost::alloc::vec::Vec<QuantizationLevel>,
+    /// Progressive search configuration
     ///
-    /// Number of subvectors (default: dimension/4, min 8, max 64)
-    #[prost(int32, optional, tag = "3")]
-    pub num_subvectors: ::core::option::Option<i32>,
-    /// Bits per subvector (default: 8, options: 4,6,8)
-    #[prost(int32, optional, tag = "4")]
-    pub bits_per_subvector: ::core::option::Option<i32>,
-    /// Training settings
+    /// Multi-tier filtering (default: true)
+    #[prost(bool, tag = "4")]
+    pub enable_progressive_search: bool,
+    /// Binary filter selectivity (default: 0.3 = 30% reduction)
+    #[prost(float, tag = "5")]
+    pub binary_filter_selectivity: f32,
+    /// INT8 ranking selectivity (default: 0.1 = 10% of remaining)
+    #[prost(float, tag = "6")]
+    pub int8_ranking_selectivity: f32,
+    /// PQ ranking selectivity (default: 0.05 = 5% for rerank)
+    #[prost(float, tag = "7")]
+    pub pq_ranking_selectivity: f32,
+    /// Training and quality settings
     ///
     /// Samples for codebook training (default: 10000)
-    #[prost(int32, optional, tag = "5")]
-    pub training_sample_size: ::core::option::Option<i32>,
-    /// Min acceptable quality (default: 0.95)
-    #[prost(float, optional, tag = "6")]
-    pub min_quality: ::core::option::Option<f32>,
-    /// Progressive search settings (for hierarchical SST layout)
+    #[prost(int32, tag = "8")]
+    pub training_sample_size: i32,
+    /// Minimum acceptable recall (default: 0.95)
+    #[prost(float, tag = "9")]
+    pub quality_threshold: f32,
+    /// Retrain on data distribution changes (default: true)
+    #[prost(bool, tag = "10")]
+    pub enable_adaptive_training: bool,
+    /// Performance optimization hints
     ///
-    /// Use multi-tier filtering (default: true)
-    #[prost(bool, optional, tag = "7")]
-    pub enable_progressive_search: ::core::option::Option<bool>,
-    /// Hamming threshold for first stage (default: 0.3)
-    #[prost(float, optional, tag = "8")]
-    pub binary_filter_threshold: ::core::option::Option<f32>,
+    /// Prioritize storage savings over speed (default: false)
+    #[prost(bool, tag = "11")]
+    pub optimize_for_storage: bool,
+    /// Prioritize memory usage over quality (default: false)
+    #[prost(bool, tag = "12")]
+    pub optimize_for_memory: bool,
+    /// Use SIMD for quantization ops (default: true)
+    #[prost(bool, tag = "13")]
+    pub enable_simd_acceleration: bool,
 }
 /// Nested message and enum types in `QuantizationConfig`.
 pub mod quantization_config {
-    /// Quantization method - PQ is most effective for high dimensions
+    /// Quantization strategy - controls how quantization levels are selected
     #[derive(serde::Serialize, serde::Deserialize)]
     #[derive(
         Clone,
@@ -770,36 +774,155 @@ pub mod quantization_config {
         ::prost::Enumeration
     )]
     #[repr(i32)]
-    pub enum Method {
-        /// Product Quantization (default, best for d>=128)
-        ProductQuantization = 0,
-        /// INT8 quantization (good for d<128)
-        ScalarQuantization = 1,
-        /// Binary sketches (extreme compression)
-        BinaryQuantization = 2,
-        /// Auto-select based on dimension
-        Adaptive = 3,
+    pub enum Strategy {
+        /// Auto-select Binary + INT8 + PQ based on dimension (RECOMMENDED)
+        SmartDefaults = 0,
+        /// User provides specific quantization levels
+        CustomLevels = 1,
+        /// Only essential quantization (INT8 for d<128, PQ8 for d>=128)
+        Minimal = 2,
+        /// Maximum compression (Binary + PQ4 + INT8)
+        Aggressive = 3,
     }
-    impl Method {
+    impl Strategy {
         /// String value of the enum field names used in the ProtoBuf definition.
         ///
         /// The values are not transformed in any way and thus are considered stable
         /// (if the ProtoBuf definition does not change) and safe for programmatic use.
         pub fn as_str_name(&self) -> &'static str {
             match self {
-                Method::ProductQuantization => "PRODUCT_QUANTIZATION",
-                Method::ScalarQuantization => "SCALAR_QUANTIZATION",
-                Method::BinaryQuantization => "BINARY_QUANTIZATION",
-                Method::Adaptive => "ADAPTIVE",
+                Strategy::SmartDefaults => "SMART_DEFAULTS",
+                Strategy::CustomLevels => "CUSTOM_LEVELS",
+                Strategy::Minimal => "MINIMAL",
+                Strategy::Aggressive => "AGGRESSIVE",
             }
         }
         /// Creates an enum from field names used in the ProtoBuf definition.
         pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
             match value {
-                "PRODUCT_QUANTIZATION" => Some(Self::ProductQuantization),
-                "SCALAR_QUANTIZATION" => Some(Self::ScalarQuantization),
-                "BINARY_QUANTIZATION" => Some(Self::BinaryQuantization),
-                "ADAPTIVE" => Some(Self::Adaptive),
+                "SMART_DEFAULTS" => Some(Self::SmartDefaults),
+                "CUSTOM_LEVELS" => Some(Self::CustomLevels),
+                "MINIMAL" => Some(Self::Minimal),
+                "AGGRESSIVE" => Some(Self::Aggressive),
+                _ => None,
+            }
+        }
+    }
+}
+/// Individual quantization level specification
+#[derive(serde::Serialize, serde::Deserialize)]
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct QuantizationLevel {
+    /// Level identifier for progressive search ordering
+    ///
+    /// e.g., "binary", "int8", "pq8", "pq4"
+    #[prost(string, tag = "1")]
+    pub level_id: ::prost::alloc::string::String,
+    #[prost(enumeration = "quantization_level::QuantizationType", tag = "2")]
+    pub r#type: i32,
+    /// Bits per code/element
+    ///
+    /// 1 (binary), 4, 8, 16, 32
+    #[prost(int32, tag = "3")]
+    pub bits: i32,
+    /// Product quantization specific settings (when type=PRODUCT)
+    ///
+    /// Number of subvectors for PQ
+    #[prost(int32, optional, tag = "4")]
+    pub num_subvectors: ::core::option::Option<i32>,
+    /// Auto-adjust subvectors based on dimension
+    #[prost(bool, optional, tag = "5")]
+    pub adaptive_subvectors: ::core::option::Option<bool>,
+    /// Scalar quantization specific settings (when type=SCALAR)
+    ///
+    /// Quantization scale factor
+    #[prost(float, optional, tag = "6")]
+    pub scale: ::core::option::Option<f32>,
+    /// Quantization offset
+    #[prost(float, optional, tag = "7")]
+    pub offset: ::core::option::Option<f32>,
+    /// Clamp to valid range
+    #[prost(bool, optional, tag = "8")]
+    pub clamp_values: ::core::option::Option<bool>,
+    /// Binary quantization specific settings (when type=BINARY)
+    ///
+    /// Binary threshold (default: 0.0)
+    #[prost(float, optional, tag = "9")]
+    pub threshold: ::core::option::Option<f32>,
+    /// Use sign-based binary encoding
+    #[prost(bool, optional, tag = "10")]
+    pub sign_based: ::core::option::Option<bool>,
+    /// Level-specific performance settings
+    ///
+    /// Store this level in storage engine (default: true)
+    #[prost(bool, optional, tag = "11")]
+    pub enable_in_storage: ::core::option::Option<bool>,
+    /// Use this level in AXIS indexes (default: inherit)
+    #[prost(bool, optional, tag = "12")]
+    pub enable_in_index: ::core::option::Option<bool>,
+    /// Search order (lower = earlier, 0=first filter)
+    #[prost(int32, optional, tag = "13")]
+    pub search_priority: ::core::option::Option<i32>,
+    /// Quality and validation settings
+    ///
+    /// Minimum recall required for this level (default: 0.8)
+    #[prost(float, optional, tag = "14")]
+    pub min_recall: ::core::option::Option<f32>,
+    /// Validate recall during training (default: true)
+    #[prost(bool, optional, tag = "15")]
+    pub enable_validation: ::core::option::Option<bool>,
+}
+/// Nested message and enum types in `QuantizationLevel`.
+pub mod quantization_level {
+    /// Quantization method for this level
+    #[derive(serde::Serialize, serde::Deserialize)]
+    #[derive(
+        Clone,
+        Copy,
+        Debug,
+        PartialEq,
+        Eq,
+        Hash,
+        PartialOrd,
+        Ord,
+        ::prost::Enumeration
+    )]
+    #[repr(i32)]
+    pub enum QuantizationType {
+        /// Binary sketches (1 bit per dimension)
+        Binary = 0,
+        /// Scalar quantization (INT8, INT4, etc.)
+        Scalar = 1,
+        /// Product quantization (PQ4, PQ8, PQ16)
+        Product = 2,
+        /// Uniform quantization
+        Uniform = 3,
+        /// Full precision (for final rerank stage)
+        None = 4,
+    }
+    impl QuantizationType {
+        /// String value of the enum field names used in the ProtoBuf definition.
+        ///
+        /// The values are not transformed in any way and thus are considered stable
+        /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+        pub fn as_str_name(&self) -> &'static str {
+            match self {
+                QuantizationType::Binary => "BINARY",
+                QuantizationType::Scalar => "SCALAR",
+                QuantizationType::Product => "PRODUCT",
+                QuantizationType::Uniform => "UNIFORM",
+                QuantizationType::None => "NONE",
+            }
+        }
+        /// Creates an enum from field names used in the ProtoBuf definition.
+        pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+            match value {
+                "BINARY" => Some(Self::Binary),
+                "SCALAR" => Some(Self::Scalar),
+                "PRODUCT" => Some(Self::Product),
+                "UNIFORM" => Some(Self::Uniform),
+                "NONE" => Some(Self::None),
                 _ => None,
             }
         }
@@ -839,7 +962,7 @@ pub struct Collection {
     #[prost(message, optional, tag = "3")]
     pub stats: ::core::option::Option<CollectionStats>,
     #[prost(int64, tag = "4")]
-    pub timestamp: i64,
+    pub created_at: i64,
     #[prost(int64, tag = "5")]
     pub updated_at: i64,
     #[prost(message, optional, tag = "6")]
@@ -866,43 +989,6 @@ pub struct CollectionStats {
     pub index_size_bytes: i64,
     #[prost(int64, tag = "3")]
     pub data_size_bytes: i64,
-}
-/// SearchResult directly contains search result fields (flattened from SearchVectorRecord)
-#[derive(serde::Serialize, serde::Deserialize)]
-#[allow(clippy::derive_partial_eq_without_eq)]
-#[derive(Clone, PartialEq, ::prost::Message)]
-pub struct SearchResult {
-    /// Vector ID (always present in results)
-    #[prost(string, tag = "1")]
-    pub id: ::prost::alloc::string::String,
-    /// Vector data (if requested)
-    #[prost(float, repeated, tag = "2")]
-    pub vector: ::prost::alloc::vec::Vec<f32>,
-    /// Metadata (if requested)
-    #[prost(message, repeated, tag = "3")]
-    pub metadata: ::prost::alloc::vec::Vec<MetadataItem>,
-    /// Search-specific fields
-    ///
-    /// Search result rank (1-based)
-    #[prost(int32, tag = "4")]
-    pub rank: i32,
-    /// Similarity score
-    #[prost(float, tag = "5")]
-    pub similarity: f32,
-    /// Distance value
-    #[prost(float, tag = "6")]
-    pub distance: f32,
-    /// Optional fields for detailed results
-    ///
-    /// Version (if versioning enabled)
-    #[prost(uint32, optional, tag = "7")]
-    pub version: ::core::option::Option<u32>,
-    /// When record was created
-    #[prost(uint32, optional, tag = "8")]
-    pub timestamp: ::core::option::Option<u32>,
-    /// Source collection (for multi-collection search)
-    #[prost(string, optional, tag = "9")]
-    pub collection_id: ::core::option::Option<::prost::alloc::string::String>,
 }
 #[derive(serde::Serialize, serde::Deserialize)]
 #[allow(clippy::derive_partial_eq_without_eq)]
@@ -1106,7 +1192,9 @@ pub struct IncludeFields {
     #[prost(bool, tag = "2")]
     pub metadata: bool,
     #[prost(bool, tag = "3")]
-    pub similarity: bool,
+    pub score: bool,
+    #[prost(bool, tag = "4")]
+    pub rank: bool,
 }
 /// Quantization parameter types for SearchParams
 ///
@@ -1214,7 +1302,7 @@ pub mod search_params {
         Uniform(super::UniformQuantizationParams),
     }
 }
-/// UNIFIED RESPONSE - All vector operations with optimized data transfer
+/// UNIFIED RESPONSE - All vector operations using native proto types
 #[derive(serde::Serialize, serde::Deserialize)]
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -1225,47 +1313,36 @@ pub struct VectorOperationResponse {
     pub operation: i32,
     #[prost(message, optional, tag = "3")]
     pub metrics: ::core::option::Option<OperationMetrics>,
+    /// Native proto results - no Avro binary to avoid confusion
+    ///
+    /// Search results with top-k records
+    #[prost(message, optional, tag = "4")]
+    pub results: ::core::option::Option<SearchResult>,
     /// Generated/affected IDs
-    #[prost(string, repeated, tag = "6")]
+    #[prost(string, repeated, tag = "5")]
     pub vector_ids: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
-    #[prost(string, optional, tag = "7")]
+    #[prost(string, optional, tag = "6")]
     pub error_message: ::core::option::Option<::prost::alloc::string::String>,
-    #[prost(string, optional, tag = "8")]
+    #[prost(string, optional, tag = "7")]
     pub error_code: ::core::option::Option<::prost::alloc::string::String>,
     /// Result metadata for client decision making
-    #[prost(message, optional, tag = "9")]
+    #[prost(message, optional, tag = "8")]
     pub result_info: ::core::option::Option<ResultMetadata>,
-    /// Optimized result transfer - choose based on data size and operation
-    #[prost(oneof = "vector_operation_response::ResultPayload", tags = "4, 5")]
-    pub result_payload: ::core::option::Option<vector_operation_response::ResultPayload>,
 }
-/// Nested message and enum types in `VectorOperationResponse`.
-pub mod vector_operation_response {
-    /// Optimized result transfer - choose based on data size and operation
-    #[derive(serde::Serialize, serde::Deserialize)]
-    #[allow(clippy::derive_partial_eq_without_eq)]
-    #[derive(Clone, PartialEq, ::prost::Oneof)]
-    pub enum ResultPayload {
-        /// Small results: regular gRPC
-        #[prost(message, tag = "4")]
-        CompactResults(super::SearchResultsCompact),
-        /// Large results: Avro binary for zero-copy
-        #[prost(bytes, tag = "5")]
-        AvroResults(::prost::alloc::vec::Vec<u8>),
-    }
-}
-/// Compact results for small datasets (< 1MB typical)
+/// Search result containing top-k vector records
 #[derive(serde::Serialize, serde::Deserialize)]
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
-pub struct SearchResultsCompact {
-    /// Direct use of SearchVectorRecord
+pub struct SearchResult {
+    /// Top-k search results
     #[prost(message, repeated, tag = "1")]
     pub results: ::prost::alloc::vec::Vec<SearchVectorRecord>,
+    /// Total number of matches found
     #[prost(int64, tag = "2")]
     pub total_found: i64,
+    /// Collection these results are from
     #[prost(string, optional, tag = "3")]
-    pub search_algorithm_used: ::core::option::Option<::prost::alloc::string::String>,
+    pub collection_id: ::core::option::Option<::prost::alloc::string::String>,
 }
 /// Metadata about the result payload
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -1276,12 +1353,12 @@ pub struct ResultMetadata {
     pub result_count: i64,
     #[prost(int64, tag = "2")]
     pub estimated_size_bytes: i64,
-    /// True if using avro_results field
-    #[prost(bool, tag = "3")]
-    pub is_avro_binary: bool,
-    /// For Avro compatibility checking
-    #[prost(string, tag = "4")]
-    pub avro_schema_version: ::prost::alloc::string::String,
+    /// Processing time in microseconds
+    #[prost(int64, tag = "3")]
+    pub processing_time_us: i64,
+    /// Search algorithm used
+    #[prost(string, optional, tag = "4")]
+    pub algorithm_used: ::core::option::Option<::prost::alloc::string::String>,
 }
 #[derive(serde::Serialize, serde::Deserialize)]
 #[allow(clippy::derive_partial_eq_without_eq)]

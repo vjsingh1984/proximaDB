@@ -330,3 +330,5 @@ build_rs_cov.profraw
 # Large binary tools
 tools/minio
 tools/fake-gcs-server
+newcategory.txt
+ml_prompt.txt

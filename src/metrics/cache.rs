@@ -156,7 +156,7 @@ impl CacheMetricsCollector {
         let l3_total = l3_hits + l3_misses;
         
         CacheMetricsSnapshot {
-            overall_hit_rate: base_metrics.hit_rate_percent(),
+            overall_hit_rate: base_metrics.hit_rate(),
             
             l1_metrics: TierMetrics {
                 hits: l1_hits,
@@ -262,10 +262,10 @@ impl CacheMetricsCollector {
         let metrics = self.current_metrics.read().await;
         
         CacheOptimizationHints {
-            should_increase_l1_size: metrics.l1_metrics.hit_rate_percent < 0.7 && 
+            should_increase_l1_size: metrics.l1_metrics.hit_rate < 0.7 && 
                                     metrics.memory_usage.used_bytes < metrics.memory_usage.total_allocated_bytes * 8 / 10,
-            should_enable_l2: metrics.l1_metrics.hit_rate_percent < 0.5 && metrics.l2_metrics.entries == 0,
-            should_enable_l3: metrics.l2_metrics.hit_rate_percent < 0.3 && metrics.l3_metrics.entries == 0,
+            should_enable_l2: metrics.l1_metrics.hit_rate < 0.5 && metrics.l2_metrics.entries == 0,
+            should_enable_l3: metrics.l2_metrics.hit_rate < 0.3 && metrics.l3_metrics.entries == 0,
             should_adjust_eviction: metrics.eviction_metrics.memory_pressure_evictions > 
                                    metrics.eviction_metrics.total_evictions / 2,
             should_enable_prefetching: metrics.coordination_metrics.prefetch_success_rate < 0.5,

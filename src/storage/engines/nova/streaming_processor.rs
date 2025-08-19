@@ -9,10 +9,8 @@ use std::sync::Arc;
 use tokio::sync::{mpsc, Semaphore, RwLock};
 use tokio::time::{timeout, Duration};
 use tracing::{debug, info, warn};
-
 use crate::core::VectorRecord;
 use super::hierarchical_stats::{EnhancedRowGroupStats, SuperBlock, ZoneMap};
-
 /// Configuration for streaming row group processing
 #[derive(Debug, Clone)]
 pub struct StreamingConfig {
@@ -21,23 +19,17 @@ pub struct StreamingConfig {
     
     /// Number of row groups to prefetch
     pub prefetch_queue_size: usize,
-    
     /// Maximum concurrent row group processors
     pub max_concurrent_processors: usize,
-    
     /// Timeout for row group processing
     pub processing_timeout: Duration,
-    
     /// Batch size for record processing
     pub batch_size: usize,
-    
     /// Enable backpressure control
     pub enable_backpressure: bool,
-    
     /// Memory threshold for backpressure (percentage)
     pub backpressure_threshold: f32,
 }
-
 impl Default for StreamingConfig {
     fn default() -> Self {
         Self {
@@ -82,13 +74,13 @@ pub struct RowGroupProcessingResult {
 }
 
 /// Candidate from row group processing
-#[derive(Debug, Clone)]
 pub struct RowGroupCandidate {
-    pub row_group_id: u32,
     pub row_offset: u32,
     pub similarity: f32,
     pub vector_id: Option<String>,
     pub record: Option<VectorRecord>,
+    pub row_group_id: u32,
+    pub stage: ProcessingStage,
 }
 
 /// Streaming row group processor with memory management
@@ -100,7 +92,6 @@ pub struct StreamingRowGroupProcessor {
 }
 
 /// Memory usage tracking and management
-#[derive(Debug)]
 struct MemoryTracker {
     current_usage: usize,
     max_usage: usize,
@@ -152,18 +143,15 @@ impl StreamingRowGroupProcessor {
             parquet_metadata.num_row_groups(),
             self.config.max_memory_bytes
         );
-        
         // Create processing channels
         let (sender, mut receiver) = mpsc::channel(self.config.prefetch_queue_size);
         let (result_sender, mut result_receiver) = mpsc::channel(self.config.max_concurrent_processors);
-        
         // Start producer task
         let producer_handle = self.start_producer_task(
             context.clone(),
             parquet_metadata.clone(),
             sender,
         ).await?;
-        
         // Start consumer tasks
         let mut consumer_handles = Vec::new();
         for _ in 0..self.config.max_concurrent_processors {
@@ -177,7 +165,6 @@ impl StreamingRowGroupProcessor {
         
         // Close channels
         drop(result_sender);
-        
         // Collect results
         let mut results = Vec::new();
         while let Some(result) = result_receiver.recv().await {
@@ -193,7 +180,6 @@ impl StreamingRowGroupProcessor {
         info!("Completed streaming processing with {} results", results.len());
         Ok(results)
     }
-    
     /// Start producer task for row group scheduling
     async fn start_producer_task(
         &self,
@@ -203,7 +189,6 @@ impl StreamingRowGroupProcessor {
     ) -> Result<tokio::task::JoinHandle<Result<()>>> {
         let config = self.config.clone();
         let memory_tracker = self.memory_tracker.clone();
-        
         let handle = tokio::spawn(async move {
             let ordered_row_groups = Self::order_row_groups_by_cost(&context, &parquet_metadata)?;
             
@@ -227,15 +212,12 @@ impl StreamingRowGroupProcessor {
                     metadata: row_group_metadata.clone(),
                     estimated_memory: Self::estimate_row_group_memory(row_group_metadata),
                 };
-                
                 if sender.send(task).await.is_err() {
                     break; // Receiver dropped
                 }
             }
-            
-            Ok(())
+            Ok::<(), anyhow::Error>(())
         });
-        
         Ok(handle)
     }
     
@@ -247,14 +229,13 @@ impl StreamingRowGroupProcessor {
         result_sender: mpsc::Sender<RowGroupProcessingResult>,
     ) -> Result<tokio::task::JoinHandle<Result<()>>> {
         let semaphore = self.semaphore.clone();
-        let memory_tracker = self.memory_tracker.clone();
         let config = self.config.clone();
+        let memory_tracker = self.memory_tracker.clone();
         let pipeline = self.processing_pipeline.clone();
         
         let handle = tokio::spawn(async move {
             while let Some(task) = receiver.recv().await {
-                let _permit = semaphore/* TODO: Fix VectorMemoryPool::acquire() method */.await.map_err(|e| anyhow!("Semaphore error: {}", e))?;
-                
+                let _permit = semaphore.acquire().await.map_err(|e| anyhow!("Semaphore error: {}", e))?;
                 // Reserve memory
                 let memory_reservation = {
                     let mut tracker = memory_tracker.write().await;
@@ -266,13 +247,11 @@ impl StreamingRowGroupProcessor {
                     config.processing_timeout,
                     Self::process_single_row_group(&context, &task, &pipeline),
                 ).await;
-                
                 // Release memory
                 {
                     let mut tracker = memory_tracker.write().await;
                     tracker.release_memory(&format!("rg_{}", task.row_group_id));
                 }
-                
                 match processing_result {
                     Ok(Ok(result)) => {
                         if result_sender.send(result).await.is_err() {
@@ -287,8 +266,7 @@ impl StreamingRowGroupProcessor {
                     }
                 }
             }
-            
-            Ok(())
+            Ok::<(), anyhow::Error>(())
         });
         
         Ok(handle)
@@ -305,14 +283,11 @@ impl StreamingRowGroupProcessor {
         let mut records_processed = 0;
         let mut records_filtered = 0;
         let mut current_stage = ProcessingStage::BloomFilter;
-        
         // Find relevant enhanced stats for this row group
         let enhanced_stats = context.enhanced_stats.iter()
             .find(|stats| stats.row_group_id == task.row_group_id);
-        
         for stage in pipeline {
             current_stage = stage.clone();
-            
             match stage {
                 ProcessingStage::BloomFilter => {
                     // Quick existence check - for now, pass all through
@@ -321,7 +296,6 @@ impl StreamingRowGroupProcessor {
                         records_processed += task.metadata.num_rows() as usize;
                     }
                 }
-                
                 ProcessingStage::ZoneMapPruning => {
                     // Use zone maps for dimensional pruning
                     if let Some(stats) = enhanced_stats {
@@ -330,14 +304,12 @@ impl StreamingRowGroupProcessor {
                             crate::compute::distance_computation::DistanceMetric::Euclidean,
                             context.distance_threshold.unwrap_or(f32::INFINITY),
                         );
-                        
                         if !intersects {
                             records_filtered += records_processed;
                             break; // Skip this row group entirely
                         }
                     }
                 }
-                
                 ProcessingStage::BinaryFilter => {
                     // Binary quantization filtering
                     candidates = Self::apply_binary_filtering(context, task, &mut records_processed, &mut records_filtered).await?;
@@ -346,25 +318,14 @@ impl StreamingRowGroupProcessor {
                         break;
                     }
                 }
-                
                 ProcessingStage::Int8Filter => {
                     // INT8 quantization filtering
                     candidates = Self::apply_int8_filtering(context, task, candidates, &mut records_processed, &mut records_filtered).await?;
-                    
-                    if candidates.is_empty() {
-                        break;
-                    }
                 }
-                
                 ProcessingStage::PQFilter => {
                     // Product quantization filtering
                     candidates = Self::apply_pq_filtering(context, task, candidates, &mut records_processed, &mut records_filtered).await?;
-                    
-                    if candidates.is_empty() {
-                        break;
-                    }
                 }
-                
                 ProcessingStage::FullPrecision => {
                     // Full precision processing
                     candidates = Self::apply_full_precision(context, task, candidates, &mut records_processed, &mut records_filtered).await?;
@@ -373,7 +334,6 @@ impl StreamingRowGroupProcessor {
         }
         
         let processing_time_ms = start_time.elapsed().as_millis() as u64;
-        
         Ok(RowGroupProcessingResult {
             row_group_id: task.row_group_id,
             stage: current_stage,
@@ -393,14 +353,13 @@ impl StreamingRowGroupProcessor {
         records_filtered: &mut usize,
     ) -> Result<Vec<RowGroupCandidate>> {
         // Simulate binary filtering
-        let mut candidates = Vec::new();
         let total_records = task.metadata.num_rows() as usize;
         *records_processed += total_records;
-        
         // Simulate 90% filtering at binary stage
         let surviving_records = (total_records as f32 * 0.1) as usize;
         *records_filtered += total_records - surviving_records;
         
+        let mut candidates = Vec::new();
         for i in 0..surviving_records {
             candidates.push(RowGroupCandidate {
                 row_group_id: task.row_group_id,
@@ -410,7 +369,6 @@ impl StreamingRowGroupProcessor {
                 record: None,
             });
         }
-        
         Ok(candidates)
     }
     
@@ -422,12 +380,10 @@ impl StreamingRowGroupProcessor {
         records_filtered: &mut usize,
     ) -> Result<Vec<RowGroupCandidate>> {
         *records_processed += candidates.len();
-        
         // Simulate 60% filtering at INT8 stage
         let original_count = candidates.len();
         candidates.truncate((original_count as f32 * 0.4) as usize);
         *records_filtered += original_count - candidates.len();
-        
         Ok(candidates)
     }
     
@@ -439,12 +395,10 @@ impl StreamingRowGroupProcessor {
         records_filtered: &mut usize,
     ) -> Result<Vec<RowGroupCandidate>> {
         *records_processed += candidates.len();
-        
-        // Simulate 50% filtering at PQ stage
         let original_count = candidates.len();
+        // Simulate 50% filtering at PQ stage
         candidates.truncate((original_count as f32 * 0.5) as usize);
         *records_filtered += original_count - candidates.len();
-        
         Ok(candidates)
     }
     
@@ -456,7 +410,6 @@ impl StreamingRowGroupProcessor {
         _records_filtered: &mut usize,
     ) -> Result<Vec<RowGroupCandidate>> {
         *records_processed += candidates.len();
-        
         // Simulate full precision processing
         for candidate in &mut candidates {
             // Would load actual vectors and compute real distances
@@ -466,15 +419,11 @@ impl StreamingRowGroupProcessor {
                 metadata: None,
                 timestamp: 0,
                 updated_at: None,
+                quantized_vector: None,
                 expires_at: None,
                 version: None,
             });
         }
-        
-        // Sort by distance and keep top candidates
-        candidates.sort_by(|a, b| a.distance.partial_cmp(&b.distance).unwrap());
-        candidates.truncate(context.top_k);
-        
         Ok(candidates)
     }
     
@@ -484,19 +433,16 @@ impl StreamingRowGroupProcessor {
         parquet_metadata: &ParquetMetaData,
     ) -> Result<Vec<u32>> {
         let mut row_group_costs = Vec::new();
-        
         for i in 0..parquet_metadata.num_row_groups() {
             let cost = context.enhanced_stats.iter()
                 .find(|stats| stats.row_group_id == i as u32)
                 .map(|stats| stats.search_cost_estimate.estimated_latency_ms)
                 .unwrap_or(100.0); // Default cost
-            
             row_group_costs.push((i as u32, cost));
         }
         
         // Sort by cost (ascending)
         row_group_costs.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
-        
         Ok(row_group_costs.into_iter().map(|(id, _)| id).collect())
     }
     
@@ -510,7 +456,6 @@ impl StreamingRowGroupProcessor {
 }
 
 /// Task for processing a row group
-#[derive(Debug)]
 struct RowGroupTask {
     row_group_id: u32,
     priority: u32,
@@ -540,7 +485,6 @@ impl MemoryTracker {
         self.current_usage += amount;
         self.peak_usage = self.peak_usage.max(self.current_usage);
         self.allocations.insert(identifier.to_string(), amount);
-        
         debug!("Reserved {} bytes for {}, total usage: {}", amount, identifier, self.current_usage);
         Ok(())
     }
@@ -566,7 +510,6 @@ impl MemoryTracker {
 mod tests {
     use super::*;
     use crate::storage::engines::nova::hierarchical_stats::*;
-    
     #[test]
     fn test_streaming_config_defaults() {
         let config = StreamingConfig::default();
@@ -579,22 +522,17 @@ mod tests {
     #[test]
     fn test_memory_tracker() {
         let mut tracker = MemoryTracker::new(1000);
-        
         // Reserve memory
         assert!(tracker.reserve_memory("test1", 400).is_ok());
         assert_eq!(tracker.current_usage, 400);
-        
         // Reserve more memory
         assert!(tracker.reserve_memory("test2", 300).is_ok());
         assert_eq!(tracker.current_usage, 700);
-        
         // Try to exceed limit
         assert!(tracker.reserve_memory("test3", 400).is_err());
-        
         // Release memory
         tracker.release_memory("test1");
         assert_eq!(tracker.current_usage, 300);
-        
         // Check pressure
         assert!(tracker.is_under_pressure(0.2)); // 30% > 20%
         assert!(!tracker.is_under_pressure(0.5)); // 30% < 50%
@@ -604,7 +542,6 @@ mod tests {
     async fn test_streaming_processor_creation() {
         let config = StreamingConfig::default();
         let processor = StreamingRowGroupProcessor::new(config);
-        
         assert_eq!(processor.processing_pipeline.len(), 6);
         assert_eq!(processor.processing_pipeline[0], ProcessingStage::BloomFilter);
         assert_eq!(processor.processing_pipeline[5], ProcessingStage::FullPrecision);

@@ -11,7 +11,7 @@ use crate::core::{VectorRecord, hardware_capabilities::HardwareCapabilities};
 use crate::core::memory::pool::VectorMemoryPool;
 use super::block_structures::{RowBasedDataBlock, BlockLocation, SuperBlock};
 use super::index_structures::RowBasedIdIndex;
-use super::quantization_adapter::RowBasedQuantizationAdapter;
+// Quantization now handled by unified compute module
 
 /// Row-based batch operations handler
 pub struct RowBasedBatchOperations {
@@ -21,8 +21,6 @@ pub struct RowBasedBatchOperations {
     /// Memory pool for efficient buffer reuse
     memory_pool: Arc<VectorMemoryPool>,
     
-    /// Quantization adapter
-    quantization_adapter: Arc<RowBasedQuantizationAdapter>,
     
     /// Configuration
     config: BatchConfig,
@@ -62,7 +60,7 @@ pub struct BatchConfig {
     
     /// Performance optimization
     pub enable_prefetching: bool,
-    pub prefetch_distance: usize,
+    pub prefetch_similarity: usize,
     pub enable_pipelining: bool,
 }
 
@@ -135,7 +133,7 @@ pub struct CachedBatchResult {
     pub result: BatchResult,
     pub timestamp: std::time::Instant,
     pub access_count: u64,
-    pub cache_key: String,
+    pub key: String,
 }
 
 /// Batch operation statistics
@@ -156,7 +154,6 @@ impl RowBasedBatchOperations {
     pub fn new(
         hardware: Arc<HardwareCapabilities>,
         memory_pool: Arc<VectorMemoryPool>,
-        quantization_adapter: Arc<RowBasedQuantizationAdapter>,
         config: BatchConfig,
     ) -> Self {
         let semaphore = Arc::new(Semaphore::new(config.max_concurrent_batches));
@@ -165,7 +162,6 @@ impl RowBasedBatchOperations {
         Self {
             hardware,
             memory_pool,
-            quantization_adapter,
             config,
             semaphore,
             operation_cache,
@@ -189,7 +185,7 @@ impl RowBasedBatchOperations {
         }
         
         // Acquire semaphore for concurrency control
-        let _permit = self.semaphore/* TODO: Fix VectorMemoryPool::acquire() method */.await?;
+        let _permit = self.semaphore.acquire()/* TODO: Fix VectorMemoryPool::acquire() method */.await?;
         
         // Split into batches
         let batches = self.split_into_batches(&ids);
@@ -238,10 +234,27 @@ impl RowBasedBatchOperations {
             failed_operations,
             partial_results: all_results,
             throughput_ops_per_second: throughput,
-            memory_usage_peak: self.memory_pool.as_ref().peak_usage(),
+            memory_usage_peak: {
+                let stats = self.memory_pool.get_comprehensive_stats();
+                (stats.serialization.peak_size + stats.vector.peak_size + 
+                stats.compression.peak_size + stats.metadata.peak_size) as u64
+            },
             cache_hit_rate: 0.0, // Would be calculated from actual cache usage
             cpu_usage_percent: 0.0, // Would be measured
-            memory_efficiency: self.memory_pool.as_ref().efficiency(),
+            memory_efficiency: {
+                let stats = self.memory_pool.get_comprehensive_stats();
+                let total_hits = stats.serialization.cache_hits + stats.vector.cache_hits +
+                                stats.compression.cache_hits + stats.metadata.cache_hits;
+                let total_acquisitions = stats.serialization.total_acquisitions + 
+                                       stats.vector.total_acquisitions +
+                                       stats.compression.total_acquisitions +
+                                       stats.metadata.total_acquisitions;
+                if total_acquisitions > 0 {
+                    (total_hits as f64 / total_acquisitions as f64) as f32
+                } else {
+                    0.0
+                }
+            },
             io_efficiency: 1.0, // Would be calculated from actual I/O
         };
         
@@ -264,7 +277,7 @@ impl RowBasedBatchOperations {
         let start_time = std::time::Instant::now();
         
         // Acquire semaphore for concurrency control
-        let _permit = self.semaphore/* TODO: Fix VectorMemoryPool::acquire() method */.await?;
+        let _permit = self.semaphore.acquire()/* TODO: Fix VectorMemoryPool::acquire() method */.await?;
         
         // Split records into batches
         let batches = self.split_records_into_batches(records);
@@ -304,10 +317,10 @@ impl RowBasedBatchOperations {
             failed_operations,
             partial_results: all_results,
             throughput_ops_per_second: throughput,
-            memory_usage_peak: self.memory_pool.as_ref().peak_usage(),
+            memory_usage_peak: self.memory_pool.peak_usage(),
             cache_hit_rate: 0.0,
             cpu_usage_percent: 0.0,
-            memory_efficiency: self.memory_pool.as_ref().efficiency(),
+            memory_efficiency: self.memory_pool.efficiency(),
             io_efficiency: 1.0,
         })
     }
@@ -322,7 +335,7 @@ impl RowBasedBatchOperations {
         let operation_id = format!("batch_update_{}", uuid::Uuid::new_v4());
         let start_time = std::time::Instant::now();
         
-        let _permit = self.semaphore/* TODO: Fix VectorMemoryPool::acquire() method */.await?;
+        let _permit = self.semaphore.acquire()/* TODO: Fix VectorMemoryPool::acquire() method */.await?;
         
         let mut all_results = Vec::new();
         let mut successful_operations = 0;
@@ -381,10 +394,10 @@ impl RowBasedBatchOperations {
             failed_operations,
             partial_results: all_results,
             throughput_ops_per_second: throughput,
-            memory_usage_peak: self.memory_pool.as_ref().peak_usage(),
+            memory_usage_peak: self.memory_pool.peak_usage(),
             cache_hit_rate: 0.0,
             cpu_usage_percent: 0.0,
-            memory_efficiency: self.memory_pool.as_ref().efficiency(),
+            memory_efficiency: self.memory_pool.efficiency(),
             io_efficiency: 1.0,
         })
     }
@@ -399,7 +412,7 @@ impl RowBasedBatchOperations {
         let operation_id = format!("batch_delete_{}", uuid::Uuid::new_v4());
         let start_time = std::time::Instant::now();
         
-        let _permit = self.semaphore/* TODO: Fix VectorMemoryPool::acquire() method */.await?;
+        let _permit = self.semaphore.acquire()/* TODO: Fix VectorMemoryPool::acquire() method */.await?;
         
         let mut successful_operations = 0;
         let mut failed_operations = 0;
@@ -454,10 +467,10 @@ impl RowBasedBatchOperations {
             failed_operations,
             partial_results: all_results,
             throughput_ops_per_second: throughput,
-            memory_usage_peak: self.memory_pool.as_ref().peak_usage(),
+            memory_usage_peak: self.memory_pool.peak_usage(),
             cache_hit_rate: 0.0,
             cpu_usage_percent: 0.0,
-            memory_efficiency: self.memory_pool.as_ref().efficiency(),
+            memory_efficiency: self.memory_pool.efficiency(),
             io_efficiency: 1.0,
         })
     }
@@ -566,6 +579,7 @@ impl RowBasedBatchOperations {
             
             match index.lookup(id).await {
                 Some(location) => {
+                    let key = &location.block_id;
                     if let Some(block) = blocks.get(key) {
                         if let Some(record) = block.get_record(location.record_offset as usize) {
                             successful_operations += 1;
@@ -689,7 +703,8 @@ impl RowBasedBatchOperations {
     /// Check operation cache
     async fn check_cache(&self, operation_id: &str) -> Option<CachedBatchResult> {
         let cache = self.operation_cache.read().await;
-        cache.get(cache_key).cloned()
+        let key = operation_id;
+        cache.get(key).cloned()
     }
     
     /// Cache operation result
@@ -699,7 +714,7 @@ impl RowBasedBatchOperations {
         // Remove expired entries
         let now = std::time::Instant::now();
         cache.retain(|_, cached| {
-            now.duration_since(cached.created_at).as_secs() < self.config.cache_ttl_seconds
+            now.duration_since(cached.timestamp).as_secs() < self.config.cache_ttl_seconds
         });
         
         // Add new entry if under limit
@@ -708,7 +723,7 @@ impl RowBasedBatchOperations {
                 result,
                 timestamp: now,
                 access_count: 0,
-                cache_key: operation_id,
+                key: operation_id,
             });
         }
     }
@@ -730,7 +745,7 @@ impl Default for BatchConfig {
             cache_ttl_seconds: 300, // 5 minutes
             max_cache_entries: 1000,
             enable_prefetching: true,
-            prefetch_distance: 10,
+            prefetch_similarity: 10,
             enable_pipelining: false,
         }
     }
@@ -754,8 +769,6 @@ impl Default for BatchOperationStats {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::storage::engines::sst::quantization::QuantizedSection;
-    use crate::storage::engines::row_based::quantization_adapter::QuantizationBlockConfig;
     use crate::storage::engines::row_based::index_structures::IndexConfiguration;
     
     #[tokio::test]

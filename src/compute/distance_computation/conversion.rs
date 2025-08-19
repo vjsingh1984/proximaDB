@@ -14,6 +14,7 @@ use crate::compute::distance_computation::engine::DistanceMetric;
 /// The corresponding DistanceMetric, defaults to Cosine if unknown
 pub fn proto_distance_to_internal(proto_value: i32) -> DistanceMetric {
     match proto_value {
+        x if x == ProtoDistanceMetric::Unspecified as i32 => DistanceMetric::Cosine, // Default unspecified to Cosine
         x if x == ProtoDistanceMetric::Cosine as i32 => DistanceMetric::Cosine,
         x if x == ProtoDistanceMetric::Euclidean as i32 => DistanceMetric::Euclidean,
         x if x == ProtoDistanceMetric::DotProduct as i32 => DistanceMetric::DotProduct,
@@ -43,6 +44,7 @@ pub fn proto_distance_to_internal(proto_value: i32) -> DistanceMetric {
 /// The corresponding proto enum value as i32
 pub fn internal_distance_to_proto(metric: DistanceMetric) -> i32 {
     match metric {
+        DistanceMetric::Unspecified => ProtoDistanceMetric::Unspecified as i32,
         DistanceMetric::Cosine => ProtoDistanceMetric::Cosine as i32,
         DistanceMetric::Euclidean => ProtoDistanceMetric::Euclidean as i32,
         DistanceMetric::DotProduct => ProtoDistanceMetric::DotProduct as i32,
@@ -56,7 +58,6 @@ pub fn internal_distance_to_proto(metric: DistanceMetric) -> i32 {
         DistanceMetric::Angular => ProtoDistanceMetric::Angular as i32,
         DistanceMetric::BrayCurtis => ProtoDistanceMetric::BrayCurtis as i32,
         DistanceMetric::Hellinger => ProtoDistanceMetric::Hellinger as i32,
-        DistanceMetric::DistanceMetricUnspecified => ProtoDistanceMetric::DistanceMetricUnspecified as i32,
     }
 }
 

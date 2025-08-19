@@ -820,7 +820,7 @@ where
     pub async fn flush_write_buffer(&self) -> Result<usize> {
         let mut buffer = self.write_buffer.write().await;
         
-        if buffer.is_none() {
+        if buffer.is_empty() {
             return Ok(0);
         }
         
@@ -1300,8 +1300,8 @@ mod tests {
         assert_eq!(backend.get(key)).await, None);
         
         // Utility methods
-        assert!(backend.contains_hash(&"key2".to_string()).await);
-        assert!(!backend.contains_hash(&"key1".to_string()).await);
+        assert!(backend.contains(&"key2".to_string()).await);
+        assert!(!backend.contains(&"key1".to_string()).await);
         assert_eq!(backend.len().await, 1);
         assert!(!backend.is_none().await);
         

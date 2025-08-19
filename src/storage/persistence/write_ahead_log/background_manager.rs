@@ -110,17 +110,17 @@ impl BackgroundMaintenanceManager {
         let engines = storage_engines.read().await;
         
         // Use the engine type from context instead of defaulting to VIPER
-        let engine = if let Some(engine) = engines.get(key) {
+        let engine = if let Some(engine) = engines.get(&engine_name) {
             info!("🏭 [COMPACTION] Using {} storage engine for collection {}", 
                   engine_name, context.collection_id);
             engine.clone()
         } else {
             // Fallback to VIPER if the requested engine isn't available
-            if let Some(viper_engine) = engines.get(key) {
+            if let Some(viper_engine) = engines.get("VIPER") {
                 warn!("⚠️ [COMPACTION] Requested engine '{}' not found, falling back to VIPER for collection {}", 
                       engine_name, context.collection_id);
                 viper_engine.clone()
-            } else if let Some(sst_engine) = engines.get(key) {
+            } else if let Some(sst_engine) = engines.get("SST") {
                 warn!("⚠️ [COMPACTION] Neither '{}' nor 'viper' found, falling back to SST for collection {}", 
                       engine_name, context.collection_id);
                 sst_engine.clone()
@@ -142,6 +142,7 @@ impl BackgroundMaintenanceManager {
             synchronous: true, // Wait for completion
             hints: std::collections::HashMap::new(),
             timeout_ms: context.timeout_ms.or(Some(300_000)), // Use context timeout or 5 minute default
+            estimated_input_size: 0, // Will be calculated by compaction
             priority: match context.priority {
                 crate::storage::background_flush_context::OperationPriority::Low => crate::storage::traits::OperationPriority::Low,
                 crate::storage::background_flush_context::OperationPriority::Normal => crate::storage::traits::OperationPriority::Medium,
@@ -215,7 +216,7 @@ impl BackgroundMaintenanceManager {
     /// Get collection status
     pub async fn get_collection_status(&self, collection_id: &str) -> BackgroundTaskStatus {
         let status_map = self.collection_status.read().await;
-        status_map.get(key).cloned().unwrap_or(BackgroundTaskStatus::Idle)
+        status_map.get(collection_id).cloned().unwrap_or(BackgroundTaskStatus::Idle)
     }
 
     /// Get background maintenance statistics

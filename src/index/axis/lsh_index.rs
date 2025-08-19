@@ -236,7 +236,9 @@ impl AxisLshIndex {
     }
     
     /// Add a vector to the index - clean API, no VectorRecord
-    pub async fn add_vector(&self, id: String, vector_data: Vec<f32>) -> Result<()> {
+    pub async fn add_vector(&self, id: Option<String>, vector_data: Vec<f32>) -> Result<()> {
+        // Generate ID if not provided
+        let vector_id = id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
         if vector_data.len() != self.dimension {
             return Err(anyhow!(
                 "Vector dimension mismatch: expected {}, got {}",
@@ -259,7 +261,7 @@ impl AxisLshIndex {
             table
                 .entry(key)
                 .or_insert_with(HashSet::new)
-                .insert(id.clone());
+                .insert(vector_id.clone());
         }
         
         // Store vector in the collection-specific ZeroOverheadCollection
@@ -276,7 +278,7 @@ impl AxisLshIndex {
         
         // Insert vector into the zero-overhead collection
         let mut coll = collection.write().unwrap();
-        coll.add_fp32(id, &vector_data)?;
+        coll.add_fp32(vector_id.clone(), &vector_data)?;
         
         self.vector_count.fetch_add(1, Ordering::Relaxed);
         
@@ -312,7 +314,7 @@ impl AxisLshIndex {
             };
             
             // Look in the same bucket
-            if let Some(bucket) = table.get(&hash) {
+            if let Some(bucket) = table.get(&key) {
                 for id in bucket.iter() {
                     candidates.insert(id.clone());
                 }
@@ -328,7 +330,7 @@ impl AxisLshIndex {
                         PartitionedKey::new("default".to_string(), adjacent_hash)
                     };
                     
-                    if let Some(bucket) = table.get(&hash) {
+                    if let Some(bucket) = table.get(&adjacent_key) {
                         for id in bucket.iter() {
                             candidates.insert(id.clone());
                         }
@@ -342,18 +344,18 @@ impl AxisLshIndex {
         let collection_id = self.collection_id.as_ref().map(|s| s.as_str()).unwrap_or("default");
         
         // Get the collection for this collection_id
-        if let Some(collection) = self.vectors.get(&vector_id) {
+        if let Some(collection) = self.vectors.get(&collection_id.to_string()) {
             let coll = collection.read().unwrap();
             
             for id in &candidates {
-                if let Some(view) = coll.get(key) {
+                if let Some(view) = coll.get(id) {
                     // Metadata filtering should be done at storage layer
                     if filter.is_some() {
                         debug!("Metadata filtering should be applied at storage layer, not in AXIS index");
                     }
                     
                     if let Some(vector_data) = view.as_f32() {
-                        let dist = self.compute_distance(query, vector_data);
+                        let dist = self.calculate_distance(query, vector_data);
                         results.push((id.clone(), dist));
                     }
                 }
@@ -378,11 +380,11 @@ impl AxisLshIndex {
         let collection_id = self.collection_id.as_ref().map(|s| s.as_str()).unwrap_or("default");
         
         // Get the collection and remove the vector
-        if let Some(collection) = self.vectors.get(&vector_id) {
+        if let Some(collection) = self.vectors.get(&collection_id.to_string()) {
             let mut coll = collection.write().unwrap();
             
             // Get the vector data before removing it (needed to update hash tables)
-            let vector_data = if let Some(view) = coll.get(key) {
+            let vector_data = if let Some(view) = coll.get(id) {
                 view.as_f32().map(|v| v.to_vec())
             } else {
                 None
@@ -563,7 +565,7 @@ impl AxisLshIndex {
     
     /// NEW: Get preferred vector representation for queue consumption
     pub fn preferred_extraction_mode(&self) -> ExtractionMode {
-        self.preferred_extraction_mode
+        self.preferred_extraction_mode.clone()
     }
     
     /// NEW: Check if quantized vectors are available for search acceleration
@@ -667,7 +669,7 @@ mod tests {
         assert!(!results.is_empty());
         // Should find vec_0 and vec_4 as most similar
         let result_ids: Vec<String> = results.iter().map(|(id, _)| id.clone()).collect();
-        assert!(result_ids.contains_hash(&"vec_0".to_string()) || result_ids.contains_hash(&"vec_4".to_string()));
+        assert!(result_ids.contains(&"vec_0".to_string()) || result_ids.contains(&"vec_4".to_string()));
     }
     
     #[tokio::test]
@@ -717,7 +719,7 @@ mod tests {
 // Implement AxisVectorIndex trait for deep AXIS integration
 #[async_trait]
 impl AxisVectorIndex for AxisLshIndex {
-    async fn add(&self, id: String, vector_data: Vec<f32>) -> Result<()> {
+    async fn add(&self, id: Option<String>, vector_data: Vec<f32>) -> Result<()> {
         AxisLshIndex::add_vector(self, id, vector_data).await
     }
     

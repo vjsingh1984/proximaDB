@@ -19,13 +19,14 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::{debug, error, info, warn};
 
-// MIGRATION: Import universal adapters for deduplication
-use crate::storage::engines::common::{
-    UniversalCompressionAdapter, UniversalCompressionConfig,
-    compression_common::{
-        AdaptiveCompressionSettings, AdaptiveStrategy,
-        ContextAwareCompressionConfig,
-    },
+// Use core compression directly instead of adapter
+use crate::core::compression::{
+    StandardCompression, CompressionProvider,
+    CompressionContext, CompressionAlgorithm,
+};
+use crate::storage::engines::common::compression_common::{
+    AdaptiveCompressionSettings, AdaptiveStrategy,
+    ContextAwareCompressionConfig,
 };
 use crate::metrics::compression::CompressionDataType;
 
@@ -53,8 +54,8 @@ pub struct FlushManager {
     /// Atomic coordinator for ACID operations
     atomic_coordinator: Arc<TransactionCoordinator>,
     
-    /// MIGRATION: Universal compression adapter (REQUIRED)
-    compression_adapter: Arc<UniversalCompressionAdapter>,
+    /// Direct compression provider (no adapter indirection)
+    compression_provider: StandardCompression,
     
     /// Metrics updater for flush operation tracking
     metrics_updater: Option<Arc<dyn crate::metrics::InternalMetricsUpdater>>,
@@ -67,7 +68,7 @@ impl std::fmt::Debug for FlushManager {
             .field("collection_service", &self.collection_service)
             .field("filesystem_factory", &self.filesystem_factory)
             .field("atomic_coordinator", &self.atomic_coordinator)
-            .field("compression_adapter", &"UniversalCompressionAdapter")
+            .field("compression_provider", &"StandardCompression")
             .field("metrics_updater", &self.metrics_updater.is_some())
             .finish()
     }
@@ -85,18 +86,15 @@ impl FlushManager {
                 .context("Failed to create atomic coordinator")?
         );
         
-        // MIGRATION: Initialize universal compression adapter (REQUIRED)
-        let compression_adapter = Arc::new(
-            UniversalCompressionAdapter::new()
-                .context("Failed to initialize universal compression adapter")?
-        );
+        // Initialize compression provider directly
+        let compression_provider = StandardCompression::default();
         
         Ok(Self {
             schema_manager: SchemaManager::new(),
             collection_service,
             filesystem_factory,
             atomic_coordinator,
-            compression_adapter,
+            compression_provider,
             metrics_updater: None, // Set via set_metrics_updater for dependency injection
         })
     }
@@ -534,7 +532,7 @@ impl FlushManager {
             let mut extra_kvs = Vec::new();
             for item in &record.metadata {
                 // Skip filterable fields - they're handled dynamically above
-                if !filterable_field_names.contains_hash(&item.key) {
+                if !filterable_field_names.contains(&item.key) {
                     // Convert metadata value to string for storage
                     let value_str = match &item.value {
                         Some(crate::proto::proximadb::metadata_item::Value::StringValue(s)) => s.clone(),
@@ -592,7 +590,7 @@ impl FlushManager {
         // 🎯 DYNAMIC FILTERABLE METADATA: Create Arrow arrays for each filterable column
         let mut dynamic_filterable_arrays: Vec<Arc<dyn Array>> = Vec::new();
         for filterable_column in &filterable_metadata {
-            let values = filterable_arrays.get(key).unwrap();
+            let values = filterable_arrays.get(&filterable_column.name).unwrap();
             
             let arrow_array: Arc<dyn Array> = {
                 use crate::proto::proximadb::FilterableDataType;
@@ -749,67 +747,64 @@ impl FlushManager {
                    records.len(), batch.num_rows());
         }
 
-        // MIGRATION: Use universal compression adapter for Parquet
+        // Use core compression directly for Parquet
         let mut buffer = Vec::new();
         
-        debug!("🔍 VIPER FLUSH: Using universal compression adapter");
+        debug!("🔍 VIPER FLUSH: Using core compression directly");
         debug!("   Collection: {}", collection_id);
         debug!("   Records: {}", records.len());
         
-        // Configure universal compression for VIPER columnar data
-        let mut universal_config = UniversalCompressionConfig::default();
-        universal_config.enabled = true;
-        
-        // Get compression settings from collection config if available
-        if let Some(ref collection) = collection_config {
+        // Select compression algorithm based on collection config
+        let compression_algorithm = if let Some(ref collection) = collection_config {
             if let Some(ref config) = collection.config {
-                if let Some(ref compression) = config.storage.as_ref().and_then(|s| s.compression.as_ref()) {
-                    use crate::proto::proximadb::CompressionAlgorithm;
+                if let Some(ref storage_config) = config.storage_config {
+                    if let Some(ref compression) = storage_config.compression {
+                    use crate::proto::proximadb::CompressionAlgorithm as ProtoAlgorithm;
                     
-                    // Convert proto compression to universal config
-                    universal_config.primary_algorithm = match CompressionAlgorithm::try_from(compression.algorithm) {
-                        Ok(CompressionAlgorithm::CompressionZstd) => 
+                    // Convert proto compression to core compression algorithm
+                    match ProtoAlgorithm::try_from(compression.algorithm) {
+                        Ok(ProtoAlgorithm::CompressionZstd) => 
                             crate::core::compression::CompressionAlgorithm::Zstd,
-                        Ok(CompressionAlgorithm::CompressionLz4) => 
+                        Ok(ProtoAlgorithm::CompressionLz4) => 
                             crate::core::compression::CompressionAlgorithm::Lz4,
-                        Ok(CompressionAlgorithm::CompressionSnappy) => 
+                        Ok(ProtoAlgorithm::CompressionSnappy) => 
                             crate::core::compression::CompressionAlgorithm::Snappy,
-                        Ok(CompressionAlgorithm::CompressionGzip) => 
+                        Ok(ProtoAlgorithm::CompressionGzip) => 
                             crate::core::compression::CompressionAlgorithm::Gzip,
-                        Ok(CompressionAlgorithm::CompressionBrotli) => 
+                        Ok(ProtoAlgorithm::CompressionBrotli) => 
                             crate::core::compression::CompressionAlgorithm::Brotli,
-                        Ok(CompressionAlgorithm::CompressionMixed) => 
+                        Ok(ProtoAlgorithm::CompressionMixed) => 
                             crate::core::compression::CompressionAlgorithm::Mixed,
                         _ => crate::core::compression::CompressionAlgorithm::None,
-                    };
-                    universal_config.compression_level = compression.level.unwrap_or(viper_config.compression_level);
+                    }
+                    } else {
+                        crate::core::compression::CompressionAlgorithm::Zstd // Default
+                    }
+                } else {
+                    crate::core::compression::CompressionAlgorithm::Zstd // Default
                 }
+            } else {
+                crate::core::compression::CompressionAlgorithm::Zstd // Default
             }
-        }
-        
-        // Configure adaptive settings for columnar data
-        universal_config.adaptive_settings = AdaptiveCompressionSettings {
-            enabled: true,
-            strategy: AdaptiveStrategy::DataDriven,
-            fallback_algorithms: vec![
-                crate::core::compression::CompressionAlgorithm::Zstd,
-                crate::core::compression::CompressionAlgorithm::Lz4,
-            ],
-            performance_target: Some(100), // 100ms target for columnar compression
+        } else {
+            crate::core::compression::CompressionAlgorithm::Zstd // Default
         };
         
-        // Set VIPER-specific context
-        universal_config.context_aware = ContextAwareCompressionConfig {
-            data_type: CompressionDataType::VectorData, // Columnar vector data
-            size_hint: Some(batch.num_rows() * batch.num_columns()),
-            access_pattern: None,
+        let compression_level = if let Some(ref collection) = collection_config {
+            collection.config.as_ref()
+                .and_then(|c| c.storage_config.as_ref())
+                .and_then(|s| s.compression.as_ref())
+                .and_then(|c| c.level)
+                .unwrap_or(viper_config.compression_level)
+        } else {
+            viper_config.compression_level
         };
         
-        // Apply universal config to adapter
-        self.compression_adapter.as_ref().set_default_config(universal_config.clone());
-        
-        // Map universal compression to Parquet compression
-        let compression_algo = self.map_universal_to_parquet_compression(&universal_config)?;
+        // Map core compression to Parquet compression using shared function
+        let compression_algo = crate::storage::engines::columnar::map_core_to_parquet_compression(
+            compression_algorithm, 
+            Some(compression_level)
+        )?;
         debug!("   Selected Parquet compression: {:?}", compression_algo);
         
         // Build writer properties with optimal encodings for different column types
@@ -817,8 +812,8 @@ impl FlushManager {
             .set_compression(compression_algo)
             .set_max_row_group_size(viper_config.row_group_size);
         
-        // For Mixed compression strategy, apply per-column optimization
-        if universal_config.primary_algorithm == crate::core::compression::CompressionAlgorithm::Mixed {
+        // For Mixed compression, apply per-column optimization
+        if compression_algorithm == crate::core::compression::CompressionAlgorithm::Mixed {
             info!("🎯 VIPER: Applying Mixed compression per-column optimization");
             props_builder = self.apply_mixed_compression_strategy(props_builder, &batch)?;
         }
@@ -1186,81 +1181,6 @@ impl FlushManager {
         
         Ok((sorted_records, stats))
     }
-    
-    /// MIGRATION: Map universal compression config to Parquet compression
-    /// 
-    /// Parquet directly supports: UNCOMPRESSED, SNAPPY, GZIP, LZ4, ZSTD, BROTLI, LZO
-    /// For unsupported algorithms, we map to the closest equivalent:
-    /// - Deflate/Zlib -> GZIP (similar algorithms)
-    /// - LZ4HC -> LZ4 (same family)
-    /// - XZ/LZMA -> ZSTD with high compression (both high-ratio algorithms)
-    /// - Bzip2 -> Brotli (both provide good compression)
-    fn map_universal_to_parquet_compression(
-        &self,
-        config: &UniversalCompressionConfig,
-    ) -> Result<parquet::basic::Compression> {
-        use crate::core::compression::CompressionAlgorithm;
-        
-        let compression = match config.primary_algorithm {
-            CompressionAlgorithm::Zstd => {
-                parquet::basic::Compression::ZSTD(
-                    parquet::basic::ZstdLevel::try_new(config.compression_level)?
-                )
-            },
-            CompressionAlgorithm::Lz4 => parquet::basic::Compression::LZ4,
-            CompressionAlgorithm::Snappy => parquet::basic::Compression::SNAPPY,
-            CompressionAlgorithm::Gzip => {
-                parquet::basic::Compression::GZIP(
-                    parquet::basic::GzipLevel::try_new(config.compression_level as u32)?
-                )
-            },
-            CompressionAlgorithm::Brotli => {
-                parquet::basic::Compression::BROTLI(
-                    parquet::basic::BrotliLevel::try_new(config.compression_level as u32)?
-                )
-            },
-            CompressionAlgorithm::Lzo => parquet::basic::Compression::LZO,
-            // Add support for other compression types if they exist in our enum
-            CompressionAlgorithm::Deflate => {
-                // Deflate is similar to GZIP but without the header
-                parquet::basic::Compression::GZIP(
-                    parquet::basic::GzipLevel::try_new(config.compression_level as u32)?
-                )
-            },
-            CompressionAlgorithm::Zlib => {
-                // Zlib can be mapped to GZIP in Parquet
-                parquet::basic::Compression::GZIP(
-                    parquet::basic::GzipLevel::try_new(config.compression_level as u32)?
-                )
-            },
-            // LZ4HC, XZ, Bzip2, and LZMA are not directly supported by Parquet
-            // Map them to their closest equivalents
-            CompressionAlgorithm::Lz4Hc => parquet::basic::Compression::LZ4,
-            CompressionAlgorithm::Xz | CompressionAlgorithm::Lzma => {
-                // XZ and LZMA provide high compression, map to ZSTD with high level
-                parquet::basic::Compression::ZSTD(
-                    parquet::basic::ZstdLevel::try_new(config.compression_level.max(9))?
-                )
-            },
-            CompressionAlgorithm::Bzip2 => {
-                // BZip2 provides good compression, map to Brotli
-                parquet::basic::Compression::BROTLI(
-                    parquet::basic::BrotliLevel::try_new(config.compression_level as u32)?
-                )
-            },
-            CompressionAlgorithm::Mixed => {
-                // Mixed compression // strategy removed -  Use ZSTD level 3 as default for Parquet
-                // Per-column optimization will be handled at the writer level
-                info!("🎯 VIPER: Using Mixed compression strategy with ZSTD level 3 as base");
-                parquet::basic::Compression::ZSTD(
-                    parquet::basic::ZstdLevel::try_new(3)?
-                )
-            },
-            CompressionAlgorithm::None | _ => parquet::basic::Compression::UNCOMPRESSED,
-        };
-        
-        Ok(compression)
-    }
 
     /// Apply mixed compression strategy with per-column optimization
     fn apply_mixed_compression_strategy(
@@ -1271,30 +1191,30 @@ impl FlushManager {
         use crate::core::compression::{detect_column_type, get_optimal_compression_for_column, 
                                       map_to_parquet_compression, CompressionContext};
         
-        info!("🎯 VIPER: Applying Mixed compression strategy to {} columns", batch.num_columns());
+        info!("🎯 VIPER: Applying Mixed compression search_strategy to {} columns", batch.num_columns());
         
         // Analyze each column and apply optimal compression
         for field in batch.schema().fields() {
-            let column_name = field.name();
+            let name = field.name();
             
             // Detect column type based on name and context
-            let column_type = detect_column_type(column_name, &CompressionContext::ParquetColumn);
+            let data_type = detect_column_type(name, &CompressionContext::ParquetColumn);
             
             // Get optimal compression for this column type
-            let optimal_algorithm = get_optimal_compression_for_column(&column_type);
+            let optimal_algorithm = get_optimal_compression_for_column(&data_type);
             
             // Convert to Parquet compression
             if let Some(parquet_compression) = map_to_parquet_compression(&optimal_algorithm) {
-                let column_path = parquet::schema::types::ColumnPath::from(column_name.as_str());
+                let column_path = parquet::schema::types::ColumnPath::from(name.as_str());
                 
                 debug!("🔧 VIPER Mixed: {} -> {:?} (type: {:?})", 
-                       column_name, optimal_algorithm, column_type);
+                       name, optimal_algorithm, data_type);
                 
                 // Apply per-column compression
                 props_builder = props_builder.set_column_compression(column_path, parquet_compression);
                 
                 // Apply optimal encoding based on column type
-                let encoding = match column_type {
+                let encoding = match data_type {
                     crate::core::compression::ColumnDataType::BinaryQuantized => {
                         // Binary data - use bit packing for maximum density
                         parquet::basic::Encoding::BIT_PACKED
@@ -1331,11 +1251,11 @@ impl FlushManager {
                 
                 props_builder = props_builder.set_column_encoding(column_path, encoding);
                 
-                debug!("🔧 VIPER Mixed: {} encoding -> {:?}", column_name, encoding);
+                debug!("🔧 VIPER Mixed: {} encoding -> {:?}", name, encoding);
             }
         }
         
-        info!("✅ VIPER: Mixed compression strategy applied to all columns");
+        info!("✅ VIPER: Mixed compression search_strategy applied to all columns");
         Ok(props_builder)
     }
 }

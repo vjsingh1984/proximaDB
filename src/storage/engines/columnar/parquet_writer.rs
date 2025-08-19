@@ -424,7 +424,8 @@ impl StreamingParquetWriter {
         
         // Update bloom filters (use original order for consistency)
         if self.config.enable_bloom_filters {
-            self.update_bloom_filters(&self.current_batch)?;
+            let current_batch = self.current_batch.clone();
+            self.update_bloom_filters(&current_batch)?;
         }
         
         // Write to Parquet
@@ -499,8 +500,16 @@ impl StreamingParquetWriter {
             let stats = handler.get_optimization_stats();
             if stats.total_fields > 0 {
                 // Use native types for metadata
-                let metadata_maps: Vec<_> = records.iter()
-                    .map(|r| r.metadata.as_ref().cloned().unwrap_or_default())
+                let metadata_maps: Vec<HashMap<String, crate::proto::proximadb::metadata_item::Value>> = records.iter()
+                    .map(|r| {
+                        let mut map = HashMap::new();
+                        for item in &r.metadata {
+                            if let Some(value) = &item.value {
+                                map.insert(item.key.clone(), value.clone());
+                            }
+                        }
+                        map
+                    })
                     .collect();
                 
                 let native_arrays = handler.metadata_to_arrow_arrays(&metadata_maps)?;
@@ -514,14 +523,26 @@ impl StreamingParquetWriter {
             } else {
                 // Fall back to JSON string if type inference not done yet
                 let metadata: Vec<Option<String>> = records.iter()
-                    .map(|r| r.metadata.as_ref().map(|m| serde_json::to_string(m).unwrap_or_default()))
+                    .map(|r| {
+                        if r.metadata.is_empty() {
+                            None
+                        } else {
+                            Some(serde_json::to_string(&r.metadata).unwrap_or_default())
+                        }
+                    })
                     .collect();
                 arrays.push(Arc::new(StringArray::from(metadata)));
             }
         } else {
             // Use JSON string for metadata (backward compatible)
             let metadata: Vec<Option<String>> = records.iter()
-                .map(|r| r.metadata.as_ref().map(|m| serde_json::to_string(m).unwrap_or_default()))
+                .map(|r| {
+                    if r.metadata.is_empty() {
+                        None
+                    } else {
+                        Some(serde_json::to_string(&r.metadata).unwrap_or_default())
+                    }
+                })
                 .collect();
             arrays.push(Arc::new(StringArray::from(metadata)));
         }
@@ -594,11 +615,11 @@ impl StreamingParquetWriter {
             let zero_point = (-min_val / scale).round() as i8;
             
             // Quantize to INT8
-            let quantized: Vec<u8> = record.vector.iter()
+            let quantized_vector: Vec<u8> = record.vector.iter()
                 .map(|&v| ((v / scale) + zero_point as f32).round().clamp(0.0, 255.0) as u8)
                 .collect();
             
-            vectors.push(Some(quantized));
+            vectors.push(Some(quantized_vector));
             scales.push(Some(scale));
             zero_points.push(Some(zero_point));
         }
@@ -700,7 +721,7 @@ impl StreamingParquetWriter {
         let filter_keywords = ["category", "type", "status", "tag", "label", "class", "group", "kind"];
         
         // Check if key contains filter keywords
-        let is_filter_field = filter_keywords.iter().any(|&keyword| key_lower.contains_hash(keyword));
+        let is_filter_field = filter_keywords.iter().any(|&keyword| key_lower.contains(keyword));
         
         // Check if it's a reasonable cardinality (not too high, not too low)
         let is_reasonable_cardinality = match value {
@@ -711,7 +732,7 @@ impl StreamingParquetWriter {
         
         // Respect explicit configuration
         if !self.config.bloom_filter_columns.is_empty() {
-            return self.config.bloom_filter_columns.contains_hash(&key.to_string());
+            return self.config.bloom_filter_columns.contains(&key.to_string());
         }
         
         is_filter_field && is_reasonable_cardinality
@@ -742,12 +763,13 @@ impl StreamingParquetWriter {
             }
         } else {
             // Handle metadata bloom filters with smart sizing
+            let estimated_items = self.estimate_column_cardinality(column);
+            let bloom_fpp = self.config.bloom_filter_fpp;
             let bloom = self.metadata_bloom_filters.entry(column.to_string())
                 .or_insert_with(|| {
-                    let estimated_items = self.estimate_column_cardinality(column);
                     let bloom = crate::storage::engines::columnar::id_index::BloomFilter::new(
                         estimated_items,
-                        self.config.bloom_filter_fpp
+                        bloom_fpp
                     );
                     
                     trace!("Created {} bloom filter with capacity {}", 
@@ -766,13 +788,13 @@ impl StreamingParquetWriter {
         let name_lower = column_name.to_lowercase();
         
         // Estimate based on common patterns
-        if name_lower.contains_hash("category") || name_lower.contains_hash("type") || name_lower.contains_hash("status") {
+        if name_lower.contains("category") || name_lower.contains("type") || name_lower.contains("status") {
             // Low cardinality categorical data
             100
-        } else if name_lower.contains_hash("tag") || name_lower.contains_hash("label") || name_lower.contains_hash("group") {
+        } else if name_lower.contains("tag") || name_lower.contains("label") || name_lower.contains("group") {
             // Medium cardinality data
             1_000
-        } else if name_lower == "timestamp" || name_lower.contains_hash("time") {
+        } else if name_lower == "timestamp" || name_lower.contains("time") {
             // High cardinality but with temporal patterns
             self.config.row_group_size / 2
         } else if name_lower == "version" {

@@ -11,7 +11,7 @@ use std::collections::HashMap;
 use std::time::SystemTime;
 
 // Import columnar common types to avoid duplication
-use crate::storage::engines::columnar::{
+pub use crate::storage::engines::columnar::{
     ColumnarFileMetadata as CollectionMetadata,
     FilterCondition,
     ColumnStatistics,

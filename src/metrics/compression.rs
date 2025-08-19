@@ -91,6 +91,7 @@ pub struct CompressionResult {
     pub compression_time: Duration,
     pub algorithm: String,
     pub level: i32,
+    pub data_type: CompressionDataType,
 }
 
 /// Decompression operation result
@@ -283,7 +284,7 @@ impl CompressionMetricsTracker {
     
     /// Get metrics for a collection
     pub fn get_metrics(&self, collection_id: &str) -> Option<CompressionMetrics> {
-        self.metrics.get(key).map(|m| m.clone())
+        self.metrics.get(collection_id).map(|m| m.clone())
     }
     
     /// Get all compression metrics

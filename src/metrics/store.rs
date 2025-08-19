@@ -65,7 +65,7 @@ impl MetricsPersistenceLayer {
         let base_path = config.storage_path.clone();
         
         // Normalize path to ensure it starts with file:// for local filesystem
-        let normalized_base = if !base_path.contains_hash("://") {
+        let normalized_base = if !base_path.contains("://") {
             format!("file://{}", base_path)
         } else {
             base_path.clone()
@@ -202,7 +202,7 @@ impl MetricsPersistenceLayer {
     pub async fn get_collection_metrics(&self, collection_id: &str) -> Result<Option<CollectionMetrics>> {
         // Check cache first
         let cache = self.snapshot_cache.read().await;
-        if let Some(snapshot) = cache.get(&key) {
+        if let Some(snapshot) = cache.get(collection_id) {
             return Ok(Some(snapshot.metrics.clone()));
         }
         
@@ -451,7 +451,7 @@ impl MetricsPersistenceLayer {
                             .and_then(|s| s.strip_suffix(".json"))
                             .unwrap_or("")
                             .to_string();
-                        if !collection_id.is_none() && !collections.contains_hash(&collection_id) {
+                        if !collection_id.is_empty() && !collections.contains(&collection_id) {
                             collections.push(collection_id);
                         }
                     }

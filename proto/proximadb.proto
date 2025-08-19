@@ -119,21 +119,19 @@ message VectorRecord {
   optional bytes quantized_vector = 8;       // Pre-quantized vector data (avoids re-quantization)
 }
 
-// Output record for search results - optimized for client consumption
+// Output record for search results - aligned with core SearchResult
 message SearchVectorRecord {
   string id = 1;                             // Vector ID (always present in results)
   repeated float vector = 2;                 // Vector data (if requested)
   repeated MetadataItem metadata = 3;        // Metadata (if requested)
   
-  // Search-specific fields
-  int32 rank = 4;                            // Search result rank (1-based)
-  float score = 5;                           // Similarity score
-  float distance = 6;                        // Distance value
+  // Search-specific fields - aligned with core::search::SearchResult
+  float score = 4;                           // Similarity score (higher = more similar)
+  optional float similarity = 5;             // Alternative similarity value (if different from score)
   
   // Optional fields for detailed results
-  optional uint32 version = 7;               // Version (if versioning enabled)
-  optional uint32 timestamp = 8;             // When record was created
-  optional string collection_id = 9;         // Source collection (for multi-collection search)
+  optional uint32 version = 6;               // Version (if versioning enabled)
+  optional uint32 timestamp = 7;             // When record was created
 }
 
 // Native typed metadata supporting multiple value types
@@ -506,37 +504,93 @@ message NovaEngineSettings {
   optional bool prefer_low_latency = 4;
 }
 
-// Comprehensive quantization configuration with storage-aware strategies
-// DESIGN DECISION: Quantization is ON by default for 95% I/O reduction and 50-80% storage savings
-// Uses same distance metric as CollectionConfig.distance_metric for consistency
+// ============================================================================
+// GRANULAR QUANTIZATION CONFIGURATION - Multi-Level Support with Smart Defaults
+// ============================================================================
+// DESIGN DECISIONS:
+// 1. Quantization is ON by default for 95% I/O reduction and 50-80% storage savings
+// 2. Smart defaults: Binary + INT8 + PQ automatically selected based on dimension
+// 3. Progressive search: Binary filter → INT8 ranking → PQ ranking → FP32 rerank
+// 4. User can override with custom levels (max 5 for system protection)
+// 5. Distance metric inherited from CollectionConfig.distance_metric for consistency
+// ============================================================================
+
 message QuantizationConfig {
-  // Quantization is enabled by default for I/O reduction and storage savings
-  // Set enabled=false only if you have specific reasons (e.g., very small dimensions)
-  bool enabled = 1;                               // Enable quantization (default: true in code)
-  
-  // Quantization method - PQ is most effective for high dimensions
-  enum Method {
-    PRODUCT_QUANTIZATION = 0;     // Product Quantization (default, best for d>=128)
-    SCALAR_QUANTIZATION = 1;      // INT8 quantization (good for d<128)
-    BINARY_QUANTIZATION = 2;      // Binary sketches (extreme compression)
-    ADAPTIVE = 3;                 // Auto-select based on dimension
+  // Master quantization switch (default: true for all collections)
+  bool enabled = 1;
+
+  // Quantization strategy - controls how quantization levels are selected
+  enum Strategy {
+    SMART_DEFAULTS = 0;           // Auto-select Binary + INT8 + PQ based on dimension (RECOMMENDED)
+    CUSTOM_LEVELS = 1;            // User provides specific quantization levels
+    MINIMAL = 2;                  // Only essential quantization (INT8 for d<128, PQ8 for d>=128)
+    AGGRESSIVE = 3;               // Maximum compression (Binary + PQ4 + INT8)
   }
-  optional Method method = 2;                     // Quantization method (default: PRODUCT_QUANTIZATION)
-  
-  // PQ-specific settings (used when method=PRODUCT_QUANTIZATION)
-  optional int32 num_subvectors = 3;              // Number of subvectors (default: dimension/4, min 8, max 64)
-  optional int32 bits_per_subvector = 4;          // Bits per subvector (default: 8, options: 4,6,8)
-  
-  // Training settings
-  optional int32 training_sample_size = 5;        // Samples for codebook training (default: 10000)
-  optional float quality_threshold = 6;           // Min acceptable quality (default: 0.95)
-  
-  // Progressive search settings (for hierarchical SST layout)
-  optional bool enable_progressive_search = 7;    // Use multi-tier filtering (default: true)
-  optional float binary_filter_threshold = 8;     // Hamming threshold for first stage (default: 0.3)
-  
+  Strategy strategy = 2;          // Default: SMART_DEFAULTS
+
+  // Custom quantization levels (used when strategy=CUSTOM_LEVELS)
+  // Maximum 5 levels for system protection and performance
+  repeated QuantizationLevel custom_levels = 3;
+
+  // Progressive search configuration
+  bool enable_progressive_search = 4;    // Multi-tier filtering (default: true)
+  float binary_filter_selectivity = 5;  // Binary filter selectivity (default: 0.3 = 30% reduction)
+  float int8_ranking_selectivity = 6;    // INT8 ranking selectivity (default: 0.1 = 10% of remaining)
+  float pq_ranking_selectivity = 7;      // PQ ranking selectivity (default: 0.05 = 5% for rerank)
+
+  // Training and quality settings
+  int32 training_sample_size = 8;        // Samples for codebook training (default: 10000)
+  float quality_threshold = 9;           // Minimum acceptable recall (default: 0.95)
+  bool enable_adaptive_training = 10;    // Retrain on data distribution changes (default: true)
+
+  // Performance optimization hints
+  bool optimize_for_storage = 11;        // Prioritize storage savings over speed (default: false)
+  bool optimize_for_memory = 12;         // Prioritize memory usage over quality (default: false)
+  bool enable_simd_acceleration = 13;    // Use SIMD for quantization ops (default: true)
+
   // NOTE: Distance metric is inherited from CollectionConfig.distance_metric
-  // This ensures consistency between search and quantization
+  // This ensures consistency between search and quantization operations
+}
+
+// Individual quantization level specification
+message QuantizationLevel {
+  // Level identifier for progressive search ordering
+  string level_id = 1;                  // e.g., "binary", "int8", "pq8", "pq4"
+  
+  // Quantization method for this level
+  enum QuantizationType {
+    BINARY = 0;                         // Binary sketches (1 bit per dimension)
+    SCALAR = 1;                         // Scalar quantization (INT8, INT4, etc.)
+    PRODUCT = 2;                        // Product quantization (PQ4, PQ8, PQ16)
+    UNIFORM = 3;                        // Uniform quantization
+    NONE = 4;                           // Full precision (for final rerank stage)
+  }
+  QuantizationType type = 2;
+
+  // Bits per code/element
+  int32 bits = 3;                       // 1 (binary), 4, 8, 16, 32
+
+  // Product quantization specific settings (when type=PRODUCT)
+  optional int32 num_subvectors = 4;    // Number of subvectors for PQ
+  optional bool adaptive_subvectors = 5; // Auto-adjust subvectors based on dimension
+
+  // Scalar quantization specific settings (when type=SCALAR)  
+  optional float scale = 6;             // Quantization scale factor
+  optional float offset = 7;            // Quantization offset
+  optional bool clamp_values = 8;       // Clamp to valid range
+
+  // Binary quantization specific settings (when type=BINARY)
+  optional float threshold = 9;         // Binary threshold (default: 0.0)
+  optional bool sign_based = 10;        // Use sign-based binary encoding
+
+  // Level-specific performance settings
+  optional bool enable_in_storage = 11; // Store this level in storage engine (default: true)
+  optional bool enable_in_index = 12;   // Use this level in AXIS indexes (default: inherit)
+  optional int32 search_priority = 13;  // Search order (lower = earlier, 0=first filter)
+
+  // Quality and validation settings
+  optional float min_recall = 14;       // Minimum recall required for this level (default: 0.8)
+  optional bool enable_validation = 15; // Validate recall during training (default: true)
 }
 
 // Clean proto design - no legacy fields (Release 1)
@@ -596,21 +650,7 @@ message CollectionStats {
 }
 
 // SearchResult directly contains search result fields (flattened from SearchVectorRecord)
-message SearchResult {
-  string id = 1;                             // Vector ID (always present in results)
-  repeated float vector = 2;                 // Vector data (if requested)
-  repeated MetadataItem metadata = 3;        // Metadata (if requested)
-  
-  // Search-specific fields
-  int32 rank = 4;                            // Search result rank (1-based)
-  float score = 5;                           // Similarity score
-  float distance = 6;                        // Distance value
-  
-  // Optional fields for detailed results
-  optional uint32 version = 7;               // Version (if versioning enabled)
-  optional uint32 timestamp = 8;             // When record was created
-  optional string collection_id = 9;         // Source collection (for multi-collection search)
-}
+// SearchResult removed - using SearchVectorRecord for all search results to avoid confusion
 
 // ============================================================================
 // COLLECTION OPERATIONS - Unified flexible schema
@@ -783,39 +823,36 @@ message SearchParams {
 }
 
 
-// UNIFIED RESPONSE - All vector operations with optimized data transfer
+// UNIFIED RESPONSE - All vector operations using native proto types
 message VectorOperationResponse {
   bool success = 1;
   VectorOperation operation = 2;
   OperationMetrics metrics = 3;
   
-  // Optimized result transfer - choose based on data size and operation
-  oneof result_payload {
-    SearchResultsCompact compact_results = 4;    // Small results: regular gRPC
-    bytes avro_results = 5;                      // Large results: Avro binary for zero-copy
-  }
+  // Native proto results - no Avro binary to avoid confusion
+  SearchResult results = 4;                     // Search results with top-k records
   
-  repeated string vector_ids = 6;               // Generated/affected IDs
-  optional string error_message = 7;
-  optional string error_code = 8;
+  repeated string vector_ids = 5;               // Generated/affected IDs
+  optional string error_message = 6;
+  optional string error_code = 7;
   
   // Result metadata for client decision making
-  ResultMetadata result_info = 9;
+  ResultMetadata result_info = 8;
 }
 
-// Compact results for small datasets (< 1MB typical)
-message SearchResultsCompact {
-  repeated SearchVectorRecord results = 1;      // Direct use of SearchVectorRecord
-  int64 total_found = 2;
-  optional string search_algorithm_used = 3;
+// Search result containing top-k vector records
+message SearchResult {
+  repeated SearchVectorRecord results = 1;      // Top-k search results
+  int64 total_found = 2;                       // Total number of matches found
+  optional string collection_id = 3;            // Collection these results are from
 }
 
 // Metadata about the result payload
 message ResultMetadata {
   int64 result_count = 1;
   int64 estimated_size_bytes = 2;
-  bool is_avro_binary = 3;                      // True if using avro_results field
-  string avro_schema_version = 4;               // For Avro compatibility checking
+  int64 processing_time_us = 3;                 // Processing time in microseconds
+  optional string algorithm_used = 4;           // Search algorithm used
 }
 
 message OperationMetrics {

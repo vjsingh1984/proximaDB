@@ -224,7 +224,7 @@ impl EventLogQueue {
                 if let Some(mut status) = self.file_status.get_mut(file_path) {
                     // Move from pending to completed
                     status.pending_indexes.retain(|i| i != index_name);
-                    if !status.completed_indexes.contains_hash(&index_name.to_string()) {
+                    if !status.completed_indexes.contains(&index_name.to_string()) {
                         status.completed_indexes.push(index_name.to_string());
                     }
                     
@@ -244,10 +244,15 @@ impl EventLogQueue {
         });
     }
     
+    /// Get file status for a specific file
+    pub fn get_file_status(&self, file_path: &str) -> Option<FileIndexingStatus> {
+        self.file_status.get(file_path).map(|s| s.clone())
+    }
+
     /// Check if file can be compacted
     pub fn can_compact(&self, file_path: &str) -> bool {
         self.file_status
-            .get(key)
+            .get(self.collection_id)
             .map(|s| s.ready_for_compaction)
             .unwrap_or(true) // If not tracked, allow compaction
     }
@@ -260,7 +265,7 @@ impl EventLogQueue {
         
         // Remove events for deleted files
         self.active_events.blocking_write().retain(|e| {
-            !e.file_paths.iter().any(|f| deleted_files.contains_hash(f))
+            !e.file_paths.iter().any(|f| deleted_files.contains(f))
         });
         
         // Persist changes

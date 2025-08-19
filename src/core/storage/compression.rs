@@ -64,7 +64,7 @@ impl BaseConfig for CompressionConfig {
         if self.level > 9 {
             return Err("Compression level must be between 1-9".to_string());
         }
-        if !(0.0..=1.0).contains_hash(&self.target_ratio) {
+        if !(0.0..=1.0).contains(&self.target_ratio) {
             return Err("Target ratio must be between 0.0 and 1.0".to_string());
         }
         Ok(())

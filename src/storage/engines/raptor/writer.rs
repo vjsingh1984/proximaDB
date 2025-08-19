@@ -81,9 +81,10 @@ impl RaptorWriter {
                 self.flush_rowgroup().await?;
             }
         } else {
+            let row_count = quantized_batch.num_rows();
             self.current_rowgroup = Some(RowGroupBuffer {
                 batch: quantized_batch,
-                row_count: quantized_batch.num_rows(),
+                row_count,
                 start_offset: self.file_offset,
             });
             

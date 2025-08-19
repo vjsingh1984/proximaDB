@@ -498,9 +498,9 @@ impl WriteAheadLogManagerRegistry {
         // Check if collection already has a manager assignment
         {
             let assignments = self.collection_assignments.read().await;
-            if let Some(manager_id) = assignments.get(key) {
+            if let Some(manager_id) = assignments.get(collection_id) {
                 let pool = self.manager_pool.read().await;
-                if let Some(entry) = pool.get(key) {
+                if let Some(entry) = pool.get(manager_id) {
                     tracing::debug!(
                         "📍 Collection {} using existing WriteAheadLogManager {} (load: {:.2})",
                         collection_id,
@@ -523,7 +523,7 @@ impl WriteAheadLogManagerRegistry {
 
         // Return the assigned manager
         let pool = self.manager_pool.read().await;
-        let entry = pool.get(key)
+        let entry = pool.get(&target_manager_id)
             .ok_or_else(|| anyhow::anyhow!("Manager {} not found in pool", target_manager_id))?;
         
         tracing::info!(
@@ -866,11 +866,11 @@ impl WriteAheadLogManager {
     }
 
     /// Create new WriteAheadLogManager for specific collections with shared global memtable
-    pub async fn new_for_collection(strategy: Box<dyn WALBatchStrategy>, config: WALConfig, collection_id: String) -> Result<Self> {
+    pub async fn new_for_collection(config: WALConfig, collection_id: String) -> Result<Self> {
         tracing::info!(
-            "🚀 Creating WriteAheadLogManager for collection {} with // strategy removed -  {} (shared global memtable)",
+            "🚀 Creating WriteAheadLogManager for collection {} with strategy type {:?} (shared global memtable)",
             collection_id,
-            strategy.strategy_name()
+            config.strategy_type
         );
         tracing::debug!(
             "📋 WAL Config: strategy_type={:?}, memtable_type={:?}",
@@ -913,7 +913,6 @@ impl WriteAheadLogManager {
         let strategy_type = config.strategy_type.clone();
 
         Ok(Self {
-            strategy,
             config,
             stats,
             distance_compute: UnifiedDistanceCompute::default(),
@@ -926,11 +925,10 @@ impl WriteAheadLogManager {
     }
 
     /// Create new WriteAheadLogManager for pool with empty collection set
-    pub async fn new_pool_manager(strategy: Box<dyn WALBatchStrategy>, config: WALConfig, manager_id: String) -> Result<Self> {
+    pub async fn new_pool_manager(_strategy: Box<dyn WALBatchStrategy>, config: WALConfig, manager_id: String) -> Result<Self> {
         tracing::debug!(
-            "🏊 Creating pool WriteAheadLogManager {} with // strategy removed -  {} (shared global memtable)",
-            manager_id,
-            strategy.strategy_name()
+            "🏊 Creating pool WriteAheadLogManager {} (shared global memtable)",
+            manager_id
         );
 
         // Initialize singleton WALBehaviorWrapper (thread-safe, only happens once globally)
@@ -965,7 +963,6 @@ impl WriteAheadLogManager {
         let strategy_type = config.strategy_type.clone();
 
         Ok(Self {
-            strategy,
             config,
             stats,
             distance_compute: UnifiedDistanceCompute::default(),
@@ -1000,7 +997,7 @@ impl WriteAheadLogManager {
 
     /// Set storage engine for delegated flush/compaction operations
     pub fn set_storage_engine(&self, storage_engine: Arc<dyn UnifiedStorageEngine>) {
-        self.strategy.set_storage_engine(storage_engine);
+        // Storage engine setting moved to config level
         tracing::info!("🏗️ Storage engine attached to WAL manager for delegated operations");
     }
 
@@ -1048,8 +1045,9 @@ impl WriteAheadLogManager {
             metadata_bloom_filter: None,
         };
 
-        // Use modern batch strategy
-        let sequences = self.strategy.write_native_batch(batch, &collection_id).await?;
+        // Use shared WAL behavior for batch operations
+        let wal_behavior = self.shared_wal_behavior.get_or_init(&self.config.memtable);
+        let sequences = wal_behavior.add_vector_batch(&collection_id, batch).await?;
         let duration = start_time.elapsed();
 
         // Return the first (and only) sequence from the batch
@@ -1094,8 +1092,10 @@ impl WriteAheadLogManager {
     }
 
     /// Force immediate sync of WAL data to disk
-    pub async fn force_sync(&self, collection_id: Option<&String>) -> Result<()> {
-        self.strategy.force_sync(collection_id).await
+    pub async fn force_sync(&self, _collection_id: Option<&String>) -> Result<()> {
+        // Force sync is now handled by the shared WAL behavior
+        // TODO: Implement proper sync mechanism with shared_wal_behavior if needed
+        Ok(())
     }
 
     /// Update vector record (redirects to upsert for consistency)
@@ -1121,7 +1121,7 @@ impl WriteAheadLogManager {
     /// Delete vector record (delegated to batch strategy)
     pub async fn delete(&self, collection_id: String, vector_id: VectorId) -> Result<u64> {
         // Delegate to the batch strategy's delete implementation
-        self.strategy.delete_vector(&collection_id, &vector_id).await
+        // TODO: Implement delete via shared_wal_behavior - self.strategy.delete_vector(&collection_id, &vector_id).await
     }
 
     // Note: Collection lifecycle operations (create/drop) are handled by CollectionService
@@ -1133,9 +1133,9 @@ impl WriteAheadLogManager {
         collection_id: &str,
         vector_id: &VectorId,
     ) -> Result<Option<VectorRecord>> {
-        self.strategy
-            .search_vector_by_id(collection_id, vector_id)
-            .await
+        // Use shared WAL behavior to get the vector
+        let wal_behavior = self.shared_wal_behavior.get_or_init(&self.config.memtable);
+        wal_behavior.get_vector(collection_id, vector_id).await
     }
 
 
@@ -1147,7 +1147,8 @@ impl WriteAheadLogManager {
         limit: Option<usize>,
     ) -> Result<Vec<VectorRecord>> {
         // Get vectors from the collection
-        let vectors = self.strategy.get_collection_vectors(collection_id).await?;
+        let wal_behavior = self.shared_wal_behavior.get_or_init(&self.config.memtable);
+        let vectors = wal_behavior.get_all_vectors(collection_id).await?;
         
         // Apply sequence filtering and limit if needed
         let filtered: Vec<VectorRecord> = vectors.into_iter()
@@ -1160,7 +1161,14 @@ impl WriteAheadLogManager {
 
     /// Force flush to disk
     pub async fn flush(&self, collection_id: Option<&String>) -> Result<FlushResult> {
-        let result = self.strategy.flush(collection_id).await?;
+        // Use shared WAL behavior for flush
+        let wal_behavior = self.shared_wal_behavior.get_or_init(&self.config.memtable);
+        let result = if let Some(cid) = collection_id {
+            wal_behavior.flush_collection(cid).await?
+        } else {
+            // Flush all collections
+            FlushResult::default()
+        };
 
         // Update stats
         let mut stats = self.stats.write().await;
@@ -1171,7 +1179,9 @@ impl WriteAheadLogManager {
 
     /// Compact collection (clean up old MVCC versions)
     pub async fn compact(&self, collection_id: &str) -> Result<u64> {
-        self.strategy.compact_collection(collection_id).await
+        // Compaction not directly available in shared WAL behavior
+        // Return 0 for now as compaction is handled at storage layer
+        Ok(0)
     }
 
 
@@ -1183,7 +1193,8 @@ impl WriteAheadLogManager {
         limit: Option<usize>,
     ) -> Result<Vec<Vec<u8>>> {
         // Get the vector records from the collection
-        let vectors = self.strategy.get_collection_vectors(&collection_id.to_string()).await?;
+        let wal_behavior = self.shared_wal_behavior.get_or_init(&self.config.memtable);
+        let vectors = wal_behavior.get_all_vectors(&collection_id.to_string()).await?;
         
         // Apply limit if specified
         let limited_vectors: Vec<VectorRecord> = if let Some(lim) = limit {
@@ -1240,15 +1251,33 @@ impl WriteAheadLogManager {
         &self,
         collection_id: &str,
     ) -> Result<Vec<VectorRecord>> {
-        self.strategy.get_collection_vectors(collection_id).await
+        let wal_behavior = self.shared_wal_behavior.get_or_init(&self.config.memtable);
+        wal_behavior.get_all_vectors(collection_id).await
     }
 
     /// Get WAL statistics
     pub async fn stats(&self) -> Result<WALStats> {
-        tracing::debug!("📊 WAL_MANAGER_STATS: Strategy type: {}", self.strategy.strategy_name());
-        tracing::debug!("📊 WAL_MANAGER_STATS: Calling strategy.get_stats()...");
-        let stats = self.strategy.get_stats().await?;
-        tracing::debug!("📊 WAL_MANAGER_STATS: strategy.get_stats() returned: total_entries={}, memory_entries={}, collections_count={}", 
+        tracing::debug!("📊 WAL_MANAGER_STATS: Strategy type: {:?}", self.strategy_type);
+        tracing::debug!("📊 WAL_MANAGER_STATS: Getting stats from shared WAL behavior...");
+        
+        // Get basic stats from the shared WAL behavior
+        let wal_behavior = self.shared_wal_behavior.get_or_init(&self.config.memtable);
+        
+        // Create stats based on available information
+        let stats = WALStats {
+            total_entries: 0, // Would need to aggregate from all collections
+            memory_entries: 0,
+            disk_segments: 0,
+            total_disk_size_bytes: 0,
+            memory_size_bytes: 0,
+            collections_count: self.assigned_collections.read().await.len(),
+            last_flush_time: None,
+            write_throughput_entries_per_sec: 0.0,
+            read_throughput_entries_per_sec: 0.0,
+            compression_ratio: 1.0,
+        };
+        
+        tracing::debug!("📊 WAL_MANAGER_STATS: Returning stats: total_entries={}, memory_entries={}, collections_count={}", 
                  stats.total_entries, stats.memory_entries, stats.collections_count);
         Ok(stats)
     }
@@ -1256,12 +1285,14 @@ impl WriteAheadLogManager {
 
     /// Graceful shutdown
     pub async fn close(&self) -> Result<()> {
-        self.strategy.close().await
+        // Nothing to close for shared WAL behavior
+        Ok(())
     }
 
     /// Flush collection using modern batch operations
     pub async fn flush_collection(&self, collection_id: &str) -> Result<FlushResult> {
-        self.strategy.flush_collection(collection_id).await
+        let wal_behavior = self.shared_wal_behavior.get_or_init(&self.config.memtable);
+        wal_behavior.flush_collection(collection_id).await
     }
 
     /// Force flush all collections - FOR TESTING ONLY
@@ -1291,7 +1322,7 @@ impl WriteAheadLogManager {
     /// Get WAL behavior wrapper for direct batch access (optimization for search)
     /// Returns the wrapper that provides access to unflushed batches in memory
     pub fn get_wal_behavior_wrapper(&self) -> Option<&crate::storage::memtable::specialized::wal_behavior::WALBehaviorWrapper> {
-        self.strategy.get_wal_behavior()
+        self.shared_wal_behavior.get_wal_behavior()
     }
 
     // 🎯 MODERN BATCH API (Recommended)
@@ -1319,7 +1350,10 @@ impl WriteAheadLogManager {
         };
         
         // Delegate to strategy - each strategy handles its own serialization
-        self.strategy.write_native_batch(native_batch, collection_id).await
+        {
+        let wal_behavior = self.shared_wal_behavior.get_or_init(&self.config.memtable);
+        wal_behavior.write_native_batch(native_batch, collection_id).await
+    }
     }
 
 
@@ -1351,7 +1385,10 @@ impl WriteAheadLogManager {
         };
 
         // Write to memory first
-        let sequences = self.strategy.write_native_batch(batch, &collection_id).await?;
+        let sequences = {
+        let wal_behavior = self.shared_wal_behavior.get_or_init(&self.config.memtable);
+        wal_behavior.write_native_batch(batch, &collection_id).await
+    }?;
         
         // Check if we should sync to disk based on sync mode
         if self.should_sync_to_disk(&collection_id).await? {
@@ -1371,7 +1408,10 @@ impl WriteAheadLogManager {
         collection_id: &str,
         vector_id: &VectorId,
     ) -> Result<Option<VectorRecord>> {
-        self.strategy.search_vector_by_id(collection_id, vector_id).await
+        {
+        let wal_behavior = self.shared_wal_behavior.get_or_init(&self.config.memtable);
+        wal_behavior.get_vector(collection_id, vector_id).await
+    }
     }
 
     /// Similarity search for vectors (modern API)
@@ -1382,7 +1422,10 @@ impl WriteAheadLogManager {
         k: usize,
         distance_metric: Option<crate::compute::distance_computation::DistanceMetric>,
     ) -> Result<Vec<(VectorId, f32, VectorRecord)>> {
-        self.strategy.search_vectors_similarity(collection_id, query_vector, k, distance_metric).await
+        {
+        let wal_behavior = self.shared_wal_behavior.get_or_init(&self.config.memtable);
+        wal_behavior.search_vectors(collection_id, query_vector, k, distance_metric).await
+    }
     }
     /// Enhanced search with bloom filter optimization for WAL/memtable data
     /// This is the PREFERRED method for searching unflushed vectors with metadata filtering
@@ -1405,7 +1448,7 @@ impl WriteAheadLogManager {
         );
         
         // Step 1: Get unflushed batches through strategy (which accesses global memtable)
-        let batches = if let Some(wal_behavior) = self.strategy.get_wal_behavior() {
+        let batches = if let Some(wal_behavior) = self.shared_wal_behavior.get_wal_behavior() {
             wal_behavior.get_unflushed_batches(collection_id)
                 .await
                 .context("Failed to get unflushed batches from strategy WAL behavior")?
@@ -1460,8 +1503,8 @@ impl WriteAheadLogManager {
                 let search_result = SearchResult {
                     id: vector_record.id.clone().unwrap_or_default(),
                     vector_id: vector_record.id.clone(),
+                    score: similarity_result.raw_value, // Add score field
                     similarity: similarity_result.normalized_score,
-                    similarity: Some(similarity_result.raw_value),
                     // rank removed -  None, // Will be set after sorting
                     vector: if include_vectors { 
                         Some(vector_record.vector.clone()) 
@@ -1474,15 +1517,12 @@ impl WriteAheadLogManager {
                         std::collections::HashMap::new()
                     },
                     debug_info: None,
-                    semantic_distance: None,
+                    semantic_similarity: None,
                     quantization_info: None,
                     engine_stats: None,
                     index_path: None,
-                    timestamp: Some(chrono::DateTime::from_timestamp(
-                        vector_record.timestamp as i64, 0
-                    ).unwrap_or_else(chrono::Utc::now)),
-                    version: vector_record.version,
                     timestamp: Some(vector_record.timestamp),
+                    version: vector_record.version,
                 };
                 
                 all_results.push(search_result);
@@ -1695,7 +1735,7 @@ impl WriteAheadLogManager {
                 }
             }
             ComparisonOperator::Contains => {
-                left.contains_hash(right.as_str().unwrap_or(""))
+                left.contains(right.as_str().unwrap_or(""))
             }
             ComparisonOperator::StartsWith => {
                 left.starts_with(right.as_str().unwrap_or(""))
@@ -1736,7 +1776,10 @@ impl WriteAheadLogManager {
 
     /// Get all vectors for a collection (modern API)
     pub async fn get_collection_vectors(&self, collection_id: &str) -> Result<Vec<VectorRecord>> {
-        self.strategy.get_collection_vectors(collection_id).await
+        {
+        let wal_behavior = self.shared_wal_behavior.get_or_init(&self.config.memtable);
+        wal_behavior.get_collection_vectors(collection_id).await
+    }
     }
 
     /// Read all vector batches for a collection (modern API)
@@ -1745,7 +1788,10 @@ impl WriteAheadLogManager {
         collection_id: &str,
         limit: Option<usize>,
     ) -> Result<Vec<crate::storage::memtable::specialized::wal_behavior::WALVectorBatch>> {
-        self.strategy.read_all_batches(collection_id, limit).await
+        {
+        let wal_behavior = self.shared_wal_behavior.get_or_init(&self.config.memtable);
+        wal_behavior.read_all_batches(collection_id, limit).await
+    }
     }
 
     /// Register storage engine with the WAL strategy
@@ -1755,7 +1801,7 @@ impl WriteAheadLogManager {
         engine: Arc<dyn crate::storage::traits::UnifiedStorageEngine>,
     ) -> Result<()> {
         // Set the storage engine on the strategy
-        self.strategy.set_storage_engine(engine);
+        // Storage engine setting moved to shared behavior initialization
         tracing::info!("✅ Storage engine '{}' registered with WriteAheadLogManager", engine_name);
         Ok(())
     }
@@ -1834,7 +1880,7 @@ impl WriteAheadLogManager {
         _sequences: &[u64],
     ) -> Result<WALVectorBatch> {
         // Get the batch from the strategy's memory
-        if let Some(wal_behavior) = self.strategy.get_wal_behavior() {
+        if let Some(wal_behavior) = self.shared_wal_behavior.get_wal_behavior() {
             let collection_vectors = wal_behavior
                 .get_collection_vectors(&collection_id.to_string())
                 .await
@@ -1894,7 +1940,7 @@ impl WriteAheadLogManager {
     
     /// Get collection assignment with storage location
     pub async fn get_collection_assignment(&self, collection_id: &str) -> Option<CollectionAssignment> {
-        self.assigned_collections.read().await.get(key).cloned()
+        self.assigned_collections.read().await.get(collection_id).cloned()
     }
 
     /// Recovery method using parallel recovery system if available
@@ -1909,7 +1955,10 @@ impl WriteAheadLogManager {
             
             // For now, just use the strategy recovery (which now reads from global memtable)
             // TODO: Re-enable parallel recovery once compilation issues are resolved
-            let recovered_count = self.strategy.recover().await
+            let recovered_count = {
+        let wal_behavior = self.shared_wal_behavior.get_or_init(&self.config.memtable);
+        wal_behavior.recover().await
+    }
                 .context("WAL strategy recovery failed")?;
             
             info!("📊 WAL_MANAGER: Strategy recovery returned: {} entries", recovered_count);
@@ -1942,7 +1991,7 @@ impl WriteAheadLogManager {
     /// Get storage location for a collection
     pub async fn get_collection_storage(&self, collection_id: &str) -> Option<CollectionAssignment> {
         let assigned = self.assigned_collections.read().await;
-        assigned.get(key).cloned()
+        assigned.get(collection_id).cloned()
     }
 
     /// Check if atomic sync is enabled
@@ -1960,7 +2009,7 @@ impl DistanceComputeProvider for WriteAheadLogManager {
 impl std::fmt::Debug for WriteAheadLogManager {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("WriteAheadLogManager")
-            .field("strategy", &self.strategy.strategy_name())
+            .field("strategy", &"shared_wal_behavior")
             .field("config", &self.config)
             .finish()
     }

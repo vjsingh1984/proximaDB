@@ -201,7 +201,7 @@ impl AxisTieringIntegration {
         let is_hot = self.access_tracker.is_frequently_accessed(collection_id, 10).await;
         
         // Get index type preferences
-        let preference = self.index_type_preferences.preferences.get(key);
+        let preference = self.index_type_preferences.preferences.get(&index_type);
         
         let recommended_tier = if is_hot {
             // Hot data: use index type's preferred tier or faster

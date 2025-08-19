@@ -34,14 +34,14 @@ impl MetadataSource for VIPERParquetMetadataSource {
         self.parquet_metadata.total_rows
     }
     
-    fn get_column_metadata(&self, column_name: &str) -> Option<ColumnMetadata> {
-        self.parquet_metadata.column_info.get(key).cloned()
+    fn get_column_metadata(&self, field: &str) -> Option<ColumnMetadata> {
+        self.parquet_metadata.column_info.get(field).cloned()
     }
     
-    fn get_metadata_value(&self, row_idx: usize, column_name: &str) -> Option<serde_json::Value> {
+    fn get_metadata_value(&self, row_idx: usize, field: &str) -> Option<serde_json::Value> {
         self.column_metadata_cache
-            .get(key)
-            .and_then(|column_values| column_values.get(key))
+            .get(field)
+            .and_then(|column_values| column_values.get(row_idx))
             .cloned()
     }
     
@@ -61,7 +61,7 @@ impl VIPERParquetMetadataSource {
         let filesystem_factory = crate::storage::persistence::filesystem::FilesystemFactory::new(filesystem_config)
             .await
             .map_err(|e| anyhow::anyhow!("Failed to create filesystem factory: {}", e))?;
-        let reader = crate::storage::engines::viper::readers::unified_parquet_reader::UnifiedParquetReader::new(
+        let reader = crate::storage::engines::columnar::UnifiedParquetReader::new(
             Arc::new(filesystem_factory)
         );
         
@@ -76,9 +76,9 @@ impl VIPERParquetMetadataSource {
         for (row_idx, record) in all_records.iter().enumerate() {
             let metadata_map = crate::core::proto_metadata_helper::proto_metadata_to_json(&record.metadata);
             
-            for (column_name, value) in metadata_map {
+            for (field, value) in metadata_map {
                 // Update column info
-                let entry = column_info.entry(column_name.clone())
+                let entry = column_info.entry(field.clone())
                     .or_insert_with(|| ColumnMetadata {
                         // data_type removed -  Self::infer_data_type(&value),
                         has_index: true, // VIPER has column-level indexes via parquet
@@ -100,7 +100,7 @@ impl VIPERParquetMetadataSource {
                 
                 // Build column cache
                 let column_values = column_metadata_cache
-                    .entry(column_name)
+                    .entry(field)
                     .or_insert_with(|| vec![serde_json::Value::Null; total_rows]);
                 
                 if row_idx < column_values.len() {
@@ -110,8 +110,8 @@ impl VIPERParquetMetadataSource {
         }
         
         // Calculate cardinalities
-        for (column_name, column_meta) in &mut column_info {
-            if let Some(column_values) = column_metadata_cache.get(&key) {
+        for (field, column_meta) in &mut column_info {
+            if let Some(column_values) = column_metadata_cache.get(field) {
                 let unique_values: HashSet<_> = column_values.iter().collect();
                 column_meta.cardinality = Some(unique_values.len() as u64);
             }
@@ -168,7 +168,7 @@ impl VIPERIndexBasedReader {
         file_path: &str,
         indices: &[usize],
     ) -> Result<Vec<VectorRecord>> {
-        let reader = crate::storage::engines::viper::readers::unified_parquet_reader::UnifiedParquetReader::new(
+        let reader = crate::storage::engines::columnar::UnifiedParquetReader::new(
             Arc::clone(&self.filesystem_factory)
         );
         
@@ -178,7 +178,7 @@ impl VIPERIndexBasedReader {
         
         let selective_records: Vec<VectorRecord> = indices
             .iter()
-            .filter_map(|&idx| all_records.get(key).cloned())
+            .filter_map(|&idx| all_records.get(idx).cloned())
             .collect();
         
         debug!("VIPER selective read: {} out of {} rows for {}", 
@@ -188,7 +188,7 @@ impl VIPERIndexBasedReader {
     
     /// Read full parquet file
     async fn read_full_file(&self, file_path: &str) -> Result<Vec<VectorRecord>> {
-        let reader = crate::storage::engines::viper::readers::unified_parquet_reader::UnifiedParquetReader::new(
+        let reader = crate::storage::engines::columnar::UnifiedParquetReader::new(
             Arc::clone(&self.filesystem_factory)
         );
         

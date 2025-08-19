@@ -8,7 +8,7 @@ use tokio::sync::{Semaphore, RwLock};
 use tracing::{debug, info, warn};
 
 use crate::core::VectorRecord;
-use super::{SstFile, DataBlock};
+use super::{SwiftFile, DataBlock};
 use super::id_index::BlockLocation;
 
 /// Configuration for batch operations
@@ -80,7 +80,7 @@ impl BlockCache {
 
 /// Main batch ID lookup function
 pub async fn get_records_by_ids(
-    sst: &SstFile,
+    sst: &SwiftFile,
     ids: &[String],
 ) -> Result<Vec<VectorRecord>> {
     let config = BatchConfig::default();
@@ -123,7 +123,7 @@ pub async fn get_records_by_ids(
 
 /// Lookup locations for multiple IDs
 fn lookup_id_locations(
-    sst: &SstFile,
+    sst: &SwiftFile,
     ids: &[String],
 ) -> Result<Vec<(String, BlockLocation)>> {
     let mut locations = Vec::new();
@@ -160,7 +160,7 @@ fn group_by_block(
 
 /// Load blocks in parallel and extract requested records
 async fn load_and_extract_records(
-    sst: &SstFile,
+    sst: &SwiftFile,
     grouped: HashMap<(u32, u32), Vec<(String, u32)>>,
     max_concurrent: usize,
     cache: Option<BlockCache>,
@@ -173,7 +173,7 @@ async fn load_and_extract_records(
         let cache = cache.as_ref().map(|c| c.clone());
         
         let handle = tokio::spawn(async move {
-            let _permit = sem/* TODO: Fix VectorMemoryPool::acquire() method */.await.unwrap();
+            let _permit = sem.acquire().await.unwrap();
             
             // Check cache first
             let block = if let Some(ref cache) = cache {
@@ -236,7 +236,8 @@ async fn load_block_from_disk(
         compressed_size: 0,
         uncompressed_size: 0,
         records: Vec::new(),
-        quantized: None, // Quantization handled by universal adapter
+        quantized_vectors: None, // Quantization handled by universal adapter
+        quantization_level: None,
         id_range: (String::new(), String::new()),
         // min_timestamp removed -  0,
         // max_timestamp removed -  0,
@@ -249,7 +250,7 @@ fn extract_record_from_block(
     block: &DataBlock,
     offset: u32,
 ) -> Option<VectorRecord> {
-    block.records.get(key).cloned()
+    block.records.get(offset as usize).cloned()
 }
 
 /// Estimate memory size of a block
@@ -258,17 +259,18 @@ fn estimate_block_size(block: &DataBlock) -> usize {
     let record_size = block.records.len() * 
         (std::mem::size_of::<VectorRecord>() + 768 * 4); // Assume 768-dim vectors
     
-    let quantized_size = 
-        block.quantized_section.binary_sketches.len() * 100 +
-        block.quantized_section.int8_vectors.len() * 800 +
-        block.quantized_section.pq_codes.len() * 100;
+    let quantized_size = if let Some(ref quantized) = block.quantized_vectors {
+        quantized.len() * 100  // Estimate based on quantized vectors
+    } else {
+        0
+    };
     
     record_size + quantized_size + 1024 // Overhead
 }
 
 /// Batch update operations
 pub async fn update_records_batch(
-    sst: &mut SstFile,
+    swift_file: &mut SwiftFile,
     updates: Vec<(String, VectorRecord)>,
 ) -> Result<usize> {
     // In a real implementation, SST files are immutable
@@ -280,7 +282,7 @@ pub async fn update_records_batch(
 
 /// Batch delete operations (mark as deleted)
 pub async fn delete_records_batch(
-    sst: &mut SstFile,
+    swift_file: &mut SwiftFile,
     ids: &[String],
 ) -> Result<usize> {
     // In SST, deletions are typically handled by:
@@ -289,13 +291,13 @@ pub async fn delete_records_batch(
     
     let mut deleted = 0;
     for id in ids {
-        if sst.id_index.lookup(id).is_some() {
+        if swift_file.id_index.lookup(id).is_some() {
             // Would write a tombstone record
             deleted += 1;
         }
     }
     
-    sst.header.deleted_records += deleted as u64;
+    swift_file.header.deleted_records += deleted as u64;
     
     info!("Marked {} records for deletion", deleted);
     Ok(deleted)
@@ -303,7 +305,7 @@ pub async fn delete_records_batch(
 
 /// Prefetch blocks for anticipated access patterns
 pub async fn prefetch_blocks(
-    sst: &SstFile,
+    sst: &SwiftFile,
     block_ids: Vec<(u32, u32)>,
     cache: Option<BlockCache>,
 ) -> Result<()> {
@@ -317,7 +319,7 @@ pub async fn prefetch_blocks(
     
     for (sb_idx, b_idx) in block_ids {
         // Skip if already cached
-        if cache.get(&key) {
+        if cache.get(&(*sb_idx, *b_idx)).is_some() {
             continue;
         }
         
@@ -325,7 +327,7 @@ pub async fn prefetch_blocks(
         let cache = cache.clone();
         
         let handle = tokio::spawn(async move {
-            let _permit = sem/* TODO: Fix VectorMemoryPool::acquire() method */.await.unwrap();
+            let _permit = sem.acquire().await.unwrap();
             
             match load_block_from_disk(sb_idx, b_idx).await {
                 Ok(block) => {
@@ -410,7 +412,8 @@ mod tests {
                     version: None,
                 },
             ],
-            quantized: None, // Quantization handled by universal adapter
+            quantized_vectors: None, // Quantization handled by universal adapter
+        quantization_level: None,
             id_range: ("test".to_string(), "test".to_string()),
             // min_timestamp removed -  0,
             // max_timestamp removed -  0,

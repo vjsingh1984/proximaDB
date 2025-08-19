@@ -165,9 +165,9 @@ pub struct ClusteringMetrics {
     /// Calinski-Harabasz index (higher is better)
     pub calinski_harabasz_index: f32,
     /// Average intra-cluster distance
-    pub avg_intra_cluster_distance: f32,
+    pub avg_intra_cluster_similarity: f32,
     /// Average inter-cluster distance
-    pub avg_inter_cluster_distance: f32,
+    pub avg_inter_cluster_similarity: f32,
 }
 
 /// AXIS clustering engine
@@ -285,7 +285,7 @@ impl AxisClusteringEngine {
     ) -> Result<ClusterAssignment> {
         let models = self.models.read().await;
         let model = models
-            .get(key)
+            .get(collection_id)
             .ok_or_else(|| anyhow::anyhow!("No clustering model for collection {}", collection_id))?;
 
         // Find nearest centroid
@@ -324,7 +324,7 @@ impl AxisClusteringEngine {
     ) -> Result<Vec<(u32, f32)>> {
         let models = self.models.read().await;
         let model = models
-            .get(key)
+            .get(collection_id)
             .ok_or_else(|| anyhow::anyhow!("No clustering model for collection {}", collection_id))?;
 
         // Calculate distances to all centroids
@@ -362,7 +362,7 @@ impl AxisClusteringEngine {
             .push(vector);
 
         // Check if we need to recompute
-        let pending_count = pending.get(key).map(|v| v.len()).unwrap_or(0);
+        let pending_count = pending.get(collection_id).map(|v| v.len()).unwrap_or(0);
         if pending_count >= self.config.recompute_threshold {
             // TODO: Trigger recomputation
             tracing::info!(
@@ -378,7 +378,7 @@ impl AxisClusteringEngine {
     /// Get clustering model for collection
     pub async fn get_model(&self, collection_id: &str) -> Option<ClusteringModel> {
         let models = self.models.read().await;
-        models.get(key).cloned()
+        models.get(collection_id).cloned()
     }
 
     /// Train K-Means model

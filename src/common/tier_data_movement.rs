@@ -312,7 +312,7 @@ impl TierDataMovement {
                 updated_at: None,
                 expires_at: None,
                 version: vector.version,
-                quantized: None,
+                quantized_vector: None,
             });
         }
         

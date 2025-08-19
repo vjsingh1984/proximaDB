@@ -508,10 +508,11 @@ impl UniversalFilterOptimizer {
         &self,
         condition: &UniversalFilterCondition,
     ) -> Result<FilterAnalysis> {
-        let column_name = self.extract_column_name(condition);
+        let field = self.extract_column_name(condition);
+        let key = &field;
         
         let column_metadata = self.columns.get(key)
-            .ok_or_else(|| anyhow::anyhow!("Unknown column: {}", column_name))?;
+            .ok_or_else(|| anyhow::anyhow!("Unknown column: {}", field))?;
         
         // Determine best execution strategy
         let (step_type, uses_index, estimated_cost) = 
@@ -523,7 +524,7 @@ impl UniversalFilterOptimizer {
         
         Ok(FilterAnalysis {
             step_type,
-            column: column_name,
+            column: field,
             uses_index,
             estimated_cost,
             estimated_selectivity,

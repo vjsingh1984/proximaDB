@@ -168,8 +168,9 @@ impl StorageEngine {
         let axis_config = AxisConfig::default();
         let axis_index_manager = Arc::new(AxisManager::new(axis_config).await?);
 
-        // Initialize compaction manager
-        let compaction_manager = Arc::new(CompactionManager::new(config.sst_config.clone()).await?);
+        // Initialize compaction manager with default config if not provided
+        let sst_config = config.sst_config.clone().unwrap_or_default();
+        let compaction_manager = Arc::new(CompactionManager::new(sst_config).await?);
         
         // Create singleton SST storage instance
         let _sst_storage = Arc::new(SstStorage::new(
@@ -218,7 +219,8 @@ impl StorageEngine {
 
         // Start compaction workers
         // We need to replace the compaction manager to start workers
-        let mut temp_manager = CompactionManager::new(self.config.sst_config.clone()).await?;
+        let sst_config = self.config.sst_config.clone().unwrap_or_default();
+        let mut temp_manager = CompactionManager::new(sst_config).await?;
         temp_manager.start_workers(2).await?; // Start 2 worker threads
         self.compaction_manager = Arc::new(temp_manager);
 
@@ -335,7 +337,7 @@ impl StorageEngine {
         id: &VectorId,
     ) -> crate::storage::Result<bool> {
         // Check SST storage for vector existence
-        if let Some(sst_storage) = self.sst_storages.get(key) {
+        if let Some(sst_storage) = self.sst_storages.get(collection_id) {
             // Use SST storage to check if vector exists
             // This could be enhanced to check SST files directly
             return Ok(false); // TODO: Implement SST-based existence check
@@ -898,7 +900,7 @@ impl StorageEngine {
         );
 
         // Get vectors from SST storage (if available)
-        if let Some(sst_storage) = self.sst_storages.get(key) {
+        if let Some(sst_storage) = self.sst_storages.get(collection_id) {
             // TODO: Implement SST iteration for get_all_vectors
             tracing::debug!(
                 "SST storage available for collection {}, but iteration not yet implemented",

@@ -603,7 +603,7 @@ use tracing::{debug, error, info};
         let test_vectors = create_test_vectors();
         let wal_vectors: Vec<_> = test_vectors.iter().filter(|v| v.in_wal).collect();
         
-        if wal_vectors.is_none() {
+        if wal_vectors.is_empty() {
             debug!("⚠️ No WAL vectors found, creating test set...");
             return Ok(());
         }
@@ -662,7 +662,7 @@ use tracing::{debug, error, info};
                     }
                 };
                 
-                if filtered_wal_vectors.is_none() {
+                if filtered_wal_vectors.is_empty() {
                     debug!("  ⚠️ No vectors after {} filtering, skipping", op_name);
                     continue;
                 }
@@ -791,7 +791,7 @@ use tracing::{debug, error, info};
         let test_vectors = create_test_vectors();
         let wal_vectors: Vec<_> = test_vectors.iter().filter(|v| v.in_wal).take(3).collect();
         
-        if wal_vectors.is_none() {
+        if wal_vectors.is_empty() {
             debug!("⚠️ No WAL vectors for backend testing");
             return Ok(());
         }
@@ -1121,7 +1121,7 @@ use tracing::{debug, error, info};
                         ).collect(),
                     };
                     
-                    if filtered_vectors.is_none() {
+                    if filtered_vectors.is_empty() {
                         debug!("  ⚠️ No vectors after filtering, skipping");
                         continue;
                     }

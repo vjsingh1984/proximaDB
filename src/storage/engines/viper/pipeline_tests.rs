@@ -185,7 +185,7 @@ pub mod viper_pipeline_tests {
         assert_eq!(record.version, Some(1));
         assert!(record.rank.is_none());
         assert!(record.score.is_none());
-        assert!(record.distance.is_none());
+        assert!(record.similarity.is_none());
     }
 
     #[test]

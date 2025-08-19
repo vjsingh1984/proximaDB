@@ -51,7 +51,8 @@ impl ViperFlushHandler {
         
         // VIPER stores both FP32 (in one column) and quantized (in another)
         let has_quantized = params.collection_config.as_ref()
-            .and_then(|c| c.quantization.as_ref())
+            .and_then(|c| c.config.as_ref())
+            .and_then(|cfg| cfg.quantization.as_ref())
             .map(|q| q.enabled)
             .unwrap_or(false);
         

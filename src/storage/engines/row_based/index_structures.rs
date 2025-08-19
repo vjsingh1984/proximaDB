@@ -341,7 +341,7 @@ impl RowBasedIdIndex {
     pub async fn lookup(&self, key: &str) -> Option<BlockLocation> {
         // Quick bloom filter check
         if !self.bloom_filters.is_empty() {
-            let exists = self.bloom_filters.iter().any(|bloom| bloom.contains_hash(key.as_bytes()));
+            let exists = self.bloom_filters.iter().any(|bloom| bloom.contains(key.as_bytes()));
             if !exists {
                 return None;
             }
@@ -447,7 +447,7 @@ impl RowBasedIdIndex {
         // Start from root and navigate down
         for level in self.hierarchical_levels.iter().rev() {
             if let Some(ref bloom) = level.bloom_filter {
-                if !bloom.contains_hash(key.as_bytes()) {
+                if !bloom.contains(key.as_bytes()) {
                     continue;
                 }
             }

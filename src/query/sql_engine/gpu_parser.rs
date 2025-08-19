@@ -165,7 +165,7 @@ impl GpuTokenizer {
             }
             
             // Handle delimiters (including array brackets)
-            if ch.is_whitespace() || "(),;=<>![]".contains_hash(ch) {
+            if ch.is_whitespace() || "(),;=<>![]".contains(ch) {
                 if !current_token.is_empty() {
                     tokens.push(self.classify_token(&current_token));
                     current_token.clear();

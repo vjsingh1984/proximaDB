@@ -39,6 +39,7 @@ pub struct ColumnarSchemaConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FilterableColumnSpec {
     pub name: String,
+    pub data_type: FilterableDataType,
     pub nullable: bool,
     pub indexed: bool,
     pub estimated_cardinality: Option<usize>,
@@ -556,7 +557,7 @@ impl ColumnarSchemaBuilder {
     /// Clear cache for collection
     pub async fn clear_cache(&self, collection_id: &str) {
         let mut cache = self.schema_cache.write().await;
-        cache.retain(|key, _| !key.contains_hash(collection_id));
+        cache.retain(|key, _| !key.contains(collection_id));
         debug!("Cleared schema cache for collection: {}", collection_id);
     }
     

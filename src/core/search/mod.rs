@@ -6,12 +6,22 @@ pub mod results;
 pub mod unified_interface;
 pub mod typesafe_filter;
 pub mod index_based_filter;
+pub mod progressive_quantization;
+pub mod progressive_orchestrator;
 
 #[cfg(test)]
 mod early_termination_tests;
 
 use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
+
+/// Custom recall rates for progressive search stages
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProgressiveRecalls {
+    pub binary_recall: Option<f32>,
+    pub int8_recall: Option<f32>,
+    pub pq_recall: Option<f32>,
+}
 
 /// Unified search parameters for all storage engines
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -60,6 +70,19 @@ pub struct SearchParams {
     /// Internal: Indicates if the query requires ordering (e.g., gRPC/REST always true, SQL with ORDER BY true)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub requires_ordering: Option<bool>,
+    
+    // Progressive search parameters
+    /// Enable progressive quantization-aware search
+    pub enable_progressive_search: Option<bool>,
+    
+    /// Progressive search scenario (high_recall, balanced, high_speed, low_memory)
+    pub progressive_scenario: Option<String>,
+    
+    /// Custom recall rates for progressive stages
+    pub progressive_recalls: Option<ProgressiveRecalls>,
+    
+    /// Optimization hint for search strategy
+    pub optimization_hint: Option<String>,
 }
 
 impl Default for SearchParams {
@@ -320,7 +343,7 @@ pub mod json_comparison {
                 !evaluate_filter(e, metadata)
             }
             FilterExpression::Comparison { field, operator, value } => {
-                let field_value = metadata.get(key);
+                let field_value = metadata.get(field);
                 match (field_value, operator) {
                     (Some(field_val), ComparisonOperator::Equals) => {
                         // Add debug output for filter evaluation
@@ -363,7 +386,7 @@ pub mod json_comparison {
                         ord == Ordering::Greater || ord == Ordering::Equal
                     }
                     (Some(Value::Array(arr)), ComparisonOperator::In) => {
-                        arr.contains_hash(value)
+                        arr.contains(value)
                     }
                     (Some(field_val), ComparisonOperator::In) => {
                         if let Value::Array(values) = value {
@@ -393,7 +416,7 @@ pub mod json_comparison {
                     }
                     (Some(Value::String(s)), ComparisonOperator::Contains) => {
                         if let Value::String(pattern) = value {
-                            s.contains_hash(pattern)
+                            s.contains(pattern)
                         } else {
                             false
                         }
@@ -512,8 +535,8 @@ pub mod filter_extraction {
     ///     },
     /// ]);
     /// let columns = extract_filter_columns(&filter);
-    /// assert!(columns.contains_hash("batch"));
-    /// assert!(columns.contains_hash("category"));
+    /// assert!(columns.contains("batch"));
+    /// assert!(columns.contains("category"));
     /// ```
     pub fn extract_filter_columns(expr: &FilterExpression) -> HashSet<String> {
         let mut columns = HashSet::new();

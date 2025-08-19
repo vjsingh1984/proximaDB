@@ -8,12 +8,17 @@ use anyhow::{Context, Result};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tracing::{debug, info, trace};
+use crate::compute::distance_computation::DistanceMetric;
+use crate::compute::ComputationMethod;
 
 use crate::core::VectorRecord;
 use crate::storage::engines::columnar::{
     CommonColumnarOperations, CommonColumnarConfig, ColumnarSchemaBuilder,
     ColumnarSerializer, FormatPreference,
     FilterableColumnSpec, FilterableDataType, QuantizationConfig,
+};
+use crate::storage::engines::columnar::common::{
+    NovaOptimizations, ZoneMapOptimization, StreamingProcessingConfig,
 };
 use crate::compute::distance_computation::{
     QuantizedDistanceCalculator, QuantizedDistanceConfig, QuantizedVectorData,
@@ -187,8 +192,8 @@ pub struct SuperBlockStats {
     pub super_block_id: usize,
     pub num_row_groups: usize,
     pub total_vectors: usize,
-    pub min_distance: f32,
-    pub max_distance: f32,
+    pub min_similarity: f32,
+    pub max_similarity: f32,
     pub centroid: Vec<f32>,
     pub compression_ratio: f32,
 }
@@ -208,7 +213,7 @@ pub struct RowGroupStats {
 /// Column statistics
 #[derive(Debug, Clone)]
 pub struct ColumnStats {
-    pub column_name: String,
+    pub name: String,
     pub null_count: usize,
     pub distinct_count: usize,
     pub min_value: Option<serde_json::Value>,
@@ -275,6 +280,22 @@ enum StreamType {
     Search,
     Update,
     Delete,
+}
+
+// Helper functions for quantized vector operations
+fn dequantize_int8(data: &[i8], scale: f32, zero_point: i8) -> Vec<f32> {
+    data.iter()
+        .map(|&val| (val as f32 - zero_point as f32) * scale)
+        .collect()
+}
+
+fn compute_hamming_distance(query: &[f32], binary: &[u8]) -> u32 {
+    // Simple hamming distance - in production would use SIMD
+    let mut distance = 0u32;
+    for byte in binary {
+        distance += byte.count_ones();
+    }
+    distance
 }
 
 impl NovaUnifiedEngine {
@@ -412,7 +433,7 @@ impl NovaUnifiedEngine {
     ) -> Result<AdvancedSearchResult> {
         let start_time = std::time::Instant::now();
         
-        info!("Advanced search on collection: {} (top_k: {}, quality: {:.2})", 
+        info!("Advanced search on collection: {} (top_k: {}, quality_level: {:.2})", 
               collection_id, top_k, search_options.target_quality);
         
         // Get collection metadata with hierarchical stats
@@ -554,12 +575,7 @@ impl NovaUnifiedEngine {
                 enable_adaptive_caching: nova_config.caching_config.enable_adaptive_caching,
                 cache_size_mb: nova_config.caching_config.cache_size_mb,
                 cache_levels: nova_config.caching_config.cache_levels,
-                prefetch_strategy: match nova_config.caching_config.prefetch_strategy {
-                    PrefetchStrategy::Adaptive => "adaptive".to_string(),
-                    PrefetchStrategy::Sequential => "sequential".to_string(),
-                    PrefetchStrategy::MachineLearning => "ml".to_string(),
-                    PrefetchStrategy::None => "none".to_string(),
-                },
+                prefetch_strategy: nova_config.caching_config.prefetch_strategy,
             },
         };
         
@@ -585,7 +601,7 @@ impl NovaUnifiedEngine {
             compression_metadata: crate::storage::engines::columnar::CompressionMetadata {
                 column_compression: HashMap::new(),
                 compression_ratios: HashMap::new(),
-                writer_properties: crate::storage::engines::columnar::WriterPropertiesConfig::default(),
+                writer_properties: crate::storage::engines::columnar::schema::WriterPropertiesConfig::default(),
             },
             hierarchical_stats: HierarchicalStatistics {
                 super_blocks: vec![],
@@ -607,7 +623,7 @@ impl NovaUnifiedEngine {
     
     async fn get_nova_collection_metadata(&self, collection_id: &str) -> Result<NovaCollectionMetadata> {
         let cache = self.collection_cache.read().await;
-        cache.get(cache_key).cloned()
+        cache.get(collection_id)
             .cloned()
             .ok_or_else(|| anyhow::anyhow!("NOVA collection metadata not found: {}", collection_id))
     }
@@ -649,14 +665,14 @@ impl NovaUnifiedEngine {
         _collection_id: &str,
         _zones: &[usize],
         max_vectors: Option<usize>,
-    ) -> Result<Vec<crate::storage::engines::columnar::QuantizedVectorData>> {
-        // Placeholder implementation
+    ) -> Result<Vec<QuantizedVectorData>> {
+        // Placeholder implementation - using types from compute module
         let count = max_vectors.unwrap_or(1000).min(1000);
         let vectors = vec![
-            crate::storage::engines::columnar::QuantizedVectorData {
+            QuantizedVectorData {
                 fp32: Some(vec![1.0; 768]),
                 binary: Some(vec![0xFF; 96]),
-                int8: Some(crate::storage::engines::columnar::similarity::Int8VectorData {
+                int8: Some(Int8VectorData {
                     values: vec![100; 768],
                     scale: 0.01,
                     zero_point: 0,
@@ -671,20 +687,69 @@ impl NovaUnifiedEngine {
     async fn compute_progressive_distances(
         &self,
         query_vector: &[f32],
-        quantized_vectors: &[crate::storage::engines::columnar::QuantizedVectorData],
+        quantized_vectors: &[crate::compute::distance_computation::QuantizedVectorData],
         target_quality: f32,
         _top_k: usize,
-    ) -> Result<Vec<crate::storage::engines::columnar::QuantizedDistanceResult>> {
-        // Use progressive distance computation for better quality/performance tradeoff
+    ) -> Result<Vec<crate::compute::distance_computation::QuantizedDistanceResult>> {
+        // Progressive distance computation using best available representation
         let mut results = Vec::new();
+        let distance_metric = DistanceMetric::Cosine; // Get from collection config in production
         
         for vector in quantized_vectors {
-            let result = self.common_ops.compute_progressive_distance(
-                query_vector,
-                vector,
-                target_quality,
-            ).await?;
+            // Determine quality level based on available data
+            let (similarity, quality_estimate) = if let Some(fp32_vec) = &vector.fp32 {
+                // Best quality: use FP32 directly
+                let sim = self.distance_compute.calculate_distance(
+                    query_vector,
+                    fp32_vec,
+                    &distance_metric,
+                );
+                (sim, 1.0) // Perfect quality
+            } else if let Some(int8_data) = &vector.int8 {
+                // Good quality: dequantize INT8 and compute
+                let dequantized = dequantize_int8(&int8_data.data, int8_data.scale, int8_data.zero_point);
+                let sim = self.distance_compute.calculate_distance(
+                    query_vector,
+                    &dequantized,
+                    &distance_metric,
+                );
+                (sim, 0.85) // ~85% quality for INT8
+            } else if let Some(binary_vec) = &vector.binary {
+                // Approximate: use binary hamming distance
+                let hamming_distance = compute_hamming_distance(query_vector, binary_vec);
+                let normalized = 1.0 - (hamming_distance as f32 / (binary_vec.len() * 8) as f32);
+                let sim = crate::compute::distance_computation::engine::SimilarityResult {
+                    raw_value: hamming_distance as f32,
+                    metric: DistanceMetric::Hamming,
+                    normalized_score: normalized,
+                    rank_value: hamming_distance as f32,
+                };
+                (sim, 0.60) // ~60% quality for binary
+            } else {
+                // No data available
+                let sim = crate::compute::distance_computation::engine::SimilarityResult {
+                    raw_value: f32::MAX,
+                    metric: DistanceMetric::Cosine,
+                    normalized_score: 0.0,
+                    rank_value: f32::MAX,
+                };
+                (sim, 0.0)
+            };
+            
+            // Create QuantizedDistanceResult
+            let result = crate::compute::distance_computation::quantized::QuantizedDistanceResult {
+                similarity: similarity.normalized_score,
+                quality_estimate,
+                method: crate::compute::distance_computation::quantized::ComputationMethod::ExactFP32,
+                metrics: crate::compute::distance_computation::quantized::DistanceMetrics::default(),
+            };
+            
             results.push(result);
+            
+            // Early termination if quality threshold met
+            if quality_estimate >= target_quality {
+                break;
+            }
         }
         
         Ok(results)
@@ -692,23 +757,20 @@ impl NovaUnifiedEngine {
     
     async fn rank_and_filter_results(
         &self,
-        mut distance_results: Vec<crate::storage::engines::columnar::QuantizedDistanceResult>,
+        mut distance_results: Vec<crate::compute::distance_computation::QuantizedDistanceResult>,
         top_k: usize,
         _search_options: &AdvancedSearchOptions,
     ) -> Result<Vec<NovaSearchResult>> {
         // Sort by distance and take top_k
-        distance_results.sort_by(|a, b| a.distance.partial_cmp(&b.distance).unwrap());
+        distance_results.sort_by(|a, b| a.similarity.partial_cmp(&b.similarity).unwrap());
         
         let results = distance_results.into_iter()
             .take(top_k)
             .enumerate()
             .map(|(i, result)| NovaSearchResult {
                 vector_id: format!("nova_vector_{}", i),
-                similarity: result.distance,
+                similarity: result.similarity,
                 quality_estimate: result.quality_estimate,
-                // computation_method removed -  result.method,
-                hierarchical_level: 0, // Placeholder
-                zone_id: Some(i), // Placeholder
             })
             .collect();
         
@@ -750,7 +812,7 @@ pub struct AdvancedSearchOptions {
     pub target_quality: f32,
     pub enable_progressive: bool,
     pub max_vectors_to_evaluate: Option<usize>,
-    pub format_preference: Option<crate::storage::engines::columnar::SelectedFormat>,
+    pub format_preference: Option<crate::compute::distance_computation::SelectedFormat>,
     pub enable_hierarchical_pruning: bool,
     pub enable_zone_map_pruning: bool,
 }

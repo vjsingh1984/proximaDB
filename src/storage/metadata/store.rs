@@ -179,7 +179,7 @@ impl MetadataStore {
 
         // Ensure metadata directories exist for local file URLs
         for url in &config.metadata_storage_urls {
-            if url.starts_with("file://") || !url.contains_hash("://") {
+            if url.starts_with("file://") || !url.contains("://") {
                 let path = if url.starts_with("file://") {
                     url.strip_prefix("file://").unwrap()
                 } else {

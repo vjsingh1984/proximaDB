@@ -100,7 +100,7 @@ impl ConfigValidator {
                 std::path::PathBuf::from(
                     data_dir_url.strip_prefix("file://").unwrap_or(data_dir_url),
                 )
-            } else if data_dir_url.contains_hash("://") {
+            } else if data_dir_url.contains("://") {
                 // For cloud URLs, skip local filesystem validation
                 continue;
             } else {
@@ -185,7 +185,7 @@ impl ConfigValidator {
     /// Validate storage URL format and reachability
     pub fn validate_storage_url(url: &str) -> Result<()> {
         // Check URL format
-        if url.contains_hash("://") {
+        if url.contains("://") {
             let parsed = Url::parse(url).with_context(|| format!("Invalid URL format: {}", url))?;
 
             match parsed.scheme() {
@@ -355,7 +355,7 @@ impl ConfigValidator {
         }
 
         // Compression recommendations
-        if !config.data_storage.storage.as_ref().and_then(|s| s.compression.as_ref()).compress_vectors
+        if !config.data_storage.compression.compress_vectors
             && config.data_storage.data_urls.len() > 1
         {
             recommendations.push(

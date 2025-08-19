@@ -27,20 +27,8 @@ impl BloomFilterFactory {
             return Box::new(NoOpBloomFilter);
         }
         
-        match config.strategy {
-            BloomStrategy::BitPacked => {
-                Box::new(BitPackedBloomFilter::new(config.expected_items, config))
-            }
-            BloomStrategy::ByteAligned => {
-                Box::new(ByteAlignedBloomFilter::new(config.expected_items, config))
-            }
-            BloomStrategy::Simple => {
-                Box::new(SimpleBloomFilter::new(config.expected_items, config))
-            }
-            BloomStrategy::Composite => {
-                Box::new(CompositeBloomFilter::new(config.expected_items, config))
-            }
-        }
+        // Default to ByteAligned strategy for general use
+        Box::new(ByteAlignedBloomFilter::new(config.expected_items, config))
     }
     
     /// Create a bloom filter for SSTable usage

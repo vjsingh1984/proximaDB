@@ -4,7 +4,7 @@
 mod tests {
     use super::super::super::*;
     use crate::proto::proximadb::{CompressionConfig, CompressionAlgorithm};
-    use proximadb::core::serialization::CompressionAlgorithm};
+    use proximadb::core::serialization::CompressionAlgorithm;
     use crate::storage::engines::sst::readers::unified_sstable_reader::UnifiedSstableReader;
     use crate::storage::persistence::filesystem::FilesystemFactory;
     use tempfile::TempDir;

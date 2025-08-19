@@ -252,12 +252,12 @@ impl BackgroundFlushContext {
         
         // Parse quantization config if present
         let quantization = config.quantization.as_ref().map(|qc| {
-            // Extract quantization type from the simplified QuantizationConfig
-            let quantization_type = match qc.method() {
-                crate::proto::proximadb::quantization_config::Method::ProductQuantization => "product",
-                crate::proto::proximadb::quantization_config::Method::ScalarQuantization => "scalar",
-                crate::proto::proximadb::quantization_config::Method::BinaryQuantization => "binary",
-                crate::proto::proximadb::quantization_config::Method::Adaptive => "adaptive",
+            // Extract quantization type from the new QuantizationConfig
+            let quantization_type = match qc.strategy() {
+                crate::proto::proximadb::quantization_config::Strategy::SmartDefaults => "smart_defaults",
+                crate::proto::proximadb::quantization_config::Strategy::CustomLevels => "custom_levels",
+                crate::proto::proximadb::quantization_config::Strategy::Minimal => "minimal",
+                crate::proto::proximadb::quantization_config::Strategy::Aggressive => "aggressive",
             };
             
             QuantizationConfig {

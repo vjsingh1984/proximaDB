@@ -19,8 +19,8 @@ pub struct ClusterManager {
 
 impl ClusterManager {
     pub async fn new(config: ClusteringConfig) -> Result<Self> {
-        let distance_config = crate::compute::distance_computation::engine::UnifiedDistanceConfig::default();
-        let distance_calculator = Arc::new(UnifiedDistanceCompute::new(distance_config)?);
+        // Use DistanceMetric directly, not UnifiedDistanceConfig
+        let distance_calculator = Arc::new(UnifiedDistanceCompute::new(DistanceMetric::Cosine));
         
         Ok(Self {
             config,
@@ -167,11 +167,12 @@ impl ClusterManager {
         let mut nearest_cluster = 0u32;
         
         for (i, centroid) in self.centroids.iter().enumerate() {
-            let distance = self.distance_calculator.calculate_distance(
+            let distance_result = self.distance_calculator.calculate_distance(
                 vector,
                 centroid,
                 &self.config.distance_metric,
             );
+            let distance = distance_result.raw_value;
             
             if distance < min_distance {
                 min_distance = distance;

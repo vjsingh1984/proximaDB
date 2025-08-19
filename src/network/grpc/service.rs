@@ -11,8 +11,8 @@ use tracing::{debug, info, span, Instrument, Level};
 use crate::proto::proximadb::proxima_db_server::ProximaDb;
 use crate::proto::proximadb::{
     CollectionOperation, CollectionRequest, CollectionResponse, HealthRequest, HealthResponse,
-    MetricsRequest, MetricsResponse, OperationMetrics, ResultMetadata, SearchResult,
-    SearchResultsCompact, VectorBatchRequest, VectorOperation,
+    MetricsRequest, MetricsResponse, OperationMetrics, ResultMetadata, 
+    SearchResult, VectorBatchRequest, VectorOperation,
     VectorOperationResponse, VectorSearchRequest, VectorGetRequest,
 };
 use crate::services::collection_service::CollectionService;
@@ -234,7 +234,7 @@ impl ProximaDb for ProximaDbGrpcService {
                         affected_count: 1,
                         total_count: None,
                         metadata: std::collections::HashMap::new(),
-                        // error_message removed -  None,
+                        error_message: None,
                         error_code: None,
                         processing_time_us: result.processing_time_us,
                     }))
@@ -247,7 +247,7 @@ impl ProximaDb for ProximaDbGrpcService {
                         affected_count: 0,
                         total_count: None,
                         metadata: std::collections::HashMap::new(),
-                        // error_message removed -  result.error_message,
+                        error_message: None,
                         error_code: result.error_code,
                         processing_time_us: result.processing_time_us,
                     }))
@@ -279,7 +279,7 @@ impl ProximaDb for ProximaDbGrpcService {
                         affected_count: 1,
                         total_count: None,
                         metadata: std::collections::HashMap::new(),
-                        // error_message removed -  None,
+                        error_message: None,
                         error_code: None,
                         processing_time_us: processing_time,
                     }))
@@ -292,7 +292,7 @@ impl ProximaDb for ProximaDbGrpcService {
                         affected_count: 0,
                         total_count: None,
                         metadata: std::collections::HashMap::new(),
-                        // error_message removed -  Some(format!("Collection '{}' not found", collection_id)),
+                        error_message: None,
                         error_code: Some("COLLECTION_NOT_FOUND".to_string()),
                         processing_time_us: processing_time,
                     }))
@@ -321,7 +321,7 @@ impl ProximaDb for ProximaDbGrpcService {
                     affected_count: total_count,
                     total_count: Some(total_count),
                     metadata: std::collections::HashMap::new(),
-                    // error_message removed -  None,
+                    error_message: None,
                     error_code: None,
                     processing_time_us: processing_time,
                 }))
@@ -348,7 +348,7 @@ impl ProximaDb for ProximaDbGrpcService {
                         affected_count: 1,
                         total_count: None,
                         metadata: std::collections::HashMap::new(),
-                        // error_message removed -  None,
+                        error_message: None,
                         error_code: None,
                         processing_time_us: result.processing_time_us,
                     }))
@@ -361,7 +361,7 @@ impl ProximaDb for ProximaDbGrpcService {
                         affected_count: 0,
                         total_count: None,
                         metadata: std::collections::HashMap::new(),
-                        // error_message removed -  result.error_message,
+                        error_message: None,
                         error_code: result.error_code,
                         processing_time_us: result.processing_time_us,
                     }))
@@ -476,7 +476,7 @@ impl ProximaDb for ProximaDbGrpcService {
                         affected_count: 1,
                         total_count: None,
                         metadata: std::collections::HashMap::new(),
-                        // error_message removed -  None,
+                        error_message: None,
                         error_code: None,
                         processing_time_us: result.processing_time_us,
                     }))
@@ -484,9 +484,7 @@ impl ProximaDb for ProximaDbGrpcService {
                     // Convert error codes to appropriate gRPC Status
                     let status = match result.error_code.as_deref() {
                         Some("COLLECTION_NOT_FOUND") => Status::not_found(
-                            result
-                                .error_message
-                                .unwrap_or_else(|| "Collection not found".to_string()),
+                            format!("Collection not found: {:?}", result.error_code),
                         ),
                         Some(
                             "INVALID_DESCRIPTION"
@@ -496,14 +494,10 @@ impl ProximaDb for ProximaDbGrpcService {
                             | "IMMUTABLE_FIELD"
                             | "UNKNOWN_FIELD",
                         ) => Status::invalid_argument(
-                            result
-                                .error_message
-                                .unwrap_or_else(|| "Invalid update request".to_string()),
+                            format!("Invalid update request: {:?}", result.error_code),
                         ),
                         _ => Status::internal(
-                            result
-                                .error_message
-                                .unwrap_or_else(|| "Internal server error".to_string()),
+                            format!("Internal error: {:?}", result.error_code),
                         ),
                     };
                     Err(status)
@@ -539,7 +533,7 @@ impl ProximaDb for ProximaDbGrpcService {
                             affected_count: 1,
                             total_count: Some(1),
                             metadata,
-                            // error_message removed -  None,
+                            error_message: None,
                             error_code: None,
                             processing_time_us: processing_time,
                         }))
@@ -797,34 +791,26 @@ impl ProximaDb for ProximaDbGrpcService {
                 .map_err(|e| Status::internal(format!("Enhanced search failed: {}", e)))?;
             
             // Extract search results from response
-            let search_results = if let Some(payload) = search_response.result_payload {
-                // Handle CompactResults from UnifiedHandlers
-                match payload {
-                    crate::proto::proximadb::vector_operation_response::ResultPayload::CompactResults(compact) => {
-                        compact.results.into_iter().map(|r| crate::core::search::SearchResult {
-                            id: r.id.clone().unwrap_or_default(),
-                            vector_id: r.id.clone(),
-                            similarity: r.score,
-                            similarity: None, // Not provided in compact format
-                            // rank removed -  r.rank.map(|rank| rank as u16),
-                            vector: if include_vectors && !r.vector.is_empty() { Some(r.vector) } else { None },
-                            metadata: if include_metadata && !r.metadata.is_empty() {
-                                crate::core::proto_metadata_helper::proto_metadata_to_json(&r.metadata)
-                            } else {
-                                std::collections::HashMap::new()
-                            },
-                            debug_info: None,
-                            semantic_distance: None,
-                            quantization_info: None,
-                            engine_stats: None,
-                            version: None,
-                            timestamp: None,
-                            index_path: None,
-                            timestamp: None,
-                        }).collect()
+            let search_results = if let Some(search_result) = search_response.results {
+                search_result.results.into_iter().map(|r| crate::core::search::SearchResult {
+                    id: r.id.clone(),
+                    vector_id: Some(r.id.clone()),
+                    score: r.score,
+                    similarity: r.similarity,
+                    vector: if include_vectors && !r.vector.is_empty() { Some(r.vector) } else { None },
+                    metadata: if include_metadata && !r.metadata.is_empty() {
+                        crate::core::proto_metadata_helper::proto_metadata_to_json(&r.metadata)
+                    } else {
+                        std::collections::HashMap::new()
                     },
-                    _ => vec![]
-                }
+                    debug_info: None,
+                    semantic_similarity: None,
+                    quantization_info: None,
+                    engine_stats: None,
+                    version: r.version,
+                    timestamp: r.timestamp,
+                    index_path: None,
+                }).collect()
             } else {
                 vec![]
             };
@@ -853,23 +839,19 @@ impl ProximaDb for ProximaDbGrpcService {
                         wal_write_time_us: 0,
                         index_update_time_us: 0,
                     }),
-                    result_payload: Some(
-                        crate::proto::proximadb::vector_operation_response::ResultPayload::CompactResults(
-                            SearchResultsCompact {
-                                results: proto_results,
-                                total_found: result_count,
-                                search_algorithm_used: Some("DirectConversion".to_string()),
-                            }
-                        )
-                    ),
+                    results: Some(SearchResult {
+                        results: proto_results,
+                        total_found: result_count,
+                        collection_id: Some(req.collection_id.clone()),
+                    }),
                     vector_ids: vec![],
-                    // error_message removed -  None,
+                    error_message: None,
                     error_code: None,
                     result_info: Some(ResultMetadata {
                         result_count,
                         estimated_size_bytes: 0,
-                        is_avro_binary: false,
-                        avro_schema_version: "2".to_string(),
+                        processing_time_us: 0,
+                        algorithm_used: None,
                     }),
                 }));
             }
@@ -880,7 +862,7 @@ impl ProximaDb for ProximaDbGrpcService {
                     serde_json::json!({
                         "id": result.id,
                         "score": result.score, // Unified distance score
-                        "distance": result.distance, // Raw distance value
+                        "distance": result.similarity, // Raw distance value
                         "vector": if include_vectors { Some(&result.vector) } else { None },
                         "metadata_info": if include_metadata { Some(&result.metadata) } else { None },
                         "rank": result.rank,
@@ -959,12 +941,8 @@ impl ProximaDb for ProximaDbGrpcService {
                     let search_results = self.vector_operations_service
                         .search_vectors(
                             &req.collection_id,
-                            &query.vector,
+                            query.vector.clone(),
                             req.top_k as usize,
-                            crate::compute::distance_computation::DistanceMetric::Cosine,
-                            None, // search_params
-                            include_vectors,
-                            include_metadata,
                         )
                         .await
                         .map_err(|e| Status::internal(format!("Multi-query search {} failed: {}", index, e)))?;
@@ -993,23 +971,19 @@ impl ProximaDb for ProximaDbGrpcService {
                         wal_write_time_us: 0,
                         index_update_time_us: 0,
                     }),
-                    result_payload: Some(
-                        crate::proto::proximadb::vector_operation_response::ResultPayload::CompactResults(
-                            SearchResultsCompact {
-                                results: all_proto_results,
-                                total_found: result_count,
-                                search_algorithm_used: Some("DirectConversion-Multi".to_string()),
-                            }
-                        )
-                    ),
+                    results: Some(SearchResult {
+                        results: all_proto_results,
+                        total_found: result_count,
+                        collection_id: Some(req.collection_id.clone()),
+                    }),
                     vector_ids: vec![],
-                    // error_message removed -  None,
+                    error_message: None,
                     error_code: None,
                     result_info: Some(ResultMetadata {
                         result_count,
                         estimated_size_bytes: 0,
-                        is_avro_binary: false,
-                        avro_schema_version: "2".to_string(),
+                        processing_time_us: 0,
+                        algorithm_used: None,
                     }),
                 }));
             }
@@ -1073,12 +1047,8 @@ impl ProximaDb for ProximaDbGrpcService {
                     .vector_operations_service
                     .search_vectors(
                         &req.collection_id,
-                        &query.vector,
+                        query.vector.clone(),
                         req.top_k as usize,
-                        crate::proto::proximadb::DistanceMetric::Cosine, // Default to cosine
-                        search_params.as_ref(),
-                        include_vectors,
-                        include_metadata,
                     )
                     .instrument(span!(
                         Level::DEBUG,
@@ -1127,91 +1097,53 @@ impl ProximaDb for ProximaDbGrpcService {
         let processing_time = start_time.elapsed().as_micros() as i64;
         let result_size = avro_result.len();
 
-        // ZERO-COPY: Check if we should use Avro binary for large results
-        // OPTIMIZED: Lowered threshold from 10KB to 1KB for more zero-copy responses
-        const AVRO_THRESHOLD: usize = 1 * 1024;
+        // Parse search results directly (no more Avro binary support)
+        debug!(
+            "📦 Processing search results ({}B)",
+            result_size
+        );
 
-        if result_size > AVRO_THRESHOLD {
-            debug!(
-                "🚀 Using zero-copy Avro binary for search results ({}KB)",
-                result_size / 1024
-            );
+        // Parse search results
+        let search_results: JsonValue = serde_json::from_slice(&avro_result)
+            .map_err(|e| Status::internal(format!("Failed to parse search results: {}", e)))?;
 
-            // Return zero-copy Avro binary response
-            Ok(Response::new(VectorOperationResponse {
-                success: true,
-                operation: VectorOperation::VectorSearch as i32,
-                metrics: Some(OperationMetrics {
-                    total_processed: req.queries.len() as i64,
-                    successful_count: req.queries.len() as i64,
-                    failed_count: 0,
-                    updated_count: 0,
-                    processing_time_us: processing_time,
-                    wal_write_time_us: 0, // No WAL for searches
-                    index_update_time_us: 0,
-                }),
-                result_payload: Some(
-                    crate::proto::proximadb::vector_operation_response::ResultPayload::AvroResults(
-                        avro_result,
-                    ),
-                ),
-                vector_ids: vec![], // Not applicable for search
-                // error_message removed -  None,
-                error_code: None,
-                result_info: Some(ResultMetadata {
-                    result_count: 0, // Client needs to parse Avro to get count
-                    estimated_size_bytes: result_size as i64,
-                    is_avro_binary: true,
-                    avro_schema_version: "1".to_string(),
-                }),
-            }))
-        } else {
-            // For small results, parse and use compact format
-            debug!(
-                "📦 Using compact format for small search results ({}B)",
-                result_size
-            );
+        // Debug: Log the actual search results structure
+        debug!(
+            "🔍 Raw search results JSON: {}",
+            serde_json::to_string_pretty(&search_results).unwrap_or_default()
+        );
 
-            // Parse search results
-            let search_results: JsonValue = serde_json::from_slice(&avro_result)
-                .map_err(|e| Status::internal(format!("Failed to parse search results: {}", e)))?;
-
-            // Debug: Log the actual search results structure
-            debug!(
-                "🔍 Raw search results JSON: {}",
-                serde_json::to_string_pretty(&search_results).unwrap_or_default()
-            );
-
-            // Convert results to gRPC format
-            let results = search_results
-                .get(key)
-                .and_then(|r| r.as_array())
-                .unwrap_or(&vec![])
-                .iter()
-                .map(|result| SearchResult {
-                    id: result
-                        .get(key)
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("")
-                        .to_string(),
-                    similarity: result.get(key).and_then(|v| v.as_f64()).unwrap_or(0.0) as f32,
-                    vector: if include_vectors {
-                        result
-                            .get(key)
-                            .and_then(|v| v.as_array())
-                            .map(|arr| {
-                                arr.iter()
-                                    .filter_map(|x| x.as_f64().map(|f| f as f32))
-                                    .collect()
-                            })
-                            .unwrap_or_default()
-                    } else {
-                        vec![]
-                    },
-                    metadata: if include_metadata {
-                        result
-                            .get(key)
-                            .and_then(|m| m.as_object())
+        // Convert results to gRPC format
+        let results = search_results
+            .get("results")
+            .and_then(|r| r.as_array())
+            .unwrap_or(&vec![])
+            .iter()
+            .map(|result| crate::proto::proximadb::SearchVectorRecord {
+                id: result
+                    .get("id")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string(),
+                score: result.get("score").and_then(|v| v.as_f64()).unwrap_or(0.0) as f32,
+                similarity: result.get("similarity").and_then(|v| v.as_f64()).map(|f| f as f32),
+                vector: if include_vectors {
+                    result
+                        .get("vector")
+                        .and_then(|v| v.as_array())
+                        .map(|arr| {
+                            arr.iter()
+                                .filter_map(|x| x.as_f64().map(|f| f as f32))
+                                .collect()
+                        })
+                        .unwrap_or_default()
+                } else {
+                    vec![]
+                },
+                metadata: if include_metadata {
+                    result
+                        .get("metadata")
+                        .and_then(|m| m.as_object())
                             .map(|obj| {
                                 obj.iter()
                                     .map(|(k, v)| {
@@ -1238,16 +1170,13 @@ impl ProximaDb for ProximaDbGrpcService {
                     } else {
                         vec![]
                     },
-                    // rank removed -  0, // Default rank value
-                    similarity: result.get(key).and_then(|v| v.as_f64()).unwrap_or(0.0) as f32,
-                    version: result.get(key).and_then(|v| v.as_u64()).map(|v| v as u32),
-                    timestamp: result.get(key).and_then(|v| v.as_u64()).map(|v| v as u32),
-                    collection_id: result.get(key).and_then(|v| v.as_str()).map(|s| s.to_string()),
-                })
+                version: result.get("version").and_then(|v| v.as_u64()).map(|v| v as u32),
+                timestamp: result.get("timestamp").and_then(|v| v.as_u64()).map(|v| v as u32),
+            })
                 .collect();
 
             let total_results = search_results
-                .get(key)
+                .get("metadata")
                 .and_then(|v| v.as_i64())
                 .unwrap_or(0);
 
@@ -1263,22 +1192,21 @@ impl ProximaDb for ProximaDbGrpcService {
                     wal_write_time_us: 0, // No WAL for searches
                     index_update_time_us: 0,
                 }),
-                result_payload: Some(crate::proto::proximadb::vector_operation_response::ResultPayload::CompactResults(SearchResultsCompact {
+                results: Some(SearchResult {
                     results,
                     total_found: total_results,
-                    search_algorithm_used: Some("HNSW".to_string()),
-                })),
+                    collection_id: Some(req.collection_id.clone()),
+                }),
                 vector_ids: vec![], // Not applicable for search
-                // error_message removed -  None,
+                error_message: None,
                 error_code: None,
                 result_info: Some(ResultMetadata {
                     result_count: total_results,
                     estimated_size_bytes: result_size as i64,
-                    is_avro_binary: false,
-                    avro_schema_version: "1".to_string(),
+                    processing_time_us: processing_time,
+                    algorithm_used: Some("HNSW".to_string()),
                 }),
             }))
-        }
     }
 
     /// Get single vector by ID

@@ -861,7 +861,11 @@ impl UnifiedSearchOptimizer {
         
         let distance_metric = proto_distance_to_internal(config.distance_metric);
         
-        let method = match quant_config.method {
+        // TODO: Update to new quantization strategy enum when obsolete file is removed
+        let method = match quant_config.strategy {
+            // Temporarily map to default method since this file is obsolete
+            _ => QuantizationMethod::ProductQuantization
+            /*
             Some(m) if m == crate::proto::proximadb::quantization_config::Method::ProductQuantization as i32 => {
                 QuantizationMethod::ProductQuantization
             }
@@ -869,6 +873,7 @@ impl UnifiedSearchOptimizer {
                 QuantizationMethod::ScalarQuantization
             }
             _ => QuantizationMethod::ProductQuantization,
+            */
         };
         
         let storage_config = StorageQuantizationConfig {

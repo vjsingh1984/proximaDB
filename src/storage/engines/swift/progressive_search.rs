@@ -9,9 +9,77 @@ use tokio::sync::Semaphore;
 use tracing::{debug, info};
 
 use crate::core::VectorRecord;
-use crate::compute::distance_computation::DistanceMetric;
-use super::{SstFile, MetadataFilter, SuperBlock, DataBlock};
-use super::quantization_blocks::{BinarySketch, Int8Vector, PQCode, DistanceTable};
+use crate::compute::distance_computation::{DistanceMetric, UnifiedDistanceCompute, SimilarityResult};
+use crate::compute::quantization::storage_engine::{StorageQuantizationEngine, StorageQuantizationConfig, StorageQuantizedData};
+use super::{SwiftFile, MetadataFilter, SuperBlock, DataBlock};
+
+/// Helper function to compare JSON values
+fn compare_json_values(
+    a: &serde_json::Value,
+    b: &serde_json::Value,
+    expected: std::cmp::Ordering,
+) -> Option<bool> {
+    use serde_json::Value;
+    
+    match (a, b) {
+        (Value::Number(n1), Value::Number(n2)) => {
+            if let (Some(f1), Some(f2)) = (n1.as_f64(), n2.as_f64()) {
+                Some(match expected {
+                    Ordering::Greater => f1 >= f2,
+                    Ordering::Less => f1 <= f2,
+                    Ordering::Equal => (f1 - f2).abs() < f64::EPSILON,
+                })
+            } else if let (Some(i1), Some(i2)) = (n1.as_i64(), n2.as_i64()) {
+                Some(match expected {
+                    Ordering::Greater => i1 >= i2,
+                    Ordering::Less => i1 <= i2,
+                    Ordering::Equal => i1 == i2,
+                })
+            } else {
+                None
+            }
+        }
+        (Value::String(s1), Value::String(s2)) => {
+            Some(match expected {
+                Ordering::Greater => s1 >= s2,
+                Ordering::Less => s1 <= s2,
+                Ordering::Equal => s1 == s2,
+            })
+        }
+        (Value::Bool(b1), Value::Bool(b2)) => {
+            Some(match expected {
+                Ordering::Equal => b1 == b2,
+                _ => false, // Booleans don't have ordering
+            })
+        }
+        _ => None, // Can't compare other types
+    }
+}
+
+// Temporary local definition until unified quantization types are available
+#[derive(Debug, Clone)]
+struct BinarySketch {
+    bits: Vec<u8>,
+    dimension: usize,
+}
+
+impl BinarySketch {
+    fn hamming_distance(&self, other: &BinarySketch) -> u32 {
+        self.bits.iter()
+            .zip(other.bits.iter())
+            .map(|(a, b)| (*a ^ *b).count_ones())
+            .sum()
+    }
+}
+// Quantization types from unified compute module
+use crate::compute::quantization::unified::{
+    BinaryQuantization,
+    ScalarQuantization,
+    ProductQuantization,
+};
+
+// Distance table type for PQ search
+type DistanceTable = Vec<Vec<f32>>;
 
 /// Configuration for progressive search
 #[derive(Debug, Clone)]
@@ -51,7 +119,7 @@ impl Default for ProgressiveSearchConfig {
 /// Candidate at various stages of refinement
 #[derive(Debug, Clone)]
 struct Candidate {
-    superblock_idx:u32,
+    superblock_idx: u32,
     block_idx: u32,
     vector_idx: u32,
     similarity: f32,
@@ -59,7 +127,7 @@ struct Candidate {
 
 impl PartialEq for Candidate {
     fn eq(&self, other: &Self) -> bool {
-        self.distance == other.distance
+        self.similarity == other.similarity
     }
 }
 
@@ -68,7 +136,7 @@ impl Eq for Candidate {}
 impl PartialOrd for Candidate {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         // Reverse order for min-heap
-        other.distance.partial_cmp(&self.distance)
+        other.similarity.partial_cmp(&self.similarity)
     }
 }
 
@@ -80,7 +148,7 @@ impl Ord for Candidate {
 
 /// Main progressive search function
 pub async fn search_progressive(
-    sst: &SstFile,
+    sst: &SwiftFile,
     query: &[f32],
     top_k: usize,
     filter: Option<MetadataFilter>,
@@ -155,13 +223,13 @@ pub async fn search_progressive(
 
 /// Phase 1: Binary sketch filtering
 async fn phase1_binary_filtering(
-    sst: &SstFile,
+    sst: &SwiftFile,
     query: &[f32],
     n_candidates: usize,
     filter: &Option<MetadataFilter>,
     threshold: f32,
 ) -> Result<Vec<Candidate>> {
-    let binary_query = BinarySketch::from_vector(query, 0.0);
+    let binary_query = BinaryQuantization::quantize_single(query, 128);
     let mut candidates = BinaryHeap::new();
     
     // First check superblock-level signatures
@@ -187,20 +255,22 @@ async fn phase1_binary_filtering(
             }
             
             // Check each vector in block using binary sketches
-            for (v_idx, sketch) in block.quantized_section.binary_sketches.iter().enumerate() {
-                let distance = binary_query.hamming_distance(sketch) as f32;
+            if let Some(ref sketches) = block.quantized_vectors {
+                for (v_idx, sketch) in sketches.iter().enumerate() {
+                    let distance = binary_query.hamming_distance(sketch) as f32;
                 
-                if distance <= threshold {
-                    candidates.push(Candidate {
-                        superblock_idx:sb_idx as u32,
-                        block_idx: b_idx as u32,
-                        vector_idx: v_idx as u32,
-                        distance,
-                    });
-                    
-                    // Keep only top candidates
-                    if candidates.len() > n_candidates {
-                        candidates.pop();
+                    if distance <= threshold {
+                        candidates.push(Candidate {
+                            superblock_idx: sb_idx as u32,
+                            block_idx: b_idx as u32,
+                            vector_idx: v_idx as u32,
+                            similarity: distance,
+                        });
+                        
+                        // Keep only top candidates
+                        if candidates.len() > n_candidates {
+                            candidates.pop();
+                        }
                     }
                 }
             }
@@ -219,13 +289,20 @@ async fn phase1_binary_filtering(
 
 /// Phase 2: INT8 filtering
 async fn phase2_int8_filtering(
-    sst: &SstFile,
+    sst: &SwiftFile,
     query: &[f32],
     binary_candidates: Vec<Candidate>,
     n_candidates: usize,
     threshold: f32,
 ) -> Result<Vec<Candidate>> {
-    let int8_query = Int8Vector::from_vector(query);
+    // TODO: Use unified quantization module - for now just use simple quantization
+    // This should be refactored to use StorageQuantizationEngine
+    let min_val = query.iter().fold(f32::INFINITY, |a, &b| a.min(b));
+    let max_val = query.iter().fold(f32::NEG_INFINITY, |a, &b| a.max(b));
+    let scale = (max_val - min_val) / 255.0;
+    let int8_query: Vec<i8> = query.iter()
+        .map(|&v| ((v - min_val) / scale - 128.0) as i8)
+        .collect();
     let mut candidates = BinaryHeap::new();
     
     // Group candidates by block for efficient access
@@ -241,19 +318,21 @@ async fn phase2_int8_filtering(
         let block = &sst.superblocks[sb_idx as usize].blocks[b_idx as usize];
         
         for v_idx in vector_indices {
-            if let Some(int8_vec) = block.quantized_section.int8_vectors.get(&vector_id) {
-                let distance = int8_query.l2_distance_squared(int8_vec);
-                
-                if distance <= threshold {
-                    candidates.push(Candidate {
-                        superblock_idx:sb_idx,
-                        block_idx: b_idx,
-                        vector_idx: v_idx,
-                        distance,
-                    });
+            if let Some(ref quantized) = block.quantized_vectors {
+                if let Some(int8_vec) = quantized.get(v_idx as usize) {
+                    let distance = int8_query.l2_distance_squared(int8_vec);
                     
-                    if candidates.len() > n_candidates {
-                        candidates.pop();
+                    if distance <= threshold {
+                        candidates.push(Candidate {
+                            superblock_idx: sb_idx,
+                            block_idx: b_idx,
+                            vector_idx: v_idx as u32,
+                            similarity: distance,
+                        });
+                        
+                        if candidates.len() > n_candidates {
+                            candidates.pop();
+                        }
                     }
                 }
             }
@@ -272,7 +351,7 @@ async fn phase2_int8_filtering(
 
 /// Phase 3: PQ refinement
 async fn phase3_pq_refinement(
-    sst: &SstFile,
+    sst: &SwiftFile,
     query: &[f32],
     int8_candidates: Vec<Candidate>,
     n_candidates: usize,
@@ -284,6 +363,14 @@ async fn phase3_pq_refinement(
     } else {
         None
     };
+    
+    // Compute INT8 query for fallback
+    let min_val = query.iter().fold(f32::INFINITY, |a, &b| a.min(b));
+    let max_val = query.iter().fold(f32::NEG_INFINITY, |a, &b| a.max(b));
+    let scale = (max_val - min_val) / 255.0;
+    let int8_query: Vec<i8> = query.iter()
+        .map(|&v| ((v - min_val) / scale - 128.0) as i8)
+        .collect();
     
     let mut candidates = BinaryHeap::new();
     
@@ -300,25 +387,29 @@ async fn phase3_pq_refinement(
         let block = &sst.superblocks[sb_idx as usize].blocks[b_idx as usize];
         
         for v_idx in vector_indices {
-            if let Some(pq_code) = block.quantized_section.pq_codes.get(key) {
-                let distance = if let Some(ref dt) = distance_table {
-                    dt.lookup_distance(pq_code)
-                } else {
-                    // Fallback to INT8 distance if no PQ
-                    block.quantized_section.int8_vectors[v_idx as usize]
-                        .l2_distance_squared(&Int8Vector::from_vector(query))
-                };
-                
-                if distance <= threshold {
-                    candidates.push(Candidate {
-                        superblock_idx:sb_idx,
-                        block_idx: b_idx,
-                        vector_idx: v_idx,
-                        distance,
-                    });
+            if let Some(ref quantized) = block.quantized_vectors {
+                if let Some(pq_code) = quantized.get(v_idx as usize) {
+                    let distance: f32 = if let Some(ref dt) = distance_table {
+                        dt.lookup_distance(pq_code) as f32
+                    } else {
+                        // Fallback to INT8 distance if no PQ
+                        pq_code.iter()
+                            .zip(int8_query.iter())
+                            .map(|(a, b)| (*a as f32 - *b as f32).powi(2))
+                            .sum::<f32>()
+                    };
                     
-                    if candidates.len() > n_candidates {
-                        candidates.pop();
+                    if distance <= threshold {
+                        candidates.push(Candidate {
+                            superblock_idx: sb_idx,
+                            block_idx: b_idx,
+                            vector_idx: v_idx as u32,
+                            similarity: distance,
+                        });
+                        
+                        if candidates.len() > n_candidates {
+                            candidates.pop();
+                        }
                     }
                 }
             }
@@ -337,7 +428,7 @@ async fn phase3_pq_refinement(
 
 /// Phase 4: Full precision reranking
 async fn phase4_full_precision(
-    sst: &SstFile,
+    sst: &SwiftFile,
     query: &[f32],
     pq_candidates: Vec<Candidate>,
     top_k: usize,
@@ -364,7 +455,7 @@ async fn phase4_full_precision(
         let distance_metric = sst.header.distance_metric;
         
         let handle = tokio::spawn(async move {
-            let _permit = sem/* TODO: Fix VectorMemoryPool::acquire() method */.await.unwrap();
+            let _permit = sem.acquire().await.unwrap();
             
             // In real implementation, would load block from disk
             // For now, we'll simulate with the in-memory block
@@ -376,8 +467,9 @@ async fn phase4_full_precision(
             // Compute distances for vectors in this block
             for v_idx in vector_indices {
                 // let record = &block.records[v_idx as usize];
-                // let distance = compute_distance(&query, &record.vector, distance_metric);
-                // results.push((record.clone(), distance));
+                // let compute = UnifiedDistanceCompute::new(distance_metric);
+                // let result = compute.calculate_distance(&query, &record.vector, &distance_metric);
+                // results.push((record.clone(), result.similarity));
             }
             
             Ok::<Vec<(VectorRecord, f32)>, anyhow::Error>(results)
@@ -439,9 +531,13 @@ fn condition_matches_block_stats(
     
     match condition {
         FilterCondition::Range(column, min, max) => {
-            if let Some(col_stats) = stats.get(key) {
+            if let Some(col_stats) = stats.get(column) {
                 // Check if range overlaps with block's range
-                col_stats.max_value >= *min && col_stats.min_value <= *max
+                // Use JSON comparison helpers
+                compare_json_values(&col_stats.max_value, min, std::cmp::Ordering::Greater)
+                    .unwrap_or(false)
+                    && compare_json_values(&col_stats.min_value, max, std::cmp::Ordering::Less)
+                        .unwrap_or(false)
             } else {
                 false
             }
@@ -469,13 +565,16 @@ fn condition_matches_record(
     
     match condition {
         FilterCondition::Equals(column, value) => {
-            metadata.get(key).map_or(false, |v| v == value)
+            metadata.get(column).map_or(false, |v| v == value)
         }
         FilterCondition::Range(column, min, max) => {
-            metadata.get(key).map_or(false, |v| v >= min && v <= max)
+            metadata.get(column).map_or(false, |v| {
+                compare_json_values(v, min, std::cmp::Ordering::Greater).unwrap_or(false)
+                    && compare_json_values(v, max, std::cmp::Ordering::Less).unwrap_or(false)
+            })
         }
         FilterCondition::In(column, values) => {
-            metadata.get(key).map_or(false, |v| values.contains_hash(v))
+            metadata.get(column).map_or(false, |v| values.contains(v))
         }
         FilterCondition::IsNull(column) => {
             !metadata.contains_key(column) || metadata[column].is_null()
@@ -486,34 +585,7 @@ fn condition_matches_record(
     }
 }
 
-fn compute_distance(a: &[f32], b: &[f32], metric: DistanceMetric) -> f32 {
-    match metric {
-        DistanceMetric::Euclidean => {
-            a.iter()
-                .zip(b.iter())
-                .map(|(x, y)| (x - y).powi(2))
-                .sum::<f32>()
-                .sqrt()
-        }
-        DistanceMetric::Cosine => {
-            let dot: f32 = a.iter().zip(b.iter()).map(|(x, y)| x * y).sum();
-            let norm_a: f32 = a.iter().map(|x| x.powi(2)).sum::<f32>().sqrt();
-            let norm_b: f32 = b.iter().map(|x| x.powi(2)).sum::<f32>().sqrt();
-            1.0 - (dot / (norm_a * norm_b))
-        }
-        DistanceMetric::DotProduct => {
-            -a.iter().zip(b.iter()).map(|(x, y)| x * y).sum::<f32>()
-        }
-        _ => {
-            // Fallback to Euclidean
-            a.iter()
-                .zip(b.iter())
-                .map(|(x, y)| (x - y).powi(2))
-                .sum::<f32>()
-                .sqrt()
-        }
-    }
-}
+// Removed compute_distance wrapper - directly use UnifiedDistanceCompute in calling code
 
 #[cfg(test)]
 mod tests {
@@ -524,21 +596,21 @@ mod tests {
         let mut heap = BinaryHeap::new();
         
         heap.push(Candidate {
-            superblock_idx:0,
+            superblock_idx: 0,
             block_idx: 0,
             vector_idx: 0,
             similarity: 10.0,
         });
         
         heap.push(Candidate {
-            superblock_idx:0,
+            superblock_idx: 0,
             block_idx: 0,
             vector_idx: 1,
             similarity: 5.0,
         });
         
         heap.push(Candidate {
-            superblock_idx:0,
+            superblock_idx: 0,
             block_idx: 0,
             vector_idx: 2,
             similarity: 15.0,
@@ -555,13 +627,14 @@ mod tests {
         let a = vec![1.0, 0.0, 0.0];
         let b = vec![0.0, 1.0, 0.0];
         
-        let euclidean = compute_distance(&a, &b, DistanceMetric::Euclidean);
-        assert!((euclidean - 1.414).abs() < 0.01);
+        let compute = UnifiedDistanceCompute::new(DistanceMetric::Euclidean);
+        let euclidean_result = compute.calculate_distance(&a, &b, &DistanceMetric::Euclidean);
+        assert!((euclidean_result.similarity - 1.414).abs() < 0.01);
         
-        let cosine = compute_distance(&a, &b, DistanceMetric::Cosine);
-        assert!((cosine - 1.0).abs() < 0.01); // Orthogonal vectors
+        let cosine_result = compute.calculate_distance(&a, &b, &DistanceMetric::Cosine);
+        assert!((cosine_result.similarity - 1.0).abs() < 0.01); // Orthogonal vectors
         
-        let dot = compute_distance(&a, &b, DistanceMetric::DotProduct);
-        assert_eq!(dot, 0.0); // Orthogonal vectors
+        let dot_result = compute.calculate_distance(&a, &b, &DistanceMetric::DotProduct);
+        assert_eq!(dot_result.similarity, 0.0); // Orthogonal vectors
     }
 }

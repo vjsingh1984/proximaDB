@@ -255,7 +255,7 @@ impl ColumnarBatchOperations {
         _compression_config: Option<&super::QuantizationConfig>,
     ) -> Result<SingleBatchWriteResult> {
         // Get buffer from memory pool
-        let mut buffer = self.memory_pool/* TODO: Fix VectorMemoryPool::acquire() method */;
+        let mut buffer = self.memory_pool.serialization_buffers.acquire();
         buffer.clear();
         
         // Serialize batch to buffer (simplified)
@@ -484,7 +484,7 @@ mod tests {
         );
         
         let parquet_reader = Arc::new(UnifiedParquetReader::new(filesystem));
-        let hardware = HardwareCapabilities::get().unwrap();
+        let hardware = crate::core::hardware_capabilities::get_hardware_capabilities();
         let memory_pool = Arc::new(VectorMemoryPool::new());
         let config = ColumnarConfig::default();
         
@@ -539,7 +539,7 @@ mod tests {
             );
             
             let parquet_reader = Arc::new(UnifiedParquetReader::new(filesystem));
-            let hardware = HardwareCapabilities::get().unwrap();
+            let hardware = crate::core::hardware_capabilities::get_hardware_capabilities();
             let memory_pool = Arc::new(VectorMemoryPool::new());
             let config = ColumnarConfig::default();
             

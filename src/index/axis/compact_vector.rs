@@ -103,7 +103,7 @@ impl CompactVector {
     /// Create from quantized vector - only 1 byte for quantization method
     pub fn new_quantized(
         id: &str, 
-        quantized: &[u8], 
+        quantized_vector: &[u8], 
         quantization_method: u8,  // 0=INT8, 1=PQ8, 2=PQ4, 3=Binary
     ) -> Result<Self> {
         let id_bytes = id.as_bytes();
@@ -241,7 +241,7 @@ impl CompactVectorCollection {
     pub fn add_quantized(
         &mut self, 
         id: String, 
-        quantized: &[u8],
+        quantized_vector: &[u8],
         method: u8,
     ) -> Result<()> {
         let compact = CompactVector::new_quantized(&id, quantized, method)?;

@@ -50,7 +50,7 @@ impl RestServer {
         let max_size_bytes = max_request_size_mb.unwrap_or(64) * 1024 * 1024;
 
         // Build service layers conditionally to avoid type mismatch
-        let router = if enable_compression {
+        let router = if compression {
             // Create compression layer with support for multiple algorithms
             // Priority order (fastest to best compression): deflate, gzip, zstd, brotli
             let compression_layer = CompressionLayer::new()

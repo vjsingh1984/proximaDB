@@ -103,7 +103,7 @@ impl CollectionPartition {
         for batch in self.wal_batches.values() {
             for vector_record in batch.vector_records.iter() {
                 if !vector_record.id.as_deref().unwrap_or("").is_empty() && vector_record.id.as_deref().unwrap_or("") == vector_id {
-                    let sequence = batch.created_at.duration_since(std::time::UNIX_EPOCH).unwrap().as_millis() as u64;
+                    let sequence = batch.timestamp.duration_since(std::time::UNIX_EPOCH).unwrap().as_millis() as u64;
                     let version = vector_record.version;
                     
                     // Check if this is a newer version (prioritize version number over timestamp)
@@ -196,12 +196,13 @@ impl CollectionPartition {
         // Collect latest versions for each ID
         for batch in self.wal_batches.values() {
             for vector_record in batch.vector_records.iter() {
-                let sequence = batch.created_at.duration_since(std::time::UNIX_EPOCH).unwrap().as_millis() as u64;
+                let sequence = batch.timestamp.duration_since(std::time::UNIX_EPOCH).unwrap().as_millis() as u64;
                 let version = vector_record.version;
                 
                 if !vector_record.id.as_deref().unwrap_or("").is_empty() {
+                    let vector_id = vector_record.id.as_deref().unwrap_or("");
                     // Check if this is the latest version (prioritize version number over timestamp)
-                    let is_newer = match id_to_latest.get(key).unwrap_or("") {
+                    let is_newer = match id_to_latest.get(vector_id) {
                         Some((_, existing_seq, existing_version)) => {
                             // Primary: Compare by version number (higher version wins)
                             match (version, existing_version) {
@@ -304,12 +305,13 @@ impl CollectionPartition {
             tracing::debug!("🔍 Processing WAL batch {} with {} vectors", batch_id, wal_batch.vector_records.len());
             
             for vector_record in wal_batch.vector_records.iter() {
-                let sequence = wal_batch.created_at.duration_since(std::time::UNIX_EPOCH).unwrap().as_millis() as u64;
+                let sequence = wal_batch.timestamp.duration_since(std::time::UNIX_EPOCH).unwrap().as_millis() as u64;
                 let version = vector_record.version;
                 
                 if !vector_record.id.as_deref().unwrap_or("").is_empty() {
+                    let vector_id = vector_record.id.as_deref().unwrap_or("");
                     // Check if this is the latest version (prioritize version number over timestamp)
-                    let is_newer = match id_to_latest.get(key).unwrap_or("") {
+                    let is_newer = match id_to_latest.get(vector_id) {
                         Some((_, _, existing_seq, existing_version)) => {
                             // Primary: Compare by version number (higher version wins)
                             match (version, existing_version) {
@@ -525,7 +527,7 @@ impl GlobalPartitionedMemtable {
             debug!("🔍 Available collection: '{}' with {} vectors", id, partition.vector_count);
         }
 
-        if let Some(partition) = collections.get(key) {
+        if let Some(partition) = collections.get(collection_id) {
             let mut results = partition.search_vectors(
                 query_vector,
                 &distance_metric,
@@ -552,7 +554,7 @@ impl GlobalPartitionedMemtable {
     pub async fn get_vector_by_id(&self, collection_id: &str, vector_id: &str) -> Result<Option<VectorRecord>> {
         let collections = self.collections.read().await;
 
-        if let Some(partition) = collections.get(key) {
+        if let Some(partition) = collections.get(collection_id) {
             Ok(partition.get_vector_by_id(vector_id))
         } else {
             Ok(None)
@@ -563,7 +565,7 @@ impl GlobalPartitionedMemtable {
     pub async fn get_collection_vectors(&self, collection_id: &str) -> Result<Vec<VectorRecord>> {
         let collections = self.collections.read().await;
 
-        if let Some(partition) = collections.get(key) {
+        if let Some(partition) = collections.get(collection_id) {
             let vectors = partition.get_all_vectors();
             
             tracing::debug!(
@@ -582,7 +584,7 @@ impl GlobalPartitionedMemtable {
     pub async fn get_collection_stats(&self, collection_id: &str) -> (usize, usize) {
         let collections = self.collections.read().await;
 
-        if let Some(partition) = collections.get(key) {
+        if let Some(partition) = collections.get(collection_id) {
             (partition.vector_count, partition.total_size)
         } else {
             (0, 0)
@@ -1008,7 +1010,7 @@ fn calculate_flush_efficiency_score(size_bytes: usize, vector_count: usize, batc
 /// Higher score = older collection (should be flushed sooner)
 fn calculate_age_score(timestamp: std::time::SystemTime) -> f64 {
     let now = std::time::SystemTime::now();
-    let age_duration = now.duration_since(created_at).unwrap_or(std::time::Duration::from_secs(0));
+    let age_duration = now.duration_since(timestamp).unwrap_or(std::time::Duration::from_secs(0));
     
     // Age in minutes (higher = older)
     let age_minutes = age_duration.as_secs() as f64 / 60.0;

@@ -208,7 +208,7 @@ pub enum DiversificationStrategy {
     
     /// Distance-based diversification
     DistanceBased {
-        min_distance: f32,
+        min_similarity: f32,
         distance_metric: DistanceMetric,
     },
     
