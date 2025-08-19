@@ -108,10 +108,8 @@ impl SchemaManager {
                 match quant_type {
                     "pq" | "pq4" | "pq8" => {
                         // Product Quantization - use FixedSizeBinary for better performance
-                        let (subvectors, bits) = (
-                            quant_config.num_subvectors.unwrap_or(16) as u32,
-                            quant_config.bits_per_subvector.unwrap_or(8) as u32,
-                        );
+                        // Default to 16 subvectors with 8 bits each for PQ
+                        let (subvectors, bits) = (16u32, 8u32);
                         let pq_size = subvectors * (bits / 8);
                         
                         schema_fields.push(Field::new(

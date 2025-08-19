@@ -142,9 +142,24 @@ impl ProgressiveSearchOrchestrator {
                 }
                 
                 if quant_config.enabled {
+                    // Look for PQ configuration in custom_levels
+                    let (subvectors, bits) = if !quant_config.custom_levels.is_empty() {
+                        // Find PQ level in custom levels
+                        let pq_level = quant_config.custom_levels.iter()
+                            .find(|level| level.r#type == crate::proto::proximadb::quantization_level::QuantizationType::Product as i32);
+                        
+                        if let Some(pq) = pq_level {
+                            (pq.num_subvectors.unwrap_or(8) as usize, pq.bits as usize)
+                        } else {
+                            (8, 8) // Default PQ8 configuration
+                        }
+                    } else {
+                        (8, 8) // Default PQ8 configuration
+                    };
+                    
                     stages.push(QuantizationStage::ProductQuantization {
-                        subvectors: quant_config.num_subvectors.unwrap_or(8) as usize,
-                        bits: quant_config.bits_per_subvector.unwrap_or(8) as usize,
+                        subvectors,
+                        bits,
                     });
                 }
                 

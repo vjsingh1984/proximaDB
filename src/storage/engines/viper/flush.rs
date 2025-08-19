@@ -490,8 +490,8 @@ impl FlushManager {
                     debug!("🔧 VIPER: Applying collection quantization config for vector {}", 
                            record.id.as_deref().unwrap_or("unnamed"));
                     
-                    info!("🎯 VIPER: Collection quantization enabled - method={:?}, subvectors={:?}, bits={:?}", 
-                          quant_config.method, quant_config.num_subvectors, quant_config.bits_per_subvector);
+                    info!("🎯 VIPER: Collection quantization enabled - strategy={:?}", 
+                          quant_config.strategy);
                     
                     // Apply collection-aware quantization using config parameters
                     let int8_vector = self.quantize_to_int8(fp32_vector, quant_config);
@@ -939,8 +939,8 @@ impl FlushManager {
             return Vec::new();
         }
         
-        // Use collection-specific subvector configuration
-        let subvectors = quant_config.num_subvectors.unwrap_or(32) as usize;
+        // Use default subvector configuration (32 subvectors)
+        let subvectors = 32usize;
         let subvector_size = if subvectors > 0 { 
             (fp32_vector.len() + subvectors - 1) / subvectors 
         } else { 
@@ -976,13 +976,13 @@ impl FlushManager {
         }
         
         // Use collection-specific bits per subvector configuration  
-        let bits_per_subvector = quant_config.bits_per_subvector.unwrap_or(4) as usize;
+        let bits_per_subvector = 4usize; // Default to 4 bits per subvector
         let effective_bits = std::cmp::min(bits_per_subvector, 4); // Max 4 bits for PQ4
         
         debug!("🔧 VIPER: Enhanced PQ4 quantization with {} effective bits per subvector", 
                effective_bits);
         
-        let subvectors = quant_config.num_subvectors.unwrap_or(32) as usize;
+        let subvectors = 32usize; // Default to 32 subvectors
         let subvector_size = if subvectors > 0 { 
             (fp32_vector.len() + subvectors - 1) / subvectors 
         } else { 
