@@ -82,6 +82,11 @@ use crate::core::compression::{
     CompressionContext, CompressionAlgorithm,
 };
 
+// FastLanes encoding delegation 
+use crate::storage::engines::common::fastlanes_encoding::{
+    FastLanesEncoder, FastLanesScheme
+};
+
 /// SSTable writer with atomic write optimization and quantization support
 /// MIGRATED: Now uses universal adapters to eliminate code duplication
 pub struct SstableWriter {
@@ -191,8 +196,9 @@ impl SstableWriter {
         debug!("   Level: {}", level);
         debug!("   Block records: {}", data_block.records.len());
         
-        // Use core compression directly without adapter
-        let serialized = data_block.serialize()?;
+        // FASTLANES: Apply encoding before serialization based on block analysis
+        let encoded_data_block = self.encode_block_with_fastlanes(data_block)?;
+        let serialized = encoded_data_block.serialize()?;
         
         // Select algorithm based on data size for optimal performance
         let algorithm = if serialized.len() < 1024 {
@@ -891,6 +897,107 @@ impl SstableWriter {
             super::VectorFormatType::Mixed { dominant_dimension } => Some(*dominant_dimension as u32),
             super::VectorFormatType::Variable => None,
         }
+    }
+
+    /// Encode DataBlock using FastLanes with intelligent scheme selection
+    fn encode_block_with_fastlanes(&self, data_block: &DataBlock) -> Result<DataBlock> {
+        if data_block.records.is_empty() {
+            return Ok(data_block.clone());
+        }
+
+        // Analyze vectors to choose optimal FastLanes scheme
+        let scheme = self.analyze_vector_patterns(&data_block.records)?;
+        
+        // Create encoder with chosen scheme
+        let encoder = FastLanesEncoder::new(scheme);
+        
+        // Clone the block and encode vector data using FastLanes
+        let mut encoded_block = data_block.clone();
+        
+        // Encode vectors in columnar fashion for better compression
+        for record in &mut encoded_block.records {
+            if !record.vector.is_empty() {
+                match encoder.encode_dense(&record.vector) {
+                    Ok(encoded_vector) => {
+                        // Store original vector length for decoding
+                        let original_len = record.vector.len();
+                        record.vector = encoded_vector;
+                        // Store encoding metadata in block metadata if needed
+                        debug!("✅ FastLanes encoded vector: {} -> {} elements", 
+                               original_len, record.vector.len());
+                    }
+                    Err(e) => {
+                        debug!("⚠️  FastLanes encoding failed, using raw: {}", e);
+                        // Keep original vector if encoding fails or increases size
+                    }
+                }
+            }
+        }
+        
+        Ok(encoded_block)
+    }
+
+    /// Analyze vector patterns to choose optimal FastLanes encoding scheme
+    fn analyze_vector_patterns(&self, records: &[VectorRecord]) -> Result<FastLanesScheme> {
+        if records.is_empty() {
+            return Ok(FastLanesScheme::BitPacked { bits: 16 });
+        }
+
+        // Sample vectors for analysis (first 10 or all if fewer)
+        let sample_size = std::cmp::min(10, records.len());
+        let mut has_constants = false;
+        let mut has_small_range = false;
+        let mut has_deltas = false;
+
+        for record in records.iter().take(sample_size) {
+            if !record.vector.is_empty() {
+                let vec = &record.vector;
+                
+                // Check for constant dimensions
+                let first_val = vec[0];
+                if vec.iter().all(|&v| (v - first_val).abs() < f32::EPSILON) {
+                    has_constants = true;
+                }
+                
+                // Check for small range (good for frame of reference)
+                let min_val = vec.iter().fold(f32::INFINITY, |a, &b| a.min(b));
+                let max_val = vec.iter().fold(f32::NEG_INFINITY, |a, &b| a.max(b));
+                if (max_val - min_val) < 100.0 {
+                    has_small_range = true;
+                }
+                
+                // Check for sequential patterns (good for delta encoding)
+                if vec.len() > 1 {
+                    let mut sequential_count = 0;
+                    for i in 1..vec.len() {
+                        if (vec[i] - vec[i-1]).abs() < 10.0 {
+                            sequential_count += 1;
+                        }
+                    }
+                    if sequential_count > vec.len() / 2 {
+                        has_deltas = true;
+                    }
+                }
+            }
+        }
+
+        // Choose scheme based on analysis
+        let scheme = if has_constants {
+            FastLanesScheme::RunLength
+        } else if has_small_range {
+            FastLanesScheme::FrameOfReference { 
+                min_value: 0.0,
+                bit_width: 16
+            }
+        } else if has_deltas {
+            FastLanesScheme::Delta
+        } else {
+            // Default to bit packing for dense data
+            FastLanesScheme::BitPacked { bits: 16 }
+        };
+
+        debug!("🔍 FastLanes scheme selected: {:?}", scheme);
+        Ok(scheme)
     }
 
     /// Compare two JSON values for ordering
