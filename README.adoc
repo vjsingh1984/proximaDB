@@ -3,6 +3,9 @@
 :toclevels: 2
 :imagesdir: docs/diagrams/images
 
+[.text-center]
+image::../proximadb-logo.svg[ProximaDB Logo, 200, 200, align="center"]
+
 image:https://img.shields.io/badge/version-0.1.4-yellow[Version] image:https://img.shields.io/badge/performance-17K%20vec%2Fs-blue[Performance] image:https://img.shields.io/badge/compression-50--80%25-orange[Compression] image:https://img.shields.io/badge/license-Apache%202.0-blue[License]
 
 image::business-overview-abstract.svg[ProximaDB Business Overview, width=900]
