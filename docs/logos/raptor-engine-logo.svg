@@ -1,34 +1,45 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 200" width="400" height="200">
-  <!-- RAPTOR Engine Logo: Row-Aligned Predicated Tensor Optimized Repository -->
-  <!-- Design: Aggressive bird of prey with row-based data visualization -->
+  <!-- RAPTOR Engine Logo: Row-Aligned Performance Tensor Optimized Repository -->
+  <!-- Design: Radiant tensor processing core with intelligent row alignment -->
   
   <defs>
-    <!-- Gradient for the raptor -->
-    <linearGradient id="raptorGradient" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" style="stop-color:#FF6B35;stop-opacity:1" />
-      <stop offset="100%" style="stop-color:#F7931E;stop-opacity:1" />
-    </linearGradient>
+    <!-- Radiant tensor core gradient -->
+    <radialGradient id="tensorGradient" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" style="stop-color:#FFD700;stop-opacity:1" />
+      <stop offset="30%" style="stop-color:#FF6B35;stop-opacity:0.9" />
+      <stop offset="60%" style="stop-color:#4A90E2;stop-opacity:0.7" />
+      <stop offset="100%" style="stop-color:#7B68EE;stop-opacity:0.5" />
+    </radialGradient>
     
     <!-- Gradient for row data -->
     <linearGradient id="dataGradient" x1="0%" y1="0%" x2="100%" y2="0%">
       <stop offset="0%" style="stop-color:#4A90E2;stop-opacity:0.8" />
       <stop offset="50%" style="stop-color:#7B68EE;stop-opacity:0.8" />
       <stop offset="100%" style="stop-color:#4A90E2;stop-opacity:0.8" />
+    </radialGradient>
+    
+    <!-- Performance flow gradient -->
+    <linearGradient id="performanceGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#FFD700;stop-opacity:0.9" />
+      <stop offset="100%" style="stop-color:#FF6B35;stop-opacity:0.7" />
     </linearGradient>
     
-    <!-- Shadow filter -->
-    <filter id="shadow" x="-50%" y="-50%" width="200%" height="200%">
-      <feGaussianBlur in="SourceAlpha" stdDeviation="2"/>
-      <feOffset dx="2" dy="2" result="offsetblur"/>
-      <feComponentTransfer>
-        <feFuncA type="linear" slope="0.3"/>
-      </feComponentTransfer>
+    <!-- Radiant glow filter -->
+    <filter id="radiantGlow">
+      <feGaussianBlur stdDeviation="3" result="coloredBlur"/>
       <feMerge>
-        <feMergeNode/>
+        <feMergeNode in="coloredBlur"/>
         <feMergeNode in="SourceGraphic"/>
       </feMerge>
     </filter>
+    
+    <!-- Tensor pattern -->
+    <pattern id="tensorPattern" x="0" y="0" width="8" height="8" patternUnits="userSpaceOnUse">
+      <rect width="8" height="8" fill="none"/>
+      <circle cx="4" cy="4" r="1.5" fill="#FFD700" opacity="0.6"/>
+      <circle cx="4" cy="4" r="0.5" fill="#FFF" opacity="0.9"/>
+    </pattern>
   </defs>
   
   <!-- Background -->
@@ -48,21 +59,44 @@
     <rect x="20" y="100" width="355" height="8" rx="2" fill="url(#dataGradient)"/>
   </g>
   
-  <!-- Stylized raptor silhouette -->
-  <g transform="translate(50, 30)" filter="url(#shadow)">
-    <!-- Wing -->
-    <path d="M 0 40 L 30 20 L 60 25 L 80 35 L 70 45 L 40 50 Z" 
-          fill="url(#raptorGradient)" opacity="0.9"/>
-    <!-- Body -->
-    <ellipse cx="35" cy="45" rx="25" ry="18" fill="url(#raptorGradient)"/>
-    <!-- Head -->
-    <circle cx="55" cy="38" r="12" fill="url(#raptorGradient)"/>
-    <!-- Beak -->
-    <path d="M 65 38 L 72 36 L 70 40 Z" fill="#FF4500"/>
-    <!-- Eye -->
-    <circle cx="58" cy="36" r="2" fill="#FFF"/>
-    <!-- Tail -->
-    <path d="M 10 48 L 5 55 L 12 52 L 8 58 L 15 54 Z" fill="url(#raptorGradient)"/>
+  <!-- Central tensor processing core -->
+  <g transform="translate(120, 60)" filter="url(#radiantGlow)">
+    <!-- Main tensor core -->
+    <circle cx="0" cy="0" r="30" fill="url(#tensorGradient)" opacity="0.9"/>
+    <circle cx="0" cy="0" r="25" fill="url(#tensorPattern)"/>
+    <circle cx="0" cy="0" r="20" fill="none" stroke="#FFD700" stroke-width="2" opacity="0.8"/>
+    <circle cx="0" cy="0" r="15" fill="none" stroke="#4A90E2" stroke-width="1" opacity="0.7"/>
+    <circle cx="0" cy="0" r="10" fill="none" stroke="#FF6B35" stroke-width="1" opacity="0.6"/>
+    
+    <!-- Tensor alignment indicators -->
+    <rect x="-2" y="-20" width="4" height="40" fill="#FFD700" opacity="0.7"/>
+    <rect x="-20" y="-2" width="40" height="4" fill="#4A90E2" opacity="0.7"/>
+    
+    <!-- Performance nodes -->
+    <circle cx="-12" cy="-12" r="3" fill="#FFD700"/>
+    <circle cx="12" cy="-12" r="3" fill="#4A90E2"/>
+    <circle cx="12" cy="12" r="3" fill="#FF6B35"/>
+    <circle cx="-12" cy="12" r="3" fill="#7B68EE"/>
+  </g>
+  
+  <!-- Performance flow streams -->
+  <g opacity="0.8">
+    <!-- Input performance stream -->
+    <path d="M 20 75 Q 50 70, 85 75" 
+          stroke="url(#performanceGradient)" stroke-width="5" fill="none" 
+          stroke-linecap="round"/>
+    <circle cx="15" cy="75" r="4" fill="#FFD700"/>
+    
+    <!-- Output optimization stream -->
+    <path d="M 155 75 Q 185 70, 220 75 Q 250 77, 280 75" 
+          stroke="url(#performanceGradient)" stroke-width="6" fill="none" 
+          stroke-linecap="round"/>
+    
+    <!-- Efficiency indicators -->
+    <g transform="translate(200, 65)">
+      <path d="M 0 0 L 10 5 L 0 10 Z" fill="#FFD700"/>
+      <path d="M 6 0 L 16 5 L 6 10 Z" fill="#4A90E2" opacity="0.7"/>
+    </g>
   </g>
   
   <!-- HNSW Graph visualization (small network) -->
@@ -83,15 +117,20 @@
   </g>
   
   <!-- Text -->
-  <text x="200" y="140" font-family="'Segoe UI', Arial, sans-serif" font-size="36" 
-        font-weight="bold" fill="#FFFFFF" text-anchor="middle">RAPTOR</text>
+  <text x="200" y="160" font-family="'Segoe UI', Arial, sans-serif" font-size="36" 
+        font-weight="bold" fill="#FFFFFF" text-anchor="middle" filter="url(#radiantGlow)">RAPTOR</text>
   
-  <text x="200" y="165" font-family="'Segoe UI', Arial, sans-serif" font-size="12" 
-        fill="#7B68EE" text-anchor="middle" letter-spacing="3">ROW-ALIGNED TENSOR ENGINE</text>
+  <text x="200" y="182" font-family="'Segoe UI', Arial, sans-serif" font-size="11" 
+        fill="#FFD700" text-anchor="middle" letter-spacing="2">INTELLIGENT ROW-ALIGNED ENGINE</text>
   
-  <!-- Performance indicator -->
-  <g transform="translate(320, 140)">
-    <rect x="0" y="0" width="60" height="20" rx="3" fill="none" stroke="#4A90E2" stroke-width="1"/>
-    <text x="30" y="14" font-family="monospace" font-size="10" fill="#4A90E2" text-anchor="middle">HNSW</text>
+  <!-- Positive performance badges -->
+  <g transform="translate(20, 160)">
+    <rect x="0" y="0" width="60" height="18" rx="9" fill="none" stroke="#FFD700" stroke-width="1"/>
+    <text x="30" y="12" font-family="monospace" font-size="9" fill="#FFD700" text-anchor="middle">⚡ TENSOR OPT</text>
+  </g>
+  
+  <g transform="translate(320, 160)">
+    <rect x="0" y="0" width="60" height="18" rx="9" fill="none" stroke="#4A90E2" stroke-width="1"/>
+    <text x="30" y="12" font-family="monospace" font-size="9" fill="#4A90E2" text-anchor="middle">🚀 HNSW READY</text>
   </g>
 </svg>

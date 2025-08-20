@@ -1,114 +1,158 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 200" width="400" height="200">
   <!-- VIPER Engine Logo: Vector-optimized Intelligent Parquet with Efficient Retrieval -->
-  <!-- Design: Sleek snake with columnar data representation -->
+  <!-- Design: Radiant data streams with intelligent vector processing -->
   
   <defs>
-    <!-- Gradient for the viper -->
-    <linearGradient id="viperGradient" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" style="stop-color:#00D4FF;stop-opacity:1" />
-      <stop offset="50%" style="stop-color:#0099FF;stop-opacity:1" />
-      <stop offset="100%" style="stop-color:#0066CC;stop-opacity:1" />
-    </linearGradient>
+    <!-- Radiant center gradient -->
+    <radialGradient id="coreGradient" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" style="stop-color:#FFD700;stop-opacity:1" />
+      <stop offset="30%" style="stop-color:#00D4FF;stop-opacity:0.9" />
+      <stop offset="60%" style="stop-color:#0099FF;stop-opacity:0.7" />
+      <stop offset="100%" style="stop-color:#0066CC;stop-opacity:0.5" />
+    </radialGradient>
     
-    <!-- Gradient for columns -->
-    <linearGradient id="columnGradient" x1="0%" y1="100%" x2="0%" y2="0%">
+    <!-- Data stream gradient -->
+    <linearGradient id="streamGradient" x1="0%" y1="0%" x2="100%" y2="0%">
       <stop offset="0%" style="stop-color:#00D4FF;stop-opacity:0.3" />
-      <stop offset="100%" style="stop-color:#0099FF;stop-opacity:0.8" />
+      <stop offset="50%" style="stop-color:#FFD700;stop-opacity:0.8" />
+      <stop offset="100%" style="stop-color:#00D4FF;stop-opacity:1" />
     </linearGradient>
     
-    <!-- Pattern for scales -->
-    <pattern id="scales" x="0" y="0" width="10" height="10" patternUnits="userSpaceOnUse">
-      <rect width="10" height="10" fill="#0099FF"/>
-      <circle cx="5" cy="5" r="3" fill="#00D4FF" opacity="0.6"/>
+    <!-- Columnar gradient -->
+    <linearGradient id="columnGradient" x1="0%" y1="100%" x2="0%" y2="0%">
+      <stop offset="0%" style="stop-color:#00D4FF;stop-opacity:0.4" />
+      <stop offset="50%" style="stop-color:#FFD700;stop-opacity:0.6" />
+      <stop offset="100%" style="stop-color:#00D4FF;stop-opacity:0.9" />
+    </linearGradient>
+    
+    <!-- Intelligence pattern -->
+    <pattern id="intelligence" x="0" y="0" width="12" height="12" patternUnits="userSpaceOnUse">
+      <rect width="12" height="12" fill="none"/>
+      <circle cx="6" cy="6" r="2" fill="#FFD700" opacity="0.4"/>
+      <circle cx="6" cy="6" r="1" fill="#FFF" opacity="0.8"/>
     </pattern>
     
-    <!-- Glow effect -->
-    <filter id="glow">
-      <feGaussianBlur stdDeviation="3" result="coloredBlur"/>
+    <!-- Radiant glow effect -->
+    <filter id="radiantGlow">
+      <feGaussianBlur stdDeviation="4" result="coloredBlur"/>
       <feMerge>
         <feMergeNode in="coloredBlur"/>
         <feMergeNode in="SourceGraphic"/>
       </feMerge>
     </filter>
+    
+    <!-- Pulse animation -->
+    <filter id="pulse">
+      <feGaussianBlur stdDeviation="2" result="softBlur"/>
+      <feMerge>
+        <feMergeNode in="softBlur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
   </defs>
   
-  <!-- Background -->
+  <!-- Background with subtle radiance -->
   <rect width="400" height="200" fill="#0A0A0A"/>
+  <rect width="400" height="200" fill="url(#coreGradient)" opacity="0.1"/>
   
-  <!-- Columnar data visualization (Parquet columns) -->
-  <g opacity="0.7">
-    <!-- Column 1 -->
-    <rect x="250" y="30" width="20" height="90" fill="url(#columnGradient)" rx="2"/>
-    <rect x="250" y="30" width="20" height="30" fill="#00D4FF" opacity="0.6" rx="2"/>
+  <!-- Intelligent columnar data visualization (Parquet columns) -->
+  <g opacity="0.8">
+    <!-- Column 1 - Optimized -->
+    <rect x="250" y="25" width="22" height="95" fill="url(#columnGradient)" rx="3"/>
+    <rect x="252" y="27" width="18" height="30" fill="#FFD700" opacity="0.7" rx="2"/>
+    <text x="261" y="15" font-family="monospace" font-size="8" fill="#FFD700" text-anchor="middle">OPT</text>
     
-    <!-- Column 2 -->
-    <rect x="280" y="40" width="20" height="80" fill="url(#columnGradient)" rx="2"/>
-    <rect x="280" y="40" width="20" height="25" fill="#00D4FF" opacity="0.6" rx="2"/>
+    <!-- Column 2 - Intelligent -->
+    <rect x="280" y="35" width="22" height="85" fill="url(#columnGradient)" rx="3"/>
+    <rect x="282" y="37" width="18" height="25" fill="#00D4FF" opacity="0.8" rx="2"/>
+    <text x="291" y="25" font-family="monospace" font-size="8" fill="#00D4FF" text-anchor="middle">AI</text>
     
-    <!-- Column 3 -->
-    <rect x="310" y="35" width="20" height="85" fill="url(#columnGradient)" rx="2"/>
-    <rect x="310" y="35" width="20" height="40" fill="#00D4FF" opacity="0.6" rx="2"/>
+    <!-- Column 3 - Vector -->
+    <rect x="310" y="30" width="22" height="90" fill="url(#columnGradient)" rx="3"/>
+    <rect x="312" y="32" width="18" height="40" fill="#FFD700" opacity="0.6" rx="2"/>
+    <text x="321" y="20" font-family="monospace" font-size="8" fill="#FFD700" text-anchor="middle">VEC</text>
     
-    <!-- Column 4 -->
-    <rect x="340" y="45" width="20" height="75" fill="url(#columnGradient)" rx="2"/>
-    <rect x="340" y="45" width="20" height="20" fill="#00D4FF" opacity="0.6" rx="2"/>
+    <!-- Column 4 - Efficient -->
+    <rect x="340" y="40" width="22" height="80" fill="url(#columnGradient)" rx="3"/>
+    <rect x="342" y="42" width="18" height="20" fill="#00D4FF" opacity="0.9" rx="2"/>
+    <text x="351" y="30" font-family="monospace" font-size="8" fill="#00D4FF" text-anchor="middle">EFF</text>
     
-    <!-- Column 5 -->
-    <rect x="370" y="38" width="20" height="82" fill="url(#columnGradient)" rx="2"/>
-    <rect x="370" y="38" width="20" height="35" fill="#00D4FF" opacity="0.6" rx="2"/>
+    <!-- Column 5 - Retrieval -->
+    <rect x="370" y="33" width="22" height="87" fill="url(#columnGradient)" rx="3"/>
+    <rect x="372" y="35" width="18" height="35" fill="#FFD700" opacity="0.7" rx="2"/>
+    <text x="381" y="23" font-family="monospace" font-size="8" fill="#FFD700" text-anchor="middle">RET</text>
   </g>
   
-  <!-- Stylized viper -->
-  <g transform="translate(30, 50)" filter="url(#glow)">
-    <!-- Body curve -->
-    <path d="M 0 30 Q 30 20, 60 25 T 120 30 T 180 25" 
-          stroke="url(#viperGradient)" stroke-width="12" fill="none" 
+  <!-- Central intelligent processing core -->
+  <g transform="translate(120, 60)" filter="url(#radiantGlow)">
+    <!-- Core processing unit -->
+    <circle cx="0" cy="0" r="25" fill="url(#coreGradient)" opacity="0.9"/>
+    <circle cx="0" cy="0" r="20" fill="url(#intelligence)"/>
+    <circle cx="0" cy="0" r="15" fill="none" stroke="#FFD700" stroke-width="2" opacity="0.8"/>
+    <circle cx="0" cy="0" r="10" fill="none" stroke="#00D4FF" stroke-width="1" opacity="0.6"/>
+    
+    <!-- Intelligence indicators -->
+    <circle cx="-8" cy="-8" r="2" fill="#FFD700"/>
+    <circle cx="8" cy="-8" r="2" fill="#00D4FF"/>
+    <circle cx="8" cy="8" r="2" fill="#FFD700"/>
+    <circle cx="-8" cy="8" r="2" fill="#00D4FF"/>
+  </g>
+  
+  <!-- Data flow streams (replacing snake imagery) -->
+  <g opacity="0.7" filter="url(#pulse)">
+    <!-- Input stream 1 -->
+    <path d="M 20 70 Q 50 65, 80 68 Q 95 70, 95 75" 
+          stroke="url(#streamGradient)" stroke-width="4" fill="none" 
+          stroke-linecap="round"/>
+    <circle cx="15" cy="70" r="3" fill="#FFD700"/>
+    
+    <!-- Input stream 2 -->
+    <path d="M 25 85 Q 55 80, 85 83 Q 95 85, 95 85" 
+          stroke="url(#streamGradient)" stroke-width="4" fill="none" 
+          stroke-linecap="round"/>
+    <circle cx="20" cy="85" r="3" fill="#00D4FF"/>
+    
+    <!-- Input stream 3 -->
+    <path d="M 22 100 Q 52 95, 82 98 Q 95 100, 95 95" 
+          stroke="url(#streamGradient)" stroke-width="4" fill="none" 
+          stroke-linecap="round"/>
+    <circle cx="17" cy="100" r="3" fill="#FFD700"/>
+    
+    <!-- Output stream to columns -->
+    <path d="M 145 75 Q 175 70, 205 73 Q 235 75, 250 75" 
+          stroke="url(#streamGradient)" stroke-width="6" fill="none" 
           stroke-linecap="round"/>
     
-    <!-- Pattern overlay for scales effect -->
-    <path d="M 0 30 Q 30 20, 60 25 T 120 30 T 180 25" 
-          stroke="url(#scales)" stroke-width="10" fill="none" 
-          stroke-linecap="round" opacity="0.5"/>
-    
-    <!-- Head -->
-    <ellipse cx="185" cy="24" rx="15" ry="10" fill="url(#viperGradient)"/>
-    
-    <!-- Eye -->
-    <circle cx="190" cy="22" r="3" fill="#FFD700"/>
-    <ellipse cx="190" cy="22" rx="1" ry="3" fill="#000"/>
-    
-    <!-- Fangs -->
-    <path d="M 198 28 L 196 32 L 197 28" fill="#FFF" opacity="0.9"/>
-    <path d="M 195 28 L 193 32 L 194 28" fill="#FFF" opacity="0.9"/>
-    
-    <!-- Tongue -->
-    <path d="M 200 25 L 205 23 M 200 25 L 205 27" 
-          stroke="#FF0066" stroke-width="1.5" stroke-linecap="round"/>
+    <!-- Efficiency indicators -->
+    <g transform="translate(190, 60)">
+      <path d="M 0 0 L 8 4 L 0 8 Z" fill="#FFD700"/>
+      <path d="M 5 0 L 13 4 L 5 8 Z" fill="#00D4FF" opacity="0.7"/>
+    </g>
   </g>
   
-  <!-- Parquet logo hint -->
-  <g transform="translate(260, 125)" opacity="0.4">
-    <rect x="0" y="0" width="8" height="12" fill="#00D4FF"/>
-    <rect x="10" y="2" width="8" height="10" fill="#0099FF"/>
-    <rect x="20" y="0" width="8" height="12" fill="#00D4FF"/>
+  <!-- Performance optimization symbols -->
+  <g transform="translate(60, 40)" opacity="0.6">
+    <!-- Speed indicator -->
+    <path d="M 0 0 L 15 0 M 2 -3 L 17 -3 M 4 3 L 19 3" 
+          stroke="#FFD700" stroke-width="2" stroke-linecap="round"/>
   </g>
   
   <!-- Text -->
   <text x="200" y="160" font-family="'Segoe UI', Arial, sans-serif" font-size="36" 
-        font-weight="bold" fill="#FFFFFF" text-anchor="middle">VIPER</text>
+        font-weight="bold" fill="#FFFFFF" text-anchor="middle" filter="url(#radiantGlow)">VIPER</text>
   
   <text x="200" y="182" font-family="'Segoe UI', Arial, sans-serif" font-size="11" 
-        fill="#00D4FF" text-anchor="middle" letter-spacing="2">COLUMNAR PARQUET ENGINE</text>
+        fill="#FFD700" text-anchor="middle" letter-spacing="2">INTELLIGENT COLUMNAR ENGINE</text>
   
-  <!-- Performance badges -->
+  <!-- Positive performance badges -->
   <g transform="translate(20, 160)">
-    <rect x="0" y="0" width="50" height="18" rx="3" fill="none" stroke="#00D4FF" stroke-width="1"/>
-    <text x="25" y="12" font-family="monospace" font-size="9" fill="#00D4FF" text-anchor="middle">95% I/O↓</text>
+    <rect x="0" y="0" width="60" height="18" rx="9" fill="none" stroke="#FFD700" stroke-width="1"/>
+    <text x="30" y="12" font-family="monospace" font-size="9" fill="#FFD700" text-anchor="middle">⚡ OPTIMIZED</text>
   </g>
   
-  <g transform="translate(330, 160)">
-    <rect x="0" y="0" width="50" height="18" rx="3" fill="none" stroke="#00D4FF" stroke-width="1"/>
-    <text x="25" y="12" font-family="monospace" font-size="9" fill="#00D4FF" text-anchor="middle">CLOUD</text>
+  <g transform="translate(320, 160)">
+    <rect x="0" y="0" width="60" height="18" rx="9" fill="none" stroke="#00D4FF" stroke-width="1"/>
+    <text x="30" y="12" font-family="monospace" font-size="9" fill="#00D4FF" text-anchor="middle">☁️ CLOUD READY</text>
   </g>
 </svg>
