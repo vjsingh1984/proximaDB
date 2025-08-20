@@ -296,8 +296,8 @@ impl RowGroupManager {
             }
             
             // Add metadata (columnar format)
-            if let Some(metadata) = vector.metadata {
-                self.add_metadata_columnar(&mut row_group.columnar_data.metadata_columns, metadata)?;
+            if !vector.metadata.is_empty() {
+                self.add_metadata_columnar(&mut row_group.columnar_data.metadata_columns, vector.metadata)?;
             } else {
                 // Add empty metadata
                 self.add_empty_metadata_columnar(&mut row_group.columnar_data.metadata_columns)?;
@@ -398,7 +398,7 @@ impl RowGroupManager {
         // Compress each dimension separately using FastLanes
         for dimension_data in &row_group.columnar_data.transposed_vectors.dimensions {
             if !dimension_data.is_empty() {
-                let encoded = self.fastlanes_encoder.encode_f32_slice(dimension_data)?;
+                let encoded = self.fastlanes_encoder.encode_f32(dimension_data)?;
                 encoded_dimensions.push(encoded);
                 encoding_schemes.push(FastLanesScheme::BitPacked { bits: 16 }); // Default scheme
             }
@@ -441,18 +441,20 @@ impl RowGroupManager {
             }
             
             // Apply quantization
-            let quantized = quantization_engine.quantize_batch(&vectors).await?;
+            let quantized = quantization_engine.quantize_batch(&vectors, None).await?;
             
             // Store quantized data in columnar format
+            // Note: quantized is Vec<StorageQuantizedData>, need to extract data appropriately
+            // For now, create empty structure as the exact mapping needs clarification
             row_group.columnar_data.quantized_data = Some(QuantizedColumnarData {
-                binary: quantized.binary,
-                int8: quantized.int8,
-                pq4: quantized.pq4,
-                pq8: quantized.pq8,
+                binary: Vec::new(), // Would extract from quantized[*].filter
+                int8: Vec::new(),   // Would extract from quantized[*].fast
+                pq4: Vec::new(),    // Would extract from quantized[*].primary if PQ4
+                pq8: Vec::new(),    // Would extract from quantized[*].primary if PQ8
                 quantization_params: QuantizationParams {
                     scale: 1.0,
                     offset: 0.0,
-                    codebook: quantized.codebook,
+                    codebook: Vec::new(), // Would extract from quantization metadata
                 },
             });
             

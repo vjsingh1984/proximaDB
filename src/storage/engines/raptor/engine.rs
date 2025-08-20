@@ -192,7 +192,15 @@ impl RaptorEngine {
         };
         
         let writer = Arc::new(RwLock::new(
-            RaptorWriter::new(base_path.clone(), config.clone(), schema.clone()).await?
+            RaptorWriter::new(
+                base_path.clone(), 
+                config.clone(), 
+                collection_id.clone(),
+                config.vector_dimension.unwrap_or_else(|| {
+                    tracing::error!("RAPTOR: No vector dimension provided in config, this should not happen");
+                    panic!("Vector dimension must be provided in collection metadata config");
+                })
+            ).await?
         ));
         
         // Initialize zero-copy filesystem and transaction coordinator

@@ -17,7 +17,7 @@ use crate::storage::persistence::filesystem::FileSystem;
 use super::common::{RowGroup, RowGroupMetadata, RaptorFileMetadata};
 
 /// Cache key for rowgroup data
-#[derive(Debug, Clone, Hash, Eq, PartialEq)]
+#[derive(Debug, Clone, Hash, Eq, PartialEq, Serialize, Deserialize)]
 pub struct RowGroupCacheKey {
     pub file_path: String,
     pub rowgroup_id: u32,
@@ -329,7 +329,7 @@ impl RowGroupCacheManager {
         
         // Check metadata filters
         if !context.metadata_filters.is_empty() {
-            for (field, predicate) in &metadata_filter.predicates {
+            for (field, predicate) in &context.metadata_filters {
                 if let Some(stats) = metadata.metadata_stats.get(field) {
                     // Check if predicate can possibly match based on min/max
                     if !self.predicate_could_match(predicate, stats) {
