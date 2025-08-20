@@ -1142,11 +1142,267 @@ The RAPTOR engine implements HNSW-aware compaction with:
 3. **Query Consistency**: Dual-file queries during compaction
 4. **Background Maintenance**: Prioritized graph optimization
 
-### 7. Zero-Copy Filesystem Integration
+### 7. Zero-Copy Filesystem Integration with RowGroup-Level Caching
 
-RAPTOR leverages ProximaDB's zero-copy filesystem API for optimized I/O across cloud and local storage:
+RAPTOR leverages ProximaDB's zero-copy filesystem API with intelligent rowgroup-level caching to avoid downloading monolithic files:
 
-#### 7.1 Filesystem API Usage
+#### 7.1 RowGroup Cache Architecture
+
+```mermaid
+graph TB
+    subgraph "Query Processing"
+        Query["Vector Query + Predicates"]
+        QP["Query Planner"]
+        RGF["RowGroup Filter"]
+    end
+    
+    subgraph "RowGroup Cache Layer"
+        CM["Cache Manager"]
+        MC["Memory Cache<br/>• LRU Eviction<br/>• 4GB Default"]
+        FC["File Metadata Cache<br/>• Footer parsing avoided"]
+        PS["Prefetch Strategy<br/>• Adjacent<br/>• HNSW Locality<br/>• Adaptive"]
+    end
+    
+    subgraph "I/O Optimization"
+        RS["Read Strategy Optimizer"]
+        IND["Individual Reads<br/>(1-2 rowgroups)"]
+        COAL["Coalesced Reads<br/>(adjacent RGs)"]
+        FULL["Full File Read<br/>(>50% needed)"]
+    end
+    
+    subgraph "Storage Backend"
+        ZC["Zero-Copy Filesystem"]
+        LOCAL["Local Disk<br/>• Compacted file<br/>• Fast access"]
+        CLOUD["Cloud Storage<br/>• S3/GCS/Azure<br/>• Range reads"]
+    end
+    
+    Query --> QP
+    QP --> RGF
+    RGF --> CM
+    
+    CM --> MC
+    MC -->|Hit| Query
+    MC -->|Miss| FC
+    FC --> RS
+    
+    RS --> IND
+    RS --> COAL
+    RS --> FULL
+    
+    IND --> ZC
+    COAL --> ZC
+    FULL --> ZC
+    
+    ZC --> LOCAL
+    ZC --> CLOUD
+    
+    style CM fill:#9f9,stroke:#333,stroke-width:2px
+    style MC fill:#ff9,stroke:#333,stroke-width:2px
+    style RS fill:#f9f,stroke:#333,stroke-width:2px
+```
+
+#### 7.2 Selective RowGroup Loading Flow
+
+```mermaid
+sequenceDiagram
+    participant Client
+    participant RaptorReader
+    participant CacheManager as RowGroup Cache
+    participant FileMetadata as File Metadata
+    participant ZeroCopy as Zero-Copy FS
+    participant Storage as Cloud/Local
+    
+    Client->>RaptorReader: search(query, k=10)
+    
+    RaptorReader->>RaptorReader: Filter rowgroups by stats
+    Note over RaptorReader: Use bloom filters,<br/>min/max stats to skip RGs
+    
+    RaptorReader->>CacheManager: get_rowgroups([1,3,7])
+    
+    CacheManager->>CacheManager: Check memory cache
+    Note over CacheManager: RG 1: Hit<br/>RG 3: Miss<br/>RG 7: Miss
+    
+    CacheManager->>FileMetadata: get_metadata(file.raptor)
+    Note over FileMetadata: Cached footer parse<br/>Avoids repeated reads
+    
+    CacheManager->>CacheManager: optimize_read_strategy([3,7])
+    
+    alt Adjacent RowGroups
+        CacheManager->>ZeroCopy: read_range(offset_3, size_3+7)
+        Note over ZeroCopy: Coalesce adjacent reads<br/>Single I/O operation
+    else Scattered RowGroups
+        CacheManager->>ZeroCopy: read_range(offset_3, size_3)
+        CacheManager->>ZeroCopy: read_range(offset_7, size_7)
+        Note over ZeroCopy: Individual range reads<br/>Only needed data
+    else Many RowGroups (>50%)
+        CacheManager->>ZeroCopy: read_full_file()
+        Note over ZeroCopy: More efficient to<br/>load entire file
+    end
+    
+    ZeroCopy->>Storage: Optimized I/O
+    Storage-->>ZeroCopy: Data
+    ZeroCopy-->>CacheManager: Compressed RGs
+    
+    CacheManager->>CacheManager: Cache with LRU eviction
+    CacheManager-->>RaptorReader: RowGroups [1,3,7]
+    
+    RaptorReader->>RaptorReader: Decompress & search
+    RaptorReader-->>Client: Results
+    
+    Note over CacheManager: Trigger prefetch<br/>Adjacent RGs or<br/>HNSW connected
+```
+
+#### 7.3 Bandwidth Optimization Strategies
+
+##### 7.3.1 Read Strategy Selection
+```rust
+pub enum ReadStrategy {
+    // For 1-2 rowgroups - individual range reads
+    Individual,
+    
+    // For adjacent rowgroups - coalesce into fewer reads
+    Coalesced {
+        ranges: Vec<(u64, u64, Vec<u32>)>, // (start, end, rg_ids)
+    },
+    
+    // For >50% rowgroups - load full file
+    FullFile,
+}
+```
+
+**Decision Logic:**
+- **Individual**: When only 1-2 non-adjacent rowgroups needed
+- **Coalesced**: When multiple rowgroups are within 1MB gaps
+- **FullFile**: When >50% of rowgroups needed or >10 scattered ranges
+
+##### 7.3.2 Cache Serialization for Persistence
+```rust
+// Serialize frequently accessed rowgroups to local disk
+pub struct SerializedCacheEntry {
+    pub compressed_data: Vec<u8>,
+    pub metadata: RowGroupMetadata,
+    pub access_count: u64,  // For intelligent prefetch
+}
+```
+
+##### 7.3.3 Prefetch Strategies
+
+```mermaid
+graph LR
+    subgraph "Prefetch Strategies"
+        A[Adjacent Strategy]
+        H[HNSW Locality]
+        AD[Adaptive Strategy]
+    end
+    
+    subgraph "Adjacent (Sequential Access)"
+        A --> A1[Current RG: 5]
+        A1 --> A2[Prefetch: 4,6]
+        A2 --> A3[Then: 3,7]
+    end
+    
+    subgraph "HNSW (Graph Navigation)"
+        H --> H1[Current RG: 5]
+        H1 --> H2[HNSW Neighbors: 2,8,15]
+        H2 --> H3[Prefetch connected RGs]
+    end
+    
+    subgraph "Adaptive (Learn Patterns)"
+        AD --> AD1[Track: 1→3→7→12]
+        AD1 --> AD2[Pattern: Skip 2,4,5]
+        AD2 --> AD3[Prefetch: 17,22]
+    end
+```
+
+#### 7.4 Benefits of RowGroup-Level Caching
+
+| Scenario | Traditional (Full File) | With RG Cache | Improvement |
+|----------|------------------------|---------------|-------------|
+| k=10 search, 100K vectors | Download 400MB | Download 4MB (1 RG) | **100x less** |
+| Metadata filter (10% match) | Download 400MB | Download 40MB (10 RGs) | **10x less** |
+| HNSW navigation | Download 400MB | Download 12MB (3 RGs) | **33x less** |
+| Repeated queries | Download every time | Cache hit (0 download) | **∞ improvement** |
+| Cloud egress costs | $0.08/GB × 400MB | $0.08/GB × 4MB | **100x cost reduction** |
+
+#### 7.5 Memory Structure for Fast Filtering
+
+```rust
+pub struct CachedRowGroup {
+    // Compressed data ready for decompression
+    pub compressed_data: Bytes,
+    
+    // Metadata for filtering WITHOUT decompression
+    pub metadata: RowGroupMetadata {
+        // Vector statistics for similarity filtering
+        centroid: Vec<f32>,
+        min_norm: f32,
+        max_norm: f32,
+        
+        // Metadata min/max for predicate pushdown
+        metadata_stats: HashMap<String, ColumnStats>,
+        
+        // Temporal range for time-based queries
+        min_timestamp: i64,
+        max_timestamp: i64,
+        
+        // Bloom filter offset for exact match checks
+        bloom_filter_offset: Option<u64>,
+    },
+    
+    // Cache management
+    pub cached_at: Instant,
+    pub access_count: u64,
+}
+```
+
+This structure allows:
+1. **Filtering without decompression** - Use metadata to skip irrelevant rowgroups
+2. **Smart eviction** - LRU with access count weighting
+3. **Instant availability** - Compressed data ready for SIMD decompression
+
+#### 7.6 Integration with Bandwidth Optimizer
+
+When the bandwidth optimizer evicts a compacted file from local disk:
+
+1. **Graceful degradation**: Automatically switch to selective cloud reads
+2. **Hot data retention**: Keep frequently accessed rowgroups in memory cache
+3. **Predictive loading**: Use access patterns to pre-load likely needed rowgroups
+4. **Cost awareness**: Choose read strategy based on cloud egress pricing
+
+```mermaid
+stateDiagram-v2
+    [*] --> LocalFile: Initial State
+    
+    LocalFile --> MemoryCache: Hot RGs cached
+    
+    LocalFile --> Evicted: Disk pressure
+    
+    Evicted --> SelectiveCloud: Query arrives
+    
+    SelectiveCloud --> RangeRead: Few RGs needed
+    SelectiveCloud --> FullDownload: Many RGs needed
+    
+    RangeRead --> MemoryCache: Cache RGs
+    FullDownload --> LocalFile: Restore file
+    
+    MemoryCache --> SerializeToDisk: Persist hot data
+    
+    note right of SelectiveCloud
+        Smart decision based on:
+        • Number of RGs needed
+        • Cloud egress cost
+        • Network bandwidth
+        • Cache hit ratio
+    end note
+```
+
+#### 7.7 Implementation Files
+
+- **RowGroup Cache Manager**: `/src/storage/engines/raptor/rowgroup_cache.rs`
+- **Zero-Copy Integration**: `/src/storage/persistence/filesystem/zero_copy_filesystem.rs`
+- **RAPTOR Reader Integration**: `/src/storage/engines/raptor/reader.rs`
+
+#### 7.8 Filesystem API Usage
 ```rust
 use crate::storage::persistence::filesystem::{
     FileSystem, FileOptions, StorageTier, 

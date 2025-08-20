@@ -15,6 +15,7 @@ pub mod compaction;
 pub mod hnsw_manager;
 pub mod hnsw_compaction;
 pub mod unified_reader;     // Consolidated reader
+pub mod rowgroup_cache;     // RowGroup-level caching for selective loading
 pub mod simd_ops;
 pub mod simd_encoder;
 pub mod artus_bloom;
