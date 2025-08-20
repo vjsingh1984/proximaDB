@@ -2,9 +2,20 @@
 :toc: left
 :toclevels: 2
 
-**Next-gen Optimized Vector Analytics with Performance Optimization**
+**Next-gen Optimized Vector Analytics (Parquet-Based)**
 
-NOVA represents the cutting-edge of columnar vector storage, combining advanced analytics capabilities with hierarchical statistics and streaming processors. Version 2.0 adds comprehensive performance optimizations for fast reads, I/O bandwidth, and cloud storage cost efficiency.
+[IMPORTANT]
+====
+**📋 For Complete Engine Comparison**: See link:unified_storage_engines_design.adoc[Unified Storage Engines Design] for comprehensive architecture overview, implementation status, and visual diagrams.
+
+**🎯 NOVA Quick Facts**:
+- **Status**: 🚧 Alpha (85% Complete)
+- **Technology**: Enhanced Parquet (No FastLanes)
+- **Performance**: 4K vec/s write, 1-2ms search
+- **Use Case**: Advanced analytics with hierarchical statistics
+====
+
+NOVA represents advanced columnar vector storage, combining proven Parquet foundations with hierarchical statistics and streaming processors for analytical workloads.
 
 == Executive Summary
 
@@ -44,26 +55,66 @@ NOVA v2.0 eliminates redundancies found in traditional columnar engines while im
 
 == Architecture Overview
 
-=== Core Components
+=== NOVA Engine Architecture (Current Implementation)
+
+[source,mermaid]
+----
+graph TB
+    subgraph "NOVA Engine (Parquet-Based)"
+        NOVA_Core[NOVA Engine Core]
+        NOVA_Core --> OptimizedOps[Optimized Operations]
+        NOVA_Core --> EngineStats[Engine Statistics]
+        NOVA_Core --> Quantization[Unified Quantization Engine]
+        
+        OptimizedOps --> ParquetOps[Parquet Operations]
+        OptimizedOps --> ColumnarOps[Columnar Operations]
+        
+        Quantization --> PrimaryLevel[Primary: PQ8(32)]
+        Quantization --> FilterLevel[Filter: Binary]
+        Quantization --> FastLevel[Fast: INT8]
+        
+        NOVA_Core --> Universal[Universal Performance Optimizer]
+        Universal --> MemoryPool[Vector Memory Pool]
+        Universal --> Compression[Standard Compression]
+        Universal --> Hardware[Hardware Capabilities]
+    end
+    
+    subgraph "Parquet Native Technology"
+        ParquetFormat[Enhanced Parquet Format]
+        ParquetFormat --> ZSTD[ZSTD Compression]
+        ParquetFormat --> SNAPPY[SNAPPY Compression]
+        ParquetFormat --> RLE[RLE_DICTIONARY]
+        ParquetFormat --> DELTA[DELTA_BINARY_PACKED]
+    end
+    
+    NOVA_Core --> ParquetFormat
+----
+
+=== Core Components (Actual Implementation)
 
 [source,rust]
 ----
 pub struct NovaEngine {
-    // Hierarchical statistics for efficient pruning
-    superblocks: Vec<SuperBlock>,
-    row_group_stats: Vec<EnhancedRowGroupStats>,
+    /// Filesystem factory for storage operations
+    filesystem: Arc<FilesystemFactory>,
     
-    // Streaming processors for real-time analytics
-    streaming_processor: StreamingProcessor,
+    /// Optimized operations handler (actual implementation)
+    optimized_ops: Arc<OptimizedNovaOperations>,
     
-    // Advanced quantization system
-    quantization_hierarchy: QuantizationHierarchy,
+    /// Engine statistics
+    statistics: Arc<RwLock<EngineStatistics>>,
     
-    // Progressive search engine
-    progressive_search: ProgressiveSearchEngine,
+    /// Hardware capabilities detection
+    hardware: Arc<HardwareCapabilities>,
     
-    // Zone maps for dimension-level pruning
-    zone_maps: HierarchicalZoneMaps,
+    /// Unified quantization engine from compute module
+    quantization_engine: Arc<StorageQuantizationEngine>,
+    
+    /// Universal performance optimizer (eliminates duplication)
+    universal_optimizer: UniversalPerformanceOptimizer,
+    
+    /// Direct compression provider (no FastLanes)
+    compression_provider: StandardCompression,
 }
 ----
 

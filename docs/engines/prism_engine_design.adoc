@@ -4,9 +4,23 @@
 :icons: font
 :source-highlighter: rouge
 
+**Progressive Retrieval through Indexed Storage Management**
+
+[IMPORTANT]
+====
+**📋 For Complete Engine Comparison**: See link:unified_storage_engines_design.adoc[Unified Storage Engines Design] for comprehensive architecture overview, implementation status, and visual diagrams.
+
+**🎯 PRISM Quick Facts**:
+- **Status**: 🔬 Research (70% Complete)
+- **Technology**: Memory-First Multi-Resolution + FastLanes
+- **Performance**: 20K vec/s write, 0.3ms search (estimated)
+- **Use Case**: Memory-first progressive search (95% I/O reduction)
+- **Implementation Gap**: Column families config-only, major work needed
+====
+
 == Overview
 
-PRISM (Partitioned Row-Indexed Storage with Multi-resolution) is a revolutionary storage engine for ProximaDB enhanced with **performance optimizations for fast reads, I/O bandwidth, and cloud storage cost efficiency**. It achieves 100% accuracy while reducing I/O by up to 95% through intelligent column family separation, multi-resolution indexing, and memory-first optimization strategies.
+PRISM (Partitioned Row-Indexed Storage with Multi-resolution) is a research storage engine for ProximaDB that achieves theoretical 95% I/O reduction through progressive search and memory-first optimization. **Currently in research phase with significant implementation gaps.**
 
 === Key Innovation & Performance Optimization
 
@@ -118,19 +132,57 @@ pub struct PrismEngine {
         versions: VersionedVectors,
     },
     
-    // Column Family 5: Learned Structures
+    // Column Family 5: Learned Structures (NOT IMPLEMENTED)
     cf5_learned: LearnedFamily {
-        // Query routing model
+        // Query routing model (research concept)
         routing_model: NeuralRouter,
         
-        // I/O cost predictor
+        // I/O cost predictor (research concept) 
         cost_model: CostPredictor,
         
-        // Access pattern cache
+        // Access pattern cache (research concept)
         pattern_cache: PatternLearner,
     },
 }
 ----
+
+=== Current Implementation Reality (2025-08-20)
+
+[source,rust]
+----
+// ACTUAL PRISM ENGINE IMPLEMENTATION (BASIC)
+pub struct PrismEngine {
+    /// Universal performance optimizer (actual)
+    universal_optimizer: UniversalPerformanceOptimizer,
+    
+    /// Metadata engine (basic implementation)
+    metadata_engine: Arc<PrismMetadataEngine>,
+    
+    /// Progressive pipeline (basic implementation)
+    progressive_pipeline: Arc<PrismProgressivePipeline>,
+    
+    /// Sketch filter (basic implementation) 
+    sketch_filter: Arc<PrismSketchFilter>,
+    
+    /// Memory-first design (3GB default cache)
+    memory_first_design: MemoryFirstDesign,
+    
+    // NOTE: Column families CF0-CF5 are CONFIG ONLY
+    // Actual storage uses basic single-file approach
+    // Major implementation work needed for full design
+}
+----
+
+[WARNING]
+====
+**Implementation Gap Analysis**:
+- **Column Families (CF0-CF5)**: Configuration exists, no actual implementation
+- **Bloom Cascade**: Not implemented (basic bloom filter only)
+- **Sketch Structures**: Basic binary sketches only
+- **Progressive Refinement**: Limited implementation
+- **Learned Models**: Research concepts only
+- **I/O Optimization**: Theoretical calculations, not measured
+====
 
 === I/O Optimization Strategy
 

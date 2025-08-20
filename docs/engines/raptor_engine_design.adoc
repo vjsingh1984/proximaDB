@@ -4,9 +4,33 @@
 :icons: font
 :source-highlighter: rouge
 
+**Row-Aligned Predicated Tensor Optimized Repository**
+
+[IMPORTANT]
+====
+**📋 For Complete Engine Comparison**: See link:unified_storage_engines_design.adoc[Unified Storage Engines Design] for comprehensive architecture overview, implementation status, and visual diagrams.
+
+**🎯 RAPTOR Quick Facts**:
+- **Status**: 🚧 Alpha (75% Complete - Compilation Issues)
+- **Technology**: Hybrid Row+Columnar + FastLanes + Smart Sizing
+- **Performance**: 12K vec/s write, 1.8ms search (estimated)
+- **Use Case**: Hybrid workloads requiring both row and columnar access
+- **Current Issues**: Type mismatches, missing traits, initialization problems
+====
+
 == Executive Summary
 
-RAPTOR (Row-Aligned Predicated Tensor Optimized Repository) is a high-performance storage engine for ProximaDB featuring *smart row group sizing*, *hybrid row-columnar architecture*, and *semantic accuracy optimization*. It achieves sub-10ms search latency through intelligent data organization based on vector dimensionality and cloud I/O characteristics.
+RAPTOR (Row-Aligned Predicated Tensor Optimized Repository) is a hybrid storage engine featuring *smart row group sizing*, *hybrid row-columnar architecture*, and *semantic accuracy optimization*.
+
+[WARNING]
+====
+**Compilation Status**: RAPTOR engine currently has compilation errors:
+- Missing `Deserialize` trait for `RowGroupCacheKey`
+- Type mismatches in `RowPageMetadata` and `SearchResult` 
+- `CompressionCodec` enum issues
+- FastLanes encoder initialization problems
+- Method resolution errors for reader/writer components
+====
 
 === Key Differentiators
 

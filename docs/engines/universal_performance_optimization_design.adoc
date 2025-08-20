@@ -4,9 +4,18 @@
 :icons: font
 :source-highlighter: rouge
 
+**Shared Infrastructure Design**
+
+[IMPORTANT]
+====
+**📋 For Complete Engine Comparison**: See link:unified_storage_engines_design.adoc[Unified Storage Engines Design] for comprehensive architecture overview, implementation status, and visual diagrams.
+
+This document details the shared infrastructure used by all 6 storage engines.
+====
+
 == Executive Summary
 
-This document describes the Universal Performance Optimization Module that eliminates code duplication across ProximaDB's storage engines (SST, VIPER, SWIFT, NOVA, PRISM) while providing consistent high-performance optimizations for fast I/O, cloud storage cost reduction, and bandwidth efficiency.
+This document describes the Universal Performance Optimization Module that eliminates code duplication across ProximaDB's storage engines (SST, VIPER, SWIFT, NOVA, RAPTOR, PRISM) while providing consistent high-performance optimizations for fast I/O, cloud storage cost reduction, and bandwidth efficiency.
 
 *Key Achievement*: **Eliminated ~6000 lines of duplicate optimization code** across storage engines while achieving **sub-millisecond access times**, **70% cloud cost savings**, and **95% bandwidth reduction**.
 

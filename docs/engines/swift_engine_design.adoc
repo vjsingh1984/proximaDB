@@ -2,9 +2,20 @@
 :toc: left
 :toclevels: 2
 
-**Storage With Instant Fast Traversal - Enhanced with Universal Performance Module**
+**Storage With Instant Fast Traversal - SuperBlock Architecture**
 
-SWIFT is a dual-mode storage engine that provides instant vector navigation through optimized tree structures while maintaining compatibility with traditional scanning approaches. Enhanced with universal performance optimization for fast I/O, cloud cost efficiency, and bandwidth optimization.
+[IMPORTANT]
+====
+**📋 For Complete Engine Comparison**: See link:unified_storage_engines_design.adoc[Unified Storage Engines Design] for comprehensive architecture overview, implementation status, and visual diagrams.
+
+**🎯 SWIFT Quick Facts**:
+- **Status**: 🚧 Beta (80% Complete)
+- **Technology**: SuperBlock Hierarchical + FastLanes (0xA2) + Shared Infrastructure  
+- **Performance**: 15K vec/s write, 1.5ms search
+- **Use Case**: High-write workloads with hierarchical access patterns
+====
+
+SWIFT is a hierarchical storage engine with SuperBlock architecture that provides fast navigation through optimized tree structures and FastLanes encoding.
 
 == Executive Summary
 

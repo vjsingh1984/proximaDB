@@ -4,9 +4,22 @@
 :icons: font
 :source-highlighter: rouge
 
+**SST Engine Implementation Details**
+
+[IMPORTANT]
+====
+**📋 For Complete Engine Comparison**: See link:unified_storage_engines_design.adoc[Unified Storage Engines Design] for comprehensive architecture overview, implementation status, and visual diagrams.
+
+**🎯 SST Quick Facts**:
+- **Status**: ✅ Production Ready (95% Complete)
+- **Technology**: Row-Based Storage + FastLanes + Shared Infrastructure
+- **Performance**: 17K vec/s write, 0.9ms search
+- **Use Case**: High-write OLTP workloads, row-based access patterns
+====
+
 == Executive Summary
 
-This document describes the in-place enhancement of ProximaDB's SST storage engine to incorporate integrated quantization, similarity-based ordering, and comprehensive performance optimizations for fast I/O, cloud storage cost reduction, and bandwidth optimization. The design maintains all existing interfaces while achieving 10-50x I/O reduction, 5-10x better compression, and sub-millisecond access times.
+This document describes the SST storage engine implementation in ProximaDB. SST uses shared row_based infrastructure, FastLanes encoding (0xA1 markers), and progressive quantization to achieve production-ready performance for OLTP workloads.
 
 *Key Principles*: 
 - Modify SST internally without changing external APIs
