@@ -307,9 +307,16 @@ impl FastLanesEncoder {
         let mut encoded = Vec::new();
         
         // Use storage quantization engine for vector quantization
-        for vector in vectors {
-            let quantized = quantization_engine.quantize_for_storage(vector).await?;
-            encoded.extend(&quantized.data);
+        let quantized_batch = quantization_engine.quantize_batch(vectors, None).await?;
+        for quantized in quantized_batch {
+            // Use primary quantization data if available, otherwise filter
+            if let Some(primary) = &quantized.primary {
+                encoded.extend(&primary.data);
+            } else if let Some(filter) = &quantized.filter {
+                encoded.extend(&filter.data);
+            } else {
+                return Err(anyhow::anyhow!("No quantization data available"));
+            }
         }
         
         Ok(encoded)

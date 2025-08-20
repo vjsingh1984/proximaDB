@@ -24,6 +24,8 @@ pub enum WorkloadType {
     RealTime,
     /// Mixed workload with balanced settings
     Balanced,
+    /// Cost-optimized workload (minimize bandwidth/cost)
+    CostOptimized,
 }
 
 /// Complete system configuration
@@ -273,22 +275,6 @@ pub struct BackgroundTaskConfig {
     pub threshold_optimization_interval: Duration,
 }
 
-/// Workload type for preset configurations
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum WorkloadType {
-    /// High-performance workload (minimize latency)
-    HighPerformance,
-    /// Cost-optimized workload (minimize bandwidth/cost)
-    CostOptimized,
-    /// Balanced workload (general purpose)
-    Balanced,
-    /// Analytics workload (large scans)
-    Analytics,
-    /// OLTP workload (small random access)
-    OLTP,
-    /// Hybrid workload (mixed patterns)
-    Hybrid,
-}
 
 /// Builder for creating Zero-Copy I/O System
 pub struct ZeroCopyIOSystemBuilder {
@@ -450,8 +436,8 @@ impl ZeroCopyIOConfig {
             WorkloadType::CostOptimized => Self::cost_optimized(),
             WorkloadType::Balanced => Self::balanced(),
             WorkloadType::Analytics => Self::analytics(),
-            WorkloadType::OLTP => Self::oltp(),
-            WorkloadType::Hybrid => Self::hybrid(),
+            WorkloadType::HighThroughput => Self::high_performance(), // Map to high performance
+            WorkloadType::RealTime => Self::high_performance(), // Map to high performance for low latency
         }
     }
     
@@ -545,42 +531,6 @@ impl ZeroCopyIOConfig {
         }
     }
     
-    /// OLTP configuration (small random access)
-    pub fn oltp() -> Self {
-        Self {
-            download_optimizer: DownloadOptimizerConfig {
-                base_threshold_percent: 25.0,  // Very selective for point queries
-                size_thresholds: SizeBasedThresholds {
-                    small_file_download_percent: 15.0,
-                    medium_file_download_percent: 25.0,
-                    large_file_download_percent: 35.0,
-                    huge_file_download_percent: 45.0,
-                    ..Default::default()
-                },
-                ..Default::default()
-            },
-            ..Default::default()
-        }
-    }
-    
-    /// Hybrid configuration (mixed workload patterns)
-    pub fn hybrid() -> Self {
-        Self {
-            download_optimizer: DownloadOptimizerConfig {
-                access_prediction: AccessPredictionConfig {
-                    enable_learning: true,
-                    confidence_threshold: 0.7,
-                    ..Default::default()
-                },
-                ..Default::default()
-            },
-            performance: PerformanceConfig {
-                enable_adaptive_thresholds: true,
-                ..Default::default()
-            },
-            ..Default::default()
-        }
-    }
 }
 
 // Default implementations

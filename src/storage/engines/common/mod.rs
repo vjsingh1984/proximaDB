@@ -11,6 +11,34 @@ pub mod progressive_search;
 /// Universal performance optimization module for all storage engines
 pub mod performance_optimization;
 
+// Import common types used across the module
+use serde::{Deserialize, Serialize};
+use crate::core::search::FilterExpression;
+
+/// Filterable metadata column configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FilterableColumn {
+    /// Column name
+    pub name: String,
+    /// Column data type
+    pub data_type: ColumnDataType,
+    /// Whether this column is indexed
+    pub is_indexed: bool,
+    /// Estimated cardinality for optimization
+    pub estimated_cardinality: Option<usize>,
+}
+
+/// Column data types for type-safe filtering
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum ColumnDataType {
+    String,
+    Integer,
+    Float,
+    Boolean,
+    DateTime,
+    Json,
+}
+
 /// UNIFIED ZERO-COPY I/O SYSTEM - Complete solution for intelligent cloud storage access
 pub mod zero_copy_io_system;
 
@@ -124,7 +152,6 @@ pub use search_common::{
 };
 
 use anyhow::Result;
-use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -530,7 +557,7 @@ pub trait UniversalEngineOperations {
         &self,
         query: &[f32],
         top_k: usize,
-        filter: Option<UniversalMetadataFilter>,
+        filter: Option<FilterExpression>,
     ) -> Result<Vec<VectorRecord>>;
     
     /// Batch operations
@@ -540,7 +567,7 @@ pub trait UniversalEngineOperations {
         &self,
         queries: &[Vec<f32>],
         top_k: usize,
-        filter: Option<UniversalMetadataFilter>,
+        filter: Option<FilterExpression>,
     ) -> Result<Vec<Vec<VectorRecord>>>;
     
     /// Administrative operations

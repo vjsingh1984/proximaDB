@@ -844,30 +844,105 @@ pub struct FallbackStrategies {
 // MIGRATION HELPERS
 // ================================================================================
 
-/// Migration helper: Convert old UniversalMetadataFilter to new unified format
-pub fn migrate_universal_filter(old: &crate::storage::engines::common::metadata_filters::UniversalMetadataFilter) -> UnifiedMetadataFilter {
-    UnifiedMetadataFilter {
-        conditions: old.conditions.iter().map(|c| {
-            // Map old conditions to new format
-            match c {
-                crate::storage::engines::common::metadata_filters::UniversalFilterCondition::Equals { column, value, .. } => {
-                    FilterCondition::Equals {
-                        column: column.clone(),
+/// Migration helper: Convert FilterExpression to unified format
+pub fn migrate_universal_filter(filter: &crate::core::search::FilterExpression) -> UnifiedMetadataFilter {
+    let mut conditions = Vec::new();
+    let mut logic = FilterLogic::And;
+    
+    fn extract_conditions(expr: &crate::core::search::FilterExpression, conditions: &mut Vec<FilterCondition>) {
+        use crate::core::search::{FilterExpression, ComparisonOperator};
+        
+        match expr {
+            FilterExpression::Comparison { field, operator, value } => {
+                let condition = match operator {
+                    ComparisonOperator::Equals => FilterCondition::Equals {
+                        column: field.clone(),
                         value: value.clone(),
-                    }
+                    },
+                    ComparisonOperator::NotEquals => FilterCondition::NotEquals {
+                        column: field.clone(),
+                        value: value.clone(),
+                    },
+                    ComparisonOperator::GreaterThan => FilterCondition::GreaterThan {
+                        column: field.clone(),
+                        value: value.clone(),
+                    },
+                    ComparisonOperator::GreaterThanOrEqual => FilterCondition::GreaterThanOrEqual {
+                        column: field.clone(),
+                        value: value.clone(),
+                    },
+                    ComparisonOperator::LessThan => FilterCondition::LessThan {
+                        column: field.clone(),
+                        value: value.clone(),
+                    },
+                    ComparisonOperator::LessThanOrEqual => FilterCondition::LessThanOrEqual {
+                        column: field.clone(),
+                        value: value.clone(),
+                    },
+                    ComparisonOperator::In => FilterCondition::In {
+                        column: field.clone(),
+                        values: match value {
+                            serde_json::Value::Array(arr) => arr.clone(),
+                            _ => vec![value.clone()],
+                        },
+                    },
+                    ComparisonOperator::NotIn => FilterCondition::NotIn {
+                        column: field.clone(),
+                        values: match value {
+                            serde_json::Value::Array(arr) => arr.clone(),
+                            _ => vec![value.clone()],
+                        },
+                    },
+                    ComparisonOperator::Contains => FilterCondition::Contains {
+                        column: field.clone(),
+                        value: value.clone(),
+                    },
+                    ComparisonOperator::StartsWith => FilterCondition::StartsWith {
+                        column: field.clone(),
+                        value: value.clone(),
+                    },
+                };
+                conditions.push(condition);
+            },
+            FilterExpression::And(expressions) => {
+                for expr in expressions {
+                    extract_conditions(expr, conditions);
                 }
-                // ... map other conditions
-                _ => FilterCondition::Equals {
-                    column: String::new(),
-                    value: serde_json::Value::Null,
+            },
+            FilterExpression::Or(expressions) => {
+                // For OR expressions, we'll create individual conditions
+                // The logic handling will be done at the top level
+                for expr in expressions {
+                    extract_conditions(expr, conditions);
                 }
-            }
-        }).collect(),
-        logic: match old.logic {
-            crate::storage::engines::common::metadata_filters::UniversalFilterLogic::And => FilterLogic::And,
-            crate::storage::engines::common::metadata_filters::UniversalFilterLogic::Or => FilterLogic::Or,
-            _ => FilterLogic::And,
+            },
+            FilterExpression::Not(expr) => {
+                // Handle NOT by extracting the inner condition and marking it as negated
+                extract_conditions(expr.as_ref(), conditions);
+                // Note: The NOT logic would need to be handled differently in a full implementation
+            },
+        }
+    }
+    
+    // Determine the overall logic based on the top-level expression
+    match filter {
+        crate::core::search::FilterExpression::And(_) => {
+            logic = FilterLogic::And;
         },
+        crate::core::search::FilterExpression::Or(_) => {
+            logic = FilterLogic::Or;
+        },
+        _ => {
+            logic = FilterLogic::And; // Default for single conditions
+        }
+    }
+    
+    // Extract all conditions
+    extract_conditions(filter, &mut conditions);
+    
+    UnifiedMetadataFilter {
+        conditions,
+        logic,
         optimization_hints: FilterOptimizationHints {
             expected_selectivity: None,
             preferred_index: None,

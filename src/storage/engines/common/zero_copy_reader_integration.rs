@@ -3,8 +3,8 @@
 
 use std::sync::Arc;
 
-use crate::storage::persistence::filesystem::{FilesystemFactory, ZeroCopyFilesystem, ZeroCopyFilesystemBuilder};
-use crate::storage::engines::common::zero_copy_io_system::{ZeroCopyIOSystem, ZeroCopyIOSystemBuilder};
+use crate::storage::persistence::filesystem::{FilesystemFactory, ZeroCopyFilesystem};
+use crate::storage::engines::common::zero_copy_io_system::ZeroCopyIOSystemBuilder;
 use crate::core::error::ProximaDBError;
 
 /// Example integration showing how to enhance existing readers with zero-copy optimization
@@ -37,13 +37,14 @@ impl ZeroCopyReaderIntegration {
         // 1. Create zero-copy I/O system with SST-optimized configuration
         let io_system = ZeroCopyIOSystemBuilder::new()
             .for_workload(crate::storage::engines::common::zero_copy_io_system::WorkloadType::HighThroughput)
-            .build()?;
+            .with_filesystem(filesystem_factory.clone())
+            .build().await?;
 
         // 2. Create zero-copy filesystem wrapper
         let zero_copy_fs = filesystem_factory
             .create_zero_copy_filesystem(
                 base_path,
-                io_system,
+                Arc::new(io_system),
                 collection_id.to_string(),
                 "SST".to_string(),
             )
@@ -62,13 +63,14 @@ impl ZeroCopyReaderIntegration {
         // 1. Create zero-copy I/O system optimized for analytics workloads
         let io_system = ZeroCopyIOSystemBuilder::new()
             .for_workload(crate::storage::engines::common::zero_copy_io_system::WorkloadType::Analytics)
-            .build()?;
+            .with_filesystem(filesystem_factory.clone())
+            .build().await?;
 
         // 2. Create zero-copy filesystem wrapper for columnar storage
         let zero_copy_fs = filesystem_factory
             .create_zero_copy_filesystem(
                 base_path,
-                io_system,
+                Arc::new(io_system),
                 collection_id.to_string(),
                 "VIPER".to_string(),
             )
@@ -86,13 +88,14 @@ impl ZeroCopyReaderIntegration {
         // 1. Create zero-copy I/O system optimized for real-time workloads
         let io_system = ZeroCopyIOSystemBuilder::new()
             .for_workload(crate::storage::engines::common::zero_copy_io_system::WorkloadType::RealTime)
-            .build()?;
+            .with_filesystem(filesystem_factory.clone())
+            .build().await?;
 
         // 2. Create zero-copy filesystem wrapper for hierarchical storage
         let zero_copy_fs = filesystem_factory
             .create_zero_copy_filesystem(
                 base_path,
-                io_system,
+                Arc::new(io_system),
                 collection_id.to_string(),
                 "SWIFT".to_string(),
             )
@@ -121,13 +124,14 @@ impl ZeroCopyReaderIntegration {
             // Create optimized I/O system for this engine type
             let io_system = ZeroCopyIOSystemBuilder::new()
                 .for_workload(workload_type)
-                .build()?;
+                .with_filesystem(filesystem_factory.clone())
+                .build().await?;
 
             // Create zero-copy filesystem
             let zero_copy_fs = filesystem_factory
                 .create_zero_copy_filesystem(
                     base_path,
-                    io_system,
+                    Arc::new(io_system),
                     collection_id.to_string(),
                     engine_type.to_string(),
                 )
@@ -139,7 +143,7 @@ impl ZeroCopyReaderIntegration {
                 "VIPER" => Box::new(EnhancedParquetReader::new(Arc::new(zero_copy_fs))),
                 "SWIFT" => Box::new(EnhancedSwiftReader::new(Arc::new(zero_copy_fs))),
                 _ => {
-                    return Err(ProximaDBError::InvalidArgument(
+                    return Err(ProximaDBError::Config(
                         format!("Unsupported engine type: {}", engine_type)
                     ));
                 }
@@ -157,8 +161,8 @@ pub trait EnhancedReader: Send + Sync {
     /// Get engine type
     fn engine_type(&self) -> &str;
     
-    /// Read with zero-copy optimization
-    async fn read_optimized(&self, file_path: &str) -> Result<Vec<u8>, ProximaDBError>;
+    /// Read with zero-copy optimization (object-safe version)
+    fn read_optimized<'a>(&'a self, file_path: &'a str) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Vec<u8>, ProximaDBError>> + Send + 'a>>;
     
     /// Get optimization metrics
     fn get_metrics(&self) -> ReaderMetrics;
@@ -179,19 +183,20 @@ impl EnhancedSstReader {
     }
 }
 
-#[async_trait::async_trait]
 impl EnhancedReader for EnhancedSstReader {
     fn engine_type(&self) -> &str {
         "SST"
     }
 
-    async fn read_optimized(&self, file_path: &str) -> Result<Vec<u8>, ProximaDBError> {
-        // All read operations automatically go through zero-copy optimization
-        // including metadata cache checks, selective downloading, and disk cache
-        self.filesystem
-            .read(file_path)
-            .await
-            .map_err(|e| ProximaDBError::Internal(e.to_string()))
+    fn read_optimized<'a>(&'a self, file_path: &'a str) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Vec<u8>, ProximaDBError>> + Send + 'a>> {
+        Box::pin(async move {
+            // All read operations automatically go through zero-copy optimization
+            // including metadata cache checks, selective downloading, and disk cache
+            self.filesystem
+                .read(file_path)
+                .await
+                .map_err(|e| ProximaDBError::Internal(e.to_string()))
+        })
     }
 
     fn get_metrics(&self) -> ReaderMetrics {
@@ -218,19 +223,20 @@ impl EnhancedParquetReader {
     }
 }
 
-#[async_trait::async_trait]
 impl EnhancedReader for EnhancedParquetReader {
     fn engine_type(&self) -> &str {
         "VIPER"
     }
 
-    async fn read_optimized(&self, file_path: &str) -> Result<Vec<u8>, ProximaDBError> {
-        // Parquet files benefit greatly from selective range downloads
-        // The zero-copy system uses NOVA metadata serializer for optimal column access
-        self.filesystem
-            .read(file_path)
-            .await
-            .map_err(|e| ProximaDBError::Internal(e.to_string()))
+    fn read_optimized<'a>(&'a self, file_path: &'a str) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Vec<u8>, ProximaDBError>> + Send + 'a>> {
+        Box::pin(async move {
+            // Parquet files benefit greatly from selective range downloads
+            // The zero-copy system uses NOVA metadata serializer for optimal column access
+            self.filesystem
+                .read(file_path)
+                .await
+                .map_err(|e| ProximaDBError::Internal(e.to_string()))
+        })
     }
 
     fn get_metrics(&self) -> ReaderMetrics {
@@ -257,19 +263,20 @@ impl EnhancedSwiftReader {
     }
 }
 
-#[async_trait::async_trait]
 impl EnhancedReader for EnhancedSwiftReader {
     fn engine_type(&self) -> &str {
         "SWIFT"
     }
 
-    async fn read_optimized(&self, file_path: &str) -> Result<Vec<u8>, ProximaDBError> {
-        // SWIFT files benefit from segment-level optimization
-        // The zero-copy system uses SWIFT metadata serializer for segment pruning
-        self.filesystem
-            .read(file_path)
-            .await
-            .map_err(|e| ProximaDBError::Internal(e.to_string()))
+    fn read_optimized<'a>(&'a self, file_path: &'a str) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Vec<u8>, ProximaDBError>> + Send + 'a>> {
+        Box::pin(async move {
+            // SWIFT files benefit from segment-level optimization
+            // The zero-copy system uses SWIFT metadata serializer for segment pruning
+            self.filesystem
+                .read(file_path)
+                .await
+                .map_err(|e| ProximaDBError::Internal(e.to_string()))
+        })
     }
 
     fn get_metrics(&self) -> ReaderMetrics {

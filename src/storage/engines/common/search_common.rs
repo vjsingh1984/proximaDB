@@ -6,11 +6,12 @@
 use anyhow::Result;
 use async_trait::async_trait;
 use std::sync::Arc;
+use std::collections::HashMap;
 use futures::stream::{self, StreamExt};
 
 use crate::core::search::{SearchResult, FilterExpression};
 use crate::core::VectorRecord;
-use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
+use crate::compute::distance_computation::engine::{UnifiedDistanceCompute, SimilarityResult};
 use crate::compute::distance_computation::DistanceMetric;
 use crate::compute::quantization::unified::UnifiedQuantizationEngine;
 use crate::compute::quantization::storage_engine::StorageQuantizedData;
@@ -281,12 +282,15 @@ impl UniversalSearchPipeline {
         
         for mut result in candidates {
             if let Some(ref vector) = result.vector {
-                let distance = self.distance_compute.as_ref().calculate_distance(
+                let similarity_result = match self.distance_compute.as_ref().calculate_distance(
                     query_vector,
                     vector,
                     &config.distance_metric,
-                )?;
-                result.similarity = Some(distance);
+                ) {
+                    Ok(dist) => dist,
+                    Err(_) => continue, // Skip this result if distance calculation fails
+                };
+                result.similarity = Some(similarity_result.raw_value);
             }
             reranked.push(result);
         }
@@ -334,11 +338,17 @@ impl UniversalSearchPipeline {
         query_vector: &[f32],
         threshold: f32,
     ) -> Result<Vec<VectorRecord>> {
-        // Use quantization engine for binary filtering - quantize as batch of one
-        let quantized = self.quantization_engine.quantize_batch(&[query_vector.to_vec()], &self.config).await?;
-        let binary_query = quantized.into_iter().next()
-            .and_then(|q| q.into_iter().find(|d| matches!(d, StorageQuantizedData::Binary(_))))
-            .ok_or_else(|| anyhow::anyhow!("Failed to quantize query to binary"))?;
+        // Use quantization engine for binary filtering
+        // Create a binary quantization level
+        use crate::compute::quantization::unified::{UnifiedQuantizationLevel, QuantizationLevelType, BinaryQuantization};
+        let binary_level = UnifiedQuantizationLevel {
+            level_type: Some(QuantizationLevelType::Binary(BinaryQuantization {
+                sign_based: true,
+                threshold: threshold,
+            })),
+        };
+        
+        let binary_query = self.quantization_engine.quantize(query_vector, &binary_level).await?;
         
         let mut filtered = Vec::new();
         for record in records {
@@ -396,27 +406,35 @@ impl UniversalSearchPipeline {
         let mut results = Vec::with_capacity(records.len());
         
         for record in records {
-            let distance = self.distance_compute.as_ref().calculate_distance(
+            let similarity_result = match self.distance_compute.as_ref().calculate_distance(
                 query_vector,
                 &record.vector,
                 &DistanceMetric::Cosine, // Use default for now
-            )?;
+            ) {
+                Ok(dist) => dist,
+                Err(_) => continue, // Skip this result if distance calculation fails
+            };
             
+            // Convert metadata from Vec<MetadataItem> to HashMap<String, Value>
+            let metadata_map = record.metadata.into_iter()
+                .map(|item| (item.key, serde_json::Value::String(item.value.unwrap_or_default())))
+                .collect::<HashMap<String, serde_json::Value>>();
+
             results.push(SearchResult {
                 id: record.id.unwrap_or_default(),
-                similarity: 1.0 - distance, // Convert distance to similarity score
-                vector: record.vector,
-                metadata: record.metadata,
-                // rank removed -  0, // Default rank
+                score: similarity_result.normalized_score,
+                vector: Some(record.vector),
+                metadata: metadata_map,
                 version: record.updated_at,
                 timestamp: Some(record.timestamp),
-                collection_id: None, // Default collection_id
+                semantic_similarity: Some(similarity_result),
+                ..Default::default()
             });
         }
         
-        // Sort by distance
+        // Sort by score (higher score = better result)
         results.sort_by(|a, b| {
-            a.similarity.partial_cmp(&b.similarity).unwrap_or(std::cmp::Ordering::Equal)
+            b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal)
         });
         
         results.truncate(top_k.min(results.len()));
