@@ -185,7 +185,7 @@ impl ArtusBloomManager {
         
         for (column, bloom) in &self.column_blooms {
             // Serialize bloom filter to bytes
-            let bytes = self.serialize_bloom(bloom)?;
+            let bytes = self.serialize_bloom(bloom.as_ref())?;
             serialized.insert(column.clone(), bytes);
         }
         
@@ -229,7 +229,7 @@ impl ArtusBloomManager {
         for (column, stats) in &self.column_stats {
             // Check if bloom needs resizing based on actual vs expected cardinality
             if let Some(bloom) = self.column_blooms.get(column) {
-                let current_fp_rate = self.estimate_false_positive_rate(bloom, stats.cardinality);
+                let current_fp_rate = self.estimate_false_positive_rate(bloom.as_ref(), stats.cardinality);
                 
                 // Resize if FP rate deviates significantly
                 if (current_fp_rate - self.config.false_positive_rate).abs() > 0.05 {

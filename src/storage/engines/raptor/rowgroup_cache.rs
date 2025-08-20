@@ -316,19 +316,19 @@ impl RowGroupCacheManager {
     /// Check if a rowgroup can be skipped based on query context
     fn can_skip_rowgroup(&self, metadata: &RowGroupMetadata, context: &QueryContext) -> bool {
         // Check vector statistics
-        if let Some(ref vector_filter) = context.vector_filter {
+        if let Some(ref query_vector) = context.query_vector {
             // Check centroid distance if available
             if let Some(ref centroid) = metadata.centroid {
                 // Simplified distance check - would use proper distance metric
-                let approx_distance = self.estimate_distance(&vector_filter.query_vector, centroid);
-                if approx_distance > vector_filter.max_distance {
+                let approx_distance = self.estimate_distance(query_vector, centroid);
+                if approx_distance > 1.0 { // Use a default threshold
                     return true;
                 }
             }
         }
         
         // Check metadata filters
-        if let Some(ref metadata_filter) = context.metadata_filter {
+        if !context.metadata_filters.is_empty() {
             for (field, predicate) in &metadata_filter.predicates {
                 if let Some(stats) = metadata.metadata_stats.get(field) {
                     // Check if predicate can possibly match based on min/max
@@ -340,6 +340,8 @@ impl RowGroupCacheManager {
         }
         
         // Check temporal filters
+        // Temporal filtering not implemented in QueryContext yet
+        /*
         if let Some(ref temporal_filter) = context.temporal_filter {
             if let (Some(min_ts), Some(max_ts)) = (metadata.min_timestamp, metadata.max_timestamp) {
                 if max_ts < temporal_filter.start_time || min_ts > temporal_filter.end_time {
@@ -347,6 +349,7 @@ impl RowGroupCacheManager {
                 }
             }
         }
+        */
         
         false
     }

@@ -595,7 +595,8 @@ impl RaptorWriter {
         if let Some(id_col) = batch.column_by_name("id") {
             if let Some(id_array) = id_col.as_any().downcast_ref::<arrow_array::StringArray>() {
                 for i in 0..id_array.len() {
-                    if let Some(id) = id_array.value_opt(i) {
+                    if !id_array.is_null(i) {
+                        let id = id_array.value(i);
                         let id_bytes = id.as_bytes();
                         encoded_data.write_all(&(id_bytes.len() as u32).to_le_bytes())?;
                         encoded_data.write_all(id_bytes)?;
@@ -625,7 +626,7 @@ impl RaptorWriter {
         if let Some(vector_col) = batch.column_by_name("vector") {
             if let Some(float_array) = vector_col.as_any().downcast_ref::<arrow_array::Float32Array>() {
                 // Assuming vectors are stored flat with known dimension
-                let dimension = self.config.dimension;
+                let dimension = self.config.vector_dimension.unwrap_or(768);
                 let num_vectors = float_array.len() / dimension;
                 
                 for i in 0..num_vectors {
@@ -694,11 +695,15 @@ impl RaptorWriter {
     /// Update column projections for filtering
     fn update_column_projections(&mut self, vector: &VectorRecord, location: RowLocation) {
         // Extract metadata columns for projection
-        for (key, value) in &vector.metadata {
-            self.column_projections.metadata_columns
-                .entry(key.clone())
-                .or_insert_with(Vec::new)
-                .push(bincode::serialize(&value).unwrap_or_default());
+        if let Some(metadata) = &vector.metadata {
+            for item in metadata {
+                let key = &item.key;
+                let value = &item.value;
+                self.column_projections.metadata_columns
+                    .entry(key.clone())
+                    .or_insert_with(Vec::new)
+                    .push(bincode::serialize(&value).unwrap_or_default());
+            }
         }
         
         // Update filter bitmaps (example: filtering by specific metadata values)

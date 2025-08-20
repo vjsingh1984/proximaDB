@@ -734,7 +734,7 @@ impl HnswAwareCompactionManager {
             // Take top entry points (configurable)
             let num_entry_points = self.config.hnsw_config.as_ref()
                 .map(|c| c.num_entry_points)
-                ;
+                .unwrap_or(16);
             
             entry_points.extend(
                 candidates.iter()

@@ -15,7 +15,7 @@
 === By Engine Status
 
 **✅ Production Ready**
-- link:enhanced_sst_design.adoc[SST Engine] - Row-based OLTP (17K vec/s, 0.9ms)
+- link:sst_design.adoc[SST Engine] - Row-based OLTP (17K vec/s, 0.9ms)
 - VIPER Engine - Columnar Parquet (5K vec/s, 2-3ms) - *See unified design*
 
 **🚧 Beta/Alpha**  
@@ -49,7 +49,7 @@
 === By Use Case
 
 **High-Write OLTP Workloads**
-- **Primary**: link:enhanced_sst_design.adoc[SST Engine] ✅
+- **Primary**: link:sst_design.adoc[SST Engine] ✅
 - **Alternative**: link:swift_engine_design.adoc[SWIFT Engine] 🚧
 
 **Analytics & Reporting**
@@ -253,7 +253,7 @@ _* Estimated performance based on design_
 docs/engines/
 ├── README.adoc                                    # This navigation guide
 ├── unified_storage_engines_design.adoc            # Comprehensive overview
-├── enhanced_sst_design.adoc                       # SST implementation details  
+├── sst_design.adoc                               # SST implementation details  
 ├── swift_engine_design.adoc                       # SWIFT SuperBlock architecture
 ├── nova_engine_design.adoc                        # NOVA analytics features
 ├── raptor_engine_design.adoc                      # RAPTOR hybrid design

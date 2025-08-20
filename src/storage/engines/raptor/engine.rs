@@ -1599,7 +1599,7 @@ impl RaptorEngine {
                 })
                 .collect(),
             version,
-            timestamp: timestamp,
+            timestamp: timestamp.unwrap_or(0),
             ..Default::default()
         })
     }
