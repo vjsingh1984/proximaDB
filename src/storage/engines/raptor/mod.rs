@@ -4,9 +4,11 @@
 /// Magic constant for RAPTOR files (4 bytes)
 pub const RAPTOR_MAGIC: [u8; 4] = *b"RPTR";
 
+// Common types module - MUST be first to avoid circular dependencies
+pub mod common;
+
 pub mod config;
 pub mod engine;
-pub mod rowgroup;
 pub mod writer;
 pub mod reader;
 pub mod compaction;
@@ -14,15 +16,26 @@ pub mod hnsw_manager;
 pub mod hnsw_compaction;
 pub mod unified_reader;     // Consolidated reader
 pub mod simd_ops;
-pub mod metadata;
+pub mod simd_encoder;
+pub mod artus_bloom;
 
 #[cfg(test)]
 mod tests;
 
-pub use config::RaptorConfig;
-pub use engine::RaptorEngine;
-pub use rowgroup::{RowGroup, RowGroupManager};
-pub use writer::RaptorWriter;
-pub use unified_reader::RaptorUnifiedReader;  // Export the unified reader
+// Re-export commonly used types from common module
+pub use common::{
+    RowGroup, RowGroupMetadata, VectorStats, ColumnStats, 
+    MetadataColumn, MetadataValue, MetadataDataType,
+    HnswGraph, HnswEdge, LocalHnswSegment, HnswGraphMetadata,
+    RaptorFileMetadata, SchemaDescriptor, FieldDescriptor,
+    SearchResult, Predicate, PredicateOp,
+    FastLanesScheme, VectorEncoding, ColumnEncoding,
+    IoStrategy, CachePolicy, ReadPattern,
+    LocalityCluster, BloomFilterMetadata,
+};
 
-use anyhow::Result;
+pub use config::{RaptorConfig, CompactionConfig, HnswConfig};
+pub use engine::RaptorEngine;
+pub use writer::RaptorWriter;
+pub use reader::RaptorReader;
+pub use unified_reader::RaptorUnifiedReader;
