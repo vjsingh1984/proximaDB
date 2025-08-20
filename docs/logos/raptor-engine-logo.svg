@@ -99,21 +99,21 @@
     </g>
   </g>
   
-  <!-- HNSW Graph visualization (small network) -->
+  <!-- HNSW Intelligence Network -->
   <g opacity="0.7">
-    <!-- Connections -->
-    <line x1="300" y1="60" x2="320" y2="50" stroke="#4A90E2" stroke-width="1"/>
-    <line x1="320" y1="50" x2="340" y2="55" stroke="#4A90E2" stroke-width="1"/>
-    <line x1="340" y1="55" x2="350" y2="70" stroke="#4A90E2" stroke-width="1"/>
-    <line x1="300" y1="60" x2="310" y2="75" stroke="#4A90E2" stroke-width="1"/>
-    <line x1="310" y1="75" x2="330" y2="80" stroke="#4A90E2" stroke-width="1"/>
-    <!-- Nodes -->
-    <circle cx="300" cy="60" r="3" fill="#7B68EE"/>
-    <circle cx="320" cy="50" r="3" fill="#7B68EE"/>
-    <circle cx="340" cy="55" r="3" fill="#7B68EE"/>
-    <circle cx="350" cy="70" r="3" fill="#7B68EE"/>
-    <circle cx="310" cy="75" r="3" fill="#7B68EE"/>
-    <circle cx="330" cy="80" r="3" fill="#7B68EE"/>
+    <!-- Neural connections -->
+    <path d="M 300 60 Q 320 50, 340 55" stroke="#FFD700" stroke-width="2" fill="none" opacity="0.6"/>
+    <path d="M 340 55 Q 350 62, 350 70" stroke="#4A90E2" stroke-width="2" fill="none" opacity="0.6"/>
+    <path d="M 300 60 Q 310 67, 310 75" stroke="#FF6B35" stroke-width="2" fill="none" opacity="0.6"/>
+    <path d="M 310 75 Q 320 77, 330 80" stroke="#7B68EE" stroke-width="2" fill="none" opacity="0.6"/>
+    
+    <!-- Intelligence nodes -->
+    <circle cx="300" cy="60" r="4" fill="#FFD700" opacity="0.8"/>
+    <circle cx="320" cy="50" r="3" fill="#4A90E2" opacity="0.8"/>
+    <circle cx="340" cy="55" r="4" fill="#FF6B35" opacity="0.8"/>
+    <circle cx="350" cy="70" r="3" fill="#7B68EE" opacity="0.8"/>
+    <circle cx="310" cy="75" r="3" fill="#FFD700" opacity="0.8"/>
+    <circle cx="330" cy="80" r="4" fill="#4A90E2" opacity="0.8"/>
   </g>
   
   <!-- Text -->

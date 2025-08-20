@@ -13,6 +13,7 @@ use dashmap::DashMap;
 use memmap2::{Mmap, MmapOptions};
 use parquet::file::metadata::ParquetMetaData;
 use tokio::sync::RwLock;
+use tracing::{debug, info, warn};
 
 use crate::storage::persistence::filesystem::{FileSystem, FilesystemFactory};
 // DEPRECATED: refined_integrated_cache replaced by zero_copy_io_system  
@@ -20,8 +21,8 @@ use crate::storage::engines::common::zero_copy_io_system::{
     ZeroCopyIOSystem, MetadataSerializer, EngineMetadata, QueryContext, DataRange,
     FileAccessRequest, RequestPriority, IOStrategy
 };
-use crate::common::errors::ProximaDBError;
-use crate::core::models::VectorRecord;
+use crate::core::errors::ProximaDBError;
+use crate::core::service_types::VectorRecord;
 
 const FOOTER_MAX_SIZE: usize = 8 * 1024 * 1024;  // 8MB max footer size
 const COLUMN_INDEX_CACHE_SIZE: usize = 1024 * 1024 * 1024; // 1GB for column indexes
@@ -396,7 +397,7 @@ impl SharedParquetFormatReader {
         
         self.stats.cache_invalidations.fetch_add(invalidated, Ordering::Relaxed);
         
-        log::info!(
+        info!(
             "Invalidated {} Parquet cache entries for collection {} during compaction",
             invalidated,
             collection_id
@@ -436,7 +437,7 @@ impl SharedParquetFormatReader {
             }
         }
         
-        log::info!(
+        info!(
             "Columnar scan: filtered {}/{} row groups using statistics, downloading {} candidates",
             total_filtered,
             total_filtered + total_candidates,
@@ -676,7 +677,7 @@ impl LocalDiskCache {
             }
         }
         
-        log::info!("Invalidated Parquet disk cache for collection {}", collection_id);
+        info!("Invalidated Parquet disk cache for collection {}", collection_id);
         
         Ok(())
     }
