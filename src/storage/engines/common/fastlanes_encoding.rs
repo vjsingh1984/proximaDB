@@ -174,6 +174,41 @@ impl FastLanesEncoder {
             _ => self.encode_uncompressed(data),
         }
     }
+    
+    /// Encode floating-point data with full fidelity
+    /// Maintains IEEE 754 precision while applying compression
+    pub fn encode_f32(&self, data: &[f32]) -> Result<Vec<u8>> {
+        // Convert f32 to bits preserving exact representation
+        let int_data: Vec<i64> = data.iter()
+            .map(|&f| f.to_bits() as i64)
+            .collect();
+        
+        // Encode as integers preserving all bits
+        let mut encoded = vec![0x80]; // Marker for f32 encoding
+        encoded.extend(self.encode_integers(&int_data)?);
+        Ok(encoded)
+    }
+    
+    /// Encode double-precision floating-point data
+    pub fn encode_f64(&self, data: &[f64]) -> Result<Vec<u8>> {
+        // Convert f64 to bits preserving exact representation
+        let int_data: Vec<i64> = data.iter()
+            .map(|&f| f.to_bits() as i64)
+            .collect();
+        
+        // Encode as integers preserving all bits
+        let mut encoded = vec![0x81]; // Marker for f64 encoding
+        encoded.extend(self.encode_integers(&int_data)?);
+        Ok(encoded)
+    }
+    
+    /// Encode i64 data (for metadata timestamps, IDs, etc)
+    pub fn encode_i64(&self, data: &[i64]) -> Result<Vec<u8>> {
+        // Direct integer encoding
+        let mut encoded = vec![0x82]; // Marker for i64 encoding
+        encoded.extend(self.encode_integers(data)?);
+        Ok(encoded)
+    }
 
     /// Bit-packing with SIMD-friendly layout
     /// Uses transposed bit-packing for better auto-vectorization
@@ -362,6 +397,54 @@ impl FastLanesDecoder {
             }
             _ => self.decode_uncompressed(data, count),
         }
+    }
+    
+    /// Decode f32 data with full fidelity
+    pub fn decode_f32(&self, data: &[u8]) -> Result<Vec<f32>> {
+        // Check for f32 marker
+        if data.is_empty() || data[0] != 0x80 {
+            return Err(anyhow::anyhow!("Invalid f32 encoded data"));
+        }
+        
+        // Decode integers and convert back to f32
+        let count = (data.len() - 1) * 8 / std::mem::size_of::<i64>();
+        let int_data = self.decode_integers(&data[1..], count)?;
+        
+        let floats: Vec<f32> = int_data.iter()
+            .map(|&i| f32::from_bits(i as u32))
+            .collect();
+        
+        Ok(floats)
+    }
+    
+    /// Decode f64 data with full fidelity
+    pub fn decode_f64(&self, data: &[u8]) -> Result<Vec<f64>> {
+        // Check for f64 marker
+        if data.is_empty() || data[0] != 0x81 {
+            return Err(anyhow::anyhow!("Invalid f64 encoded data"));
+        }
+        
+        // Decode integers and convert back to f64
+        let count = (data.len() - 1) * 8 / std::mem::size_of::<i64>();
+        let int_data = self.decode_integers(&data[1..], count)?;
+        
+        let doubles: Vec<f64> = int_data.iter()
+            .map(|&i| f64::from_bits(i as u64))
+            .collect();
+        
+        Ok(doubles)
+    }
+    
+    /// Decode i64 data
+    pub fn decode_i64(&self, data: &[u8]) -> Result<Vec<i64>> {
+        // Check for i64 marker
+        if data.is_empty() || data[0] != 0x82 {
+            return Err(anyhow::anyhow!("Invalid i64 encoded data"));
+        }
+        
+        // Decode integers directly
+        let count = (data.len() - 1) * 8 / std::mem::size_of::<i64>();
+        self.decode_integers(&data[1..], count)
     }
 
     /// Unpack bit-packed integers

@@ -16,7 +16,7 @@ use crate::core::hardware_capabilities::HardwareCapabilities;
 use crate::core::memory::pool::VectorMemoryPool;
 use crate::proto::proximadb::VectorRecord;
 
-use super::{RaptorConfig, metadata::*};
+use super::{RaptorConfig, common::*};
 use super::config::{CompressionCodec as RaptorCompressionCodec};
 
 pub struct RaptorWriter {
@@ -211,7 +211,7 @@ impl RaptorWriter {
         let filesystem = FilesystemFactory::create_from_path(&file_path).await?;
         
         // Initialize hardware capabilities
-        let hardware = HardwareCapabilities::get();
+        let hardware = HardwareCapabilities::global();
         
         // Initialize unified compression
         let compression_algo = match &config.compression {
@@ -502,7 +502,8 @@ impl RaptorWriter {
                 };
                 
                 let encoder = FastLanesEncoder::new(scheme);
-                let encoded_column = encoder.encode_f32(column)?;
+                // Use FastLanes float encoding with full fidelity
+                let encoded_column = encoder.encode_f32(&column)?;
                 
                 // Write encoding scheme marker
                 encoded.push(match scheme {
@@ -609,6 +610,7 @@ impl RaptorWriter {
         
         // Encode each dimension column
         for column in columns {
+            // Use FastLanes float encoding with full fidelity
             let encoded_column = encoder.encode_f32(&column)?;
             encoded_data.write_all(&(encoded_column.len() as u32).to_le_bytes())?;
             encoded_data.write_all(&encoded_column)?;

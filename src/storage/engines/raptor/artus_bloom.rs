@@ -2,7 +2,8 @@
 // Provides per-column bloom filters based on cardinality and access patterns
 
 use anyhow::Result;
-use bloomfilter::Bloom;
+// Use internal bloom filter implementation from SST engine
+use crate::storage::engines::sst::bloom_filter::{BloomFilter, BloomFilterFactory, BloomFilterConfig};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};

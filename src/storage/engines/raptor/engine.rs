@@ -15,7 +15,7 @@ use crate::proto::proximadb::Collection;
 use crate::core::VectorRecord;
 use crate::core::search::{SearchResult, FilterExpression};
 use crate::compute::distance_computation::DistanceMetric;
-use super::{RaptorConfig, RowGroupManager, RaptorWriter, RaptorUnifiedReader};
+use super::{RaptorConfig, RaptorWriter, RaptorUnifiedReader};
 use super::compaction::CompactionManager;
 use super::hnsw_manager::HnswManager;
 
@@ -246,7 +246,7 @@ impl RaptorEngine {
         
         // Get the global hardware capabilities instance
         let hardware_capabilities = Arc::new(
-            HardwareCapabilities::get_instance()
+            HardwareCapabilities::global()
         );
         
         // Initialize universal performance optimization

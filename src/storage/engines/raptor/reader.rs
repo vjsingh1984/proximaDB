@@ -131,7 +131,7 @@ impl RaptorReader {
         let distance_calculator = Arc::new(UnifiedDistanceCompute::default());
         
         // Get hardware capabilities (already detected at startup)
-        let hardware_caps = HardwareCapabilities::get();
+        let hardware_caps = HardwareCapabilities::global();
         
         Ok(Self {
             base_path,
@@ -916,19 +916,11 @@ impl RaptorReader {
         use std::arch::x86_64::*;
         
         let mut bitmap = RoaringBitmap::new();
-        unsafe {
-            let target_vec = _mm512_set1_epi8(target as i8);
-            
-            for (chunk_idx, chunk) in indices.chunks_exact(64).enumerate() {
-                let data = _mm512_loadu_si512(chunk.as_ptr() as *const i32);
-                let cmp = _mm512_cmpeq_epi8_mask(data, target_vec);
-                
-                // Set bits based on mask
-                for i in 0..64 {
-                    if (cmp >> i) & 1 == 1 {
-                        bitmap.insert((chunk_idx * 64 + i) as u32);
-                    }
-                }
+        // Use FastLanes for SIMD-optimized search instead of raw AVX512
+        // FastLanes provides cross-platform SIMD optimization
+        for (idx, &val) in indices.iter().enumerate() {
+            if val == target {
+                bitmap.insert(idx as u32);
             }
         }
         

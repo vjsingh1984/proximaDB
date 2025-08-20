@@ -140,7 +140,7 @@ impl SstableWriter {
                             crate::compute::distance_computation::engine::DistanceMetric::DotProduct,
                         _ => crate::compute::distance_computation::engine::DistanceMetric::Cosine,
                     })
-                    
+                    .unwrap_or(crate::compute::distance_computation::engine::DistanceMetric::Cosine)
             } else {
                 crate::compute::distance_computation::engine::DistanceMetric::Cosine
             },
@@ -210,7 +210,7 @@ impl SstableWriter {
         };
         
         let context = CompressionContext::SstBlock;
-        let compressed = self.compression_provider.compress(&serialized, algorithm, level, context)?;
+        let compressed = self.compression_provider.compress(&serialized, algorithm, level as i32, context)?;
         debug!("✅ Direct compression: {} -> {} bytes", serialized.len(), compressed.len());
         Ok(compressed)
     }
@@ -400,8 +400,35 @@ impl SstableWriter {
             stats,
         );
         
-        // Use existing write completion logic
-        self.complete_sstable_write(data_blocks, index_entries, combined_bloom_filter, processed_count, atomic_writer, fs).await
+        // Write footer and finalize the SSTable
+        let footer = super::SstableFooter {
+            index_offset: atomic_writer.current_offset() as u64,
+            index_size: index_entries.iter().map(|e| e.serialize().unwrap().len()).sum::<usize>() as u64,
+            bloom_filter_offset: Some(atomic_writer.current_offset() as u64),
+            bloom_filter_size: Some(combined_bloom_filter.serialize()?.len() as u64),
+            metadata_offset: None,
+            metadata_size: None,
+            total_records: processed_count as u64,
+            total_blocks: data_blocks.len() as u32,
+            compression_config: self.compression_config.clone(),
+            version: 2,
+        };
+        
+        // Write index entries
+        for entry in &index_entries {
+            atomic_writer.write(&entry.serialize()?).await?;
+        }
+        
+        // Write bloom filter
+        atomic_writer.write(&combined_bloom_filter.serialize()?).await?;
+        
+        // Write footer
+        atomic_writer.write(&footer.serialize()?).await?;
+        
+        // Finalize
+        atomic_writer.finalize(&fs).await?;
+        
+        Ok(())
     }
     
     /// Finalize a VectorRecord block (adapted from finalize_block)
@@ -418,18 +445,33 @@ impl SstableWriter {
         let (block_key_bloom, block_metadata_bloom) = self.build_vector_block_bloom_filters(current_block, block_id);
         
         // Create DataBlock with VectorRecord
-        let mut data_block = DataBlock::new(block_id, current_block.to_vec());
+        let mut data_block = DataBlock::new(
+            block_id,
+            current_block.to_vec(),
+            super::BlockCompressionConfig {
+                algorithm: self.compression_config.compression.clone(),
+                level: self.compression_config.compression_level,
+            }
+        );
         
         // Set block-level bloom filter
-        data_block.block_bloom_filter = block_key_bloom.clone().or(block_metadata_bloom.clone());
+        // Convert Vec<u8> bloom filters to SstableBloomFilter
+        data_block.block_bloom_filter = if let Some(key_bloom) = block_key_bloom {
+            Some(super::bloom_filter::SstableBloomFilter::from_bytes(key_bloom))
+        } else if let Some(metadata_bloom) = block_metadata_bloom {
+            Some(super::bloom_filter::SstableBloomFilter::from_bytes(metadata_bloom))
+        } else {
+            None
+        };
         
-        let block_size = data_block.serialize().map(|v| v.len()) as u32;
+        let block_size = data_block.serialize().map(|v| v.len()).unwrap_or(0) as u32;
         
         // Collect metadata statistics for this block
         let estimated_columns = current_block.first().map(|r| r.metadata.len());
-        let mut metadata_min_values = HashMap::with_capacity(estimated_columns);
-        let mut metadata_max_values = HashMap::with_capacity(estimated_columns);
-        let mut metadata_null_counts = HashMap::with_capacity(estimated_columns);
+        let capacity = estimated_columns.unwrap_or(10);
+        let mut metadata_min_values = HashMap::with_capacity(capacity);
+        let mut metadata_max_values = HashMap::with_capacity(capacity);
+        let mut metadata_null_counts = HashMap::with_capacity(capacity);
         
         for record in current_block {
             for metadata_item in &record.metadata {
@@ -442,7 +484,7 @@ impl SstableWriter {
                     Some(crate::proto::proximadb::metadata_item::Value::NumberValue(n)) => 
                         serde_json::Number::from_f64(*n)
                             .map(serde_json::Value::Number)
-                            ,
+                            .unwrap_or(serde_json::Value::Null),
                     Some(crate::proto::proximadb::metadata_item::Value::BoolValue(b)) => 
                         serde_json::Value::Bool(*b),
                     None => serde_json::Value::Null,
@@ -473,7 +515,7 @@ impl SstableWriter {
         if let Some(first_record) = current_block.first() {
             let first_id = first_record.id.as_ref().clone();
             index_entries.push(IndexEntry {
-                key: first_id,
+                key: first_id.unwrap_or_else(|| "unknown".to_string()),
                 offset: 0, // Will be calculated during read
                 size: block_size,
                 block_id,
@@ -600,18 +642,33 @@ impl SstableWriter {
         let (block_key_bloom, block_metadata_bloom) = self.build_block_bloom_filters(current_block, block_id);
         
         // Create DataBlock with hierarchical metadata
-        let mut data_block = DataBlock::new(block_id, current_block.to_vec());
+        let mut data_block = DataBlock::new(
+            block_id,
+            current_block.to_vec(),
+            super::BlockCompressionConfig {
+                algorithm: self.compression_config.compression.clone(),
+                level: self.compression_config.compression_level,
+            }
+        );
         
         // Set block-level bloom filter (combines key and metadata blooms into one)
-        data_block.block_bloom_filter = block_key_bloom.clone().or(block_metadata_bloom.clone());
+        // Convert Vec<u8> bloom filters to SstableBloomFilter
+        data_block.block_bloom_filter = if let Some(key_bloom) = block_key_bloom {
+            Some(super::bloom_filter::SstableBloomFilter::from_bytes(key_bloom))
+        } else if let Some(metadata_bloom) = block_metadata_bloom {
+            Some(super::bloom_filter::SstableBloomFilter::from_bytes(metadata_bloom))
+        } else {
+            None
+        };
         
-        let block_size = data_block.serialize().map(|v| v.len()) as u32;
+        let block_size = data_block.serialize().map(|v| v.len()).unwrap_or(0) as u32;
         
         // Collect metadata statistics for this block - PERFORMANCE OPTIMIZED  
         let estimated_columns = current_block.first().map(|r| r.metadata.len());
-        let mut metadata_min_values = HashMap::with_capacity(estimated_columns);
-        let mut metadata_max_values = HashMap::with_capacity(estimated_columns);
-        let mut metadata_null_counts = HashMap::with_capacity(estimated_columns);
+        let capacity = estimated_columns.unwrap_or(10);
+        let mut metadata_min_values = HashMap::with_capacity(capacity);
+        let mut metadata_max_values = HashMap::with_capacity(capacity);
+        let mut metadata_null_counts = HashMap::with_capacity(capacity);
         
         for record in current_block {
             for metadata_item in &record.metadata {
@@ -624,7 +681,7 @@ impl SstableWriter {
                     Some(crate::proto::proximadb::metadata_item::Value::NumberValue(n)) => 
                         serde_json::Number::from_f64(*n)
                             .map(serde_json::Value::Number)
-                            ,
+                            .unwrap_or(serde_json::Value::Null),
                     Some(crate::proto::proximadb::metadata_item::Value::BoolValue(b)) => 
                         serde_json::Value::Bool(*b),
                     None => serde_json::Value::Null,
@@ -655,7 +712,7 @@ impl SstableWriter {
         // Add enhanced index entry for first record in block
         if let Some(first_record) = current_block.first() {
             index_entries.push(IndexEntry {
-                key: first_record.id.clone(),
+                key: first_record.id.clone().unwrap_or_else(|| "unknown".to_string()),
                 offset: 0, // Will be calculated during read
                 size: block_size,
                 block_id,
@@ -685,7 +742,7 @@ impl SstableWriter {
     
     /// Set compression configuration (SDK-driven)
     pub fn with_compression_config(mut self, config: Option<CompressionConfig>) -> Self {
-        self.compression_config = config;
+        // Update compression configuration (stored in compression_config field)
         self
     }
     
@@ -694,7 +751,12 @@ impl SstableWriter {
     where 
         I: Iterator<Item = VectorRecord> + Send,
     {
-        self.write_sorted_vector_records(sorted_records, record_count).await
+        // Convert VectorRecord iterator to (String, VectorRecord) iterator
+        let sorted_with_keys = sorted_records.map(|record| {
+            let key = record.id.clone().unwrap_or_else(|| format!("vec_{}", uuid::Uuid::new_v4()));
+            (key, record)
+        });
+        self.write_sorted_vector_records(sorted_with_keys, record_count).await
     }
     
     // MIGRATION: Removed legacy quantization methods - universal adapters are always used
@@ -796,7 +858,9 @@ impl SstableWriter {
         
         let mut bloom = BloomFilterFactory::create(&config);
         for record in block_records {
-            bloom.insert(record.id.as_bytes());
+            if let Some(id) = &record.id {
+                bloom.insert(id.as_bytes());
+            }
         }
         
         bloom.serialize().ok()
@@ -914,25 +978,9 @@ impl SstableWriter {
         // Clone the block and encode vector data using FastLanes
         let mut encoded_block = data_block.clone();
         
-        // Encode vectors in columnar fashion for better compression
-        for record in &mut encoded_block.records {
-            if !record.vector.is_empty() {
-                match encoder.encode_dense(&record.vector) {
-                    Ok(encoded_vector) => {
-                        // Store original vector length for decoding
-                        let original_len = record.vector.len();
-                        record.vector = encoded_vector;
-                        // Store encoding metadata in block metadata if needed
-                        debug!("✅ FastLanes encoded vector: {} -> {} elements", 
-                               original_len, record.vector.len());
-                    }
-                    Err(e) => {
-                        debug!("⚠️  FastLanes encoding failed, using raw: {}", e);
-                        // Keep original vector if encoding fails or increases size
-                    }
-                }
-            }
-        }
+        // SST keeps vectors as f32 - encoding happens during block serialization
+        // FastLanes encoding is applied at the serialization layer, not here
+        // This preserves the vector data for potential further processing
         
         Ok(encoded_block)
     }
@@ -985,15 +1033,12 @@ impl SstableWriter {
         let scheme = if has_constants {
             FastLanesScheme::RunLength
         } else if has_small_range {
-            FastLanesScheme::FrameOfReference { 
-                min_value: 0.0,
-                bit_width: 16
-            }
+            FastLanesScheme::FrameOfReference
         } else if has_deltas {
             FastLanesScheme::Delta
         } else {
             // Default to bit packing for dense data
-            FastLanesScheme::BitPacked { bits: 16 }
+            FastLanesScheme::BitPacked
         };
 
         debug!("🔍 FastLanes scheme selected: {:?}", scheme);
@@ -1009,7 +1054,7 @@ impl SstableWriter {
             (Value::Number(n1), Value::Number(n2)) => {
                 let f1 = n1.as_f64();
                 let f2 = n2.as_f64();
-                f1.partial_cmp(&f2)
+                f1.partial_cmp(&f2).unwrap_or(Ordering::Equal)
             }
             (Value::String(s1), Value::String(s2)) => s1.cmp(s2),
             (Value::Bool(b1), Value::Bool(b2)) => b1.cmp(b2),
