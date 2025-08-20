@@ -63,6 +63,7 @@ use std::sync::Arc;
 use anyhow::Result;
 use std::collections::HashMap;
 use tokio::sync::RwLock;
+use roaring::RoaringBitmap;
 
 use crate::core::storage::compression::{CompressionConfig, CompressionAlgorithm};
 use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
@@ -72,24 +73,65 @@ use crate::storage::engines::common::zero_copy_io_system::ZeroCopyIOSystem;
 use super::{RaptorConfig, RowGroup};
 
 pub struct RaptorReader {
-    /// RAPTOR-specific reader for Arrow RecordBatch format
-    /// Does not use SharedParquetFormatReader as RAPTOR has its own format
+    /// RAPTOR-specific reader with columnar tensor and metadata optimization
     
     base_path: String,
     config: RaptorConfig,
     
-    // Simplified components  
+    // Core components  
     compression_config: CompressionConfig,
     distance_calculator: Arc<UnifiedDistanceCompute>,
     filesystem_factory: Arc<FilesystemFactory>,
     
-    // RAPTOR-SPECIFIC: Row-aligned optimizations and tensor operations
+    // RAPTOR-SPECIFIC: Columnar tensor storage and metadata columns
     rowgroup_index: Arc<RwLock<HashMap<u32, RowGroup>>>,
+    metadata_columns: Arc<RwLock<HashMap<String, MetadataColumn>>>,
     prefetch_queue: Arc<RwLock<Vec<u32>>>,
     
     // Zero-copy cache integration
     zero_copy_system: Arc<ZeroCopyIOSystem>,
     collection_id: String,
+    
+    // SIMD support detection
+    simd_support: SimdSupport,
+}
+
+#[derive(Clone, Copy)]
+enum SimdSupport {
+    #[cfg(target_arch = "x86_64")]
+    AVX512,
+    #[cfg(target_arch = "x86_64")]
+    AVX2,
+    #[cfg(target_arch = "x86_64")]
+    SSE,
+    #[cfg(target_arch = "aarch64")]
+    NEON,
+    None,
+}
+
+impl SimdSupport {
+    fn detect() -> Self {
+        #[cfg(target_arch = "x86_64")]
+        {
+            if is_x86_feature_detected!("avx512f") {
+                return SimdSupport::AVX512;
+            }
+            if is_x86_feature_detected!("avx2") {
+                return SimdSupport::AVX2;
+            }
+            if is_x86_feature_detected!("sse4.2") {
+                return SimdSupport::SSE;
+            }
+        }
+        
+        #[cfg(target_arch = "aarch64")]
+        {
+            // NEON is mandatory on AArch64
+            return SimdSupport::NEON;
+        }
+        
+        SimdSupport::None
+    }
 }
 
 impl RaptorReader {
@@ -132,7 +174,11 @@ impl RaptorReader {
             distance_calculator,
             filesystem_factory,
             rowgroup_index: Arc::new(RwLock::new(HashMap::new())),
+            metadata_columns: Arc::new(RwLock::new(HashMap::new())),
             prefetch_queue: Arc::new(RwLock::new(Vec::new())),
+            zero_copy_system,
+            collection_id,
+            simd_support: SimdSupport::detect(),
         })
     }
     
@@ -779,4 +825,173 @@ pub struct ReaderSearchResult {
     pub row_index: usize,
     pub similarity: f32,
     pub vector_id: String,
+}
+
+// Metadata column for predicate pushdown
+pub struct MetadataColumn {
+    pub name: String,
+    pub encoding: MetadataEncoding,
+    pub encoded_data: Vec<u8>,
+    pub dictionary: Option<Vec<String>>,
+    pub statistics: ColumnStats,
+}
+
+pub enum MetadataEncoding {
+    Dictionary { indices: Vec<u8>, dict_size: u16, bits_per_index: u8 },
+    Integer { min: i64, max: i64 },
+    Float { min: f32, max: f32 },
+    Boolean { packed_bits: Vec<u8> },
+    RunLength { value: Vec<u8>, count: u32 },
+    String,
+}
+
+pub struct ColumnStats {
+    pub null_count: u32,
+    pub distinct_count: u32,
+    pub min_value: Option<Vec<u8>>,
+    pub max_value: Option<Vec<u8>>,
+}
+
+impl RaptorReader {
+    /// Evaluate predicate on metadata columns with SIMD optimization
+    pub async fn evaluate_predicate(
+        &self,
+        column_name: &str,
+        predicate: &Predicate,
+    ) -> Result<RoaringBitmap> {
+        let columns = self.metadata_columns.read().await;
+        let column = columns.get(column_name)
+            .ok_or_else(|| anyhow::anyhow!("Column {} not found", column_name))?;
+        
+        match (&column.encoding, predicate) {
+            // Dictionary encoding with SIMD
+            (MetadataEncoding::Dictionary { indices, dict_size, bits_per_index }, 
+             Predicate::Equals(value)) => {
+                let target_idx = column.dictionary
+                    .as_ref()
+                    .and_then(|d| d.iter().position(|v| v == value))
+                    .ok_or_else(|| anyhow::anyhow!("Value not in dictionary"))?;
+                
+                // Use SIMD based on platform
+                match self.simd_support {
+                    #[cfg(target_arch = "x86_64")]
+                    SimdSupport::AVX2 => self.simd_eq_avx2(indices, target_idx as u8),
+                    #[cfg(target_arch = "aarch64")]
+                    SimdSupport::NEON => self.simd_eq_neon(indices, target_idx as u8),
+                    _ => self.scalar_eq(indices, target_idx as u8),
+                }
+            },
+            
+            // Integer range check
+            (MetadataEncoding::Integer { min, max }, 
+             Predicate::Range(low, high)) => {
+                // Skip if range doesn't overlap
+                if high < min || low > max {
+                    return Ok(RoaringBitmap::new());
+                }
+                
+                // Decode and evaluate
+                self.decode_and_evaluate_integers(column, *low, *high).await
+            },
+            
+            _ => Ok(RoaringBitmap::new()),
+        }
+    }
+    
+    #[cfg(target_arch = "aarch64")]
+    fn simd_eq_neon(&self, indices: &[u8], target: u8) -> Result<RoaringBitmap> {
+        use std::arch::aarch64::*;
+        
+        let mut bitmap = RoaringBitmap::new();
+        unsafe {
+            let target_vec = vdupq_n_u8(target);
+            
+            for (chunk_idx, chunk) in indices.chunks_exact(16).enumerate() {
+                let data = vld1q_u8(chunk.as_ptr());
+                let cmp = vceqq_u8(data, target_vec);
+                
+                // Extract comparison results
+                let mask = vreinterpretq_u64_u8(cmp);
+                let mask_val = vgetq_lane_u64(mask, 0);
+                
+                for i in 0..8 {
+                    if (mask_val >> (i * 8)) & 0xFF == 0xFF {
+                        bitmap.insert((chunk_idx * 16 + i) as u32);
+                    }
+                }
+            }
+        }
+        
+        // Handle remaining elements
+        for (i, &val) in indices.iter().skip(indices.len() - indices.len() % 16).enumerate() {
+            if val == target {
+                bitmap.insert((indices.len() - indices.len() % 16 + i) as u32);
+            }
+        }
+        
+        Ok(bitmap)
+    }
+    
+    #[cfg(target_arch = "x86_64")]
+    fn simd_eq_avx2(&self, indices: &[u8], target: u8) -> Result<RoaringBitmap> {
+        use std::arch::x86_64::*;
+        
+        let mut bitmap = RoaringBitmap::new();
+        unsafe {
+            let target_vec = _mm256_set1_epi8(target as i8);
+            
+            for (chunk_idx, chunk) in indices.chunks_exact(32).enumerate() {
+                let data = _mm256_loadu_si256(chunk.as_ptr() as *const __m256i);
+                let cmp = _mm256_cmpeq_epi8(data, target_vec);
+                let mask = _mm256_movemask_epi8(cmp) as u32;
+                
+                // Set bits based on mask
+                for i in 0..32 {
+                    if (mask >> i) & 1 == 1 {
+                        bitmap.insert((chunk_idx * 32 + i) as u32);
+                    }
+                }
+            }
+        }
+        
+        // Handle remaining elements
+        for (i, &val) in indices.iter().skip(indices.len() - indices.len() % 32).enumerate() {
+            if val == target {
+                bitmap.insert((indices.len() - indices.len() % 32 + i) as u32);
+            }
+        }
+        
+        Ok(bitmap)
+    }
+    
+    fn scalar_eq(&self, indices: &[u8], target: u8) -> Result<RoaringBitmap> {
+        let mut bitmap = RoaringBitmap::new();
+        for (i, &val) in indices.iter().enumerate() {
+            if val == target {
+                bitmap.insert(i as u32);
+            }
+        }
+        Ok(bitmap)
+    }
+    
+    async fn decode_and_evaluate_integers(
+        &self,
+        column: &MetadataColumn,
+        low: i64,
+        high: i64,
+    ) -> Result<RoaringBitmap> {
+        // Decode integers using FastLanes
+        // Then evaluate range predicate
+        // This would use the actual FastLanes decoder
+        Ok(RoaringBitmap::new())
+    }
+}
+
+// Predicate types for filtering
+pub enum Predicate {
+    Equals(String),
+    Range(i64, i64),
+    In(Vec<String>),
+    IsNull,
+    IsNotNull,
 }

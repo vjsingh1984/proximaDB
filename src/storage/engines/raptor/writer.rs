@@ -96,6 +96,110 @@ struct CurrentRowgroup {
     size: usize,
 }
 
+// Metadata column analysis for intelligent encoding
+struct MetadataColumn {
+    name: String,
+    values: Vec<String>,
+    distinct_count: usize,
+    all_integers: bool,
+    all_floats: bool,
+    all_booleans: bool,
+}
+
+impl MetadataColumn {
+    fn new(name: String) -> Self {
+        Self {
+            name,
+            values: Vec::new(),
+            distinct_count: 0,
+            all_integers: true,
+            all_floats: true,
+            all_booleans: true,
+        }
+    }
+    
+    fn add_value(&mut self, value: String) {
+        // Check type compatibility
+        if self.all_integers {
+            self.all_integers = value.parse::<i64>().is_ok();
+        }
+        if self.all_floats {
+            self.all_floats = value.parse::<f32>().is_ok();
+        }
+        if self.all_booleans {
+            let lower = value.to_lowercase();
+            self.all_booleans = lower == "true" || lower == "false" || 
+                                value == "0" || value == "1";
+        }
+        
+        self.values.push(value);
+    }
+    
+    fn analyze_and_choose_encoding(&mut self) -> MetadataEncoding {
+        use std::collections::HashSet;
+        
+        // Calculate distinct count
+        let unique: HashSet<_> = self.values.iter().cloned().collect();
+        self.distinct_count = unique.len();
+        
+        // Choose encoding based on characteristics
+        if self.distinct_count == 1 {
+            MetadataEncoding::RunLength
+        } else if self.all_booleans {
+            MetadataEncoding::Boolean
+        } else if self.all_integers {
+            MetadataEncoding::Integer
+        } else if self.all_floats {
+            MetadataEncoding::Float
+        } else if self.distinct_count <= self.values.len() / 10 {
+            // Dictionary encoding if cardinality < 10%
+            MetadataEncoding::Dictionary
+        } else {
+            MetadataEncoding::String
+        }
+    }
+    
+    fn build_dictionary(&self) -> Vec<String> {
+        use std::collections::BTreeSet;
+        let unique: BTreeSet<_> = self.values.iter().cloned().collect();
+        unique.into_iter().collect()
+    }
+    
+    fn encode_as_indices(&self, dict: &[String]) -> Vec<usize> {
+        let dict_map: HashMap<_, _> = dict.iter()
+            .enumerate()
+            .map(|(i, s)| (s.as_str(), i))
+            .collect();
+        
+        self.values.iter()
+            .map(|v| *dict_map.get(v.as_str()).unwrap_or(&0))
+            .collect()
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+enum MetadataEncoding {
+    Dictionary,  // Low cardinality strings
+    Integer,     // Integer values with FastLanes
+    Float,       // Float values with FastLanes
+    Boolean,     // Boolean values as bits
+    String,      // High cardinality strings
+    RunLength,   // All values the same
+}
+
+impl MetadataEncoding {
+    fn to_byte(&self) -> u8 {
+        match self {
+            Self::Dictionary => 0x10,
+            Self::Integer => 0x11,
+            Self::Float => 0x12,
+            Self::Boolean => 0x13,
+            Self::String => 0x14,
+            Self::RunLength => 0x15,
+        }
+    }
+}
+
 impl RaptorWriter {
     pub async fn new(
         file_path: String,
@@ -420,11 +524,8 @@ impl RaptorWriter {
             encoded.extend(&row.id);
         }
         
-        // Store metadata separately (row-wise for variable-length metadata)
-        for row in &page.rows {
-            encoded.extend(&(row.metadata.len() as u32).to_le_bytes());
-            encoded.extend(&row.metadata);
-        }
+        // Store metadata with intelligent columnar encoding
+        self.encode_metadata_columns(&page, &mut encoded)?;
         
         Ok(encoded)
     }
@@ -747,6 +848,154 @@ impl RaptorWriter {
         // This would use the actual distance computation from the quantization engine
         // For now, return a placeholder
         Ok(0.5)
+    }
+    
+    /// Encode metadata columns with intelligent type detection and encoding
+    fn encode_metadata_columns(&self, page: &RowPageBuffer, encoded: &mut Vec<u8>) -> Result<()> {
+        use std::collections::BTreeMap;
+        
+        // First, extract and analyze all metadata across the page
+        let mut metadata_schema: BTreeMap<String, MetadataColumn> = BTreeMap::new();
+        
+        // Parse all metadata to build schema
+        for row in &page.rows {
+            if !row.metadata.is_empty() {
+                // Deserialize metadata (stored as bincode of HashMap<String, String>)
+                if let Ok(metadata_map) = bincode::deserialize::<HashMap<String, String>>(&row.metadata) {
+                    for (key, value) in metadata_map {
+                        metadata_schema.entry(key.clone())
+                            .or_insert_with(|| MetadataColumn::new(key.clone()))
+                            .add_value(value);
+                    }
+                } 
+            }
+        }
+        
+        // Write number of metadata columns
+        encoded.extend(&(metadata_schema.len() as u32).to_le_bytes());
+        
+        // Encode each metadata column optimally
+        for (column_name, mut column) in metadata_schema {
+            // Write column name
+            let name_bytes = column_name.as_bytes();
+            encoded.extend(&(name_bytes.len() as u32).to_le_bytes());
+            encoded.extend(name_bytes);
+            
+            // Analyze column and choose encoding
+            let encoding = column.analyze_and_choose_encoding();
+            encoded.push(encoding.to_byte());
+            
+            // Encode column based on chosen strategy
+            match encoding {
+                MetadataEncoding::Dictionary => {
+                    // Dictionary encoding for low cardinality
+                    let dict = column.build_dictionary();
+                    encoded.extend(&(dict.len() as u32).to_le_bytes());
+                    
+                    // Write dictionary entries
+                    for entry in &dict {
+                        let entry_bytes = entry.as_bytes();
+                        encoded.extend(&(entry_bytes.len() as u32).to_le_bytes());
+                        encoded.extend(entry_bytes);
+                    }
+                    
+                    // Write indices using minimal bits
+                    let bits_needed = (dict.len() as f32).log2().ceil() as u8;
+                    encoded.push(bits_needed);
+                    
+                    // Pack indices
+                    let indices = column.encode_as_indices(&dict);
+                    let packed = self.pack_indices(&indices, bits_needed);
+                    encoded.extend(&(packed.len() as u32).to_le_bytes());
+                    encoded.extend(&packed);
+                },
+                MetadataEncoding::Integer => {
+                    // Parse as integers and use FastLanes
+                    let integers: Vec<i64> = column.values.iter()
+                        .map(|v| v.parse::<i64>().unwrap_or(0))
+                        .collect();
+                    
+                    let min = *integers.iter().min().unwrap_or(&0);
+                    let max = *integers.iter().max().unwrap_or(&0);
+                    let range = max - min;
+                    
+                    // Use frame of reference encoding
+                    let scheme = FastLanesScheme::FrameOfReference {
+                        reference: min,
+                        bits: ((range as f64).log2().ceil() as u8 + 1).min(32),
+                    };
+                    
+                    let encoder = FastLanesEncoder::new(scheme);
+                    let encoded_ints = encoder.encode_i64(&integers)?;
+                    
+                    encoded.extend(&min.to_le_bytes());
+                    encoded.extend(&max.to_le_bytes());
+                    encoded.extend(&(encoded_ints.len() as u32).to_le_bytes());
+                    encoded.extend(&encoded_ints);
+                },
+                MetadataEncoding::Boolean => {
+                    // Pack booleans as bits
+                    let bools: Vec<bool> = column.values.iter()
+                        .map(|v| v.to_lowercase() == "true" || v == "1")
+                        .collect();
+                    
+                    let packed = self.pack_booleans(&bools);
+                    encoded.extend(&(packed.len() as u32).to_le_bytes());
+                    encoded.extend(&packed);
+                },
+                MetadataEncoding::Float => {
+                    // Parse as floats and use FastLanes
+                    let floats: Vec<f32> = column.values.iter()
+                        .map(|v| v.parse::<f32>().unwrap_or(0.0))
+                        .collect();
+                    
+                    let encoder = FastLanesEncoder::new(FastLanesScheme::BitPacked { bits: 16 });
+                    let encoded_floats = encoder.encode_f32(&floats)?;
+                    
+                    encoded.extend(&(encoded_floats.len() as u32).to_le_bytes());
+                    encoded.extend(&encoded_floats);
+                },
+                MetadataEncoding::String => {
+                    // High cardinality strings - use length-prefixed encoding
+                    for value in &column.values {
+                        let value_bytes = value.as_bytes();
+                        encoded.extend(&(value_bytes.len() as u32).to_le_bytes());
+                        encoded.extend(value_bytes);
+                    }
+                },
+                MetadataEncoding::RunLength => {
+                    // All values are the same - just store once
+                    let value = &column.values[0];
+                    let value_bytes = value.as_bytes();
+                    encoded.extend(&(value_bytes.len() as u32).to_le_bytes());
+                    encoded.extend(value_bytes);
+                    encoded.extend(&(column.values.len() as u32).to_le_bytes()); // count
+                },
+            }
+        }
+        
+        Ok(())
+    }
+    
+    /// Pack boolean values into bits
+    fn pack_booleans(&self, bools: &[bool]) -> Vec<u8> {
+        let mut packed = Vec::new();
+        for chunk in bools.chunks(8) {
+            let mut byte = 0u8;
+            for (i, &b) in chunk.iter().enumerate() {
+                if b {
+                    byte |= 1 << i;
+                }
+            }
+            packed.push(byte);
+        }
+        packed
+    }
+    
+    /// Pack indices with minimal bits
+    fn pack_indices(&self, indices: &[usize], bits: u8) -> Vec<u8> {
+        // Simplified bit packing - in production would use proper bit packing
+        indices.iter().map(|&i| i as u8).collect()
     }
     
     /// Write B-tree index to disk

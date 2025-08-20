@@ -299,6 +299,14 @@ pub struct HnswNode {
 - **Cache Locality**: Entire row group fits in L3 cache
 - **No Duplication**: HNSW stores only quantized references (8-16x smaller)
 
+**Intelligent Metadata Encoding:**
+- **Type Detection**: Automatically detect integers, floats, booleans, strings
+- **Dictionary Encoding**: Low cardinality columns (<10% distinct) use dictionary
+- **Bit Packing**: Booleans packed as bits (8x compression)
+- **Integer/Float Compression**: FastLanes FOR/Delta encoding
+- **Run-Length**: Constant columns stored once
+- **Predicate Pushdown**: Direct filtering on encoded data without decompression
+
 **Memory Footprint (per 10K vectors, 384-dim):**
 ```
 Traditional Columnar: 10K × 384 × 4 = 15.4 MB (vectors only)
@@ -396,49 +404,163 @@ pub async fn scan_with_filter(&self, filter: &Filter) -> Result<Vec<VectorRecord
 }
 ```
 
-#### 3.5 FastLanes Encoding Integration
+#### 3.5 Metadata Encoding with SIMD-Optimized Predicate Pushdown
 
-Column projections use FastLanes for efficient encoding:
+Metadata columns are encoded with FastLanes for SIMD-accelerated filtering:
 
 ```rust
-pub struct EncodedColumn {
-    pub encoding_type: FastLanesEncoding,
+pub struct MetadataColumn {
+    pub name: String,
+    pub encoding: MetadataEncoding,
     pub encoded_data: Vec<u8>,
-    pub dictionary: Option<Dictionary>,
-    pub statistics: ColumnStatistics,
+    pub dictionary: Option<Vec<String>>,
+    pub statistics: ColumnStats,
+    pub simd_aligned: bool,  // 32-byte aligned for AVX/NEON
 }
 
-pub enum FastLanesEncoding {
-    Dictionary,      // For strings, low cardinality
-    Delta,          // For sorted/sequential values  
-    FrameOfReference, // For bounded numeric ranges
-    RunLength,      // For repeated values
-    BitPacking,     // For small integers
-    Uncompressed,   // For high entropy data
+pub enum MetadataEncoding {
+    // Dictionary with SIMD index comparison
+    Dictionary { 
+        indices: Vec<u8>,     // Packed indices
+        dict_size: u16,       // Dictionary size
+        bits_per_index: u8,   // Minimal bits needed
+    },
+    
+    // Integer with SIMD range checks
+    Integer {
+        scheme: FastLanesScheme,
+        min: i64,
+        max: i64,
+    },
+    
+    // Float with SIMD comparison
+    Float {
+        scheme: FastLanesScheme,
+        min: f32,
+        max: f32,
+    },
+    
+    // Boolean with SIMD bit operations
+    Boolean {
+        packed_bits: Vec<u8>, // 8 bools per byte
+    },
+    
+    // Run-length for constant values
+    RunLength {
+        value: Vec<u8>,
+        count: u32,
+    },
 }
 
-impl ColumnProjections {
-    pub fn encode_metadata_column(
-        &mut self,
-        column_name: &str,
-        values: &[MetadataValue]
-    ) -> Result<()> {
-        // Choose encoding based on data characteristics
-        let encoding = match analyze_column(values) {
-            ColumnType::LowCardinality(n) if n < 256 => {
-                FastLanesEncoding::Dictionary
-            }
-            ColumnType::Sequential => FastLanesEncoding::Delta,
-            ColumnType::BoundedNumeric(min, max) => {
-                FastLanesEncoding::FrameOfReference
-            }
-            ColumnType::Repeated => FastLanesEncoding::RunLength,
-            _ => FastLanesEncoding::Uncompressed,
-        };
+/// SIMD-optimized predicate evaluation
+impl MetadataColumn {
+    pub fn evaluate_predicate(&self, predicate: &Predicate) -> Result<RoaringBitmap> {
+        // Detect hardware capabilities
+        let simd_type = detect_simd_support();
         
-        let encoded = fastlanes::encode(values, encoding)?;
-        self.metadata_columns.insert(column_name.to_string(), encoded);
-        Ok(())
+        match (&self.encoding, predicate) {
+            // Dictionary encoding with SIMD
+            (MetadataEncoding::Dictionary { indices, dict_size, bits_per_index }, 
+             Predicate::Equals(value)) => {
+                let target_idx = self.dictionary
+                    .as_ref()
+                    .and_then(|d| d.iter().position(|v| v == value))
+                    .ok_or("Value not in dictionary")?;
+                
+                // SIMD comparison of packed indices
+                match simd_type {
+                    SimdType::AVX512 => self.simd_eq_avx512(indices, target_idx as u8),
+                    SimdType::AVX2 => self.simd_eq_avx2(indices, target_idx as u8),
+                    SimdType::NEON => self.simd_eq_neon(indices, target_idx as u8),
+                    SimdType::SSE => self.simd_eq_sse(indices, target_idx as u8),
+                    SimdType::None => self.scalar_eq(indices, target_idx as u8),
+                }
+            },
+            
+            // Integer range check with SIMD
+            (MetadataEncoding::Integer { scheme, min, max }, 
+             Predicate::Range(low, high)) => {
+                // Decode integers with FastLanes
+                let integers = self.decode_integers_simd(scheme)?;
+                
+                // SIMD range comparison
+                match simd_type {
+                    SimdType::AVX512 => self.simd_range_i64_avx512(&integers, *low, *high),
+                    SimdType::AVX2 => self.simd_range_i64_avx2(&integers, *low, *high),
+                    SimdType::NEON => self.simd_range_i64_neon(&integers, *low, *high),
+                    _ => self.scalar_range_i64(&integers, *low, *high),
+                }
+            },
+            
+            // Boolean with SIMD bit operations
+            (MetadataEncoding::Boolean { packed_bits }, 
+             Predicate::Equals(value)) => {
+                let target = value.parse::<bool>().unwrap_or(false);
+                
+                // SIMD bit manipulation
+                match simd_type {
+                    SimdType::AVX512 => self.simd_bool_avx512(packed_bits, target),
+                    SimdType::NEON => self.simd_bool_neon(packed_bits, target),
+                    _ => self.scalar_bool(packed_bits, target),
+                }
+            },
+            
+            _ => Ok(RoaringBitmap::new()),
+        }
+    }
+    
+    // ARM NEON implementation
+    #[cfg(target_arch = "aarch64")]
+    fn simd_eq_neon(&self, indices: &[u8], target: u8) -> Result<RoaringBitmap> {
+        use std::arch::aarch64::*;
+        
+        let mut bitmap = RoaringBitmap::new();
+        let target_vec = unsafe { vdupq_n_u8(target) };
+        
+        for (chunk_idx, chunk) in indices.chunks_exact(16).enumerate() {
+            unsafe {
+                let data = vld1q_u8(chunk.as_ptr());
+                let cmp = vceqq_u8(data, target_vec);
+                let mask = vget_lane_u64(vreinterpret_u64_u8(vshrn_n_u16(
+                    vreinterpretq_u16_u8(cmp), 4)), 0);
+                
+                // Set bits in bitmap based on mask
+                for i in 0..16 {
+                    if (mask >> (i * 4)) & 0xF == 0xF {
+                        bitmap.insert(chunk_idx * 16 + i as u32);
+                    }
+                }
+            }
+        }
+        
+        Ok(bitmap)
+    }
+    
+    // x86 AVX2 implementation
+    #[cfg(target_arch = "x86_64")]
+    fn simd_eq_avx2(&self, indices: &[u8], target: u8) -> Result<RoaringBitmap> {
+        use std::arch::x86_64::*;
+        
+        let mut bitmap = RoaringBitmap::new();
+        let target_vec = unsafe { _mm256_set1_epi8(target as i8) };
+        
+        for (chunk_idx, chunk) in indices.chunks_exact(32).enumerate() {
+            unsafe {
+                let data = _mm256_loadu_si256(chunk.as_ptr() as *const __m256i);
+                let cmp = _mm256_cmpeq_epi8(data, target_vec);
+                let mask = _mm256_movemask_epi8(cmp);
+                
+                // Set bits in bitmap based on mask
+                for i in 0..32 {
+                    if (mask >> i) & 1 == 1 {
+                        bitmap.insert(chunk_idx * 32 + i as u32);
+                    }
+                }
+            }
+        }
+        
+        Ok(bitmap)
+    }
     }
 }
 ```
