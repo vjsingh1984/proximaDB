@@ -1318,11 +1318,13 @@ graph LR
 
 | Scenario | Traditional (Full File) | With RG Cache | Improvement |
 |----------|------------------------|---------------|-------------|
-| k=10 search, 100K vectors | Download 400MB | Download 4MB (1 RG) | **100x less** |
-| Metadata filter (10% match) | Download 400MB | Download 40MB (10 RGs) | **10x less** |
-| HNSW navigation | Download 400MB | Download 12MB (3 RGs) | **33x less** |
-| Repeated queries | Download every time | Cache hit (0 download) | **∞ improvement** |
-| Cloud egress costs | $0.08/GB × 400MB | $0.08/GB × 4MB | **100x cost reduction** |
+| k=10 search, 100K vectors | Load 400MB to memory | Load 4MB (1 RG) | **100x less memory** |
+| Metadata filter (10% match) | Process 400MB | Process 40MB (10 RGs) | **10x faster** |
+| HNSW navigation | Read 400MB from S3 | Read 12MB (3 RGs) | **33x less I/O** |
+| Repeated queries | Re-read from S3 | Memory cache hit | **∞ improvement** |
+| Instance memory usage | 400MB per file | 4-40MB active data | **10-100x reduction** |
+| S3 GET requests | 1 large request | 1-3 range requests | **Similar cost** |
+| API response to user | Filter from 400MB | Direct from 4MB cache | **Instant response** |
 
 #### 7.5 Memory Structure for Fast Filtering
 
@@ -1364,10 +1366,10 @@ This structure allows:
 
 When the bandwidth optimizer evicts a compacted file from local disk:
 
-1. **Graceful degradation**: Automatically switch to selective cloud reads
+1. **Graceful degradation**: Automatically switch to selective S3/GCS reads
 2. **Hot data retention**: Keep frequently accessed rowgroups in memory cache
 3. **Predictive loading**: Use access patterns to pre-load likely needed rowgroups
-4. **Cost awareness**: Choose read strategy based on cloud egress pricing
+4. **Latency optimization**: Minimize S3 API calls through intelligent batching
 
 ```mermaid
 stateDiagram-v2
@@ -1396,13 +1398,71 @@ stateDiagram-v2
     end note
 ```
 
-#### 7.7 Implementation Files
+#### 7.7 Cost Model Clarification
+
+**Important**: The primary benefits are NOT cloud egress savings (S3→EC2 is free within same region), but rather:
+
+1. **Memory Efficiency**: 
+   - Without cache: Load entire 400MB file into memory for 10 results
+   - With cache: Load only 4MB rowgroup containing relevant vectors
+   - Benefit: 100x less memory pressure, more concurrent queries
+
+2. **I/O Latency**:
+   - Without cache: S3 GET for 400MB takes ~1-2 seconds
+   - With cache: S3 range read for 4MB takes ~50ms
+   - Benefit: 20-40x faster query response
+
+3. **CPU Efficiency**:
+   - Without cache: Decompress and scan 400MB of data
+   - With cache: Decompress and scan 4MB of relevant data
+   - Benefit: 100x less CPU for decompression
+
+4. **API Response Optimization**:
+   - User receives only k=10 results (~1KB) regardless of backend processing
+   - The optimization is about server-side efficiency, not client bandwidth
+   - Faster response generation = better user experience
+
+5. **S3 API Costs** (minimal difference):
+   - GET request: $0.0004 per 1000 requests
+   - Range requests: Same pricing as GET
+   - Data transfer within AWS region: FREE
+   - Actual cost difference: Negligible
+
+```mermaid
+graph TB
+    subgraph "Cost Model Reality"
+        User["End User<br/>Receives 1KB<br/>(10 results)"]
+        API["API Server<br/>In AWS Region"]
+        S3["S3 Storage<br/>Same Region"]
+        
+        User -->|"1KB response<br/>Actual egress cost"| API
+        API -->|"FREE within region<br/>4MB-400MB"| S3
+    end
+    
+    subgraph "Optimization Benefits"
+        MEM["100x less memory"]
+        CPU["100x less CPU"]
+        LAT["20-40x lower latency"]
+        CON["10x more concurrent queries"]
+    end
+    
+    API --> MEM
+    API --> CPU
+    API --> LAT
+    API --> CON
+    
+    style User fill:#f99,stroke:#333,stroke-width:2px
+    style S3 fill:#99f,stroke:#333,stroke-width:2px
+    style API fill:#9f9,stroke:#333,stroke-width:2px
+```
+
+#### 7.8 Implementation Files
 
 - **RowGroup Cache Manager**: `/src/storage/engines/raptor/rowgroup_cache.rs`
 - **Zero-Copy Integration**: `/src/storage/persistence/filesystem/zero_copy_filesystem.rs`
 - **RAPTOR Reader Integration**: `/src/storage/engines/raptor/reader.rs`
 
-#### 7.8 Filesystem API Usage
+#### 7.9 Filesystem API Usage
 ```rust
 use crate::storage::persistence::filesystem::{
     FileSystem, FileOptions, StorageTier, 
