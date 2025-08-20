@@ -42,9 +42,11 @@ pub mod progressive_search;
 pub mod batch_operations;
 pub mod optimized_operations;
 pub mod unified_reader;
+pub mod superblock_cache;
 
-// Re-export main engine type
+// Re-export main engine type and cache
 pub use engine::SwiftEngine;
+pub use superblock_cache::{SwiftSuperBlockCache, CachedSuperBlockMetadata, TreeNavigationHints, OptimalTreePath};
 
 use anyhow::{Result, anyhow};
 use serde::{Deserialize, Serialize};
@@ -236,6 +238,10 @@ impl SwiftFile {
                 // Use row-based SuperBlock constructor
                 let mut superblock = SuperBlock::new(superblock_id, format!("swift_sb_{}", superblock_id));
                 
+                // FASTLANES: Set SuperBlock-level encoding for hierarchical compression
+                // SWIFT benefits from encoding 10K vectors together for better compression
+                superblock.superblock_encoding_marker = 0x80; // SWIFT SuperBlock encoding
+                
                 // Initialize SWIFT-specific fields
                 superblock.centroid = Some(vec![0.0; self.header.dimension]);
                 superblock.quantized_signature = Vec::new();
@@ -313,6 +319,10 @@ impl SwiftFile {
             if self.superblocks.len() <= superblock_id as usize {
                 // Use row-based SuperBlock constructor
                 let mut superblock = SuperBlock::new(superblock_id, format!("swift_sb_{}", superblock_id));
+                
+                // FASTLANES: Set SuperBlock-level encoding for hierarchical compression
+                // SWIFT benefits from encoding 10K vectors together for better compression
+                superblock.superblock_encoding_marker = 0x80; // SWIFT SuperBlock encoding
                 
                 // Initialize SWIFT-specific fields
                 superblock.centroid = Some(vec![0.0; self.header.dimension]);
@@ -426,6 +436,198 @@ impl SwiftFile {
         filter: Option<MetadataFilter>,
     ) -> Result<Vec<VectorRecord>> {
         progressive_search::search_progressive(self, query, top_k, filter).await
+    }
+    
+    /// FASTLANES: Optimize SuperBlock encoding for columnar SIMD and hierarchical compression
+    /// Uses columnar layout for maximum SIMD efficiency and optimized I/O
+    fn finalize_superblock_encoding(&mut self) {
+        use crate::storage::engines::row_based::block_structures::FastLanesMetadata;
+        use crate::storage::engines::common::fastlanes_encoding::FastLanesScheme;
+        use crate::core::hardware_capabilities::HardwareCapabilities;
+        
+        let hw_caps = HardwareCapabilities::get_instance();
+        
+        for superblock in &mut self.superblocks {
+            // Columnar analysis: transpose vectors to analyze dimension-wise
+            let mut all_vectors = Vec::new();
+            for block in &superblock.blocks {
+                for record in &block.records {
+                    all_vectors.push(&record.vector);
+                }
+            }
+            
+            if all_vectors.is_empty() {
+                continue;
+            }
+            
+            let dimension = all_vectors[0].len();
+            let vector_count = all_vectors.len();
+            
+            // COLUMNAR ANALYSIS: Transpose to dimension-major layout for SIMD
+            let mut columnar_stats = Vec::new();
+            for dim in 0..dimension {
+                let mut values: Vec<f32> = all_vectors.iter()
+                    .map(|v| v[dim])
+                    .collect();
+                values.sort_by(|a, b| a.partial_cmp(b).unwrap());
+                
+                let min_val = values[0];
+                let max_val = values[values.len() - 1];
+                let range = max_val - min_val;
+                
+                // Calculate delta compression potential
+                let mut sum_delta = 0.0f32;
+                for i in 1..values.len() {
+                    sum_delta += (values[i] - values[i-1]).abs();
+                }
+                let avg_delta = sum_delta / (values.len() - 1) as f32;
+                
+                columnar_stats.push((min_val, max_val, range, avg_delta));
+            }
+            
+            // SIMD-optimized scheme selection based on hardware capabilities
+            let (marker, scheme) = if hw_caps.has_avx512() {
+                // AVX-512: 16x f32 SIMD operations
+                self.select_avx512_scheme(&columnar_stats, vector_count)
+            } else if hw_caps.has_avx2() {
+                // AVX2: 8x f32 SIMD operations  
+                self.select_avx2_scheme(&columnar_stats, vector_count)
+            } else if hw_caps.has_sse4_1() {
+                // SSE4.1: 4x f32 SIMD operations
+                self.select_sse_scheme(&columnar_stats, vector_count)
+            } else {
+                // Fallback: scalar optimized
+                self.select_scalar_scheme(&columnar_stats, vector_count)
+            };
+            
+            // Calculate global statistics for metadata
+            let (global_min, global_max) = columnar_stats.iter().fold(
+                (f32::MAX, f32::MIN),
+                |(min_acc, max_acc), &(min_val, max_val, _, _)| {
+                    (min_acc.min(min_val), max_acc.max(max_val))
+                }
+            );
+            
+            superblock.superblock_encoding_marker = marker;
+            superblock.superblock_encoding_metadata = Some(FastLanesMetadata {
+                scheme,
+                dimension,
+                vector_count,
+                bits_per_value: Some(((global_max - global_min).log2().ceil() as u8).max(1)),
+                base_value: Some(global_min as i64),
+                dict_size: None,
+                patch_count: None,
+                min_value: global_min,
+                max_value: global_max,
+                range_bits: ((global_max - global_min).log2().ceil() as u8).max(1),
+                compression_ratio: 1.0, // Will be calculated during actual encoding
+            });
+            
+            // Update child blocks to inherit SuperBlock columnar encoding
+            for block in &mut superblock.blocks {
+                // Child blocks inherit columnar SIMD optimization
+                if block.encoding_marker == 0x00 || block.encoding_marker == 0x10 {
+                    block.encoding_marker = 0xFF; // Inherit columnar SIMD from SuperBlock
+                    block.encoding_metadata = None; // Use SuperBlock columnar metadata
+                }
+            }
+        }
+    }
+    
+    /// AVX-512 optimized scheme selection for 16-wide SIMD
+    fn select_avx512_scheme(&self, stats: &[(f32, f32, f32, f32)], vector_count: usize) -> (u8, FastLanesScheme) {
+        let avg_range = stats.iter().map(|(_, _, range, _)| *range).sum::<f32>() / stats.len() as f32;
+        let avg_delta = stats.iter().map(|(_, _, _, delta)| *delta).sum::<f32>() / stats.len() as f32;
+        
+        if avg_range < 1e-6 {
+            (0x96, FastLanesScheme::RunLength) // AVX-512 run-length
+        } else if avg_delta < avg_range / 16.0 {
+            // Excellent delta compression for AVX-512
+            (0x92, FastLanesScheme::Delta { base: stats[0].0 as i64 })
+        } else if avg_range < 32.0 {
+            // Frame-of-reference for 16-wide SIMD
+            (0x93, FastLanesScheme::FrameOfReference {
+                reference: stats[0].0 as i64,
+                bits: (avg_range.log2().ceil() as u8).max(6), // Optimized for AVX-512
+            })
+        } else {
+            // High-precision BitPacking for AVX-512
+            (0x91, FastLanesScheme::BitPacked {
+                bits: (avg_range.log2().ceil() as u8).max(10),
+            })
+        }
+    }
+    
+    /// AVX2 optimized scheme selection for 8-wide SIMD
+    fn select_avx2_scheme(&self, stats: &[(f32, f32, f32, f32)], vector_count: usize) -> (u8, FastLanesScheme) {
+        let avg_range = stats.iter().map(|(_, _, range, _)| *range).sum::<f32>() / stats.len() as f32;
+        let avg_delta = stats.iter().map(|(_, _, _, delta)| *delta).sum::<f32>() / stats.len() as f32;
+        
+        if avg_range < 1e-6 {
+            (0x86, FastLanesScheme::RunLength) // AVX2 run-length
+        } else if avg_delta < avg_range / 8.0 {
+            // Good delta compression for AVX2
+            (0x82, FastLanesScheme::Delta { base: stats[0].0 as i64 })
+        } else if avg_range < 64.0 {
+            // Frame-of-reference for 8-wide SIMD
+            (0x83, FastLanesScheme::FrameOfReference {
+                reference: stats[0].0 as i64,
+                bits: (avg_range.log2().ceil() as u8).max(8),
+            })
+        } else {
+            // Standard BitPacking for AVX2
+            (0x81, FastLanesScheme::BitPacked {
+                bits: (avg_range.log2().ceil() as u8).max(12),
+            })
+        }
+    }
+    
+    /// SSE optimized scheme selection for 4-wide SIMD
+    fn select_sse_scheme(&self, stats: &[(f32, f32, f32, f32)], vector_count: usize) -> (u8, FastLanesScheme) {
+        let avg_range = stats.iter().map(|(_, _, range, _)| *range).sum::<f32>() / stats.len() as f32;
+        let avg_delta = stats.iter().map(|(_, _, _, delta)| *delta).sum::<f32>() / stats.len() as f32;
+        
+        if avg_range < 1e-6 {
+            (0x76, FastLanesScheme::RunLength) // SSE run-length
+        } else if avg_delta < avg_range / 4.0 {
+            // Modest delta compression for SSE
+            (0x72, FastLanesScheme::Delta { base: stats[0].0 as i64 })
+        } else if avg_range < 128.0 {
+            // Conservative frame-of-reference for 4-wide SIMD
+            (0x73, FastLanesScheme::FrameOfReference {
+                reference: stats[0].0 as i64,
+                bits: (avg_range.log2().ceil() as u8).max(10),
+            })
+        } else {
+            // Basic BitPacking for SSE
+            (0x71, FastLanesScheme::BitPacked {
+                bits: (avg_range.log2().ceil() as u8).max(14),
+            })
+        }
+    }
+    
+    /// Scalar optimized scheme selection (no SIMD)
+    fn select_scalar_scheme(&self, stats: &[(f32, f32, f32, f32)], vector_count: usize) -> (u8, FastLanesScheme) {
+        let avg_range = stats.iter().map(|(_, _, range, _)| *range).sum::<f32>() / stats.len() as f32;
+        let avg_delta = stats.iter().map(|(_, _, _, delta)| *delta).sum::<f32>() / stats.len() as f32;
+        
+        if avg_range < 1e-6 {
+            (0x66, FastLanesScheme::RunLength) // Scalar run-length
+        } else if avg_delta < avg_range / 2.0 {
+            // Simple delta compression
+            (0x62, FastLanesScheme::Delta { base: stats[0].0 as i64 })
+        } else if avg_range < 256.0 {
+            // Basic frame-of-reference
+            (0x63, FastLanesScheme::FrameOfReference {
+                reference: stats[0].0 as i64,
+                bits: (avg_range.log2().ceil() as u8).max(12),
+            })
+        } else {
+            // Conservative BitPacking
+            (0x61, FastLanesScheme::BitPacked {
+                bits: (avg_range.log2().ceil() as u8).max(16),
+            })
+        }
     }
 }
 
