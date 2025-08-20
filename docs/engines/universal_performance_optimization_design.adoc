@@ -4,6 +4,9 @@
 :icons: font
 :source-highlighter: rouge
 
+[.text-center]
+image::../logos/proximadb-logo.svg[ProximaDB Logo, 100, 100, align="center"]
+
 **Shared Infrastructure Design**
 
 [IMPORTANT]
@@ -46,6 +49,115 @@ Prior to this implementation, each storage engine implemented its own performanc
 * **Inconsistent performance** characteristics across engines
 
 == Solution: Universal Performance Optimization Module
+
+=== Universal Infrastructure Architecture
+
+[source,mermaid]
+----
+graph TB
+    subgraph "Storage Engines"
+        SST[SST Engine<br/>✅ Production]
+        VIPER[VIPER Engine<br/>✅ Production]
+        SWIFT[SWIFT Engine<br/>🚧 Beta]
+        NOVA[NOVA Engine<br/>🚧 Alpha]
+        RAPTOR[RAPTOR Engine<br/>⚠️ Issues]
+        PRISM[PRISM Engine<br/>🔬 Research]
+    end
+    
+    subgraph "Universal Performance Module"
+        Optimizer[UniversalPerformanceOptimizer]
+        Hardware[HardwareCapabilities]
+        MemPool[VectorMemoryPool]
+        Distance[Unified Distance Engine]
+        Compression[Core Compression]
+        Quantization[Unified Quantization]
+    end
+    
+    subgraph "Shared Infrastructure"
+        RowBased[row_based module]
+        Columnar[columnar module]
+        Filesystem[filesystem API]
+        Cache[Cache Orchestrator]
+    end
+    
+    SST --> Optimizer
+    VIPER --> Optimizer
+    SWIFT --> Optimizer
+    NOVA --> Optimizer
+    RAPTOR --> Optimizer
+    PRISM --> Optimizer
+    
+    Optimizer --> Hardware
+    Optimizer --> MemPool
+    Optimizer --> Distance
+    Optimizer --> Compression
+    Optimizer --> Quantization
+    
+    Hardware -.-> RowBased
+    MemPool -.-> Columnar
+    Distance -.-> Filesystem
+    Compression -.-> Cache
+    
+    classDef production fill:#90EE90,stroke:#006400,stroke-width:3px
+    classDef beta fill:#87CEEB,stroke:#4682B4,stroke-width:2px
+    classDef alpha fill:#FFA07A,stroke:#FF4500,stroke-width:2px
+    classDef issues fill:#FFB6C1,stroke:#DC143C,stroke-width:2px
+    classDef research fill:#DDA0DD,stroke:#8B008B,stroke-width:2px
+    classDef universal fill:#FFE4B5,stroke:#FF8C00,stroke-width:3px
+    classDef infrastructure fill:#E6E6FA,stroke:#4B0082,stroke-width:2px
+    
+    class SST,VIPER production
+    class SWIFT,NOVA beta
+    class RAPTOR issues
+    class PRISM research
+    class Optimizer,Hardware,MemPool,Distance,Compression,Quantization universal
+    class RowBased,Columnar,Filesystem,Cache infrastructure
+----
+
+=== Code Duplication Elimination
+
+[source,text]
+----
+┌─────────────────────── Before: Duplicated Code ─────────────────────────┐
+│                                                                            │
+│  SST Engine:     1,500 lines  │  SWIFT Engine:  1,800 lines             │
+│  • Custom memory pools      │  • Tree-based pools                    │
+│  • Engine-specific mmap     │  • Hierarchical I/O                    │
+│  • Distance computation     │  • SuperBlock navigation               │
+│  • Compression strategies   │  • B+ tree optimization                │
+│                              │                                         │
+│  VIPER Engine:  1,200 lines  │  NOVA Engine:   1,100 lines             │
+│  • Columnar memory mgmt     │  • Adaptive pools                      │
+│  • Parquet-specific I/O     │  • Column-aware I/O                    │
+│  • Schema-based pools       │  • Statistics optimization             │
+│  • Analytics optimization   │  • Hierarchical compression            │
+│                              │                                         │
+│  PRISM Engine:  1,400 lines  │  RAPTOR Engine: (compilation issues)    │
+│  • Progressive pools        │  • Hybrid optimization                 │
+│  • Metadata-first I/O       │  • Smart row group sizing              │
+│  • Column family caching    │  • Semantic accuracy factors           │
+│                              │                                         │
+│  Total: ~7,000 lines of duplicate performance optimization code            │
+└────────────────────────────────────────────────────────────────────────────┘
+
+┌──────────────────────── After: Unified Infrastructure ─────────────────────────┐
+│                                                                            │
+│  Universal Performance Module: 1,200 lines (replaces all 7,000)           │
+│                                                                            │
+│  ┌─── Core Components ───┐  ┌─── Engine Integration ───┐            │
+│  │                         │  │                            │            │
+│  │ • HardwareCapabilities  │  │ All 6 engines delegate     │            │
+│  │ • VectorMemoryPool      │  │ to unified module:         │            │
+│  │ • Unified Distance      │  │                            │            │
+│  │ • Core Compression     │  │ • Same performance APIs   │            │
+│  │ • Unified Quantization │  │ • Consistent behavior     │            │
+│  │                         │  │ • Reduced maintenance     │            │
+│  └─────────────────────────┘  └────────────────────────────┘            │
+│                                                                            │
+│  Net Result: 83% reduction in performance optimization code                │
+│  Maintenance: Single codebase vs 6 separate implementations                │
+└────────────────────────────────────────────────────────────────────────────┘
+----
 
 === Architecture Overview
 

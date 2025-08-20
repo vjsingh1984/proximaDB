@@ -4,6 +4,9 @@
 :icons: font
 :source-highlighter: rouge
 
+[.text-center]
+image::../logos/prism-engine-logo.svg[PRISM Engine Logo, 120, 120, align="center"]
+
 **Progressive Retrieval through Indexed Storage Management**
 
 [IMPORTANT]
@@ -22,9 +25,105 @@
 
 PRISM (Partitioned Row-Indexed Storage with Multi-resolution) is a research storage engine for ProximaDB that achieves theoretical 95% I/O reduction through progressive search and memory-first optimization. **Currently in research phase with significant implementation gaps.**
 
+=== PRISM Engine Architecture
+
+[source,mermaid]
+----
+graph TB
+    subgraph "PRISM Engine - Memory-First Progressive Search"
+        Input[VectorRecord] --> Router[Progressive Router]
+        Router --> |"Metadata"| CF0[CF0: Metadata]
+        Router --> |"IDs"| CF1[CF1: ID Index]
+        Router --> |"Binary"| CF2[CF2: Sketch Family]
+        Router --> |"Quantized"| CF3[CF3: PQ Family]
+        Router --> |"Compressed"| CF4[CF4: Compressed Family]
+        Router --> |"Learned"| CF5[CF5: Neural Router]
+        
+        CF0 --> Memory[Memory Cache]
+        CF1 --> Memory
+        CF2 --> |"95% Filter"| Progressive[Progressive Pipeline]
+        CF3 --> |"99% Rank"| Progressive
+        CF4 --> |"100% Precision"| Progressive
+        CF5 --> |"Smart Routing"| Progressive
+        
+        Progressive --> Results[Search Results]
+    end
+    
+    subgraph "Implementation Status"
+        Implemented[✅ Implemented]
+        ConfigOnly[📋 Config Only]
+        Missing[❌ Missing]
+        Research[🔬 Research]
+    end
+    
+    CF0 -.-> ConfigOnly
+    CF1 -.-> ConfigOnly
+    CF2 -.-> Missing
+    CF3 -.-> Missing
+    CF4 -.-> Missing
+    CF5 -.-> Research
+    Memory -.-> Implemented
+    Progressive -.-> Missing
+    
+    classDef research fill:#FFB6C1,stroke:#DC143C,stroke-width:3px
+    classDef missing fill:#FFA07A,stroke:#FF4500,stroke-width:2px
+    classDef config fill:#F0E68C,stroke:#DAA520,stroke-width:2px
+    classDef implemented fill:#90EE90,stroke:#006400,stroke-width:2px
+    
+    class CF5,Progressive research
+    class CF2,CF3,CF4 missing
+    class CF0,CF1 config
+    class Memory implemented
+----
+
+=== Column Family Architecture (Research Design)
+
+[source,text]
+----
+┌──────────────────────── PRISM Column Families ──────────────────────────┐
+│                                                                                  │
+│  ┌─── CF0: Metadata Family ───┐  ┌─── CF1: ID Index Family ───┐        │
+│  │                           │  │                           │        │
+│  │ 📋 Config Only            │  │ 📋 Config Only            │        │
+│  │ • Bloom Filters           │  │ • B+ Tree Structure      │        │
+│  │ • Inverted Indices        │  │ • Fast ID Lookups        │        │
+│  │ • Metadata Search         │  │ • Memory-Mapped Index    │        │
+│  └───────────────────────────┘  └───────────────────────────┘        │
+│                                                                                  │
+│  ┌─── CF2: Sketch Family ─────┐  ┌─── CF3: Quantized Family ───┐        │
+│  │                           │  │                            │        │
+│  │ ❌ Major Implementation    │  │ ❌ Major Implementation     │        │
+│  │ • Binary Sketches         │  │ • PQ Codes (32 bytes/vec)  │        │
+│  │ • LSH Signatures          │  │ • INT8 Quantized Vectors  │        │
+│  │ • MinHash Sketches        │  │ • Progressive Ranking     │        │
+│  └───────────────────────────┘  └────────────────────────────┘        │
+│                                                                                  │
+│  ┌─── CF4: Compressed Family ──┐  ┌─── CF5: Neural Router ─────┐        │
+│  │                           │  │                            │        │
+│  │ ❌ Major Implementation    │  │ 🔬 Research Concept         │        │
+│  │ • Full Precision Vectors  │  │ • Learned Query Router     │        │
+│  │ • FastLanes Compression   │  │ • Neural Path Selection    │        │
+│  │ • Final Ranking Stage     │  │ • Adaptive Optimization   │        │
+│  └───────────────────────────┘  └────────────────────────────┘        │
+└──────────────────────────────────────────────────────────────────────────────┘
+----
+
 === Key Innovation & Performance Optimization
 
 Unlike traditional row-based storage (SST) or columnar storage (VIPER), PRISM uses a *hybrid column-family architecture* with **memory-first optimization** that separates data by access patterns while maintaining consistency. This allows queries to read only the data they need with unprecedented performance.
+
+[WARNING]
+====
+**🚧 Implementation Reality Check**: While the PRISM design is theoretically sound and could achieve 95% I/O reduction, the current implementation has major gaps:
+
+- **Column Families CF0-CF5**: Configuration exists but no actual implementation
+- **Progressive Pipeline**: Basic concepts only, needs complete implementation  
+- **Bloom Cascade**: Not implemented
+- **Sketch Structures**: Missing binary/LSH/MinHash implementations
+- **Neural Router**: Research concept only
+
+**Estimated Work Needed**: 6-12 months for core implementation, 18+ months for full research features.
+====
 
 ### 🚀 **Fast Read Performance**
 - **In-memory vector caching** with intelligent eviction strategies

@@ -4,6 +4,9 @@
 :icons: font
 :source-highlighter: rouge
 
+[.text-center]
+image::../logos/raptor-engine-logo.svg[RAPTOR Engine Logo, 120, 120, align="center"]
+
 **Row-Aligned Predicated Tensor Optimized Repository**
 
 [IMPORTANT]
@@ -22,14 +25,93 @@
 
 RAPTOR (Row-Aligned Predicated Tensor Optimized Repository) is a hybrid storage engine featuring *smart row group sizing*, *hybrid row-columnar architecture*, and *semantic accuracy optimization*.
 
+=== RAPTOR Engine Architecture
+
+[source,mermaid]
+----
+graph TB
+    subgraph "RAPTOR Engine - Hybrid Row+Columnar"
+        Input[VectorRecord] --> SmartSizing[Smart Row Group Sizing]
+        SmartSizing --> |"Dimension-Aware"| RowGroup[Row Group Formation]
+        RowGroup --> |"0xA3 FastLanes"| Hybrid[Hybrid Storage]
+        
+        Hybrid --> RowAlign[Row-Aligned Data]
+        Hybrid --> ColumnarOps[Columnar Operations]
+        
+        RowAlign --> HNSW[HNSW Navigation]
+        ColumnarOps --> SIMD[SIMD Operations]
+        
+        HNSW --> Search[Hybrid Search]
+        SIMD --> Search
+        Search --> Results[Search Results]
+    end
+    
+    subgraph "Compilation Status"
+        Issues["⚠️ Compilation Issues"]
+        Missing["❌ Missing Traits"]
+        Types["🔧 Type Mismatches"]
+        Init["⚡ Initialization Problems"]
+    end
+    
+    SmartSizing -.-> Issues
+    RowGroup -.-> Missing
+    Hybrid -.-> Types
+    HNSW -.-> Init
+    
+    classDef alpha fill:#FFA07A,stroke:#FF4500,stroke-width:3px
+    classDef issues fill:#FFB6C1,stroke:#DC143C,stroke-width:2px
+    classDef fastlanes fill:#FFE4B5,stroke:#FF8C00,stroke-width:2px
+    
+    class SmartSizing,RowGroup,Hybrid alpha
+    class Issues,Missing,Types,Init issues
+    class Input,HNSW,SIMD fastlanes
+----
+
+=== Smart Row Group Sizing Algorithm
+
+[source,text]
+----
+┌─────────────────────── RAPTOR Smart Sizing ─────────────────────────┐
+│                                                                                │
+│  Input: Vector Dimension (d)                                                   │
+│  ↓                                                                            │
+│  ┌───────────────────────────────────────────────────────────────────────┐  │
+│  │  Semantic Accuracy Factor Calculation:                                │  │
+│  │                                                                       │  │
+│  │  if d <= 64:        factor = 1.3   # Small, need more precision    │  │
+│  │  elif d <= 128:     factor = 1.1   # Medium density                │  │
+│  │  elif d <= 384:     factor = 1.0   # Sweet spot                    │  │
+│  │  elif d <= 768:     factor = 0.9   # Large, can be bigger groups   │  │
+│  │  elif d <= 1536:    factor = 0.7   # Very large                     │  │
+│  │  else:              factor = 0.6   # Extremely large                │  │
+│  │                                                                       │  │
+│  └───────────────────────────────────────────────────────────────────────┘  │
+│  ↓                                                                            │
+│  row_group_size = base_size * factor                                           │
+│  where base_size = 1000 vectors (configurable)                                 │
+│  ↓                                                                            │
+│  Result Examples:                                                               │
+│  • 64D:   1300 vectors/group  (higher precision for small vectors)           │
+│  • 384D:  1000 vectors/group  (baseline)                                     │
+│  • 768D:   900 vectors/group  (slightly smaller for large vectors)          │
+│  • 1536D:  700 vectors/group  (much smaller for very large vectors)         │
+└──────────────────────────────────────────────────────────────────────────────┘
+----
+
 [WARNING]
 ====
-**Compilation Status**: RAPTOR engine currently has compilation errors:
-- Missing `Deserialize` trait for `RowGroupCacheKey`
-- Type mismatches in `RowPageMetadata` and `SearchResult` 
-- `CompressionCodec` enum issues
+**⚠️ Compilation Status**: RAPTOR engine currently has compilation errors that prevent usage:
+
+**Critical Issues:**
+- Missing `Deserialize` trait for `RowGroupCacheKey` 
+- Type mismatches in `RowPageMetadata` and `SearchResult`
+- `CompressionCodec` enum issues with shared infrastructure
 - FastLanes encoder initialization problems
 - Method resolution errors for reader/writer components
+
+**Impact**: Engine cannot be compiled or tested until these issues are resolved.
+
+**Estimated Fix Time**: 2-4 weeks for core compilation issues, additional time for testing and integration.
 ====
 
 === Key Differentiators

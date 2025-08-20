@@ -1,6 +1,11 @@
 = NOVA Engine Design
 :toc: left
 :toclevels: 2
+:icons: font
+:source-highlighter: rouge
+
+[.text-center]
+image::../logos/nova-engine-logo.svg[NOVA Engine Logo, 120, 120, align="center"]
 
 **Next-gen Optimized Vector Analytics (Parquet-Based)**
 
@@ -16,6 +21,78 @@
 ====
 
 NOVA represents advanced columnar vector storage, combining proven Parquet foundations with hierarchical statistics and streaming processors for analytical workloads.
+
+=== NOVA Engine Architecture
+
+[source,mermaid]
+----
+graph TB
+    subgraph "NOVA Engine - Enhanced Parquet Analytics"
+        Input[VectorRecord] --> Schema[Schema Manager]
+        Schema --> |"Native Parquet"| Writer[Parquet Writer]
+        Writer --> |"ZSTD/SNAPPY"| Compressed[Compressed Columns]
+        
+        Compressed --> SuperBlock[SuperBlock Statistics]
+        SuperBlock --> RowGroup[Row Group Statistics]
+        RowGroup --> Column[Column Statistics]
+        
+        Column --> ZoneMap[Zone Maps]
+        ZoneMap --> |"Analytics Query"| Optimizer[Cost-Based Optimizer]
+        Optimizer --> |"Streaming"| Processor[Streaming Processor]
+        
+        Processor --> Results[Query Results]
+    end
+    
+    subgraph "Shared Infrastructure"
+        Columnar[Columnar Module] --> ParquetReader[Unified Parquet Reader]
+        Quantization[Unified Quantization] --> Compression[Core Compression]
+        Hardware[Hardware Capabilities] --> SIMD[Vector Operations]
+    end
+    
+    Schema -.-> Columnar
+    Writer -.-> Quantization
+    SuperBlock -.-> Hardware
+    
+    classDef alpha fill:#FFA07A,stroke:#FF4500,stroke-width:3px
+    classDef parquet fill:#98FB98,stroke:#32CD32,stroke-width:2px
+    classDef infrastructure fill:#E6E6FA,stroke:#4B0082,stroke-width:2px
+    
+    class SuperBlock,RowGroup,Optimizer alpha
+    class Schema,Writer,Compressed parquet
+    class Columnar,ParquetReader,Quantization infrastructure
+----
+
+=== Hierarchical Statistics Architecture
+
+[source,text]
+----
+┌────────────────────── NOVA Hierarchical Statistics ───────────────────────┐
+│                                                                              │
+│  ┌─── Level 1: SuperBlock Statistics ───┐                                  │
+│  │                                        │                                  │
+│  │ • File-level aggregates (10M vectors)  │                                  │
+│  │ • Global quantization parameters     │                                  │
+│  │ • Compression ratio tracking        │                                  │
+│  │ • Query performance hints           │                                  │
+│  └────────────────────────────────────────┘                                  │
+│                                                                              │
+│  ┌─── Level 2: Row Group Statistics ───┐                                   │
+│  │                                        │                                  │
+│  │ • Row group aggregates (100K vectors) │                                  │
+│  │ • Min/max value bounds per column   │                                  │
+│  │ • Null value counts and patterns    │                                  │
+│  │ • Similarity clustering hints       │                                  │
+│  └────────────────────────────────────────┘                                  │
+│                                                                              │
+│  ┌─── Level 3: Column Statistics ──────┐                                   │
+│  │                                        │                                  │
+│  │ • Column-level histograms           │                                  │
+│  │ • Value distribution patterns       │                                  │
+│  │ • Quantization effectiveness        │                                  │
+│  │ • Zone map filtering capabilities   │                                  │
+│  └────────────────────────────────────────┘                                  │
+└──────────────────────────────────────────────────────────────────────────────┘
+----
 
 == Executive Summary
 

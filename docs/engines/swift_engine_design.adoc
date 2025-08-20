@@ -1,6 +1,11 @@
 = SWIFT Engine Design with Universal Performance Optimization
 :toc: left
 :toclevels: 2
+:icons: font
+:source-highlighter: rouge
+
+[.text-center]
+image::../logos/swift-engine-logo.svg[SWIFT Engine Logo, 120, 120, align="center"]
 
 **Storage With Instant Fast Traversal - SuperBlock Architecture**
 
@@ -16,6 +21,89 @@
 ====
 
 SWIFT is a hierarchical storage engine with SuperBlock architecture that provides fast navigation through optimized tree structures and FastLanes encoding.
+
+=== SWIFT Engine Architecture
+
+[source,mermaid]
+----
+graph TB
+    subgraph "SWIFT Engine - SuperBlock Hierarchical Storage"
+        Input[VectorRecord] --> |"0xA2 FastLanes"| SuperBlock[SuperBlock Formation]
+        SuperBlock --> |"64KB Aligned"| Hierarchy[3-Level Hierarchy]
+        
+        Hierarchy --> L1[Level 1: SuperBlocks]
+        Hierarchy --> L2[Level 2: Blocks] 
+        Hierarchy --> L3[Level 3: Records]
+        
+        L1 --> BTree[B+ Tree Navigation]
+        L2 --> Cache[Intelligent Caching]
+        L3 --> Progressive[Progressive Search]
+        
+        BTree --> |"O(log n)"| IDLookup[ID-based Lookup]
+        Cache --> |"Access Pattern"| Prefetch[Smart Prefetching]
+        Progressive --> |"Binary→PQ→Full"| Results[Search Results]
+    end
+    
+    subgraph "Shared Infrastructure"
+        RowBased[row_based module]
+        Hardware[HardwareCapabilities]
+        MemPool[VectorMemoryPool]
+        Compression[Core Compression]
+    end
+    
+    SuperBlock -.-> RowBased
+    BTree -.-> Hardware
+    Cache -.-> MemPool
+    Progressive -.-> Compression
+    
+    classDef beta fill:#87CEEB,stroke:#4682B4,stroke-width:3px
+    classDef fastlanes fill:#FFE4B5,stroke:#FF8C00,stroke-width:2px
+    classDef infrastructure fill:#E6E6FA,stroke:#4B0082,stroke-width:2px
+    
+    class SuperBlock,Hierarchy,BTree beta
+    class Input,IDLookup,Progressive fastlanes
+    class RowBased,Hardware,MemPool infrastructure
+----
+
+=== SuperBlock Hierarchical Architecture
+
+[source,text]
+----
+┌────────────────────────── SWIFT SuperBlock Hierarchy ───────────────────────────┐
+│                                                                                  │
+│  ┌─── Level 1: SuperBlocks (64KB Aligned) ───┐                              │
+│  │                                          │                              │
+│  │ • Container for multiple blocks          │                              │
+│  │ • Memory-mapped for fast access         │                              │
+│  │ • Cloud-optimized chunk sizes          │                              │
+│  │ • B+ tree navigation support          │                              │
+│  └──────────────────────────────────────────┘                              │
+│                  │                                                          │
+│                  ↓                                                          │
+│  ┌─── Level 2: Blocks (8KB each) ──────────┐                              │
+│  │                                          │                              │
+│  │ • Standard SST-style data blocks       │                              │
+│  │ • Progressive quantization sections   │                              │
+│  │ • Intelligent caching layer           │                              │
+│  │ • Access pattern tracking             │                              │
+│  └──────────────────────────────────────────┘                              │
+│                  │                                                          │
+│                  ↓                                                          │
+│  ┌─── Level 3: Records (VectorRecord) ───────┐                              │
+│  │                                          │                              │
+│  │ • Individual vector records            │                              │
+│  │ • FastLanes 0xA2 encoding             │                              │
+│  │ • Multi-resolution quantization       │                              │
+│  │ • Metadata indexing support           │                              │
+│  └──────────────────────────────────────────┘                              │
+│                                                                                  │
+│  Access Patterns:                                                               │
+│  • ID Lookup:    O(log n) via B+ tree navigation                            │
+│  • Range Scan:   Sequential SuperBlock traversal                           │
+│  • Similarity:   Progressive search with early termination                 │
+│  • Analytics:    Block-level aggregation and statistics                    │
+└──────────────────────────────────────────────────────────────────────────────┘
+----
 
 == Executive Summary
 

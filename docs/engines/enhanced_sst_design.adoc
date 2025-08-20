@@ -4,7 +4,10 @@
 :icons: font
 :source-highlighter: rouge
 
-**SST Engine Implementation Details**
+[.text-center]
+image::../logos/sst-engine-logo.svg[SST Engine Logo, 120, 120, align="center"]
+
+**SST Engine Implementation Details - Row-Based OLTP Storage**
 
 [IMPORTANT]
 ====
@@ -29,6 +32,45 @@ This document describes the SST storage engine implementation in ProximaDB. SST 
 - **Bandwidth efficiency** via progressive quantization and smart prefetching
 
 == Design Overview
+
+=== SST Engine Architecture
+
+[source,mermaid]
+----
+graph TB
+    subgraph "SST Engine - Row-Based Storage with FastLanes"
+        VR[VectorRecord] --> |"0xA1 FastLanes"| DataBlock[Enhanced DataBlock]
+        DataBlock --> |"Quantized Section"| QS[Binary + PQ + INT8]
+        DataBlock --> |"Full Section"| FS[Complete VectorRecords]
+        
+        QS --> |"Progressive Search"| PS[3-Stage Filter]
+        PS --> |"Stage 1: Binary"| Binary[Hamming Distance]
+        PS --> |"Stage 2: PQ"| PQ[Asymmetric Distance]
+        PS --> |"Stage 3: Full"| Full[Exact Distance]
+        
+        FS --> Writer[SstableWriter]
+        Writer --> |"PQ-Based Sorting"| Sorted[Similarity Clusters]
+        Sorted --> |"Shared Infrastructure"| RowBased[row_based module]
+    end
+    
+    subgraph "Performance Optimization"
+        Hardware[HardwareCapabilities] --> SIMD[AVX2/AVX512]
+        MemPool[VectorMemoryPool] --> Buffer[60-80% Reuse]
+        Compression[Core Compression] --> FastLanes[Mixed Strategy]
+    end
+    
+    Binary -.-> Hardware
+    PQ -.-> MemPool
+    Full -.-> Compression
+    
+    classDef production fill:#90EE90,stroke:#006400,stroke-width:3px
+    classDef optimization fill:#FFE4B5,stroke:#FF8C00,stroke-width:2px
+    classDef infrastructure fill:#E6E6FA,stroke:#4B0082,stroke-width:2px
+    
+    class DataBlock,PS,Writer production
+    class Hardware,MemPool,Compression optimization
+    class RowBased,SIMD,Buffer infrastructure
+----
 
 === Core Enhancement
 
@@ -85,6 +127,36 @@ struct FullDataSection {
     pub vectors: Vec<VectorRecord>,    // Delta-encoded when similar
     pub metadata: MetadataStore,       // Dictionary-compressed
 }
+----
+
+=== SST DataBlock Enhancement Architecture
+
+[source,text]
+----
+┌─────────────────────────── Enhanced DataBlock ───────────────────────────┐
+│                                                                            │
+│  ┌─── Header ───┐  ┌────── Quantized Section ──────┐  ┌─── Full Section ───┐ │
+│  │              │  │                               │  │                     │ │
+│  │ • Metadata   │  │ • Binary Sketches (1 bit/dim) │  │ • Complete Records  │ │
+│  │ • PQ Centroid│  │ • PQ Codes (32 bytes/vector)  │  │ • Similarity Sorted │ │
+│  │ • Bloom Info │  │ • INT8 Quantized (768 bytes)  │  │ • Delta Compressed  │ │
+│  │ • Similarity │  │ • Metadata Index (fast filter)│  │ • Full Precision    │ │
+│  │   Range      │  │                               │  │                     │ │
+│  └──────────────┘  └───────────────────────────────┘  └─────────────────────┘ │
+│                                                                            │
+│  Always Loaded      Always Loaded (Small)               Loaded On Demand    │
+│  (~1KB)            (~1-10KB)                           (~100KB-10MB)       │
+└────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────── Progressive Search Pipeline ──────────────────────────┐
+│                                                                            │
+│  Query Vector  →  Binary Filter  →  PQ Ranking  →  Full Precision         │
+│      (768D)         (95% filtered)   (99% ranked)    (100% accurate)      │
+│                                                                            │
+│  I/O: 0 bytes   I/O: ~1KB/block   I/O: ~10KB/block  I/O: ~1MB/block      │
+│  Time: 0ms      Time: 0.1ms       Time: 0.5ms       Time: 2ms            │
+│  Accuracy: N/A  Accuracy: 95%     Accuracy: 99%     Accuracy: 100%       │
+└────────────────────────────────────────────────────────────────────────────┘
 ----
 
 === Key Files to Modify
@@ -1188,6 +1260,64 @@ mod quantization_tests {
 - VNNI for INT8 operations (if available)
 - Graceful fallback to software
 
+== SST Performance Optimization Pipeline
+
+=== Memory-Mapped I/O Architecture
+
+[source,text]
+----
+┌─────────────────── SST Performance Stack ──────────────────────┐
+│                                                                 │
+│  ┌─── Application Layer ───┐                                    │
+│  │ UnifiedStorageEngine API │  ← Same Interface (No Changes)    │
+│  └─────────────────────────┘                                    │
+│              │                                                  │
+│  ┌─── Enhancement Layer ───┐                                    │
+│  │ • Progressive Search     │  ← New: 3-Stage Filtering         │
+│  │ • PQ-Based Sorting      │  ← New: Similarity Clusters       │
+│  │ • SIMD Acceleration     │  ← New: AVX2/AVX512 Support       │
+│  └─────────────────────────┘                                    │
+│              │                                                  │
+│  ┌─── Storage Layer ───────┐                                    │
+│  │ • Memory-Mapped Files   │  ← Enhanced: Sub-ms Access        │
+│  │ • Parallel Block Ops    │  ← Enhanced: 16-thread Concurrency│
+│  │ • Intelligent Caching   │  ← Enhanced: Access Pattern Aware │
+│  └─────────────────────────┘                                    │
+│              │                                                  │
+│  ┌─── Infrastructure ──────┐                                    │
+│  │ • Shared row_based      │  ← Existing: Proven Infrastructure│
+│  │ • Hardware Capabilities │  ← Existing: Auto-detection       │
+│  │ • Core Compression      │  ← Existing: Unified Module       │
+│  └─────────────────────────┘                                    │
+└─────────────────────────────────────────────────────────────────┘
+----
+
+=== FastLanes Integration Flow
+
+[source,mermaid]
+----
+flowchart LR
+    Input[VectorRecord] --> Encode["FastLanes Encode<br/>0xA1 Marker"]
+    Encode --> Quantize["Multi-Level Quantization<br/>Binary + PQ + INT8"]
+    Quantize --> Sort["PQ-Based Similarity Sorting<br/>Better Compression"]
+    Sort --> Write["Enhanced DataBlock Write<br/>Shared row_based"]
+    Write --> Store["SST File on Disk<br/>Hierarchical Blocks"]
+    
+    Store --> Read["Progressive Read Pipeline"]
+    Read --> Stage1["Stage 1: Binary Filter<br/>95% I/O Reduction"]
+    Stage1 --> Stage2["Stage 2: PQ Ranking<br/>99% Accuracy"]
+    Stage2 --> Stage3["Stage 3: Full Precision<br/>100% Accuracy"]
+    Stage3 --> Results["Search Results"]
+    
+    classDef fastlanes fill:#FFB6C1,stroke:#DC143C,stroke-width:2px
+    classDef quantization fill:#98FB98,stroke:#32CD32,stroke-width:2px
+    classDef progressive fill:#87CEEB,stroke:#4682B4,stroke-width:2px
+    
+    class Encode,Write fastlanes
+    class Quantize,Sort quantization
+    class Stage1,Stage2,Stage3 progressive
+----
+
 == Performance Expectations
 
 [cols="2,1,1,1"]
@@ -1416,6 +1546,32 @@ impl SstStorage {
         self.compression_provider.compress(data, &context)
     }
 }
+----
+
+=== Hardware Integration Architecture
+
+[source,text]
+----
+┌─────────────────── SST Hardware Optimization ──────────────────────┐
+│                                                                      │
+│  ┌─── SIMD Acceleration ────┐  ┌─── Memory Pool Management ─────┐    │
+│  │                          │  │                                │    │
+│  │ AVX-512: 16 floats/op   │  │ VectorMemoryPool Integration   │    │
+│  │ AVX2:    8 floats/op    │  │ 60-80% Buffer Reuse           │    │
+│  │ SSE:     4 floats/op    │  │ Reduced GC Pressure           │    │
+│  │ NEON:    4 floats/op    │  │ Zero-copy Operations          │    │
+│  │                         │  │                               │    │
+│  └─────────────────────────┘  └───────────────────────────────┘    │
+│                                                                      │
+│  ┌─── Distance Computation ─┐  ┌─── Compression Strategy ──────┐    │
+│  │                          │  │                                │    │
+│  │ Unified Distance Engine  │  │ Core Compression Module       │    │
+│  │ Batch Vectorized Ops    │  │ Mixed Algorithm Strategy      │    │
+│  │ Auto Hardware Detection  │  │ Context-Aware Selection       │    │
+│  │ Fallback Compatibility   │  │ FastLanes Integration         │    │
+│  │                         │  │                               │    │
+│  └─────────────────────────┘  └───────────────────────────────┘    │
+└──────────────────────────────────────────────────────────────────────┘
 ----
 
 === Performance Benchmarks with Optimizations

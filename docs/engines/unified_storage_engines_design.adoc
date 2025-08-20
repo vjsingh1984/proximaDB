@@ -12,6 +12,22 @@ ProximaDB implements 6 storage engines, each optimized for specific use cases. T
 
 === Engine Implementation Status (2025-08-20)
 
+[source,ascii]
+----
+ProximaDB Storage Engines - Implementation & Performance Matrix
+┌──────────┬─────────────┬──────────────┬─────────────────────┬─────────────────────────────┐
+│ Engine   │ Status      │ Completion   │ Performance         │ Primary Use Case            │
+├──────────┼─────────────┼──────────────┼─────────────────────┼─────────────────────────────┤
+│ SST      │ ✅ PRODUCTION│ ████████▉ 95%│ 17K vec/s, 0.9ms   │ Row-based OLTP              │
+│ VIPER    │ ✅ PRODUCTION│ █████████ 90%│  5K vec/s, 2-3ms   │ Columnar analytics          │
+│ NOVA     │ 🚧 ALPHA     │ ████████▌ 85%│  4K vec/s, 1-2ms   │ Advanced analytics          │
+│ SWIFT    │ 🚧 BETA      │ ████████  80%│ 15K vec/s, 1.5ms   │ Hierarchical SuperBlocks    │
+│ RAPTOR   │ 🚧 ALPHA*    │ ███████▌  75%│ 12K vec/s, 1.8ms*  │ Hybrid row+columnar         │
+│ PRISM    │ 🔬 RESEARCH  │ ███████   70%│ 20K vec/s, 0.3ms*  │ Memory-first progressive    │
+└──────────┴─────────────┴──────────────┴─────────────────────┴─────────────────────────────┘
+* = Has compilation issues or implementation gaps
+----
+
 [cols="2,1,1,1,2", options="header"]
 |===
 | Engine | Status | Implementation | Performance | Use Case
@@ -57,31 +73,99 @@ ProximaDB implements 6 storage engines, each optimized for specific use cases. T
 
 === Storage Engine Hierarchy
 
+[source,ascii]
+----
+ProximaDB Storage Engine Architecture
+                                    
+┌─────────────────────────────────────────────────────────────────────────────────┐
+│                        UnifiedStorageEngine Trait                              │
+│                      (Common interface for all engines)                        │
+└─────────────────────────────────────────────────────────────────────────────────┘
+                                      │
+            ┌─────────────┬─────────────┼─────────────┬─────────────┬─────────────┐
+            │             │             │             │             │             │
+            ▼             ▼             ▼             ▼             ▼             ▼
+    ┌─────────────┐ ┌─────────────┐ ┌─────────────┐ ┌─────────────┐ ┌─────────────┐ ┌─────────────┐
+    │     SST     │ │    VIPER    │ │    NOVA     │ │    SWIFT    │ │   RAPTOR    │ │    PRISM    │
+    │ ✅ Production│ │ ✅ Production│ │  🚧 Alpha   │ │   🚧 Beta   │ │  🚧 Alpha*  │ │ 🔬 Research │
+    │  Row-Based  │ │  Columnar   │ │ Enhanced    │ │ SuperBlock  │ │   Hybrid    │ │Memory-First │
+    │   17K/0.9ms │ │   5K/2-3ms  │ │  4K/1-2ms   │ │ 15K/1.5ms   │ │ 12K/1.8ms*  │ │ 20K/0.3ms*  │
+    └─────────────┘ └─────────────┘ └─────────────┘ └─────────────┘ └─────────────┘ └─────────────┘
+            │             │             │             │             │             │
+            └─────────────┴─────────────┼─────────────┴─────────────┴─────────────┘
+                                        │
+                            ┌─────────────────────────┐
+                            │  Shared Infrastructure  │
+                            └─────────────────────────┘
+                                        │
+        ┌─────────────┬─────────────┬───┴───┬─────────────┬─────────────┐
+        │             │             │       │             │             │
+        ▼             ▼             ▼       ▼             ▼             ▼
+┌──────────────┐ ┌──────────────┐ ┌──────────────┐ ┌──────────────┐ ┌──────────────┐
+│ Quantization │ │ Compression  │ │ Performance  │ │ Filesystem   │ │   Hardware   │
+│   Engine     │ │   Provider   │ │  Optimizer   │ │     API      │ │ Capabilities │
+└──────────────┘ └──────────────┘ └──────────────┘ └──────────────┘ └──────────────┘
+
+Legend: * = Has compilation issues or implementation gaps
+----
+
+=== Engine Gallery with Logos
+
+[cols="6*^", options="header"]
+|===
+2+| Production Ready ✅ | Beta/Alpha 🚧 2+| Research 🔬
+
+| image:../logos/sst-engine-logo.svg[SST Logo,width=80,height=80] +
+**SST Engine** +
+Row-based OLTP +
+17K vec/s, 0.9ms
+| image:../logos/viper-engine-logo.svg[VIPER Logo,width=80,height=80] +
+**VIPER Engine** +
+Columnar Analytics +
+5K vec/s, 2-3ms  
+| image:../logos/swift-engine-logo.svg[SWIFT Logo,width=80,height=80] +
+**SWIFT Engine** +
+SuperBlock Hierarchical +
+15K vec/s, 1.5ms
+| image:../logos/nova-engine-logo.svg[NOVA Logo,width=80,height=80] +
+**NOVA Engine** +
+Advanced Analytics +
+4K vec/s, 1-2ms
+| image:../logos/raptor-engine-logo.svg[RAPTOR Logo,width=80,height=80] +
+**RAPTOR Engine** +
+Hybrid Row+Columnar +
+12K vec/s, 1.8ms*
+| image:../logos/prism-engine-logo.svg[PRISM Logo,width=80,height=80] +
+**PRISM Engine** +
+Memory-First Progressive +
+20K vec/s, 0.3ms*
+|===
+
 [source,mermaid]
 ----
 graph TB
     subgraph "Storage Engine Layer"
         UnifiedInterface[UnifiedStorageEngine Trait]
-        UnifiedInterface --> SST[SST Engine]
-        UnifiedInterface --> VIPER[VIPER Engine]
-        UnifiedInterface --> NOVA[NOVA Engine]
-        UnifiedInterface --> SWIFT[SWIFT Engine]
-        UnifiedInterface --> RAPTOR[RAPTOR Engine]
-        UnifiedInterface --> PRISM[PRISM Engine]
+        UnifiedInterface --> SST[SST Engine<br/>✅ Production<br/>Row-based OLTP]
+        UnifiedInterface --> VIPER[VIPER Engine<br/>✅ Production<br/>Columnar Analytics]
+        UnifiedInterface --> NOVA[NOVA Engine<br/>🚧 Alpha<br/>Advanced Analytics]
+        UnifiedInterface --> SWIFT[SWIFT Engine<br/>🚧 Beta<br/>SuperBlock Hierarchical]
+        UnifiedInterface --> RAPTOR[RAPTOR Engine<br/>🚧 Alpha*<br/>Hybrid Row+Columnar]
+        UnifiedInterface --> PRISM[PRISM Engine<br/>🔬 Research<br/>Memory-First Progressive]
     end
     
     subgraph "Shared Infrastructure"
-        Quantization[Unified Quantization]
-        Compression[Core Compression]
-        Performance[Universal Performance Optimizer]
-        Filesystem[Filesystem API]
-        Hardware[Hardware Capabilities]
+        Quantization[Unified Quantization Engine<br/>Binary→INT8→PQ→FP32]
+        Compression[Core Compression Provider<br/>14 algorithms + Mixed]
+        Performance[Universal Performance Optimizer<br/>6000+ lines eliminated]
+        Filesystem[Filesystem API<br/>S3/GCS/Azure support]
+        Hardware[Hardware Capabilities<br/>SIMD/GPU detection]
     end
     
-    subgraph "Engine Categories"
-        RowBased[Row-Based<br/>SST, SWIFT, RAPTOR]
-        Columnar[Columnar<br/>VIPER, NOVA]
-        Hybrid[Hybrid<br/>PRISM]
+    subgraph "Engine Categories by Technology"
+        RowBased[Row-Based + FastLanes<br/>SST, SWIFT, RAPTOR]
+        Columnar[Parquet Native<br/>VIPER, NOVA]
+        Hybrid[Memory-First + Progressive<br/>PRISM]
     end
     
     SST --> Quantization
@@ -90,6 +174,13 @@ graph TB
     SWIFT --> Performance
     RAPTOR --> Filesystem
     PRISM --> Hardware
+    
+    style SST fill:#90EE90
+    style VIPER fill:#90EE90
+    style NOVA fill:#FFE4B5
+    style SWIFT fill:#FFE4B5
+    style RAPTOR fill:#FFB6C1
+    style PRISM fill:#E6E6FA
 ----
 
 === Technology Stack Distribution
