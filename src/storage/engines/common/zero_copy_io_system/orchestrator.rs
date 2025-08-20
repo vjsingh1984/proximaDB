@@ -256,6 +256,33 @@ impl ZeroCopyIOSystem {
         Ok(system)
     }
 
+    /// Create orchestrator with all engine serializers registered
+    pub async fn with_all_engines(
+        config: ZeroCopyIOConfig,
+        filesystem: Arc<FilesystemFactory>,
+    ) -> Result<Self, ProximaDBError> {
+        // Import all engine serializers
+        use crate::storage::engines::row_based::sst_metadata_serializer::SstMetadataSerializer;
+        use crate::storage::engines::row_based::swift_metadata_serializer::SwiftMetadataSerializer;
+        use crate::storage::engines::columnar::parquet_metadata_serializer::ParquetMetadataSerializer;
+        use crate::storage::engines::columnar::nova_metadata_serializer::NovaMetadataSerializer;
+        
+        // Create all engine serializers
+        let serializers: Vec<Box<dyn MetadataSerializer>> = vec![
+            Box::new(SstMetadataSerializer::new(Arc::clone(&filesystem))),
+            Box::new(SwiftMetadataSerializer::new(Arc::clone(&filesystem))),
+            Box::new(ParquetMetadataSerializer::new(Arc::clone(&filesystem))),
+            Box::new(NovaMetadataSerializer::new(Arc::clone(&filesystem))),
+        ];
+        
+        info!(
+            "Creating zero-copy I/O orchestrator with {} engine serializers",
+            serializers.len()
+        );
+        
+        Self::new(config, filesystem, serializers).await
+    }
+
     /// Optimize single file access
     pub async fn optimize_file_access(
         &self,
@@ -827,18 +854,20 @@ impl ZeroCopyIOSystem {
             "Populating cache from file"
         );
 
-        // TODO: Fix metadata cache API mismatch - these methods don't exist
-        // This likely requires updating the orchestrator to match the current metadata cache implementation
-        return Err(ProximaDBError::Internal(format!("Metadata cache population not yet implemented for engine: {}", engine_type)));
-
+        // Use the metadata cache's existing API to get metadata
+        // This will automatically handle serialization/deserialization via registered serializers
+        let metadata = self.metadata_cache.get_metadata(file_path, collection_id, engine_type).await?;
+        
+        let metadata_obj = metadata.get_metadata()?;
         debug!(
             file_path,
             collection_id,
             engine_type,
-            "Cache population completed successfully"
+            memory_footprint = metadata_obj.memory_footprint(),
+            "Successfully populated cache from file"
         );
-
-        Ok(metadata)
+        
+        Ok(())
     }
 }
 
