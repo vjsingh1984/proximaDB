@@ -12,7 +12,7 @@ use crate::storage::engines::common::zero_copy_metadata_cache::{
     MetadataSerializer, EngineMetadata, QueryContext, DataRange,
 };
 use crate::storage::engines::row_based::bloom_filter::SstableBloomFilter;
-use crate::common::errors::ProximaDBError;
+use crate::core::errors::ProximaDBError;
 
 /// SST Global metadata (fixed size, bytemuck-compatible)
 #[repr(C)]

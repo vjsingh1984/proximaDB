@@ -7,7 +7,7 @@ use std::path::PathBuf;
 use async_trait::async_trait;
 use tracing::{debug, trace, warn};
 
-use crate::common::errors::ProximaDBError;
+use crate::core::errors::ProximaDBError;
 use crate::storage::persistence::filesystem::{FileSystem, FsResult, FilesystemError, FileMetadata, FileOptions};
 use crate::storage::engines::common::zero_copy_io_system::{
     ZeroCopyIOSystem, QueryContext, FileAccessRequest, RequestPriority, OptimizedIOResult, IOStrategy

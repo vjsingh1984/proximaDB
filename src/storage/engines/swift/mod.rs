@@ -59,6 +59,8 @@ use crate::core::compression::CompressionAlgorithm;
 
 // SYNERGY: Reuse row-based bloom filter structures (shared with SST)
 use crate::storage::engines::row_based::bloom_filter::SstableBloomFilter;
+// FastLanes encoding for columnar vector optimization
+use crate::storage::engines::common::fastlanes_encoding::FastLanesScheme;
 // NOTE: Quantization now uses unified engine from compute module
 
 // Import row-based common structures
@@ -442,7 +444,6 @@ impl SwiftFile {
     /// Uses columnar layout for maximum SIMD efficiency and optimized I/O
     fn finalize_superblock_encoding(&mut self) {
         use crate::storage::engines::row_based::block_structures::FastLanesMetadata;
-        use crate::storage::engines::common::fastlanes_encoding::FastLanesScheme;
         use crate::core::hardware_capabilities::HardwareCapabilities;
         
         let hw_caps = HardwareCapabilities::get_instance();

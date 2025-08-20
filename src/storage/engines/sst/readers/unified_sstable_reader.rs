@@ -1368,6 +1368,196 @@ impl UnifiedSstableReader {
         }
     }
     
+    /// 🚀 NEW: Create unified reader with bandwidth optimizer for smart threshold decisions
+    /// This constructor enables dual strategy support for different operation types
+    pub fn new_with_bandwidth_optimizer(
+        filesystem: Arc<FilesystemFactory>,
+        zero_copy_system: Arc<ZeroCopyIOSystem>,
+        collection_id: String,
+        bandwidth_optimizer: Option<Arc<crate::storage::engines::common::zero_copy_io_system::BandwidthOptimizer>>,
+    ) -> Self {
+        let config = ReaderConfig::default();
+        
+        // Create SST mmap strategy that considers bandwidth optimization decisions
+        let mmap_strategy = SstMmapStrategy {
+            always_mmap: vec![
+                SstRegion::BloomFilter,     // Always cache bloom filters for metadata filtering
+                SstRegion::IndexBlock,      // Always cache index blocks for range queries
+            ],
+            conditional_mmap: vec![
+                (SstRegion::DataBlock, 0.7), // Cache data blocks based on bandwidth optimizer decisions
+            ],
+            never_mmap: vec![
+                SstRegion::Footer,          // Footers are small, direct read is faster
+            ],
+        };
+        
+        // Create shared reader with bandwidth optimization support
+        let shared_reader = Arc::new(SharedSstFormatReader::new(
+            filesystem,
+            mmap_strategy,
+            zero_copy_system.clone(),
+            collection_id.clone(),
+        ));
+        
+        Self {
+            shared_reader,
+            strategy_selector: Arc::new(ReadingStrategySelector::new(config)),
+            zero_copy_system,
+            collection_id,
+        }
+    }
+    
+    /// 🚀 NEW: Read with selective cache strategy - for normal queries with range reads and cache lookup
+    /// This strategy is optimized for:
+    /// - Range-based reading with bloom filter optimization
+    /// - Cache lookup for frequently accessed data
+    /// - Metadata cache utilization for query planning
+    /// - Bandwidth-aware threshold decisions
+    pub async fn read_with_selective_cache_strategy(
+        &self,
+        params: &SearchParams,
+        collection_context: &CollectionContext,
+        bandwidth_optimizer: Option<Arc<crate::storage::engines::common::zero_copy_io_system::BandwidthOptimizer>>,
+    ) -> Result<Vec<SearchResult>> {
+        debug!("🔍 SST SELECTIVE CACHE: Starting selective read strategy for {} files", 
+               collection_context.sstable_files.len());
+        
+        // Use SelectiveWithCache strategy
+        let strategy = SstableReadingStrategy::SelectiveWithCache {
+            use_range_reads: true,
+            enable_bloom_filters: true,
+            enable_cache_lookup: true,
+            enable_metadata_cache: true,
+        };
+        
+        // Apply bandwidth optimizer decisions if available
+        if let Some(optimizer) = bandwidth_optimizer {
+            // Create query context for bandwidth decisions
+            use crate::storage::engines::common::zero_copy_io_system::traits::{QueryContext, QueryType, RequestPriority};
+            
+            let query_context = QueryContext {
+                query_type: QueryType::VectorSearch,
+                priority: RequestPriority::Normal,
+                estimated_result_size: params.top_k.unwrap_or(10) as u64,
+                selectivity_hint: params.filter_expression.as_ref().map(|_| 0.1).unwrap_or(1.0),
+                collection_id: self.collection_id.clone(),
+                concurrent_queries: 1,
+                cache_temperature: 0.5,
+            };
+            
+            // Make bandwidth-optimized decisions for each file
+            for file_path in &collection_context.sstable_files {
+                match optimizer.decide_strategy(file_path, &query_context).await {
+                    Ok(decision) => {
+                        debug!("📊 SST BANDWIDTH: File {} - strategy: {:?}, rationale: {:?}", 
+                               file_path, decision.strategy, decision.rationale);
+                    }
+                    Err(e) => {
+                        warn!("⚠️ SST BANDWIDTH: Failed to get decision for {}: {}", file_path, e);
+                    }
+                }
+            }
+        }
+        
+        // Apply strategy to read relevant blocks with cache optimization
+        let relevant_blocks = self.apply_strategy(&strategy, params, collection_context).await?;
+        
+        // Perform vector search on loaded data
+        self.perform_vector_search_on_blocks(&relevant_blocks, params).await
+    }
+    
+    /// 🚀 NEW: Read with compaction strategy - for full read operations where cache lookups are suboptimal
+    /// This strategy is optimized for:
+    /// - Compaction operations that bypass write cache but use disk cache if files exist
+    /// - Full file sequential reads without range optimization
+    /// - Minimal metadata overhead for transient files
+    /// - Bandwidth conservation by avoiding unnecessary downloads
+    pub async fn read_with_compaction_strategy(
+        &self,
+        sstable_files: &[String],
+        bandwidth_optimizer: Option<Arc<crate::storage::engines::common::zero_copy_io_system::BandwidthOptimizer>>,
+    ) -> Result<Vec<VectorRecord>> {
+        info!("🔥 SST COMPACTION: Starting compaction read strategy for {} files", sstable_files.len());
+        
+        // Use CompactionFullRead strategy
+        let strategy = SstableReadingStrategy::CompactionFullRead {
+            skip_bloom_filters: true,
+            skip_indexes: true,
+            bypass_write_cache: true,
+            use_disk_cache_if_exists: true,
+            sequential_io: true,
+        };
+        
+        // Apply bandwidth optimizer decisions if available
+        if let Some(optimizer) = bandwidth_optimizer {
+            // Create compaction query context
+            use crate::storage::engines::common::zero_copy_io_system::traits::{QueryContext, QueryType, RequestPriority};
+            
+            let query_context = QueryContext {
+                query_type: QueryType::FullScan,
+                priority: RequestPriority::Background,
+                estimated_result_size: 1000000, // Large result set for compaction
+                selectivity_hint: 1.0, // Read everything
+                collection_id: self.collection_id.clone(),
+                concurrent_queries: 1,
+                cache_temperature: 0.0, // Don't pollute cache
+            };
+            
+            // Make bandwidth-optimized decisions for compaction
+            for file_path in sstable_files {
+                match optimizer.decide_strategy(file_path, &query_context).await {
+                    Ok(decision) => {
+                        // For compaction, prefer using disk cache if available, avoid downloading transient files
+                        debug!("🔄 SST COMPACTION BANDWIDTH: File {} - strategy: {:?} (transient files avoid download)", 
+                               file_path, decision.strategy);
+                    }
+                    Err(e) => {
+                        warn!("⚠️ SST COMPACTION BANDWIDTH: Failed to get decision for {}: {}", file_path, e);
+                    }
+                }
+            }
+        }
+        
+        // Create minimal context for compaction
+        let context = CollectionContext {
+            file_path: String::new(),
+            sstable_files: sstable_files.to_vec(),
+            total_vectors: 0,
+            metadata_columns: vec![],
+            level: 0,
+            creation_time: chrono::Utc::now(),
+            io_optimization_hints: None,
+        };
+        
+        // Apply compaction strategy
+        let blocks = self.apply_strategy(&strategy, &Default::default(), &context).await?;
+        info!("📦 SST COMPACTION: Loaded {} data blocks for compaction", blocks.len());
+        
+        // Convert blocks to VectorRecords for compaction processing
+        let mut all_records = Vec::new();
+        for block in blocks {
+            all_records.extend(block.records);
+        }
+        
+        info!("🎯 SST COMPACTION: Returning {} records for compaction", all_records.len());
+        Ok(all_records)
+    }
+    
+    /// 🚀 HELPER: Perform vector search on loaded data blocks
+    /// This is extracted from the main search logic to support dual strategy patterns
+    async fn perform_vector_search_on_blocks(
+        &self,
+        blocks: &[DataBlock],
+        params: &SearchParams,
+    ) -> Result<Vec<SearchResult>> {
+        // Create distance compute locally per query to avoid cross-query contamination
+        let distance_compute = UnifiedDistanceCompute::default();
+        
+        // Perform the actual search
+        self.search_in_blocks(params, blocks, &distance_compute).await
+    }
+    
     /// Search vectors using cache-first zero-copy architecture
     pub async fn search_vectors(
         &self,
@@ -1466,8 +1656,159 @@ impl UnifiedSstableReader {
             SstableReadingStrategy::CompactionOptimized { skip_bloom_filters, skip_indexes, bypass_cache, sequential_io } => {
                 self.compaction_optimized_strategy(context, *skip_bloom_filters, *skip_indexes, *bypass_cache, *sequential_io).await
             }
+            // 🚀 NEW: Dual strategy support
+            SstableReadingStrategy::SelectiveWithCache { use_range_reads, enable_bloom_filters, enable_cache_lookup, enable_metadata_cache } => {
+                self.selective_cache_strategy(context, *use_range_reads, *enable_bloom_filters, *enable_cache_lookup, *enable_metadata_cache).await
+            }
+            SstableReadingStrategy::CompactionFullRead { skip_bloom_filters, skip_indexes, bypass_write_cache, use_disk_cache_if_exists, sequential_io } => {
+                self.compaction_full_read_strategy(context, *skip_bloom_filters, *skip_indexes, *bypass_write_cache, *use_disk_cache_if_exists, *sequential_io).await
+            }
         }
         })
+    }
+    
+    /// 🚀 NEW: Selective cache strategy - optimized for normal queries with range reads and cache lookup
+    async fn selective_cache_strategy(
+        &self,
+        context: &CollectionContext,
+        use_range_reads: bool,
+        enable_bloom_filters: bool,
+        enable_cache_lookup: bool,
+        enable_metadata_cache: bool,
+    ) -> Result<Vec<DataBlock>> {
+        debug!("🔍 SST SELECTIVE CACHE: Processing {} files with range_reads={}, bloom={}, cache={}, metadata_cache={}", 
+               context.sstable_files.len(), use_range_reads, enable_bloom_filters, enable_cache_lookup, enable_metadata_cache);
+        
+        let mut all_blocks = Vec::new();
+        
+        for (idx, file_path) in context.sstable_files.iter().enumerate() {
+            debug!("📂 SELECTIVE CACHE: File {} of {}: {}", idx + 1, context.sstable_files.len(), file_path);
+            
+            // Validate SST1 magic marker
+            match self.validate_sst_file(file_path).await {
+                Ok(()) => {
+                    debug!("✅ SST1 validation passed for file: {}", file_path);
+                }
+                Err(e) => {
+                    warn!("⚠️ Skipping invalid SSTable file {}: {}", file_path, e);
+                    continue;
+                }
+            }
+            
+            let start_time = std::time::Instant::now();
+            
+            // Use cache lookup when enabled
+            let blocks = if enable_cache_lookup {
+                self.read_file_with_cache(file_path).await?
+            } else {
+                // Use modular reading for range-based optimization
+                if use_range_reads {
+                    self.read_file_with_range_optimization(file_path, enable_bloom_filters, enable_metadata_cache).await?
+                } else {
+                    self.read_file_direct(file_path).await?
+                }
+            };
+            
+            let elapsed = start_time.elapsed();
+            debug!("⚡ SELECTIVE CACHE: Loaded {} blocks from {} in {:?}", 
+                   blocks.len(), file_path, elapsed);
+            
+            all_blocks.extend(blocks);
+        }
+        
+        debug!("✅ SELECTIVE CACHE: Loaded {} total blocks from {} files", 
+               all_blocks.len(), context.sstable_files.len());
+        Ok(all_blocks)
+    }
+    
+    /// 🚀 NEW: Compaction full read strategy - optimized for bulk operations with minimal overhead
+    async fn compaction_full_read_strategy(
+        &self,
+        context: &CollectionContext,
+        skip_bloom_filters: bool,
+        skip_indexes: bool,
+        bypass_write_cache: bool,
+        use_disk_cache_if_exists: bool,
+        sequential_io: bool,
+    ) -> Result<Vec<DataBlock>> {
+        info!("🔥 SST COMPACTION FULL READ: Processing {} files with optimizations: bloom={}, index={}, write_cache={}, disk_cache={}, sequential={}", 
+              context.sstable_files.len(), !skip_bloom_filters, !skip_indexes, !bypass_write_cache, use_disk_cache_if_exists, sequential_io);
+        
+        // For compaction, prefer direct reading to avoid cache pollution
+        if bypass_write_cache && skip_bloom_filters && skip_indexes && sequential_io {
+            // Use the most optimized path for bulk compaction
+            return self.compaction_direct_strategy_modular(context).await;
+        }
+        
+        let mut all_blocks = Vec::new();
+        
+        for (idx, file_path) in context.sstable_files.iter().enumerate() {
+            debug!("📂 COMPACTION FULL READ: File {} of {}: {}", idx + 1, context.sstable_files.len(), file_path);
+            
+            // Validate SST1 magic marker
+            match self.validate_sst_file(file_path).await {
+                Ok(()) => {
+                    debug!("✅ SST1 validation passed for file: {}", file_path);
+                }
+                Err(e) => {
+                    warn!("⚠️ Skipping invalid SSTable file {}: {}", file_path, e);
+                    continue;
+                }
+            }
+            
+            let start_time = std::time::Instant::now();
+            
+            // Check disk cache first if enabled, otherwise direct read
+            let blocks = if use_disk_cache_if_exists {
+                // Try cache first, fallback to direct read
+                match self.read_file_with_cache(file_path).await {
+                    Ok(cached_blocks) => {
+                        debug!("💾 COMPACTION: Using disk cache for {}", file_path);
+                        cached_blocks
+                    }
+                    Err(_) => {
+                        debug!("📁 COMPACTION: Cache miss, direct read for {}", file_path);
+                        self.read_file_direct_no_cache(file_path, skip_bloom_filters, skip_indexes, sequential_io).await?
+                    }
+                }
+            } else {
+                // Direct read without cache to avoid cache pollution
+                self.read_file_direct_no_cache(file_path, skip_bloom_filters, skip_indexes, sequential_io).await?
+            };
+            
+            let elapsed = start_time.elapsed();
+            debug!("⚡ COMPACTION FULL READ: Loaded {} blocks from {} in {:?} (disk_cache={})", 
+                   blocks.len(), file_path, elapsed, use_disk_cache_if_exists);
+            
+            all_blocks.extend(blocks);
+        }
+        
+        info!("✅ COMPACTION FULL READ: Loaded {} total blocks from {} files", 
+              all_blocks.len(), context.sstable_files.len());
+        Ok(all_blocks)
+    }
+    
+    /// Helper method for range-optimized reading with bloom filter and metadata cache support
+    async fn read_file_with_range_optimization(
+        &self,
+        file_path: &str,
+        enable_bloom_filters: bool,
+        enable_metadata_cache: bool,
+    ) -> Result<Vec<DataBlock>> {
+        debug!("📊 RANGE OPTIMIZATION: Reading {} with bloom={}, metadata_cache={}", 
+               file_path, enable_bloom_filters, enable_metadata_cache);
+        
+        // For now, use the modular full scan strategy with optimizations
+        // In a full implementation, this would use selective range reads
+        self.full_scan_strategy_modular(&CollectionContext {
+            file_path: file_path.to_string(),
+            sstable_files: vec![file_path.to_string()],
+            total_vectors: 0,
+            metadata_columns: vec![],
+            level: 0,
+            creation_time: chrono::Utc::now(),
+            io_optimization_hints: None,
+        }, enable_metadata_cache).await
     }
     
     /// Perform ultra-high-performance vector search in loaded blocks

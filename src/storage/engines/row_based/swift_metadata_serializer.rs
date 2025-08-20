@@ -8,7 +8,7 @@ use bytemuck::{Pod, Zeroable, bytes_of, from_bytes};
 use serde::{Serialize, Deserialize};
 use tracing::{debug, trace};
 
-use crate::common::errors::ProximaDBError;
+use crate::core::errors::ProximaDBError;
 use crate::storage::persistence::filesystem::FilesystemFactory;
 use crate::storage::engines::common::zero_copy_io_system::traits::{
     MetadataSerializer, EngineMetadata, QueryContext, DataRange, QueryType

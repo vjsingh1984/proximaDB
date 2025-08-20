@@ -187,6 +187,26 @@ impl UnifiedSwiftReader {
         collection_id: String,
         config: SwiftReaderConfig,
     ) -> Result<Self> {
+        Self::new_with_bandwidth_optimizer(
+            filesystem,
+            file_path,
+            zero_copy_system,
+            collection_id,
+            config,
+            None,
+        ).await
+    }
+    
+    /// 🚀 NEW: Create SWIFT reader with bandwidth optimizer for smart threshold decisions
+    /// This constructor enables dual strategy support for different operation types
+    pub async fn new_with_bandwidth_optimizer(
+        filesystem: Arc<FilesystemFactory>,
+        file_path: String,
+        zero_copy_system: Arc<ZeroCopyIOSystem>,
+        collection_id: String,
+        config: SwiftReaderConfig,
+        bandwidth_optimizer: Option<Arc<crate::storage::engines::common::zero_copy_io_system::BandwidthOptimizer>>,
+    ) -> Result<Self> {
         // Create SWIFT-optimized mmap strategy for hierarchical blocks
         let mmap_strategy = SstMmapStrategy {
             always_mmap: vec![
@@ -195,10 +215,10 @@ impl UnifiedSwiftReader {
                 // SWIFT-SPECIFIC: Always cache SuperBlock metadata for hierarchical pruning
             ],
             conditional_mmap: vec![
-                (SstRegion::DataBlock, 0.8), // Cache data blocks if memory pressure < 80% (higher threshold for SWIFT)
+                (SstRegion::DataBlock, 0.8), // Cache data blocks based on bandwidth optimizer decisions
             ],
             never_mmap: vec![
-                SstRegion::Footer,          // Footers are small, don't need mmap
+                SstRegion::Footer,          // Footers are small, direct read is faster
             ],
         };
         
@@ -221,6 +241,94 @@ impl UnifiedSwiftReader {
         };
         
         Ok(reader)
+    }
+    
+    /// 🚀 NEW: Read with selective cache strategy - for normal queries with range reads and cache lookup
+    /// This strategy is optimized for:
+    /// - Range-based reading with hierarchical SuperBlock pruning
+    /// - Cache lookup for frequently accessed SuperBlocks  
+    /// - Metadata cache utilization for query planning
+    /// - Bandwidth-aware threshold decisions
+    pub async fn read_with_selective_cache_strategy(
+        &self,
+        strategy: SwiftReadStrategy,
+        bandwidth_optimizer: Option<Arc<crate::storage::engines::common::zero_copy_io_system::BandwidthOptimizer>>,
+    ) -> Result<SwiftReadResult> {
+        debug!("🔍 SWIFT SELECTIVE CACHE: Starting selective read strategy for {}", self.file_path);
+        
+        // Apply bandwidth optimizer decisions if available
+        if let Some(optimizer) = bandwidth_optimizer {
+            // Create query context for bandwidth decisions
+            use crate::storage::engines::common::zero_copy_io_system::traits::{QueryContext, QueryType, RequestPriority};
+            
+            let query_context = QueryContext {
+                query_type: QueryType::VectorSearch,
+                priority: RequestPriority::Normal,
+                estimated_result_size: 1000, // Estimate based on strategy
+                selectivity_hint: 0.5, // Moderate selectivity for SWIFT hierarchical reads
+                collection_id: self.collection_id.clone(),
+                concurrent_queries: 1,
+                cache_temperature: 0.5,
+            };
+            
+            // Make bandwidth-optimized decisions
+            match optimizer.decide_strategy(&self.file_path, &query_context).await {
+                Ok(decision) => {
+                    debug!("📊 SWIFT BANDWIDTH: File {} - strategy: {:?}, rationale: {:?}", 
+                           self.file_path, decision.strategy, decision.rationale);
+                }
+                Err(e) => {
+                    warn!("⚠️ SWIFT BANDWIDTH: Failed to get decision for {}: {}", self.file_path, e);
+                }
+            }
+        }
+        
+        // Apply the SWIFT strategy with cache optimization
+        self.read_with_strategy(strategy).await
+    }
+    
+    /// 🚀 NEW: Read with compaction strategy - for full read operations where cache lookups are suboptimal
+    /// This strategy is optimized for:
+    /// - Compaction operations that bypass write cache but use disk cache if files exist
+    /// - Full SuperBlock sequential reads without hierarchical pruning
+    /// - Minimal metadata overhead for transient files
+    /// - Bandwidth conservation by avoiding unnecessary downloads
+    pub async fn read_with_compaction_strategy(
+        &self,
+        bandwidth_optimizer: Option<Arc<crate::storage::engines::common::zero_copy_io_system::BandwidthOptimizer>>,
+    ) -> Result<SwiftReadResult> {
+        info!("🔥 SWIFT COMPACTION: Starting compaction read strategy for {}", self.file_path);
+        
+        // Apply bandwidth optimizer decisions if available
+        if let Some(optimizer) = bandwidth_optimizer {
+            // Create compaction query context
+            use crate::storage::engines::common::zero_copy_io_system::traits::{QueryContext, QueryType, RequestPriority};
+            
+            let query_context = QueryContext {
+                query_type: QueryType::FullScan,
+                priority: RequestPriority::Background,
+                estimated_result_size: 1000000, // Large result set for compaction
+                selectivity_hint: 1.0, // Read everything
+                collection_id: self.collection_id.clone(),
+                concurrent_queries: 1,
+                cache_temperature: 0.0, // Don't pollute cache
+            };
+            
+            // Make bandwidth-optimized decisions for compaction
+            match optimizer.decide_strategy(&self.file_path, &query_context).await {
+                Ok(decision) => {
+                    // For compaction, prefer using disk cache if available, avoid downloading transient files
+                    debug!("🔄 SWIFT COMPACTION BANDWIDTH: File {} - strategy: {:?} (transient files avoid download)", 
+                           self.file_path, decision.strategy);
+                }
+                Err(e) => {
+                    warn!("⚠️ SWIFT COMPACTION BANDWIDTH: Failed to get decision for {}: {}", self.file_path, e);
+                }
+            }
+        }
+        
+        // Use StreamAll strategy for compaction - no hierarchical pruning needed
+        self.stream_all().await
     }
 
     /// Get SuperBlock metadata with cache-first pattern

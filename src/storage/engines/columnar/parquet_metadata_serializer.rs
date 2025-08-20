@@ -12,7 +12,7 @@ use crate::storage::engines::common::zero_copy_metadata_cache::{
     MetadataSerializer, EngineMetadata, QueryContext, DataRange,
 };
 use crate::storage::persistence::filesystem::FilesystemFactory;
-use crate::common::errors::ProximaDBError;
+use crate::core::errors::ProximaDBError;
 
 /// Parquet Footer metadata (fixed size, bytemuck-compatible)
 #[repr(C)]

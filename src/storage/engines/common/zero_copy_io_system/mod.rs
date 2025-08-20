@@ -49,7 +49,7 @@ pub use traits::{
 };
 
 use std::sync::Arc;
-use crate::common::errors::ProximaDBError;
+use crate::core::errors::ProximaDBError;
 use crate::storage::persistence::filesystem::FilesystemFactory;
 
 /// Main entry point for the Zero-Copy I/O System

@@ -7,7 +7,7 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
-use crate::common::errors::ProximaDBError;
+use crate::core::errors::ProximaDBError;
 use crate::storage::persistence::filesystem::FilesystemFactory;
 use super::{ZeroCopyIOSystem, MetadataSerializer};
 

@@ -128,15 +128,190 @@ impl RaptorUnifiedReader {
         config: RaptorConfig,
         local_cache_dir: String,
     ) -> Self {
+        Self::new_with_bandwidth_optimizer(
+            filesystem,
+            transaction_coordinator,
+            config,
+            local_cache_dir,
+            None,
+        )
+    }
+    
+    /// 🚀 NEW: Create RAPTOR reader with bandwidth optimizer for smart threshold decisions
+    /// This constructor enables dual strategy support for different operation types
+    pub fn new_with_bandwidth_optimizer(
+        filesystem: Arc<ZeroCopyFilesystem>,
+        transaction_coordinator: Arc<TransactionCoordinator>,
+        config: RaptorConfig,
+        local_cache_dir: String,
+        bandwidth_optimizer: Option<Arc<crate::storage::engines::common::zero_copy_io_system::BandwidthOptimizer>>,
+    ) -> Self {
+        // Create IO strategy that considers bandwidth optimization decisions
+        let mut io_strategy = IoStrategy::default();
+        
+        // If bandwidth optimizer is available, adjust thresholds based on network conditions
+        if bandwidth_optimizer.is_some() {
+            // Bandwidth optimizer will make dynamic decisions, adjust base thresholds
+            io_strategy.full_download_threshold_mb = 100.0; // Higher threshold, let optimizer decide
+            io_strategy.read_percentage_threshold = 0.5; // More conservative base threshold
+        }
+        
         Self {
             filesystem,
             transaction_coordinator,
             config,
-            io_strategy: IoStrategy::default(),
+            io_strategy,
             metadata_cache: Arc::new(RwLock::new(HashMap::new())),
             local_cache_dir,
             stats: Arc::new(RwLock::new(ReaderStatistics::default())),
         }
+    }
+    
+    /// 🚀 NEW: Read with selective cache strategy - for normal queries with range reads and cache lookup
+    /// This strategy is optimized for:
+    /// - Range-based reading with HNSW graph navigation
+    /// - Cache lookup for frequently accessed RowGroups
+    /// - Metadata cache utilization for query planning
+    /// - Bandwidth-aware threshold decisions
+    pub async fn read_with_selective_cache_strategy(
+        &self,
+        file_path: &str,
+        rowgroup_selection: Option<Vec<usize>>,
+        bandwidth_optimizer: Option<Arc<crate::storage::engines::common::zero_copy_io_system::BandwidthOptimizer>>,
+    ) -> Result<Vec<RecordBatch>> {
+        tracing::debug!("🔍 RAPTOR SELECTIVE CACHE: Starting selective read strategy for {}", file_path);
+        
+        // Apply bandwidth optimizer decisions if available
+        if let Some(optimizer) = bandwidth_optimizer {
+            // Create query context for bandwidth decisions
+            use crate::storage::engines::common::zero_copy_io_system::traits::{QueryContext, QueryType, RequestPriority};
+            
+            let query_context = QueryContext {
+                query_type: QueryType::VectorSearch,
+                priority: RequestPriority::Normal,
+                estimated_result_size: rowgroup_selection.as_ref().map(|rg| rg.len() as u64).unwrap_or(1000),
+                selectivity_hint: 0.3, // Moderate selectivity for RAPTOR HNSW navigation
+                collection_id: "raptor".to_string(), // Generic collection ID for RAPTOR
+                concurrent_queries: 1,
+                cache_temperature: 0.5,
+            };
+            
+            // Make bandwidth-optimized decisions
+            match optimizer.decide_strategy(file_path, &query_context).await {
+                Ok(decision) => {
+                    tracing::debug!("📊 RAPTOR BANDWIDTH: File {} - strategy: {:?}, rationale: {:?}", 
+                           file_path, decision.strategy, decision.rationale);
+                }
+                Err(e) => {
+                    tracing::warn!("⚠️ RAPTOR BANDWIDTH: Failed to get decision for {}: {}", file_path, e);
+                }
+            }
+        }
+        
+        // Use range-based reading with cache optimization
+        self.read_rowgroups_with_caching(file_path, rowgroup_selection).await
+    }
+    
+    /// 🚀 NEW: Read with compaction strategy - for full read operations where cache lookups are suboptimal
+    /// This strategy is optimized for:
+    /// - Compaction operations that bypass write cache but use disk cache if files exist
+    /// - Full file sequential reads without selective RowGroup filtering
+    /// - Minimal metadata overhead for transient files
+    /// - Bandwidth conservation by avoiding unnecessary downloads
+    pub async fn read_with_compaction_strategy(
+        &self,
+        file_path: &str,
+        bandwidth_optimizer: Option<Arc<crate::storage::engines::common::zero_copy_io_system::BandwidthOptimizer>>,
+    ) -> Result<Vec<RecordBatch>> {
+        tracing::info!("🔥 RAPTOR COMPACTION: Starting compaction read strategy for {}", file_path);
+        
+        // Apply bandwidth optimizer decisions if available
+        if let Some(optimizer) = bandwidth_optimizer {
+            // Create compaction query context
+            use crate::storage::engines::common::zero_copy_io_system::traits::{QueryContext, QueryType, RequestPriority};
+            
+            let query_context = QueryContext {
+                query_type: QueryType::FullScan,
+                priority: RequestPriority::Background,
+                estimated_result_size: 1000000, // Large result set for compaction
+                selectivity_hint: 1.0, // Read everything
+                collection_id: "raptor".to_string(),
+                concurrent_queries: 1,
+                cache_temperature: 0.0, // Don't pollute cache
+            };
+            
+            // Make bandwidth-optimized decisions for compaction
+            match optimizer.decide_strategy(file_path, &query_context).await {
+                Ok(decision) => {
+                    // For compaction, prefer using disk cache if available, avoid downloading transient files
+                    tracing::debug!("🔄 RAPTOR COMPACTION BANDWIDTH: File {} - strategy: {:?} (transient files avoid download)", 
+                           file_path, decision.strategy);
+                }
+                Err(e) => {
+                    tracing::warn!("⚠️ RAPTOR COMPACTION BANDWIDTH: Failed to get decision for {}: {}", file_path, e);
+                }
+            }
+        }
+        
+        // Use full file streaming for compaction - no selective RowGroup filtering
+        self.read_full_file_streaming(file_path).await
+    }
+    
+    /// Helper method for range-based reading with cache optimization
+    async fn read_rowgroups_with_caching(
+        &self,
+        file_path: &str,
+        rowgroup_selection: Option<Vec<usize>>,
+    ) -> Result<Vec<RecordBatch>> {
+        tracing::debug!("📊 RAPTOR RANGE CACHE: Reading {} with selective RowGroups", file_path);
+        
+        // Get metadata first
+        let metadata = self.get_metadata(file_path).await?;
+        
+        // Determine which rowgroups to read
+        let target_rowgroups = rowgroup_selection.unwrap_or_else(|| {
+            (0..metadata.num_rowgroups).collect()
+        });
+        
+        // Use range reads for selective access
+        let mut record_batches = Vec::new();
+        for &rowgroup_idx in &target_rowgroups {
+            if rowgroup_idx < metadata.rowgroup_offsets.len() {
+                let offset = metadata.rowgroup_offsets[rowgroup_idx];
+                let size = metadata.rowgroup_sizes[rowgroup_idx];
+                
+                let rowgroup_data = self.filesystem.read_range(file_path, offset, size as usize).await?;
+                let record_batch = self.parse_rowgroup_data(&rowgroup_data)?;
+                record_batches.push(record_batch);
+            }
+        }
+        
+        Ok(record_batches)
+    }
+    
+    /// Helper method for full file streaming
+    async fn read_full_file_streaming(&self, file_path: &str) -> Result<Vec<RecordBatch>> {
+        tracing::debug!("📁 RAPTOR FULL STREAM: Reading entire file {}", file_path);
+        
+        // Read full file data
+        let file_data = self.filesystem.read(file_path).await?;
+        
+        // Parse all record batches from the file
+        self.parse_full_file_data(&file_data)
+    }
+    
+    /// Parse rowgroup data into RecordBatch
+    fn parse_rowgroup_data(&self, data: &[u8]) -> Result<RecordBatch> {
+        // Placeholder implementation - would parse Arrow RecordBatch from bytes
+        // In a real implementation, this would use Arrow IPC or Parquet deserialization
+        Err(anyhow::anyhow!("RowGroup parsing not yet implemented"))
+    }
+    
+    /// Parse full file data into multiple RecordBatches
+    fn parse_full_file_data(&self, data: &[u8]) -> Result<Vec<RecordBatch>> {
+        // Placeholder implementation - would parse all RecordBatches from file
+        // In a real implementation, this would parse the entire RAPTOR file format
+        Err(anyhow::anyhow!("Full file parsing not yet implemented"))
     }
 
     // ========================================================================

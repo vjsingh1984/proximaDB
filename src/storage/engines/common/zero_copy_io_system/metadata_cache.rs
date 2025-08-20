@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize};
 use tokio::fs;
 use tracing::{trace, debug, info, warn, error};
 
-use crate::common::errors::ProximaDBError;
+use crate::core::errors::ProximaDBError;
 use super::traits::{MetadataSerializer, EngineMetadata, QueryContext, DataRange};
 use super::MAGIC_BYTES;
 

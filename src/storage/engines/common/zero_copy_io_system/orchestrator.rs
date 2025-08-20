@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
 use tracing::{trace, debug, info, warn, error};
 
-use crate::common::errors::ProximaDBError;
+use crate::core::errors::ProximaDBError;
 use crate::storage::persistence::filesystem::FilesystemFactory;
 use super::metadata_cache::{ZeroCopyMetadataCache, CacheStatistics};
 use super::bandwidth_optimizer::{BandwidthOptimizer, DownloadStrategy, OptimizedRange, AccessPrediction};
@@ -751,7 +751,9 @@ impl Drop for ZeroCopyIOSystem {
             handle.abort();
         }
     }
+}
 
+impl ZeroCopyIOSystem {
     /// Get cached metadata with automatic cache population on miss
     /// This is the primary method readers should use for filename-based cache verification
     pub async fn get_cached_metadata(

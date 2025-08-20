@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 
-use crate::common::errors::ProximaDBError;
+use crate::core::errors::ProximaDBError;
 
 /// Engine-specific metadata serialization trait
 /// 

@@ -5,7 +5,7 @@ use tokio::sync::RwLock;
 use serde::{Serialize, Deserialize};
 use bincode;
 
-use crate::storage::engines::common::fastlanes_encoding::{FastLanesEncoder, markers};
+use crate::storage::engines::common::fastlanes_tensor_encoding::{FastLanesEncoder, markers};
 use crate::storage::engines::common::fastlanes_tensor_encoding;
 use super::hnsw_manager::{HnswManager, GraphNode, GraphEdge};
 use super::RaptorConfig;

@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use serde::{Serialize, Deserialize};
 
 use crate::core::VectorRecord;
-use crate::storage::engines::common::fastlanes_encoding::{
+use crate::storage::engines::common::fastlanes_tensor_encoding::{
     FastLanesEncoder, FastLanesDecoder, FastLanesScheme, markers
 };
 use crate::storage::engines::common::fastlanes_tensor_encoding;
