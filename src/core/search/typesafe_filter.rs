@@ -21,7 +21,11 @@ impl TypeSafeFilterEvaluator {
     pub fn new(filterable_columns: &[FilterableColumnSpec]) -> Self {
         let column_types: HashMap<String, FilterableDataType> = filterable_columns
             .iter()
-            .map(|col| (col.name.clone(), FilterableDataType::try_from(col.data_type).unwrap_or(FilterableDataType::FilterableString)))
+            .filter_map(|col| {
+                FilterableDataType::try_from(col.data_type)
+                    .ok()
+                    .map(|dt| (col.name.clone(), dt))
+            })
             .collect();
         
         Self { column_types }
@@ -52,7 +56,7 @@ impl TypeSafeFilterEvaluator {
             }
             FilterExpression::Comparison { field, operator, value } => {
                 // Get the field's expected data type from collection metadata
-                let expected_type = self.column_types.get(field).copied().unwrap_or(FilterableDataType::FilterableString);
+                let expected_type = self.column_types.get(field).copied();
                 
                 // Get the actual metadata value
                 let metadata_item = metadata.get(field.as_str());
@@ -154,11 +158,11 @@ impl TypeSafeFilterEvaluator {
         &self,
         metadata_value: &Option<MetadataValue>,
         json_value: &serde_json::Value,
-        expected_type: FilterableDataType,
+        expected_type: Option<FilterableDataType>,
     ) -> Option<Ordering> {
         match (metadata_value, expected_type) {
             // String comparison
-            (Some(MetadataValue::StringValue(s)), FilterableDataType::FilterableString) => {
+            (Some(MetadataValue::StringValue(s)), Some(FilterableDataType::FilterableString)) => {
                 if let serde_json::Value::String(js) = json_value {
                     Some(s.cmp(js))
                 } else {
@@ -167,7 +171,7 @@ impl TypeSafeFilterEvaluator {
             }
             
             // Number comparison - no casting needed, direct type comparison
-            (Some(MetadataValue::NumberValue(n)), FilterableDataType::FilterableInteger | FilterableDataType::FilterableFloat) => {
+            (Some(MetadataValue::NumberValue(n)), Some(FilterableDataType::FilterableInteger) | Some(FilterableDataType::FilterableFloat)) => {
                 match json_value {
                     serde_json::Value::Number(jn) => {
                         // Direct numeric comparison without conversion
@@ -184,7 +188,7 @@ impl TypeSafeFilterEvaluator {
             }
             
             // Boolean comparison
-            (Some(MetadataValue::BoolValue(b)), FilterableDataType::FilterableBoolean) => {
+            (Some(MetadataValue::BoolValue(b)), Some(FilterableDataType::FilterableBoolean)) => {
                 if let serde_json::Value::Bool(jb) = json_value {
                     Some(b.cmp(jb))
                 } else {
@@ -194,7 +198,7 @@ impl TypeSafeFilterEvaluator {
             
             // Cross-type conversions when metadata doesn't match expected type
             // This can happen with flexible schemas or type mismatches
-            (Some(MetadataValue::StringValue(s)), FilterableDataType::FilterableInteger) => {
+            (Some(MetadataValue::StringValue(s)), Some(FilterableDataType::FilterableInteger)) => {
                 // Try to parse string as integer
                 if let (Ok(si), serde_json::Value::Number(jn)) = (s.parse::<i64>(), json_value) {
                     if let Some(ji) = jn.as_i64() {
@@ -207,7 +211,7 @@ impl TypeSafeFilterEvaluator {
                 }
             }
             
-            (Some(MetadataValue::StringValue(s)), FilterableDataType::FilterableFloat) => {
+            (Some(MetadataValue::StringValue(s)), Some(FilterableDataType::FilterableFloat)) => {
                 // Try to parse string as float
                 if let (Ok(sf), serde_json::Value::Number(jn)) = (s.parse::<f64>(), json_value) {
                     if let Some(jf) = jn.as_f64() {
@@ -220,7 +224,7 @@ impl TypeSafeFilterEvaluator {
                 }
             }
             
-            (Some(MetadataValue::NumberValue(n)), FilterableDataType::FilterableString) => {
+            (Some(MetadataValue::NumberValue(n)), Some(FilterableDataType::FilterableString)) => {
                 // Convert number to string for comparison
                 if let serde_json::Value::String(js) = json_value {
                     n.to_string().as_str().cmp(js).into()
@@ -246,7 +250,7 @@ pub fn metadata_items_to_json(items: &[MetadataItem]) -> HashMap<String, serde_j
                     serde_json::Value::Number(serde_json::Number::from(*n as i64))
                 } else {
                     serde_json::Value::Number(
-                        serde_json::Number::from_f64(*n).unwrap_or(serde_json::Number::from(0))
+                        serde_json::Number::from_f64(*n).unwrap_or_else(|| serde_json::Number::from(0))
                     )
                 }
             }
@@ -323,12 +327,12 @@ mod tests {
         let columns = vec![
             FilterableColumnSpec {
                 name: "category".to_string(),
-                // data_type removed -  FilterableDataType::FilterableString as i32,
+                data_type: FilterableDataType::FilterableString as i32,
                 indexed: true,
                 supports_range: false,
                 estimated_cardinality: Some(100),
-                        encoding_hint: None,
-                    }
+                encoding_hint: None,
+            }
         ];
         
         let evaluator = TypeSafeFilterEvaluator::new(&columns);
@@ -354,12 +358,12 @@ mod tests {
         let columns = vec![
             FilterableColumnSpec {
                 name: "price".to_string(),
-                // data_type removed -  FilterableDataType::FilterableFloat as i32,
+                data_type: FilterableDataType::FilterableFloat as i32,
                 indexed: true,
                 supports_range: true,
                 estimated_cardinality: None,
-                        encoding_hint: None,
-                    }
+                encoding_hint: None,
+            }
         ];
         
         let evaluator = TypeSafeFilterEvaluator::new(&columns);

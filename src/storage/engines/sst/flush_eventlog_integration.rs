@@ -58,7 +58,7 @@ impl SstFlushHandler {
             .and_then(|c| c.config.as_ref())
             .and_then(|cfg| cfg.quantization.as_ref())
             .map(|q| q.enabled)
-            .unwrap_or(false);
+            ;
         
         // SST always stores FP32
         let has_fp32 = true;
@@ -157,14 +157,14 @@ mod tests {
     fn test_flush_handler_creation() {
         let handler = SstFlushHandler::new();
         // Handler should work even without EventLog service
-        assert!(handler.event_log.is_none() || handler.event_log.is_some());
+        assert!(handler.event_log.is_empty() || handler.event_log.is_some());
     }
     
     #[tokio::test]
     async fn test_can_compact_without_service() {
         let handler = SstFlushHandler::new();
         // Without EventLog service, compaction should be allowed
-        if handler.event_log.is_none() {
+        if handler.event_log.is_empty() {
             assert!(handler.can_compact_files("test", &["file1.sstable".to_string()]).await);
         }
     }

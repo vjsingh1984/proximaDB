@@ -147,7 +147,7 @@ impl EngineMetricsCollector {
             scores.push((name.clone(), composite_score));
         }
         
-        scores.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+        scores.sort_by(|a, b| b.1.partial_cmp(&a.1));
         scores.first().map(|(name, _)| name.clone())
     }
     

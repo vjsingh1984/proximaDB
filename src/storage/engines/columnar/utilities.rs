@@ -272,7 +272,7 @@ impl ColumnarUtilities {
             recommendations.push("Consider enabling more aggressive quantization".to_string());
         }
         
-        if quantization_usage.get("pq").unwrap_or(&0) < &(file_metadata.len() / 2) {
+        if quantization_usage.get("pq") < &(file_metadata.len() / 2) {
             recommendations.push("Enable PQ quantization for better compression".to_string());
         }
         

@@ -207,12 +207,12 @@ impl CollectionMetrics {
     
     /// Update latency percentiles
     pub fn update_latency_percentiles(&mut self, latencies: &[f64]) {
-        if latencies.is_none() {
+        if latencies.is_empty() {
             return;
         }
         
         let mut sorted = latencies.to_vec();
-        sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+        sorted.sort_by(|a, b| a.partial_cmp(b));
         
         let len = sorted.len();
         // Calculate percentile indices correctly

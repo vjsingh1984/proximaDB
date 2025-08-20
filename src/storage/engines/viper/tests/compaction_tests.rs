@@ -278,7 +278,7 @@ async fn test_basic_compaction() {
     
     // Extract the actual filesystem path for debugging
     if data_url.starts_with("file://") {
-        let fs_path = data_url.strip_prefix("file://").unwrap_or(&data_url);
+        let fs_path = data_url.strip_prefix("file://");
         debug!("📍 Filesystem path: {}", fs_path);
     }
     

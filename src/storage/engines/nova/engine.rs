@@ -390,7 +390,7 @@ impl UnifiedStorageEngine for NovaEngine {
         let dimension = params.collection_config.as_ref()
             .and_then(|c| c.config.as_ref())
             .map(|cfg| cfg.dimension)
-            .unwrap_or(768) as usize;
+             as usize;
         // Use default compression for Parquet
         let compression_algorithm = CompressionAlgorithm::Zstd;
         debug!("NOVA: Using compression: {:?}", compression_algorithm);
@@ -569,7 +569,7 @@ impl UnifiedStorageEngine for NovaEngine {
         let distance_metric = ctx.distance_metric();
         let dimension = ctx.dimension();
         let filter = ctx.search_params.filter_expression.as_ref()
-            .map(|f| serde_json::to_value(f).unwrap_or(serde_json::Value::Null));
+            .map(|f| serde_json::to_value(f));
         let search_params = ctx.search_params.custom_hints.clone();
         
         info!("NOVA unified search: collection={}, k={}, metric={:?}, storage_path={}", 

@@ -310,7 +310,7 @@ impl CompactionCoordinator {
     async fn should_trigger_compaction(&self, collection_id: &str) -> Result<bool> {
         let states = self.collection_states.read().await;
         let default_state = CollectionCompactionState::default();
-        let state = states.get(collection_id).unwrap_or(&default_state);
+        let state = states.get(collection_id);
         
         // Don't trigger if already in progress
         if state.compaction_in_progress {
@@ -661,7 +661,7 @@ impl CompactionCoordinator {
     
     /// Manual compaction trigger (for testing or admin operations)
     pub async fn trigger_manual_compaction(&self, collection_id: &str, engine_type: Option<&str>) -> Result<CompactionResult> {
-        let engine = engine_type.unwrap_or("VIPER");
+        let engine = engine_type;
         
         info!(
             "🔧 CompactionCoordinator: Manual compaction triggered for collection {} using {}",
@@ -674,7 +674,7 @@ impl CompactionCoordinator {
     /// Check collection compaction status and trigger if needed
     pub async fn check_and_compact(&self, collection_id: &str) -> Result<Option<CompactionResult>> {
         // Initialize collection state if not exists
-        if self.get_collection_state(collection_id).await.is_none() {
+        if self.get_collection_state(collection_id).await.is_empty() {
             self.initialize_collection(collection_id, "VIPER").await?;
         }
         

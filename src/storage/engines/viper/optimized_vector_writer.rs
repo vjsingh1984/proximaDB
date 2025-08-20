@@ -153,7 +153,7 @@ impl OptimizedVectorWriter {
         
         // Build ID array
         let ids: Vec<String> = records.iter()
-            .map(|r| r.id.as_deref().unwrap_or("").to_string())
+            .map(|r| r.id.as_str().to_string())
             .collect();
         let id_array = Arc::new(arrow_array::StringArray::from(ids));
 
@@ -200,7 +200,7 @@ impl OptimizedVectorWriter {
                                 Some(crate::proto::proximadb::metadata_item::Value::NumberValue(n)) => {
                                     serde_json::Number::from_f64(*n)
                                         .map(serde_json::Value::Number)
-                                        .unwrap_or(serde_json::Value::Null)
+                                        
                                 }
                                 Some(crate::proto::proximadb::metadata_item::Value::BoolValue(b)) => serde_json::Value::Bool(*b),
                                 None => serde_json::Value::Null,
@@ -292,7 +292,7 @@ impl OptimizedVectorWriter {
         let vector_dimensions = records.iter()
             .find(|r| !r.vector.is_empty())
             .map(|r| r.vector.len())
-            .unwrap_or(0);
+            ;
 
         if vector_dimensions == 0 {
             return Err(anyhow::anyhow!("No valid vectors found to determine dimensions"));

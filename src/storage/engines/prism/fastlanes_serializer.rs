@@ -92,7 +92,7 @@ impl PrismFastLanesSerializer {
             num_vectors: records.len(),
             dimension: records.first()
                 .map(|r| r.vector.len())
-                .unwrap_or(0),
+                ,
             encoding_scheme: self.get_scheme_for_level(level),
             compression_ratio: 0.0, // Will be calculated
             quality_score: self.estimate_quality_for_level(level),

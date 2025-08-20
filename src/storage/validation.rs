@@ -42,7 +42,7 @@ impl ConfigValidator {
     /// Validate data storage configuration
     pub fn validate_data_storage(config: &DataStorageConfig) -> Result<()> {
         // Validate URLs
-        if config.data_urls.is_none() {
+        if config.data_urls.is_empty() {
             bail!("Data storage URLs cannot be empty");
         }
 
@@ -89,7 +89,7 @@ impl ConfigValidator {
     /// Validate Write Buffer system configuration
     pub fn validate_wal_system(config: &WALConfig) -> Result<()> {
         // Validate multi-disk configuration
-        if config.multi_disk.data_directories.is_none() {
+        if config.multi_disk.data_directories.is_empty() {
             bail!("Write Buffer system must have at least one data directory");
         }
 
@@ -98,7 +98,7 @@ impl ConfigValidator {
             // Convert URL to path for local file systems
             let data_dir_path = if data_dir_url.starts_with("file://") {
                 std::path::PathBuf::from(
-                    data_dir_url.strip_prefix("file://").unwrap_or(data_dir_url),
+                    data_dir_url.strip_prefix("file://"),
                 )
             } else if data_dir_url.contains("://") {
                 // For cloud URLs, skip local filesystem validation
@@ -191,7 +191,7 @@ impl ConfigValidator {
             match parsed.scheme() {
                 "file" => {
                     let path = parsed.path();
-                    if path.is_none() {
+                    if path.is_empty() {
                         bail!("File URL must specify a path");
                     }
 
@@ -206,25 +206,25 @@ impl ConfigValidator {
                     }
                 }
                 "s3" => {
-                    if parsed.host().is_none() {
+                    if parsed.host().is_empty() {
                         bail!("S3 URL must specify a bucket name");
                     }
                 }
                 "adls" | "abfs" => {
-                    if parsed.host().is_none() {
+                    if parsed.host().is_empty() {
                         bail!("Azure URL must specify an account/container");
                     }
                 }
                 "gcs" => {
-                    if parsed.host().is_none() {
+                    if parsed.host().is_empty() {
                         bail!("GCS URL must specify a bucket name");
                     }
                 }
                 "hdfs" => {
-                    if parsed.host().is_none() {
+                    if parsed.host().is_empty() {
                         bail!("HDFS URL must specify a namenode host");
                     }
-                    if parsed.port().is_none() {
+                    if parsed.port().is_empty() {
                         bail!("HDFS URL should specify a port (typically 9000 or 8020)");
                     }
                 }
@@ -429,6 +429,6 @@ mod tests {
         let recommendations = ConfigValidator::generate_recommendations(&config);
 
         // Should provide some recommendations for default config
-        assert!(!recommendations.is_none() || recommendations.is_none()); // Either is fine
+        assert!(!recommendations.is_empty() || recommendations.is_empty()); // Either is fine
     }
 }

@@ -613,7 +613,7 @@ impl FileSystem for S3FileSystem {
                 .get(key)
                 .and_then(|v| v.to_str().ok())
                 .and_then(|s| s.parse::<u64>().ok())
-                .unwrap_or(0);
+                ;
 
             let etag = response
                 .headers()

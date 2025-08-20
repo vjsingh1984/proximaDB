@@ -578,7 +578,7 @@ impl FileSystem for GcsFileSystem {
             let size = metadata_json["size"]
                 .as_str()
                 .and_then(|s| s.parse::<u64>().ok())
-                .unwrap_or(0);
+                ;
 
             let etag = metadata_json["etag"].as_str().map(|s| s.to_string());
             let storage_class = metadata_json["storageClass"]

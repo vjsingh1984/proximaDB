@@ -1045,7 +1045,7 @@ where
     }
 
     async fn is_empty(&self) -> bool {
-        self.storage.is_none()
+        self.storage.is_empty()
     }
 
     async fn keys(&self) -> Vec<K> {
@@ -1303,10 +1303,10 @@ mod tests {
         assert!(backend.contains(&"key2".to_string()).await);
         assert!(!backend.contains(&"key1".to_string()).await);
         assert_eq!(backend.len().await, 1);
-        assert!(!backend.is_none().await);
+        assert!(!backend.is_empty().await);
         
         backend.clear().await;
-        assert!(backend.is_none().await);
+        assert!(backend.is_empty().await);
         */
     }
     

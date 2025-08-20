@@ -108,7 +108,7 @@ impl CompactionFileDiscovery {
                     }
                 };
                 
-                let can_compact = can_compact_result.unwrap_or(false);
+                let can_compact = can_compact_result;
                 
                 if can_compact {
                     level_compactable.push(file_meta);
@@ -236,7 +236,7 @@ impl CompactionTaskBuilder {
                 // Calculate total size at L0
                 let l0_total_size_mb = filtered_files.compactable_files.get(&0)
                     .map(|files| files.iter().map(|f| f.size_bytes / (1024 * 1024)).sum::<u64>() as usize)
-                    .unwrap_or(0);
+                    ;
                 l0_total_size_mb >= config.l0_size_threshold_mb
             }
             "hybrid" | _ => {
@@ -244,7 +244,7 @@ impl CompactionTaskBuilder {
                 let count_triggered = file_discovery.should_trigger_compaction(&filtered_files, 0, config.l0_file_threshold);
                 let l0_total_size_mb = filtered_files.compactable_files.get(&0)
                     .map(|files| files.iter().map(|f| f.size_bytes / (1024 * 1024)).sum::<u64>() as usize)
-                    .unwrap_or(0);
+                    ;
                 let size_triggered = l0_total_size_mb >= config.l0_size_threshold_mb;
                 count_triggered || size_triggered
             }
@@ -284,14 +284,14 @@ impl CompactionTaskBuilder {
                 "size" => {
                     let level_total_size_mb = filtered_files.compactable_files.get(&level)
                         .map(|files| files.iter().map(|f| f.size_bytes / (1024 * 1024)).sum::<u64>() as usize)
-                        .unwrap_or(0);
+                        ;
                     level_total_size_mb >= level_size_threshold_mb
                 }
                 "hybrid" | _ => {
                     let count_triggered = file_discovery.should_trigger_compaction(&filtered_files, level, level_file_threshold);
                     let level_total_size_mb = filtered_files.compactable_files.get(&level)
                         .map(|files| files.iter().map(|f| f.size_bytes / (1024 * 1024)).sum::<u64>() as usize)
-                        .unwrap_or(0);
+                        ;
                     let size_triggered = level_total_size_mb >= level_size_threshold_mb;
                     count_triggered || size_triggered
                 }

@@ -185,7 +185,7 @@ impl AxisLshIndex {
         dimension: usize,
         preferred_extraction_mode: ExtractionMode,
     ) -> Self {
-        let coll_str = collection_id.as_ref().map(|s| s.as_str()).unwrap_or("default");
+        let coll_str = collection_id.as_ref().map(|s| s.as_str());
         info!(
             "Creating AXIS LSH index for collection '{}': {} tables, {} hashes, {} dim, repr={:?}",
             coll_str, config.n_tables, config.n_hashes, dimension, preferred_extraction_mode
@@ -265,7 +265,7 @@ impl AxisLshIndex {
         }
         
         // Store vector in the collection-specific ZeroOverheadCollection
-        let collection_id = self.collection_id.as_ref().map(|s| s.as_str()).unwrap_or("default");
+        let collection_id = self.collection_id.as_ref().map(|s| s.as_str());
         
         // Get or create collection for this collection_id
         let collection = self.vectors.entry(collection_id.to_string())
@@ -341,7 +341,7 @@ impl AxisLshIndex {
         
         // Compute actual distances for candidates
         let mut results = Vec::new();
-        let collection_id = self.collection_id.as_ref().map(|s| s.as_str()).unwrap_or("default");
+        let collection_id = self.collection_id.as_ref().map(|s| s.as_str());
         
         // Get the collection for this collection_id
         if let Some(collection) = self.vectors.get(&collection_id.to_string()) {
@@ -355,7 +355,7 @@ impl AxisLshIndex {
                     }
                     
                     if let Some(vector_data) = view.as_f32() {
-                        let dist = self.calculate_distance(query, vector_data);
+                        let dist = self.distance_compute.compute(query, vector_data);
                         results.push((id.clone(), dist));
                     }
                 }
@@ -374,10 +374,9 @@ impl AxisLshIndex {
         
         Ok(results)
     }
-    
     /// Remove a vector from the index
     pub async fn remove(&self, id: &str) -> Result<()> {
-        let collection_id = self.collection_id.as_ref().map(|s| s.as_str()).unwrap_or("default");
+        let collection_id = self.collection_id.as_ref().map(|s| s.as_str());
         
         // Get the collection and remove the vector
         if let Some(collection) = self.vectors.get(&collection_id.to_string()) {

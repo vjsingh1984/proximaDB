@@ -142,7 +142,7 @@ impl PartialOrd for Candidate {
 
 impl Ord for Candidate {
     fn cmp(&self, other: &Self) -> Ordering {
-        self.partial_cmp(other).unwrap_or(Ordering::Equal)
+        self.partial_cmp(other)
     }
 }
 
@@ -535,9 +535,9 @@ fn condition_matches_block_stats(
                 // Check if range overlaps with block's range
                 // Use JSON comparison helpers
                 compare_json_values(&col_stats.max_value, min, std::cmp::Ordering::Greater)
-                    .unwrap_or(false)
+                    
                     && compare_json_values(&col_stats.min_value, max, std::cmp::Ordering::Less)
-                        .unwrap_or(false)
+                        
             } else {
                 false
             }
@@ -569,8 +569,8 @@ fn condition_matches_record(
         }
         FilterCondition::Range(column, min, max) => {
             metadata.get(column).map_or(false, |v| {
-                compare_json_values(v, min, std::cmp::Ordering::Greater).unwrap_or(false)
-                    && compare_json_values(v, max, std::cmp::Ordering::Less).unwrap_or(false)
+                compare_json_values(v, min, std::cmp::Ordering::Greater)
+                    && compare_json_values(v, max, std::cmp::Ordering::Less)
             })
         }
         FilterCondition::In(column, values) => {

@@ -745,7 +745,7 @@ impl StreamingParquetWriter {
             if self.id_bloom_filters.len() <= self.current_row_group {
                 // Use configured NDV or estimate for ID columns
                 let estimated_items = self.config.expected_ndv
-                    .unwrap_or(self.config.row_group_size); // IDs are typically unique
+                    ; // IDs are typically unique
                 
                 let bloom = crate::storage::engines::columnar::id_index::BloomFilter::new(
                     estimated_items, 
@@ -872,7 +872,7 @@ impl StreamingParquetWriter {
     fn build_pq_codebook(&self, records: &[VectorRecord]) -> Result<PqCodebook> {
         let dimension = records.first()
             .map(|r| r.vector.len())
-            .unwrap_or(0);
+            ;
         
         if dimension == 0 {
             return Err(anyhow!("Cannot build PQ codebook for zero-dimensional vectors"));

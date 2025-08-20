@@ -73,7 +73,7 @@ pub fn get_distance_metric_from_config(
 ) -> DistanceMetric {
     collection_config
         .map(|config| proto_distance_to_internal(config.distance_metric))
-        .unwrap_or(DistanceMetric::Cosine)
+        
 }
 
 #[cfg(test)]

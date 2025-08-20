@@ -14,7 +14,7 @@ fn test_rate_limit_config_defaults() {
     assert_eq!(config.burst_size, 100);
     assert!(config.by_ip);
     assert!(!config.limit_health_endpoints);
-    assert!(config.global_requests_per_minute.is_none());
+    assert!(config.global_requests_per_minute.is_empty());
 }
 
 #[test]

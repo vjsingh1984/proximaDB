@@ -67,7 +67,7 @@ impl IntoResponse for ErrorResponse {
             "error_code": self.error_code
         }));
         
-        (StatusCode::from_u16(self.status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR), body).into_response()
+        (StatusCode::from_u16(self.status), body).into_response()
     }
 }
 
@@ -113,14 +113,14 @@ impl CollectionConfigJson {
         let mut config = CollectionConfig {
             name: self.name.clone(),
             dimension: self.dimension,
-            distance_metric: conversions::parse_distance_metric(&self.distance_metric.as_deref().unwrap_or("cosine")).into(),
-            storage_engine: conversions::parse_storage_engine(&self.storage_engine.as_deref().unwrap_or("viper")).into(),
+            distance_metric: conversions::parse_distance_metric(&self.distance_metric.as_str()).into(),
+            storage_engine: conversions::parse_storage_engine(&self.storage_engine.as_str()).into(),
             filterable_columns: self.filterable_columns.clone().unwrap_or_default(),
             index_configs: self.index_configs.clone().unwrap_or_default(),
             quantization: self.quantization.clone(),
             storage_config: self.storage.clone(),
             primary_index: self.primary_index.clone().unwrap_or_default(),
-            auto_index_selection: self.auto_index_selection.unwrap_or(false),
+            auto_index_selection: self.auto_index_selection,
             description: self.description.clone(),
             tags: self.tags.clone().unwrap_or_default(),
             owner: self.owner.clone(),
@@ -963,8 +963,8 @@ pub async fn get_vector(
     Path((collection_id, vector_id)): Path<(String, String)>,
     Query(params): Query<GetVectorParams>,
 ) -> Result<JsonResponse<VectorGetResponse>, ErrorResponse> {
-    let include_vector = params.include_vector.unwrap_or(true);
-    let include_metadata = params.include_metadata.unwrap_or(true);
+    let include_vector = params.include_vector;
+    let include_metadata = params.include_metadata;
     
     match state.unified_handlers.handle_get_vector(
         &collection_id,
@@ -1085,11 +1085,11 @@ pub async fn get_collection_metrics(
 ) -> Result<JsonResponse<ApiResponse<serde_json::Value>>, StatusCode> {
     // Parse query options
     let include_hints = params.get("include_hints")
-        .map(|v| v.parse().unwrap_or(true))
-        .unwrap_or(true);
+        .map(|v| v.parse())
+        ;
     let _include_history = params.get("include_hints")
-        .map(|v| v.parse().unwrap_or(false))
-        .unwrap_or(false);
+        .map(|v| v.parse())
+        ;
     
     // TODO: Delegate to metrics query service when integrated
     match state.unified_handlers.get_collection_metrics(&collection_id, include_hints).await {
@@ -1185,7 +1185,7 @@ fn convert_index_config_to_proto(config: IndexConfiguration) -> IndexConfig {
         update_mode,
         async_update_timeout_ms: config.async_update_timeout_ms,
         async_update_batch_size: config.async_update_batch_size,
-        enable_background_optimization: config.enable_background_optimization.unwrap_or(true),
+        enable_background_optimization: config.enable_background_optimization,
         hnsw_config: config.hnsw_config.map(|c| HnswConfig {
             m: c.m,
             ef_construction: c.ef_construction,
@@ -1239,7 +1239,7 @@ fn convert_index_config_to_proto(config: IndexConfiguration) -> IndexConfig {
         build_concurrency: config.build_concurrency,
         memory_limit_mb: config.memory_limit_mb,
         checkpoint_interval_ms: config.checkpoint_interval_ms,
-        is_primary: config.is_primary.unwrap_or(false),
+        is_primary: config.is_primary,
         use_cases: config.use_cases.unwrap_or_default(),
         selectivity_threshold: config.selectivity_threshold,
     }
@@ -1582,9 +1582,9 @@ fn convert_from_proto_collection(proto: ProtoCollection) -> Collection {
         id: proto.id,
         config: CollectionConfigJson::from_proto(&config),
         stats: CollectionStats {
-            vector_count: proto.stats.as_ref().map(|s| s.vector_count).unwrap_or(0),
-            index_size_bytes: proto.stats.as_ref().map(|s| s.index_size_bytes).unwrap_or(0),
-            data_size_bytes: proto.stats.as_ref().map(|s| s.data_size_bytes).unwrap_or(0),
+            vector_count: proto.stats.as_ref().map(|s| s.vector_count),
+            index_size_bytes: proto.stats.as_ref().map(|s| s.index_size_bytes),
+            data_size_bytes: proto.stats.as_ref().map(|s| s.data_size_bytes),
         },
         timestamp: proto.created_at,
         updated_at: proto.updated_at,
@@ -1629,7 +1629,7 @@ pub async fn list_collections(
                 timestamp: c.created_at,
                 updated_at: c.updated_at,
                 vector_count: stats.map(|s| s.vector_count),
-                indexed: stats.map(|s| s.index_size_bytes > 0).unwrap_or(false),
+                indexed: stats.map(|s| s.index_size_bytes > 0),
             }
         })
         .collect();
@@ -1679,7 +1679,7 @@ pub async fn get_collection(
                 timestamp: c.created_at,
                 updated_at: c.updated_at,
                 vector_count: stats.map(|s| s.vector_count),
-                indexed: stats.map(|s| s.index_size_bytes > 0).unwrap_or(false),
+                indexed: stats.map(|s| s.index_size_bytes > 0),
             };
             Ok(JsonResponse(collection_info))
         }

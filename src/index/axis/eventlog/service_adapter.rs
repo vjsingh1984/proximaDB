@@ -338,7 +338,7 @@ impl EventLogServiceFactory {
         collection_cache: Arc<dashmap::DashMap<String, Arc<crate::proto::proximadb::Collection>>>,
         deployment_mode: Option<String>,
     ) -> Result<Arc<dyn EventLogService>> {
-        let service: Arc<dyn EventLogService> = match deployment_mode.as_deref() {
+        let service: Arc<dyn EventLogService> = match deployment_mode.as_str() {
             Some("standalone") => {
                 // Parse standalone config from environment or config
                 let bind_address = std::env::var("EVENTLOG_BIND_ADDRESS")

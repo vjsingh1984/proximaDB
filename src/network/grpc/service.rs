@@ -116,7 +116,9 @@ impl ProximaDbGrpcService {
         use prost_types::value::Kind;
         match &value.kind {
             Some(Kind::NullValue(_)) => serde_json::Value::Null,
-            Some(Kind::NumberValue(n)) => serde_json::Value::Number(serde_json::Number::from_f64(*n).unwrap_or(serde_json::Number::from(0))),
+            Some(Kind::NumberValue(n)) => serde_json::Value::Number(
+                serde_json::Number::from_f64(*n).unwrap_or_else(|| serde_json::Number::from(0))
+            ),
             Some(Kind::StringValue(s)) => serde_json::Value::String(s.clone()),
             Some(Kind::BoolValue(b)) => serde_json::Value::Bool(*b),
             Some(Kind::StructValue(s)) => {
@@ -423,7 +425,7 @@ impl ProximaDb for ProximaDbGrpcService {
                 }
                 
                 // Check if any updates were provided
-                if description.is_none() && tags.is_none() && owner.is_none() && config.is_none() {
+                if description.is_empty() && tags.is_empty() && owner.is_empty() && config.is_empty() {
                     return Err(Status::invalid_argument("No valid updates provided"));
                 }
                 
@@ -435,9 +437,9 @@ impl ProximaDb for ProximaDbGrpcService {
                         distance_metric: 0, // 0 means don't update
                         storage_engine: 0, // 0 means don't update
                         primary_indexing_algorithm: 0, // 0 means don't update
-                        description: description.unwrap_or(None),
+                        description: description,
                         tags: tags.unwrap_or_default(),
-                        owner: owner.unwrap_or(None),
+                        owner: owner,
                         filterable_columns: vec![],
                         index_configs: vec![],
                         quantization: None,
@@ -482,7 +484,7 @@ impl ProximaDb for ProximaDbGrpcService {
                     }))
                 } else {
                     // Convert error codes to appropriate gRPC Status
-                    let status = match result.error_code.as_deref() {
+                    let status = match result.error_code.as_str() {
                         Some("COLLECTION_NOT_FOUND") => Status::not_found(
                             format!("Collection not found: {:?}", result.error_code),
                         ),
@@ -628,7 +630,7 @@ impl ProximaDb for ProximaDbGrpcService {
             "include_vectors": include_vectors,
             "include_metadata_info": include_metadata,
             "metadata_filters": metadata_filters,
-            "distance_metric": req.distance_metric_override.unwrap_or(1),
+            "distance_metric": req.distance_metric_override,
             "index_algorithm": 1, // Default to HNSW
             "search_params": req.search_params,
             "optimization_mode": "protobuf_direct" // Flag for optimized path
@@ -1083,7 +1085,7 @@ impl ProximaDb for ProximaDbGrpcService {
                 "multi_query_results": all_results.iter().enumerate().map(|(idx, result)| {
                     json!({
                         "query_index": idx,
-                        "results": serde_json::from_slice::<serde_json::Value>(result).unwrap_or(json!({}))
+                        "results": serde_json::from_slice::<serde_json::Value>(result).unwrap_or(serde_json::Value::Null)
                     })
                 }).collect::<Vec<_>>(),
                 "total_queries": req.queries.len()
@@ -1117,7 +1119,7 @@ impl ProximaDb for ProximaDbGrpcService {
         let results = search_results
             .get("results")
             .and_then(|r| r.as_array())
-            .unwrap_or(&vec![])
+            
             .iter()
             .map(|result| crate::proto::proximadb::SearchVectorRecord {
                 id: result
@@ -1178,7 +1180,7 @@ impl ProximaDb for ProximaDbGrpcService {
             let total_results = search_results
                 .get("metadata")
                 .and_then(|v| v.as_i64())
-                .unwrap_or(0);
+                ;
 
             Ok(Response::new(VectorOperationResponse {
                 success: true,

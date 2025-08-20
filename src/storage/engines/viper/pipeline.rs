@@ -818,7 +818,7 @@ impl VectorRecordProcessor {
             (Value::Number(a_num), Value::Number(b_num)) => {
                 match (a_num.as_f64(), b_num.as_f64()) {
                     (Some(a_f), Some(b_f)) => {
-                        a_f.partial_cmp(&b_f).unwrap_or(Ordering::Equal)
+                        a_f.partial_cmp(&b_f)
                     }
                     _ => Ordering::Equal,
                 }
@@ -1155,7 +1155,7 @@ impl VectorRecordProcessor {
 
         // Create minimal RecordBatch (placeholder implementation)
         let id_array = arrow_array::StringArray::from(
-            records.iter().map(|r| r.id.as_deref().unwrap_or("")).collect::<Vec<_>>(),
+            records.iter().map(|r| r.id.as_str()).collect::<Vec<_>>(),
         );
         let collection_array = arrow_array::StringArray::from(
             vec![collection_id; records.len()]
@@ -1248,7 +1248,7 @@ impl VectorRecordProcessor {
                     let mag_b: f32 = b.vector.iter().map(|x| x * x).sum::<f32>().sqrt();
                     mag_a
                         .partial_cmp(&mag_b)
-                        .unwrap_or(Ordering::Equal)
+                        
                 });
             }
 
@@ -1260,7 +1260,7 @@ impl VectorRecordProcessor {
                         return count_cmp;
                     }
                     // Secondary sort by ID for consistency
-                    a.id.as_deref().unwrap_or("").cmp(&b.id.as_deref().unwrap_or(""))
+                    a.id.as_str().cmp(&b.id.as_str().unwrap_or(""))
                 });
             }
 
@@ -1278,7 +1278,7 @@ impl VectorRecordProcessor {
                     for i in 0..std::cmp::min(3, std::cmp::min(a.vector.len(), b.vector.len())) {
                         let dim_cmp = a.vector[i]
                             .partial_cmp(&b.vector[i])
-                            .unwrap_or(Ordering::Equal);
+                            ;
                         if dim_cmp != Ordering::Equal {
                             return dim_cmp;
                         }
@@ -1307,7 +1307,7 @@ impl VectorRecordProcessor {
                 records.sort_by(|a, b| a.timestamp.cmp(&b.timestamp));
             }
             SortingStrategy::ById => {
-                records.sort_by(|a, b| a.id.as_deref().unwrap_or("").cmp(&b.id.as_deref().unwrap_or("")));
+                records.sort_by(|a, b| a.id.as_str().cmp(&b.id.as_str().unwrap_or("")));
             }
             SortingStrategy::ByMetadata(fields) => {
                 records.sort_by(|a, b| self.compare_by_metadata_fields(a, b, fields));
@@ -1319,7 +1319,7 @@ impl VectorRecordProcessor {
             } => {
                 records.sort_by(|a, b| {
                     if *include_id {
-                        let id_cmp = a.id.as_deref().unwrap_or("").cmp(&b.id.as_deref().unwrap_or(""));
+                        let id_cmp = a.id.as_str().cmp(&b.id.as_str().unwrap_or(""));
                         if id_cmp != Ordering::Equal {
                             return id_cmp;
                         }
@@ -1366,7 +1366,7 @@ impl VectorRecordProcessor {
                     let mag_b: f32 = b.vector.iter().map(|x| x * x).sum::<f32>().sqrt();
                     let mag_cmp = mag_a
                         .partial_cmp(&mag_b)
-                        .unwrap_or(Ordering::Equal);
+                        ;
 
                     if mag_cmp != Ordering::Equal {
                         return mag_cmp;
@@ -1376,7 +1376,7 @@ impl VectorRecordProcessor {
                     for i in 0..std::cmp::min(5, std::cmp::min(a.vector.len(), b.vector.len())) {
                         let dim_cmp = a.vector[i]
                             .partial_cmp(&b.vector[i])
-                            .unwrap_or(Ordering::Equal);
+                            ;
                         if dim_cmp != Ordering::Equal {
                             return dim_cmp;
                         }
@@ -1386,7 +1386,7 @@ impl VectorRecordProcessor {
                 });
             }
             SortingStrategy::ById => {
-                records.sort_by(|a, b| a.id.as_deref().unwrap_or("").cmp(&b.id.as_deref().unwrap_or("")));
+                records.sort_by(|a, b| a.id.as_str().cmp(&b.id.as_str().unwrap_or("")));
             }
             SortingStrategy::ByMetadata(fields) => {
                 records.sort_by(|a, b| self.compare_by_metadata_fields(a, b, fields));
@@ -1398,7 +1398,7 @@ impl VectorRecordProcessor {
             } => {
                 records.sort_by(|a, b| {
                     if *include_id {
-                        let id_cmp = a.id.as_deref().unwrap_or("").cmp(&b.id.as_deref().unwrap_or(""));
+                        let id_cmp = a.id.as_str().cmp(&b.id.as_str().unwrap_or(""));
                         if id_cmp != Ordering::Equal {
                             return id_cmp;
                         }
@@ -1804,7 +1804,7 @@ impl VectorProcessor for VectorRecordProcessor {
                     let mag_b: f32 = b.vector.iter().map(|x| x * x).sum::<f32>().sqrt();
                     let mag_cmp = mag_a
                         .partial_cmp(&mag_b)
-                        .unwrap_or(Ordering::Equal);
+                        ;
 
                     if mag_cmp != Ordering::Equal {
                         return mag_cmp;
@@ -1814,7 +1814,7 @@ impl VectorProcessor for VectorRecordProcessor {
                     for i in 0..std::cmp::min(5, std::cmp::min(a.vector.len(), b.vector.len())) {
                         let dim_cmp = a.vector[i]
                             .partial_cmp(&b.vector[i])
-                            .unwrap_or(Ordering::Equal);
+                            ;
                         if dim_cmp != Ordering::Equal {
                             return dim_cmp;
                         }
@@ -1826,7 +1826,7 @@ impl VectorProcessor for VectorRecordProcessor {
             }
 
             SortingStrategy::ById => {
-                records.sort_by(|a, b| a.id.as_deref().unwrap_or("").cmp(&b.id.as_deref().unwrap_or("")));
+                records.sort_by(|a, b| a.id.as_str().cmp(&b.id.as_str().unwrap_or("")));
                 tracing::debug!("🔢 Sorted {} records by ID", record_count);
             }
 
@@ -1849,7 +1849,7 @@ impl VectorProcessor for VectorRecordProcessor {
 
                     // Stage 1: ID comparison (if enabled)
                     if *include_id {
-                        let id_cmp = a.id.as_deref().unwrap_or("").cmp(&b.id.as_deref().unwrap_or(""));
+                        let id_cmp = a.id.as_str().cmp(&b.id.as_str().unwrap_or(""));
                         if id_cmp != Ordering::Equal {
                             return id_cmp;
                         }

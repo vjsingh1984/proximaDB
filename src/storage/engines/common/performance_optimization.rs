@@ -307,7 +307,7 @@ impl UniversalPerformanceOptimizer {
         
         // Try local file memory mapping first (works for file:// URLs)
         if file_url.starts_with("file://") {
-            let local_path = file_url.strip_prefix("file://").unwrap_or(file_url);
+            let local_path = file_url.strip_prefix("file://");
             if let Ok(file) = File::open(local_path) {
                 let mmap = unsafe { MmapOptions::new().map(&file)? };
                 
@@ -370,7 +370,7 @@ impl UniversalPerformanceOptimizer {
         
         // Use filesystem API for seamless local/cloud writing
         let filesystem = self.filesystem_factory.get_filesystem(file_url)?;
-        filesystem.write(file_url, &compressed_data).await?;
+        filesystem.write(file_url, &compressed_data, None).await?;
         
         // Update cache if appropriate
         if compressed_data.len() < self.io_config.cache_size_mb * 1024 * 1024 / 8 {
@@ -433,8 +433,8 @@ impl UniversalPerformanceOptimizer {
     
     /// Memory pool optimization using the global shared pool
     pub async fn get_memory_buffer(&self, size: usize) -> Result<Vec<f32>> {
-        SHARED_MEMORY_POOL.acquire_buffer(size).await
-            .map_err(|e| anyhow::anyhow!("Failed to acquire memory buffer: {}", e))
+        let pooled_item = SHARED_MEMORY_POOL.get_f32_buffer(size);
+        Ok(pooled_item.take())
     }
     
     // ============================================================================
@@ -449,40 +449,40 @@ impl UniversalPerformanceOptimizer {
             UniversalOptimizationStrategy::PerformanceFirst => {
                 // Keep frequently accessed data in fast tier
                 if access_frequency > 0.1 {
-                    Ok(StorageTier::Hot)
+                    Ok(StorageTier::NVMe)
                 } else {
-                    Ok(StorageTier::Warm)
+                    Ok(StorageTier::SSD)
                 }
             },
             UniversalOptimizationStrategy::MemoryEfficient => {
                 // Optimize for memory usage
                 if data_size_bytes < 32 * 1024 * 1024 { // < 32MB
-                    Ok(StorageTier::Hot)
+                    Ok(StorageTier::NVMe)
                 } else {
-                    Ok(StorageTier::Cold)
+                    Ok(StorageTier::HDD)
                 }
             },
             UniversalOptimizationStrategy::CostOptimized => {
                 // Aggressive cost optimization
                 if access_frequency > self.io_config.tiered_storage_threshold {
-                    Ok(StorageTier::Hot)
+                    Ok(StorageTier::NVMe)
                 } else {
-                    Ok(StorageTier::Cold)
+                    Ok(StorageTier::HDD)
                 }
             },
             UniversalOptimizationStrategy::Balanced => {
                 // Balance performance and cost
                 if access_frequency > 0.3 && data_size_bytes < 64 * 1024 * 1024 {
-                    Ok(StorageTier::Hot)
+                    Ok(StorageTier::NVMe)
                 } else if access_frequency > 0.1 {
-                    Ok(StorageTier::Warm)
+                    Ok(StorageTier::SSD)
                 } else {
-                    Ok(StorageTier::Cold)
+                    Ok(StorageTier::HDD)
                 }
             },
             UniversalOptimizationStrategy::Custom(_) => {
                 // Default to balanced for custom strategies
-                Ok(StorageTier::Warm)
+                Ok(StorageTier::SSD)
             }
         }
     }
@@ -492,17 +492,22 @@ impl UniversalPerformanceOptimizer {
         use crate::core::compression::{CompressionProvider, CompressionContext};
         
         let (algorithm, level) = match tier {
-            StorageTier::Hot => {
+            StorageTier::Memory | StorageTier::NVMe => {
                 // Fast compression for hot tier
                 (CompressionAlgorithm::Lz4, 1) // Fastest
             },
-            StorageTier::Warm => {
+            StorageTier::SSD | StorageTier::AzurePremium | StorageTier::GcsSSD => {
                 // Balanced compression
                 (CompressionAlgorithm::Snappy, 3)
             },
-            StorageTier::Cold => {
+            StorageTier::HDD | StorageTier::S3Standard | StorageTier::AzureStandard | 
+            StorageTier::GcsHDD | StorageTier::S3GlacierInstant => {
                 // Maximum compression for cost savings
                 (CompressionAlgorithm::Zstd, 9)
+            },
+            StorageTier::S3Express => {
+                // Balanced for S3 Express
+                (CompressionAlgorithm::Snappy, 2)
             },
         };
         
@@ -553,7 +558,7 @@ impl UniversalPerformanceOptimizer {
             let mmap_cache = self.mmap_cache.clone();
             tokio::spawn(async move {
                 for file_url in local_files {
-                    let local_path = file_url.strip_prefix("file://").unwrap_or(&file_url);
+                    let local_path = file_url.strip_prefix("file://");
                     if let Ok(file) = File::open(local_path) {
                         if let Ok(mmap) = unsafe { MmapOptions::new().map(&file) } {
                             let mut cache = mmap_cache.write().await;
@@ -760,6 +765,6 @@ mod tests {
         ).await.unwrap();
         
         let tier = optimizer.optimize_storage_tier("test_key", 1024).await.unwrap();
-        assert!(matches!(tier, StorageTier::Cold)); // Should default to cold for cost optimization
+        assert!(matches!(tier, StorageTier::HDD)); // Should default to HDD for cost optimization
     }
 }

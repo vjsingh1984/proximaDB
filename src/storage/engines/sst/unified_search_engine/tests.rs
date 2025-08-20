@@ -451,7 +451,7 @@ mod search_tests {
         for result in &search_result_set.results {
             let version = result.metadata.get(key)
                 .and_then(|v| v.as_i64())
-                .unwrap_or(0);
+                ;
             assert_eq!(version, 2);
         }
     }
@@ -638,7 +638,7 @@ mod helper_methods_tests {
         assert_eq!(resolved_results[0].id, "doc1");
         let version = resolved_results[0].metadata.get(key)
             .and_then(|v| v.as_i64())
-            .unwrap_or(0);
+            ;
         assert_eq!(version, 2);
         
         // Results should be sorted by score descending

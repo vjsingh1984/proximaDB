@@ -155,10 +155,10 @@ mod tests {
         let config = StorageConfig::default();
         
         // Should have default storage locations
-        assert!(!config.storage_locations.is_none());
+        assert!(!config.storage_locations.is_empty());
         
         // Should have proper metadata URL
-        assert!(!config.metadata_url.is_none());
+        assert!(!config.metadata_url.is_empty());
         assert!(config.metadata_url.starts_with("file://"));
         
         // Assignment config should default to hash with affinity

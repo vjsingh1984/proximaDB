@@ -419,14 +419,11 @@ impl FileSystem for ZeroCopyFilesystem {
     /// 1. For cloud storage: Write to local cache first, then upload asynchronously
     /// 2. For large files: Use staging directory for atomic moves
     /// 3. For small files: Direct write with cache population
-    async fn write(&self, path: &str, data: &[u8]) -> FsResult<()> {
-        self.write_with_intelligent_staging(path, data, &FileOptions::default()).await
+    async fn write(&self, path: &str, data: &[u8], options: Option<FileOptions>) -> FsResult<()> {
+        let opts = options.unwrap_or_default();
+        self.write_with_intelligent_staging(path, data, &opts).await
     }
 
-    /// Write file with options and intelligent staging
-    async fn write_with_options(&self, path: &str, data: &[u8], options: &FileOptions) -> FsResult<()> {
-        self.write_with_intelligent_staging(path, data, options).await
-    }
 
     /// Delete file with intelligent cache invalidation
     async fn delete(&self, path: &str) -> FsResult<()> {
@@ -444,73 +441,13 @@ impl FileSystem for ZeroCopyFilesystem {
                 }
             }
             
-            // TODO: Invalidate metadata cache entries
-            self.invalidate_metadata_cache(path).await;
+            // TODO: Invalidate metadata cache entries (placeholder)
         }
         
         result
     }
 
     /// Invalidate metadata cache entries for the given path
-    async fn invalidate_metadata_cache(&self, path: &str) {
-        trace!(path, "Invalidating metadata cache entries");
-        
-        // In a full implementation, this would:
-        // 1. Remove metadata cache entries for this file
-        // 2. Update access pattern tracking to mark file as deleted
-        // 3. Clean up any staging or temporary files
-        
-        // TODO: Integrate with ZeroCopyMetadataCache.invalidate()
-    }
-    
-    /// Check if file should be cached for future access based on bandwidth optimization
-    async fn should_cache_for_future_access(&self, path: &str, result: &OptimizedIOResult) -> bool {
-        // Use bandwidth optimizer decision plus local factors
-        result.should_cache_locally || 
-        result.bandwidth_decision.as_ref()
-            .map(|bd| bd.cache_recommendation)
-            .unwrap_or(false)
-    }
-    
-    /// Cache file for future access
-    async fn cache_for_future_access(&self, path: &str, data: &[u8]) {
-        if let Ok(cache_path) = self.get_local_cache_path(path).await {
-            if let Err(e) = self.write_to_local_cache(&cache_path, data).await {
-                warn!(path, cache_path, error = ?e, "Failed to cache file for future access");
-            } else {
-                debug!(path, cache_path, size = data.len(), "Cached file for future access");
-            }
-        }
-    }
-    
-    /// Execute range-based access as recommended by bandwidth optimizer
-    async fn execute_range_based_access(&self, path: &str, result: &OptimizedIOResult) -> FsResult<Vec<u8>> {
-        // Extract range information from the optimization result
-        if let Some(ranges) = &result.optimized_ranges {
-            let mut combined_data = Vec::new();
-            
-            for range in ranges {
-                let range_data = self.underlying_fs.read_range(
-                    path, 
-                    range.offset, 
-                    range.length
-                ).await?;
-                combined_data.extend_from_slice(&range_data);
-            }
-            
-            debug!(
-                path, 
-                ranges_count = ranges.len(),
-                total_bytes = combined_data.len(),
-                "Range-based access completed"
-            );
-            Ok(combined_data)
-        } else {
-            // Fallback to full file read
-            warn!(path, "No range information available, falling back to full read");
-            self.underlying_fs.read(path).await
-        }
-    }
 
     /// Create directory (delegate to underlying filesystem)
     async fn create_dir(&self, path: &str) -> FsResult<()> {
@@ -554,8 +491,8 @@ impl FileSystem for ZeroCopyFilesystem {
     }
 
     /// List directory contents (delegate to underlying filesystem)
-    async fn list_dir(&self, path: &str) -> FsResult<Vec<crate::storage::persistence::filesystem::DirEntry>> {
-        self.underlying_fs.list_dir(path).await
+    async fn list(&self, path: &str) -> FsResult<Vec<crate::storage::persistence::filesystem::DirEntry>> {
+        self.underlying_fs.list(path).await
     }
 
     /// Copy file (delegate to underlying filesystem)

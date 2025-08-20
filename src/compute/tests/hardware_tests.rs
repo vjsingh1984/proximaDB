@@ -31,7 +31,7 @@ mod tests {
         assert!(info.memory_total > 0);
         assert!(info.memory_free > 0);
         assert!(info.memory_free <= info.memory_total);
-        assert!(info.multiprocessor_count.unwrap_or(0) > 0);
+        assert!(info.multiprocessor_count > 0);
     }
     
     #[tokio::test]

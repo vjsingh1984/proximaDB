@@ -254,7 +254,7 @@ impl FlushParametersExt for FlushParameters {
         self.collection_config.as_ref()
             .and_then(|c| c.quantization.as_ref())
             .map(|q| q.enabled)
-            .unwrap_or(false)
+            
     }
     
     fn has_fp32(&self) -> bool {
@@ -266,7 +266,7 @@ impl FlushParametersExt for FlushParameters {
         // Could check hints or collection config
         if self.hints.as_ref()
             .map(|h| h.contains_key("engine") && h["engine"] == "viper")
-            .unwrap_or(false) 
+             
         {
             StorageEngineType::VIPER
         } else {
@@ -285,7 +285,7 @@ impl CompactionParametersExt for CompactionParameters {
     fn storage_engine(&self) -> StorageEngineType {
         if self.hints.as_ref()
             .map(|h| h.contains_key("engine") && h["engine"] == "viper")
-            .unwrap_or(false)
+            
         {
             StorageEngineType::VIPER
         } else {

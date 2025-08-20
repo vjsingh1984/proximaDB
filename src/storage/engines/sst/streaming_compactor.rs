@@ -45,7 +45,7 @@ impl Ord for MergeRecord {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
         // Priority: ID first, then version (higher = newer), then sequence (higher = newer)
         self.record.id.cmp(&other.record.id)
-            .then_with(|| other.record.version.unwrap_or(0).cmp(&self.record.version.unwrap_or(0)))
+            .then_with(|| other.record.version.cmp(&self.record.version.unwrap_or(0)))
             .then_with(|| other.sequence.cmp(&self.sequence))
     }
 }

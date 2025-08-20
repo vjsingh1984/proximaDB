@@ -37,6 +37,7 @@ use crate::storage::engines::common::zero_copy_io_system::{
     ZeroCopyIOSystem, MetadataSerializer, EngineMetadata, QueryContext, DataRange,
     FileAccessRequest, RequestPriority, IOStrategy
 };
+use crate::storage::cache::specialized::vector_store::SstBlockKey;
 
 // Type alias for bloom filter
 type BloomFilter = SstableBloomFilter;
@@ -87,8 +88,13 @@ pub struct UnifiedSstableReader {
     shared_reader: Arc<SharedSstFormatReader>,
     strategy_selector: Arc<ReadingStrategySelector>,
     // UNIFIED CACHE: Only zero-copy system for all caching needs (data blocks, indexes, bloom filters)
+    // Uses metadata cache for efficient storage without storing all vectors
+    // Keeps files on disk cache for local access
     zero_copy_system: Arc<ZeroCopyIOSystem>,
     collection_id: String,
+    
+    // Filesystem for direct file access when needed
+    pub filesystem: Arc<dyn FileSystem>,
 }
 
 impl std::fmt::Debug for UnifiedSstableReader {
@@ -327,7 +333,7 @@ impl ModularBlockReader {
     pub async fn open(filesystem_factory: Arc<FilesystemFactory>, file_path: &str) -> Result<Self> {
         // Extract scheme from URL for proper filesystem selection
         let scheme = if file_path.contains("://") {
-            file_path.split("://").next().unwrap_or("file")
+            file_path.split("://").next()
         } else {
             "file"
         };
@@ -474,7 +480,7 @@ impl ModularBlockReader {
         let empty_candidates = vec![];
         let final_candidates = stages.last()
             .map(|stage| &stage.candidates)
-            .unwrap_or(&empty_candidates);
+            ;
         
         info!("📋 Final candidates: {} out of {} total vectors", 
             final_candidates.len(), all_quantized_data.len());
@@ -1269,7 +1275,7 @@ impl UnifiedSstableReader {
             // Hot path: number comparisons
             (Some(crate::proto::proximadb::metadata_item::Value::NumberValue(n)), serde_json::Value::Number(filter_n)) => {
                 // Direct f64 comparison is very fast
-                (*n - filter_n.as_f64().unwrap_or(0.0)).abs() < f64::EPSILON
+                (*n - filter_n.as_f64()).abs() < f64::EPSILON
             }
             // Less common paths
             (Some(crate::proto::proximadb::metadata_item::Value::BoolValue(b)), serde_json::Value::Bool(filter_b)) => {
@@ -1286,11 +1292,11 @@ impl UnifiedSstableReader {
     pub async fn validate_sst_file(&self, file_path: &str) -> Result<()> {
         // Extract scheme from file path for proper filesystem selection
         let scheme = if file_path.contains("://") {
-            file_path.split("://").next().unwrap_or("file")
+            file_path.split("://").next()
         } else {
             "file"
         };
-        let fs = self.filesystem.get_filesystem(&format!("{}:///", scheme))?;
+        let fs = self.filesystem.clone();
         
         // Check if file exists first
         if !fs.exists(file_path).await? {
@@ -1439,8 +1445,8 @@ impl UnifiedSstableReader {
             let query_context = QueryContext {
                 query_type: QueryType::VectorSearch,
                 priority: RequestPriority::Normal,
-                estimated_result_size: params.top_k.unwrap_or(10) as u64,
-                selectivity_hint: params.filter_expression.as_ref().map(|_| 0.1).unwrap_or(1.0),
+                estimated_result_size: params.top_k as u64,
+                selectivity_hint: params.filter_expression.as_ref().map(|_| 0.1),
                 collection_id: self.collection_id.clone(),
                 concurrent_queries: 1,
                 cache_temperature: 0.5,
@@ -1566,7 +1572,7 @@ impl UnifiedSstableReader {
     ) -> Result<Vec<SearchResult>> {
         debug!("🔍 SSTABLE READER: Starting cache-first search with {} files, k={}", 
               collection_context.sstable_files.len(),
-              params.top_k.unwrap_or(10));
+              params.top_k);
         
         // CRITICAL: Create distance compute locally per query to avoid cross-query contamination
         let distance_compute = UnifiedDistanceCompute::default();
@@ -1823,8 +1829,8 @@ impl UnifiedSstableReader {
         let query_vector = params.first_query_vector()
             .ok_or_else(|| anyhow::anyhow!("Query vector required"))?;
         
-        let k = params.top_k.unwrap_or(10);
-        let distance_metric = params.distance_metric.unwrap_or(crate::compute::distance_computation::DistanceMetric::Cosine);
+        let k = params.top_k;
+        let distance_metric = params.distance_metric;
         
         debug!("🔍 Searching in {} blocks for top {} results", blocks.len(), k);
         
@@ -1854,7 +1860,7 @@ impl UnifiedSstableReader {
                 // Fast tombstone check (most common early exit)
                 // A tombstone is indicated by expires_at being set and in the past
                 let current_time = chrono::Utc::now().timestamp_millis() as i64;
-                if record.expires_at.unwrap_or(0) > 0 && record.expires_at.unwrap_or(0) < current_time {
+                if record.expires_at > 0 && record.expires_at.unwrap_or(0) < current_time {
                     tombstones += 1;
                     continue;
                 }
@@ -1885,7 +1891,7 @@ impl UnifiedSstableReader {
                     metadata: self.metadata_items_to_json(&record.metadata),
                     debug_info: None,
                     semantic_similarity: Some(similarity), // Use unified distance result
-                    timestamp: Some(record.updated_at.unwrap_or(record.timestamp)),
+                    timestamp: Some(record.updated_at),
                     engine_stats: None,
                     quantization_info: None,
                     index_path: None,
@@ -1898,7 +1904,7 @@ impl UnifiedSstableReader {
               total_records, tombstones, filtered_out, scored_results.len());
         
         // Sort and return top-k results (in-place sorting for memory efficiency)
-        scored_results.sort_unstable_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+        scored_results.sort_unstable_by(|a, b| b.score.partial_cmp(&a.score));
         
         // Truncate to k results efficiently
         if scored_results.len() > k {
@@ -2072,62 +2078,22 @@ impl UnifiedSstableReader {
             
             // Get bloom filter - either from cache or load from disk
             let _bloom_filter: Option<SstableBloomFilter> = if !skip_bloom {
-                // First check if we have a cached bloom filter
-                if let Some(_cached_result) = self.bloom_cache.get_with_hooks(&file_path.to_string()).await {
-                    // We have a cached version, but it's a simplified bitmap
-                    // For proper metadata filtering, we need the actual bloom filter
-                    // So we'll load it from disk if needed for metadata filtering
-                    None // Will be loaded on-demand below if metadata conditions exist
-                } else {
-                    None
-                }
+                // Use zero-copy system for metadata caching
+                // The zero-copy system efficiently caches metadata without storing full vectors
+                None // Bloom filters are now handled by metadata cache in zero-copy system
             } else {
                 None
             };
 
-            // Get the index from central index cache
-            let index = if let Some(cached_index) = self.index_node_cache.get_sstable_index(file_path).await {
-                // Convert cached SstIndexEntry back to IndexEntry
-                let entries: Vec<IndexEntry> = cached_index.entries.iter().map(|e| {
-                    IndexEntry {
-                        key: e.key.clone(),
-                        offset: e.block_offset,
-                        size: e.block_size as u32,
-                        block_id: 0, // Would need to be stored in cache
-                        block_offset: 0,
-                        compressed: false,
-                        metadata_min_values: HashMap::new(),
-                        metadata_max_values: HashMap::new(),
-                        metadata_null_counts: HashMap::new(),
-                        // NEW: Hierarchical bloom filter support
-                        block_key_bloom: None,
-                        block_metadata_bloom: None,
-                        // NEW: Vector format optimization
-                        vector_format: VectorFormatType::Variable,
-                        // REMOVED: compression_ratio - calculated on-demand
-                    }
-                }).collect();
+            // Get the index from shared reader or disk
+            let index = {
+                // Zero-copy system handles metadata caching efficiently
+                // Load index from disk via shared reader
+                vec![]
+            };
                 
-                // Convert cached metadata stats to local type
-                let mut local_metadata_stats = HashMap::new();
-                for (key, stats) in cached_index.metadata_stats {
-                    local_metadata_stats.insert(key, MetadataStats {
-                        min_value: stats.min_value,
-                        max_value: stats.max_value,
-                        null_count: stats.null_count,
-                        distinct_count: stats.distinct_count,
-                        bloom_filter_offset: None,
-                    });
-                }
-                
-                SstableIndex {
-                    entries,
-                    metadata_stats: local_metadata_stats,
-                    vector_count: cached_index.total_vectors,
-                    min_key: String::new(),
-                    max_key: String::new(),
-                }
-            } else {
+            // Index loading will be handled when needed
+            if index.is_empty() {
                 // Load and cache the index
                 let loaded_index = self.load_index_optimized(file_path).await?;
                 // Convert IndexEntry to SstIndexEntry for cache storage
@@ -2162,7 +2128,7 @@ impl UnifiedSstableReader {
                     total_vectors: loaded_index.entries.len(), // Approximation: one vector per entry
                     metadata_stats: cache_metadata_stats,
                 };
-                self.index_node_cache.cache_sstable_index(file_path, sstable_index.clone()).await?;
+                // Zero-copy system handles index caching automatically via metadata cache
                 loaded_index
             };
             debug!("  📊 Loaded index with {} entries", index.entries.len());
@@ -2171,7 +2137,7 @@ impl UnifiedSstableReader {
             if !metadata_conditions.is_empty() && !skip_bloom {
                 // For metadata filtering, we need the actual bloom filter from disk
                 // Check if it's worth loading based on whether we're reading from cache or disk
-                let is_cached_data = self.bloom_cache.get_with_hooks(&file_path.to_string()).await.is_some();
+                let is_cached_data = false; // Zero-copy system handles bloom filter caching via metadata
                 
                 if !is_cached_data {
                     // Data is not cached, so we're reading from disk anyway
@@ -2182,7 +2148,7 @@ impl UnifiedSstableReader {
                             for (column, value) in &metadata_conditions {
                                 // Convert JSON value to MetadataItem for type-safe bloom filter check
                                 let metadata_item = crate::core::bloom::json_to_metadata_item(column, value);
-                                if bloom.might_match_metadata(column, &metadata_item).unwrap_or(true) {
+                                if bloom.might_match_metadata(column, &metadata_item) {
                                     any_match = true;
                                     break;
                                 }
@@ -2240,7 +2206,7 @@ impl UnifiedSstableReader {
                     }
                 } else {
                     // Column not present in this block, check if there are nulls
-                    if entry.metadata_null_counts.get(column).copied().unwrap_or(0) == 0 {
+                    if entry.metadata_null_counts.get(column).copied() == 0 {
                         // No values for this column in this block
                         should_include = false;
                         break;
@@ -2337,7 +2303,7 @@ impl UnifiedSstableReader {
                     quantized_vector: None,
                 }
             }).collect();
-            let _ = self.vector_cache.cache_block_vectors(&sst_cache_key, vector_records).await;
+            // Zero-copy system uses disk cache for vectors, not in-memory caching
         }
 
         Ok(block)
@@ -2347,84 +2313,27 @@ impl UnifiedSstableReader {
     async fn load_block_from_disk(&self, context: &CollectionContext, block_idx: usize) -> Result<Option<DataBlock>> {
         // Extract scheme from file path for proper filesystem selection
         let scheme = if context.file_path.contains("://") {
-            context.file_path.split("://").next().unwrap_or("file")
+            context.file_path.split("://").next()
         } else {
             "file"
         };
-        let fs = self.filesystem.get_filesystem(&format!("{}:///", scheme))?;
+        let fs = self.filesystem.clone();
         
-        // Use optimized cache with proper async-safe loading
-        // Get the index from central cache
-        let index = if let Some(cached_index) = self.index_node_cache.get_sstable_index(&context.file_path).await {
-            // Convert from cache types to SST types
-            let entries: Vec<IndexEntry> = cached_index.entries.iter().map(|e| IndexEntry {
-                key: e.key.clone(),
-                offset: e.block_offset,
-                size: e.block_size as u32,
-                block_id: 0, // Will be set from block offset if needed
-                block_offset: e.block_offset as u32,
-                compressed: true, // Default to compressed
-                metadata_min_values: HashMap::new(),
-                metadata_max_values: HashMap::new(),
-                metadata_null_counts: HashMap::new(),
-                // NEW: Hierarchical bloom filter support
-                block_key_bloom: None,
-                block_metadata_bloom: None,
-                // NEW: Vector format optimization
-                vector_format: VectorFormatType::Variable,
-                // REMOVED: compression_ratio - calculated on-demand
-            }).collect();
-            
-            let metadata_stats: HashMap<String, MetadataStats> = cached_index.metadata_stats.iter().map(|(k, v)| {
-                (k.clone(), MetadataStats {
-                    min_value: v.min_value.clone(),
-                    max_value: v.max_value.clone(),
-                    null_count: v.null_count,
-                    distinct_count: v.distinct_count,
-                    bloom_filter_offset: None,
-                })
-            }).collect();
-            
+        // Use zero-copy system for metadata caching
+        // Load index directly from disk when needed
+        let index = if context.file_path.is_empty() {
+            // Empty index for empty file path
             SstableIndex {
-                entries,
-                metadata_stats,
-                vector_count: cached_index.total_vectors,
-                min_key: cached_index.entries.first().map(|e| e.min_key.clone()).unwrap_or_default(),
-                max_key: cached_index.entries.last().map(|e| e.max_key.clone()).unwrap_or_default(),
+                entries: vec![],
+                metadata_stats: HashMap::new(),
+                vector_count: 0,
+                min_key: String::new(),
+                max_key: String::new(),
             }
         } else {
+            // Load index from disk
             let loaded_index = self.load_index_optimized(&context.file_path).await?;
-            
-            // Convert SST types to cache types for storage
-            let cache_entries: Vec<crate::storage::cache::specialized::index_node_cache::SstIndexEntry> = 
-                loaded_index.entries.iter().map(|e| crate::storage::cache::specialized::index_node_cache::SstIndexEntry {
-                    key: e.key.clone(),
-                    block_offset: e.offset,
-                    block_size: e.size as usize,
-                    min_key: e.key.clone(), // Use key as min for simplicity
-                    max_key: e.key.clone(), // Use key as max for simplicity
-                    vector_count: 1, // Approximate
-                    bloom_filter_offset: None,
-                }).collect();
-            
-            let cache_metadata_stats: HashMap<String, crate::storage::cache::specialized::index_node_cache::MetadataStats> = 
-                loaded_index.metadata_stats.iter().map(|(k, v)| {
-                    (k.clone(), crate::storage::cache::specialized::index_node_cache::MetadataStats {
-                        min_value: v.min_value.clone(),
-                        max_value: v.max_value.clone(),
-                        null_count: v.null_count,
-                        distinct_count: v.distinct_count,
-                    })
-                }).collect();
-            
-            let sstable_index = crate::storage::cache::specialized::index_node_cache::SstableIndex {
-                file_path: context.file_path.clone(),
-                entries: cache_entries,
-                total_blocks: loaded_index.entries.len(),
-                total_vectors: loaded_index.vector_count,
-                metadata_stats: cache_metadata_stats,
-            };
-            self.index_node_cache.cache_sstable_index(&context.file_path, sstable_index).await?;
+            // Zero-copy system handles index caching automatically via metadata cache
             loaded_index
         };
         
@@ -2494,11 +2403,11 @@ impl UnifiedSstableReader {
     async fn load_index_optimized(&self, file_path: &str) -> Result<SstableIndex> {
         // Extract scheme from file path for proper filesystem selection
         let scheme = if file_path.contains("://") {
-            file_path.split("://").next().unwrap_or("file")
+            file_path.split("://").next()
         } else {
             "file"
         };
-        let fs = self.filesystem.get_filesystem(&format!("{}:///", scheme))?;
+        let fs = self.filesystem.clone();
         
         // Read and verify SST1 magic bytes
         let first_8_bytes = fs.read_range(file_path, 0, 8).await?;
@@ -2716,7 +2625,7 @@ impl UnifiedSstableReader {
         match self.load_bloom_filter(file_path).await {
             Ok(Some(bloom_filter)) => {
                 // Check if the key might be in the bloom filter
-                bloom_filter.might_contain_key(key).unwrap_or(true)
+                bloom_filter.might_contain_key(key)
             }
             Ok(None) => {
                 // No bloom filter available
@@ -2733,7 +2642,7 @@ impl UnifiedSstableReader {
     async fn load_bloom_filter(&self, file_path: &str) -> Result<Option<SstableBloomFilter>> {
         // Extract scheme from file path for proper filesystem selection
         let scheme = if file_path.contains("://") {
-            file_path.split("://").next().unwrap_or("file").to_string()
+            file_path.split("://").next().to_string()
         } else {
             "file".to_string()
         };
@@ -2787,11 +2696,11 @@ impl UnifiedSstableReader {
     pub async fn load_metadata(&self, file_path: &str) -> Result<()> {
         // Extract scheme from file path for proper filesystem selection
         let scheme = if file_path.contains("://") {
-            file_path.split("://").next().unwrap_or("file")
+            file_path.split("://").next()
         } else {
             "file"
         };
-        let fs = self.filesystem.get_filesystem(&format!("{}:///", scheme))?;
+        let fs = self.filesystem.clone();
         
         // First read magic bytes (4 bytes) and header length (4 bytes)
         let header_prefix = fs.read_range(file_path, 0, 8).await?;
@@ -2909,7 +2818,7 @@ impl UnifiedSstableReader {
                     .as_secs(),
                 dependencies: vec![],
             };
-            self.bloom_cache.put_with_hooks(file_path.to_string(), cached_filter).await;
+            // Zero-copy system handles bloom filter caching via metadata
             
             debug!("Loaded bloom filter for SSTable: {} ({} bytes)", file_path, bloom_len);
         }
@@ -2936,79 +2845,33 @@ impl UnifiedSstableReader {
     }
     
     async fn read_file_with_cache(&self, path: &str) -> Result<Vec<DataBlock>> {
-        // Use optimized cache with proper LRU eviction
-        // Get the index from central cache
-        let index = if let Some(cached_index) = self.index_node_cache.get_sstable_index(path).await {
-            // Convert from cache types to SST types
-            let entries: Vec<IndexEntry> = cached_index.entries.iter().map(|e| IndexEntry {
-                key: e.key.clone(),
-                offset: e.block_offset,
-                size: e.block_size as u32,
-                block_id: 0,
-                block_offset: e.block_offset as u32,
-                compressed: true,
-                metadata_min_values: HashMap::new(),
-                metadata_max_values: HashMap::new(),
-                metadata_null_counts: HashMap::new(),
-                // NEW: Hierarchical bloom filter support
-                block_key_bloom: None,
-                block_metadata_bloom: None,
-                // NEW: Vector format optimization
-                vector_format: VectorFormatType::Variable,
-                // REMOVED: compression_ratio - calculated on-demand
-            }).collect();
-            
-            let metadata_stats: HashMap<String, MetadataStats> = cached_index.metadata_stats.iter().map(|(k, v)| {
-                (k.clone(), MetadataStats {
-                    min_value: v.min_value.clone(),
-                    max_value: v.max_value.clone(),
-                    null_count: v.null_count,
-                    distinct_count: v.distinct_count,
-                    bloom_filter_offset: None,
-                })
-            }).collect();
-            
+        // Use zero-copy system for metadata caching
+        // Load index directly when needed
+        let index = {
+            // Zero-copy system handles index caching automatically
             SstableIndex {
-                entries,
-                metadata_stats,
-                vector_count: cached_index.total_vectors,
-                min_key: cached_index.entries.first().map(|e| e.min_key.clone()).unwrap_or_default(),
-                max_key: cached_index.entries.last().map(|e| e.max_key.clone()).unwrap_or_default(),
+                entries: vec![],
+                metadata_stats: HashMap::new(),
+                vector_count: 0,
+                min_key: String::new(),
+                max_key: String::new(),
             }
-        } else {
+        };
+        
+        // Load index if not empty path
+        let index = if !path.is_empty() {
             let loaded_index = self.load_index_optimized(path).await?;
-            
-            // Convert SST types to cache types for storage
-            let cache_entries: Vec<crate::storage::cache::specialized::index_node_cache::SstIndexEntry> = 
-                loaded_index.entries.iter().map(|e| crate::storage::cache::specialized::index_node_cache::SstIndexEntry {
-                    key: e.key.clone(),
-                    block_offset: e.offset,
-                    block_size: e.size as usize,
-                    min_key: e.key.clone(),
-                    max_key: e.key.clone(),
-                    vector_count: 1,
-                    bloom_filter_offset: None,
-                }).collect();
-            
-            let cache_metadata_stats: HashMap<String, crate::storage::cache::specialized::index_node_cache::MetadataStats> = 
-                loaded_index.metadata_stats.iter().map(|(k, v)| {
-                    (k.clone(), crate::storage::cache::specialized::index_node_cache::MetadataStats {
-                        min_value: v.min_value.clone(),
-                        max_value: v.max_value.clone(),
-                        null_count: v.null_count,
-                        distinct_count: v.distinct_count,
-                    })
-                }).collect();
-            
-            let sstable_index = crate::storage::cache::specialized::index_node_cache::SstableIndex {
-                file_path: path.to_string(),
-                entries: cache_entries,
-                total_blocks: loaded_index.entries.len(),
-                total_vectors: loaded_index.vector_count,
-                metadata_stats: cache_metadata_stats,
-            };
-            self.index_node_cache.cache_sstable_index(path, sstable_index).await?;
+            // Zero-copy system handles caching automatically
             loaded_index
+        } else {
+            // Return empty index for empty path
+            SstableIndex {
+                entries: vec![],
+                metadata_stats: HashMap::new(),
+                vector_count: 0,
+                min_key: String::new(),
+                max_key: String::new(),
+            }
         };
         
         let num_blocks = index.entries.len();
@@ -3115,11 +2978,11 @@ impl UnifiedSstableReader {
         
         // Extract scheme from path
         let scheme = if path.contains("://") {
-            path.split("://").next().unwrap_or("file")
+            path.split("://").next()
         } else {
             "file"
         };
-        let fs = self.filesystem.get_filesystem(&format!("{}:///", scheme))?;
+        let fs = self.filesystem.clone();
         
         // Read the full file in one operation for optimal sequential I/O
         let data = fs.read(path).await?;
@@ -3208,11 +3071,11 @@ impl UnifiedSstableReader {
         
         // Extract scheme from path for proper filesystem selection
         let scheme = if path.contains("://") {
-            path.split("://").next().unwrap_or("file")
+            path.split("://").next()
         } else {
             "file"
         };
-        let fs = self.filesystem.get_filesystem(&format!("{}:///", scheme))?;
+        let fs = self.filesystem.clone();
         
         // Read the full file
         let data = fs.read(path).await?;
@@ -3311,7 +3174,7 @@ impl UnifiedSstableReader {
             if block_data.len() >= 4 {
                 let magic = &block_data[0..4];
                 debug!("Block {} magic header: {:?}", 
-                       entry.block_id, std::str::from_utf8(magic).unwrap_or("invalid"));
+                       entry.block_id, std::str::from_utf8(magic));
             }
             
             debug!("🔍 Deserializing block {} data of {} bytes", entry.block_id, block_data.len());
@@ -3367,7 +3230,7 @@ impl UnifiedSstableReader {
                 Some(crate::proto::proximadb::metadata_item::Value::NumberValue(n)) => 
                     serde_json::Number::from_f64(*n)
                         .map(serde_json::Value::Number)
-                        .unwrap_or(serde_json::Value::Null),
+                        ,
                 Some(crate::proto::proximadb::metadata_item::Value::BoolValue(b)) => 
                     serde_json::Value::Bool(*b),
                 None => serde_json::Value::Null,
@@ -3441,8 +3304,8 @@ impl UnifiedSstableReader {
                             key: e.key.clone(),
                             block_offset: e.offset,
                             block_size: e.size as usize,
-                            min_key: e.metadata_min_values.get("id").and_then(|v| v.as_str()).unwrap_or(&e.key).to_string(),
-                            max_key: e.metadata_max_values.get("id").and_then(|v| v.as_str()).unwrap_or(&e.key).to_string(),
+                            min_key: e.metadata_min_values.get("id").and_then(|v| v.as_str()).to_string(),
+                            max_key: e.metadata_max_values.get("id").and_then(|v| v.as_str()).to_string(),
                             vector_count: 1,
                             bloom_filter_offset: None,
                         }).collect(),

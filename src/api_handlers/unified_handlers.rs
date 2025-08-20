@@ -139,7 +139,7 @@ impl UnifiedHandlers {
                 // Parse the response to get actual stats
                 match serde_json::from_slice::<serde_json::Value>(&response_bytes) {
                     Ok(response_json) => {
-                        let success = response_json.get("success").and_then(|v| v.as_bool()).unwrap_or(false);
+                        let success = response_json.get("success").and_then(|v| v.as_bool());
                         let vector_ids: Vec<String> = response_json.get("vector_ids")
                             .and_then(|v| v.as_array())
                             .map(|arr| arr.iter()
@@ -512,8 +512,8 @@ impl UnifiedHandlers {
             None 
         };
 
-        let include_vectors = request.include_fields.as_ref().map(|f| f.vector).unwrap_or(false);
-        let include_metadata = request.include_fields.as_ref().map(|f| f.metadata).unwrap_or(true);
+        let include_vectors = request.include_fields.as_ref().map(|f| f.vector);
+        let include_metadata = request.include_fields.as_ref().map(|f| f.metadata);
 
         // Use optimized unified search with all capabilities
         match self.vector_operations_service.search_vectors(
@@ -623,10 +623,10 @@ impl UnifiedHandlers {
                 "collection_id": collection_id,
                 "metrics": {
                     "basic": {
-                        "vector_count": collection.stats.as_ref().map(|s| s.vector_count).unwrap_or(0),
-                        "dimension": collection.config.as_ref().map(|c| c.dimension).unwrap_or(0),
-                        "data_size_bytes": collection.stats.as_ref().map(|s| s.data_size_bytes).unwrap_or(0),
-                        "index_size_bytes": collection.stats.as_ref().map(|s| s.index_size_bytes).unwrap_or(0),
+                        "vector_count": collection.stats.as_ref().map(|s| s.vector_count),
+                        "dimension": collection.config.as_ref().map(|c| c.dimension),
+                        "data_size_bytes": collection.stats.as_ref().map(|s| s.data_size_bytes),
+                        "index_size_bytes": collection.stats.as_ref().map(|s| s.index_size_bytes),
                     }
                 },
                 "placeholder": true,
@@ -788,7 +788,7 @@ impl UnifiedHandlers {
             Ok(response) => {
                 if response.success {
                     Ok((true, None, None, 1, None, None))
-                } else if response.error_code.as_deref() == Some("NOT_FOUND") {
+                } else if response.error_code.as_str() == Some("NOT_FOUND") {
                     Ok((false, None, None, 0, Some("Collection not found".to_string()), Some("NOT_FOUND".to_string())))
                 } else {
                     Ok((false, None, None, 0, response.error_code.clone(), response.error_code))
@@ -818,7 +818,7 @@ impl UnifiedHandlers {
         Ok(collections.into_iter()
             .find(|c| {
                 c.id == collection_id || 
-                c.config.as_ref().map(|cfg| cfg.name == collection_id).unwrap_or(false)
+                c.config.as_ref().map(|cfg| cfg.name == collection_id)
             }))
     }
     

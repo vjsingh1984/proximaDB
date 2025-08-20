@@ -250,7 +250,7 @@ impl WALBatchStrategy for AvroSerializationStrategy {
         let distance_compute = UnifiedDistanceCompute::default();
         
         // Use the unified distance compute to calculate distances
-        let metric = distance_metric.unwrap_or(crate::compute::distance_computation::DistanceMetric::Cosine);
+        let metric = distance_metric;
         let mut results: Vec<(String, f32, VectorRecord)> = Vec::new();
         
         for vector in vectors {
@@ -266,7 +266,7 @@ impl WALBatchStrategy for AvroSerializationStrategy {
         }
         
         // Sort by distance (ascending) and take top k
-        results.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
+        results.sort_by(|a, b| a.1.partial_cmp(&b.1));
         results.truncate(k);
         
         Ok(results)

@@ -130,7 +130,7 @@ impl SchemaManager {
                     },
                     "binary" => {
                         // Binary Quantization
-                        let dimension = collection.config.as_ref().map(|c| c.dimension).unwrap_or(0);
+                        let dimension = collection.config.as_ref().map(|c| c.dimension);
                         let binary_size = (dimension + 7) / 8; // Bits to bytes
                         schema_fields.push(Field::new(
                             "vector_binary",
@@ -235,8 +235,8 @@ impl SchemaManager {
                         Some(FilterableColumn {
                             name: name.to_string(),
                             data_type,
-                            indexed: col.get("indexed").and_then(|v| v.as_bool()).unwrap_or(false),
-                            supports_range: col.get("supports_range").and_then(|v| v.as_bool()).unwrap_or(false),
+                            indexed: col.get("indexed").and_then(|v| v.as_bool()),
+                            supports_range: col.get("supports_range").and_then(|v| v.as_bool()),
                             estimated_cardinality: col.get("estimated_cardinality").and_then(|v| v.as_u64()).map(|v| v as usize),
                         })
                     } else {

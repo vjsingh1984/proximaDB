@@ -322,7 +322,7 @@ impl MetricsQueryService {
         }
         
         // Add filterable column stats if present
-        if !metrics.filterable_column_stats.is_none() {
+        if !metrics.filterable_column_stats.is_empty() {
             let mut column_stats = serde_json::Map::new();
             for (col_name, stats) in &metrics.filterable_column_stats {
                 column_stats.insert(col_name.clone(), serde_json::json!({

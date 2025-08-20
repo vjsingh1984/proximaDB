@@ -105,7 +105,7 @@ impl StorageEngine {
         let data_dirs: Vec<PathBuf> = config.storage_locations.iter()
             .filter_map(|loc| {
                 if loc.url.starts_with("file://") {
-                    Some(PathBuf::from(loc.url.strip_prefix("file://").unwrap_or(&loc.url)))
+                    Some(PathBuf::from(loc.url.strip_prefix("file://")))
                 } else {
                     None
                 }
@@ -257,7 +257,7 @@ impl StorageEngine {
         let vector_ref = &record.vector[..];
         let vector_size = std::mem::size_of_val(vector_ref) + std::mem::size_of::<VectorRecord>();
         let start = std::time::Instant::now();
-        let vector_id = record.id.as_ref().map(|s| s.as_str()).unwrap_or("");
+        let vector_id = record.id.as_ref().map(|s| s.as_str());
         
         tracing::debug!("🔄 Starting write operation for vector {} in collection {}, vector_dim={}, size_bytes={}", 
                        vector_id, collection_id, vector_ref.len(), vector_size);
@@ -424,7 +424,7 @@ impl StorageEngine {
                     Ok(_) => tracing::debug!("Created directory: {}", dir_url),
                     Err(e) => {
                         // Check if already exists
-                        if !fs.exists(&dir_url).await.unwrap_or(false) {
+                        if !fs.exists(&dir_url).await {
                             return Err(crate::core::StorageError::DiskIO(
                                 std::io::Error::new(
                                     std::io::ErrorKind::Other,
@@ -473,7 +473,7 @@ impl StorageEngine {
             return Ok(());
         };
         
-        if collections.is_none() {
+        if collections.is_empty() {
             tracing::info!("📋 No collections to load");
             return Ok(());
         }
@@ -485,7 +485,7 @@ impl StorageEngine {
             let collection_id = &collection.id;
             let collection_name = collection.config.as_ref()
                 .map(|c| c.name.as_str())
-                .unwrap_or(collection_id);
+                ;
             
             // Storage assignment is now part of collection metadata
             if let Some(ref assignment) = collection.storage_assignment {
@@ -627,7 +627,7 @@ impl StorageEngine {
                         .get_collection_entries(&collection_id.to_string())
                         .await
                     {
-                        Ok(entries) if !entries.is_none() => {
+                        Ok(entries) if !entries.is_empty() => {
                             if seen_collections.insert(collection_id.to_string()) {
                                 tracing::info!(
                                     "📦 Found collection {} with {} entries in WAL",
@@ -762,7 +762,7 @@ impl StorageEngine {
             .await
         {
             Ok(stats) => {
-                let json_value = serde_json::to_value(stats).unwrap_or(serde_json::json!({}));
+                let json_value = serde_json::to_value(stats).unwrap_or(serde_json::Value::Null);
                 if let Some(obj) = json_value.as_object() {
                     let mut result = HashMap::new();
                     for (k, v) in obj {
@@ -797,7 +797,7 @@ impl StorageEngine {
 
         // Use existing write method for each record to ensure consistency
         for (index, record) in records.iter().enumerate() {
-            let record_id = record.id.as_deref().unwrap_or("").to_string();
+            let record_id = record.id.as_str().to_string();
             tracing::debug!(
                 "📝 Processing record {}/{}: vector_id={}, collection_id={}",
                 index + 1,
@@ -838,7 +838,7 @@ impl StorageEngine {
         // Collect collection IDs
         let collection_ids: Vec<String> = collections.iter().map(|c| c.id.clone()).collect();
 
-        if !collection_ids.is_none() {
+        if !collection_ids.is_empty() {
             // Collection-aware WAL cleanup for all collections
             tracing::debug!(
                 "🧹 Performing collection-aware WAL cleanup for {} collections: {:?}",
@@ -866,10 +866,10 @@ impl StorageEngine {
         // Clear metadata store by deleting all collections
         for _collection in collections {
             // TODO: Use SharedServices for metadata operations
-            // if let Err(e) = self.metadata_store.delete_collection(&collection.id.as_deref().unwrap_or("")).await {
+            // if let Err(e) = self.metadata_store.delete_collection(&collection.id.as_str()).await {
             //     tracing::warn!(
             //         "Failed to delete collection metadata {}: {}",
-            //         collection.id.as_deref().unwrap_or(""),
+            //         collection.id.as_str(),
             //         e
             //     );
             // }

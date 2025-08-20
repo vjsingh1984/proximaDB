@@ -392,9 +392,9 @@ impl SstManifest {
         use serde_json::Value;
         match (value, min, max) {
             (Value::Number(v), Value::Number(min_n), Value::Number(max_n)) => {
-                let v_f = v.as_f64().unwrap_or(0.0);
-                let min_f = min_n.as_f64().unwrap_or(0.0);
-                let max_f = max_n.as_f64().unwrap_or(0.0);
+                let v_f = v.as_f64();
+                let min_f = min_n.as_f64();
+                let max_f = max_n.as_f64();
                 v_f >= min_f && v_f <= max_f
             }
             (Value::String(v), Value::String(min_s), Value::String(max_s)) => {

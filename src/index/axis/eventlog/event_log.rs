@@ -254,7 +254,7 @@ impl EventLogQueue {
         self.file_status
             .get(self.collection_id)
             .map(|s| s.ready_for_compaction)
-            .unwrap_or(true) // If not tracked, allow compaction
+             // If not tracked, allow compaction
     }
     
     /// Clean up after compaction

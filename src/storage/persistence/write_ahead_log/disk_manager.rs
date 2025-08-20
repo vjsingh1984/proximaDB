@@ -304,7 +304,7 @@ impl WriteBufferDiskManager {
     ) -> Option<WriteBufferFileInfo> {
         // Strip file:// prefix if present
         let clean_path = if path.starts_with("file://") {
-            path.strip_prefix("file://").unwrap_or(path)
+            path.strip_prefix("file://")
         } else {
             path
         };

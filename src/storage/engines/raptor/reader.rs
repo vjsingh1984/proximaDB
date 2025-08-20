@@ -72,9 +72,8 @@ use crate::storage::engines::common::zero_copy_io_system::ZeroCopyIOSystem;
 use super::{RaptorConfig, RowGroup};
 
 pub struct RaptorReader {
-    /// CORE READER: Delegates Parquet operations to shared columnar infrastructure
-    /// (RAPTOR uses Arrow RecordBatch format which maps to Parquet)
-    shared_reader: Arc<SharedParquetFormatReader>,
+    /// RAPTOR-specific reader for Arrow RecordBatch format
+    /// Does not use SharedParquetFormatReader as RAPTOR has its own format
     
     base_path: String,
     config: RaptorConfig,
@@ -82,6 +81,7 @@ pub struct RaptorReader {
     // Simplified components  
     compression_config: CompressionConfig,
     distance_calculator: Arc<UnifiedDistanceCompute>,
+    filesystem_factory: Arc<FilesystemFactory>,
     
     // RAPTOR-SPECIFIC: Row-aligned optimizations and tensor operations
     rowgroup_index: Arc<RwLock<HashMap<u32, RowGroup>>>,
@@ -103,20 +103,8 @@ impl RaptorReader {
         let filesystem_factory = Arc::new(FilesystemFactory::new(FilesystemConfig::default()).await?);
         
         // Create RAPTOR-optimized Parquet mmap strategy
-        // RAPTOR prefers row-aligned access for tensor operations
-        let mmap_strategy = ParquetMmapStrategy {
-            footer_max_size: 8 * 1024 * 1024,  // 8MB for RAPTOR metadata
-            column_strategies: HashMap::new(),  // Would configure per-column strategies
-            row_group_mmap_threshold: 32 * 1024 * 1024, // 32MB threshold for RAPTOR rowgroups
-        };
-        
-        // Create shared Parquet reader for actual file operations
-        let shared_reader = Arc::new(SharedParquetFormatReader::new(
-            filesystem_factory,
-            mmap_strategy,
-            zero_copy_system.clone(),
-            collection_id.clone(),
-        ));
+        // RAPTOR uses its own Arrow RecordBatch format, not Parquet
+        // Initialize RAPTOR-specific reader components
         
         // Initialize compression config
         let compression_config = CompressionConfig {
@@ -142,7 +130,7 @@ impl RaptorReader {
             config,
             compression_config,
             distance_calculator,
-            filesystem,
+            filesystem_factory,
             rowgroup_index: Arc::new(RwLock::new(HashMap::new())),
             prefetch_queue: Arc::new(RwLock::new(Vec::new())),
         })
@@ -361,7 +349,7 @@ impl RaptorReader {
         
         // Read IDs
         let mut ids = Vec::new();
-        for _ in 0..num_vectors {
+        for i in 0..num_vectors {
             let mut len_bytes = [0u8; 4];
             if cursor.read_exact(&mut len_bytes).is_ok() {
                 let id_len = u32::from_le_bytes(len_bytes) as usize;

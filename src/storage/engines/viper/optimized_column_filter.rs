@@ -235,7 +235,7 @@ impl VIPERColumnFilterEvaluator {
                 let metadata_map = crate::core::proto_metadata_helper::proto_metadata_to_json(&record.metadata);
                 let value = metadata_map.get(name)
                     .cloned()
-                    .unwrap_or(serde_json::Value::Null);
+                    ;
                 column_values.push(value);
             }
             

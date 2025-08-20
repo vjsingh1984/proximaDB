@@ -238,7 +238,7 @@ impl UnifiedSearchOrchestrator {
         
         // Build collection config
         let collection_config = collection.config.as_ref().map(|config| CollectionConfig {
-            default_distance_metric: DistanceMetric::try_from(config.distance_metric).unwrap_or(DistanceMetric::Cosine),
+            default_distance_metric: DistanceMetric::try_from(config.distance_metric),
             vector_dimension: config.dimension as usize,
             enable_quantization: config.quantization.is_some(),
             enable_metadata_filtering: !filterable_columns.is_empty(),
@@ -280,7 +280,7 @@ impl UnifiedSearchOrchestrator {
         }
         
         let mut indices: Vec<usize> = (0..selected.len()).collect();
-        indices.sort_by(|&i, &j| costs[i].partial_cmp(&costs[j]).unwrap_or(std::cmp::Ordering::Equal));
+        indices.sort_by(|&i, &j| costs[i].partial_cmp(&costs[j]));
         
         let sorted_selected = indices.into_iter()
             .map(|i| selected[i].clone())
@@ -297,7 +297,7 @@ impl UnifiedSearchOrchestrator {
     ) -> Result<()> {
         // Sort by score (higher = better, so reverse order)
         results.sort_by(|a, b| {
-            b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal)
+            b.score.partial_cmp(&a.score)
         });
         
         // Limit to requested k

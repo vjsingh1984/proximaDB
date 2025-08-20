@@ -90,11 +90,11 @@ impl QueryPlanner {
         let vector_search = if let Some(order_by) = &query.order_by {
             match &order_by.order_type {
                 OrderType::VectorSimilarity { query_vector, metric } => {
-                    let limit = query.limit.unwrap_or(self.default_limit);
+                    let limit = query.limit;
                     Some(VectorSearchParams {
                         query_vector: query_vector.clone(),
                         metric: metric.clone(),
-                        top_k: limit + query.offset.unwrap_or(0), // Need extra for offset
+                        top_k: limit + query.offset, // Need extra for offset
                     })
                 }
                 OrderType::Field(_) => None, // Regular field ordering not supported yet
@@ -108,8 +108,8 @@ impl QueryPlanner {
             select_fields,
             metadata_filter,
             vector_search,
-            limit: query.limit.unwrap_or(self.default_limit),
-            offset: query.offset.unwrap_or(0),
+            limit: query.limit,
+            offset: query.offset,
             has_order_by: query.order_by.is_some(),
         })
     }

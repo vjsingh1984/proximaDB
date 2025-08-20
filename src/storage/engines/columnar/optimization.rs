@@ -234,7 +234,7 @@ impl ColumnarOptimizer {
         row_group: &RowGroupMetaData,
         filter: Option<&MetadataFilter>,
     ) -> Result<bool> {
-        if filter.is_none() {
+        if filter.is_empty() {
             return Ok(true);
         }
         
@@ -322,7 +322,7 @@ impl ColumnarOptimizer {
         stats.search_time_ms = start_time.elapsed().as_millis() as u64;
         // Final ranking and selection
         all_candidates.sort_by(|a, b| {
-            a.similarity.partial_cmp(&b.similarity).unwrap_or(std::cmp::Ordering::Equal)
+            a.similarity.partial_cmp(&b.similarity)
         });
         all_candidates.truncate(top_k);
         info!("Progressive search complete: {:?}", stats);
@@ -383,7 +383,7 @@ impl ColumnarOptimizer {
             debug!("FP32 rerank stage: {} candidates", candidates.len());
         }
         // Sort and limit
-        candidates.sort_by(|a, b| a.similarity.partial_cmp(&b.similarity).unwrap_or(std::cmp::Ordering::Equal));
+        candidates.sort_by(|a, b| a.similarity.partial_cmp(&b.similarity));
         candidates.truncate(top_k);
         Ok(candidates)
     }

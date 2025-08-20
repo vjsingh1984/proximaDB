@@ -93,7 +93,7 @@ impl<K: Hash + Eq + Clone + Send + Sync> EvictionStrategy for ARCStrategy<K> {
     
     fn update_on_access(&mut self, key: &Self::Key) {
         let locations = self.location_map.read().unwrap();
-        let location = locations.get(key).copied().unwrap_or(CacheLocation::NotInCache);
+        let location = locations.get(key).copied();
         drop(locations);
         
         match location {
@@ -149,7 +149,7 @@ impl<K: Hash + Eq + Clone + Send + Sync> EvictionStrategy for ARCStrategy<K> {
     
     fn update_on_evict(&mut self, key: &Self::Key) {
         let mut locations = self.location_map.write().unwrap();
-        let location = locations.get(key).copied().unwrap_or(CacheLocation::NotInCache);
+        let location = locations.get(key).copied();
         
         match location {
             CacheLocation::T1 => {

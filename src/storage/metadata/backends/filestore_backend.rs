@@ -483,8 +483,8 @@ impl FilestoreMetadataBackend {
         
         // Parse JSON operation log
         let op_json: serde_json::Value = serde_json::from_slice(&data)?;
-        let sequence = op_json["sequence"].as_u64().unwrap_or(0);
-        let op_type_str = op_json["operation_type"].as_str().unwrap_or("");
+        let sequence = op_json["sequence"].as_u64();
+        let op_type_str = op_json["operation_type"].as_str();
         
         let max_sequence = sequence;
         
@@ -501,7 +501,7 @@ impl FilestoreMetadataBackend {
             }
             "Delete" => {
                 // collection_id is the name, need to get UUID first
-                let collection_id = op_json["collection_id"].as_str().unwrap_or("");
+                let collection_id = op_json["collection_id"].as_str();
                 if let Some(uuid) = self.index.get_uuid_by_name(collection_id) {
                     self.index.remove_collection(&uuid);
                 }
@@ -758,7 +758,7 @@ impl FilestoreMetadataBackend {
         info!("🔄 Found {} operation files at restart, creating checkpoint", op_count);
         
         // Create snapshot manager if not already present
-        if self.snapshot_manager.lock().await.is_none() {
+        if self.snapshot_manager.lock().await.is_empty() {
             let manager = SnapshotManager::new(
                 self.config.snapshot_threshold,
                 self.config.keep_snapshots,
@@ -864,7 +864,7 @@ impl FilestoreMetadataBackend {
         info!("🗑️ Deleting collection: {}", collection_id);
         
         // Check if collection exists
-        if self.index.get_by_name(collection_id).is_none() {
+        if self.index.get_by_name(collection_id).is_empty() {
             return Err(anyhow::anyhow!("Collection '{}' not found", collection_id));
         }
         
@@ -994,8 +994,8 @@ impl FilestoreMetadataBackend {
                         
                         // Rollback: restore secondary index if name changed
                         let empty_string = String::new();
-                        let prev_name = previous.config.as_ref().map(|c| &c.name).unwrap_or(&empty_string);
-                        let curr_name = record.config.as_ref().map(|c| &c.name).unwrap_or(&empty_string);
+                        let prev_name = previous.config.as_ref().map(|c| &c.name);
+                        let curr_name = record.config.as_ref().map(|c| &c.name);
                         if prev_name != curr_name {
                             tx.register_rollback(
                                 "secondary_index",
@@ -1263,7 +1263,7 @@ impl FilestoreMetadataBackend {
         
         // Scan all entries in primary memtable
         for entry in self.index.list_all() {
-            if entry.config.as_ref().map(|c| c.name.as_str()).unwrap_or("") == name {
+            if entry.config.as_ref().map(|c| c.name.as_str()) == name {
                 let elapsed = start.elapsed();
                 warn!("🔧 Fallback scan found '{}' in {:?}, repairing secondary index", name, elapsed);
                 

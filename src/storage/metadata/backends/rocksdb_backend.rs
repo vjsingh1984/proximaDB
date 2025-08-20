@@ -467,7 +467,7 @@ impl RocksDbMetadataBackend {
                 
                 // Update name index
                 let cf_name_index = self.get_cf(&db, CF_NAME_INDEX)?;
-                let name = record.config.as_ref().map(|c| &c.name).unwrap_or(&record.id);
+                let name = record.config.as_ref().map(|c| &c.name);
                 txn.put_cf(&cf_name_index, name.as_bytes(), record.id.as_bytes())?;
                 
                 // Update UUID index (reverse lookup)
@@ -492,7 +492,7 @@ impl RocksDbMetadataBackend {
                 // Update name index
                 let cf_name_index = db.cf_handle(CF_NAME_INDEX)
                     .ok_or_else(|| anyhow::anyhow!("Column family not found"))?;
-                let name = record.config.as_ref().map(|c| &c.name).unwrap_or(&record.id);
+                let name = record.config.as_ref().map(|c| &c.name);
                 batch.put_cf(&cf_name_index, name.as_bytes(), record.id.as_bytes());
                 
                 // Update UUID index
@@ -764,7 +764,7 @@ impl RocksDbMetadataBackend {
         backups.sort_by_key(|p| {
             std::fs::metadata(p)
                 .and_then(|m| m.modified())
-                .unwrap_or(std::time::SystemTime::UNIX_EPOCH)
+                
         });
         backups.reverse();
         
@@ -1026,7 +1026,7 @@ mod tests {
         
         // Verify deletion
         let after_delete = backend.get_collection_metadata("test_collection").await.unwrap();
-        assert!(after_delete.is_none());
+        assert!(after_delete.is_empty());
     }
     
     #[tokio::test]

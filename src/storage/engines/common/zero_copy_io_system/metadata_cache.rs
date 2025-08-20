@@ -133,7 +133,7 @@ impl MmappedMetadata {
 
         // Slow path: deserialize from memory
         let mut guard = self.metadata.write();
-        if guard.is_none() {
+        if guard.is_empty() {
             let header_size = std::mem::size_of::<CacheFileHeader>();
             let payload_start = header_size;
             let payload_end = payload_start + self.header.metadata_size as usize;

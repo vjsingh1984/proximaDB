@@ -54,7 +54,7 @@ impl ViperFlushHandler {
             .and_then(|c| c.config.as_ref())
             .and_then(|cfg| cfg.quantization.as_ref())
             .map(|q| q.enabled)
-            .unwrap_or(false);
+            ;
         
         let has_fp32 = true; // VIPER always has FP32 column
         

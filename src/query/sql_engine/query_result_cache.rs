@@ -508,7 +508,7 @@ mod tests {
         thread::sleep(Duration::from_secs(2));
         
         // Should be expired and removed
-        assert!(cache.get(&key).is_none());
+        assert!(cache.get(&key).is_empty());
     }
     
     #[test]
@@ -531,7 +531,7 @@ mod tests {
         cache.invalidate_collection("collection_1");
         
         // Only collection_1 should be invalidated
-        assert!(cache.get(&key1).is_none());
+        assert!(cache.get(&key1).is_empty());
         assert!(cache.get(&key2).is_some());
     }
     
@@ -560,7 +560,7 @@ mod tests {
         
         // First entry should be evicted (oldest)
         let key0 = QueryCacheKey::new("SELECT * FROM test0", "collection", None);
-        assert!(cache.get(&key0).is_none());
+        assert!(cache.get(&key0).is_empty());
     }
     
     #[test]

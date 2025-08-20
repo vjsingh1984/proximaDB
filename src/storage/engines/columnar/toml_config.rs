@@ -658,18 +658,18 @@ impl ConfigLoader {
             "viper" => {
                 let eng = &config.storage.engines.viper;
                 (
-                    eng.parquet_writer.as_ref().unwrap_or(&config.storage.parquet_writer),
-                    eng.footer_cache.as_ref().unwrap_or(&config.storage.footer_cache),
-                    eng.hybrid_writer.as_ref().unwrap_or(&config.storage.hybrid_writer),
+                    eng.parquet_writer.as_ref(),
+                    eng.footer_cache.as_ref(),
+                    eng.hybrid_writer.as_ref(),
                     eng.inherit_global_settings
                 )
             }
             "nova" => {
                 let eng = &config.storage.engines.nova;
                 (
-                    eng.parquet_writer.as_ref().unwrap_or(&config.storage.parquet_writer),
-                    eng.footer_cache.as_ref().unwrap_or(&config.storage.footer_cache),
-                    eng.hybrid_writer.as_ref().unwrap_or(&config.storage.hybrid_writer),
+                    eng.parquet_writer.as_ref(),
+                    eng.footer_cache.as_ref(),
+                    eng.hybrid_writer.as_ref(),
                     eng.inherit_global_settings
                 )
             }

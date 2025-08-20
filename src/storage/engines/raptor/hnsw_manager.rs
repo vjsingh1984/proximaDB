@@ -16,7 +16,7 @@ use crate::storage::engines::common::fastlanes_encoding::{
 
 // HNSW graph structures
 #[derive(Debug, Clone)]
-struct GraphNode {
+pub struct GraphNode {
     id: String,
     encoded_vector: Vec<u8>,
     decoded_vector: Vec<f32>,
@@ -48,7 +48,7 @@ struct SearchCandidate {
 impl Ord for SearchCandidate {
     fn cmp(&self, other: &Self) -> Ordering {
         // Reverse order for min-heap
-        other.distance.partial_cmp(&self.distance).unwrap_or(Ordering::Equal)
+        other.distance.partial_cmp(&self.distance)
     }
 }
 
@@ -232,7 +232,7 @@ impl HnswManager {
         
         // HNSW search loop with encoded distances
         while let Some(current) = candidates.pop() {
-            if current.distance > w.peek().map(|c| -c.distance).unwrap_or(f32::MAX) {
+            if current.distance > w.peek().map(|c| -c.distance) {
                 break;
             }
             
@@ -246,7 +246,7 @@ impl HnswManager {
                     // Compute distance on encoded vectors (fast)
                     let dist = self.compute_encoded_distance(encoded_query, &neighbor.encoded_vector)?;
                     
-                    if dist < w.peek().map(|c| -c.distance).unwrap_or(f32::MAX) {
+                    if dist < w.peek().map(|c| -c.distance) {
                         candidates.push(SearchCandidate { distance: dist, node_id: neighbor.id.clone() });
                         w.push(SearchCandidate { distance: -dist, node_id: neighbor.id.clone() });
                         

@@ -831,7 +831,7 @@ impl UnifiedIvfIndex {
             .collect();
         
         candidates.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
-        candidates.first().map(|c| c.0).unwrap_or(0)
+        candidates.first().map(|c| c.0)
     }
     
     fn update_centroids_from_assignments(
@@ -1137,13 +1137,13 @@ impl UnifiedIvfIndex {
         let vector_key = PartitionedKey::new(self.collection_id.clone(), id.clone());
         
         // Convert HashMap metadata to Vec<MetadataItem>
-        let metadata_items = metadata.map(|map| {
+        let metadata_items = metadata.iter().map(|map| {
             map.into_iter().map(|(key, value)| {
                 crate::proto::proximadb::MetadataItem {
                     key,
                     value: Some(match value {
                         serde_json::Value::String(s) => crate::proto::proximadb::metadata_item::Value::StringValue(s),
-                        serde_json::Value::Number(n) => crate::proto::proximadb::metadata_item::Value::NumberValue(n.as_f64().unwrap_or(0.0)),
+                        serde_json::Value::Number(n) => crate::proto::proximadb::metadata_item::Value::NumberValue(n.as_f64()),
                         serde_json::Value::Bool(b) => crate::proto::proximadb::metadata_item::Value::BoolValue(b),
                         _ => crate::proto::proximadb::metadata_item::Value::StringValue(value.to_string()),
                     }),
@@ -1183,7 +1183,7 @@ impl UnifiedIvfIndex {
             return Err(anyhow!("Index must be trained before searching"));
         }
         
-        let n_probe = n_probe.unwrap_or(self.config.n_probe);
+        let n_probe = n_probe;
         self.search_count.fetch_add(1, Ordering::Relaxed);
         
         // Step 1: Find nearest centroids (always in memory - fast)
@@ -1211,7 +1211,7 @@ impl UnifiedIvfIndex {
                     if let Some(collection_entry) = self.vectors.get(vector_id) {
                         let collection = collection_entry.read().unwrap();
                         if let Some(view) = collection.get(vector_id) {
-                            let vector_data = view.as_f32().unwrap_or(&[]);
+                            let vector_data = view.as_f32();
                             let distance = self.distance_compute.calculate_distance(query, vector_data, &DistanceMetric::Euclidean).rank_value;
                             candidates.push((vector_id.clone(), distance));
                         }
@@ -1478,7 +1478,7 @@ impl UnifiedIvfIndex {
         k: usize,
         n_probe: Option<usize>,
     ) -> Result<Vec<(String, f32)>> {
-        if !self.has_quantized_storage() || self.product_quantizer.is_none() {
+        if !self.has_quantized_storage() || self.product_quantizer.is_empty() {
             // No quantized vectors or PQ available, use standard search
             return self.search(query, k, n_probe).await;
         }

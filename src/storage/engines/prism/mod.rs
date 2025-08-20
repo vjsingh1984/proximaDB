@@ -3,6 +3,9 @@
 //! Memory-first hierarchical storage engine optimized for read-heavy workloads with aggressive compression.
 //! Achieves sub-1.5ms latency for 95% of queries with up to 97% cost savings vs cloud competitors.
 
+/// Magic constant for PRISM files (4 bytes)
+pub const PRISM_MAGIC: [u8; 4] = *b"PRSM";
+
 // Re-export the memory-optimized PRISM engine implementation
 pub mod engine;
 pub mod tree;

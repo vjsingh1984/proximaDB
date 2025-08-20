@@ -78,7 +78,7 @@ impl FilesystemKey {
             "file" => parsed.path().to_string(),
             "s3" | "gcs" => {
                 // For object stores, base path is the bucket + prefix
-                let bucket = parsed.host_str().unwrap_or("");
+                let bucket = parsed.host_str();
                 let prefix = parsed.path().trim_start_matches('/');
                 if prefix.is_empty() {
                     bucket.to_string()
@@ -88,7 +88,7 @@ impl FilesystemKey {
             }
             "adls" => {
                 // For Azure, base path is account + container + prefix
-                let host = parsed.host_str().unwrap_or("");
+                let host = parsed.host_str();
                 let path_parts: Vec<&str> =
                     parsed.path().trim_start_matches('/').split('/').collect();
                 format!("{}/{}", host, path_parts.join("/"))
@@ -469,7 +469,7 @@ impl FilesystemManager {
 
             if full_path.starts_with(base_path) {
                 Ok(full_path.strip_prefix(base_path)
-                    .unwrap_or("")
+                    
                     .trim_start_matches('/')
                     .to_string())
             } else {

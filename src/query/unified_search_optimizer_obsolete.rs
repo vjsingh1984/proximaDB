@@ -332,7 +332,7 @@ impl UnifiedSearchOptimizer {
             context.collection.id,
             context.total_vectors,
             context.available_files.len(),
-            context.query_vectors.map(|v| v.first().map(|q| q.len()).unwrap_or(0)).unwrap_or(0)
+            context.query_vectors.map(|v| v.first().map(|q| q.len())).unwrap_or(0)
         );
         
         // Step 1: Analyze collection characteristics
@@ -464,7 +464,7 @@ impl UnifiedSearchOptimizer {
         collection.config.as_ref()
             .and_then(|c| c.quantization.as_ref())
             .map(|q| q.enabled)
-            .unwrap_or(false)
+            
     }
     
     /// Check if collection has indexes
@@ -473,7 +473,7 @@ impl UnifiedSearchOptimizer {
         collection.config.as_ref()
             .and_then(|c| c.index_config.as_ref())
             .map(|i| i.enabled)
-            .unwrap_or(false)
+            
     }
     
     /// Analyze compression in available files
@@ -725,7 +725,7 @@ impl UnifiedSearchOptimizer {
             quantization_type,
             use_two_stage: matches!(execution_method, ExecutionMethod::Progressive { .. }),
             candidate_multiplier: 10,
-            rerank_top_k: context.search_params.top_k.unwrap_or(10),
+            rerank_top_k: context.search_params.top_k,
         }
     }
     
@@ -880,9 +880,9 @@ impl UnifiedSearchOptimizer {
             enabled: quant_config.enabled,
             method,
             dimension: config.dimension as usize,
-            num_subvectors: quant_config.num_subvectors.unwrap_or((config.dimension / 4) as i32) as usize,
-            bits_per_subvector: quant_config.bits_per_subvector.unwrap_or(8) as usize,
-            training_sample_size: quant_config.training_sample_size.unwrap_or(10000) as usize,
+            num_subvectors: quant_config.num_subvectors as i32) as usize,
+            bits_per_subvector: quant_config.bits_per_subvector as usize,
+            training_sample_size: quant_config.training_sample_size as usize,
             distance_metric,
         };
         
@@ -954,7 +954,7 @@ mod tests {
     #[test]
     fn test_optimizer_creation() {
         let optimizer = UnifiedSearchOptimizer::new(OptimizerConfig::default());
-        assert!(optimizer.collection_cache.is_none());
+        assert!(optimizer.collection_cache.is_empty());
     }
     
     #[tokio::test]

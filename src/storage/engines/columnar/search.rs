@@ -133,7 +133,7 @@ impl SearchableFile for ParquetFile {
     }
     
     fn might_contain(&self, filter: &Option<FilterExpression>) -> bool {
-        if filter.is_none() {
+        if filter.is_empty() {
             return true;
         }
         
@@ -157,7 +157,7 @@ impl SearchableBlock for RowGroup {
     }
     
     fn records(&self) -> &[VectorRecord] {
-        self.records.as_ref().map(|v| v.as_slice()).unwrap_or(&[])
+        self.records.as_ref().map(|v| v.as_slice())
     }
     
     fn is_relevant(&self, _filter: &Option<FilterExpression>) -> bool {
@@ -230,7 +230,7 @@ impl ColumnarSearcher {
         
         // 4. Sort and select top-k
         all_results.sort_by(|a, b| {
-            a.similarity.partial_cmp(&b.similarity).unwrap_or(std::cmp::Ordering::Equal)
+            a.similarity.partial_cmp(&b.similarity)
         });
         all_results.truncate(top_k);
         
@@ -442,7 +442,7 @@ impl ColumnarSearcher {
         
         // 3. Final ranking
         all_results.sort_by(|a, b| {
-            a.similarity.partial_cmp(&b.similarity).unwrap_or(std::cmp::Ordering::Equal)
+            a.similarity.partial_cmp(&b.similarity)
         });
         all_results.truncate(top_k);
         

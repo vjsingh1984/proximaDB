@@ -52,7 +52,6 @@ use anyhow::{Result, anyhow};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
-use uuid::Uuid;
 
 use crate::core::{DistanceMetric, VectorRecord};
 use crate::core::compression::CompressionAlgorithm;
@@ -99,13 +98,15 @@ pub struct SwiftFile {
     memory_manager: Arc<MemoryManager>,
 }
 
+/// Magic constant for SWIFT files (4 bytes)
+pub const SWIFT_MAGIC: [u8; 4] = *b"SWFT";
+
 /// SWIFT header - all metadata in one place
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SwiftHeader {
     // File identification
-    pub magic: [u8; 8],
+    pub magic: [u8; 4],
     pub version: u32,
-    pub file_id: Uuid,
     
     // Collection information
     pub collection_id: String,
@@ -137,6 +138,32 @@ pub struct SwiftHeader {
     pub file_checksum: u64,
 }
 
+impl Default for SwiftHeader {
+    fn default() -> Self {
+        Self {
+            magic: SWIFT_MAGIC,
+            version: 1,
+            collection_id: String::new(),
+            timestamp: 0,
+            compaction_level: 0,
+            dimension: 0,
+            distance_metric: DistanceMetric::Cosine,
+            quantization: QuantizationConfig::default(),
+            total_records: 0,
+            deleted_records: 0,
+            superblock_count: 0,
+            blocks_per_superblock: 10,
+            records_per_block: 1000,
+            superblock_offset: 4096, // After header
+            id_index_offset: 0,
+            quantized_index_offset: 0,
+            metadata_index_offset: 0,
+            header_checksum: 0,
+            file_checksum: 0,
+        }
+    }
+}
+
 /// Quantization configuration - multi-level for progressive search
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct QuantizationConfig {
@@ -158,6 +185,24 @@ pub struct QuantizationConfig {
     // Compression
     pub compression_algorithm: CompressionAlgorithm,
     pub compression_level: u8,
+}
+
+impl Default for QuantizationConfig {
+    fn default() -> Self {
+        Self {
+            enable_binary: false,
+            binary_threshold: 0.5,
+            enable_int8: false,
+            int8_scale: 1.0,
+            int8_zero_point: 0,
+            enable_pq: false,
+            pq_segments: 8,
+            pq_bits: 8,
+            pq_codebooks: Vec::new(),
+            compression_algorithm: CompressionAlgorithm::None,
+            compression_level: 0,
+        }
+    }
 }
 
 /// PQ Codebook
@@ -389,9 +434,8 @@ impl SwiftFile {
     /// Create a new SWIFT file - clean slate, no legacy
     pub fn new(collection_id: String, dimension: usize, distance_metric: DistanceMetric) -> Self {
         let header = SwiftHeader {
-            magic: *b"PROXSWFT",
+            magic: SWIFT_MAGIC,
             version: 1,
-            file_id: Uuid::new_v4(),
             collection_id,
             timestamp: chrono::Utc::now().timestamp(),
             compaction_level: 0,
@@ -647,24 +691,6 @@ pub enum FilterCondition {
     IsNotNull(String),
 }
 
-impl Default for QuantizationConfig {
-    fn default() -> Self {
-        Self {
-            enable_binary: true,
-            binary_threshold: 0.0,
-            enable_int8: true,
-            int8_scale: 127.0,
-            int8_zero_point: 0,
-            enable_pq: true,
-            pq_segments: 16,
-            pq_bits: 8,
-            pq_codebooks: Vec::new(),
-            compression_algorithm: CompressionAlgorithm::Lz4,
-            compression_level: 3,
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -680,7 +706,7 @@ mod tests {
         assert_eq!(sst.header.collection_id, "test_collection");
         assert_eq!(sst.header.dimension, 768);
         assert_eq!(sst.header.version, 1);
-        assert_eq!(sst.header.magic, *b"PROXSWFT");
+        assert_eq!(sst.header.magic, SWIFT_MAGIC);
     }
     
     #[test]

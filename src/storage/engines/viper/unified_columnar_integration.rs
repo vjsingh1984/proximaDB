@@ -407,7 +407,7 @@ impl ViperUnifiedEngine {
             crate::compute::distance_computation::quantized::SelectedFormat::Binary
         } else if metadata.quantization.as_ref()
             .map(|q| q.enable_int8)
-            .unwrap_or(false) {
+             {
             crate::compute::distance_computation::quantized::SelectedFormat::INT8
         } else {
             crate::compute::distance_computation::quantized::SelectedFormat::FP32

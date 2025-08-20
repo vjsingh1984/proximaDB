@@ -62,7 +62,7 @@ metadata_url = "/tmp/test_data"
         // Verify config was loaded and merged with defaults
         assert_eq!(config.server.bind_address, "127.0.0.1");
         assert_eq!(config.server.port, 8080);
-        assert!(!config.storage.storage_locations.is_none());
+        assert!(!config.storage.storage_locations.is_empty());
     }
 
     #[test]

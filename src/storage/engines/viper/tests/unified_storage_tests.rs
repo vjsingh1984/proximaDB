@@ -212,13 +212,13 @@ async fn test_viper_engine_metrics_collection() -> Result<()> {
 
     // Verify metric values exist (u64 values are always >= 0)
     if let Some(serde_json::Value::Number(ops)) = metrics.get(key) {
-        let _ = ops.as_u64().unwrap_or(0); // Just verify it can be parsed as u64
+        let _ = ops.as_u64(); // Just verify it can be parsed as u64
     }
     if let Some(serde_json::Value::Number(mem)) = metrics.get(key) {
-        let _ = mem.as_u64().unwrap_or(0); // Just verify it can be parsed as u64
+        let _ = mem.as_u64(); // Just verify it can be parsed as u64
     }
     if let Some(serde_json::Value::Number(cols)) = metrics.get(key) {
-        let _ = cols.as_u64().unwrap_or(0); // Just verify it can be parsed as u64
+        let _ = cols.as_u64(); // Just verify it can be parsed as u64
     }
 
     Ok(())

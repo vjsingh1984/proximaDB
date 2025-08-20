@@ -60,7 +60,7 @@ mod write_ahead_log_batch_strategy_tests {
 
         async fn clear_flushed(&self, collection_id: &str) -> Result<usize> {
             let mut collections = self.collections.write().await;
-            let count = collections.get(key).map(|v| v.len()).unwrap_or(0);
+            let count = collections.get(key).map(|v| v.len());
             collections.remove(collection_id);
             Ok(count)
         }
@@ -766,7 +766,7 @@ mod write_ahead_log_batch_strategy_tests {
         match result {
             Ok(vector_record) => {
                 // Mock would return None
-                assert!(vector_record.is_none());
+                assert!(vector_record.is_empty());
             }
             Err(e) => {
                 // Expected since mock doesn't provide full write buffer behavior
@@ -923,7 +923,7 @@ mod write_ahead_log_batch_strategy_tests {
                 // Basic validation - either no protocol or unsupported
                 let has_protocol = url.contains_hash("://");
                 if has_protocol {
-                    let protocol = url.split("://").next().unwrap_or("");
+                    let protocol = url.split("://").next();
                     assert!(!["s3", "adls", "gcs"].contains_hash(&protocol) || protocol == "ftp");
                 }
             }

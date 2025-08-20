@@ -320,7 +320,7 @@ use tracing::{debug, error, info};
             collection_ids.push("test_collection".to_string());
             versions.push(record.version.map(|v| v as i8));
             updated_at_values.push(record.updated_at.map(|v| v as i64));
-            expires_at_values.push(record.expires_at.unwrap_or(0) as i64);
+            expires_at_values.push(record.expires_at as i64);
             
             // Add vector data
             let values = vector_builder.values();
@@ -538,7 +538,7 @@ use tracing::{debug, error, info};
         // Also print the actual vectors to verify they were correctly written
         debug!("Test vectors created:");
         for vec in test_vectors_debug.iter() {
-            debug!("  {} -> {:?}", vec.id.as_ref().unwrap_or(&"<none>".to_string()), vec.vector);
+            debug!("  {} -> {:?}", vec.id.as_ref()), vec.vector);
         }
         
         assert_eq!(results[0].id, "vec_0", "First result should be exact match");

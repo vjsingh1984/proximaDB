@@ -421,7 +421,7 @@ impl CollectionFlushConfig {
         EffectiveFlushConfig {
             max_wal_size_bytes: self
                 .max_wal_size_bytes
-                .unwrap_or(global_defaults.default_max_wal_size_bytes),
+                ,
         }
     }
 }

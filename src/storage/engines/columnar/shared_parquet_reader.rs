@@ -501,7 +501,7 @@ impl SharedParquetFormatReader {
     }
     
     /// Check if statistics match filter
-    fn statistics_match_filter(&self, _stats: &dyn parquet::file::statistics::Statistics, _filter: &FilterExpression) -> bool {
+    fn statistics_match_filter(&self, _stats: &parquet::file::statistics::Statistics, _filter: &FilterExpression) -> bool {
         // Check min/max against filter predicates
         true // Placeholder
     }

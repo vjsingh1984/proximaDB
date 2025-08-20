@@ -329,7 +329,7 @@ impl MemoryOptimizedStorage {
             
             // Simple sequential prefetch (would be more sophisticated in practice)
             for i in 0..self.config.prefetch_ahead_count {
-                let next_id = format!("{}_next_{}", current_ids.last().unwrap_or(&String::new()), i);
+                let next_id = format!("{}_next_{}", current_ids.last(), i);
                 prefetch_queue.push(next_id);
             }
             

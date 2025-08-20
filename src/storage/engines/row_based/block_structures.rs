@@ -401,7 +401,7 @@ impl RowBasedDataBlock {
     /// Find record by ID
     pub fn find_record_by_id(&self, id: &str) -> Option<&VectorRecord> {
         self.records.iter().find(|r| {
-            r.id.as_ref().map(|record_id| record_id == id).unwrap_or(false)
+            r.id.as_ref().map(|record_id| record_id == id)
         })
     }
     
@@ -419,7 +419,7 @@ impl RowBasedDataBlock {
         let records_size = self.records.len() * std::mem::size_of::<VectorRecord>();
         let quantized_size = self.quantized_vectors.as_ref()
             .map(|qv| qv.iter().map(|v| v.len()).sum())
-            .unwrap_or(0);
+            ;
         let metadata_size = std::mem::size_of::<RowBasedBlockMetadata>();
         
         records_size + quantized_size + metadata_size
@@ -777,6 +777,6 @@ mod tests {
         );
         
         assert!(block.find_record_by_id("test_id").is_some());
-        assert!(block.find_record_by_id("non_existent").is_none());
+        assert!(block.find_record_by_id("non_existent").is_empty());
     }
 }

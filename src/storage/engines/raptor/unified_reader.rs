@@ -8,7 +8,7 @@ use arrow_array::RecordBatch;
 
 use crate::storage::persistence::filesystem::zero_copy_filesystem::ZeroCopyFilesystem;
 use crate::storage::transaction_coordinator::TransactionCoordinator;
-use crate::storage::persistence::filesystem::{FileSystem, FileOptions, ReadOptions};
+use crate::storage::persistence::filesystem::{FileSystem, FileOptions};
 use super::RaptorConfig;
 
 /// Comprehensive metadata for RAPTOR files
@@ -189,7 +189,7 @@ impl RaptorUnifiedReader {
             let query_context = QueryContext {
                 query_type: QueryType::VectorSearch,
                 priority: RequestPriority::Normal,
-                estimated_result_size: rowgroup_selection.as_ref().map(|rg| rg.len() as u64).unwrap_or(1000),
+                estimated_result_size: rowgroup_selection.as_ref().map(|rg| rg.len() as u64),
                 selectivity_hint: 0.3, // Moderate selectivity for RAPTOR HNSW navigation
                 collection_id: "raptor".to_string(), // Generic collection ID for RAPTOR
                 concurrent_queries: 1,
@@ -520,7 +520,7 @@ impl RaptorUnifiedReader {
         
         // Calculate percentage of file needed
         let bytes_needed: u64 = rowgroups_needed.iter()
-            .map(|&idx| metadata.rowgroup_sizes.get(idx).unwrap_or(&0))
+            .map(|&idx| metadata.rowgroup_sizes.get(idx))
             .sum();
         let read_percentage = bytes_needed as f64 / metadata.file_size as f64;
         
@@ -851,12 +851,9 @@ impl RaptorUnifiedReader {
 
     /// Clear local cache files for a collection
     async fn clear_local_cache_for_collection(&self, collection_id: &str) -> Result<()> {
-        let entries = tokio::fs::read_dir(&self.local_cache_dir).await?;
-        let mut entries = tokio_stream::wrappers::ReadDirStream::new(entries);
+        let mut entries = tokio::fs::read_dir(&self.local_cache_dir).await?;
         
-        use tokio_stream::StreamExt;
-        while let Some(entry) = entries.next().await {
-            let entry = entry?;
+        while let Some(entry) = entries.next_entry().await? {
             let path = entry.path();
             
             if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
@@ -914,7 +911,7 @@ impl RaptorUnifiedReader {
 
     /// Get local cache path for a file
     fn get_local_cache_path(&self, file_path: &str) -> String {
-        let file_name = file_path.split('/').last().unwrap_or("unknown");
+        let file_name = file_path.split('/').last();
         format!("{}/{}", self.local_cache_dir, file_name)
     }
 }

@@ -117,7 +117,7 @@ impl PartialOrd for SimilarityResult {
 
 impl Ord for SimilarityResult {
     fn cmp(&self, other: &Self) -> Ordering {
-        self.partial_cmp(other).unwrap_or(Ordering::Equal)
+        self.partial_cmp(other)
     }
 }
 
@@ -976,7 +976,7 @@ impl UnifiedDistanceCompute {
         // Sort by rank_value (lower = better) and limit to k
         all_results.sort_by(|a, b| {
             a.0.rank_value.partial_cmp(&b.0.rank_value)
-                .unwrap_or(std::cmp::Ordering::Equal)
+                
         });
         all_results.truncate(k);
         
@@ -1339,7 +1339,7 @@ impl UnifiedDistanceCompute {
                 service.get_proto_collection(collection_id).await
             {
                 // Distance metric is in the config field of proto Collection
-                let metric = collection.config.as_ref().map(|c| c.distance_metric).unwrap_or(0);
+                let metric = collection.config.as_ref().map(|c| c.distance_metric);
                 debug!("🎯 Using collection default distance metric: {:?}", metric);
                 return match metric {
                     1 => DistanceMetric::Cosine,
@@ -1599,7 +1599,7 @@ mod tests {
 
         // Create a vector of results and sort by rank_value
         let mut results = vec![result_ab, result_ac];
-        results.sort_by(|a, b| a.rank_value.partial_cmp(&b.rank_value).unwrap_or(std::cmp::Ordering::Equal));
+        results.sort_by(|a, b| a.rank_value.partial_cmp(&b.rank_value));
 
         // The identical vectors (ac) should have lower rank_value (better match)
         assert!(results[0].rank_value < results[1].rank_value);

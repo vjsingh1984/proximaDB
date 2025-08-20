@@ -189,14 +189,14 @@ pub async fn progressive_search_handler(
                 .map(|r| SearchResultDto {
                     id: r.id,
                     score: r.score,
-                    similarity: r.similarity.unwrap_or(r.score),
-                    vector: if params.include_vectors.unwrap_or(false) {
+                    similarity: r.similarity,
+                    vector: if params.include_vectors {
                         r.vector
                     } else {
                         None
                     },
-                    metadata: if params.include_metadata.unwrap_or(true) {
-                        r.metadata.map(|m| serde_json::to_value(m).unwrap_or_default())
+                    metadata: if params.include_metadata {
+                        r.metadata.iter().map(|m| serde_json::to_value(m).unwrap_or_default())
                     } else {
                         None
                     },
@@ -204,7 +204,7 @@ pub async fn progressive_search_handler(
                 .collect();
             
             // Prepare metrics if requested
-            let metrics = if params.include_metrics.unwrap_or(false) {
+            let metrics = if params.include_metrics {
                 Some(StageMetrics {
                     binary_stage: StageInfo {
                         candidates: config.compute_stage_sizes(params.k).binary_candidates,
@@ -279,7 +279,7 @@ pub async fn explain_progressive_search_handler(
         ProgressiveSearchConfig::default()
     };
     
-    let k = params.k.unwrap_or(100);
+    let k = params.k;
     let stage_sizes = config.compute_stage_sizes(k);
     
     Ok(Json(ExplainResponse {

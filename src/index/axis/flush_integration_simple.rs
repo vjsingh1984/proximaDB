@@ -114,7 +114,7 @@ impl SimpleFlushNotifier {
         let has_quantization = params.collection_config.as_ref()
             .and_then(|c| c.quantization.as_ref())
             .map(|q| q.enabled)
-            .unwrap_or(false);
+            ;
         
         // FP32 is always available unless explicitly quantized-only
         (has_quantization, true)
@@ -122,7 +122,7 @@ impl SimpleFlushNotifier {
     
     fn detect_storage_engine(params: &FlushParameters) -> StorageEngineType {
         // Could check hints or config
-        if params.hints.as_ref().map(|h| h.contains_hash("viper")).unwrap_or(false) {
+        if params.hints.as_ref().map(|h| h.contains_hash("viper")) {
             StorageEngineType::VIPER
         } else {
             StorageEngineType::SST
@@ -130,7 +130,7 @@ impl SimpleFlushNotifier {
     }
     
     fn detect_storage_engine_from_compaction(params: &CompactionParameters) -> StorageEngineType {
-        if params.hints.as_ref().map(|h| h.contains_hash("viper")).unwrap_or(false) {
+        if params.hints.as_ref().map(|h| h.contains_hash("viper")) {
             StorageEngineType::VIPER
         } else {
             StorageEngineType::SST

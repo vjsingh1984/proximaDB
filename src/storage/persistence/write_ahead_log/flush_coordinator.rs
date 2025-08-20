@@ -269,10 +269,10 @@ impl WALFlushCoordinator {
                 match StorageEngine::try_from(config.storage_engine) {
                     Ok(StorageEngine::Viper) => "viper",
                     Ok(StorageEngine::Sst) => "sst", 
-                    _ => preferred_engine.unwrap_or("viper") // Default to viper or provided preference
+                    _ => preferred_engine // Default to viper or provided preference
                 }
             } else {
-                preferred_engine.unwrap_or("viper")
+                preferred_engine
             }
         } else {
             preferred_engine.ok_or_else(|| {
@@ -554,7 +554,7 @@ impl WALFlushCoordinator {
         flush_states
             .get(collection_id)
             .map(|state| state.uses_disk_wal)
-            .unwrap_or(true) // Default to disk WAL
+             // Default to disk WAL
     }
 
     /// Get pending flushes for a collection

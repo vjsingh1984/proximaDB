@@ -144,7 +144,7 @@ impl UnifiedSearchEngine for ViperUnifiedSearchEngine {
     ) -> Result<SearchResultSet> {
         let start_time = std::time::Instant::now();
         
-        info!("🔍 VIPER Search: collection={}, k={}", context.collection_id, params.top_k.unwrap_or(10));
+        info!("🔍 VIPER Search: collection={}, k={}", context.collection_id, params.top_k);
         if let Some(_filter_expr) = &params.filter_expression {
             info!("🔍 VIPER Search has filter expression");
         }
@@ -198,13 +198,13 @@ impl UnifiedSearchEngine for ViperUnifiedSearchEngine {
         //    - Unique: Both quantized and FP32 vectors are directly searchable
         //
         // VIPER's approach provides the best flexibility - can search at any precision level
-        let search_results = if params.enable_two_stage.unwrap_or(false) && 
+        let search_results = if params.enable_two_stage && 
                                 self.has_quantized_columns(&collection_context).await {
             info!("🎯 VIPER Two-Stage Search: Using quantized columns for initial filtering");
             
             // STAGE 1: Fast search on quantized columns (INT8/PQ8/PQ4)
             // This is unique to VIPER - we search the actual quantized vectors stored in separate columns
-            let stage1_k = params.top_k.unwrap_or(10) * 10; // Get 10x candidates
+            let stage1_k = params.top_k * 10; // Get 10x candidates
             let mut stage1_params = params.clone();
             stage1_params.top_k = Some(stage1_k);
             stage1_params.custom_hints = Some({
@@ -261,7 +261,7 @@ impl UnifiedSearchEngine for ViperUnifiedSearchEngine {
         info!("✅ VIPER Search completed: {} results in {}μs", search_results.len(), processing_time);
         
         let result_count = search_results.len() as u64;
-        let search_method = if params.enable_two_stage.unwrap_or(false) {
+        let search_method = if params.enable_two_stage {
             "VIPER-TwoStage-DualColumn"
         } else {
             "VIPER-Direct"
@@ -292,7 +292,7 @@ impl UnifiedSearchEngine for ViperUnifiedSearchEngine {
         
         // Quantization optimization for large collections
         if self.config.enable_quantization && 
-           context.collection_config.as_ref().map(|c| c.estimated_document_count).unwrap_or(0) > 50000 {
+           context.collection_config.as_ref().map(|c| c.estimated_document_count) > 50000 {
             hints.push(OptimizationHint::UseQuantization {
                 method: UnifiedQuantizationLevel::pq8(8),
                 expected_speedup: 4.0,
@@ -318,7 +318,7 @@ impl UnifiedSearchEngine for ViperUnifiedSearchEngine {
         }
         
         // Column projection for high-dimensional vectors
-        let vector_dim = context.collection_config.as_ref().map(|c| c.vector_dimension).unwrap_or(128);
+        let vector_dim = context.collection_config.as_ref().map(|c| c.vector_dimension);
         if vector_dim > 768 {
             hints.push(OptimizationHint::UseColumnProjection {
                 columns: vec!["vector".to_string(), "id".to_string(), "metadata_info".to_string()],
@@ -338,7 +338,7 @@ impl UnifiedSearchEngine for ViperUnifiedSearchEngine {
         let size_factor = (context.storage_info.estimated_size_mb / 1000.0).sqrt();
         
         // Query complexity
-        let k_factor = (params.top_k.unwrap_or(10) as f64).sqrt();
+        let k_factor = (params.top_k as f64).sqrt();
         let filter_factor = if params.filter_expression.is_some() { 0.5 } else { 1.0 }; // Filters reduce cost
         let quantization_factor = if params.quantization_hint.is_some() { 0.3 } else { 1.0 }; // Quantization reduces cost
         
@@ -421,7 +421,7 @@ impl ViperUnifiedSearchEngine {
         let has_filters = params.filter_expression.is_some();
         let vector_dim = context.collection_config.as_ref()
             .map(|c| c.vector_dimension)
-            .unwrap_or(128);
+            ;
         
         // For cloud storage, use range requests to minimize data transfer
         if is_cloud {
@@ -469,7 +469,7 @@ impl ViperUnifiedSearchEngine {
         if has_filters {
             hints.push(IoOptimizationHint::UsePredicatePushdown {
                 enabled: true,
-                early_termination: params.top_k.unwrap_or(10) < 100,
+                early_termination: params.top_k < 100,
             });
         }
         
@@ -563,7 +563,7 @@ impl ViperUnifiedSearchEngine {
             estimated_size_mb: context.storage_info.estimated_size_mb,
             estimated_document_count: context.collection_config.as_ref()
                 .map(|c| c.estimated_document_count)
-                .unwrap_or(1000),
+                ,
             is_cloud_storage: context.storage_info.is_cloud_storage,
             io_optimization_hints: None, // Will be set by apply_io_hints_to_context
         }

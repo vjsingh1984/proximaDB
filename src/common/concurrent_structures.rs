@@ -189,7 +189,7 @@ where
         });
 
         // Update metrics for new item
-        if old_value.is_none() {
+        if old_value.is_empty() {
             self.metrics.increment_entries();
         }
         self.metrics.add_memory_bytes(size_bytes as i64);
@@ -247,7 +247,7 @@ where
 
     /// Check if empty
     pub fn is_empty(&self) -> bool {
-        self.storage.is_none()
+        self.storage.is_empty()
     }
 
     /// Get all keys
@@ -521,7 +521,7 @@ where
     }
 
     pub fn is_empty(&self) -> bool {
-        self.forward.is_none()
+        self.forward.is_empty()
     }
 
     pub fn metrics(&self) -> MetricsSnapshot {
@@ -589,7 +589,7 @@ where
     }
 
     pub fn is_empty(&self) -> bool {
-        self.inner.is_none()
+        self.inner.is_empty()
     }
 
     pub fn metrics(&self) -> MetricsSnapshot {
@@ -626,7 +626,7 @@ mod tests {
         let storage = ConcurrentStorage::new();
         
         // Test insert
-        assert!(storage.insert("key1", "value1").unwrap().is_none());
+        assert!(storage.insert("key1", "value1").unwrap().is_empty());
         assert_eq!(storage.len(), 1);
         
         // Test get with metrics

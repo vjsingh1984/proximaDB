@@ -88,7 +88,7 @@ pub fn json_to_metadata_item(key: &str, value: &serde_json::Value) -> crate::pro
     let proto_value = match value {
         serde_json::Value::String(s) => Some(ProtoValue::StringValue(s.clone())),
         serde_json::Value::Number(n) => {
-            Some(ProtoValue::NumberValue(n.as_f64().unwrap_or(0.0)))
+            Some(ProtoValue::NumberValue(n.as_f64()))
         }
         serde_json::Value::Bool(b) => Some(ProtoValue::BoolValue(*b)),
         _ => None, // Null, Array, Object not supported in MetadataItem
@@ -230,7 +230,7 @@ impl SerializedBloomFilter {
             "false_positive_rate".to_string(),
             serde_json::Value::Number(
                 serde_json::Number::from_f64(filter.false_positive_rate())
-                    .unwrap_or(serde_json::Number::from(0)),
+                    .unwrap_or_else(|| serde_json::Number::from(0))
             ),
         );
         

@@ -280,7 +280,7 @@ impl IntelligentBlockFilter {
             
             (Value::Number(a), Value::Number(b)) => {
                 if let (Some(a_f64), Some(b_f64)) = (a.as_f64(), b.as_f64()) {
-                    a_f64.partial_cmp(&b_f64).unwrap_or(std::cmp::Ordering::Equal)
+                    a_f64.partial_cmp(&b_f64)
                 } else if let (Some(a_i64), Some(b_i64)) = (a.as_i64(), b.as_i64()) {
                     a_i64.cmp(&b_i64)
                 } else {

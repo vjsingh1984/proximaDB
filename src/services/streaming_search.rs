@@ -250,13 +250,13 @@ impl StreamingSearchService {
         let wal_results = self.search_wal_streaming(&collection_id, &query_vector, k, distance_metric).await?;
         let mut deduped_wal_results = Vec::new();
         
-        if !wal_results.is_none() {
+        if !wal_results.is_empty() {
             // Deduplicate WAL results if enabled
             for result in wal_results {
                 let should_include = if let Some(ref mut seen) = seen_ids {
-                    match result.id.as_deref() {
+                    match result.id.as_str() {
                         None => true, // Include records without IDs
-                        Some(id) if id.is_none() => true, // Include empty IDs
+                        Some(id) if id.is_empty() => true, // Include empty IDs
                         Some(id) => seen.insert(id.clone()), // Deduplicate by ID
                     }
                 } else {
@@ -268,7 +268,7 @@ impl StreamingSearchService {
                 }
             }
             
-            if !deduped_wal_results.is_none() {
+            if !deduped_wal_results.is_empty() {
                 batch_id += 1;
                 total_results += deduped_wal_results.len();
                 
@@ -319,9 +319,9 @@ impl StreamingSearchService {
             let mut deduped_storage_results = Vec::new();
             for result in storage_results {
                 let should_include = if let Some(ref mut seen) = seen_ids {
-                    match result.id.as_deref() {
+                    match result.id.as_str() {
                         None => true, // Include records without IDs
-                        Some(id) if id.is_none() => true, // Include empty IDs
+                        Some(id) if id.is_empty() => true, // Include empty IDs
                         Some(id) => seen.insert(id.clone()), // Deduplicate by ID
                     }
                 } else {
@@ -347,7 +347,7 @@ impl StreamingSearchService {
                 }
             }
             
-            if !deduped_storage_results.is_none() {
+            if !deduped_storage_results.is_empty() {
                 batch_id += 1;
                 total_results += deduped_storage_results.len();
                 
@@ -451,7 +451,7 @@ impl StreamingSearchService {
             }
             
             // Sort by score
-            results.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+            results.sort_by(|a, b| b.score.partial_cmp(&a.score));
             results.truncate(k);
             
             debug!("✅ STREAMING_WAL: Found {} results", results.len());

@@ -177,7 +177,7 @@ mod tests {
             ).await.expect("Failed to create serialization strategy");
 
             // Serialization strategies don't expose WAL behavior directly
-            assert!(strategy.get_wal_behavior().is_none());
+            assert!(strategy.get_wal_behavior().is_empty());
             
             // Verify basic operations work
             let stats = strategy.get_stats().await.expect("Failed to get stats");

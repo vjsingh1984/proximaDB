@@ -406,7 +406,7 @@ impl DecompressionCache {
         // Estimate based on VectorRecords in the block
         block.records.iter().map(|r| {
             std::mem::size_of::<crate::core::VectorRecord>() +
-            r.id.as_ref().map(|s| s.len()).unwrap_or(0) +
+            r.id.as_ref().map(|s| s.len()) +
             r.vector.len() * std::mem::size_of::<f32>() +
             r.metadata.iter().map(|m| m.key.len() + 8).sum::<usize>() // Rough metadata size
         }).sum()

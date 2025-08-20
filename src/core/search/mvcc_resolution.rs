@@ -78,8 +78,8 @@ impl MvccResolver {
             
             // Sort by version, then timestamp
             versions.sort_by(|a, b| {
-                let ver_a = a.version.unwrap_or(1);
-                let ver_b = b.version.unwrap_or(1);
+                let ver_a = a.version;
+                let ver_b = b.version;
                 
                 ver_a.cmp(&ver_b)
                     .then_with(|| {
@@ -93,7 +93,7 @@ impl MvccResolver {
             let mut last_valid: Option<VectorRecord> = None;
             
             for record in versions {
-                let version = record.version.unwrap_or(1);
+                let version = record.version;
                 
                 if version == expected_version {
                     // This version is continuous
@@ -113,7 +113,7 @@ impl MvccResolver {
             
             if let Some(record) = last_valid {
                 debug!("MVCC: Selected version {} for ID '{}'", 
-                       record.version.unwrap_or(1), id);
+                       record.version, id);
                 resolved.push(record);
             }
         }
@@ -155,8 +155,8 @@ impl MvccResolver {
         }
         
         // Compare versions
-        let v1 = record1.version.unwrap_or(1);
-        let v2 = record2.version.unwrap_or(1);
+        let v1 = record1.version;
+        let v2 = record2.version;
         
         if v1 > v2 {
             true
@@ -385,7 +385,7 @@ mod tests {
         
         // Find the versioned record
         let versioned_record = resolved.iter()
-            .find(|r| r.id.as_deref() == Some("real_id"))
+            .find(|r| r.id.as_str() == Some("real_id"))
             .unwrap();
         assert_eq!(versioned_record.version, Some(2)); // Should get highest version
     }

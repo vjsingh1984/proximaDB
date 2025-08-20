@@ -142,7 +142,7 @@ pub trait WALBatchStrategy: Send + Sync + std::fmt::Debug {
             // Expected format: write_buffer_batch_{collection_id}_{timestamp}_{batch_uuid}.bin
             let _collection_id = {
                 let path_parts: Vec<&str> = cloud_url.split('/').last()
-                    .unwrap_or("unknown")
+                    
                     .split('_')
                     .collect();
                 if path_parts.len() >= 4 && path_parts[0] == "write" && path_parts[1] == "buffer" && path_parts[2] == "batch" {
@@ -279,7 +279,7 @@ pub trait WALBatchStrategy: Send + Sync + std::fmt::Debug {
                 let current_time = chrono::Utc::now().timestamp() as u32;
                 let is_expired = wal_record.expires_at
                     .map(|expires| expires < current_time)
-                    .unwrap_or(false);
+                    ;
                 
                 if !is_expired {
                     return Ok(Some(wal_record));
@@ -318,7 +318,7 @@ pub trait WALBatchStrategy: Send + Sync + std::fmt::Debug {
                 CoreDistanceMetric::BrayCurtis => crate::compute::distance_computation::DistanceMetric::BrayCurtis,
                 CoreDistanceMetric::Hellinger => crate::compute::distance_computation::DistanceMetric::Hellinger,
                 CoreDistanceMetric::Custom => crate::compute::distance_computation::DistanceMetric::Custom,
-            }).unwrap_or(crate::compute::distance_computation::DistanceMetric::Cosine);
+            });
             
             let results = wal_behavior.search_unflushed_vectors(
                 collection_id,
@@ -343,13 +343,13 @@ pub trait WALBatchStrategy: Send + Sync + std::fmt::Debug {
                                 key,
                                 value: Some(match value {
                                     serde_json::Value::String(s) => crate::proto::proximadb::metadata_item::Value::StringValue(s),
-                                    serde_json::Value::Number(n) => crate::proto::proximadb::metadata_item::Value::NumberValue(n.as_f64().unwrap_or(0.0)),
+                                    serde_json::Value::Number(n) => crate::proto::proximadb::metadata_item::Value::NumberValue(n.as_f64()),
                                     serde_json::Value::Bool(b) => crate::proto::proximadb::metadata_item::Value::BoolValue(b),
                                     _ => crate::proto::proximadb::metadata_item::Value::StringValue("null".to_string()),
                                 })
                             })
                             .collect(),
-                        timestamp: search_result.timestamp.unwrap_or(0),
+                        timestamp: search_result.timestamp,
                         updated_at: None,
                         expires_at: None,
                         version: search_result.version,
@@ -469,8 +469,8 @@ pub trait WALBatchStrategy: Send + Sync + std::fmt::Debug {
             // For now, use a default path structure
             let base_location = "file:///data";
             let wal_dir = format!("{}/{}/write_ahead_log/logs", base_location, collection_id);
-            let sequence_start = sequences.first().copied().unwrap_or(0);
-            let sequence_end = sequences.last().copied().unwrap_or(sequence_start);
+            let sequence_start = sequences.first().copied();
+            let sequence_end = sequences.last().copied();
             let wal_file = format!("{}/batch_{:010}_{:010}.wal", wal_dir, sequence_start, sequence_end);
             
             // Get filesystem for this storage URL
@@ -781,7 +781,7 @@ pub trait WALBatchStrategy: Send + Sync + std::fmt::Debug {
         };
 
         let sequences = self.write_native_batch(batch, collection_id).await?;
-        Ok(sequences.into_iter().next().unwrap_or(0))
+        Ok(sequences.into_iter().next())
     }
 
     /// Flush collections using batch operations

@@ -454,7 +454,7 @@ impl HdfsClient {
 
             let file_statuses = list_json["FileStatuses"]["FileStatus"]
                 .as_array()
-                .unwrap_or(&vec![])
+                
                 .clone();
 
             tracing::debug!(
@@ -550,9 +550,9 @@ impl FileSystem for HdfsFileSystem {
 
         let file_status = &status_json["FileStatus"];
 
-        let size = file_status["length"].as_u64().unwrap_or(0);
+        let size = file_status["length"].as_u64();
         let is_directory = file_status["type"].as_str() == Some("DIRECTORY");
-        let path_suffix = file_status["pathSuffix"].as_str().unwrap_or("");
+        let path_suffix = file_status["pathSuffix"].as_str();
 
         // Convert HDFS timestamps (milliseconds since epoch)
         let modification_time = file_status["modificationTime"]
@@ -590,8 +590,8 @@ impl FileSystem for HdfsFileSystem {
         let mut entries = Vec::new();
 
         for status in file_statuses {
-            let name = status["pathSuffix"].as_str().unwrap_or("").to_string();
-            let size = status["length"].as_u64().unwrap_or(0);
+            let name = status["pathSuffix"].as_str().to_string();
+            let size = status["length"].as_u64();
             let is_directory = status["type"].as_str() == Some("DIRECTORY");
 
             let modification_time = status["modificationTime"]

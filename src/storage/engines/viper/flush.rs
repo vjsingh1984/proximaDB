@@ -157,7 +157,7 @@ impl FlushManager {
             .as_ref()
             .and_then(|c| c.config.as_ref())
             .map(|config| config.dimension as usize)
-            .unwrap_or(512); // Default to 512 if not available
+            ; // Default to 512 if not available
 
         info!("🔧 VIPER FLUSH: Using {} dimensions for collection {}", 
               vector_dimensions, collection_id);
@@ -278,7 +278,7 @@ impl FlushManager {
 
         // Step 4: Check for compaction trigger
         info!("🔄 VIPER: Step 4 - Checking compaction trigger");
-        let compaction_triggered = self.check_compaction_trigger(collection_id).await.unwrap_or(false);
+        let compaction_triggered = self.check_compaction_trigger(collection_id).await;
 
         // Step 5: Update collection metadata
         info!("🔄 VIPER: Step 5 - Updating collection metadata_info");
@@ -469,7 +469,7 @@ impl FlushManager {
         let mut vector_int8_data: Vec<Vec<i8>> = Vec::with_capacity(capacity);
         let mut vector_pq8_data: Vec<Vec<u8>> = Vec::with_capacity(capacity);
         let mut vector_pq4_data: Vec<Vec<u8>> = Vec::with_capacity(capacity);
-        let has_quantization = quantization.map(|q| q.enabled).unwrap_or(false);
+        let has_quantization = quantization.map(|q| q.enabled);
         
         let filterable_field_names: std::collections::HashSet<String> = filterable_metadata
             .iter()
@@ -477,7 +477,7 @@ impl FlushManager {
             .collect();
 
         for record in records {
-            ids.push(record.id.as_deref().unwrap_or("").to_string());
+            ids.push(record.id.as_str().to_string());
             collection_ids.push(collection_id.to_string());
             vectors.push(record.vector.clone());
             
@@ -488,7 +488,7 @@ impl FlushManager {
                 
                 if let Some(quant_config) = quantization {
                     debug!("🔧 VIPER: Applying collection quantization config for vector {}", 
-                           record.id.as_deref().unwrap_or("unnamed"));
+                           record.id.as_str());
                     
                     info!("🎯 VIPER: Collection quantization enabled - strategy={:?}", 
                           quant_config.strategy);
@@ -524,7 +524,7 @@ impl FlushManager {
                             None => serde_json::Value::Null,
                         }
                     })
-                    .unwrap_or(serde_json::Value::Null);
+                    ;
                 values.push(value);
             }
             
@@ -547,14 +547,14 @@ impl FlushManager {
 
             // Include version for MVCC, updated_at for audit, and expires_at for TTL support
             // Version should be null if id is null (for append-only vectors)
-            if record.id.is_none() {
+            if record.id.is_empty() {
                 versions.push(None);
             } else {
                 versions.push(record.version.map(|v| v as i8));
             }
             // Use timestamp as updated_at (represents either creation or last update time)
             updated_at_values.push(record.timestamp as i64);
-            expires_at_values.push(record.expires_at.unwrap_or(0) as i64);
+            expires_at_values.push(record.expires_at as i64);
         }
 
         // Create Arrow arrays with proper List<Float32> for vectors
@@ -597,7 +597,7 @@ impl FlushManager {
                 match FilterableDataType::try_from(filterable_column.data_type) {
                     Ok(FilterableDataType::FilterableString) => {
                         let string_values: Vec<Option<String>> = values.iter()
-                            .map(|v| if v.is_null() { None } else { Some(v.as_str().unwrap_or("").to_string()) })
+                            .map(|v| if v.is_null() { None } else { Some(v.as_str().to_string()) })
                             .collect();
                         Arc::new(StringArray::from(string_values))
                     }
@@ -795,7 +795,7 @@ impl FlushManager {
                 .and_then(|c| c.storage_config.as_ref())
                 .and_then(|s| s.compression.as_ref())
                 .and_then(|c| c.level)
-                .unwrap_or(viper_config.compression_level)
+                
         } else {
             viper_config.compression_level
         };
@@ -824,7 +824,7 @@ impl FlushManager {
             collection.config.as_ref()
                 .and_then(|c| c.quantization.as_ref())
                 .map(|q| q.enabled)
-                .unwrap_or(false)
+                
         } else {
             false
         };
@@ -911,7 +911,7 @@ impl FlushManager {
                quant_config.quality_threshold);
         
         // Use collection-specific quality threshold for better precision
-        let quality_threshold = quant_config.quality_threshold.unwrap_or(0.95);
+        let quality_threshold = quant_config.quality_threshold;
         
         // Enhanced scaling with quality-aware precision
         let min_val = fp32_vector.iter().copied().fold(f32::INFINITY, f32::min);
@@ -1153,8 +1153,8 @@ impl FlushManager {
             // No filterable columns, sort by vector ID for consistent ordering
             let mut sorted_records = records.to_vec();
             sorted_records.sort_by(|a, b| {
-                let a_id = a.id.as_deref().unwrap_or("");
-                let b_id = b.id.as_deref().unwrap_or("");
+                let a_id = a.id.as_str();
+                let b_id = b.id.as_str();
                 a_id.cmp(b_id)
             });
             

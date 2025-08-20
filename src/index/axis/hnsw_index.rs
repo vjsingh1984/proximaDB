@@ -83,7 +83,7 @@ impl Eq for OrderedFloat {}
 
 impl Ord for OrderedFloat {
     fn cmp(&self, other: &Self) -> Ordering {
-        self.0.partial_cmp(&other.0).unwrap_or(Ordering::Equal)
+        self.0.partial_cmp(&other.0)
     }
 }
 
@@ -160,7 +160,7 @@ impl AxisHnswIndex {
         // USING UTILS: Validate dimension
         validation::validate_dimension(dimension)?;
         
-        let coll_str = collection_id.as_ref().map(|s| s.as_str()).unwrap_or("default");
+        let coll_str = collection_id.as_ref().map(|s| s.as_str());
         info!(
             "Creating AXIS HNSW index for collection '{}': M={}, ef_construction={}, ef={}, dim={}, repr={:?}",
             coll_str, config.m, config.ef_construction, config.ef, dimension, extraction_mode
@@ -258,7 +258,7 @@ impl AxisHnswIndex {
             if let Some(external_id) = self.id_mapping.get_external(ep) {
                 let vectors = self.vectors.read().unwrap();
                 if let Some(view) = vectors.get(external_id) {
-                    let vector_data = view.as_f32().unwrap_or(&[]);
+                    let vector_data = view.as_f32();
                     let dist = self.distance_computer.calculate_distance(query, vector_data, &self.config.distance_metric).rank_value;
                     
                     candidates.push(std::cmp::Reverse((OrderedFloat(dist), ep)));
@@ -287,7 +287,7 @@ impl AxisHnswIndex {
                         if let Some(external_id) = self.id_mapping.get_external(neighbor) {
                             let vectors = self.vectors.read().unwrap();
                             if let Some(view) = vectors.get(external_id) {
-                                let vector_data = view.as_f32().unwrap_or(&[]);
+                                let vector_data = view.as_f32();
                                 let dist = self.distance_computer.calculate_distance(query, vector_data, &self.config.distance_metric).rank_value;
                                 
                                 if dynamic_candidates.len() < ef {
@@ -318,7 +318,7 @@ impl AxisHnswIndex {
             .map(|(OrderedFloat(dist), node)| (node, dist))
             .collect();
         
-        result.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(Ordering::Equal));
+        result.sort_by(|a, b| a.1.partial_cmp(&b.1));
         result
     }
 
@@ -367,7 +367,7 @@ impl AxisVectorIndex for AxisHnswIndex {
         // If this is the first node, make it the entry point
         {
             let mut entry_point_lock = self.entry_point.write().unwrap();
-            if entry_point_lock.is_none() {
+            if entry_point_lock.is_empty() {
                 *entry_point_lock = Some(internal_node_id);
                 self.stats.record_success(start.elapsed().as_micros() as u64);
                 return Ok(());

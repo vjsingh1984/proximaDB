@@ -332,7 +332,7 @@ impl ParallelRecoverySystem {
                     .as_array()
                     .ok_or_else(|| anyhow!("Missing sequences field"))?
                     .iter()
-                    .map(|s| s.as_u64().unwrap_or(0))
+                    .map(|s| s.as_u64())
                     .collect();
                 
                 Ok((vectors, sequences))

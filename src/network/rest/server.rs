@@ -47,7 +47,7 @@ impl RestServer {
         };
 
         // Calculate max request size in bytes (default to 64MB if not specified)
-        let max_size_bytes = max_request_size_mb.unwrap_or(64) * 1024 * 1024;
+        let max_size_bytes = max_request_size_mb * 1024 * 1024;
 
         // Build service layers conditionally to avoid type mismatch
         let router = if compression {

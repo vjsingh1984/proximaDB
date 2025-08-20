@@ -183,7 +183,7 @@ async fn test_finalize_atomic_operation() {
     
     // After finalization, operation should be removed from active operations
     let status = coordinator.get_operation_status(&operation.operation_id).await;
-    assert!(status.is_none(), "Operation should be removed after finalization");
+    assert!(status.is_empty(), "Operation should be removed after finalization");
     
     // Verify the file was moved to final location
     let filesystem_factory = Arc::new(FilesystemFactory::new(Default::default()).await.unwrap());
@@ -514,9 +514,9 @@ async fn test_staging_operation_type_variants() {
 async fn test_staging_config_default() {
     let config = StagingConfig::default();
     assert_eq!(config.base_url, "file://./data");
-    assert!(config.collection_id.is_none());
+    assert!(config.collection_id.is_empty());
     assert_eq!(config.operation_type, TransactionStageType::Flush);
-    assert!(config.custom_staging_dir.is_none());
+    assert!(config.custom_staging_dir.is_empty());
     assert!(config.auto_cleanup);
     assert_eq!(config.max_orphaned_age_hours, 24);
 }
@@ -743,7 +743,7 @@ async fn test_operation_status_transitions() {
     let final_status = coordinator.get_operation_status(&operation.operation_id).await;
     // After finalization, the operation might be cleaned up, so it might not exist
     // This tests both successful finalization and cleanup behavior
-    assert!(final_status.is_none() || matches!(final_status.unwrap(), TransactionalOperationStatus::Completed));
+    assert!(final_status.is_empty() || matches!(final_status.unwrap(), TransactionalOperationStatus::Completed));
 }
 
 #[tokio::test]

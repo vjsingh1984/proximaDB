@@ -33,6 +33,34 @@ pub trait MetadataSerializer: Send + Sync {
     fn estimate_selectivity(&self, metadata: &dyn EngineMetadata, query_context: &QueryContext) -> f32 {
         metadata.estimated_selectivity(query_context)
     }
+    
+    /// Helper method to hash strings for bloom filters
+    fn hash_string(&self, s: &str) -> u64 {
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+        let mut hasher = DefaultHasher::new();
+        s.hash(&mut hasher);
+        hasher.finish()
+    }
+    
+    /// Helper method to hash bytes for bloom filters
+    fn hash_bytes(&self, bytes: &[u8]) -> u64 {
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+        let mut hasher = DefaultHasher::new();
+        bytes.hash(&mut hasher);
+        hasher.finish()
+    }
+    
+    /// Simple bloom filter check helper
+    fn check_bloom_simple(&self, bloom_data: &[u8], key: &[u8]) -> bool {
+        if bloom_data.is_empty() {
+            return false; // No bloom filter data
+        }
+        let hash = self.hash_bytes(key);
+        let index = (hash % bloom_data.len() as u64) as usize;
+        bloom_data[index] != 0
+    }
 }
 
 /// Engine-agnostic metadata interface
@@ -94,6 +122,24 @@ pub struct QueryContext {
     
     /// Collection-specific context
     pub collection_context: Option<CollectionContext>,
+    
+    /// Request priority for batching and scheduling
+    pub priority: RequestPriority,
+    
+    /// Estimated result size for memory planning
+    pub estimated_result_size: Option<usize>,
+    
+    /// Selectivity hint for query optimization (0.0 = very selective, 1.0 = all records)
+    pub selectivity_hint: Option<f32>,
+    
+    /// Collection ID for context-specific optimizations
+    pub collection_id: String,
+    
+    /// Number of concurrent queries for resource planning
+    pub concurrent_queries: Option<usize>,
+    
+    /// Cache temperature hint (hot/warm/cold access patterns)
+    pub cache_temperature: CacheTemperature,
 }
 
 /// Type of query for pattern analysis and optimization
@@ -107,6 +153,10 @@ pub enum QueryType {
     MetadataFilter,
     /// Batch operations (mixed)
     Batch,
+    /// Vector search (alias for SimilaritySearch)
+    VectorSearch,
+    /// Full scan of all data
+    FullScan,
 }
 
 /// Collection-specific context for optimization
@@ -136,6 +186,14 @@ pub enum AccessFrequency {
     Medium,    // 10-100 ops/hour
     Low,       // 1-10 ops/hour
     VeryLow,   // < 1 op/hour
+}
+
+/// Cache temperature for access pattern optimization
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CacheTemperature {
+    Hot,    // Frequently accessed, keep in memory
+    Warm,   // Moderately accessed, consider caching
+    Cold,   // Rarely accessed, avoid caching
 }
 
 /// Data range to read from file
@@ -244,6 +302,12 @@ impl Default for QueryContext {
             distance_threshold: None,
             query_type: QueryType::SimilaritySearch,
             collection_context: None,
+            priority: RequestPriority::Normal,
+            estimated_result_size: None,
+            selectivity_hint: None,
+            collection_id: String::new(),
+            concurrent_queries: None,
+            cache_temperature: CacheTemperature::Warm,
         }
     }
 }
@@ -258,6 +322,16 @@ impl QueryContext {
         }
     }
     
+    /// Create a new query context for ID lookup with collection ID
+    pub fn for_id_lookup_with_collection(ids: Vec<String>, collection_id: String) -> Self {
+        Self {
+            id_lookups: ids,
+            query_type: QueryType::IdLookup,
+            collection_id,
+            ..Default::default()
+        }
+    }
+    
     /// Create a new query context for similarity search
     pub fn for_similarity_search(query_vector: Vec<f32>, top_k: usize) -> Self {
         Self {
@@ -268,11 +342,32 @@ impl QueryContext {
         }
     }
     
+    /// Create a new query context for similarity search with collection ID
+    pub fn for_similarity_search_with_collection(query_vector: Vec<f32>, top_k: usize, collection_id: String) -> Self {
+        Self {
+            query_vector: Some(query_vector),
+            top_k: Some(top_k),
+            query_type: QueryType::SimilaritySearch,
+            collection_id,
+            ..Default::default()
+        }
+    }
+    
     /// Create a new query context for metadata filtering
     pub fn for_metadata_filter(filters: HashMap<String, String>) -> Self {
         Self {
             metadata_filters: filters,
             query_type: QueryType::MetadataFilter,
+            ..Default::default()
+        }
+    }
+    
+    /// Create a new query context for metadata filtering with collection ID
+    pub fn for_metadata_filter_with_collection(filters: HashMap<String, String>, collection_id: String) -> Self {
+        Self {
+            metadata_filters: filters,
+            query_type: QueryType::MetadataFilter,
+            collection_id,
             ..Default::default()
         }
     }
@@ -335,7 +430,7 @@ mod tests {
         assert_eq!(merged.priority, 255);
         
         // Test non-mergeable
-        assert!(range1.try_merge(&range3).is_none());
+        assert!(range1.try_merge(&range3).is_empty());
     }
     
     #[test]

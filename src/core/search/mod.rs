@@ -30,6 +30,9 @@ pub struct SearchParams {
     /// Query vectors for similarity search (supports single or batch search)
     pub query_vectors: Option<Vec<Vec<f32>>>,
     
+    /// Single query vector (alternative to query_vectors for single queries)
+    pub vector: Option<Vec<f32>>,
+    
     /// Number of results to return
     pub top_k: Option<usize>,
     
@@ -38,6 +41,9 @@ pub struct SearchParams {
     
     /// Unified metadata filter expression supporting AND, OR, NOT operators
     pub filter_expression: Option<FilterExpression>,
+    
+    /// Legacy filters field for backward compatibility  
+    pub filters: Option<HashMap<String, serde_json::Value>>,
     
     /// Accuracy threshold for search (0.0-1.0)
     pub accuracy_threshold: Option<f32>,
@@ -89,9 +95,11 @@ impl Default for SearchParams {
     fn default() -> Self {
         Self {
             query_vectors: None,
+            vector: None,
             top_k: Some(10),
             distance_metric: Some(crate::compute::distance_computation::DistanceMetric::Cosine),
             filter_expression: None,
+            filters: None,
             accuracy_threshold: Some(0.95),
             include_expired: Some(false),
             timeout_ms: Some(5000),
@@ -288,9 +296,9 @@ pub mod json_comparison {
                 }
                 
                 // Fall back to float comparison
-                let f1 = n1.as_f64().unwrap_or(0.0);
-                let f2 = n2.as_f64().unwrap_or(0.0);
-                f1.partial_cmp(&f2).unwrap_or(Ordering::Equal)
+                let f1 = n1.as_f64();
+                let f2 = n2.as_f64();
+                f1.partial_cmp(&f2)
             }
             (Value::String(s1), Value::String(s2)) => s1.cmp(s2),
             (Value::Bool(b1), Value::Bool(b2)) => b1.cmp(b2),

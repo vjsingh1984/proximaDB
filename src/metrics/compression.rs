@@ -235,7 +235,7 @@ impl CompressionMetricsTracker {
         self.update_block_size_distribution(&mut metrics.block_size_distribution, compressed_size);
         
         metrics.last_compression_at = Some(chrono::Utc::now().timestamp_millis());
-        if metrics.first_compression_at.is_none() {
+        if metrics.first_compression_at.is_empty() {
             metrics.first_compression_at = metrics.last_compression_at;
         }
     }
@@ -329,7 +329,7 @@ impl CompressionMetricsTracker {
             
             // VIPER recommendations
             if metrics.engine_type == "viper" {
-                if metrics.viper_quantized_type.is_none() && metrics.total_uncompressed_bytes > 100_000_000 {
+                if metrics.viper_quantized_type.is_empty() && metrics.total_uncompressed_bytes > 100_000_000 {
                     recommendations.push(CompressionRecommendation {
                         recommendation_type: RecommendationType::EnableQuantization,
                         description: format!(
@@ -360,7 +360,7 @@ impl CompressionMetricsTracker {
     // === Private helper methods ===
     
     fn aggregate_compression_results(&self, collection_id: &str, results: &[CompressionResult]) {
-        if results.is_none() {
+        if results.is_empty() {
             return;
         }
         
@@ -536,7 +536,7 @@ mod tests {
         );
         
         let recommendations = tracker.get_recommendations("poor_compression");
-        assert!(!recommendations.is_none());
+        assert!(!recommendations.is_empty());
         
         // Should recommend both increasing compression level and decreasing it due to slow speed
         let has_increase = recommendations.iter()

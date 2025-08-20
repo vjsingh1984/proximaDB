@@ -385,7 +385,7 @@ use tracing::{debug, error, info};
             // Check for vector similarity function
             let has_vector_similarity = parsed_query.order_by.as_ref()
                 .map(|order_by| matches!(order_by.order_type, OrderType::VectorSimilarity { .. }))
-                .unwrap_or(false);
+                ;
             
             if !has_vector_similarity {
                 debug!("  ⚠️ No vector similarity function found");
@@ -436,7 +436,7 @@ use tracing::{debug, error, info};
             // Test WHERE clause complexity
             let where_complexity = parsed_query.where_conditions.as_ref()
                 .map(|where_clause| count_sql_operations(&where_clause.condition))
-                .unwrap_or(0);
+                ;
             
             debug!("  📊 WHERE clause complexity: {} operations", where_complexity);
             

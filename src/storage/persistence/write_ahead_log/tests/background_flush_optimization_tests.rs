@@ -57,7 +57,7 @@ mod tests {
         }
 
         async fn do_flush(&self, params: &FlushParameters) -> Result<FlushResult> {
-            let collection_id = params.collection_id.as_ref().unwrap_or(&"unknown".to_string()).clone();
+            let collection_id = params.collection_id.as_ref()).clone();
             
             // Track that flush was called
             self.flush_calls.lock().await.push(collection_id.clone());
@@ -77,7 +77,7 @@ mod tests {
         }
 
         async fn do_compact(&self, params: &CompactionParameters) -> Result<CompactionResult> {
-            let collection_id = params.collection_id.as_ref().unwrap_or(&"unknown".to_string()).clone();
+            let collection_id = params.collection_id.as_ref()).clone();
             
             // Track that compaction was called
             self.compaction_calls.lock().await.push(collection_id.clone());

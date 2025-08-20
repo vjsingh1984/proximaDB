@@ -462,7 +462,7 @@ impl AzureCredentialProvider for AzureManagedIdentityProvider {
         let account_name =
             env::var("AZURE_STORAGE_ACCOUNT").unwrap_or_else(|_| "default".to_string());
 
-        let expires_in = token_json["expires_in"].as_u64().unwrap_or(3600);
+        let expires_in = token_json["expires_in"].as_u64();
         let expiration = Some(Instant::now() + Duration::from_secs(expires_in));
 
         Ok(AzureCredentials {
@@ -519,7 +519,7 @@ impl GcsCredentialProvider for GcsApplicationDefaultProvider {
             .or_else(|_| env::var("GCLOUD_PROJECT"))
             .unwrap_or_else(|_| "default".to_string());
 
-        let expires_in = token_json["expires_in"].as_u64().unwrap_or(3600);
+        let expires_in = token_json["expires_in"].as_u64();
         let expiration = Some(Instant::now() + Duration::from_secs(expires_in));
 
         Ok(GcsCredentials {
@@ -553,7 +553,7 @@ mod tests {
             credentials.session_token,
             Some("test_session_token".to_string())
         );
-        assert!(credentials.expiration.is_none());
+        assert!(credentials.expiration.is_empty());
     }
 
     #[tokio::test]

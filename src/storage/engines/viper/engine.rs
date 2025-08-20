@@ -447,8 +447,7 @@ impl ViperEngine {
     ) -> Result<Vec<String>> {
         let collection_id = collection_config
             .as_ref()
-            .and_then(|c| c.id.as_ref())
-            .unwrap_or(&"unknown".to_string());
+            .and_then(|c| c.id.as_ref());
         
         info!(
             "🗜️ VIPER Engine: Compacting {} files for collection {}",
@@ -525,11 +524,11 @@ impl ViperEngine {
                         let timestamp = batch.column_by_name("timestamp")
                             .and_then(|col| col.as_any().downcast_ref::<Int64Array>())
                             .map(|arr| arr.value(row_idx))
-                            .unwrap_or(0);
+                            ;
                         let version = batch.column_by_name("version")
                             .and_then(|col| col.as_any().downcast_ref::<Int64Array>())
                             .map(|arr| arr.value(row_idx))
-                            .unwrap_or(1);
+                            ;
                         let expires_at = batch.column_by_name("expires_at")
                             .and_then(|col| col.as_any().downcast_ref::<Int64Array>())
                             .and_then(|arr| if arr.is_null(row_idx) { None } else { Some(arr.value(row_idx)) });
@@ -553,11 +552,11 @@ impl ViperEngine {
                         let _created_at = batch.column_by_name("created_at")
                             .and_then(|col| col.as_any().downcast_ref::<Int64Array>())
                             .map(|arr| arr.value(row_idx))
-                            .unwrap_or(timestamp);
+                            ;
                         let updated_at = batch.column_by_name("updated_at")
                             .and_then(|col| col.as_any().downcast_ref::<Int64Array>())
                             .map(|arr| arr.value(row_idx))
-                            .unwrap_or(timestamp);
+                            ;
                         // Parse metadata from extra_meta list of key-value pairs
                         let mut metadata_map = HashMap::new();
                         if let Some(extra_meta_col) = batch.column_by_name("extra_meta") {
@@ -1077,8 +1076,8 @@ impl UnifiedStorageEngine for ViperEngine {
         let k = ctx.top_k();
         let distance_metric = ctx.distance_metric();
         let filter_expression = ctx.search_params.filter_expression.as_ref();
-        let include_vectors = ctx.search_params.include_vectors.unwrap_or(false);
-        let include_metadata = ctx.search_params.include_metadata.unwrap_or(false);
+        let include_vectors = ctx.search_params.include_vectors;
+        let include_metadata = ctx.search_params.include_metadata;
         
         debug!("search_vectors_unified called for collection: {} with storage_url: {}", collection_id, storage_url);
         // VIPER ENGINE OPTIMIZATION: Use unified search engine
@@ -1108,8 +1107,7 @@ impl UnifiedStorageEngine for ViperEngine {
                 default_distance_metric: distance_metric.clone(),
                 vector_dimension: collection_opt.as_ref()
                     .and_then(|c| c.config.as_ref())
-                    .map(|c| c.dimension as usize)
-                    .unwrap_or(query_vector.len()), // Fallback only if config not available
+                    .map(|c| c.dimension as usize), // Fallback only if config not available
                 enable_quantization: collection_opt.as_ref()
                     .and_then(|c| c.config.as_ref())
                     .and_then(|c| c.quantization.as_ref())
@@ -1238,7 +1236,7 @@ impl UnifiedStorageEngine for ViperEngine {
     async fn compact_collection(&self, collection_id: &str, collection_config: Option<&crate::proto::proximadb::Collection>) -> Result<crate::storage::traits::CompactionResult> {
         info!("🗜️ VIPER Engine: Starting collection compaction for {}", collection_id);
         // If collection_config not provided, try to get it from service
-        let owned_config = if collection_config.is_none() {
+        let owned_config = if collection_config.is_empty() {
             if let Some(service) = self.collection_service.read().await.as_ref() {
                 service.get_collection(collection_id).await.ok().flatten()
             } else {

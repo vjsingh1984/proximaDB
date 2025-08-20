@@ -45,7 +45,7 @@ async fn test_cache_miss() {
     
     let key = "non_existent".to_string();
     let retrieved = cache.get_with_hooks(&key).await;
-    assert!(retrieved.is_none());
+    assert!(retrieved.is_empty());
 }
 
 #[tokio::test]
@@ -71,7 +71,7 @@ async fn test_invalidation() {
     assert!(invalidated);
     
     // Verify it's gone
-    assert!(cache.get_with_hooks(&key).await.is_none());
+    assert!(cache.get_with_hooks(&key).await.is_empty());
 }
 
 #[tokio::test]

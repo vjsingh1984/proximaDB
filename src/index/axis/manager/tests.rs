@@ -121,7 +121,7 @@ mod construction_tests {
         let manager = result.unwrap();
         
         // Verify initialization
-        assert!(manager.collection_service.is_none()); // Initially none
+        assert!(manager.collection_service.is_empty()); // Initially none
         
         // Check metrics are initialized
         let metrics = manager.metrics.read().await;
@@ -149,7 +149,7 @@ mod construction_tests {
         // Note: We can't actually test this due to type constraints, but we can verify the concept
         
         // Initially should be None
-        assert!(manager.collection_service.is_none());
+        assert!(manager.collection_service.is_empty());
         
         // After setting, should be Some (conceptually)
         // manager.set_collection_service(mock_service);
@@ -578,7 +578,7 @@ mod migration_tests {
         assert!(result.is_ok());
         
         let status = result.unwrap();
-        assert!(status.is_none());
+        assert!(status.is_empty());
     }
 }
 

@@ -47,6 +47,24 @@ use crate::storage::engines::common::zero_copy_io_system::{
 };
 use crate::core::errors::ProximaDBError;
 
+/// File type enum for cache key discrimination
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum FileType {
+    SST,
+    Parquet,
+    Index,
+}
+
+/// SST file metadata for caching
+#[derive(Debug, Clone)]
+pub struct SstFileMetadata {
+    pub file_path: String,
+    pub file_size: u64,
+    pub file_bloom_filter: Arc<Vec<u8>>,
+    pub file_index: Arc<Vec<u8>>,
+    pub last_accessed: std::time::Instant,
+}
+
 const BLOOM_FILTER_SIZE: usize = 4096;  // 4KB bloom filters
 const INDEX_BLOCK_SIZE: usize = 61440;  // 60KB index blocks
 const DATA_BLOCK_SIZE: usize = 65536;   // 64KB data blocks
@@ -155,7 +173,7 @@ impl SharedSstFormatReader {
     async fn get_bloom_filter_smart(&self, file_path: &str, collection_id: &str) -> Result<Arc<Vec<u8>>, ProximaDBError> {
         let filename = std::path::Path::new(file_path).file_name()
             .and_then(|name| name.to_str())
-            .unwrap_or(file_path);
+            ;
         
         // Check if file metadata with bloom filter is cached
         if let Some(file_metadata) = self.cache.get_file_metadata(collection_id, filename, FileType::SST) {
@@ -200,7 +218,7 @@ impl SharedSstFormatReader {
     async fn get_index_block_smart(&self, file_path: &str, collection_id: &str) -> Result<Arc<Vec<u8>>, ProximaDBError> {
         let filename = std::path::Path::new(file_path).file_name()
             .and_then(|name| name.to_str())
-            .unwrap_or(file_path);
+            ;
         
         // Check if file metadata with index is cached
         if let Some(file_metadata) = self.cache.get_file_metadata(collection_id, filename, FileType::SST) {
@@ -262,7 +280,7 @@ impl SharedSstFormatReader {
     ) -> Result<Vec<u8>, ProximaDBError> {
         let filename = std::path::Path::new(file_path).file_name()
             .and_then(|name| name.to_str())
-            .unwrap_or(file_path);
+            ;
         
         // For cloud files, use the integrated cache for caching
         let data = if self.is_cloud_file(file_path) {

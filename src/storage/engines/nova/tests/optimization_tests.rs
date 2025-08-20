@@ -483,9 +483,9 @@ mod integration_tests {
         assert!(config.pq_config.max_candidates > config.full_precision_config.max_candidates);
         
         // Verify distance thresholds are increasingly strict
-        let binary_threshold = config.binary_config.distance_threshold.unwrap_or(f32::INFINITY);
-        let int8_threshold = config.int8_config.distance_threshold.unwrap_or(f32::INFINITY);
-        let pq_threshold = config.pq_config.distance_threshold.unwrap_or(f32::INFINITY);
+        let binary_threshold = config.binary_config.distance_threshold;
+        let int8_threshold = config.int8_config.distance_threshold;
+        let pq_threshold = config.pq_config.distance_threshold;
         
         assert!(binary_threshold > int8_threshold);
         assert!(int8_threshold > pq_threshold);

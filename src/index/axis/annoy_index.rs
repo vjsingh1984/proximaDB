@@ -284,7 +284,7 @@ impl AnnoyTree {
                             // Remove collection prefix if present
                             let prefix = format!("{}:", coll_id);
                             if id.starts_with(&prefix) {
-                                id.strip_prefix(&prefix).unwrap_or(id)
+                                id.strip_prefix(&prefix)
                             } else {
                                 continue; // Skip vectors from other collections
                             }
@@ -365,7 +365,7 @@ impl AxisAnnoyIndex {
         // USING UTILS: Validate configuration
         validation::validate_dimension(dimension)?;
         
-        let coll_str = collection_id.as_ref().map(|s| s.as_str()).unwrap_or("default");
+        let coll_str = collection_id.as_ref().map(|s| s.as_str());
         info!(
             "Creating AXIS Annoy index for collection '{}': {} trees, search_k={}, dim={}",
             coll_str, config.n_trees, config.search_k, dimension
@@ -412,7 +412,7 @@ impl AxisAnnoyIndex {
             return Ok(());
         }
 
-        let coll_str = self.collection_id.as_ref().map(|s| s.as_str()).unwrap_or("all");
+        let coll_str = self.collection_id.as_ref().map(|s| s.as_str());
         info!(
             "Building Annoy index with {} trees for {} vectors in collection '{}'",
             self.config.n_trees,
@@ -450,7 +450,7 @@ impl AxisAnnoyIndex {
             let tree_seed = rng.gen();
             let mut tree_rng = ChaCha20Rng::seed_from_u64(tree_seed);
             
-            tree.build(&vector_data, &self.config, &mut tree_rng, &self.distance_compute, self.collection_id.as_deref())?;
+            tree.build(&vector_data, &self.config, &mut tree_rng, &self.distance_compute, self.collection_id.as_str())?;
             trees.push(tree);
         }
 
@@ -600,7 +600,7 @@ impl AxisVectorIndex for AxisAnnoyIndex {
                 &vectors,
                 &self.distance_compute,
                 nodes_per_tree,
-                self.collection_id.as_deref(),
+                self.collection_id.as_str(),
             )?;
         }
 

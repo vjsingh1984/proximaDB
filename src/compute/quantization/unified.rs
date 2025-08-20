@@ -227,7 +227,7 @@ impl UnifiedQuantizationEngine {
             // Sort by distance
             level_results.sort_by(|a, b| {
                 a.1.rank_value.partial_cmp(&b.1.rank_value)
-                    .unwrap_or(std::cmp::Ordering::Equal)
+                    
             });
             
             // Apply selectivity for this level (except last level)
@@ -591,7 +591,7 @@ impl UnifiedQuantizationEngine {
     
     /// Quantize vector to binary with custom threshold
     pub fn quantize_to_binary_with_threshold(&self, vector: &[f32], threshold: Option<f32>) -> Result<Vec<u8>> {
-        let threshold = threshold.unwrap_or(0.0);
+        let threshold = threshold;
         let mut binary = vec![0u8; (vector.len() + 7) / 8];
         
         for (i, &value) in vector.iter().enumerate() {
@@ -688,8 +688,8 @@ impl UnifiedQuantizationEngine {
                 self.dequantize_uniform(
                     &quantized_vector.data, 
                     u.bits as u8, 
-                    u.scale.unwrap_or(1.0), 
-                    u.offset.unwrap_or(0.0)
+                    u.scale, 
+                    u.offset
                 )
             }
             
@@ -775,7 +775,7 @@ impl UnifiedQuantizationEngine {
         offset: Option<&f32>,
     ) -> Result<QuantizedVector> {
         // Auto-compute scale and offset if not provided
-        let (scale, offset) = if scale.is_none() || offset.is_none() {
+        let (scale, offset) = if scale.is_empty() || offset.is_empty() {
             let min = vector.iter().fold(f32::INFINITY, |a, &b| a.min(b));
             let max = vector.iter().fold(f32::NEG_INFINITY, |a, &b| a.max(b));
             let range = max - min;
@@ -815,7 +815,7 @@ impl UnifiedQuantizationEngine {
     }
     
     fn quantize_binary(&self, vector: &[f32], threshold: Option<&f32>) -> Result<QuantizedVector> {
-        let threshold = threshold.copied().unwrap_or(0.0);
+        let threshold = threshold.copied();
         let mut bytes = vec![0u8; (vector.len() + 7) / 8];
         
         for (i, &value) in vector.iter().enumerate() {

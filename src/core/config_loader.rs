@@ -173,7 +173,7 @@ impl ConfigLoader {
                 while remaining.starts_with("../") {
                     if let Some(parent) = current.parent() {
                         current = parent.to_path_buf();
-                        remaining = remaining.strip_prefix("../").unwrap_or(remaining);
+                        remaining = remaining.strip_prefix("../");
                     } else {
                         break;
                     }
@@ -184,7 +184,7 @@ impl ConfigLoader {
                     resolved = parent.to_path_buf();
                 }
             } else if path_str.starts_with("./") {
-                let clean_path = path_str.strip_prefix("./").unwrap_or(path_str);
+                let clean_path = path_str.strip_prefix("./");
                 resolved = base_dir.join(clean_path);
             } else if path_str == "." {
                 resolved = base_dir;

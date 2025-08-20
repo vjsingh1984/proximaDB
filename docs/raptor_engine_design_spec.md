@@ -32,87 +32,422 @@ RAPTOR (Row-Aligned Predicated Tensor Optimized Repository) is a high-performanc
 
 ## Core Architecture
 
-### 1. Storage Format
+### 1. Storage Format (Artus-Aligned with Parquet-like Footer)
 
 ```
 ┌─────────────────────────────────────────────────────────┐
-│                    RAPTOR File Layout                    │
+│                RAPTOR File Layout (Artus-Inspired)       │
 ├─────────────────────────────────────────────────────────┤
-│  Header (8KB)                                           │
-│  ├── Magic Number: "RAPT0001"                          │
-│  ├── Schema (Arrow Schema)                             │
-│  ├── Global Metadata (JSON)                            │
-│  └── RowGroup Index                                    │
+│  Magic: "RPTR" (4 bytes)                                │
 ├─────────────────────────────────────────────────────────┤
-│  RowGroup 0 (Default: 10K vectors)                     │
-│  ├── RG Header (metadata, offsets, stats)              │
-│  ├── Vector Column (compressed, SIMD-aligned)          │
-│  ├── Metadata Columns (complex types supported)        │
-│  ├── Bloom Filter (serialized)                         │
-│  └── Local HNSW Graph Segment                          │
+│  RowGroup 0 (Default: 1K vectors for HNSW locality)    │
+│  ├── Columnar Tensor Layout (FastLanes encoded)        │
+│  │   ├── Vector Dimensions (transposed, delta/FOR)     │
+│  │   ├── ID Column (16-byte fixed, B-tree sorted)      │
+│  │   └── Metadata Columns (bincode-encoded)            │
+│  ├── HNSW Graph Segment (disk-resident embeddings)     │
+│  └── Bloom Filter Block                                │
 ├─────────────────────────────────────────────────────────┤
 │  RowGroup 1                                            │
 │  └── ...                                               │
 ├─────────────────────────────────────────────────────────┤
 │  ...                                                    │
 ├─────────────────────────────────────────────────────────┤
-│  Footer (4KB)                                          │
-│  ├── RowGroup Summary Index                            │
-│  ├── Global HNSW Entry Points                          │
-│  └── Checksum                                          │
+│  FileMetadata (Thrift-encoded like Parquet)            │
+│  ├── Schema (compatible with Arrow but stored compact) │
+│  ├── RowGroup Metadata List                            │
+│  │   ├── Column Metadata (min/max, null count)        │
+│  │   ├── B-tree Index Roots (for ID lookups)          │
+│  │   └── HNSW Entry Points                             │
+│  ├── Key-Value Metadata                                │
+│  └── Column Orders                                     │
+├─────────────────────────────────────────────────────────┤
+│  Footer Length (4 bytes) - Parquet-style               │
+├─────────────────────────────────────────────────────────┤
+│  Magic: "RPTR" (4 bytes) - Footer magic like PAR1      │
 └─────────────────────────────────────────────────────────┘
 ```
 
+**Key Artus/Parquet Alignments:**
+- **Footer-based metadata** like Parquet (allows streaming writes)
+- **Thrift-encoded metadata** for compactness (not JSON)
+- **B-tree indexes** per Artus for efficient ID lookups
+- **Embedded HNSW** for disk-based vector similarity
+- **Column statistics** for predicate pushdown
+
 ### 2. Key Components
 
-#### 2.1 RowGroup Structure
+#### 2.1 RowGroup Metadata (Thrift-Serialized)
 ```rust
-pub struct RowGroup {
-    pub id: u32,
-    pub offset: u64,
-    pub compressed_size: u64,
-    pub uncompressed_size: u64,
-    pub row_count: usize,
-    pub vector_stats: VectorStats,
-    pub metadata_stats: HashMap<String, ColumnStats>,
-    pub bloom_filter_offset: u64,
-    pub hnsw_segment_offset: Option<u64>,
-    pub centroid: Option<Vec<f32>>,  // For pruning
-    pub compression_codec: CompressionCodec,
+// Aligned with Parquet's RowGroup metadata structure
+#[derive(Serialize, Deserialize)]  // Using bincode/thrift for efficiency
+pub struct RowGroupMetadata {
+    pub ordinal: i32,                    // RowGroup number
+    pub total_byte_size: i64,            // Total size on disk
+    pub num_rows: i64,                   // Number of rows
+    pub columns: Vec<ColumnChunkMetadata>,
+    pub sorting_columns: Vec<SortingColumn>,  // For Artus B-tree
+    
+    // RAPTOR-specific extensions
+    pub hnsw_segment: Option<HnswSegmentMetadata>,
+    pub bloom_filter: Option<BloomFilterMetadata>,
+    pub btree_index: Option<BTreeIndexMetadata>,  // Artus-style
 }
 
-pub struct VectorStats {
-    pub dimension: usize,
-    pub min_norm: f32,
-    pub max_norm: f32,
-    pub centroid: Vec<f32>,
-    pub quantization_error: Option<f32>,
+#[derive(Serialize, Deserialize)]
+pub struct ColumnChunkMetadata {
+    pub column_path: String,              // Column name
+    pub file_offset: i64,                 // Offset in file
+    pub total_compressed_size: i64,
+    pub total_uncompressed_size: i64,
+    pub num_values: i64,
+    pub encoding: Encoding,               // Dictionary, Plain, RLE, etc.
+    pub compression: CompressionCodec,
+    pub statistics: Option<Statistics>,   // Min/max/null count
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct Statistics {
+    pub min: Option<Vec<u8>>,            // Serialized min value
+    pub max: Option<Vec<u8>>,            // Serialized max value  
+    pub null_count: i64,
+    pub distinct_count: Option<i64>,
+    
+    // Vector-specific stats
+    pub centroid: Option<Vec<f32>>,      // For vector columns
+    pub norm_bounds: Option<(f32, f32)>, // Min/max norms
+}
+
+// Artus-inspired B-tree index for ID lookups
+#[derive(Serialize, Deserialize)]
+pub struct BTreeIndexMetadata {
+    pub root_offset: i64,
+    pub height: u32,
+    pub key_type: DataType,
+    pub num_keys: i64,
+    pub first_key: Vec<u8>,
+    pub last_key: Vec<u8>,
+}
+
+// HNSW graph segment for disk-based similarity search
+#[derive(Serialize, Deserialize)]
+pub struct HnswSegmentMetadata {
+    pub file_offset: i64,
+    pub size_bytes: i64,
+    pub num_nodes: i32,
+    pub entry_point: i32,
+    pub max_level: i32,
+    pub ef_construction: i32,
+    pub m: i32,
 }
 ```
 
-#### 2.2 Metadata Support
+#### 2.2 File Metadata (Footer Structure)
 ```rust
-pub enum MetadataValue {
-    Null,
-    Bool(bool),
-    Int32(i32),
-    Int64(i64),
-    Float32(f32),
-    Float64(f64),
-    String(String),
-    Binary(Vec<u8>),
-    List(Vec<MetadataValue>),
-    Map(HashMap<String, MetadataValue>),
+// Main file metadata stored in footer (like Parquet)
+#[derive(Serialize, Deserialize)]
+pub struct FileMetadata {
+    pub version: i32,                     // File format version
+    pub created_by: String,               // Creator string
+    pub num_rows: i64,                    // Total row count
+    pub row_groups: Vec<RowGroupMetadata>,
+    pub schema: SchemaDescriptor,         // Compact schema representation
+    pub key_value_metadata: Vec<KeyValue>,
+    
+    // RAPTOR/Artus extensions
+    pub global_btree_root: Option<i64>,   // Global B-tree for cross-RG lookups
+    pub global_hnsw_entry: Option<i32>,   // Global HNSW entry point
+}
+
+// Compact schema representation (not JSON)
+#[derive(Serialize, Deserialize)]
+pub struct SchemaDescriptor {
+    pub fields: Vec<FieldDescriptor>,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct FieldDescriptor {
+    pub name: String,
+    pub data_type: DataType,
+    pub nullable: bool,
+    pub metadata: Vec<KeyValue>,
+    
+    // Vector field extensions
+    pub dimension: Option<i32>,           // For vector fields
+    pub distance_metric: Option<String>,  // For similarity search
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct KeyValue {
+    pub key: String,
+    pub value: Option<String>,
 }
 ```
 
-### 3. Core Features
+#### 2.3 Reader/Writer API with Magic Verification
+```rust
+impl RaptorWriter {
+    pub fn write_footer(&mut self, metadata: FileMetadata) -> Result<()> {
+        // Serialize metadata with bincode/thrift
+        let metadata_bytes = bincode::serialize(&metadata)?;
+        
+        // Write metadata
+        self.file.write_all(&metadata_bytes)?;
+        
+        // Write metadata length (4 bytes)
+        self.file.write_all(&(metadata_bytes.len() as u32).to_le_bytes())?;
+        
+        // Write footer magic "RPTR"
+        self.file.write_all(&RAPTOR_MAGIC)?;
+        
+        Ok(())
+    }
+}
 
-#### 3.1 SIMD-Optimized Encodings
-- **Dictionary Encoding**: For high-cardinality string columns
-- **Delta Encoding**: For sorted numeric columns
-- **Bit-Packing**: For low-cardinality integers
-- **Vector Quantization**: PQ, SQ, Binary for vectors
+impl RaptorReader {
+    pub fn read_footer(&mut self) -> Result<FileMetadata> {
+        // Seek to end - 8 bytes (length + magic)
+        self.file.seek(SeekFrom::End(-8))?;
+        
+        // Read and verify footer magic
+        let mut magic = [0u8; 4];
+        self.file.read_exact(&mut magic)?;
+        if magic != RAPTOR_MAGIC {
+            return Err(anyhow!("Invalid RAPTOR file: bad footer magic"));
+        }
+        
+        // Read metadata length
+        self.file.seek(SeekFrom::End(-8))?;
+        let mut length_bytes = [0u8; 4];
+        self.file.read_exact(&mut length_bytes)?;
+        let metadata_length = u32::from_le_bytes(length_bytes) as i64;
+        
+        // Read metadata
+        self.file.seek(SeekFrom::End(-8 - metadata_length))?;
+        let mut metadata_bytes = vec![0u8; metadata_length as usize];
+        self.file.read_exact(&mut metadata_bytes)?;
+        
+        // Deserialize with bincode
+        Ok(bincode::deserialize(&metadata_bytes)?)
+    }
+}
+```
+
+### 3. Optimized Columnar Tensor Layout Design
+
+#### 3.1 Layout Philosophy (Updated for HNSW Locality)
+RAPTOR uses a **columnar tensor layout** optimized for HNSW's localized access:
+1. **Columnar Vectors**: Transposed tensor dimensions for 3-5x compression
+2. **1K Row Groups**: Minimal wasted I/O for typical k<100 searches
+3. **FastLanes Encoding**: Per-dimension delta/FOR encoding
+4. **SIMD Distance**: Direct columnar computation without transpose
+
+#### 3.2 RowGroup Structure (Columnar Tensor Optimized)
+```rust
+pub struct RaptorRowGroup {
+    // Primary storage: Columnar tensor for vectors
+    pub tensor_storage: TensorStorage,
+    
+    // Row storage: IDs and metadata remain row-oriented
+    pub id_index: BTreeIndex,
+    pub metadata_rows: Vec<BinaryMetadata>,
+    
+    // Graph index: HNSW with quantized references
+    pub hnsw_segment: HnswSegment,
+    
+    // Access structures
+    pub bloom_filters: BloomFilterSet,
+    pub statistics: RowGroupStats,
+}
+
+pub struct TensorStorage {
+    pub encoding_marker: u8,              // 0xA1 for FastLanes tensor
+    pub num_vectors: u32,                 // Always ~1000
+    pub dimension: u32,                   // Vector dimension
+    pub dimension_columns: Vec<DimensionColumn>,
+}
+
+pub struct DimensionColumn {
+    pub dim_index: u16,
+    pub encoding_scheme: FastLanesScheme,
+    pub min_value: f32,
+    pub max_value: f32,
+    pub compressed_data: Vec<u8>,        // FastLanes encoded
+}
+
+pub enum FastLanesScheme {
+    RunLength,                           // Constant dimensions
+    FrameOfReference { ref: i64, bits: u8 }, // Small range
+    Delta { bits: u8 },                  // Sequential patterns
+    BitPacked { bits: u8 },             // General purpose
+}
+
+pub struct HnswNode {
+    pub node_id: u32,
+    pub vector_index: u16,               // Index in tensor storage
+    pub quantized_vector: Vec<u8>,       // For navigation only
+    pub edges: Vec<(u32, f32)>,         // Graph connections
+}
+```
+
+#### 3.3 Storage Efficiency Analysis
+
+**Columnar Tensor Benefits:**
+- **Compression**: 3-5x better with per-dimension delta encoding
+- **I/O Efficiency**: Read 1K vectors (4MB) vs 10K (40MB) for HNSW searches
+- **SIMD Operations**: Direct columnar distance computation
+- **Cache Locality**: Entire row group fits in L3 cache
+- **No Duplication**: HNSW stores only quantized references (8-16x smaller)
+
+**Memory Footprint (per 10K vectors, 384-dim):**
+```
+Traditional Columnar: 10K × 384 × 4 = 15.4 MB (vectors only)
+Traditional HNSW:     10K × 384 × 4 = 15.4 MB (duplicate)
+Total:                               = 30.8 MB
+
+RAPTOR Hybrid:
+- Row Pages:          10K × (16 + 384×4 + 100) = 16.5 MB
+- HNSW Quantized:     10K × 32 = 0.32 MB
+- Column Projections: 10K × 8 = 0.08 MB  
+Total:                         = 16.9 MB (45% reduction)
+```
+
+#### 3.4 Query Path Optimizations
+
+```rust
+// ID-based lookup - O(log n) + 1 page read
+pub async fn get_by_id(&self, id: &str) -> Result<VectorRecord> {
+    // B-tree lookup
+    let location = self.id_btree.find(id)?;
+    
+    // Single page read
+    let page = self.load_page(location.page_id).await?;
+    Ok(page.rows[location.offset_in_page].to_vector_record())
+}
+
+// Similarity search - HNSW navigation + batch page loads
+pub async fn search_similar(
+    &self, 
+    query: &[f32], 
+    k: usize,
+    filter: Option<&Filter>
+) -> Result<Vec<SearchResult>> {
+    // 1. Optional: Apply filter to get valid pages
+    let valid_pages = if let Some(f) = filter {
+        self.column_projections.evaluate_filter(f)?
+    } else {
+        BitSet::all()
+    };
+    
+    // 2. Navigate HNSW with quantized vectors
+    let candidates = self.hnsw_segment
+        .search_with_filter(query, k * 2, &valid_pages)?;
+    
+    // 3. Batch-load required pages
+    let pages_to_load: HashSet<u16> = candidates
+        .iter()
+        .map(|c| c.row_location.page_id)
+        .collect();
+    
+    let pages = self.load_pages_parallel(pages_to_load).await?;
+    
+    // 4. Rerank with full precision vectors
+    let mut results = Vec::with_capacity(candidates.len());
+    for candidate in candidates {
+        let page = &pages[&candidate.row_location.page_id];
+        let row = &page.rows[candidate.row_location.offset_in_page];
+        let full_vector = row.decompress_vector()?;
+        let distance = compute_distance(query, &full_vector);
+        results.push(SearchResult {
+            id: row.id,
+            distance,
+            vector: full_vector,
+            metadata: row.decode_metadata()?,
+        });
+    }
+    
+    results.sort_by(|a, b| a.distance.partial_cmp(&b.distance).unwrap());
+    results.truncate(k);
+    Ok(results)
+}
+
+// Filtered scan - Column projections + selective page loads
+pub async fn scan_with_filter(&self, filter: &Filter) -> Result<Vec<VectorRecord>> {
+    // 1. Use column projections for page pruning
+    let matching_pages = self.column_projections
+        .evaluate_filter(filter)?
+        .to_page_ids();
+    
+    // 2. Load only matching pages
+    let pages = self.load_pages_parallel(matching_pages).await?;
+    
+    // 3. Apply fine-grained filter and collect results
+    let mut results = Vec::new();
+    for page in pages.values() {
+        for row in &page.rows {
+            let metadata = row.decode_metadata()?;
+            if filter.matches(&metadata) {
+                results.push(row.to_vector_record());
+            }
+        }
+    }
+    
+    Ok(results)
+}
+```
+
+#### 3.5 FastLanes Encoding Integration
+
+Column projections use FastLanes for efficient encoding:
+
+```rust
+pub struct EncodedColumn {
+    pub encoding_type: FastLanesEncoding,
+    pub encoded_data: Vec<u8>,
+    pub dictionary: Option<Dictionary>,
+    pub statistics: ColumnStatistics,
+}
+
+pub enum FastLanesEncoding {
+    Dictionary,      // For strings, low cardinality
+    Delta,          // For sorted/sequential values  
+    FrameOfReference, // For bounded numeric ranges
+    RunLength,      // For repeated values
+    BitPacking,     // For small integers
+    Uncompressed,   // For high entropy data
+}
+
+impl ColumnProjections {
+    pub fn encode_metadata_column(
+        &mut self,
+        column_name: &str,
+        values: &[MetadataValue]
+    ) -> Result<()> {
+        // Choose encoding based on data characteristics
+        let encoding = match analyze_column(values) {
+            ColumnType::LowCardinality(n) if n < 256 => {
+                FastLanesEncoding::Dictionary
+            }
+            ColumnType::Sequential => FastLanesEncoding::Delta,
+            ColumnType::BoundedNumeric(min, max) => {
+                FastLanesEncoding::FrameOfReference
+            }
+            ColumnType::Repeated => FastLanesEncoding::RunLength,
+            _ => FastLanesEncoding::Uncompressed,
+        };
+        
+        let encoded = fastlanes::encode(values, encoding)?;
+        self.metadata_columns.insert(column_name.to_string(), encoded);
+        Ok(())
+    }
+}
+```
+
+#### 3.6 SIMD-Optimized Operations
+- **Distance Computation**: AVX-512/AVX2 for vector operations
+- **Quantization**: SIMD PQ encoding/decoding
+- **Filter Evaluation**: Vectorized predicate evaluation
+- **Decompression**: Parallel FastLanes decoding
 
 #### 3.2 Cloud-Optimized I/O
 - **Range-based reads**: HTTP Range headers for S3/GCS
@@ -437,25 +772,157 @@ The RAPTOR engine implements HNSW-aware compaction with:
 3. **Query Consistency**: Dual-file queries during compaction
 4. **Background Maintenance**: Prioritized graph optimization
 
-### 7. Performance Optimizations
+### 7. Zero-Copy Filesystem Integration
 
-#### 7.1 SIMD Acceleration
-- AVX-512 for vector operations
-- Vectorized distance computation
-- Parallel encoding/decoding
-- Batch predicate evaluation
+RAPTOR leverages ProximaDB's zero-copy filesystem API for optimized I/O across cloud and local storage:
 
-#### 7.2 Memory Management
-- Arrow memory pools
-- Zero-copy buffer sharing
-- Columnar batch processing
-- Adaptive buffer sizing
+#### 7.1 Filesystem API Usage
+```rust
+use crate::storage::persistence::filesystem::{
+    FileSystem, FileOptions, StorageTier, 
+    ZeroCopyFilesystemManager, MetadataCache
+};
 
-#### 7.3 I/O Optimization
-- Async I/O with tokio
-- Parallel rowgroup reading
-- Compression at rowgroup level
-- Smart prefetching
+pub struct RaptorEngine {
+    // Zero-copy filesystem for all I/O
+    filesystem: Arc<dyn FileSystem>,
+    
+    // Metadata cache for fast lookups
+    metadata_cache: Arc<MetadataCache>,
+    
+    // File handle cache for open files
+    file_handles: DashMap<String, Arc<FileHandle>>,
+}
+
+impl RaptorEngine {
+    pub async fn new(storage_url: &str) -> Result<Self> {
+        // Initialize filesystem based on URL scheme
+        let filesystem = FilesystemFactory::create(storage_url)?;
+        
+        // Enable zero-copy optimizations
+        let filesystem = ZeroCopyFilesystemManager::wrap(filesystem);
+        
+        Ok(Self {
+            filesystem: Arc::new(filesystem),
+            metadata_cache: Arc::new(MetadataCache::new()),
+            file_handles: DashMap::new(),
+        })
+    }
+    
+    /// Read row page using zero-copy I/O
+    pub async fn read_row_page(&self, file_path: &str, page_meta: &RowPageMetadata) -> Result<RowPage> {
+        // Use filesystem API for optimized range reads
+        let options = FileOptions {
+            range: Some((page_meta.file_offset, page_meta.compressed_size)),
+            cache_control: CacheControl::Immutable,
+            tier_hint: StorageTier::Hot,
+        };
+        
+        // Zero-copy read via mmap or direct I/O
+        let data = self.filesystem.read_range(file_path, options).await?;
+        
+        // Decompress if needed (in-place when possible)
+        let decompressed = match page_meta.compression {
+            CompressionCodec::None => data,
+            _ => self.decompress_page(data, page_meta)?,
+        };
+        
+        Ok(RowPage::from_bytes(decompressed)?)
+    }
+    
+    /// Write using zero-copy filesystem
+    pub async fn write_row_group(&self, file_path: &str, row_group: &RowGroup) -> Result<()> {
+        // Use atomic writes for consistency
+        let writer = self.filesystem.create_atomic_writer(file_path).await?;
+        
+        // Write row pages
+        for page in &row_group.row_pages {
+            let compressed = self.compress_page(page)?;
+            writer.append(&compressed).await?;
+        }
+        
+        // Write HNSW segment
+        if let Some(hnsw) = &row_group.hnsw_segment {
+            let hnsw_bytes = bincode::serialize(hnsw)?;
+            writer.append(&hnsw_bytes).await?;
+        }
+        
+        // Commit atomically
+        writer.commit().await?;
+        Ok(())
+    }
+}
+```
+
+#### 7.2 Cloud Storage Optimization
+```rust
+impl RaptorEngine {
+    /// Optimized cloud reading with caching
+    pub async fn read_from_cloud(&self, s3_path: &str, row_groups: &[i32]) -> Result<Vec<RowGroup>> {
+        // Batch multiple row groups into single S3 request
+        let ranges = self.calculate_ranges(row_groups);
+        
+        // Use multipart download for large ranges
+        let options = FileOptions {
+            parallel_downloads: 4,
+            cache_locally: true,
+            tier_hint: StorageTier::Warm,
+        };
+        
+        // Single S3 API call for multiple row groups
+        let data = self.filesystem.read_multirange(s3_path, ranges, options).await?;
+        
+        // Parse row groups from data
+        self.parse_row_groups(data)
+    }
+    
+    /// Local disk cache management
+    pub async fn cache_to_local(&self, cloud_path: &str, local_path: &str) -> Result<()> {
+        // Use filesystem API for efficient copying
+        self.filesystem.copy_async(cloud_path, local_path).await?;
+        
+        // Register in cache with TTL
+        self.metadata_cache.insert(cloud_path, local_path, Duration::hours(24));
+        Ok(())
+    }
+}
+```
+
+#### 7.3 Memory-Mapped I/O
+```rust
+impl RaptorEngine {
+    /// Memory-map entire file for repeated access
+    pub async fn mmap_file(&self, file_path: &str) -> Result<Arc<MmapHandle>> {
+        // Check cache first
+        if let Some(handle) = self.file_handles.get(file_path) {
+            return Ok(handle.clone());
+        }
+        
+        // Create memory mapping via filesystem API
+        let mmap = self.filesystem.mmap_file(file_path).await?;
+        let handle = Arc::new(MmapHandle {
+            mmap,
+            file_path: file_path.to_string(),
+        });
+        
+        self.file_handles.insert(file_path.to_string(), handle.clone());
+        Ok(handle)
+    }
+    
+    /// Direct access to memory-mapped row pages
+    pub fn read_page_from_mmap(&self, mmap: &MmapHandle, offset: u64, size: u64) -> &[u8] {
+        // Zero-copy slice from mmap
+        &mmap.mmap[offset as usize..(offset + size) as usize]
+    }
+}
+```
+
+#### 7.4 Performance Benefits
+- **Zero-Copy**: Direct memory access without buffer copying
+- **Cloud-Optimized**: Batched S3/GCS requests reduce API costs
+- **Local Caching**: Automatic tiering between memory/SSD/cloud
+- **Atomic Writes**: Consistent updates across distributed storage
+- **Cross-Platform**: Same API for local files and cloud objects
 
 ## API Design
 

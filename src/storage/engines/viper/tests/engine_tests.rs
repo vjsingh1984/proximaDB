@@ -831,7 +831,7 @@ use tracing::{debug, error, info};
     assert!(!minimal_results.is_empty());
     // Vectors and metadata should not be populated when include flags are false
     for result in &minimal_results {
-        assert!(result.vector.is_none() || result.vector.as_ref().unwrap().is_empty());
+        assert!(result.vector.is_empty() || result.vector.as_ref().unwrap().is_empty());
     }
 }
 

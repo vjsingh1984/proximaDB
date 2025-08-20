@@ -105,7 +105,7 @@ async fn test_three_layer_search_consistency_basic() {
 
     // Verify logical delete is respected (should return None)
     let result = memtable.get_vector_by_id(collection_id, vector_id).await.unwrap();
-    assert!(result.is_none(), "Vector should be logically deleted");
+    assert!(result.is_empty(), "Vector should be logically deleted");
 
     // Verify search also respects logical delete
     let search_results = memtable
@@ -143,9 +143,9 @@ async fn test_get_before_delete_update_consistency() {
 
     // Update: Construct new version with same ID but new vector
     let updated_vector = create_vector_record(
-        current_vector.id.as_deref().unwrap_or(""), // Use same ID
+        current_vector.id.as_str(), // Use same ID
         vec![4.0, 5.0, 6.0], // New vector
-        Some(current_vector.version.unwrap_or(0) + 1), // Increment version
+        Some(current_vector.version + 1), // Increment version
         None,
     );
     let batch2 = create_wal_batch(collection_id, 2, vec![updated_vector.clone()]);
@@ -162,9 +162,9 @@ async fn test_get_before_delete_update_consistency() {
     // Delete: Construct tombstone with same ID
     let current_time = chrono::Utc::now().timestamp() as u32; // Current time in seconds
     let delete_vector = create_vector_record(
-        current_vector.id.as_deref().unwrap_or(""), // Use same ID
+        current_vector.id.as_str(), // Use same ID
         vec![0.0, 0.0, 0.0], // Vector content irrelevant for delete
-        Some(found_vector.version.unwrap_or(0) + 1), // Increment version
+        Some(found_vector.version + 1), // Increment version
         Some(current_time - 1), // Mark as expired 1 second ago
     );
     let batch3 = create_wal_batch(collection_id, 3, vec![delete_vector]);
@@ -172,7 +172,7 @@ async fn test_get_before_delete_update_consistency() {
 
     // Verify delete is successful
     let result = memtable.get_vector_by_id(collection_id, vector_id).await.unwrap();
-    assert!(result.is_none(), "Vector should be deleted after tombstone");
+    assert!(result.is_empty(), "Vector should be deleted after tombstone");
 }
 
 #[tokio::test]
@@ -264,7 +264,7 @@ async fn test_expired_records_vs_active_records() {
 
     // Expired vector should not be found
     let expired_result = memtable.get_vector_by_id(collection_id, "expired_vector").await.unwrap();
-    assert!(expired_result.is_none());
+    assert!(expired_result.is_empty());
 
     // Search should only return active vector
     let search_results = memtable
@@ -361,7 +361,7 @@ async fn test_multi_collection_mvcc_isolation() {
 
     // Collection A should not find the vector (deleted)
     let result_a = memtable.get_vector_by_id(collection_a, vector_id).await.unwrap();
-    assert!(result_a.is_none());
+    assert!(result_a.is_empty());
 
     // Collection B should still find the vector (not deleted)
     let result_b = memtable.get_vector_by_id(collection_b, vector_id).await.unwrap();

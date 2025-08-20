@@ -185,11 +185,11 @@ impl ProgressiveSearchExecutor {
             SearchStage::Int8Ranking => ctx.metadata.quantization_config
                 .as_ref()
                 .map(|qc| qc.int8_ranking_selectivity)
-                .unwrap_or(0.1),
+                ,
             SearchStage::PqRanking => ctx.metadata.quantization_config
                 .as_ref()
                 .map(|qc| qc.pq_ranking_selectivity)
-                .unwrap_or(0.05),
+                ,
             SearchStage::FullPrecision => 1.0,
         };
         
@@ -288,7 +288,7 @@ impl ProgressiveSearchExecutor {
         query_vector: &[f32],
         level: &QuantizationLevel,
     ) -> Result<()> {
-        let num_subvectors = level.num_subvectors.unwrap_or(16) as usize;
+        let num_subvectors = level.num_subvectors as usize;
         
         // Quantize query to PQ
         let query_pq = self.quantization_engine.quantize_to_pq(
@@ -446,7 +446,7 @@ impl ProgressiveSearchExecutor {
                 QuantizationType::Product => {
                     self.quantization_engine.quantize_to_pq(
                         vector,
-                        level.num_subvectors.unwrap_or(16) as usize,
+                        level.num_subvectors as usize,
                         level.bits,
                     )?
                 },

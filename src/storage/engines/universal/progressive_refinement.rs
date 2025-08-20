@@ -236,7 +236,7 @@ impl ProgressiveRefinementPipeline {
             
             let target_count = config.candidates_per_stage.get(&stage)
                 .copied()
-                .unwrap_or(current_candidates.len().min(100));
+                .min(100);
             
             if current_candidates.len() <= target_count {
                 debug!("Skipping stage {:?} - already have {} candidates (target: {})", 
@@ -283,7 +283,7 @@ impl ProgressiveRefinementPipeline {
         }
         
         // Generate final results
-        let final_stage = stages_used.last().copied().unwrap_or(RefinementStage::Binary);
+        let final_stage = stages_used.last().copied();
         let similarity_results = self.generate_final_similarities(
             &current_candidates,
             distance_metric,
@@ -386,7 +386,7 @@ impl ProgressiveRefinementPipeline {
         }
         
         // Sort by distance and take top candidates
-        scored_candidates.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
+        scored_candidates.sort_by(|a, b| a.1.partial_cmp(&b.1));
         
         let refined_candidates = scored_candidates.into_iter()
             .take(target_count)
@@ -432,7 +432,7 @@ impl ProgressiveRefinementPipeline {
         }
         
         // Sort by distance and take top candidates
-        scored_candidates.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
+        scored_candidates.sort_by(|a, b| a.1.partial_cmp(&b.1));
         
         let refined_candidates = scored_candidates.into_iter()
             .take(target_count)
@@ -481,7 +481,7 @@ impl ProgressiveRefinementPipeline {
         }
         
         // Sort by distance and take top candidates
-        scored_candidates.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
+        scored_candidates.sort_by(|a, b| a.1.partial_cmp(&b.1));
         
         let refined_candidates = scored_candidates.into_iter()
             .take(target_count)
@@ -529,7 +529,7 @@ impl ProgressiveRefinementPipeline {
         }
         
         // Sort by distance and take top candidates
-        scored_candidates.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
+        scored_candidates.sort_by(|a, b| a.1.partial_cmp(&b.1));
         
         let refined_candidates = scored_candidates.into_iter()
             .take(target_count)
@@ -637,10 +637,10 @@ impl ProgressiveRefinementPipeline {
             // Create a similarity result from the candidate
             // In a real implementation, this would use the actual computed distance
             let similarity_result = SimilarityResult {
-                raw_value: candidate.quality_score.unwrap_or(0.5),
+                raw_value: candidate.quality_score,
                 metric: *distance_metric,
-                normalized_score: candidate.quality_score.unwrap_or(0.5),
-                rank_value: candidate.quality_score.unwrap_or(0.5),
+                normalized_score: candidate.quality_score,
+                rank_value: candidate.quality_score,
             };
             
             results.push(similarity_result);

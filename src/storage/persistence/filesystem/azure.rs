@@ -551,7 +551,7 @@ impl FileSystem for AzureFileSystem {
                 .get(key)
                 .and_then(|v| v.to_str().ok())
                 .and_then(|s| s.parse::<u64>().ok())
-                .unwrap_or(0);
+                ;
 
             let etag = response
                 .headers()
@@ -766,7 +766,7 @@ impl AzureCredentialProvider for ServicePrincipalProvider {
             })?
             .to_string();
 
-        let expires_in = token_json["expires_in"].as_u64().unwrap_or(3600);
+        let expires_in = token_json["expires_in"].as_u64();
         let expiration = Some(Instant::now() + Duration::from_secs(expires_in));
 
         Ok(AzureCredentials {

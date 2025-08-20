@@ -68,7 +68,7 @@ mod tests {
         assert_eq!(stats.bytes_read, 0);
         assert_eq!(stats.files_merged, 0);
         assert_eq!(stats.avg_compaction_time_ms, 0);
-        assert!(stats.last_compaction_time.is_none());
+        assert!(stats.last_compaction_time.is_empty());
         assert_eq!(stats.expired_records_deleted, 0);
         assert_eq!(stats.tombstones_removed, 0);
         
@@ -289,7 +289,7 @@ mod tests {
         assert_eq!(stats.bytes_read, 0);
         assert_eq!(stats.files_merged, 0);
         assert_eq!(stats.avg_compaction_time_ms, 0);
-        assert!(stats.last_compaction_time.is_none());
+        assert!(stats.last_compaction_time.is_empty());
         assert_eq!(stats.expired_records_deleted, 0);
         assert_eq!(stats.tombstones_removed, 0);
     }

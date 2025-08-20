@@ -56,8 +56,8 @@ mod tests {
         let mut metadata_stats = DataBlockMetadata {
             min_key: records.first().map(|r| r.id.clone()).unwrap_or_default(),
             max_key: records.last().map(|r| r.id.clone()).unwrap_or_default(),
-            // min_timestamp removed -  records.iter().map(|r| r.timestamp).min().unwrap_or(0),
-            // max_timestamp removed -  records.iter().map(|r| r.timestamp).max().unwrap_or(0),
+            // min_timestamp removed -  records.iter().map(|r| r.timestamp).min(),
+            // max_timestamp removed -  records.iter().map(|r| r.timestamp).max(),
             record_count: records.len() as u32,
             null_count: 0,
             metadata_columns: vec!["category".to_string(), "score".to_string()],

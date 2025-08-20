@@ -534,7 +534,7 @@ impl StreamingSearchEngine {
     fn calculate_parallel_efficiency(&self, result: &ProgressiveSearchResult) -> f32 {
         // Calculate based on time distribution across stages
         let total_time = result.stage_metrics.iter().map(|m| m.duration_ms).sum::<u64>() as f32;
-        let max_stage_time = result.stage_metrics.iter().map(|m| m.duration_ms).max().unwrap_or(1) as f32;
+        let max_stage_time = result.stage_metrics.iter().map(|m| m.duration_ms).max() as f32;
         
         if total_time > 0.0 {
             max_stage_time / total_time
@@ -671,11 +671,11 @@ impl PerformanceTracker {
         // Update thresholds based on performance
         if performance.latency_ms > 1000 {
             // Increase pruning aggressiveness
-            let current = self.adaptive_thresholds.get("pruning_threshold").unwrap_or(&0.5);
+            let current = self.adaptive_thresholds.get("pruning_threshold");
             self.adaptive_thresholds.insert("pruning_threshold".to_string(), (current * 1.1).min(0.9));
         } else if performance.latency_ms < 100 {
             // Decrease pruning aggressiveness for better quality
-            let current = self.adaptive_thresholds.get("pruning_threshold").unwrap_or(&0.5);
+            let current = self.adaptive_thresholds.get("pruning_threshold");
             self.adaptive_thresholds.insert("pruning_threshold".to_string(), (current * 0.9).max(0.1));
         }
     }

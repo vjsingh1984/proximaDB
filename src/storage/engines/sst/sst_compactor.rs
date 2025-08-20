@@ -792,7 +792,7 @@ impl SstCompactor {
             .map(|r| {
                 let id = r.id.clone();
                 stats.records_written += 1;
-                stats.bytes_written += bincode::serialized_size(&r).unwrap_or(0);
+                stats.bytes_written += bincode::serialized_size(&r);
                 (id, r)
             })
             .collect();

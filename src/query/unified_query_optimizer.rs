@@ -397,8 +397,8 @@ impl UnifiedQueryOptimizer {
         match (query_analysis.has_metadata_filter, query_analysis.has_vector_search) {
             (true, true) => {
                 // COMBINED OPTIMIZATION - Key innovation!
-                let filter_selectivity = cost_analysis.filter_selectivity.unwrap_or(1.0);
-                let search_cost = cost_analysis.search_cost.unwrap_or(0.0);
+                let filter_selectivity = cost_analysis.filter_selectivity;
+                let search_cost = cost_analysis.search_cost;
                 
                 if filter_selectivity < 0.1 && search_cost > 100.0 {
                     // High selectivity filter first
@@ -406,8 +406,8 @@ impl UnifiedQueryOptimizer {
                     steps.push(ExecutionStep::MetadataFilter {
                         conditions: self.extract_filter_conditions(cost_analysis)?,
                         execution_method: self.select_filter_execution_method(cost_analysis)?,
-                        estimated_selectivity: cost_analysis.filter_selectivity.unwrap_or(1.0),
-                        estimated_cost: cost_analysis.filter_cost.unwrap_or(0.0),
+                        estimated_selectivity: cost_analysis.filter_selectivity,
+                        estimated_cost: cost_analysis.filter_cost,
                     });
                     steps.push(ExecutionStep::VectorSearch {
                         execution_method: self.select_search_method(cost_analysis)?,
@@ -425,8 +425,8 @@ impl UnifiedQueryOptimizer {
                     steps.push(ExecutionStep::MetadataFilter {
                         conditions: self.extract_filter_conditions(cost_analysis)?,
                         execution_method: self.select_filter_execution_method(cost_analysis)?,
-                        estimated_selectivity: cost_analysis.filter_selectivity.unwrap_or(1.0),
-                        estimated_cost: cost_analysis.filter_cost.unwrap_or(0.0),
+                        estimated_selectivity: cost_analysis.filter_selectivity,
+                        estimated_cost: cost_analysis.filter_cost,
                     });
                 } else {
                     // COMBINED EXECUTION - Optimal for most cases
@@ -443,8 +443,8 @@ impl UnifiedQueryOptimizer {
                 steps.push(ExecutionStep::MetadataFilter {
                     conditions: self.extract_filter_conditions(cost_analysis)?,
                     execution_method: self.select_filter_execution_method(cost_analysis)?,
-                    estimated_selectivity: cost_analysis.filter_selectivity.unwrap_or(1.0),
-                    estimated_cost: cost_analysis.filter_cost.unwrap_or(0.0),
+                    estimated_selectivity: cost_analysis.filter_selectivity,
+                    estimated_cost: cost_analysis.filter_cost,
                 });
             }
             (false, true) => {
@@ -668,6 +668,21 @@ pub enum OptimizationGoal {
     MinimizeLatency,
     MaximizeThroughput,
     Balanced,
+    BalancedSpeedRecall,
+}
+
+impl std::fmt::Display for OptimizationGoal {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            OptimizationGoal::MaximizeRecall => write!(f, "MaximizeRecall"),
+            OptimizationGoal::MaximizeSpeed => write!(f, "MaximizeSpeed"),
+            OptimizationGoal::MinimizeMemory => write!(f, "MinimizeMemory"),
+            OptimizationGoal::MinimizeLatency => write!(f, "MinimizeLatency"),
+            OptimizationGoal::MaximizeThroughput => write!(f, "MaximizeThroughput"),
+            OptimizationGoal::Balanced => write!(f, "Balanced"),
+            OptimizationGoal::BalancedSpeedRecall => write!(f, "BalancedSpeedRecall"),
+        }
+    }
 }
 
 /// Query complexity levels
@@ -988,7 +1003,7 @@ impl UnifiedQueryOptimizer {
         
         let method = if estimated_dataset_size < 10000 {
             FilterExecutionMethod::SequentialScan
-        } else if cost_analysis.filter_selectivity.unwrap_or(1.0) < 0.1 {
+        } else if cost_analysis.filter_selectivity < 0.1 {
             FilterExecutionMethod::IndexLookup
         } else if estimated_dataset_size > 100000 {
             FilterExecutionMethod::ParallelScan { num_threads: 4 }
@@ -1181,8 +1196,8 @@ mod tests {
     #[test]
     fn test_unified_optimizer_creation() {
         let optimizer = UnifiedQueryOptimizer::new(UnifiedOptimizerConfig::default());
-        assert!(optimizer.file_metadata_cache.is_none());
-        assert!(optimizer.column_metadata_cache.is_none());
+        assert!(optimizer.file_metadata_cache.is_empty());
+        assert!(optimizer.column_metadata_cache.is_empty());
     }
     
     #[test]
@@ -1239,7 +1254,7 @@ mod tests {
         let plan = optimizer.optimize_query(context).await.unwrap();
         
         // Should produce a combined execution plan
-        assert!(!plan.execution_steps.is_none());
+        assert!(!plan.execution_steps.is_empty());
         assert!(matches!(
             plan.execution_steps.first(),
             Some(ExecutionStep::CombinedFilterSearch { .. }) |

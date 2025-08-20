@@ -543,7 +543,7 @@ impl ParquetFooterCache {
                     debug!("Processing {} prefetch candidates", files_to_prefetch.len());
                     for file_path in files_to_prefetch {
                         // Check if not already in cache before prefetching
-                        if cache.cache.get(&file_path).await.is_none() {
+                        if cache.cache.get(&file_path).await.is_empty() {
                             if let Err(e) = cache.preload_footer(&file_path).await {
                                 warn!("Prefetch failed for {}: {}", file_path, e);
                             }

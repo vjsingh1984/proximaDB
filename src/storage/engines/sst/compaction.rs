@@ -363,8 +363,7 @@ impl CompactionManager {
         // Insert task in priority order
         let insert_pos = queue
             .iter()
-            .position(|existing_task| existing_task.priority < task.priority)
-            .unwrap_or(queue.len());
+            .position(|existing_task| existing_task.priority < task.priority);
 
         queue.insert(insert_pos, task);
 
@@ -662,14 +661,14 @@ impl CompactionManager {
         
         // OPTIMIZED: Sort VectorRecords directly by (id, version, timestamp) for merge deduplication
         all_vector_records.sort_by(|a, b| {
-            let id_a = a.id.as_ref().unwrap_or(&String::new());
-            let id_b = b.id.as_ref().unwrap_or(&String::new());
+            let id_a = a.id.as_ref();
+            let id_b = b.id.as_ref();
             
             // First sort by ID
             match id_a.cmp(id_b) {
                 std::cmp::Ordering::Equal => {
                     // For same ID, sort by version (newer versions first)
-                    match b.version.unwrap_or(0).cmp(&a.version.unwrap_or(0)) {
+                    match b.version.cmp(&a.version.unwrap_or(0)) {
                         std::cmp::Ordering::Equal => {
                             // For same version, sort by timestamp (newer timestamp first)
                             b.timestamp.cmp(&a.timestamp)
@@ -686,7 +685,7 @@ impl CompactionManager {
         let mut last_id = String::new();
         
         for record in all_vector_records {
-            let record_id = record.id.as_ref().unwrap_or(&String::new()).clone();
+            let record_id = record.id.as_ref().clone();
             
             // For append-only vectors (empty IDs), keep all records
             if record_id.is_empty() || record_id.starts_with("__append_only_") {
@@ -779,7 +778,7 @@ impl CompactionManager {
         // FASTEST: Direct VectorRecord to writer (no SstRecord conversions!)
         let mut sorted_vector_records: Vec<(String, VectorRecord)> = Vec::new();
         for (seq, vector) in sorted_vectors.into_iter().enumerate() {
-            let vector_id = vector.id.as_deref().unwrap_or("").to_string();
+            let vector_id = vector.id.as_str().to_string();
             
             // Handle append-only vectors (empty/null IDs) specially
             let key = if vector_id.is_empty() {
@@ -825,7 +824,7 @@ impl CompactionManager {
         }
 
         // Use task-specific block size if provided, otherwise fall back to server config
-        let block_size_kb = task.block_size_kb.unwrap_or(_config.block_size_kb);
+        let block_size_kb = task.block_size_kb;
         let block_size = (block_size_kb * 1024) as usize;
         
         // TODO: Pass filesystem from compaction manager - for now create a new factory

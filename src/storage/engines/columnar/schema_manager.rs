@@ -55,7 +55,7 @@ impl ColumnarSchemaManager {
         
         info!("Creating vector schema for collection: {} (dim: {})", collection_id, dimension);
         
-        let config = quantization.unwrap_or(&self.default_config);
+        let config = quantization;
         let schema = self.build_schema(dimension, config, filterable_columns)?;
         
         // Cache the schema

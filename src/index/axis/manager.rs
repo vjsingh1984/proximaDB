@@ -563,7 +563,7 @@ impl AxisManager {
             collection_id: collection_id.to_string(),
             strategy_type: search_strategy.indexes.first()
                 .map(|idx| idx.data_type)
-                .unwrap_or(DataType::DenseVector { dimension: 0 }),
+                ,
             total_vectors: 0,    // TODO: Implement actual counting
             index_size_bytes: 0, // TODO: Implement actual size calculation
             last_updated: Utc::now(),
@@ -810,7 +810,7 @@ impl AxisManager {
         files_created: Vec<String>,
         index_config: &crate::index::config::IndexConfig,
     ) -> Result<()> {
-        let batch_size_threshold = index_config.async_update_batch_size.unwrap_or(100);
+        let batch_size_threshold = index_config.async_update_batch_size;
         
         tracing::info!(
             "🎯 AXIS: Hybrid indexing for {} vectors (threshold: {}) in collection {}",
@@ -888,7 +888,7 @@ impl AxisManager {
             filter_threshold: 0.8,
             candidate_multiplier: 10,
             // quality_threshold removed -  0.95,
-            training_sample_size: quant_config.training_sample_size.unwrap_or(10000) as usize,
+            training_sample_size: quant_config.training_sample_size as usize,
             memory_budget_mb: 512,
             enable_hardware_acceleration: true,
         };

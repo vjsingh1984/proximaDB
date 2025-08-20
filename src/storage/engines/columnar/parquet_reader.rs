@@ -617,7 +617,7 @@ impl UnifiedParquetReader {
         let timestamp = batch.column_by_name("timestamp")
             .and_then(|col| col.as_any().downcast_ref::<arrow_array::Int64Array>())
             .map(|arr| arr.value(row_idx) as u32)
-            .unwrap_or(0);
+            ;
         let version = batch.column_by_name("version")
             .and_then(|col| col.as_any().downcast_ref::<arrow_array::Int64Array>())
             .map(|arr| arr.value(row_idx) as u32);
@@ -692,7 +692,7 @@ impl UnifiedParquetReader {
             let batches = self.read_row_groups_projected(
                 file_path,
                 &relevant_groups,
-                projection.as_deref(),
+                projection.as_str(),
             ).await?;
             // Process batches to find candidates
             for (batch_idx, batch) in batches.iter().enumerate() {
@@ -901,7 +901,7 @@ impl UnifiedParquetReader {
     /// Ensure ID index is built for the file
     async fn ensure_id_index_built(&self, file_path: &str) -> Result<()> {
         let mut index_guard = self.id_index.write().await;
-        if index_guard.is_none() {
+        if index_guard.is_empty() {
             info!("Building ID index for file: {}", file_path);
             let mut index = crate::storage::engines::columnar::id_index::ColumnarIdIndex::new(
                 file_path.to_string()
@@ -956,7 +956,7 @@ impl UnifiedParquetReader {
         let timestamp = batch.column_by_name("timestamp")
             .and_then(|col| col.as_any().downcast_ref::<arrow_array::Int64Array>())
             .map(|arr| arr.value(row_index) as u32)
-            .unwrap_or(0);
+            ;
         
         // Extract version
         let version = batch.column_by_name("version")
@@ -1351,7 +1351,7 @@ impl UnifiedParquetReader {
             let strategy = self.select_reading_strategy(
                 file_path,
                 None, // TODO: Convert filter_expression to MetadataFilter
-                params.top_k.unwrap_or(10),
+                params.top_k,
             ).await?;
             
             // Read vectors using selected strategy
@@ -1365,7 +1365,7 @@ impl UnifiedParquetReader {
                     let similarity = distance_compute.calculate_distance(
                         query_vector,
                         &vector_record.vector,
-                        params.distance_metric.unwrap_or(crate::compute::distance_computation::DistanceMetric::Cosine),
+                        params.distance_metric,
                     )?;
                     
                     let mut metadata_map = std::collections::HashMap::new();
@@ -1394,7 +1394,7 @@ impl UnifiedParquetReader {
         
         // Sort by similarity and take top_k
         all_results.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap());
-        all_results.truncate(params.top_k.unwrap_or(10));
+        all_results.truncate(params.top_k);
         
         Ok(all_results)
     }
@@ -1482,7 +1482,7 @@ impl UnifiedParquetReader {
                 } else {
                     None
                 };
-                self.read_parquet_file(file_path, projection.as_deref(), filter).await
+                self.read_parquet_file(file_path, projection.as_str(), filter).await
             },
             ReadingStrategy::MetadataFiltered { .. } => {
                 // Use metadata filtering to select row groups
@@ -1708,7 +1708,7 @@ impl UnifiedParquetReader {
                 
                 fetch_tasks.push(async move {
                     // Calculate byte range for this row group
-                    let start = rg_meta.file_offset().unwrap_or(0) as u64;
+                    let start = rg_meta.file_offset() as u64;
                     let size = rg_meta.total_byte_size() as u64;
                     
                     debug!("Fetching row group {} with range {}..{}", idx, start, start + size);

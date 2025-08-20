@@ -495,7 +495,7 @@ mod tests {
         let result = store.get_collection("nonexistent").await
             .expect("Get collection should not fail");
         
-        assert!(result.is_none());
+        assert!(result.is_empty());
     }
 
     #[tokio::test]

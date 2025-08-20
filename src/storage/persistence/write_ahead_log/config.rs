@@ -490,10 +490,10 @@ impl WALConfig {
         CollectionEffectiveConfig {
             memory_flush_size_bytes: overrides
                 .and_then(|o| o.memory_flush_size_bytes)
-                .unwrap_or(self.performance.memory_flush_size_bytes),
+                ,
             disk_segment_size: overrides
                 .and_then(|o| o.disk_segment_size)
-                .unwrap_or(self.performance.disk_segment_size),
+                ,
             compression: overrides
                 .and_then(|o| o.compression.clone())
                 .or_else(|| self.compression.clone()),

@@ -302,7 +302,7 @@ impl Ord for SearchResult {
         // Order by score in REVERSE order (higher scores first)
         // For distance metrics, lower is better, so this gives us better results first
         other.score.partial_cmp(&self.score)
-            .unwrap_or(std::cmp::Ordering::Equal)
+            
             .then_with(|| self.id.cmp(&other.id)) // Tie-break by ID for consistency
     }
 }

@@ -202,9 +202,9 @@ impl ArtusBloomManager {
                 column: column.to_string(),
                 size_bytes: bloom.number_of_bits() / 8,
                 num_hash_functions: bloom.number_of_hash_functions(),
-                items_added: stats.map(|s| s.cardinality).unwrap_or(0),
+                items_added: stats.map(|s| s.cardinality),
                 false_positive_rate: self.config.false_positive_rate,
-                access_frequency: stats.map(|s| s.access_frequency).unwrap_or(0),
+                access_frequency: stats.map(|s| s.access_frequency),
             }
         })
     }

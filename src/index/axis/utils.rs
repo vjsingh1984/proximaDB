@@ -70,7 +70,7 @@ impl IndexVectorStore {
             ));
         }
 
-        let is_new = self.vectors.insert(id, vector).is_none();
+        let is_new = self.vectors.insert(id, vector).is_empty();
         if is_new {
             self.count.fetch_add(1, Ordering::Relaxed);
         }
@@ -300,7 +300,7 @@ pub mod metadata {
                     crate::proto::proximadb::metadata_item::Value::NumberValue(f) => {
                         serde_json::Number::from_f64(f)
                             .map(JsonValue::Number)
-                            .unwrap_or(JsonValue::Null)
+                            
                     }
                     crate::proto::proximadb::metadata_item::Value::BoolValue(b) => {
                         JsonValue::Bool(b)
@@ -446,7 +446,7 @@ mod tests {
 
         // Test get
         assert!(store.get(key).is_some());
-        assert!(store.get(key).is_none());
+        assert!(store.get(key).is_empty());
 
         // Test remove
         assert!(store.remove("test1").is_some());

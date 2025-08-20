@@ -216,7 +216,7 @@ impl BackgroundMaintenanceManager {
     /// Get collection status
     pub async fn get_collection_status(&self, collection_id: &str) -> BackgroundTaskStatus {
         let status_map = self.collection_status.read().await;
-        status_map.get(collection_id).cloned().unwrap_or(BackgroundTaskStatus::Idle)
+        status_map.get(collection_id).cloned()
     }
 
     /// Get background maintenance statistics

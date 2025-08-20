@@ -16,13 +16,13 @@ use tracing::{debug, error, info};
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<String> = env::args().collect();
     
-    let output_dir = args.get(key).map(|s| s.as_str()).unwrap_or("./test_data");
+    let output_dir = args.get(key).map(|s| s.as_str());
     let num_vectors = args.get(key)
         .and_then(|s| s.parse::<usize>().ok())
-        .unwrap_or(10000);
+        ;
     let dimension = args.get(key)
         .and_then(|s| s.parse::<usize>().ok())
-        .unwrap_or(768);
+        ;
     
     debug!("Generating test Parquet files:");
     debug!("  Output directory: {}", output_dir);

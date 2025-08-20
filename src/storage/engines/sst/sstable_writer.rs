@@ -140,7 +140,7 @@ impl SstableWriter {
                             crate::compute::distance_computation::engine::DistanceMetric::DotProduct,
                         _ => crate::compute::distance_computation::engine::DistanceMetric::Cosine,
                     })
-                    .unwrap_or(crate::compute::distance_computation::engine::DistanceMetric::Cosine)
+                    
             } else {
                 crate::compute::distance_computation::engine::DistanceMetric::Cosine
             },
@@ -423,10 +423,10 @@ impl SstableWriter {
         // Set block-level bloom filter
         data_block.block_bloom_filter = block_key_bloom.clone().or(block_metadata_bloom.clone());
         
-        let block_size = data_block.serialize().map(|v| v.len()).unwrap_or(0) as u32;
+        let block_size = data_block.serialize().map(|v| v.len()) as u32;
         
         // Collect metadata statistics for this block
-        let estimated_columns = current_block.first().map(|r| r.metadata.len()).unwrap_or(4);
+        let estimated_columns = current_block.first().map(|r| r.metadata.len());
         let mut metadata_min_values = HashMap::with_capacity(estimated_columns);
         let mut metadata_max_values = HashMap::with_capacity(estimated_columns);
         let mut metadata_null_counts = HashMap::with_capacity(estimated_columns);
@@ -442,7 +442,7 @@ impl SstableWriter {
                     Some(crate::proto::proximadb::metadata_item::Value::NumberValue(n)) => 
                         serde_json::Number::from_f64(*n)
                             .map(serde_json::Value::Number)
-                            .unwrap_or(serde_json::Value::Null),
+                            ,
                     Some(crate::proto::proximadb::metadata_item::Value::BoolValue(b)) => 
                         serde_json::Value::Bool(*b),
                     None => serde_json::Value::Null,
@@ -471,7 +471,7 @@ impl SstableWriter {
         
         // Add enhanced index entry for first record in block
         if let Some(first_record) = current_block.first() {
-            let first_id = first_record.id.as_ref().unwrap_or(&String::new()).clone();
+            let first_id = first_record.id.as_ref().clone();
             index_entries.push(IndexEntry {
                 key: first_id,
                 offset: 0, // Will be calculated during read
@@ -605,10 +605,10 @@ impl SstableWriter {
         // Set block-level bloom filter (combines key and metadata blooms into one)
         data_block.block_bloom_filter = block_key_bloom.clone().or(block_metadata_bloom.clone());
         
-        let block_size = data_block.serialize().map(|v| v.len()).unwrap_or(0) as u32;
+        let block_size = data_block.serialize().map(|v| v.len()) as u32;
         
         // Collect metadata statistics for this block - PERFORMANCE OPTIMIZED  
-        let estimated_columns = current_block.first().map(|r| r.metadata.len()).unwrap_or(4);
+        let estimated_columns = current_block.first().map(|r| r.metadata.len());
         let mut metadata_min_values = HashMap::with_capacity(estimated_columns);
         let mut metadata_max_values = HashMap::with_capacity(estimated_columns);
         let mut metadata_null_counts = HashMap::with_capacity(estimated_columns);
@@ -624,7 +624,7 @@ impl SstableWriter {
                     Some(crate::proto::proximadb::metadata_item::Value::NumberValue(n)) => 
                         serde_json::Number::from_f64(*n)
                             .map(serde_json::Value::Number)
-                            .unwrap_or(serde_json::Value::Null),
+                            ,
                     Some(crate::proto::proximadb::metadata_item::Value::BoolValue(b)) => 
                         serde_json::Value::Bool(*b),
                     None => serde_json::Value::Null,
@@ -1007,9 +1007,9 @@ impl SstableWriter {
         
         match (a, b) {
             (Value::Number(n1), Value::Number(n2)) => {
-                let f1 = n1.as_f64().unwrap_or(0.0);
-                let f2 = n2.as_f64().unwrap_or(0.0);
-                f1.partial_cmp(&f2).unwrap_or(Ordering::Equal)
+                let f1 = n1.as_f64();
+                let f2 = n2.as_f64();
+                f1.partial_cmp(&f2)
             }
             (Value::String(s1), Value::String(s2)) => s1.cmp(s2),
             (Value::Bool(b1), Value::Bool(b2)) => b1.cmp(b2),

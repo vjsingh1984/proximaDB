@@ -69,7 +69,7 @@ mod metadata_backend_tests {
                 .get_collection_metadata(&String::from("test_collection"))
                 .await
                 .unwrap();
-            assert!(collection_exists.is_none()); // No collections yet
+            assert!(collection_exists.is_empty()); // No collections yet
         }
         
         // Create a collection through the shared collection service
@@ -173,7 +173,7 @@ mod metadata_backend_tests {
             .get_collection_metadata(&String::from("test"))
             .await
             .unwrap();
-        assert!(result.is_none()); // No collections exist yet
+        assert!(result.is_empty()); // No collections exist yet
         
         // Create a collection through collection service
         let collection_config = crate::proto::proximadb::CollectionConfig {

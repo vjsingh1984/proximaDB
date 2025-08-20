@@ -117,7 +117,7 @@ impl LocalFileSystem {
                     while remaining.starts_with("../") {
                         if let Some(parent) = current.parent() {
                             current = parent.to_path_buf();
-                            remaining = remaining.strip_prefix("../").unwrap_or(remaining);
+                            remaining = remaining.strip_prefix("../");
                         } else {
                             // Can't go up further, just use what we have
                             break;
@@ -134,7 +134,7 @@ impl LocalFileSystem {
                     }
                 } else if path_str.starts_with("./") {
                     // Replace ./ with the base directory
-                    let clean_path = path_str.strip_prefix("./").unwrap_or(path_str);
+                    let clean_path = path_str.strip_prefix("./");
                     resolved_path = PathBuf::from(fallback_base).join(clean_path);
                 } else if path_str == "." {
                     // Just current directory
@@ -469,7 +469,7 @@ impl FileSystem for LocalFileSystem {
             }
             Err(e) => {
                 // Get current position for debugging
-                let current_pos = file.stream_position().await.unwrap_or(0);
+                let current_pos = file.stream_position().await;
                 tracing::error!(
                     "LocalFS read_exact failed: path={}, offset={}, bytes_to_read={}, current_pos={}, file_size={}, error={:?}",
                     path, offset, bytes_to_read, current_pos, file_size, e
@@ -521,7 +521,7 @@ impl FileSystem for LocalFileSystem {
             let name = entry_path
                 .file_name()
                 .and_then(|n| n.to_str())
-                .unwrap_or("?")
+                
                 .to_string();
 
             let metadata = entry.metadata().await.map_err(FilesystemError::Io)?;
@@ -887,7 +887,7 @@ use tracing::{debug, error, info};
         
         // Clean up any existing test directories/files first
         // Check if the metadata directory exists and clean it up
-        if fs.exists("file://./metadata_info").await.unwrap_or(false) {
+        if fs.exists("file://./metadata_info").await {
             // List and delete all files in the directory
             if let Ok(entries) = fs.list("file://./metadata/current").await {
                 for entry in entries {
@@ -937,7 +937,7 @@ use tracing::{debug, error, info};
         let fs = LocalFileSystem::new(config).await.unwrap();
         
         // Clean up any existing test directories first
-        if fs.exists("file://./test_metadata_info").await.unwrap_or(false) {
+        if fs.exists("file://./test_metadata_info").await {
             // List and delete all files recursively
             if let Ok(entries) = fs.list("file://./test_metadata/current").await {
                 for entry in entries {
@@ -1100,7 +1100,7 @@ use tracing::{debug, error, info};
         debug!("🔍 Testing file creation: {}", test_file_url);
         
         // Clean up any existing file first
-        if fs.exists(test_file_url).await.unwrap_or(false) {
+        if fs.exists(test_file_url).await {
             debug!("🧹 Cleaning up existing file: {}", test_file_url);
             let _ = fs.delete(test_file_url).await;
         }
@@ -1125,7 +1125,7 @@ use tracing::{debug, error, info};
         let test_dir_url = "file://./test_exists_dir";
         
         // Clean up any existing directory first
-        if fs.exists(test_dir_url).await.unwrap_or(false) {
+        if fs.exists(test_dir_url).await {
             debug!("🧹 Cleaning up existing directory: {}", test_dir_url);
             let _ = fs.delete(test_dir_url).await;
         }

@@ -169,7 +169,7 @@ async fn test_metadata_cache_specialization() {
     // Test bulk invalidation for collection
     cache.invalidate_collection("coll1").await;
     let retrieved_coll: Option<CollectionMetadata> = cache.get_collection_metadata("coll1").await;
-    assert!(retrieved_coll.is_none());
+    assert!(retrieved_coll.is_empty());
 }
 
 

@@ -111,7 +111,7 @@ impl PartialOrd for SearchCandidate {
 
 impl Ord for SearchCandidate {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.partial_cmp(other).unwrap_or(std::cmp::Ordering::Equal)
+        self.partial_cmp(other)
     }
 }
 
@@ -377,7 +377,7 @@ impl NovaColumnarSearch {
             let batch = self.parquet_reader.read_row_groups_projected(
                 &nova_file.metadata.collection_id,
                 &[rg_idx],
-                projection.as_deref(),
+                projection.as_str(),
             ).await?;
             
             // Compute distances for all vectors in batch
@@ -459,7 +459,7 @@ impl NovaColumnarSearch {
         debug!("Binary filter stage: max_candidates={}", max_candidates);
         
         // Check if binary column exists
-        if nova_file.quantized_columns.binary_column.is_none() {
+        if nova_file.quantized_columns.binary_column.is_empty() {
             return Ok(Vec::new());
         }
         
@@ -512,7 +512,7 @@ impl NovaColumnarSearch {
     ) -> Result<Vec<SearchCandidate>> {
         debug!("INT8 filter stage: input={}, max={}", candidates.len(), max_candidates);
         
-        if nova_file.quantized_columns.int8_column.is_none() {
+        if nova_file.quantized_columns.int8_column.is_empty() {
             return Ok(candidates.to_vec());
         }
         
@@ -576,7 +576,7 @@ impl NovaColumnarSearch {
     ) -> Result<Vec<SearchCandidate>> {
         debug!("PQ filter stage: input={}, max={}", candidates.len(), max_candidates);
         
-        if nova_file.quantized_columns.pq_column.is_none() {
+        if nova_file.quantized_columns.pq_column.is_empty() {
             return Ok(candidates.to_vec());
         }
         
@@ -920,7 +920,7 @@ impl From<&ColumnarSearchConfig> for ProgressiveSearchConfig {
 impl From<&ColumnarSearchConfig> for StreamingConfig {
     fn from(config: &ColumnarSearchConfig) -> Self {
         StreamingConfig {
-            max_memory_bytes: config.memory_budget.unwrap_or(1024 * 1024 * 1024),
+            max_memory_bytes: config.memory_budget,
             prefetch_queue_size: 2,
             max_concurrent_processors: 4,
             processing_timeout: std::time::Duration::from_secs(30),

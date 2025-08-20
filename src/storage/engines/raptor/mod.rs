@@ -1,6 +1,9 @@
 // RAPTOR Storage Engine - Row-Aligned Predicated Tensor Optimized Repository
 // Combines Google Artus concepts with advanced vector database requirements
 
+/// Magic constant for RAPTOR files (4 bytes)
+pub const RAPTOR_MAGIC: [u8; 4] = *b"RPTR";
+
 pub mod config;
 pub mod engine;
 pub mod rowgroup;

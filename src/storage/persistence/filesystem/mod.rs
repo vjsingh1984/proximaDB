@@ -503,7 +503,7 @@ pub trait FileSystem: Send + Sync + std::fmt::Debug {
 
             TempStrategy::SameDirectory => {
                 // Create ___temp subdirectory in same location (same mount point)
-                let parent = final_path.parent().unwrap_or(Path::new("."));
+                let parent = final_path.parent();
                 let temp_dir = parent.join("___temp");
                 let temp_file = temp_dir.join(format!("{}.{}", filename, std::process::id())); // Add PID for uniqueness
                 Ok(temp_file.to_string_lossy().to_string())
@@ -879,7 +879,7 @@ impl FilesystemFactory {
             }
             "s3" => {
                 // S3 URLs must have bucket name
-                if parsed_url.host_str().is_none() || parsed_url.host_str().unwrap().is_empty() {
+                if parsed_url.host_str().is_empty() || parsed_url.host_str().unwrap().is_empty() {
                     return Err(FilesystemError::InvalidPath(
                         "S3 URLs must specify bucket name".to_string()
                     ));
@@ -887,7 +887,7 @@ impl FilesystemFactory {
             }
             "gs" => {
                 // GCS URLs must have bucket name
-                if parsed_url.host_str().is_none() || parsed_url.host_str().unwrap().is_empty() {
+                if parsed_url.host_str().is_empty() || parsed_url.host_str().unwrap().is_empty() {
                     return Err(FilesystemError::InvalidPath(
                         "GCS URLs must specify bucket name".to_string()
                     ));
@@ -904,7 +904,7 @@ impl FilesystemFactory {
             }
             "abfs" => {
                 // ABFS URLs must have container@account format
-                if parsed_url.host_str().is_none() || !parsed_url.host_str().unwrap().contains('@') {
+                if parsed_url.host_str().is_empty() || !parsed_url.host_str().unwrap().contains('@') {
                     return Err(FilesystemError::InvalidPath(
                         "ABFS URLs must use container@account format".to_string()
                     ));
@@ -912,7 +912,7 @@ impl FilesystemFactory {
             }
             "hdfs" => {
                 // HDFS URLs must have namenode host
-                if parsed_url.host_str().is_none() || parsed_url.host_str().unwrap().is_empty() {
+                if parsed_url.host_str().is_empty() || parsed_url.host_str().unwrap().is_empty() {
                     return Err(FilesystemError::InvalidPath(
                         "HDFS URLs must specify namenode host".to_string()
                     ));
@@ -1072,7 +1072,7 @@ impl FilesystemFactory {
             // Check for scheme mapping (e.g., gs -> gcs)
             let mapped_scheme = self.config.scheme_mapping
                 .get(&raw_scheme)
-                .unwrap_or(&raw_scheme);
+                ;
             
             Ok(mapped_scheme.clone())
         } else {
@@ -1252,7 +1252,7 @@ impl FilesystemFactory {
         // We need to clone the filesystem, but since we can't clone trait objects,
         // we'll need to get it by scheme instead
         let scheme = if url.contains("://") {
-            url.split("://").next().unwrap_or("file")
+            url.split("://").next()
         } else {
             "file"
         };

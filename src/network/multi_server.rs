@@ -476,7 +476,7 @@ impl SharedServices {
                         index_size_bytes: metadata.total_size_bytes as i64,
                         data_size_bytes: metadata.total_size_bytes as i64,
                     }),
-                    timestamp: metadata.timestamp.timestamp_millis(),
+                    created_at: metadata.timestamp.timestamp_millis(),
                     updated_at: metadata.updated_at.timestamp_millis(),
                     storage_assignment: metadata.storage_assignment.as_ref().map(|sa| {
                         crate::proto::proximadb::StorageAssignment {

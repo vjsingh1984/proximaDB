@@ -160,7 +160,7 @@ impl EventLogWAL {
             if !path.file_name()
                 .and_then(|n| n.to_str())
                 .map(|n| n.starts_with("eventlog_wal_"))
-                .unwrap_or(false)
+                
             {
                 continue;
             }
@@ -259,7 +259,7 @@ impl EventLogWAL {
             if path.file_name()
                 .and_then(|n| n.to_str())
                 .map(|n| n.starts_with("eventlog_wal_"))
-                .unwrap_or(false)
+                
             {
                 fs::remove_file(&path).await?;
             }
@@ -393,7 +393,7 @@ mod tests {
             .filter(|e| {
                 e.file_name().to_str()
                     .map(|n| n.starts_with("eventlog_wal_"))
-                    .unwrap_or(false)
+                    
             })
             .collect();
         

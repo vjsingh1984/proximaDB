@@ -449,7 +449,7 @@ impl MetricsPersistenceLayer {
                         let collection_id = entry.name
                             .strip_prefix("collection_")
                             .and_then(|s| s.strip_suffix(".json"))
-                            .unwrap_or("")
+                            
                             .to_string();
                         if !collection_id.is_empty() && !collections.contains(&collection_id) {
                             collections.push(collection_id);

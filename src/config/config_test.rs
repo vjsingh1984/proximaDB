@@ -23,27 +23,27 @@ mod tests {
             .expect("Default configuration should be complete");
         
         // Verify all major sections are present
-        assert!(!config.server.node_id.is_none(), "Server node_id should not be empty");
-        assert!(!config.server.bind_address.is_none(), "Server bind_address should not be empty");
+        assert!(!config.server.node_id.is_empty(), "Server node_id should not be empty");
+        assert!(!config.server.bind_address.is_empty(), "Server bind_address should not be empty");
         assert!(config.server.port > 0, "Server port should be positive");
-        assert!(!config.server.data_dir.is_none(), "Server data_dir should not be empty");
+        assert!(!config.server.data_dir.is_empty(), "Server data_dir should not be empty");
         
         // Storage configuration
-        assert!(!config.storage.data_dirs.is_none(), "Storage data_dirs should not be empty");
-        assert!(!config.storage.wal_dir.is_none(), "Storage wal_dir should not be empty");
+        assert!(!config.storage.data_dirs.is_empty(), "Storage data_dirs should not be empty");
+        assert!(!config.storage.wal_dir.is_empty(), "Storage wal_dir should not be empty");
         assert!(config.storage.cache_size_mb > 0, "Storage cache_size_mb should be positive");
         assert!(config.storage.bloom_filter_config.is_some(), "Storage bloom_filter_config should be present");
         let bloom_config = config.storage.bloom_filter_config.as_ref().unwrap();
         assert!(bloom_config.bits_per_key > 0, "Bloom filter bits_per_key should be positive");
         
         // WAL configuration
-        assert!(!config.storage.wal_config.write_buffer_urls.is_none(), "WAL write_buffer_urls should not be empty");
+        assert!(!config.storage.wal_config.write_buffer_urls.is_empty(), "WAL write_buffer_urls should not be empty");
         assert!(config.storage.wal_config.memory_flush_size_bytes > 0, "WAL memory_flush_size_bytes should be positive");
         assert!(config.storage.wal_config.global_flush_threshold > 0, "WAL global_flush_threshold should be positive");
         assert!(config.storage.wal_config.global_shrink_factor > 0.0, "WAL global_shrink_factor should be positive");
-        assert!(!config.storage.wal_config.strategy_type.is_none(), "WAL strategy_type should not be empty");
-        assert!(!config.storage.wal_config.memtable_type.is_none(), "WAL memtable_type should not be empty");
-        assert!(!config.storage.wal_config.sync_mode.is_none(), "WAL sync_mode should not be empty");
+        assert!(!config.storage.wal_config.strategy_type.is_empty(), "WAL strategy_type should not be empty");
+        assert!(!config.storage.wal_config.memtable_type.is_empty(), "WAL memtable_type should not be empty");
+        assert!(!config.storage.wal_config.sync_mode.is_empty(), "WAL sync_mode should not be empty");
         assert!(config.storage.wal_config.batch_threshold > 0, "WAL batch_threshold should be positive");
         assert!(config.storage.wal_config.write_buffer_size_mb > 0, "WAL write_buffer_size_mb should be positive");
         assert!(config.storage.wal_config.concurrent_flushes > 0, "WAL concurrent_flushes should be positive");
@@ -51,11 +51,11 @@ mod tests {
         // LSM configuration
         assert!(config.storage.lsm_config.memtable_size_mb > 0, "LSM memtable_size_mb should be positive");
         assert!(config.storage.lsm_config.memory_flush_size_bytes > 0, "LSM memory_flush_size_bytes should be positive");
-        assert!(!config.storage.lsm_config.memtable_type.is_none(), "LSM memtable_type should not be empty");
+        assert!(!config.storage.lsm_config.memtable_type.is_empty(), "LSM memtable_type should not be empty");
         assert!(config.storage.lsm_config.level_count > 0, "LSM level_count should be positive");
         assert!(config.storage.lsm_config.compaction_threshold > 0, "LSM compaction_threshold should be positive");
-        assert!(!config.storage.lsm_config.compaction_strategy.is_none(), "LSM compaction_strategy should not be empty");
-        assert!(!config.storage.lsm_config.storage.as_ref().and_then(|s| s.compression.as_ref()).is_none(), "LSM compression should not be empty");
+        assert!(!config.storage.lsm_config.compaction_strategy.is_empty(), "LSM compaction_strategy should not be empty");
+        assert!(!config.storage.lsm_config.storage.as_ref().and_then(|s| s.compression.as_ref()).is_empty(), "LSM compression should not be empty");
         assert!(config.storage.lsm_config.block_size_mb > 0, "LSM block_size_kb should be positive");
         assert!(config.storage.lsm_config.cache_size_mb > 0, "LSM cache_size_mb should be positive");
         assert!(config.storage.lsm_config.write_buffer_size_mb > 0, "LSM write_buffer_size_mb should be positive");
@@ -63,9 +63,9 @@ mod tests {
         assert!(config.storage.lsm_config.level_size_multiplier > 0.0, "LSM level_size_multiplier should be positive");
         assert!(config.storage.lsm_config.max_levels > 0, "LSM max_levels should be positive");
         assert!(config.storage.lsm_config.background_thread_count > 0, "LSM background_thread_count should be positive");
-        assert!(!config.storage.lsm_config.sync_mode.is_none(), "LSM sync_mode should not be empty");
-        assert!(!config.storage.lsm_config.write_buffer_directory.is_none(), "LSM write_buffer_directory should not be empty");
-        assert!(!config.storage.lsm_config.data_directory.is_none(), "LSM data_directory should not be empty");
+        assert!(!config.storage.lsm_config.sync_mode.is_empty(), "LSM sync_mode should not be empty");
+        assert!(!config.storage.lsm_config.write_buffer_directory.is_empty(), "LSM write_buffer_directory should not be empty");
+        assert!(!config.storage.lsm_config.data_directory.is_empty(), "LSM data_directory should not be empty");
         assert!(config.storage.lsm_config.prefetch_size_kb > 0, "LSM prefetch_size_kb should be positive");
         
         // Bloom filter configuration
@@ -73,14 +73,14 @@ mod tests {
         
         // Storage layout configuration
         assert!(config.storage.storage_layout.node_instance > 0, "Storage layout node_instance should be positive");
-        assert!(!config.storage.storage_layout.assignment_strategy.is_none(), "Storage layout assignment_strategy should not be empty");
-        assert!(!config.storage.storage_layout.base_paths.is_none(), "Storage layout base_paths should not be empty");
+        assert!(!config.storage.storage_layout.assignment_strategy.is_empty(), "Storage layout assignment_strategy should not be empty");
+        assert!(!config.storage.storage_layout.base_paths.is_empty(), "Storage layout base_paths should not be empty");
         
         // Base path configuration
         let base_path = &config.storage.storage_layout.base_paths[0];
-        assert!(!base_path.base_dir.is_none(), "Base path base_dir should not be empty");
+        assert!(!base_path.base_dir.is_empty(), "Base path base_dir should not be empty");
         assert!(base_path.instance_id > 0, "Base path instance_id should be positive");
-        assert!(!base_path.mount_point.is_none(), "Base path mount_point should not be empty");
+        assert!(!base_path.mount_point.is_empty(), "Base path mount_point should not be empty");
         
         // Capacity configuration
         assert!(base_path.capacity_config.max_wal_size_mb > 0, "Capacity config max_wal_size_mb should be positive");
@@ -88,16 +88,16 @@ mod tests {
         assert!(base_path.capacity_config.warning_threshold_percent > 0.0, "Capacity config warning_threshold_percent should be positive");
         
         // Temp configuration
-        assert!(!base_path.temp_config.temp_suffix.is_none(), "Temp config temp_suffix should not be empty");
-        assert!(!base_path.temp_config.compaction_suffix.is_none(), "Temp config compaction_suffix should not be empty");
-        assert!(!base_path.temp_config.flush_suffix.is_none(), "Temp config flush_suffix should not be empty");
+        assert!(!base_path.temp_config.temp_suffix.is_empty(), "Temp config temp_suffix should not be empty");
+        assert!(!base_path.temp_config.compaction_suffix.is_empty(), "Temp config compaction_suffix should not be empty");
+        assert!(!base_path.temp_config.flush_suffix.is_empty(), "Temp config flush_suffix should not be empty");
         
         // Filesystem configuration
-        assert!(!config.storage.filesystem_config.temp_strategy.is_none(), "Filesystem config temp_strategy should not be empty");
+        assert!(!config.storage.filesystem_config.temp_strategy.is_empty(), "Filesystem config temp_strategy should not be empty");
         
         // Metadata backend configuration
-        assert!(!config.storage.metadata_backend.backend_type.is_none(), "Metadata backend backend_type should not be empty");
-        assert!(!config.storage.metadata_backend.storage_url.is_none(), "Metadata backend storage_url should not be empty");
+        assert!(!config.storage.metadata_backend.backend_type.is_empty(), "Metadata backend backend_type should not be empty");
+        assert!(!config.storage.metadata_backend.storage_url.is_empty(), "Metadata backend storage_url should not be empty");
         assert!(config.storage.metadata_backend.cache_size_mb > 0, "Metadata backend cache_size_mb should be positive");
         assert!(config.storage.metadata_backend.flush_interval_secs > 0, "Metadata backend flush_interval_secs should be positive");
         
@@ -108,7 +108,7 @@ mod tests {
         assert!(config.api.timeout_seconds > 0, "API timeout_seconds should be positive");
         
         // Monitoring configuration
-        assert!(!config.monitoring.log_level.is_none(), "Monitoring log_level should not be empty");
+        assert!(!config.monitoring.log_level.is_empty(), "Monitoring log_level should not be empty");
         
         // Consensus configuration
         assert!(config.consensus.node_id > 0, "Consensus node_id should be positive");
@@ -160,10 +160,10 @@ rest_port = 9997
         assert_eq!(config.api.rest_port, 9997);
         
         // Verify defaults are still present for non-overridden fields
-        assert!(!config.server.bind_address.is_none(), "Default bind_address should be preserved");
-        assert!(!config.server.data_dir.is_none(), "Default data_dir should be preserved");
+        assert!(!config.server.bind_address.is_empty(), "Default bind_address should be preserved");
+        assert!(!config.server.data_dir.is_empty(), "Default data_dir should be preserved");
         assert!(config.storage.bloom_filter_config.is_some(), "Default bloom_filter_config should be preserved");
-        assert!(!config.storage.wal_config.strategy_type.is_none(), "Default WAL strategy_type should be preserved");
+        assert!(!config.storage.wal_config.strategy_type.is_empty(), "Default WAL strategy_type should be preserved");
         assert!(config.storage.lsm_config.memtable_size_mb > 0, "Default LSM memtable_size_mb should be preserved");
         assert!(config.api.timeout_seconds > 0, "Default API timeout_seconds should be preserved");
         
@@ -195,9 +195,9 @@ node_id = "minimal-test"
         assert_eq!(config.server.node_id, "minimal-test");
         
         // Verify all required fields are still present from defaults
-        assert!(!config.server.bind_address.is_none());
+        assert!(!config.server.bind_address.is_empty());
         assert!(config.server.port > 0);
-        assert!(!config.storage.wal_config.strategy_type.is_none());
+        assert!(!config.storage.wal_config.strategy_type.is_empty());
         assert!(config.storage.lsm_config.memtable_size_mb > 0);
         assert!(config.api.grpc_port > 0);
         
@@ -319,7 +319,7 @@ rest_port = 15678
         
         // Verify defaults are preserved
         assert!(config.storage.cache_size_mb > 0);
-        assert!(!config.storage.wal_config.strategy_type.is_none());
+        assert!(!config.storage.wal_config.strategy_type.is_empty());
         assert!(config.storage.lsm_config.memtable_size_mb > 0);
         
         info!("✅ Server startup configuration test passed");

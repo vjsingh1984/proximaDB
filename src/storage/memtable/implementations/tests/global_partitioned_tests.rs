@@ -242,7 +242,7 @@ async fn test_mvcc_and_logical_deletes() {
 
     // Test get_vector_by_id - should return None due to logical delete
     let result = memtable.get_vector_by_id(collection_id, "test_vector").await.unwrap();
-    assert!(result.is_none(), "Vector should be logically deleted");
+    assert!(result.is_empty(), "Vector should be logically deleted");
 
     // Test search - should not find the vector
     let search_results = memtable

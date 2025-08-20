@@ -119,7 +119,7 @@ impl BatchCoordinator {
         // Update vector index
         for (index, vector_record) in batch.vector_records.iter().enumerate() {
             self.vector_index.insert(
-                vector_record.id.as_deref().unwrap_or("").to_string(),
+                vector_record.id.as_str().to_string(),
                 (collection_id.to_string(), batch_id.clone(), index),
             );
         }
@@ -167,7 +167,7 @@ impl BatchCoordinator {
             let mut cleared_batch_records = Vec::new();
             for batch in collection_batches.values() {
                 if batch.is_flushed {
-                    cleared_batch_records.extend(batch.vector_records.iter().map(|v| v.id.as_deref().unwrap_or("").to_string()));
+                    cleared_batch_records.extend(batch.vector_records.iter().map(|v| v.id.as_str().to_string()));
                 }
             }
             
@@ -315,7 +315,7 @@ impl WALBehaviorWrapper {
         );
         
         // Create bloom filter if not already present
-        if batch.metadata_bloom_filter.is_none() && vector_count > 0 {
+        if batch.metadata_bloom_filter.is_empty() && vector_count > 0 {
             match batch.create_bloom_filter() {
                 Ok(_) => {
                     tracing::debug!("✅ Created bloom filter for batch {} with {} vectors", batch_id, vector_count);
@@ -488,12 +488,12 @@ impl WALBehaviorWrapper {
                                 crate::proto::proximadb::metadata_item::Value::NumberValue(n) => {
                                     serde_json::Number::from_f64(*n)
                                         .map(serde_json::Value::Number)
-                                        .unwrap_or(serde_json::Value::Null)
+                                        
                                 }
                                 crate::proto::proximadb::metadata_item::Value::BoolValue(b) => {
                                     serde_json::Value::Bool(*b)
                                 }
-                            }).unwrap_or(serde_json::Value::Null);
+                            });
                             Some((item.key.clone(), value))
                         })
                         .collect()
@@ -1074,7 +1074,7 @@ mod tests {
 
         // Verify vector data integrity
         let found_vectors: Vec<_> = all_vectors.iter()
-            .filter(|(_, record)| record.id.as_deref().unwrap_or("") == vector_id)
+            .filter(|(_, record)| record.id.as_str() == vector_id)
             .collect();
         assert!(!found_vectors.is_empty());
     }

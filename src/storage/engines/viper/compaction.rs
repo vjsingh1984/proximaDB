@@ -82,7 +82,7 @@ impl ViperFilenameGenerator {
     /// Returns level 0 for files that don't follow the naming convention
     pub fn parse_level_from_filename(filename: &str) -> u32 {
         if let Some(captures) = regex::Regex::new(r"^level(\d+)_").unwrap().captures(filename) {
-            captures.get(1).unwrap().as_str().parse().unwrap_or(0)
+            captures.get(1).unwrap().as_str().parse()
         } else {
             0 // Treat legacy files as level 0
         }
@@ -96,7 +96,7 @@ impl ViperFilenameGenerator {
     /// Parse timestamp from filename for ordering
     pub fn parse_timestamp_from_filename(filename: &str) -> u64 {
         if let Some(captures) = regex::Regex::new(r"level\d+_(\d+)_").unwrap().captures(filename) {
-            captures.get(1).unwrap().as_str().parse().unwrap_or(0)
+            captures.get(1).unwrap().as_str().parse()
         } else {
             0
         }
@@ -404,7 +404,7 @@ impl CompactionManager {
                 "📊 File {}/{}: {} - Size: {:.2}MB, Rows: {}, Avg row size: {:.2}KB",
                 idx + 1,
                 input_files.len(),
-                file_path.split('/').last().unwrap_or("unknown"),
+                file_path.split('/').last(),
                 file_size as f64 / (1024.0 * 1024.0),
                 row_count,
                 avg_row_size / 1024.0
@@ -478,7 +478,7 @@ impl CompactionManager {
             .as_ref()
             .and_then(|collection| collection.config.as_ref())
             .map(|config| config.dimension as usize)
-            .unwrap_or(512); // Default to 512 if not available
+            ; // Default to 512 if not available
         
         info!("🔧 VIPER COMPACTION: Starting with {} dimensions for collection {}", 
               vector_dimensions, collection_id);
@@ -687,14 +687,14 @@ impl CompactionManager {
                         }
                     };
                     trace!("Record ID extracted: {:?}", record_id);
-                    let record_version = version_values[i].unwrap_or(1);
+                    let record_version = version_values[i];
                     trace!("Record version: {}", record_version);
                     
                     // Extract timestamp for duplicate resolution
                     let record_timestamp = batch.column_by_name("timestamp")
                         .and_then(|col| col.as_any().downcast_ref::<Int64Array>())
                         .map(|arr| if arr.is_null(i) { None } else { Some(arr.value(i)) })
-                        .unwrap_or(None);
+                        ;
                     
                     let record_expires_at = if expires_at_array.is_null(i) {
                         trace!("expires_at is NULL for row {}", i);
@@ -709,7 +709,7 @@ impl CompactionManager {
                     let is_tombstone = batch.column_by_name("is_deleted")
                         .and_then(|col| col.as_any().downcast_ref::<arrow_array::BooleanArray>())
                         .map(|arr| !arr.is_null(i) && arr.value(i))
-                        .unwrap_or(false);
+                        ;
                     
                     if is_tombstone {
                         expired_records_count += 1; // Count tombstones as removed records
@@ -733,7 +733,7 @@ impl CompactionManager {
                     trace!("Latest records count before check: {}", latest_records.len());
                     
                     // Handle immutable vectors (null/empty IDs) - skip ID-based merging
-                    let should_keep = if record_id.is_none() {
+                    let should_keep = if record_id.is_empty() {
                         debug!("📝 Immutable vector record (no ID), including as-is");
                         true
                     } else if let Some(ref id_str) = record_id {
@@ -743,7 +743,7 @@ impl CompactionManager {
                             let existing_vector_record = VectorRecord {
                                 id: Some(id_str.clone()),
                                 version: Some(existing_record.version as u32),
-                                timestamp: existing_record.timestamp.unwrap_or(0) as u32,
+                                timestamp: existing_record.timestamp as u32,
                                 vector: vec![],
                                 metadata: vec![],
                                 updated_at: existing_record.timestamp.map(|t| t as u32),
@@ -755,7 +755,7 @@ impl CompactionManager {
                             let current_vector_record = VectorRecord {
                                 id: Some(id_str.clone()),
                                 version: Some(record_version as u32),
-                                timestamp: record_timestamp.unwrap_or(0) as u32,
+                                timestamp: record_timestamp as u32,
                                 vector: vec![],
                                 metadata: vec![],
                                 updated_at: record_timestamp.map(|t| t as u32),
@@ -817,7 +817,7 @@ impl CompactionManager {
                         };
                         
                         // For immutable vectors (no ID), add to ordered list
-                        if record_id.is_none() {
+                        if record_id.is_empty() {
                             debug!("Adding record without ID to ordered list");
                             all_records_ordered.push(record_data);
                             trace!("all_records_ordered now has {} records", all_records_ordered.len());
@@ -962,7 +962,7 @@ impl CompactionManager {
                             // Convert proto compression to Parquet compression
                             let parquet_compression = match CompressionAlgorithm::try_from(compression.algorithm) {
                                 Ok(CompressionAlgorithm::CompressionZstd) => {
-                                    let level = compression.level.unwrap_or(3);
+                                    let level = compression.level;
                                     parquet::basic::Compression::ZSTD(
                                         parquet::basic::ZstdLevel::try_new(level)?
                                     )
@@ -974,13 +974,13 @@ impl CompactionManager {
                                     parquet::basic::Compression::SNAPPY
                                 }
                                 Ok(CompressionAlgorithm::CompressionGzip) => {
-                                    let level = compression.level.unwrap_or(6) as u32;
+                                    let level = compression.level as u32;
                                     parquet::basic::Compression::GZIP(
                                         parquet::basic::GzipLevel::try_new(level)?
                                     )
                                 }
                                 Ok(CompressionAlgorithm::CompressionBrotli) => {
-                                    let level = compression.level.unwrap_or(6) as u32;
+                                    let level = compression.level as u32;
                                     parquet::basic::Compression::BROTLI(
                                         parquet::basic::BrotliLevel::try_new(level)?
                                     )
@@ -1046,7 +1046,7 @@ impl CompactionManager {
                         .map(|filename| codec.parse_level(filename))
                 })
                 .max()
-                .unwrap_or(0);
+                ;
             let target_level = (source_level + 1).min(7); // Max level is typically 7
             
             let output_filename = codec.generate(target_level, "parquet");
@@ -1341,7 +1341,7 @@ impl CompactionManager {
             for (field, values) in &mut column_builders {
                 let value = record.get(field)
                     .cloned()
-                    .unwrap_or(serde_json::Value::Null);
+                    ;
                 values.push(value);
             }
         }

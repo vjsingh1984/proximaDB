@@ -567,14 +567,14 @@ impl HardwareQuery {
     pub fn has_avx512() -> bool {
         try_get_hardware_capabilities()
             .map(|caps| caps.has_avx512())
-            .unwrap_or(false)
+            
     }
     
     /// Check if GPU acceleration is available
     pub fn has_gpu() -> bool {
         try_get_hardware_capabilities()
             .map(|caps| caps.has_gpu())
-            .unwrap_or(false)
+            
     }
     
     /// Get the number of CPU cores
@@ -595,7 +595,7 @@ impl HardwareQuery {
     pub fn recommended_cache_size() -> u64 {
         try_get_hardware_capabilities()
             .map(|caps| caps.memory.recommended_cache_size)
-            .unwrap_or(1024 * 1024 * 1024) // 1GB default
+             // 1GB default
     }
 }
 
@@ -612,7 +612,7 @@ mod tests {
         // CPU should always be detected
         assert!(caps.cpu.physical_cores > 0);
         assert!(caps.cpu.logical_cores >= caps.cpu.physical_cores);
-        assert!(!caps.cpu.vendor.is_none());
+        assert!(!caps.cpu.vendor.is_empty());
         
         // Memory should always be detected
         assert!(caps.memory.total_memory > 0);

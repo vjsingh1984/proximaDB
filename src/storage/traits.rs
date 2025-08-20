@@ -529,7 +529,7 @@ pub trait UnifiedStorageEngine: Send + Sync {
                     .engine_specific
                     .get("vector_count")
                     .and_then(|v| v.as_u64())
-                    .unwrap_or(0)
+                    
                     > 10)
             }
             StorageEngineStrategy::Lsm => {
@@ -539,7 +539,7 @@ pub trait UnifiedStorageEngine: Send + Sync {
                     .engine_specific
                     .get("index_count")
                     .and_then(|v| v.as_bool())
-                    .unwrap_or(false))
+                    )
             }
             StorageEngineStrategy::Hybrid => {
                 // Hybrid: check both strategies
@@ -552,7 +552,7 @@ pub trait UnifiedStorageEngine: Send + Sync {
                     .engine_specific
                     .get("index_count")
                     .and_then(|v| v.as_bool())
-                    .unwrap_or(false))
+                    )
             }
             StorageEngineStrategy::Swift => {
                 // SWIFT: compact based on file count
@@ -561,7 +561,7 @@ pub trait UnifiedStorageEngine: Send + Sync {
                     .engine_specific
                     .get("file_count")
                     .and_then(|v| v.as_u64())
-                    .unwrap_or(0)
+                    
                     > 5)
             }
             StorageEngineStrategy::Nova => {
@@ -571,7 +571,7 @@ pub trait UnifiedStorageEngine: Send + Sync {
                     .engine_specific
                     .get("row_group_count")
                     .and_then(|v| v.as_u64())
-                    .unwrap_or(0)
+                    
                     > 20)
             }
             StorageEngineStrategy::Raptor => {
@@ -581,7 +581,7 @@ pub trait UnifiedStorageEngine: Send + Sync {
                     .engine_specific
                     .get("needs_compaction")
                     .and_then(|v| v.as_bool())
-                    .unwrap_or(false))
+                    )
             }
         }
     }
@@ -600,15 +600,15 @@ pub trait UnifiedStorageEngine: Send + Sync {
             total_storage_bytes: engine_metrics
                 .get("collection_id")
                 .and_then(|v| v.as_u64())
-                .unwrap_or(0),
+                ,
             memory_usage_bytes: engine_metrics
                 .get("dimension")
                 .and_then(|v| v.as_u64())
-                .unwrap_or(0),
+                ,
             collection_count: engine_metrics
                 .get("engine_type")
                 .and_then(|v| v.as_u64())
-                .unwrap_or(0) as usize,
+                 as usize,
             last_flush: engine_metrics
                 .get("created_at")
                 .and_then(|v| v.as_i64())
@@ -620,11 +620,11 @@ pub trait UnifiedStorageEngine: Send + Sync {
             pending_flushes: engine_metrics
                 .get("is_active")
                 .and_then(|v| v.as_u64())
-                .unwrap_or(0),
+                ,
             pending_compactions: engine_metrics
                 .get("metadata")
                 .and_then(|v| v.as_u64())
-                .unwrap_or(0),
+                ,
             engine_specific: engine_metrics,
         })
     }
@@ -640,13 +640,13 @@ pub trait UnifiedStorageEngine: Send + Sync {
             .engine_specific
             .get("is_healthy")
             .and_then(|v| v.as_bool())
-            .unwrap_or(true);
+            ;
 
         let error_count = stats
             .engine_specific
             .get("error_count")
             .and_then(|v| v.as_u64())
-            .unwrap_or(0) as usize;
+             as usize;
 
         let warnings = stats
             .engine_specific
@@ -1006,9 +1006,9 @@ impl SearchContext {
                     level_id: level.level_id.clone(),
                     quantization_type,
                     bits: level.bits,
-                    search_priority: level.search_priority.unwrap_or(0),
+                    search_priority: level.search_priority,
                     num_subvectors: level.num_subvectors,
-                    min_recall: level.min_recall.unwrap_or(0.8),
+                    min_recall: level.min_recall,
                 }
             })
             .collect();
@@ -1032,17 +1032,17 @@ impl SearchContext {
             use_axis_indexes: config
                 .and_then(|c| c.index_config.as_ref())
                 .map(|_| true)
-                .unwrap_or(false),
+                ,
             has_quantization: config
                 .and_then(|c| c.quantization.as_ref())
                 .is_some(),
             dimension: config
                 .map(|c| c.dimension as usize)
-                .unwrap_or(0),
+                ,
             distance_metric: config
                 .and_then(|c| c.distance_metric)
                 .map(|dm| dm.into())
-                .unwrap_or(crate::compute::distance_computation::DistanceMetric::Cosine),
+                ,
             storage_strategy: config
                 .and_then(|c| c.storage.as_ref())
                 .and_then(|s| s.engine.as_ref())
@@ -1057,11 +1057,11 @@ impl SearchContext {
                 .map(|sa| sa.base_location.clone())
                 .unwrap_or_default(),
             estimated_vector_count: config
-                .map(|c| c.estimated_vector_count.unwrap_or(0))
-                .unwrap_or(0),
+                .map(|c| c.estimated_vector_count)
+                ,
             estimated_size_bytes: config
-                .map(|c| c.estimated_size_bytes.unwrap_or(0))
-                .unwrap_or(0),
+                .map(|c| c.estimated_size_bytes)
+                ,
             performance_tier: config
                 .and_then(|c| c.storage.as_ref())
                 .and_then(|s| s.performance_tier.as_ref())
@@ -1077,15 +1077,15 @@ impl SearchContext {
                 .and_then(|c| c.storage.as_ref())
                 .and_then(|s| s.compression.as_ref())
                 .map(|_| true)
-                .unwrap_or(false),
+                ,
             quantization_enabled: config
                 .and_then(|c| c.quantization.as_ref())
                 .map(|_| true)
-                .unwrap_or(false),
+                ,
             // Parse quantization config for progressive search
             quantization_config: config
                 .and_then(|c| c.quantization.as_ref())
-                .and_then(|qc| Self::parse_quantization_config(qc, config.map(|c| c.dimension as u32).unwrap_or(0))),
+                .and_then(|qc| Self::parse_quantization_config(qc, config.map(|c| c.dimension as u32))),
         };
         
         Self {
@@ -1104,13 +1104,13 @@ impl SearchContext {
     
     /// Get top_k value with fallback to default
     pub fn top_k(&self) -> usize {
-        self.search_params.top_k.unwrap_or(10)
+        self.search_params.top_k
     }
     
     /// Get distance metric (pre-computed from collection config)
     pub fn distance_metric(&self) -> crate::compute::distance_computation::DistanceMetric {
         // Use search params override if provided, otherwise use pre-computed value
-        self.search_params.distance_metric.unwrap_or(self.metadata.distance_metric)
+        self.search_params.distance_metric
     }
     
     /// Get dimension from metadata (pre-computed)
@@ -1123,7 +1123,7 @@ impl SearchContext {
         self.metadata.quantization_config
             .as_ref()
             .map(|qc| qc.progressive_search_enabled)
-            .unwrap_or(false)
+            
     }
     
     /// Get progressive quantization levels ordered by search priority
@@ -1138,7 +1138,7 @@ impl SearchContext {
         self.metadata.quantization_config
             .as_ref()
             .map(|qc| qc.binary_filter_selectivity)
-            .unwrap_or(0.3)
+            
     }
     
     /// Check if SIMD acceleration should be used
@@ -1146,7 +1146,7 @@ impl SearchContext {
         self.metadata.quantization_config
             .as_ref()
             .map(|qc| qc.enable_simd_acceleration)
-            .unwrap_or(true)
+            
     }
     
     /// Get the parsed quantization config
@@ -1202,7 +1202,7 @@ impl SearchContext {
     /// Get storage URL from collection's storage assignment
     pub fn storage_url(&self) -> Option<&str> {
         self.collection.storage_assignment.as_ref()
-            .and_then(|sa| sa.base_url.as_deref())
+            .and_then(|sa| sa.base_url.as_str())
     }
     
     /// Get collection-specific storage path

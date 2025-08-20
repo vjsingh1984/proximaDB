@@ -149,7 +149,7 @@ impl ProgressiveSearchOrchestrator {
                             .find(|level| level.r#type == crate::proto::proximadb::quantization_level::QuantizationType::Product as i32);
                         
                         if let Some(pq) = pq_level {
-                            (pq.num_subvectors.unwrap_or(8) as usize, pq.bits as usize)
+                            (pq.num_subvectors.unwrap_or(8) as usize, pq.bits.unwrap_or(8) as usize)
                         } else {
                             (8, 8) // Default PQ8 configuration
                         }

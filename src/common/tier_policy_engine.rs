@@ -315,10 +315,10 @@ impl CollectionStorageConfig {
     fn parse_cloud_provider(base_location: &str) -> Result<CloudProvider> {
         if base_location.starts_with("s3://") {
             let bucket = base_location.strip_prefix("s3://")
-                .unwrap_or("")
+                
                 .split('/')
                 .next()
-                .unwrap_or("default-bucket")
+                
                 .to_string();
             
             Ok(CloudProvider::AwsS3 {
@@ -328,10 +328,10 @@ impl CollectionStorageConfig {
             })
         } else if base_location.starts_with("gs://") {
             let bucket = base_location.strip_prefix("gs://")
-                .unwrap_or("")
+                
                 .split('/')
                 .next()
-                .unwrap_or("default-bucket")
+                
                 .to_string();
             
             Ok(CloudProvider::GoogleCloud {
@@ -456,6 +456,9 @@ pub enum WorkloadType {
         /// Balance between performance and cost (0.0=cost, 1.0=performance)  
         performance_cost_balance: f64,
     },
+    
+    /// Mixed workload: Balanced read/write operations
+    Mixed,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

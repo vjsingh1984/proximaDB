@@ -243,7 +243,7 @@ impl GpuDistanceCompute {
     ) -> Result<f32> {
         use cudarc::driver::{CudaDevice, CudaSlice, LaunchConfig};
         
-        let device = CudaDevice::new(self.selected_device.unwrap_or(0) as i32)?;
+        let device = CudaDevice::new(self.selected_device as i32)?;
         
         // Allocate GPU memory
         let gpu_a = device.htod_copy(vec_a)?;
@@ -287,7 +287,7 @@ impl GpuDistanceCompute {
     ) -> Result<Vec<f32>> {
         use cudarc::driver::{CudaDevice, LaunchConfig};
         
-        let device = CudaDevice::new(self.selected_device.unwrap_or(0) as i32)?;
+        let device = CudaDevice::new(self.selected_device as i32)?;
         let num_vectors = vectors.len();
         let dimension = query.len();
         
@@ -501,7 +501,7 @@ impl GpuDistanceCompute {
                 let name = device.name().unwrap_or_else(|_| "Unknown".to_string());
                 let total_memory = device
                     .global_mem_size()
-                    .unwrap_or(0);
+                    ;
                 
                 devices.push(GpuDevice {
                     id: idx as u32,
@@ -530,7 +530,7 @@ impl GpuDistanceCompute {
         use opencl3::memory::{Buffer, CL_MEM_READ_ONLY, CL_MEM_WRITE_ONLY};
         
         // Get device
-        let device_idx = self.selected_device.unwrap_or(0);
+        let device_idx = self.selected_device;
         let device = &self.devices[device_idx];
         
         // Create OpenCL context

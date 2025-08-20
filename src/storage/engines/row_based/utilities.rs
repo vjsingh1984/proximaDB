@@ -121,7 +121,7 @@ impl RowBasedUtilities {
             let mut record_issues = Vec::new();
             
             // Check ID
-            if record.id.is_none() || record.id.as_ref().unwrap().is_empty() {
+            if record.id.is_empty() || record.id.as_ref().unwrap().is_empty() {
                 record_issues.push("Missing or empty ID".to_string());
             }
             
@@ -483,7 +483,7 @@ impl PerformanceProfiler {
         let peak_memory = self.checkpoints.iter()
             .map(|cp| cp.memory_usage)
             .max()
-            .unwrap_or(0);
+            ;
         
         PerformanceProfile {
             total_time_ms: total_time.as_millis() as u64,

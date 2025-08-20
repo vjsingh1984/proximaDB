@@ -196,7 +196,7 @@ fn test_in_memory_codebook_store() {
         
         // Non-existent codebook
         let missing = store.get_codebook("missing").await.unwrap();
-        assert!(missing.is_none());
+        assert!(missing.is_empty());
     });
 }
 

@@ -246,7 +246,7 @@ impl CollectionRequestBuilder {
                 .unwrap_or_default(),
             auto_index_selection: json.get("auto_index_selection")
                 .and_then(|v| v.as_bool())
-                .unwrap_or(false),
+                ,
             description: json.get("description").and_then(|v| v.as_str()).map(String::from),
             tags: json.get("tags")
                 .and_then(|v| v.as_array())
@@ -275,7 +275,7 @@ pub fn collection_to_json(collection: &Collection) -> serde_json::Value {
             "filterable_columns": c.filterable_columns,
             "index_configs": c.index_configs,
             "quantization": c.quantization,
-            "primary_index_name": if c.primary_index.is_none() { None } else { Some(&c.primary_index) },
+            "primary_index_name": if c.primary_index.is_empty() { None } else { Some(&c.primary_index) },
             "enable_automatic_index_selection": c.auto_index_selection,
             "description": c.description.as_ref(),
             "tags": c.tags,
@@ -429,7 +429,7 @@ impl VectorSearchRequestBuilder {
             
         let top_k = json.get("top_k")
             .and_then(|v| v.as_i64())
-            .unwrap_or(10) as i32;
+             as i32;
             
         // Parse search optimization
         let search_optimization = if let Some(opt_json) = json.get("search_optimization") {
@@ -441,16 +441,16 @@ impl VectorSearchRequestBuilder {
         // Parse include fields - support both new and old formats
         let include_fields = if let Some(fields_json) = json.get("include_fields") {
             Some(crate::proto::proximadb::IncludeFields {
-                vector: fields_json.get("vector").and_then(|v| v.as_bool()).unwrap_or(false),
-                metadata: fields_json.get("metadata").and_then(|v| v.as_bool()).unwrap_or(true),
-                similarity: fields_json.get("similarity").and_then(|v| v.as_bool()).unwrap_or(true),
-                // rank removed -  fields_json.get(key).and_then(|v| v.as_bool()).unwrap_or(true),
+                vector: fields_json.get("vector").and_then(|v| v.as_bool()),
+                metadata: fields_json.get("metadata").and_then(|v| v.as_bool()),
+                similarity: fields_json.get("similarity").and_then(|v| v.as_bool()),
+                // rank removed -  fields_json.get(key).and_then(|v| v.as_bool()),
             })
         } else {
             // Fallback to old format fields
             Some(crate::proto::proximadb::IncludeFields {
-                vector: json.get("include_vector").and_then(|v| v.as_bool()).unwrap_or(false),
-                metadata: json.get("include_metadata").and_then(|v| v.as_bool()).unwrap_or(true),
+                vector: json.get("include_vector").and_then(|v| v.as_bool()),
+                metadata: json.get("include_metadata").and_then(|v| v.as_bool()),
                 similarity: true,
                 // rank removed -  true,
             })
@@ -515,11 +515,11 @@ impl VectorSearchRequestBuilder {
             top_k: json.get("top_k").and_then(|v| v.as_u64()).map(|v| v as u32),
             filters,
             accuracy_threshold: json.get("accuracy_threshold").and_then(|v| v.as_f64()).map(|f| f as f32),
-            include_expired: Some(json.get("include_expired").and_then(|v| v.as_bool()).unwrap_or(false)),
+            include_expired: Some(json.get("include_expired").and_then(|v| v.as_bool())),
             timeout_ms: json.get("timeout_ms").and_then(|v| v.as_u64()),
-            enable_two_stage: Some(json.get("enable_two_stage").and_then(|v| v.as_bool()).unwrap_or(false)),
-            enable_clustering_hint: Some(json.get("enable_clustering_hint").and_then(|v| v.as_bool()).unwrap_or(false)),
-            enable_metadata_filtering_hint: Some(json.get("enable_metadata_filtering_hint").and_then(|v| v.as_bool()).unwrap_or(false)),
+            enable_two_stage: Some(json.get("enable_two_stage").and_then(|v| v.as_bool())),
+            enable_clustering_hint: Some(json.get("enable_clustering_hint").and_then(|v| v.as_bool())),
+            enable_metadata_filtering_hint: Some(json.get("enable_metadata_filtering_hint").and_then(|v| v.as_bool())),
             // TODO: Parse quantization hint when needed
             quantization_hint: None,
             custom_hints: Default::default(),

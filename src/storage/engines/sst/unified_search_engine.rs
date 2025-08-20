@@ -138,7 +138,7 @@ impl UnifiedSearchEngine for SstUnifiedSearchEngine {
         
         debug!("🔍 SST SEARCH: collection={}, k={}", 
               context.collection_id, 
-              params.top_k.unwrap_or(10));
+              params.top_k);
         
         // Debug: Print filter expression
         if let Some(filter) = &params.filter_expression {
@@ -187,7 +187,7 @@ impl UnifiedSearchEngine for SstUnifiedSearchEngine {
         // 5. Add filterable columns to search params for type-safe filtering
         let mut params_with_columns = params.clone();
         if !context.filterable_columns.is_empty() {
-            if params_with_columns.custom_hints.is_none() {
+            if params_with_columns.custom_hints.is_empty() {
                 params_with_columns.custom_hints = Some(HashMap::new());
             }
             
@@ -425,7 +425,7 @@ impl SstUnifiedSearchEngine {
             
             for file_info in files {
                 let full_path = &file_info.metadata.path;
-                let filename = full_path.split('/').last().unwrap_or("");
+                let filename = full_path.split('/').last();
                 
                 debug!("🔍 SST SCAN: Item: path={}, name={}, is_dir={}", 
                          full_path, filename, file_info.metadata.is_directory);
@@ -447,7 +447,7 @@ impl SstUnifiedSearchEngine {
                         debug!("🔍 SST SCAN: ✅ MATCH - filename '{}' matches pattern", filename);
                         
                         // Extract level from filename using centralized utility
-                        let level = super::SstFilenameGenerator::parse_level_from_filename(filename).unwrap_or(0);
+                        let level = super::SstFilenameGenerator::parse_level_from_filename(filename);
                         
                         debug!("  ✅ SSTable: {} (level={}, size={} bytes)", filename, level, file_info.metadata.size);
                         sstable_files.push(full_path.clone());
@@ -536,14 +536,14 @@ use tracing::debug;
             // Use unstable sort for better performance
             versions.sort_unstable_by(|a, b| {
                 // Treat None/null as version 1
-                let version_a = a.version.unwrap_or(1);
-                let version_b = b.version.unwrap_or(1);
+                let version_a = a.version;
+                let version_b = b.version;
                 
                 version_a.cmp(&version_b)
                     .then_with(|| {
                         // For same version, earliest timestamp wins
-                        let ts_a = a.timestamp.unwrap_or(u32::MAX);
-                        let ts_b = b.timestamp.unwrap_or(u32::MAX);
+                        let ts_a = a.timestamp;
+                        let ts_b = b.timestamp;
                         ts_a.cmp(&ts_b)
                     })
             });
@@ -554,15 +554,15 @@ use tracing::debug;
             
             for result in versions {
                 // Treat None/null as version 1
-                let version = result.version.unwrap_or(1);
+                let version = result.version;
                 
                 if version == expected_version {
                     // Check for duplicate version - keep earliest timestamp
                     if let Some(ref existing) = last_valid {
-                        let existing_version = existing.version.unwrap_or(1);
+                        let existing_version = existing.version;
                         if existing_version == version {
-                            let existing_ts = existing.timestamp.unwrap_or(u32::MAX);
-                            let current_ts = result.timestamp.unwrap_or(u32::MAX);
+                            let existing_ts = existing.timestamp;
+                            let current_ts = result.timestamp;
                             if current_ts < existing_ts {
                                 last_valid = Some(result);
                             }
@@ -588,7 +588,7 @@ use tracing::debug;
         deduplicated.extend(results_without_id);
         
         // Sort by score - use unstable sort for better performance
-        deduplicated.sort_unstable_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+        deduplicated.sort_unstable_by(|a, b| b.score.partial_cmp(&a.score));
         
         debug!("🔄 MVCC resolution: {} unique results after deduplication", deduplicated.len());
         

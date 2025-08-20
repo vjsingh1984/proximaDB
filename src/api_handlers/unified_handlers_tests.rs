@@ -101,9 +101,9 @@ mod tests {
         assert_eq!(config.storage_engine, StorageEngine::Sst as i32);
         assert_eq!(config.primary_index, IndexingAlgorithm::Hnsw as i32);
         assert!(config.description.is_some());
-        assert!(!config.tags.is_none());
-        assert!(config.filterable_columns.is_none());
-        assert!(config.index_configs.is_none());
+        assert!(!config.tags.is_empty());
+        assert!(config.filterable_columns.is_empty());
+        assert!(config.index_configs.is_empty());
         assert_eq!(config.primary_index, "default");
         assert!(config.auto_index_selection);
         assert!(config.owner.is_some());
@@ -118,7 +118,7 @@ mod tests {
         assert_eq!(record.vector.len(), 128);
         assert_eq!(record.version, Some(1));
         assert!(record.timestamp > 0);
-        assert!(record.metadata.is_none());
+        assert!(record.metadata.is_empty());
     }
 
     #[test]
@@ -160,7 +160,7 @@ mod tests {
         
         assert_eq!(query.vector.len(), 4);
         assert_eq!(query.id.unwrap(), "search_id");
-        assert!(query.metadata_filter.is_none());
+        assert!(query.metadata_filter.is_empty());
     }
 
     #[test] 
@@ -303,9 +303,9 @@ mod tests {
         
         assert_eq!(config.dimension, 256);
         assert_eq!(config.distance_metric, DistanceMetric::Euclidean as i32);
-        assert!(config.description.is_none());
-        assert!(config.tags.is_none());
-        assert!(config.owner.is_none());
+        assert!(config.description.is_empty());
+        assert!(config.tags.is_empty());
+        assert!(config.owner.is_empty());
         assert!(!config.auto_index_selection);
         
         // Test setting optional fields
@@ -352,7 +352,7 @@ mod tests {
         assert_eq!(request.queries.len(), 3);
         assert_eq!(request.queries[0].id.as_ref().unwrap(), "query1");
         assert_eq!(request.queries[1].id.as_ref().unwrap(), "query2");
-        assert!(request.queries[2].id.is_none());
+        assert!(request.queries[2].id.is_empty());
         assert_eq!(request.top_k, 5);
     }
 
@@ -488,7 +488,7 @@ mod tests {
             };
             
             match timeout {
-                None => assert!(request.batch_timeout_ms.is_none()),
+                None => assert!(request.batch_timeout_ms.is_empty()),
                 Some(expected) => assert_eq!(request.batch_timeout_ms.unwrap(), expected),
             }
         }
@@ -507,7 +507,7 @@ mod tests {
         
         for batch_size in batch_sizes {
             // VectorBatchRequest doesn't have batch_size field, so we test with vectors count instead
-            let vectors_count = batch_size.unwrap_or(1);
+            let vectors_count = batch_size;
             let mut vectors = Vec::new();
             for i in 0..vectors_count.min(10) { // Limit to 10 for test performance
                 vectors.push(create_test_vector_record(&format!("test_{}", i), 32));

@@ -211,12 +211,12 @@ impl AxisEventLogConsumer {
         debug!(
             "[AXIS Consumer] Collection {} found: dimension={}, engine={:?}, quantization_enabled={}",
             event.collection_id,
-            collection.config.as_ref().map(|c| c.dimension).unwrap_or(0),
-            collection.config.as_ref().map(|c| c.storage_engine).unwrap_or(0),
+            collection.config.as_ref().map(|c| c.dimension),
+            collection.config.as_ref().map(|c| c.storage_engine),
             collection.config.as_ref()
                 .and_then(|c| c.quantization.as_ref())
                 .map(|q| q.enabled)
-                .unwrap_or(false)
+                
         );
         
         let result = match event.operation {
@@ -284,7 +284,7 @@ impl AxisEventLogConsumer {
             collection.config.as_ref()
                 .and_then(|c| c.quantization.as_ref())
                 .map(|q| q.enabled)
-                .unwrap_or(false),
+                ,
             event.has_fp32,
             event.has_quantized
         );
@@ -481,7 +481,7 @@ impl AxisEventLogConsumer {
         let has_quantization = collection.config.as_ref()
             .and_then(|c| c.quantization.as_ref())
             .map(|q| q.enabled)
-            .unwrap_or(false);
+            ;
         
         // Get index algorithm if configured
         let index_algorithm = collection.config.as_ref()
@@ -738,7 +738,7 @@ impl AxisEventLogConsumer {
 //                                                 Some(arr.value(row_idx) as u32)
 //                                             }
 //                                         })
-//                                         .unwrap_or(0),
+//                                         ,
 //                                     updated_at: None,
 //                                     expires_at: None,
 //                                     // rank removed -  None,

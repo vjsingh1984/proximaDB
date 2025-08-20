@@ -303,9 +303,9 @@ use tracing::{debug, error, info};
         }
         
         // Verify operations completed
-        assert!(results.get(key).unwrap_or(&0) > &0);
-        assert!(results.get(key).unwrap_or(&0) > &0);
-        assert!(results.get(key).unwrap_or(&0) > &0);
+        assert!(results.get(key) > &0);
+        assert!(results.get(key) > &0);
+        assert!(results.get(key) > &0);
         
         // Cleanup
         let _ = std::fs::remove_dir_all(test_dir);

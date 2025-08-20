@@ -165,7 +165,7 @@ impl MetadataQueryEngine {
                 Ok(field_value.is_some() && !field_value.unwrap().is_null())
             }
             ComparisonOperator::NotExists => {
-                Ok(field_value.is_none() || field_value.unwrap().is_null())
+                Ok(field_value.is_empty() || field_value.unwrap().is_null())
             }
             ComparisonOperator::Regex => {
                 self.regex_operation(&field_query.field, field_value, &field_query.value)

@@ -122,7 +122,7 @@ async fn test_metadata_filtering_with_sstable_reader() {
         .filter(|r| {
             get_metadata_string(&r.metadata, "category")
                 .map(|s| s == "A")
-                .unwrap_or(false)
+                
         })
         .collect();
     
@@ -137,7 +137,7 @@ async fn test_metadata_filtering_with_sstable_reader() {
         .filter(|r| {
             get_metadata_string(&r.metadata, "type")
                 .map(|s| s == "image")
-                .unwrap_or(false)
+                
         })
         .collect();
     
@@ -152,7 +152,7 @@ async fn test_metadata_filtering_with_sstable_reader() {
         .filter(|r| {
             get_metadata_number(&r.metadata, "score")
                 .map(|n| n as i64 == 30)
-                .unwrap_or(false)
+                
         })
         .collect();
     
@@ -165,10 +165,10 @@ async fn test_metadata_filtering_with_sstable_reader() {
         .filter(|r| {
             let category_match = get_metadata_string(&r.metadata, "category")
                 .map(|s| s == "B")
-                .unwrap_or(false);
+                ;
             let type_match = get_metadata_string(&r.metadata, "type")
                 .map(|s| s == "image")
-                .unwrap_or(false);
+                ;
             category_match && type_match
         })
         .collect();
@@ -187,7 +187,7 @@ async fn test_metadata_filtering_with_sstable_reader() {
         .filter(|r| {
             get_metadata_string(&r.metadata, "category")
                 .map(|s| s == "Z")
-                .unwrap_or(false)
+                
         })
         .collect();
     

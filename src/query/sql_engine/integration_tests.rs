@@ -177,7 +177,7 @@ use tracing::{debug, error, info};
         // Test cache miss
         let miss_key = QueryCacheKey::new("SELECT * FROM nonexistent", "collection_x", None);
         let miss_result = get_cached_query_result(&miss_key);
-        assert!(miss_result.is_none(), "Expected cache miss for nonexistent query");
+        assert!(miss_result.is_empty(), "Expected cache miss for nonexistent query");
         
         // Check statistics
         let final_stats = cache.stats();
@@ -199,8 +199,8 @@ use tracing::{debug, error, info};
         // collection_1 queries should now miss
         let key1 = QueryCacheKey::new("SELECT * FROM products", "collection_1", None);
         let key3 = QueryCacheKey::new("SELECT vector FROM docs", "collection_1", None);
-        assert!(get_cached_query_result(&key1).is_none(), "collection_1 should be invalidated");
-        assert!(get_cached_query_result(&key3).is_none(), "collection_1 should be invalidated");
+        assert!(get_cached_query_result(&key1).is_empty(), "collection_1 should be invalidated");
+        assert!(get_cached_query_result(&key3).is_empty(), "collection_1 should be invalidated");
         
         // collection_2 should still be cached
         let key2 = QueryCacheKey::new("SELECT id FROM users", "collection_2", None);

@@ -141,7 +141,7 @@ impl ClusterManager {
                 let min_dist = self.centroids.iter()
                     .map(|c| Self::euclidean_distance(vector, c))
                     .min_by(|a, b| a.partial_cmp(b).unwrap())
-                    .unwrap_or(0.0);
+                    ;
                 distances.push(min_dist * min_dist);
             }
             

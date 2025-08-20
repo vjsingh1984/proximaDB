@@ -648,7 +648,7 @@ impl ColumnarSerializer {
     fn serialize_pq_vectors(&self, quantized_data: &[StorageQuantizedData]) -> Result<ArrayRef> {
         let pq_size = self.config.quantization.as_ref()
             .map(|q| q.pq_segments as usize)
-            .unwrap_or(16);
+            ;
         
         let mut builder = FixedSizeBinaryBuilder::new(pq_size as i32);
         
@@ -678,9 +678,9 @@ impl ColumnarSerializer {
         let compression_ratio = if !quantized_data.is_empty() {
             let original_size = original_vectors.len() * self.config.dimension * 4; // FP32
             let quantized_size = quantized_data.iter()
-                .map(|d| d.primary.as_ref().map(|p| p.data.len()).unwrap_or(0) +
-                         d.filter.as_ref().map(|f| f.data.len()).unwrap_or(0) +
-                         d.fast.as_ref().map(|f| f.data.len()).unwrap_or(0))
+                .map(|d| d.primary.as_ref().map(|p| p.data.len()) +
+                         d.filter.as_ref().map(|f| f.data.len()) +
+                         d.fast.as_ref().map(|f| f.data.len()))
                 .sum::<usize>();
             
             if quantized_size > 0 {
@@ -710,9 +710,9 @@ impl ColumnarSerializer {
         pq_array: &Option<ArrayRef>,
     ) -> Result<CompressionStats> {
         let fp32_size = fp32_array.get_array_memory_size();
-        let binary_size = binary_array.as_ref().map(|a| a.get_array_memory_size()).unwrap_or(0);
-        let int8_size = int8_array.map(|a| a.get_array_memory_size()).unwrap_or(0);
-        let pq_size = pq_array.as_ref().map(|a| a.get_array_memory_size()).unwrap_or(0);
+        let binary_size = binary_array.as_ref().map(|a| a.get_array_memory_size());
+        let int8_size = int8_array.map(|a| a.get_array_memory_size());
+        let pq_size = pq_array.as_ref().map(|a| a.get_array_memory_size());
         
         let total_original = fp32_size;
         let total_compressed = binary_size + int8_size + pq_size;

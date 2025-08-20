@@ -13,9 +13,10 @@ use serde::{Serialize, Deserialize};
 
 use crate::storage::persistence::filesystem::zero_copy_filesystem::ZeroCopyFilesystem;
 use crate::storage::engines::row_based::block_structures::{
-    SuperBlock as SwiftSuperBlock, RowBasedDataBlock, SstableBloomFilter, 
+    SuperBlock as SwiftSuperBlock, RowBasedDataBlock, 
     BlockMetadataStats
 };
+use crate::storage::engines::row_based::bloom_filter::SstableBloomFilter;
 
 /// SWIFT-specific superblock cache optimized for tree navigation and instant traversal
 pub struct SwiftSuperBlockCache {

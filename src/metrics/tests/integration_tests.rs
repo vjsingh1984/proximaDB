@@ -52,7 +52,7 @@ use tracing::{debug, error, info};
         }
 
         async fn do_flush(&self, params: &FlushParameters) -> Result<FlushResult> {
-            let collection_id = params.collection_id.as_ref().unwrap_or(&"unknown".to_string()).clone();
+            let collection_id = params.collection_id.as_ref()).clone();
             
             self.operation_calls.lock().await.push(format!("flush:{}", collection_id));
             
@@ -74,7 +74,7 @@ use tracing::{debug, error, info};
         }
 
         async fn do_compact(&self, params: &CompactionParameters) -> Result<CompactionResult> {
-            let collection_id = params.collection_id.as_ref().unwrap_or(&"unknown".to_string()).clone();
+            let collection_id = params.collection_id.as_ref()).clone();
             
             self.operation_calls.lock().await.push(format!("compact:{}", collection_id));
             

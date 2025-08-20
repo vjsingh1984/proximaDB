@@ -628,7 +628,7 @@ mod tests {
 
         // Test retrieval after deletion
         let after_delete = lsm_wrapper.get_lsm_entry("test_key").await.unwrap();
-        assert!(after_delete.is_none());
+        assert!(after_delete.is_empty());
 
         // Test metrics
         let metrics = lsm_wrapper.get_lsm_metrics().await;

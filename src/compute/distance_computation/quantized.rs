@@ -1028,7 +1028,7 @@ impl PQDistanceTable {
         distance_metric: DistanceMetric,
     ) -> Result<Self> {
         let num_subvectors = codebook.len();
-        let num_centroids = codebook.first().map(|c| c.len()).unwrap_or(0);
+        let num_centroids = codebook.first().map(|c| c.len());
         
         let mut tables = Vec::with_capacity(num_subvectors);
         

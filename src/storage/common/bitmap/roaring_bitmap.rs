@@ -161,7 +161,7 @@ impl RoaringBitmapIndex {
         self.indexes
             .get(field)
             .map(|field_index| field_index.len())
-            .unwrap_or(0)
+            
     }
 
     /// Get selectivity for a field value (percentage of rows that match)
@@ -173,7 +173,7 @@ impl RoaringBitmapIndex {
         let matching_rows = self
             .query_equals(field, value)
             .map(|bitmap| bitmap.cardinality())
-            .unwrap_or(0);
+            ;
 
         matching_rows as f64 / self.total_rows as f64
     }

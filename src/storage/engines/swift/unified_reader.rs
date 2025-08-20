@@ -58,6 +58,7 @@ use tracing::{debug, info, warn, trace};
 
 use crate::core::VectorRecord;
 use crate::storage::persistence::filesystem::{FileSystem, FilesystemFactory};
+use crate::storage::engines::common::zero_copy_io_system::traits::CacheTemperature;
 use crate::compute::distance_computation::DistanceMetric;
 // INTEGRATION: Use SharedSstFormatReader for file operations (SWIFT extends SST format)
 use crate::storage::engines::row_based::shared_sst_reader::{SharedSstFormatReader, SstMmapStrategy, SstRegion};
@@ -144,6 +145,12 @@ pub struct UnifiedSwiftReader {
     
     /// Cached ID index for fast lookups
     cached_id_index: Option<Arc<super::id_index::IdIndex>>,
+    
+    /// Cached header
+    cached_header: Option<super::SwiftHeader>,
+    
+    /// Filesystem reference for direct operations
+    filesystem: Arc<dyn FileSystem>,
 }
 
 /// Lightweight superblock metadata for caching
@@ -215,10 +222,10 @@ impl UnifiedSwiftReader {
                 // SWIFT-SPECIFIC: Always cache SuperBlock metadata for hierarchical pruning
             ],
             conditional_mmap: vec![
-                (SstRegion::DataBlock, 0.8), // Cache data blocks based on bandwidth optimizer decisions
+                (SstRegion::DataBlocks, 0.8), // Cache data blocks based on bandwidth optimizer decisions
             ],
             never_mmap: vec![
-                SstRegion::Footer,          // Footers are small, direct read is faster
+                SstRegion::Metadata,          // Metadata is small, direct read is faster
             ],
         };
         
@@ -262,20 +269,26 @@ impl UnifiedSwiftReader {
             use crate::storage::engines::common::zero_copy_io_system::traits::{QueryContext, QueryType, RequestPriority};
             
             let query_context = QueryContext {
+                query_vector: None,
+                metadata_filters: HashMap::new(),
+                id_lookups: Vec::new(),
+                top_k: None,
+                distance_threshold: None,
                 query_type: QueryType::VectorSearch,
+                collection_context: None,
                 priority: RequestPriority::Normal,
-                estimated_result_size: 1000, // Estimate based on strategy
-                selectivity_hint: 0.5, // Moderate selectivity for SWIFT hierarchical reads
+                estimated_result_size: Some(1000), // Estimate based on strategy
+                selectivity_hint: Some(0.5), // Moderate selectivity for SWIFT hierarchical reads
                 collection_id: self.collection_id.clone(),
-                concurrent_queries: 1,
-                cache_temperature: 0.5,
+                concurrent_queries: Some(1),
+                cache_temperature: CacheTemperature::Warm,
             };
             
             // Make bandwidth-optimized decisions
-            match optimizer.decide_strategy(&self.file_path, &query_context).await {
+            match optimizer.decide_strategy(&self.file_path, 0, None, &query_context, RequestPriority::Normal).await {
                 Ok(decision) => {
-                    debug!("📊 SWIFT BANDWIDTH: File {} - strategy: {:?}, rationale: {:?}", 
-                           self.file_path, decision.strategy, decision.rationale);
+                    debug!("📊 SWIFT BANDWIDTH: File {} - decision: {:?}", 
+                           self.file_path, decision);
                 }
                 Err(e) => {
                     warn!("⚠️ SWIFT BANDWIDTH: Failed to get decision for {}: {}", self.file_path, e);
@@ -305,21 +318,27 @@ impl UnifiedSwiftReader {
             use crate::storage::engines::common::zero_copy_io_system::traits::{QueryContext, QueryType, RequestPriority};
             
             let query_context = QueryContext {
+                query_vector: None,
+                metadata_filters: HashMap::new(),
+                id_lookups: Vec::new(),
+                top_k: None,
+                distance_threshold: None,
                 query_type: QueryType::FullScan,
+                collection_context: None,
                 priority: RequestPriority::Background,
-                estimated_result_size: 1000000, // Large result set for compaction
-                selectivity_hint: 1.0, // Read everything
+                estimated_result_size: Some(1000000), // Large result set for compaction
+                selectivity_hint: Some(1.0), // Read everything
                 collection_id: self.collection_id.clone(),
-                concurrent_queries: 1,
-                cache_temperature: 0.0, // Don't pollute cache
+                concurrent_queries: Some(1),
+                cache_temperature: CacheTemperature::Cold, // Don't pollute cache
             };
             
             // Make bandwidth-optimized decisions for compaction
-            match optimizer.decide_strategy(&self.file_path, &query_context).await {
+            match optimizer.decide_strategy(&self.file_path, 0, None, &query_context, RequestPriority::Background).await {
                 Ok(decision) => {
                     // For compaction, prefer using disk cache if available, avoid downloading transient files
-                    debug!("🔄 SWIFT COMPACTION BANDWIDTH: File {} - strategy: {:?} (transient files avoid download)", 
-                           self.file_path, decision.strategy);
+                    debug!("🔄 SWIFT COMPACTION BANDWIDTH: File {} - decision: {:?} (transient files avoid download)", 
+                           self.file_path, decision);
                 }
                 Err(e) => {
                     warn!("⚠️ SWIFT COMPACTION BANDWIDTH: Failed to get decision for {}: {}", self.file_path, e);
@@ -371,13 +390,14 @@ impl UnifiedSwiftReader {
         
         // Return a default SuperBlockMetadata for now
         Ok(SuperBlockMetadata {
-            superblock_id,
-            data_block_count: 0,
-            total_records: 0,
+            id: superblock_id,
+            offset: 0,
+            size: 0,
+            record_count: 0,
+            id_range: (String::new(), String::new()),
+            has_deletes: false,
             bloom_filter_offset: 0,
             bloom_filter_size: 0,
-            min_timestamp: 0,
-            max_timestamp: 0,
         })
     }
 
@@ -389,13 +409,14 @@ impl UnifiedSwiftReader {
         
         // Placeholder implementation - would use shared_reader for actual file operations
         Ok(SuperBlockMetadata {
-            superblock_id,
-            data_block_count: 0,
-            total_records: 0,
+            id: superblock_id,
+            offset: 0,
+            size: 0,
+            record_count: 0,
+            id_range: (String::new(), String::new()),
+            has_deletes: false,
             bloom_filter_offset: 0,
             bloom_filter_size: 0,
-            min_timestamp: 0,
-            max_timestamp: 0,
         })
     }
     
@@ -406,6 +427,24 @@ impl UnifiedSwiftReader {
         let header = self.deserialize_header(&header_data)?;
         self.cached_header = Some(header);
         Ok(())
+    }
+    
+    /// Deserialize header from bytes
+    fn deserialize_header(&self, data: &[u8]) -> Result<super::SwiftHeader> {
+        // Check magic bytes
+        if data.len() < 4 {
+            return Err(anyhow!("Invalid header: too small"));
+        }
+        
+        let magic = &data[0..4];
+        if magic != &super::SWIFT_MAGIC {
+            return Err(anyhow!("Invalid magic bytes: expected SWFT"));
+        }
+        
+        // Use bincode for deserialization of the rest
+        let header_bytes = &data[4..];
+        bincode::deserialize(header_bytes)
+            .map_err(|e| anyhow!("Failed to deserialize header: {}", e))
     }
     
     /// Get header (from cache)
@@ -667,7 +706,7 @@ impl UnifiedSwiftReader {
         let metadata_data = self.filesystem.read_range(
             &self.file_path,
             header.superblock_offset,
-            metadata_size as usize,
+            metadata_size,
         ).await?;
         
         // Parse all superblock metadata

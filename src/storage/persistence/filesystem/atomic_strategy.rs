@@ -236,7 +236,7 @@ impl SameMountTempExecutor {
         };
         
         let final_path = Path::new(&path_part);
-        let parent = final_path.parent().unwrap_or(Path::new("."));
+        let parent = final_path.parent();
         let filename = final_path
             .file_name()
             .and_then(|f| f.to_str())

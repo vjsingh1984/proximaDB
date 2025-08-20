@@ -197,7 +197,7 @@ impl UniversalCompressionAdapter {
             }
         };
         
-        Ok(selected_algorithm.unwrap_or(default_algorithm))
+        Ok(selected_algorithm)
     }
     
     /// Analyze data characteristics for adaptive compression
@@ -337,9 +337,9 @@ impl UniversalCompressionAdapter {
         for algorithm in candidates {
             let key = &algorithm;
             let combined_score = 
-                data_score.get(key).unwrap_or(&0.0) * 0.4 +
-                perf_score.get(key).unwrap_or(&0.0) * 0.4 +
-                hw_score.get(key).unwrap_or(&0.0) * 0.2;
+                data_score.get(key) * 0.4 +
+                perf_score.get(key) * 0.4 +
+                hw_score.get(key) * 0.2;
             
             if combined_score > best_score {
                 best_score = combined_score;

@@ -435,7 +435,7 @@ impl IntegrationTestSuite {
         
         // Should have some successes and some None results due to no compaction needed
         let successes = results.iter().filter(|r| r.is_ok() && r.as_ref().unwrap().is_some()).count();
-        let no_compaction_needed = results.iter().filter(|r| r.is_ok() && r.as_ref().unwrap().is_none()).count();
+        let no_compaction_needed = results.iter().filter(|r| r.is_ok() && r.as_ref().unwrap().is_empty()).count();
         let failures = results.iter().filter(|r| r.is_err()).count();
         
         // With 5 engines trying to compact the same collection concurrently, 

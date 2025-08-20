@@ -598,7 +598,7 @@ impl WriteAheadLogManagerRegistry {
             .min_by(|(_, a), (_, b)| {
                 // Primary: load score (lower is better)
                 a.workload_metrics.load_score.partial_cmp(&b.workload_metrics.load_score)
-                    .unwrap_or(std::cmp::Ordering::Equal)
+                    
                     // Secondary: collection count (lower is better)
                     .then_with(|| a.workload_metrics.collection_count.cmp(&b.workload_metrics.collection_count))
             })
@@ -622,8 +622,8 @@ impl WriteAheadLogManagerRegistry {
         }
 
         // After soft limit, check if adding a manager would improve load distribution
-        let min_collections = pool.values().map(|entry| entry.workload_metrics.collection_count).min().unwrap_or(0);
-        let max_collections = pool.values().map(|entry| entry.workload_metrics.collection_count).max().unwrap_or(0);
+        let min_collections = pool.values().map(|entry| entry.workload_metrics.collection_count).min();
+        let max_collections = pool.values().map(|entry| entry.workload_metrics.collection_count).max();
 
         // Create new manager if:
         // 1. The most loaded manager exceeds target collections per manager
@@ -828,8 +828,8 @@ pub async fn get_write_ahead_log_manager_pool_stats() -> Result<WriteAheadLogMan
     let pool = registry.manager_pool.read().await;
     let total_collections: usize = pool.values().map(|entry| entry.workload_metrics.collection_count).sum();
     let avg_collections_per_manager = if pool.is_empty() { 0.0 } else { total_collections as f64 / pool.len() as f64 };
-    let max_collections = pool.values().map(|entry| entry.workload_metrics.collection_count).max().unwrap_or(0);
-    let min_collections = pool.values().map(|entry| entry.workload_metrics.collection_count).min().unwrap_or(0);
+    let max_collections = pool.values().map(|entry| entry.workload_metrics.collection_count).max();
+    let min_collections = pool.values().map(|entry| entry.workload_metrics.collection_count).min();
     
     Ok(WriteAheadLogManagerPoolStats {
         total_managers: pool.len(),
@@ -1108,7 +1108,7 @@ impl WriteAheadLogManager {
         // For modern batch strategies, version management is handled internally
         // Just increment version if not already set
         // Proto-first: direct field access
-        let current_version = record.version.unwrap_or(0);
+        let current_version = record.version;
         let new_version = if current_version <= 0 { 1 } else { current_version + 1 };
         
         // Update version directly
@@ -1153,7 +1153,7 @@ impl WriteAheadLogManager {
         // Apply sequence filtering and limit if needed
         let filtered: Vec<VectorRecord> = vectors.into_iter()
             .skip(from_sequence as usize)
-            .take(limit.unwrap_or(usize::MAX))
+            .take(limit)
             .collect();
             
         Ok(filtered)
@@ -1236,10 +1236,10 @@ impl WriteAheadLogManager {
             // Use the modern batch API with sync option
             if immediate_sync {
                 self.insert_batch_with_sync(collection_id.to_string(), records.into_iter().map(|r| (r.id.clone().unwrap_or_default(), r)).collect(), true).await
-                    .map(|sequences| sequences.into_iter().next().unwrap_or(0))
+                    .map(|sequences| sequences.into_iter().next())
             } else {
                 self.insert_vectors(collection_id.to_string(), records).await
-                    .map(|sequences| sequences.into_iter().next().unwrap_or(0))
+                    .map(|sequences| sequences.into_iter().next())
             }
         } else {
             anyhow::bail!("Failed to deserialize batch payload")
@@ -1531,7 +1531,7 @@ impl WriteAheadLogManager {
         
         // Step 5: Sort by score and take top k
         all_results.sort_by(|a, b| {
-            b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal)
+            b.score.partial_cmp(&a.score)
         });
         all_results.truncate(top_k);
         
@@ -1701,10 +1701,10 @@ impl WriteAheadLogManager {
         
         match operator {
             ComparisonOperator::Equals => {
-                left == right.as_str().unwrap_or("")
+                left == right.as_str()
             }
             ComparisonOperator::NotEquals => {
-                left != right.as_str().unwrap_or("")
+                left != right.as_str()
             }
             ComparisonOperator::GreaterThan => {
                 if let (Ok(left_num), Some(right_num)) = (left.parse::<f64>(), right.as_f64()) {
@@ -1735,13 +1735,13 @@ impl WriteAheadLogManager {
                 }
             }
             ComparisonOperator::Contains => {
-                left.contains(right.as_str().unwrap_or(""))
+                left.contains(right.as_str())
             }
             ComparisonOperator::StartsWith => {
-                left.starts_with(right.as_str().unwrap_or(""))
+                left.starts_with(right.as_str())
             }
             ComparisonOperator::EndsWith => {
-                left.ends_with(right.as_str().unwrap_or(""))
+                left.ends_with(right.as_str())
             }
             _ => false, // Other operators not implemented yet
         }
@@ -1762,7 +1762,7 @@ impl WriteAheadLogManager {
                     crate::proto::proximadb::metadata_item::Value::NumberValue(n) => {
                         serde_json::Number::from_f64(*n)
                             .map(serde_json::Value::Number)
-                            .unwrap_or(serde_json::Value::Null)
+                            
                     }
                     crate::proto::proximadb::metadata_item::Value::BoolValue(b) => {
                         serde_json::Value::Bool(*b)

@@ -84,7 +84,7 @@ impl CollectionService {
         let mut enriched_config = config.clone();
         
         // Ensure storage_config exists and set compression within it
-        if enriched_config.storage_config.is_none() {
+        if enriched_config.storage_config.is_empty() {
             enriched_config.storage_config = Some(crate::proto::proximadb::StorageConfig {
                 enable_all_optimizations: Some(true),  // All optimizations on by default
                 ..Default::default()
@@ -102,7 +102,7 @@ impl CollectionService {
         
         // Add default quantization configuration if not provided
         // Use smart defaults based on vector dimension for optimal performance
-        if enriched_config.quantization.is_none() {
+        if enriched_config.quantization.is_empty() {
             use crate::compute::quantization::QuantizationSmartDefaults;
             
             match QuantizationSmartDefaults::generate_for_dimension(config.dimension as u32) {
@@ -261,7 +261,7 @@ impl CollectionService {
                 index_size_bytes: 0,
                 data_size_bytes: 0,
             }),
-            timestamp: now,
+            created_at: now,
             updated_at: now,
             storage_assignment: Some(crate::proto::proximadb::StorageAssignment {
                 base_location: base_location.clone(),
@@ -393,7 +393,7 @@ impl CollectionService {
     fn parse_index_config_from_proto(&self, proto: &Collection) -> Result<crate::index::config::IndexConfig> {
         // Check if proto has index_config field
         if let Some(config) = proto.config.as_ref() {
-            if !config.index_configs.is_none() {
+            if !config.index_configs.is_empty() {
                 // Take the first IndexConfig from proto (index_configs is a Vec)
                 if let Some(first_config) = config.index_configs.first() {
                     // Convert from proto IndexConfig to internal IndexConfig
@@ -881,7 +881,7 @@ impl CollectionService {
         let mut updated_collection = collection.clone();
         if let Some(ref mut config) = updated_collection.config {
             // Ensure storage_config exists
-            if config.storage_config.is_none() {
+            if config.storage_config.is_empty() {
                 config.storage_config = Some(crate::proto::proximadb::StorageConfig::default());
             }
             // Set compression in storage_config
@@ -1454,7 +1454,7 @@ mod tests {
             
             if !should_succeed {
                 assert_eq!(
-                    result.error_code.as_deref(), Some(expected_error_code),
+                    result.error_code.as_str(), Some(expected_error_code),
                     "Name '{}' error code mismatch", name
                 );
                 

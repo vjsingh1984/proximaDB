@@ -593,7 +593,7 @@ impl FilenameCodec {
         pattern.captures(filename)
             .and_then(|caps| caps.get(1))
             .and_then(|m| m.as_str().parse().ok())
-            .unwrap_or(0)
+            
     }
     
     /// Parse timestamp from filename with caching
@@ -609,7 +609,7 @@ impl FilenameCodec {
                     .ok()
                     .map(|dt| dt.timestamp() as u64)
             })
-            .unwrap_or(0)
+            
     }
     
     /// Check if filename follows convention

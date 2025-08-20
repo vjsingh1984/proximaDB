@@ -329,7 +329,7 @@ impl VectorOperationsService {
         }
         
         // Return final results or intermediate if no final step produced results
-        if results.is_none() {
+        if results.is_empty() {
             Ok(intermediate_results.unwrap_or_default())
         } else {
             Ok(results)
@@ -423,7 +423,7 @@ impl VectorOperationsService {
         // Stats is a serde_json::Value, extract the vector count
         let count = stats.get("vector_count")
             .and_then(|v| v.as_u64())
-            .unwrap_or(0) as usize;
+             as usize;
         Ok(count)
     }
     
@@ -432,7 +432,7 @@ impl VectorOperationsService {
         // Meta is a serde_json::Value, extract the column count
         let count = meta.get("collection_id")
             .and_then(|v| v.as_u64())
-            .unwrap_or(10) as usize; // Default to 10 columns
+             as usize; // Default to 10 columns
         Ok(count)
     }
     

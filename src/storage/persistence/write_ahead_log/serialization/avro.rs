@@ -105,7 +105,7 @@ impl super::VectorBatchSerializer for AvroSerializer {
                     None => Value::Union(0, Box::new(Value::Null)),
                 }));
                 
-                fields.push(("version".to_string(), Value::Int(v.version.unwrap_or(0) as i32)));
+                fields.push(("version".to_string(), Value::Int(v.version as i32)));
                 
                 Value::Record(fields)
             }).collect()
@@ -253,7 +253,7 @@ impl super::VectorBatchSerializer for AvroSerializer {
                                     Value::Long(ts) => Some(*ts),
                                     _ => None,
                                 })
-                                .unwrap_or(0);
+                                ;
                             
                             // Convert seconds back to microseconds
                             let timestamp_micros = timestamp_seconds * 1_000_000;

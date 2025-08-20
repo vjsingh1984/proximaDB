@@ -363,7 +363,7 @@ impl DynamicMemoryAllocator {
     pub async fn get_allocation(&self, cache_type: CacheType) -> usize {
         self.allocations.get(&cache_type)
             .map(|entry| *entry.value())
-            .unwrap_or(0)
+            
     }
     
     /// Get total memory budget

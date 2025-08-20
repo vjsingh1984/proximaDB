@@ -111,7 +111,7 @@ where
         if depth >= key.len() {
             // Insert leaf at current position
             let old_node = node.replace(Box::new(ArtNode::Leaf { value }));
-            return Ok(old_node.is_none());
+            return Ok(old_node.is_empty());
         }
         
         let byte = key[depth];

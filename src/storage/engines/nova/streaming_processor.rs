@@ -302,7 +302,7 @@ impl StreamingRowGroupProcessor {
                         let intersects = stats.vector_zone_map.intersects_query(
                             &context.query_vector,
                             crate::compute::distance_computation::DistanceMetric::Euclidean,
-                            context.distance_threshold.unwrap_or(f32::INFINITY),
+                            context.distance_threshold,
                         );
                         if !intersects {
                             records_filtered += records_processed;
@@ -437,7 +437,7 @@ impl StreamingRowGroupProcessor {
             let cost = context.enhanced_stats.iter()
                 .find(|stats| stats.row_group_id == i as u32)
                 .map(|stats| stats.search_cost_estimate.estimated_latency_ms)
-                .unwrap_or(100.0); // Default cost
+                ; // Default cost
             row_group_costs.push((i as u32, cost));
         }
         

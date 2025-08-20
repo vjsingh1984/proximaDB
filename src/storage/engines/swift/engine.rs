@@ -340,7 +340,7 @@ impl UnifiedStorageEngine for SwiftEngine {
         let dimension = params.collection_config.as_ref()
             .and_then(|c| c.config.as_ref())
             .and_then(|cfg| cfg.dimension)
-            .unwrap_or(768) as usize;
+             as usize;
         
         // Create new SWIFT file from flush parameters
         let mut swift_file = SwiftFile::new(
@@ -365,7 +365,7 @@ impl UnifiedStorageEngine for SwiftEngine {
         // - Min/max values per dimension for pruning
         // - Bloom filter parameters and false positive rate
         // Also update {storage_path}/{collection_id}/global.stats
-        self.update_global_stats(collection_id, params.storage_path.as_deref().unwrap_or("./data")).await?;
+        self.update_global_stats(collection_id, params.storage_path.as_str()).await?;
         // For now, just simulate success
         
         // Update statistics
@@ -499,7 +499,7 @@ impl UnifiedStorageEngine for SwiftEngine {
         let distance_metric = ctx.distance_metric();
         let dimension = ctx.dimension();
         let _filter = ctx.search_params.filter_expression.as_ref()
-            .map(|f| serde_json::to_value(f).unwrap_or(serde_json::Value::Null));
+            .map(|f| serde_json::to_value(f));
         let _search_params = ctx.search_params.custom_hints.clone();
         let mut timer = self.start_operation_timer("search");
         

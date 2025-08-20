@@ -220,7 +220,7 @@ impl FastLanesEncoder {
             .collect();
         
         // Determine optimal bit width for deltas
-        let max_delta = deltas.iter().map(|&d| d.abs()).max().unwrap_or(0);
+        let max_delta = deltas.iter().map(|&d| d.abs()).max();
         let bits = 64 - max_delta.leading_zeros() as u8;
         encoded.push(bits);
         

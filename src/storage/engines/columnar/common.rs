@@ -612,7 +612,7 @@ impl CommonColumnarOperations {
         let result = self.serializer.serialize_vectors(records, schema).await?;
         
         let serialization_time = start_time.elapsed().as_secs_f64() * 1000.0;
-        let bytes_processed = records.len() * records.first().map(|r| r.vector.len() * 4).unwrap_or(0);
+        let bytes_processed = records.len() * records.first().map(|r| r.vector.len() * 4);
         
         // Update metrics
         self.performance_monitor.record_serialization(
@@ -1311,7 +1311,7 @@ pub fn map_core_to_parquet_compression(
         CompressionAlgorithm::Lz4Hc => Compression::LZ4, // Use regular LZ4
         CompressionAlgorithm::Xz | CompressionAlgorithm::Lzma => {
             // XZ and LZMA provide high compression, map to ZSTD with high level
-            let high_level = level.unwrap_or(9).max(9);
+            let high_level = level.max(9);
             Compression::ZSTD(parquet::basic::ZstdLevel::try_new(high_level)?)
         }
         CompressionAlgorithm::Bzip2 => {

@@ -66,7 +66,7 @@ impl MetadataSorter {
         // Sort by estimated cardinality (low cardinality first for better compression)
         let mut columns_by_cardinality: Vec<_> = filterable_columns.iter().collect();
         columns_by_cardinality.sort_by_key(|col| {
-            col.estimated_cardinality.unwrap_or(1000) // Default cardinality if not specified
+            col.estimated_cardinality // Default cardinality if not specified
         });
         
         for column in columns_by_cardinality {
@@ -115,8 +115,8 @@ impl MetadataSorter {
             
             // Secondary sort: vector ID for stable ordering
             if self.config.stable_sort_by_id {
-                let a_id = a.id.as_deref().unwrap_or("");
-                let b_id = b.id.as_deref().unwrap_or("");
+                let a_id = a.id.as_str();
+                let b_id = b.id.as_str();
                 a_id.cmp(b_id)
             } else {
                 std::cmp::Ordering::Equal

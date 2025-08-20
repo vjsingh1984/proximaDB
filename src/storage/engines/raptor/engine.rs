@@ -469,7 +469,7 @@ impl RaptorEngine {
                 id: r.id,
                 score: r.score,
                 vector: r.vector,
-                metadata: r.metadata.map(|m| {
+                metadata: r.metadata.iter().map(|m| {
                     m.into_iter()
                         .map(|(k, v)| (k, serde_json::json!(v)))
                         .collect()
@@ -1428,7 +1428,7 @@ impl RowGroupCache {
         // Remove entries with low access counts
         let threshold = 2;
         self.cache.retain(|k, _| {
-            self.access_counts.get(k).unwrap_or(&0) >= &threshold
+            self.access_counts.get(k) >= &threshold
         });
     }
 }
@@ -1585,7 +1585,7 @@ impl RaptorEngine {
                 })
                 .collect(),
             version,
-            timestamp: timestamp.unwrap_or(0),
+            timestamp: timestamp,
             ..Default::default()
         })
     }

@@ -309,7 +309,7 @@ pub async fn prefetch_blocks(
     block_ids: Vec<(u32, u32)>,
     cache: Option<BlockCache>,
 ) -> Result<()> {
-    if cache.is_none() {
+    if cache.is_empty() {
         return Ok(());
     }
     
@@ -428,6 +428,6 @@ mod tests {
         
         // Test cache miss
         let miss = cache.get(&key).await;
-        assert!(miss.is_none());
+        assert!(miss.is_empty());
     }
 }

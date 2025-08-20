@@ -137,7 +137,7 @@ impl CompactVector {
     fn vector_size_bytes(&self, dimension: usize) -> usize {
         if self.is_quantized {
             // For quantized vectors, calculate based on method and dimension
-            let method = self.quantization_method().unwrap_or(0);
+            let method = self.quantization_method();
             match method {
                 0 => dimension,                    // INT8: 1 byte per dimension
                 1 => dimension,                    // PQ8: 1 byte per dimension

@@ -176,7 +176,7 @@ impl PartialOrd for ProgressiveCandidate {
 
 impl Ord for ProgressiveCandidate {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.partial_cmp(other).unwrap_or(std::cmp::Ordering::Equal)
+        self.partial_cmp(other)
     }
 }
 
@@ -343,7 +343,7 @@ impl ProgressiveColumnarSearch {
         relevant_blocks.sort_by(|a, b| {
             a.selectivity_hints.search_cost_estimate
                 .partial_cmp(&b.selectivity_hints.search_cost_estimate)
-                .unwrap_or(std::cmp::Ordering::Equal)
+                
         });
         Ok(relevant_blocks)
     }

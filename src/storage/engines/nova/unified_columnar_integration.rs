@@ -667,7 +667,7 @@ impl NovaUnifiedEngine {
         max_vectors: Option<usize>,
     ) -> Result<Vec<QuantizedVectorData>> {
         // Placeholder implementation - using types from compute module
-        let count = max_vectors.unwrap_or(1000).min(1000);
+        let count = max_vectors.min(1000);
         let vectors = vec![
             QuantizedVectorData {
                 fp32: Some(vec![1.0; 768]),

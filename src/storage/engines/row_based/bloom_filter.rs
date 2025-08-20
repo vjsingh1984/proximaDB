@@ -404,7 +404,7 @@ impl SstableBloomFilter {
         };
         buffer.write_all(&strategy_byte.to_le_bytes())?;
         buffer.write_all(&self.key_filter_config.bits_per_key.to_le_bytes())?;
-        buffer.write_all(&self.key_filter_config.false_positive_rate.unwrap_or(f64::NAN).to_le_bytes())?;
+        buffer.write_all(&self.key_filter_config.false_positive_rate.to_le_bytes())?;
         buffer.write_all(&self.key_filter_config.expected_items.to_le_bytes())?;
         buffer.write_all(&[if self.key_filter_config.enabled { 1u8 } else { 0u8 }])?;
         
@@ -601,7 +601,7 @@ impl From<SstableBloomFilter> for SerializedSstableBloomFilter {
                 BloomStrategy::Composite => 3,
             },
             bits_per_key: bf.key_filter_config.bits_per_key,
-            false_positive_rate: bf.key_filter_config.false_positive_rate.unwrap_or(f64::NAN),
+            false_positive_rate: bf.key_filter_config.false_positive_rate,
             expected_items: bf.key_filter_config.expected_items,
             enabled: bf.key_filter_config.enabled,
             hash_algorithm: match bf.key_filter_config.hash_algorithm {

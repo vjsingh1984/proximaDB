@@ -345,7 +345,7 @@ impl TransactionCoordinator {
             panic!("No filesystem available")
         });
         let write_strategy =
-            WriteStrategyFactory::create_metadata_strategy(fs, temp_directory.as_deref())?;
+            WriteStrategyFactory::create_metadata_strategy(fs, temp_directory.as_str())?;
 
         let coordinator = Self {
             filesystem,
@@ -1356,7 +1356,7 @@ mod tests {
         assert!(coordinator
             .get_operation_status(&metadata.operation_id)
             .await
-            .is_none());
+            .is_empty());
     }
 
     #[tokio::test]
@@ -1417,7 +1417,7 @@ mod tests {
         assert!(coordinator
             .get_operation_status(&metadata.operation_id)
             .await
-            .is_none());
+            .is_empty());
     }
 
     #[tokio::test]

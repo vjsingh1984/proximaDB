@@ -567,7 +567,7 @@ impl MetadataWriteAheadLogManager {
             }
 
             metadata.timestamp = Utc::now().timestamp() as u32;
-            metadata.version = Some(metadata.version.unwrap_or(0) + 1);
+            metadata.version = Some(metadata.version + 1);
 
             // Save updated metadata
             self.upsert_collection(metadata).await?;

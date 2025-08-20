@@ -160,9 +160,9 @@ impl OptimizedWriteBufferWriter {
             info!("🚀 WAL writer worker {} started", worker_id);
             
             // Enhanced batch configuration
-            let batch_size_threshold = config.optimized_writer_batch_size.unwrap_or(100);
-            let batch_timeout_ms = config.optimized_writer_batch_timeout_ms.unwrap_or(10);
-            let enable_combining = config.optimized_writer_enable_combining.unwrap_or(true);
+            let batch_size_threshold = config.optimized_writer_batch_size;
+            let batch_timeout_ms = config.optimized_writer_batch_timeout_ms;
+            let enable_combining = config.optimized_writer_enable_combining;
             
             info!(
                 "📊 WAL writer worker {} config - batch_size: {}, timeout: {}ms, combining: {}",
@@ -482,8 +482,8 @@ impl OptimizedWriteBufferWriter {
         let serialized_data = Vec::new(); // Self::serialize_vectors_optimized(vectors, format)?;
         
         // Generate filename
-        let min_seq = sequences.iter().min().copied().unwrap_or(0);
-        let max_seq = sequences.iter().max().copied().unwrap_or(0);
+        let min_seq = sequences.iter().min().copied();
+        let max_seq = sequences.iter().max().copied();
         let timestamp = chrono::Utc::now().format("%Y%m%d_%H%M%S");
         // TODO: Restore when OptimizedFormat is available
         let file_extension = "wal"; 

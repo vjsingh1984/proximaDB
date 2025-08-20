@@ -173,7 +173,7 @@ impl MultiTierDeduplicator {
                     if !result {
                         tracing::debug!(
                             "🔍 Query filter: Vector {} did not match logical query",
-                            vector_record.id.as_deref().unwrap_or("unknown")
+                            vector_record.id.as_deref().unwrap_or("<no-id>")
                         );
                     }
                     return result;
@@ -181,7 +181,7 @@ impl MultiTierDeduplicator {
                 Err(e) => {
                     tracing::warn!(
                         "🚨 Query evaluation error for vector {}: {}",
-                        vector_record.id.as_deref().unwrap_or("unknown"), e
+                        vector_record.id.as_deref().unwrap_or("<no-id>"), e
                     );
                     return false; // Fail safe on query evaluation error
                 }
@@ -246,17 +246,17 @@ impl MultiTierDeduplicator {
             if !self.matches_filters(&result.vector_record) {
                 tracing::debug!(
                     "🚫 Filter: Skipping vector {} due to metadata filter mismatch",
-                    result.vector_record.id.as_deref().unwrap_or("unknown")
+                    result.vector_record.id.as_deref().unwrap_or("<no-id>")
                 );
                 continue;
             }
 
-            if result.vector_record.id.is_none() || result.vector_record.id.as_deref().unwrap_or("").is_empty() {
+            if result.vector_record.id.as_ref().map_or(true, |id| id.is_empty()) {
                 // No ID - include directly (no deduplication possible)
                 self.results_without_id.push(result);
             } else {
                 // ID-based deduplication across and within tiers
-                let vector_id = result.vector_record.id.as_deref().unwrap_or("").to_string();
+                let vector_id = result.vector_record.id.clone().unwrap_or_default();
                 let should_replace = match self.id_to_latest.get(&vector_id) {
                     Some(existing) => {
                         // Multi-criteria replacement logic (in order of priority):

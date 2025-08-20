@@ -22,6 +22,14 @@ pub struct HnswGraphMetadata {
     pub compression_ratio: f32,
 }
 
+/// Graph edge representation for HNSW
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GraphEdge {
+    pub to: String,
+    pub distance: f32,
+    pub layer: u8,
+}
+
 /// Locality cluster for organizing nodes with high connectivity
 #[derive(Debug, Clone)]
 pub struct LocalityCluster {
@@ -138,7 +146,7 @@ impl HnswGraphBuilder {
             if !node.encoded_vector.is_empty() {
                 let compressed = self.encoder.encode_f32_block(
                     &node.encoded_vector,
-                    fastlanes::Encoding::FrameOfReference
+                    fastlanes_encoding::FastLanesScheme::FrameOfReference
                 )?;
                 result.extend_from_slice(&(compressed.len() as u32).to_le_bytes());
                 result.extend_from_slice(&compressed);
@@ -699,7 +707,7 @@ impl HnswAwareCompactionManager {
         // Select centroid from each major cluster as entry point
         let num_entry_points = self.config.hnsw_config.as_ref()
             .map(|c| c.num_entry_points)
-            .unwrap_or(5)
+            
             .min(clusters.len());
         
         // Sort clusters by size and select largest
@@ -737,7 +745,7 @@ impl HnswAwareCompactionManager {
             // Take top entry points (configurable)
             let num_entry_points = self.config.hnsw_config.as_ref()
                 .map(|c| c.num_entry_points)
-                .unwrap_or(5);
+                ;
             
             entry_points.extend(
                 candidates.iter()
@@ -806,7 +814,7 @@ impl HnswAwareCompactionManager {
         &self,
         file_path: &str,
         graph_data: &[u8],
-    ) -> Result<super::unified_reader::RaptorMetadataCache> {
+    ) -> Result<super::unified_reader::RaptorFileMetadata> {
         use tokio::fs;
         
         let file_metadata = fs::metadata(file_path).await?;
@@ -815,7 +823,7 @@ impl HnswAwareCompactionManager {
         // Parse the graph data to get statistics
         let graph_builder = HnswGraphBuilder::deserialize_from_disk(graph_data)?;
         
-        Ok(super::unified_reader::RaptorMetadataCache {
+        Ok(super::unified_reader::RaptorFileMetadata {
             file_size,
             num_rowgroups: 1, // After compaction, single monolithic file
             rowgroup_offsets: vec![0],

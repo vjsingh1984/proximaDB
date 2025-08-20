@@ -47,12 +47,12 @@ impl From<&Collection> for CollectionLookupResult {
         Self {
             uuid: record.id.clone(),
             name: record.config.as_ref().map(|c| c.name.clone()).unwrap_or_default(),
-            dimension: record.config.as_ref().map(|c| c.dimension).unwrap_or(0),
-            distance_metric: format!("{:?}", record.config.as_ref().map(|c| c.distance_metric).unwrap_or(0)),
+            dimension: record.config.as_ref().map(|c| c.dimension),
+            distance_metric: format!("{:?}", record.config.as_ref().map(|c| c.distance_metric)),
             indexing_algorithm: record.config.as_ref().and_then(|c| c.primary_index.clone()).unwrap_or_else(|| "None".to_string()),
-            storage_engine: format!("{:?}", record.config.as_ref().map(|c| c.storage_engine).unwrap_or(0)),
-            vector_count: record.stats.as_ref().map(|s| s.vector_count).unwrap_or(0),
-            total_size_bytes: record.stats.as_ref().map(|s| s.data_size_bytes).unwrap_or(0),
+            storage_engine: format!("{:?}", record.config.as_ref().map(|c| c.storage_engine)),
+            vector_count: record.stats.as_ref().map(|s| s.vector_count),
+            total_size_bytes: record.stats.as_ref().map(|s| s.data_size_bytes),
             timestamp: record.created_at,
             updated_at: record.updated_at,
         }

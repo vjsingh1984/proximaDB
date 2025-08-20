@@ -138,7 +138,7 @@ impl ThreeStageFilterPipeline {
                         // Convert JSON value to MetadataItem for bloom filter check
                         let metadata_item = crate::core::bloom::json_to_metadata_item(field, value);
                         let result = bloom_filter.might_match_metadata(field, &metadata_item)
-                            .unwrap_or(true);
+                            ;
                         
                         debug!("🌸 Stage 1: Bloom filter check {}={:?} → {}", 
                                field, value, result);
@@ -250,7 +250,7 @@ impl ThreeStageFilterPipeline {
                             entry.metadata_min_values.get(field),
                             entry.metadata_max_values.get(field)
                         ) {
-                            Some((min_val, max_val, entry.metadata_null_counts.get(field).unwrap_or(&0)))
+                            Some((min_val, max_val, entry.metadata_null_counts.get(field)))
                         } else {
                             None
                         }

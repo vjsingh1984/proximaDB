@@ -338,7 +338,7 @@ mod tests {
         assert!(metrics_result.is_ok(), "Metrics collection should succeed");
         
         let metrics_data = metrics_result.unwrap();
-        assert!(!metrics_data.is_none(), "Metrics should return data");
+        assert!(!metrics_data.is_empty(), "Metrics should return data");
     }
 
     #[tokio::test]
@@ -350,7 +350,7 @@ mod tests {
         assert!(wal_metrics.is_some(), "WAL metrics should be available");
         
         let report = wal_metrics.unwrap();
-        assert!(!report.is_none(), "WAL metrics report should not be empty");
+        assert!(!report.is_empty(), "WAL metrics report should not be empty");
     }
 
     #[tokio::test]
@@ -413,7 +413,7 @@ mod tests {
         
         let vectors = debug_result.unwrap();
         // Should return empty list for new collection
-        assert!(vectors.is_none() || !vectors.is_none(), "Debug should return vector list");
+        assert!(vectors.is_empty() || !vectors.is_empty(), "Debug should return vector list");
     }
 
     #[tokio::test]

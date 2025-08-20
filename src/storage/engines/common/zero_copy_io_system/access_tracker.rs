@@ -241,7 +241,7 @@ impl AccessPatternTracker {
             })
             .collect();
 
-        hot_files.sort_by(|a, b| b.2.partial_cmp(&a.2).unwrap_or(std::cmp::Ordering::Equal));
+        hot_files.sort_by(|a, b| b.2.partial_cmp(&a.2));
         hot_files.into_iter().take(limit).collect()
     }
 
@@ -273,7 +273,7 @@ impl AccessPatternTracker {
             .values()
             .map(|pattern| (pattern.collection_id.clone(), pattern.access_velocity))
             .collect();
-        active_collections.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+        active_collections.sort_by(|a, b| b.1.partial_cmp(&a.1));
 
         // Analyze query type distribution
         let mut query_type_counts = HashMap::new();
@@ -342,7 +342,7 @@ impl AccessPatternTracker {
             .values()
             .max()
             .copied()
-            .unwrap_or(0);
+            ;
         
         if let Some((query_type, _)) = stats.query_type_distribution
             .iter()
@@ -670,7 +670,7 @@ mod tests {
         
         assert!(prediction.access_probability < 0.5);
         assert!(prediction.confidence < 0.5);
-        assert!(prediction.predicted_query_type.is_none());
+        assert!(prediction.predicted_query_type.is_empty());
     }
 
     #[test]

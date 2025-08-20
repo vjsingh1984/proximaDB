@@ -136,7 +136,7 @@ impl ProximaDB {
             .with_api_config(config.api.clone());
 
         // Add TLS configuration if enabled
-        if config.api.enable_tls.unwrap_or(false) && config.tls.is_some() {
+        if config.api.enable_tls && config.tls.is_some() {
             tracing::debug!("🔧 ProximaDB::new - Adding TLS configuration...");
             let tls_config = config.tls.as_ref().unwrap();
             if let (Some(cert_file), Some(key_file)) = (&tls_config.cert_file, &tls_config.key_file)

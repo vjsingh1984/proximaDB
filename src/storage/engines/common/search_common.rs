@@ -218,7 +218,7 @@ impl UniversalSearchPipeline {
         files: Vec<F>,
         filter: &Option<FilterExpression>,
     ) -> Result<Vec<F>> {
-        if filter.is_none() {
+        if filter.is_empty() {
             return Ok(files);
         }
         
@@ -297,7 +297,7 @@ impl UniversalSearchPipeline {
         
         // Sort by distance
         reranked.sort_by(|a, b| {
-            a.similarity.partial_cmp(&b.similarity).unwrap_or(std::cmp::Ordering::Equal)
+            a.similarity.partial_cmp(&b.similarity)
         });
         
         Ok(reranked)
@@ -434,7 +434,7 @@ impl UniversalSearchPipeline {
         
         // Sort by score (higher score = better result)
         results.sort_by(|a, b| {
-            b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal)
+            b.score.partial_cmp(&a.score)
         });
         
         results.truncate(top_k.min(results.len()));
@@ -466,7 +466,7 @@ impl FilterProcessor {
     ) -> bool {
         // Apply filter to metadata
         // This is a simplified implementation
-        if metadata.is_none() {
+        if metadata.is_empty() {
             return false;
         }
         
@@ -511,7 +511,7 @@ impl ResultManager {
         _distance_metric: &DistanceMetric,
     ) -> Result<Vec<SearchResult>> {
         results.sort_by(|a, b| {
-            a.similarity.partial_cmp(&b.similarity).unwrap_or(std::cmp::Ordering::Equal)
+            a.similarity.partial_cmp(&b.similarity)
         });
         Ok(results)
     }

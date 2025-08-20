@@ -422,6 +422,9 @@ impl SstEntry {
     }
 }
 
+/// Magic constant for SST files (4 bytes)
+pub const SST_MAGIC: [u8; 4] = *b"SST1";
+
 /// SSTable header for row-based storage format with hierarchical optimizations
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SstableHeader {
@@ -858,10 +861,10 @@ impl DataBlockCompressionConfig {
     /// Create from proto CompressionConfig
     pub fn from_proto_config(config: Option<&crate::proto::proximadb::CompressionConfig>, vector_dim: usize) -> Self {
         if let Some(config) = config {
-            let block_size = if config.dynamic_block_sizing.unwrap_or(false) {
+            let block_size = if config.dynamic_block_sizing {
                 Self::optimal_block_size(vector_dim)
             } else {
-                config.block_size_kb.unwrap_or(2048) as usize * 1024
+                config.block_size_kb as usize * 1024
             };
             
             // Map proto compression algorithm to unified compression module algorithm
@@ -887,7 +890,7 @@ impl DataBlockCompressionConfig {
             
             Self {
                 algorithm: compression_algorithm.clone(),
-                compression_level: config.level.unwrap_or(3) as u8,
+                compression_level: config.level as u8,
                 enable_vector_compression: config.algorithm != crate::proto::proximadb::CompressionAlgorithm::CompressionNone as i32,
                 enable_metadata_compression: true,
                 compression_threshold_bytes: block_size / 1000, // Use 0.1% of block size as threshold
@@ -1066,7 +1069,7 @@ impl DataBlock {
         
         // Initialize with first record
         if let Some(first) = records.first() {
-            let first_id = first.id.as_ref().unwrap_or(&String::new()).clone();
+            let first_id = first.id.as_ref().clone();
             stats.min_key = first_id.clone();
             stats.max_key = first_id;
             stats.min_timestamp = first.timestamp;
@@ -1077,7 +1080,7 @@ impl DataBlock {
         let mut metadata_columns = HashMap::new();
         
         for record in records {
-            let record_id = record.id.as_ref().unwrap_or(&String::new());
+            let record_id = record.id.as_ref();
             // Update key range
             if record_id < &stats.min_key {
                 stats.min_key = record_id.clone();
@@ -1101,7 +1104,7 @@ impl DataBlock {
                     Some(crate::proto::proximadb::metadata_item::Value::NumberValue(n)) => 
                         serde_json::Number::from_f64(*n)
                             .map(serde_json::Value::Number)
-                            .unwrap_or(serde_json::Value::Null),
+                            ,
                     Some(crate::proto::proximadb::metadata_item::Value::BoolValue(b)) => 
                         serde_json::Value::Bool(*b),
                     None => {
@@ -1140,9 +1143,9 @@ impl DataBlock {
         use serde_json::Value;
         match (a, b) {
             (Value::Number(a), Value::Number(b)) => {
-                let a_f64 = a.as_f64().unwrap_or(0.0);
-                let b_f64 = b.as_f64().unwrap_or(0.0);
-                a_f64.partial_cmp(&b_f64).unwrap_or(std::cmp::Ordering::Equal)
+                let a_f64 = a.as_f64();
+                let b_f64 = b.as_f64();
+                a_f64.partial_cmp(&b_f64)
             }
             (Value::String(a), Value::String(b)) => a.cmp(b),
             (Value::Bool(a), Value::Bool(b)) => a.cmp(b),
@@ -1685,7 +1688,7 @@ impl DataBlock {
         // Calculate quantized memory usage if present
         let quantized_size = self.quantized_vectors.as_ref()
             .map(|vecs| vecs.iter().map(|v| v.len()).sum::<usize>())
-            .unwrap_or(0);
+            ;
         
         if original_size > 0 && quantized_size > 0 {
             1.0 - (quantized_size as f32 / original_size as f32)
@@ -1808,7 +1811,7 @@ impl SstStorage {
                 info!("   - Collection ID: {:?}", params.collection_id);
                 let storage_url = format!("{}/{}/data", 
                     assignment.base_location,
-                    params.collection_id.as_ref().unwrap_or(&"default".to_string()));
+                    params.collection_id.as_ref());
                 debug!("🔍 SST FLUSH: Using storage URL from params: {}", storage_url);
                 return Ok(storage_url);
             }
@@ -1833,7 +1836,7 @@ impl SstStorage {
     
     /// Enable compaction with the SST tree's atomic coordinator
     pub async fn enable_compaction(&mut self, worker_count: usize) -> Result<()> {
-        if self.compaction_manager.is_none() {
+        if self.compaction_manager.is_empty() {
             let mut compaction_manager = CompactionManager::with_atomic_coordinator(
                 self.config.clone(),
                 Some(self.atomic_coordinator.clone()),
@@ -2051,7 +2054,7 @@ impl SstStorage {
                 
                 // Collect all records into Vec (O(1) per insertion)
                 for (sequence_number, vector) in vector_records.iter().enumerate() {
-                    let vector_id = vector.id.as_deref().unwrap_or("").to_string();
+                    let vector_id = vector.id.as_str().to_string();
                     
                     // Handle append-only vectors (empty/null IDs) specially
                     let key = if vector_id.is_empty() {
@@ -2086,7 +2089,7 @@ impl SstStorage {
                     
                     for (local_idx, vector) in batch_chunk.iter().enumerate() {
                         let sequence_number = batch_idx * batch_size + local_idx;
-                        let vector_id = vector.id.as_deref().unwrap_or("").to_string();
+                        let vector_id = vector.id.as_str().to_string();
                         
                         let key = if vector_id.is_empty() {
                             format!("__append_only_seq_{}", sequence_number)
@@ -2569,7 +2572,7 @@ impl UnifiedStorageEngine for SstStorage {
             );
 
             let collection_dir = std::path::PathBuf::from(
-                collection_storage_url.strip_prefix("file://").unwrap_or(&collection_storage_url)
+                collection_storage_url.strip_prefix("file://")
             );
             
             debug!("🔍 SST COMPACTION: Collection directory path: {}", collection_dir.display());
@@ -2581,7 +2584,7 @@ impl UnifiedStorageEngine for SstStorage {
                 .await?;
             
             // Log what we found
-            if check_result.is_none() && params.force {
+            if check_result.is_empty() && params.force {
                 info!("⚠️ SST COMPACTION: No compaction task found but force=true. Checking threshold...");
                 // List files to understand why no compaction
                 if let Ok(entries) = tokio::fs::read_dir(&collection_dir).await {
@@ -2748,7 +2751,7 @@ impl UnifiedStorageEngine for SstStorage {
             let filename = std::path::Path::new(&file_path)
                 .file_name()
                 .and_then(|n| n.to_str())
-                .unwrap_or("unknown");
+                ;
             
             // Use unified SSTable reader with bloom filter
             let reader = UnifiedSstableReader::new(self.filesystem.clone());
@@ -2919,7 +2922,7 @@ impl UnifiedStorageEngine for SstStorage {
         );
 
         // Count SSTable files instead of memtable utilization
-        let sstable_count = self.count_sstables_at_level(0).await.unwrap_or(0);
+        let sstable_count = self.count_sstables_at_level(0).await;
         metrics.insert(
             "sstable_count".to_string(),
             serde_json::Value::Number((sstable_count as u64).into()),
@@ -3005,7 +3008,7 @@ impl SstStorage {
         if filtered_records.len() > 1 {
             let sort_start = std::time::Instant::now();
             // Sort by version field (contains sequence_number)
-            filtered_records.sort_by_key(|r| r.version.unwrap_or(0));
+            filtered_records.sort_by_key(|r| r.version);
             batch_stats.sort_time_us = sort_start.elapsed().as_micros() as u64;
         }
 
@@ -3056,7 +3059,7 @@ impl SstStorage {
         // Stage 1: Sort records by ID for SSTable ordering
         let sorting_start = std::time::Instant::now();
         let mut sorted_records = vector_records;
-        sorted_records.sort_by(|a, b| a.id.as_ref().unwrap_or(&String::new()).cmp(b.id.as_ref().unwrap_or(&String::new())));
+        sorted_records.sort_by(|a, b| a.id.as_ref().cmp(b.id.as_ref()));
         let sorting_time = sorting_start.elapsed().as_millis() as u64;
         debug!(
             "📊 SST STAGE 1: Sorted {} records in {}ms",
@@ -3118,7 +3121,7 @@ impl SstStorage {
                 }
             };
             let data_dir = PathBuf::from(
-                collection_storage_url.strip_prefix("file://").unwrap_or(&collection_storage_url)
+                collection_storage_url.strip_prefix("file://")
             );
 
             // Generate SSTable filename using centralized utility
@@ -3435,7 +3438,7 @@ impl SstStorage {
                 .ok_or_else(|| anyhow::anyhow!("Invalid SSTable filename"))?;
             
             // Parse level from filename using centralized utility
-            let level = SstFilenameGenerator::parse_level_from_filename(filename).unwrap_or(0);
+            let level = SstFilenameGenerator::parse_level_from_filename(filename);
             
             // Get file size
             let metadata = tokio::fs::metadata(path).await?;
@@ -3460,11 +3463,11 @@ impl SstStorage {
             let _min_sequence = flushed_records.iter()
                 .filter_map(|r| r.version)
                 .min()
-                .unwrap_or(0) as u64;
+                 as u64;
             let _max_sequence = flushed_records.iter()
                 .filter_map(|r| r.version)
                 .max()
-                .unwrap_or(0) as u64;
+                 as u64;
             
             
             // SSTable file is now discoverable via directory listing
@@ -3544,7 +3547,7 @@ impl SstStorage {
         );
 
         // Sort records by ID for SSTable format
-        sorted_records.sort_by(|a, b| a.id.as_ref().unwrap_or(&String::new()).cmp(b.id.as_ref().unwrap_or(&String::new())));
+        sorted_records.sort_by(|a, b| a.id.as_ref().cmp(b.id.as_ref()));
 
         // Serialize to row-based SSTable format (Level 0 by default for new data)
         self.serialize_sst_records_to_sstable(&sorted_records, 0).await
@@ -3650,15 +3653,15 @@ impl SstStorage {
                 let a_map = crate::core::proto_metadata_helper::proto_metadata_to_json(&a.metadata);
                 let b_map = crate::core::proto_metadata_helper::proto_metadata_to_json(&b.metadata);
                 
-                let a_value = a_map.get(sort_key).and_then(|v| v.as_str()).unwrap_or("");
-                let b_value = b_map.get(sort_key).and_then(|v| v.as_str()).unwrap_or("");
+                let a_value = a_map.get(sort_key).and_then(|v| v.as_str());
+                let b_value = b_map.get(sort_key).and_then(|v| v.as_str());
                 
                 match a_value.cmp(&b_value) {
                     std::cmp::Ordering::Equal => {
                         // Secondary sort: vector ID for stable ordering
                         let empty_id = String::new();
-                        let a_id = a.id.as_deref().unwrap_or(&empty_id);
-                        let b_id = b.id.as_deref().unwrap_or(&empty_id);
+                        let a_id = a.id.as_str();
+                        let b_id = b.id.as_str();
                         a_id.cmp(b_id)
                     }
                     other => other,
@@ -3666,8 +3669,8 @@ impl SstStorage {
             } else {
                 // Fallback: sort by vector ID only
                 let empty_id = String::new();
-                let a_id = a.id.as_deref().unwrap_or(&empty_id);
-                let b_id = b.id.as_deref().unwrap_or(&empty_id);
+                let a_id = a.id.as_str();
+                let b_id = b.id.as_str();
                 a_id.cmp(b_id)
             }
         });
@@ -3733,7 +3736,7 @@ impl SstStorage {
 
         for record in records {
             let record_size = std::mem::size_of::<VectorRecord>() + 
-                record.id.as_ref().map(|s| s.len()).unwrap_or(0) + 
+                record.id.as_ref().map(|s| s.len()) + 
                 record.vector.len() * 4 + // f32 size
                 record.metadata.iter().map(|item| item.key.len() + 50).sum::<usize>(); // Estimate metadata size (50 bytes per item)
 
@@ -3918,7 +3921,7 @@ impl SstStorage {
             
         let _merged_vectors = result.engine_metrics.get("merged_vectors")
             .and_then(|v| v.as_u64())
-            .unwrap_or(0);
+            ;
             
         // Store vector tracking info in engine_metrics if needed
         if !deleted_vector_ids.is_empty() {

@@ -296,7 +296,7 @@ impl PrismEngine {
             progressive_pipeline,
             sketch_filter,
             universal_optimizer,
-            hardware_capabilities,
+            hardware_capabilities: crate::storage::engines::common::performance_optimization::get_shared_hardware_capabilities(),
             compression_provider,
         })
     }
@@ -476,7 +476,7 @@ impl PrismEngine {
             progressive_pipeline,
             sketch_filter,
             universal_optimizer,
-            hardware_capabilities,
+            hardware_capabilities: crate::storage::engines::common::performance_optimization::get_shared_hardware_capabilities(),
             compression_provider,
         })
     }
@@ -581,7 +581,7 @@ impl PrismEngine {
             query_vector,
             candidates,
             distance_metric,
-            storage_format: storage_format.unwrap_or(StorageFormat::QuantizedPQ { segments: 8, bits: 8 }),
+            storage_format: storage_format,
             refinement_config: None,
             max_results,
             enable_acceleration: true,
