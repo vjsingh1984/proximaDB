@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
 use tracing::{trace, debug, info, warn, error};
 
-use crate::core::errors::ProximaDBError;
+use crate::core::error::ProximaDBError;
 use crate::storage::persistence::filesystem::FilesystemFactory;
 use super::metadata_cache::{ZeroCopyMetadataCache, CacheStatistics};
 use super::bandwidth_optimizer::{BandwidthOptimizer, DownloadStrategy, OptimizedRange, AccessPrediction};
@@ -827,24 +827,9 @@ impl ZeroCopyIOSystem {
             "Populating cache from file"
         );
 
-        // Find appropriate serializer for this engine type
-        let serializer = self.metadata_cache.get_serializer(engine_type)
-            .ok_or_else(|| ProximaDBError::UnknownEngineType(engine_type.to_string()))?;
-
-        // Load file from filesystem
-        let filesystem = self.filesystem.get_filesystem(file_path)?;
-        let file_data = filesystem.read_file(file_path).await?;
-
-        // Extract metadata using serializer
-        let metadata = serializer.extract_metadata(&file_data, collection_id)?;
-
-        // Store in cache for future use
-        self.metadata_cache.store_metadata(
-            file_path,
-            collection_id,
-            engine_type,
-            metadata.as_ref(),
-        ).await?;
+        // TODO: Fix metadata cache API mismatch - these methods don't exist
+        // This likely requires updating the orchestrator to match the current metadata cache implementation
+        return Err(ProximaDBError::Internal(format!("Metadata cache population not yet implemented for engine: {}", engine_type)));
 
         debug!(
             file_path,

@@ -7,7 +7,7 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
-use crate::core::errors::ProximaDBError;
+use crate::core::error::ProximaDBError;
 use crate::storage::persistence::filesystem::FilesystemFactory;
 use super::{ZeroCopyIOSystem, MetadataSerializer};
 
@@ -370,7 +370,7 @@ impl ZeroCopyIOSystemBuilder {
         
         // Require filesystem
         let filesystem = self.filesystem
-            .ok_or_else(|| ProximaDBError::InvalidArgument("Filesystem is required".into()))?;
+            .ok_or_else(|| ProximaDBError::Config("Filesystem is required".into()))?;
         
         // Register default serializers if none provided
         if self.serializers.is_empty() {

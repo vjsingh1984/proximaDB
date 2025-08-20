@@ -27,6 +27,9 @@ pub enum VectorDBError {
     Quantization(String),
 }
 
+// Type alias for backward compatibility
+pub type ProximaDBError = VectorDBError;
+
 #[derive(Error, Debug)]
 pub enum StorageError {
     #[error("SST storage error: {0}")]

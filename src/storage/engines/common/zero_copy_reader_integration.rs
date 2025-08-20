@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use crate::storage::persistence::filesystem::{FilesystemFactory, ZeroCopyFilesystem, ZeroCopyFilesystemBuilder};
 use crate::storage::engines::common::zero_copy_io_system::{ZeroCopyIOSystem, ZeroCopyIOSystemBuilder};
-use crate::core::errors::ProximaDBError;
+use crate::core::error::ProximaDBError;
 
 /// Example integration showing how to enhance existing readers with zero-copy optimization
 /// 

@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize};
 use tokio::fs;
 use tracing::{trace, debug, info, warn, error};
 
-use crate::core::errors::ProximaDBError;
+use crate::core::error::ProximaDBError;
 use super::traits::{MetadataSerializer, EngineMetadata, QueryContext, DataRange};
 use super::MAGIC_BYTES;
 
@@ -238,7 +238,7 @@ impl ZeroCopyMetadataCache {
     ) -> Result<Self, ProximaDBError> {
         // Ensure cache directory exists
         fs::create_dir_all(&cache_dir).await.map_err(|e| {
-            ProximaDBError::InternalError(format!("Failed to create cache directory: {}", e))
+            ProximaDBError::Internal(format!("Failed to create cache directory: {}", e))
         })?;
 
         Ok(Self {
@@ -279,7 +279,7 @@ impl ZeroCopyMetadataCache {
         
         // Get serializer for this engine
         let serializer = self.serializers.get(engine_type)
-            .ok_or_else(|| ProximaDBError::InvalidArgument(
+            .ok_or_else(|| ProximaDBError::Config(
                 format!("No serializer registered for engine: {}", engine_type)
             ))?;
         let serializer = Arc::clone(&serializer);
@@ -291,7 +291,7 @@ impl ZeroCopyMetadataCache {
             let file_path_hash = self.hash_string(file_path);
             let engine_hash = self.hash_string(engine_type);
             
-            if mmap_metadata.header().matches_file(engine_hash, file_path_hash) {
+            if mmap_metadata.header().matches_file(engine_hash as u32, file_path_hash) {
                 let cached = Arc::new(mmap_metadata);
                 self.mmap_cache.insert(cache_key, Arc::clone(&cached));
                 trace!(file_path, collection_id, engine_type, "Loaded from disk cache");
@@ -369,11 +369,11 @@ impl ZeroCopyMetadataCache {
 
         // Remove from disk cache
         let mut read_dir = fs::read_dir(&self.cache_dir).await.map_err(|e| {
-            ProximaDBError::InternalError(format!("Failed to read cache directory: {}", e))
+            ProximaDBError::Internal(format!("Failed to read cache directory: {}", e))
         })?;
 
         while let Some(entry) = read_dir.next_entry().await.map_err(|e| {
-            ProximaDBError::InternalError(format!("Failed to read directory entry: {}", e))
+            ProximaDBError::Internal(format!("Failed to read directory entry: {}", e))
         })? {
             let file_name = entry.file_name();
             if let Some(name_str) = file_name.to_str() {
@@ -429,12 +429,12 @@ impl ZeroCopyMetadataCache {
         serializer: Arc<dyn MetadataSerializer>,
     ) -> Result<MmappedMetadata, ProximaDBError> {
         let file = File::open(cache_file_path).map_err(|_| {
-            ProximaDBError::NotFound("Cache file not found".into())
+            ProximaDBError::Storage(crate::core::error::StorageError::NotFound("Cache file not found".into()))
         })?;
 
         let mmap = unsafe {
             MmapOptions::new().map(&file).map_err(|e| {
-                ProximaDBError::InternalError(format!("Failed to mmap cache file: {}", e))
+                ProximaDBError::Internal(format!("Failed to mmap cache file: {}", e))
             })?
         };
 
@@ -467,7 +467,7 @@ impl ZeroCopyMetadataCache {
         let compression_flags = if self.enable_compression { 1 } else { 0 };
         
         let header = CacheFileHeader::new(
-            engine_hash,
+            engine_hash as u32,
             0, // Would need actual file size from filesystem
             metadata_bytes.len() as u32,
             file_path_hash,
@@ -482,31 +482,31 @@ impl ZeroCopyMetadataCache {
             .truncate(true)
             .open(&cache_file_path)
             .map_err(|e| {
-                ProximaDBError::InternalError(format!("Failed to create cache file: {}", e))
+                ProximaDBError::Internal(format!("Failed to create cache file: {}", e))
             })?;
 
         // Write header
         file.write_all(bytes_of(&header)).map_err(|e| {
-            ProximaDBError::InternalError(format!("Failed to write cache header: {}", e))
+            ProximaDBError::Internal(format!("Failed to write cache header: {}", e))
         })?;
 
         // Write metadata payload
         file.write_all(&metadata_bytes).map_err(|e| {
-            ProximaDBError::InternalError(format!("Failed to write cache payload: {}", e))
+            ProximaDBError::Internal(format!("Failed to write cache payload: {}", e))
         })?;
 
         file.sync_all().map_err(|e| {
-            ProximaDBError::InternalError(format!("Failed to sync cache file: {}", e))
+            ProximaDBError::Internal(format!("Failed to sync cache file: {}", e))
         })?;
 
         // Memory map the file
         let file = File::open(&cache_file_path).map_err(|e| {
-            ProximaDBError::InternalError(format!("Failed to reopen cache file: {}", e))
+            ProximaDBError::Internal(format!("Failed to reopen cache file: {}", e))
         })?;
 
         let mmap = unsafe {
             MmapOptions::new().map(&file).map_err(|e| {
-                ProximaDBError::InternalError(format!("Failed to mmap new cache file: {}", e))
+                ProximaDBError::Internal(format!("Failed to mmap new cache file: {}", e))
             })?
         };
 
