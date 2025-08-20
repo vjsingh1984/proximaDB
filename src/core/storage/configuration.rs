@@ -44,7 +44,7 @@ impl BaseConfig for UnifiedStorageConfig {
             return Err("Max file size must be greater than 0".to_string());
         }
         
-        self.storage.as_ref().and_then(|s| s.compression.as_ref()).validate()?;
+        self.compression.validate()?;
         Ok(())
     }
 }

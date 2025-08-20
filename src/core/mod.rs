@@ -1,5 +1,4 @@
-pub mod avro_serialization;
-pub mod avro_unified;
+pub mod service_types;  // Core service types for vector operations
 pub mod base62;
 pub mod config;
 pub mod config_loader;
@@ -37,8 +36,8 @@ mod flush_config_tests;
 pub use config::*;
 pub use config_loader::*;
 pub use error::*;
-// Migration phase: Use selective exports and introduce Proto VectorRecord alias
-pub use avro_unified::{
+// Core service types for vector operations
+pub use service_types::{
     BatchSearchRequest, CollectionConfig, CollectionOperation, CollectionRequest,
     CollectionResponse, CompactionConfig, CompactionStrategy, CompressionAlgorithm,
     DistanceMetric, FieldCondition, HealthResponse, IndexStats, IndexingAlgorithm,
@@ -187,7 +186,7 @@ impl VectorRecordSerialization for VectorRecord {
 }
 pub use metadata_query::*;
 pub use grpc_metadata_parser::*;
-pub use vector_record_migration::{avro_to_proto, proto_to_avro, avro_batch_to_proto, proto_batch_to_avro};
+pub use vector_record_migration::{service_to_proto, proto_to_service, service_batch_to_proto, proto_batch_to_service};
 
 // The VectorRecord optimization trait is already in scope
 // No need to re-export it since it's defined in this module

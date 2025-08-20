@@ -8,7 +8,7 @@ mod edge_tests {
         UnifiedSstableReader, CollectionContext, ReaderConfig,
     };
     use crate::storage::engines::sst::{SstRecord, SstableWriter};
-    use crate::storage::engines::sst::bloom_filter::{
+    use crate::storage::engines::row_based::bloom_filter::{
         BloomFilterConfig,
     };
     use crate::core::config::SstConfig;

@@ -529,15 +529,10 @@ impl UnifiedHandlers {
                     
                     crate::proto::proximadb::SearchVectorRecord {
                         id: result.id.unwrap_or_else(|| format!("result_{}", index)),
-                        score: result.similarity.unwrap_or(0.0), // Use similarity as score if available
-                        similarity: result.similarity, // Pass through similarity
+                        score: 1.0, // Default score since VectorRecord doesn't have similarity
+                        similarity: Some(1.0), // Default similarity
                         vector,
-                        metadata: metadata.into_iter()
-                            .map(|(k, v)| crate::proto::proximadb::MetadataItem {
-                                key: k,
-                                value: v.to_string(),
-                            })
-                            .collect(),
+                        metadata,
                         version: result.version,
                         timestamp: Some(result.timestamp),
                     }

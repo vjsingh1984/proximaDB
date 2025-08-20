@@ -8,7 +8,16 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::{debug, info};
 
-use crate::core::{VectorRecord, hardware_capabilities::HardwareCapabilities};
+// Universal performance optimization imports
+use crate::storage::engines::common::performance_optimization::{
+    UniversalPerformanceOptimizer, UniversalOptimizationStrategy, 
+    UniversalIOConfig, UniversallyOptimized
+};
+// VectorMemoryPool now managed by universal optimizer
+use crate::storage::persistence::filesystem::StorageTier;
+use crate::core::hardware_capabilities::HardwareCapabilities;
+
+use crate::core::VectorRecord;
 use crate::storage::traits::{
     UnifiedStorageEngine, StorageEngineStrategy, FlushParameters, FlushResult,
     CompactionParameters, CompactionResult, EngineHealth, EngineStatistics,
@@ -25,12 +34,21 @@ use crate::core::compression::{
 };
 
 use super::{
-    SwiftFile,
+    SwiftFile, SuperBlock, DataBlock,
     progressive_search,
     optimized_operations::OptimizedSwiftOperations,
 };
 
+// Import row-based structures for hierarchical operations
+use crate::storage::engines::row_based::block_structures::{
+    RowBasedDataBlock as SwiftDataBlock,
+    SuperBlock as SwiftSuperBlock,
+};
+
+// SWIFT-specific optimization structures removed - now using universal module
+
 /// SWIFT Engine - Storage With Instant Fast Traversal for zero-overhead vector storage
+/// Enhanced with performance optimizations for fast hierarchical I/O, bandwidth, and cost efficiency.
 /// Stateless design - all metadata comes from SearchContext
 pub struct SwiftEngine {
     
@@ -54,6 +72,10 @@ pub struct SwiftEngine {
     
     /// Filesystem factory for storage operations
     filesystem: Arc<crate::storage::persistence::filesystem::FilesystemFactory>,
+    
+    // Universal performance optimization (replaces SWIFT-specific optimization)
+    /// Universal performance optimizer eliminating code duplication
+    universal_optimizer: UniversalPerformanceOptimizer,
 }
 
 impl SwiftEngine {
@@ -97,6 +119,11 @@ impl SwiftEngine {
             storage_config,
         ));
         
+        // Initialize universal performance optimization
+        let universal_optimizer = UniversalPerformanceOptimizer::with_strategy(
+            UniversalOptimizationStrategy::Balanced,
+        ).await?;
+        
         Ok(Self {
             optimized_ops,
             statistics: Arc::new(RwLock::new(EngineStatistics {
@@ -116,6 +143,7 @@ impl SwiftEngine {
             compression_provider,
             quantization_engine,
             filesystem,
+            universal_optimizer,
         })
     }
     
@@ -148,6 +176,124 @@ impl SwiftEngine {
         // This is updated after flush/compaction to maintain collection-wide metrics
         // Statistics are also embedded in individual files for atomicity
         Ok(())
+    }
+    
+    // ============================================================================
+    // PERFORMANCE OPTIMIZATION METHODS - DELEGATING TO UNIFIED MODULES
+    // ============================================================================
+    
+    /// Memory-mapped hierarchical file access for ultra-fast superblock traversal (delegates to universal optimizer)
+    async fn get_memory_mapped_superblock(&self, file_path: &str) -> Result<Option<memmap2::Mmap>> {
+        // Use universal optimizer's memory mapping functionality
+        self.universal_optimizer.get_memory_mapped_file(file_path).await
+    }
+    
+    /// Parallel superblock operations with configurable concurrency (delegates to universal optimizer)
+    async fn parallel_superblock_operations<T, F, Fut>(&self, superblocks: Vec<T>, operation: F) -> Result<Vec<Result<Fut::Output>>>
+    where
+        F: Fn(T) -> Fut + Send + Sync + Clone + 'static,
+        Fut: std::future::Future + Send + 'static,
+        Fut::Output: Send + 'static,
+        T: Send + 'static,
+    {
+        // Use universal optimizer's parallel operations capability
+        self.universal_optimizer.parallel_operations(superblocks, operation).await
+    }
+    
+    /// Storage tier optimization for hierarchical data with cloud cost efficiency (delegates to universal optimizer)
+    async fn optimize_hierarchical_storage_tier(&self, _access_frequency: f32, superblock_size_bytes: usize) -> Result<StorageTier> {
+        // Use universal optimizer's storage tier optimization
+        let file_key = format!("hierarchical_superblock_{}", superblock_size_bytes);
+        self.universal_optimizer.optimize_storage_tier(&file_key, superblock_size_bytes).await
+    }
+    
+    /// Hierarchical distance computation using unified distance compute engine (delegates to universal optimizer)
+    async fn compute_hierarchical_distances(&self, query: &[f32], superblocks: &[Arc<SwiftSuperBlock>], metric: DistanceMetric) -> Result<Vec<f32>> {
+        // Extract centroids from superblocks for distance computation
+        let centroids: Vec<Vec<f32>> = superblocks.iter()
+            .map(|sb| sb.centroid.as_ref().map(|c| c.clone()).unwrap_or_else(|| vec![0.0; query.len()]))
+            .collect();
+        
+        // Use universal optimizer's hardware-accelerated distance computation
+        self.universal_optimizer.compute_distances_accelerated(query, &centroids, metric).await
+    }
+    
+    /// Memory pool optimization for hierarchical vector operations (delegates to universal optimizer)
+    async fn get_hierarchical_memory_buffer(&self, size: usize) -> Result<Vec<f32>> {
+        self.universal_optimizer.get_memory_buffer(size).await
+            .map_err(|e| anyhow::anyhow!("Failed to acquire hierarchical memory buffer: {}", e))
+    }
+    
+    /// Hierarchical compression optimization using unified compression module (delegates to universal optimizer)
+    async fn compress_hierarchical_data(&self, data: &[u8], tier: StorageTier) -> Result<Vec<u8>> {
+        // Use universal optimizer's tier-aware compression
+        self.universal_optimizer.compress_for_tier(data, tier).await
+    }
+    
+    /// Prefetch hierarchical superblocks based on access patterns (delegates to universal optimizer)
+    async fn prefetch_hierarchical_superblocks(&self, current_superblock_id: u32, file_path: &str) -> Result<()> {
+        let config = self.universal_optimizer.get_config();
+        if !config.enable_prefetching {
+            return Ok(());
+        }
+        
+        // Generate superblock URLs for prefetching
+        let prefetch_count = config.prefetch_size_mb / 8; // Assume ~8MB per superblock
+        let start_id = current_superblock_id.saturating_sub(prefetch_count as u32 / 2);
+        let end_id = current_superblock_id + (prefetch_count as u32 / 2);
+        
+        let superblock_urls: Vec<String> = (start_id..=end_id)
+            .filter(|&id| id != current_superblock_id)
+            .map(|id| format!("{}:superblock:{}", file_path, id))
+            .collect();
+        
+        // Use universal optimizer's prefetching capability
+        self.universal_optimizer.prefetch_data(&superblock_urls).await
+    }
+    
+    /// Cache management for hierarchical structures with eviction (delegates to universal optimizer)
+    async fn evict_hierarchical_cache_if_needed(&self) -> Result<()> {
+        // Use universal optimizer's intelligent cache eviction
+        self.universal_optimizer.evict_cache_if_needed().await
+    }
+    
+    /// Progressive quantization search optimized for hierarchical access
+    async fn progressive_hierarchical_search(&self, query: &[f32], superblocks: &[Arc<SwiftSuperBlock>], top_k: usize) -> Result<Vec<(String, f32)>> {
+        // Phase 1: Superblock-level filtering using centroids
+        let superblock_distances = self.compute_hierarchical_distances(query, superblocks, DistanceMetric::Euclidean).await?;
+        
+        // Sort superblocks by distance and select top candidates
+        let mut superblock_candidates: Vec<(usize, f32)> = superblock_distances.into_iter().enumerate().collect();
+        superblock_candidates.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
+        
+        // Phase 2: Search within top superblocks using quantization
+        let search_superblocks = std::cmp::min(superblock_candidates.len(), top_k * 2); // Search 2x more superblocks
+        let mut results = Vec::new();
+        
+        for (superblock_idx, _distance) in superblock_candidates.into_iter().take(search_superblocks) {
+            let superblock = &superblocks[superblock_idx];
+            
+            // Phase 3: Use quantization engine for progressive search within superblock
+            if let Some(ref quantization_engine) = Some(&self.quantization_engine) {
+                // TODO: Implement progressive search using quantization engine
+                // For now, simulate with placeholder results
+                for block in &superblock.blocks {
+                    for (record_idx, record) in block.records.iter().enumerate() {
+                        if let Some(ref id) = record.id {
+                            // Compute approximate distance
+                            let distance = query.iter().zip(record.vector.iter()).map(|(a, b)| (a - b).abs()).sum::<f32>();
+                            results.push((id.clone(), distance));
+                        }
+                    }
+                }
+            }
+        }
+        
+        // Sort and return top-k results
+        results.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
+        results.truncate(top_k);
+        
+        Ok(results)
     }
 }
 
@@ -472,6 +618,69 @@ impl UnifiedStorageEngine for SwiftEngine {
     }
 }
 
+/// Implementation of UniversallyOptimized trait for SWIFT engine
+#[async_trait::async_trait]
+impl UniversallyOptimized for SwiftEngine {
+    /// Get the universal performance optimizer instance
+    fn get_universal_optimizer(&self) -> &UniversalPerformanceOptimizer {
+        &self.universal_optimizer
+    }
+    
+    /// SWIFT-specific optimization setup
+    async fn setup_engine_optimizations(&self) -> Result<()> {
+        // SWIFT-specific optimizations for hierarchical storage
+        info!("🔧 SWIFT Engine: Setting up universal performance optimizations");
+        
+        // Initialize hierarchical optimizations
+        let config = self.universal_optimizer.get_config();
+        debug!("   Cache size: {}MB", config.cache_size_mb);
+        debug!("   Parallel operations: {}", config.parallel_operations);
+        debug!("   Prefetching enabled: {}", config.enable_prefetching);
+        debug!("   Memory mapping enabled: {}", config.enable_memory_mapping);
+        
+        // SWIFT is ready for hierarchical row-based operations
+        info!("✅ SWIFT Engine: Universal optimizations configured for hierarchical storage");
+        Ok(())
+    }
+    
+    /// SWIFT-specific performance metrics
+    async fn collect_performance_metrics(&self) -> Result<HashMap<String, serde_json::Value>> {
+        let mut metrics = HashMap::new();
+        
+        // Basic SWIFT metrics
+        let stats = self.statistics.read().await;
+        metrics.insert("swift_total_storage_bytes".to_string(), serde_json::Value::Number(
+            serde_json::Number::from(stats.total_storage_bytes)
+        ));
+        metrics.insert("swift_memory_usage_bytes".to_string(), serde_json::Value::Number(
+            serde_json::Number::from(stats.memory_usage_bytes)
+        ));
+        metrics.insert("swift_collection_count".to_string(), serde_json::Value::Number(
+            serde_json::Number::from(stats.collection_count)
+        ));
+        metrics.insert("swift_pending_flushes".to_string(), serde_json::Value::Number(
+            serde_json::Number::from(stats.pending_flushes)
+        ));
+        
+        // Universal optimizer metrics
+        let strategy = self.universal_optimizer.get_strategy();
+        metrics.insert("universal_optimization_strategy".to_string(), 
+            serde_json::Value::String(format!("{:?}", strategy)));
+        
+        let config = self.universal_optimizer.get_config();
+        metrics.insert("universal_cache_size_mb".to_string(), serde_json::Value::Number(
+            serde_json::Number::from(config.cache_size_mb)
+        ));
+        metrics.insert("universal_parallel_operations".to_string(), serde_json::Value::Number(
+            serde_json::Number::from(config.parallel_operations)
+        ));
+        metrics.insert("universal_prefetching_enabled".to_string(), serde_json::Value::Bool(
+            config.enable_prefetching
+        ));
+        
+        Ok(metrics)
+    }
+}
 
 #[cfg(test)]
 mod tests {

@@ -25,7 +25,7 @@ use crate::core::VectorRecord;
 use crate::core::search::{SearchParams, SearchResult, FilterExpression};
 use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
 use crate::storage::persistence::filesystem::{FilesystemFactory, FileSystem};
-use crate::storage::engines::sst::bloom_filter::SstableBloomFilter;
+use crate::storage::engines::row_based::bloom_filter::SstableBloomFilter;
 use crate::storage::engines::sst::{SstableHeader, DataBlock, IndexEntry, VectorFormatType};  // OPTIMIZED: Removed SstRecord import
 use crate::core::compression::CompressionAlgorithm;
 use crate::core::bloom::{BloomFilterConfig, BloomStrategy};
@@ -1495,7 +1495,7 @@ impl UnifiedSstableReader {
                     similarity: similarity.normalized_score,
                     // rank removed -  None,
                     vector: Some(record.vector.clone()),
-                    vector_id: Some(record.id.clone()),
+                    vector_id: record.id.clone(),
                     metadata: self.metadata_items_to_json(&record.metadata),
                     debug_info: None,
                     semantic_similarity: Some(similarity), // Use unified distance result
@@ -2307,7 +2307,7 @@ impl UnifiedSstableReader {
                     let metadata_items = record.metadata.clone();
                     
                     return Ok(Some(VectorRecord {
-                        id: Some(record.id.clone()),
+                        id: record.id.clone(),
                         vector: record.vector.clone(),
                         metadata: metadata_items,
                         timestamp: record.timestamp,
@@ -2704,7 +2704,7 @@ impl UnifiedSstableReader {
             if let Some(first_block) = blocks.first() {
                 debug!("  🔎 First block has {} records", first_block.records.len());
                 for (i, record) in first_block.records.iter().take(3).enumerate() {
-                    debug!("    Record {}: id={:?}, tombstone={}", i, record.id, record/* REMOVED: is_tombstone field no longer exists */);
+                    debug!("    Record {}: id={:?}", i, record.id);
                 }
             }
             
@@ -3055,8 +3055,8 @@ impl UnifiedSstableReader {
                             key: e.key.clone(),
                             block_offset: e.offset,
                             block_size: e.size as usize,
-                            min_id: e.metadata_min_values.get("id").and_then(|v| v.as_str()).unwrap_or(&e.key).to_string(),
-                            max_id: e.metadata_max_values.get("id").and_then(|v| v.as_str()).unwrap_or(&e.key).to_string(),
+                            min_key: e.metadata_min_values.get("id").and_then(|v| v.as_str()).unwrap_or(&e.key).to_string(),
+                            max_key: e.metadata_max_values.get("id").and_then(|v| v.as_str()).unwrap_or(&e.key).to_string(),
                             vector_count: 1,
                             bloom_filter_offset: None,
                         }).collect(),
@@ -3243,18 +3243,35 @@ impl UnifiedSstableReader {
         let mut block_id = 0u32;
         
         for chunk in records.chunks(block_size) {
+            use crate::storage::engines::row_based::block_structures::{
+                BlockCompressionConfig, QuantizationStatistics, BlockStatistics
+            };
+            use std::collections::HashMap;
+            
             blocks.push(DataBlock {
                 block_id,
                 records: chunk.to_vec(),
-                uncompressed_size: 0,
-                compression_algorithm: CompressionAlgorithm::None,
-                // REMOVED: compression_ratio - calculated on-demand
-                metadata_stats: crate::storage::engines::sst::DataBlockMetadata::default(),
-                block_bloom_filter: None,
-                has_deletes: false,
-                // Quantization fields
                 quantized_vectors: None,
                 quantization_level: None,
+                quantized_section: None,
+                metadata: crate::storage::engines::sst::DataBlockMetadata::default(),
+                compression_config: BlockCompressionConfig {
+                    algorithm: CompressionAlgorithm::None,
+                    compression_level: 0,
+                    enable_vector_compression: false,
+                    enable_metadata_compression: false,
+                    compression_threshold_bytes: 0,
+                    dictionary_compression: false,
+                },
+                compression_algorithm: CompressionAlgorithm::None,
+                uncompressed_size: 0,
+                bloom_filter: None,
+                block_bloom_filter: None,
+                id_range: (String::new(), String::new()),
+                timestamp_range: (0, 0),
+                statistics: BlockStatistics::default(),
+                metadata_stats: None,
+                has_deletes: false,
             });
             block_id += 1;
         }

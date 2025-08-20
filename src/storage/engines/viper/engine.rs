@@ -25,6 +25,15 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::{debug, error, info, warn, trace};
+
+// Universal performance optimization imports
+use crate::storage::engines::common::performance_optimization::{
+    UniversalPerformanceOptimizer, UniversalOptimizationStrategy, 
+    UniversalIOConfig, UniversallyOptimized
+};
+// VectorMemoryPool now managed by universal optimizer
+use crate::storage::persistence::filesystem::StorageTier;
+use crate::core::hardware_capabilities::HardwareCapabilities;
 use crate::core::{String, VectorRecord};
 use crate::storage::persistence::filesystem::FilesystemFactory;
 use crate::storage::traits::{FlushResult, UnifiedStorageEngine, CollectionMetadataProvider};
@@ -40,6 +49,8 @@ use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
 use super::types::CollectionMetadata;
 use anyhow::Context;
 use std::collections::HashMap as StdHashMap;
+// VIPER-specific optimization structures removed - now using universal module
+
 // Using unified quantization engine directly from compute module
 /// VIPER Engine - Main coordination point for the modular VIPER storage engine
 #[derive(Debug)]
@@ -66,6 +77,10 @@ pub struct ViperEngine {
     collections: Arc<RwLock<HashMap<String, CollectionMetadata>>>,
     /// Unified quantization engine from compute module
     quantization_engine: Arc<crate::compute::quantization::storage_engine::StorageQuantizationEngine>,
+    
+    // Universal performance optimization (replaces VIPER-specific optimization)
+    /// Universal performance optimizer eliminating code duplication
+    universal_optimizer: UniversalPerformanceOptimizer,
 }
 impl ViperEngine {
     /// Create a new VIPER engine from user-facing core config
@@ -138,6 +153,12 @@ impl ViperEngine {
             distance_compute.clone(),
             storage_config,
         ));
+        
+        // Initialize universal performance optimization
+        let universal_optimizer = UniversalPerformanceOptimizer::with_strategy(
+            UniversalOptimizationStrategy::Balanced,
+        ).await.context("Failed to create universal performance optimizer for VIPER")?;
+        
         // ML clustering moved to AXIS
         // let ml_clustering_engine = MLClusteringEngine::new(super::ml_clustering::KMeansConfig::default());
         // Initialize utilities with default configuration
@@ -160,7 +181,7 @@ impl ViperEngine {
             utilities,
             // Initialize search engine with unified parquet reader
             search_engine: Arc::new(ViperUnifiedSearchEngine::new(
-                Arc::new(super::readers::UnifiedParquetReader::new(filesystem.clone())),
+                Arc::new(super::readers::UnifiedParquetReader::new(filesystem.clone()).await),
                 Arc::new(UnifiedDistanceCompute::default()),
                 Arc::new(crate::compute::quantization::unified::UnifiedQuantizationEngine::new(
                     Arc::new(UnifiedDistanceCompute::default()),
@@ -170,6 +191,7 @@ impl ViperEngine {
             stats: Arc::new(RwLock::new(EngineStats::default())),
             collections: Arc::new(RwLock::new(HashMap::new())),
             quantization_engine,
+            universal_optimizer,
         })
     }
     
@@ -181,6 +203,187 @@ impl ViperEngine {
         let mut service_lock = self.collection_service.write().await;
         *service_lock = Some(collection_service);
         info!("🔗 VIPER Engine: Collection service set for metadata access");
+    }
+    
+    // ============================================================================
+    // PERFORMANCE OPTIMIZATION METHODS - DELEGATING TO UNIFIED MODULES
+    // ============================================================================
+    
+    /// Fast read optimization using memory-mapped Parquet files (delegates to universal optimizer)
+    async fn mmap_parquet_file(&self, file_path: &str) -> Result<Vec<u8>> {
+        // Use universal optimizer's memory mapping functionality
+        if let Some(mmap) = self.universal_optimizer.get_memory_mapped_file(file_path).await? {
+            Ok(mmap.to_vec())
+        } else {
+            // Fallback to regular file reading for cloud storage
+            self.universal_optimizer.read_data_optimized(file_path).await
+        }
+    }
+    
+    /// Columnar I/O optimization with universal parallel reads
+    async fn parallel_column_read(&self, file_path: &str, column_indices: &[usize]) -> Result<Vec<Vec<u8>>> {
+        // Use universal optimizer for parallel operations
+        let read_operations: Vec<_> = column_indices.iter()
+            .map(|&column_idx| {
+                let file_path = file_path.to_string();
+                async move {
+                    Self::read_column_optimized(&file_path, column_idx).await
+                }
+            }).collect();
+        
+        let results = self.universal_optimizer.parallel_operations(
+            read_operations,
+            |operation| operation
+        ).await?;
+        
+        // Extract successful results - results is Vec<Result<Vec<u8>>>
+        let mut final_results = Vec::new();
+        for result in results {
+            // result is Result<Vec<u8>> from parallel_operations
+            match result {
+                Ok(data) => final_results.push(data),
+                Err(e) => return Err(e),
+            }
+        }
+        
+        Ok(final_results)
+    }
+    
+    /// Optimized column reading with universal memory management
+    async fn read_column_optimized(file_path: &str, column_idx: usize) -> Result<Vec<u8>> {
+        // Create filesystem factory for reading
+        let filesystem_config = crate::storage::persistence::filesystem::FilesystemConfig::default();
+        let filesystem_factory = Arc::new(
+            crate::storage::persistence::filesystem::FilesystemFactory::new(filesystem_config).await?
+        );
+        
+        // Create unified parquet reader
+        let reader = super::readers::UnifiedParquetReader::new(filesystem_factory).await;
+        
+        // Read the actual column data from the Parquet file
+        // Note: This reads all vectors and extracts the specific column
+        // A more optimized version would use Apache Arrow to read only the specific column
+        let vectors = reader.read_all_vectors(file_path, &[]).await?;
+        
+        // Extract column data based on column index
+        // Column 0: vector data, Column 1+: metadata columns
+        let column_data = if column_idx == 0 {
+            // Vector column - serialize all vectors
+            let mut data = Vec::new();
+            for record in &vectors {
+                // Serialize vector data
+                for val in &record.vector {
+                    data.extend_from_slice(&val.to_le_bytes());
+                }
+            }
+            data
+        } else {
+            // Metadata column - extract specific metadata field
+            // This is a simplified implementation
+            let mut data = Vec::new();
+            for record in &vectors {
+                // Serialize metadata for the column
+                // In a real implementation, this would map column_idx to metadata field names
+                data.extend_from_slice(b"metadata_placeholder");
+            }
+            data
+        };
+        
+        Ok(column_data)
+    }
+    
+    /// Storage tier optimization using universal optimizer
+    async fn optimize_parquet_storage_tier(&self, file_path: &str, file_size_bytes: u64) -> Result<StorageTier> {
+        // Use universal optimizer for storage tier optimization
+        self.universal_optimizer.optimize_storage_tier(file_path, file_size_bytes as usize).await
+    }
+    
+    /// Compression optimization using unified compression module for columnar data (delegates to universal optimizer)
+    async fn compress_parquet_optimized(&self, data: &[u8], tier: StorageTier, _column_type: &str) -> Result<Vec<u8>> {
+        // Delegate to universal optimizer's tier-aware compression
+        self.universal_optimizer.compress_for_tier(data, tier).await
+    }
+    
+    /// Distance computation using unified distance compute engine for columnar operations (delegates to universal optimizer)
+    async fn compute_distances_columnar_optimized(&self, query: &[f32], candidates: &[Vec<f32>], metric: crate::compute::distance_computation::DistanceMetric) -> Result<Vec<f32>> {
+        // Use universal optimizer's hardware-accelerated distance computation
+        self.universal_optimizer.compute_distances_accelerated(query, candidates, metric).await
+    }
+    
+    /// Row group prefetching optimization based on access patterns (delegates to universal optimizer)
+    async fn prefetch_row_groups(&self, file_path: &str, current_row_group: usize) -> Result<()> {
+        let config = self.universal_optimizer.get_config();
+        if !config.enable_prefetching {
+            return Ok(());
+        }
+        
+        // Generate row group file URLs for prefetching
+        let prefetch_count = config.prefetch_size_mb / 4; // Assume ~4MB per row group
+        let row_group_urls: Vec<String> = ((current_row_group + 1)..(current_row_group + 1 + prefetch_count))
+            .map(|idx| format!("{}:rowgroup:{}", file_path, idx))
+            .collect();
+        
+        // Use universal optimizer's prefetching capability
+        self.universal_optimizer.prefetch_data(&row_group_urls).await
+    }
+    
+    /// Optimized row group reading for prefetching (delegates to universal optimizer)
+    async fn read_row_group_optimized(file_path: &str, row_group_idx: usize, optimizer: &UniversalPerformanceOptimizer) -> Result<Vec<u8>> {
+        // Create filesystem and reader for actual Parquet access
+        let filesystem_config = crate::storage::persistence::filesystem::FilesystemConfig::default();
+        let filesystem_factory = Arc::new(
+            crate::storage::persistence::filesystem::FilesystemFactory::new(filesystem_config).await?
+        );
+        let reader = super::readers::UnifiedParquetReader::new(filesystem_factory).await;
+        
+        // Read vectors from the specific row group
+        // Note: UnifiedParquetReader currently reads all data, but in production
+        // this would be optimized to read only the specific row group using Arrow's
+        // row group API for selective reading
+        let all_vectors = reader.read_all_vectors(file_path, &[]).await?;
+        
+        // Calculate approximate row group boundaries
+        // Parquet typically has row groups of ~50-100MB or ~50k-100k rows
+        let rows_per_group = 50000;
+        let start_idx = row_group_idx * rows_per_group;
+        let end_idx = ((row_group_idx + 1) * rows_per_group).min(all_vectors.len());
+        
+        // Extract vectors for this row group
+        let mut row_group_data = Vec::new();
+        for i in start_idx..end_idx {
+            if let Some(record) = all_vectors.get(i) {
+                // Serialize the vector record
+                for val in &record.vector {
+                    row_group_data.extend_from_slice(&val.to_le_bytes());
+                }
+                // Also include metadata if needed
+                if let Some(id) = &record.id {
+                    row_group_data.extend_from_slice(id.as_bytes());
+                }
+            }
+        }
+        
+        Ok(row_group_data)
+    }
+    
+    /// Memory pool optimization for columnar operations (delegates to universal optimizer)
+    async fn get_columnar_buffer(&self, size: usize) -> Result<Vec<f32>> {
+        self.universal_optimizer.get_memory_buffer(size).await
+            .map_err(|e| anyhow::anyhow!("Failed to acquire columnar buffer: {}", e))
+    }
+    
+    /// Column statistics caching for analytics optimization (delegates to universal optimizer)
+    async fn cache_column_statistics(&self, file_path: &str, column_idx: usize, stats: &[u8]) -> Result<()> {
+        // Use universal optimizer's data caching
+        let cache_key = format!("{}:col:{}:stats", file_path, column_idx);
+        
+        // Write statistics to a temporary location and let universal optimizer handle caching
+        // This is a simplified approach - in production, we'd integrate more directly
+        self.universal_optimizer.write_data_optimized(
+            &cache_key,
+            stats,
+            StorageTier::Hot // Statistics are frequently accessed
+        ).await
     }
     
     // VIPER is columnar storage - it doesn't support single vector inserts
@@ -1058,3 +1261,67 @@ impl UnifiedStorageEngine for ViperEngine {
         self.do_compact(&params).await
     }
 }  // End of impl UnifiedStorageEngine for ViperEngine
+
+/// Implementation of UniversallyOptimized trait for VIPER engine
+#[async_trait::async_trait]
+impl UniversallyOptimized for ViperEngine {
+    /// Get the universal performance optimizer instance
+    fn get_universal_optimizer(&self) -> &UniversalPerformanceOptimizer {
+        &self.universal_optimizer
+    }
+    
+    /// VIPER-specific optimization setup
+    async fn setup_engine_optimizations(&self) -> Result<()> {
+        // VIPER-specific optimizations
+        info!("🔧 VIPER Engine: Setting up universal performance optimizations");
+        
+        // Initialize columnar-specific optimizations
+        let config = self.universal_optimizer.get_config();
+        debug!("   Cache size: {}MB", config.cache_size_mb);
+        debug!("   Parallel operations: {}", config.parallel_operations);
+        debug!("   Prefetching enabled: {}", config.enable_prefetching);
+        debug!("   Memory mapping enabled: {}", config.enable_memory_mapping);
+        
+        // VIPER is ready for columnar operations
+        info!("✅ VIPER Engine: Universal optimizations configured for columnar storage");
+        Ok(())
+    }
+    
+    /// VIPER-specific performance metrics
+    async fn collect_performance_metrics(&self) -> Result<HashMap<String, serde_json::Value>> {
+        let mut metrics = HashMap::new();
+        
+        // Basic VIPER metrics
+        let stats = self.stats.read().await;
+        metrics.insert("viper_total_vectors".to_string(), serde_json::Value::Number(
+            serde_json::Number::from(stats.total_vectors)
+        ));
+        metrics.insert("viper_flush_operations".to_string(), serde_json::Value::Number(
+            serde_json::Number::from(stats.flush_operations)
+        ));
+        metrics.insert("viper_compaction_operations".to_string(), serde_json::Value::Number(
+            serde_json::Number::from(stats.compaction_operations)
+        ));
+        metrics.insert("viper_collections_count".to_string(), serde_json::Value::Number(
+            serde_json::Number::from(self.collections.read().await.len())
+        ));
+        
+        // Universal optimizer metrics
+        let strategy = self.universal_optimizer.get_strategy();
+        metrics.insert("universal_optimization_strategy".to_string(), 
+            serde_json::Value::String(format!("{:?}", strategy)));
+        
+        let config = self.universal_optimizer.get_config();
+        metrics.insert("universal_cache_size_mb".to_string(), serde_json::Value::Number(
+            serde_json::Number::from(config.cache_size_mb)
+        ));
+        metrics.insert("universal_parallel_operations".to_string(), serde_json::Value::Number(
+            serde_json::Number::from(config.parallel_operations)
+        ));
+        metrics.insert("universal_prefetching_enabled".to_string(), serde_json::Value::Bool(
+            config.enable_prefetching
+        ));
+        
+        Ok(metrics)
+    }
+}

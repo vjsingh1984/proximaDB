@@ -383,6 +383,20 @@ pub trait FilesystemFile: Send + Sync + std::fmt::Debug {
 pub trait FileSystem: Send + Sync + std::fmt::Debug {
     /// Read file contents
     async fn read(&self, path: &str) -> FsResult<Vec<u8>>;
+    
+    /// Get memory-mapped access to a file (only supported for local filesystem)
+    /// Returns None if memory mapping is not supported (e.g., cloud storage)
+    /// The returned mmap is read-only and safe for concurrent access
+    async fn get_mmap(&self, path: &str) -> FsResult<Option<memmap2::Mmap>> {
+        // Default implementation returns None (not supported)
+        // LocalFileSystem will override this to provide actual memory mapping
+        Ok(None)
+    }
+    
+    /// Check if this filesystem supports memory mapping
+    fn supports_mmap(&self) -> bool {
+        false // Default: most filesystems don't support mmap
+    }
 
     /// Read specific byte range from file (for efficient cloud storage access)
     /// Returns the requested bytes. Default implementation reads entire file and slices.

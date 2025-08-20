@@ -24,11 +24,12 @@ use crate::compute::quantization::storage_engine::{
 use crate::core::{VectorRecord, hardware_capabilities::HardwareCapabilities};
 
 use super::{
-    config::{UniversalAdapterConfig, ProgressiveRefinementConfig, CacheConfig},
+    config::{UniversalAdapterConfig, CacheConfig},
+    config::ProgressiveRefinementConfig as ConfigProgressiveRefinementConfig,
     conversion::{StorageFormat, FormatConverter, ConversionResult},
     distance_cache::{DistanceTableCache, DistanceTableKey},
     hardware_manager::{HardwareAccelerationManager, OptimizationStrategy},
-    progressive_refinement::{ProgressiveRefinementPipeline, RefinementStage, QualityMetrics},
+    progressive_refinement::{ProgressiveRefinementPipeline, RefinementStage, QualityMetrics, ProgressiveRefinementConfig},
     quantized_calculator::UniversalQuantizedCalculator,
     storage_integration::{StorageEngineAdapter, EngineType},
 };
@@ -202,6 +203,21 @@ pub enum AdapterError {
 pub type AdapterResult<T> = Result<T, AdapterError>;
 
 impl UniversalDistanceAdapter {
+    /// Convert from config module's ProgressiveRefinementConfig to progressive_refinement module's
+    fn convert_refinement_config(&self, config: &ConfigProgressiveRefinementConfig) -> ProgressiveRefinementConfig {
+        use super::progressive_refinement::RefinementStrategy;
+        
+        ProgressiveRefinementConfig {
+            search_strategy: RefinementStrategy::Sequential, // Default strategy
+            candidates_per_stage: config.candidates_per_stage.clone(),
+            quality_thresholds: config.quality_thresholds.clone(),
+            enable_parallel_processing: config.enable_parallel_processing,
+            max_memory_usage_mb: config.max_memory_usage_mb,
+            enable_stage_skipping: config.enable_stage_skipping,
+            min_improvement_threshold: config.min_improvement_threshold,
+        }
+    }
+    
     /// Create a new universal distance adapter
     pub async fn new() -> AdapterResult<Self> {
         Self::with_config(UniversalAdapterConfig::default()).await
@@ -265,7 +281,7 @@ impl UniversalDistanceAdapter {
         adapter.initialize_engine_adapters().await?;
         
         info!("Universal Distance Adapter initialized successfully");
-        debug!("Hardware capabilities: {:?}", hardware_capabilities);
+        debug!("Hardware capabilities: {:?}", adapter.hardware_capabilities);
         
         Ok(adapter)
     }
@@ -293,7 +309,10 @@ impl UniversalDistanceAdapter {
         
         // Execute progressive refinement pipeline
         let refinement_config = request.refinement_config
-            .unwrap_or_else(|| self.config.progressive_refinement.clone());
+            .unwrap_or_else(|| {
+                // Convert from config module's type to progressive_refinement module's type
+                self.convert_refinement_config(&self.config.progressive_refinement)
+            });
         
         let refinement_result = self.refinement_pipeline.execute_progressive_search(
             &request.query_vector,
@@ -482,9 +501,13 @@ impl UniversalDistanceAdapter {
                     let int8_data = self.format_converter.to_int8(&candidate.data).await
                         .map_err(|e| AdapterError::FormatConversion(format!("INT8 conversion failed: {}", e)))?;
                     QuantizedVectorData {
-                        fp32: Some(candidate.data.clone()),
+                        fp32: None,
                         binary: None,
-                        int8: Some(int8_data),
+                        int8: Some(Int8VectorData {
+                            values: int8_data,
+                            scale: 1.0, // Default scale
+                            zero_point: 0, // Default zero point
+                        }),
                         pq: None,
                     }
                 },
@@ -493,10 +516,14 @@ impl UniversalDistanceAdapter {
                     let pq_data = self.format_converter.to_pq(&candidate.data, 16, 8).await
                         .map_err(|e| AdapterError::FormatConversion(format!("PQ conversion failed: {}", e)))?;
                     QuantizedVectorData {
-                        fp32: Some(candidate.data.clone()),
+                        fp32: None,
                         binary: None,
                         int8: None,
-                        pq: Some(pq_data),
+                        pq: Some(PQVectorData {
+                            codes: pq_data,
+                            codebook: vec![], // Would need actual codebook
+                            codebook_hash: 0, // Placeholder
+                        }),
                     }
                 },
                 SelectedFormat::Binary => {
@@ -504,7 +531,7 @@ impl UniversalDistanceAdapter {
                     let binary_data = self.format_converter.to_binary(&candidate.data).await
                         .map_err(|e| AdapterError::FormatConversion(format!("Binary conversion failed: {}", e)))?;
                     QuantizedVectorData {
-                        fp32: Some(candidate.data.clone()),
+                        fp32: None,
                         binary: Some(binary_data),
                         int8: None,
                         pq: None,
@@ -512,8 +539,17 @@ impl UniversalDistanceAdapter {
                 },
                 SelectedFormat::FP32 => {
                     // Keep as FP32
+                    // For FP32, convert bytes to Vec<f32>
+                    let fp32_data = if let Some(ref original) = candidate.original_vector {
+                        original.clone()
+                    } else {
+                        // Convert from bytes to f32
+                        candidate.data.chunks_exact(4)
+                            .map(|chunk| f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
+                            .collect()
+                    };
                     QuantizedVectorData {
-                        fp32: Some(candidate.data.clone()),
+                        fp32: Some(fp32_data),
                         binary: None,
                         int8: None,
                         pq: None,

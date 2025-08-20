@@ -71,6 +71,7 @@ pub mod footer_cache;
 pub mod native_metadata;
 pub mod hybrid_writer;
 pub mod config_builder;
+pub mod shared_parquet_reader;  // NEW: Shared reader for bandwidth optimization
 // quantization_config_conversion moved to common/quantization_adapter.rs
 
 // New unified columnar infrastructure
@@ -117,6 +118,13 @@ pub use hybrid_writer::{
 };
 pub use config_builder::{
     ParquetConfigBuilder, FooterCacheBuilder, HybridWriterBuilder, ParquetPresets
+};
+
+// NEW: Export shared Parquet reader components
+pub use shared_parquet_reader::{
+    SharedParquetFormatReader, ParquetMmapStrategy, ColumnMmapStrategy,
+    ParquetFooterCache as SharedFooterCache, RowGroupMetadata,
+    ReaderStatsSummary as ParquetReaderStats,
 };
 
 // New unified infrastructure exports

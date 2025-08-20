@@ -1,7 +1,8 @@
-//! Unified Avro-based schema types for ProximaDB
+//! Service Types Module - Core Types for Vector Operations Service
 //!
-//! This module provides zero-copy, schema-evolution enabled types that serve as the
-//! single source of truth for all ProximaDB operations. No wrapper objects, no conversions.
+//! This module defines all the essential types for vector operations, including
+//! VectorRecord (service-level, not proto), search requests/responses, collection operations,
+//! and metrics. These types form the core API for the vector operations service.
 
 use apache_avro::{Reader, Schema, Writer};
 use chrono::{DateTime, Utc};
@@ -14,7 +15,7 @@ use crate::core::search::SearchResult;
 const VECTOR_RECORD_SCHEMA_JSON: &str = r#" {
   "type": "record",
   "name": "VectorRecord", 
-  "namespace": "proximadb.unified",
+  "namespace": "proximadb.serialization",
   "doc": "Unified vector record - replaces all schema_types and unified_types versions",
   "fields": [
     {
@@ -112,9 +113,7 @@ pub struct VectorRecord {
     pub updated_at: Option<i64>,  // Optional
     pub expires_at: Option<i64>,  // Optional
     pub version: Option<i64>,  // Optional
-
-    // Optional fields for search results and compatibility
-    pub similarity: Option<f32>,
+    // Note: similarity, rank, score fields are only on SearchVectorRecord, not VectorRecord
 }
 
 // Note: VectorRecord intentionally does NOT implement Eq or Hash
@@ -139,9 +138,6 @@ impl VectorRecord {
             updated_at: None,
             expires_at: None,
             version: None,
-            // rank removed -  None,
-            similarity: None,
-        
         }
     }
 
@@ -163,8 +159,6 @@ impl VectorRecord {
             updated_at: None,
             expires_at: None,
             version: None,
-            // rank removed -  None,
-            similarity: None,
         }
     }
 
@@ -209,9 +203,11 @@ impl VectorRecord {
         record.put("updated_at", self.updated_at.map(Value::Long).unwrap_or(Value::Union(0, Box::new(Value::Null))));
         record.put("expires_at", self.expires_at.map(Value::Long).unwrap_or(Value::Union(0, Box::new(Value::Null))));
         record.put("version", self.version.map(Value::Long).unwrap_or(Value::Union(0, Box::new(Value::Null))));
-        record.put("rank", self.rank.map(Value::Int).unwrap_or(Value::Union(0, Box::new(Value::Null))));
-        record.put("score", self.score.map(Value::Float).unwrap_or(Value::Union(0, Box::new(Value::Null))));
-        record.put("distance", self.similarity.map(Value::Float).unwrap_or(Value::Union(0, Box::new(Value::Null))));
+        // Note: rank and score fields removed from VectorRecord struct - only similarity/distance remains
+        // These fields exist in the Avro schema for compatibility but are not used
+        record.put("rank", Value::Union(0, Box::new(Value::Null)));
+        record.put("score", Value::Union(0, Box::new(Value::Null)));
+        record.put("distance", Value::Union(0, Box::new(Value::Null)));
         
         writer.append(record)?;
         writer.flush()?;
@@ -743,7 +739,7 @@ impl CollectionResponse {
             affected_count: 0,
             total_count: None,
             metadata: HashMap::new(),
-            // error_message removed -  None,
+            error_message: None,
             error_code: None,
             processing_time_us,
         }
@@ -752,7 +748,7 @@ impl CollectionResponse {
     /// Create a failed collection response
     pub fn error(
         operation: CollectionOperation,
-        // error_message removed -  String,
+        error_message: String,
         error_code: Option<String>,
         processing_time_us: i64,
     ) -> Self {
@@ -764,7 +760,7 @@ impl CollectionResponse {
             affected_count: 0,
             total_count: None,
             metadata: HashMap::new(),
-            // error_message removed -  Some(error_message),
+            error_message: Some(error_message),
             error_code,
             processing_time_us,
         }

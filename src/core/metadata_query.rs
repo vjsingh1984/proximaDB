@@ -248,12 +248,12 @@ impl MetadataQueryEngine {
             (Some(JsonValue::String(text)), Some(pattern_str)) => {
                 // Get or compile regex
                 let regex = if let Some(cached_regex) = self.regex_cache.get(pattern_str) {
-                    cached_regex
+                    cached_regex.clone()
                 } else {
                     let compiled_regex = regex::Regex::new(pattern_str)
                         .with_context(|| format!("Invalid regex pattern for field {}: {}", field_name, pattern_str))?;
-                    self.regex_cache.insert(pattern_str.to_string(), compiled_regex);
-                    self.regex_cache.get(pattern_str).cloned()
+                    self.regex_cache.insert(pattern_str.to_string(), compiled_regex.clone());
+                    compiled_regex
                 };
                 
                 Ok(regex.is_match(text))

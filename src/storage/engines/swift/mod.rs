@@ -55,8 +55,8 @@ use uuid::Uuid;
 use crate::core::{DistanceMetric, VectorRecord};
 use crate::core::compression::CompressionAlgorithm;
 
-// SYNERGY: Reuse SST's bloom filter structures
-use crate::storage::engines::sst::bloom_filter::SstableBloomFilter;
+// SYNERGY: Reuse row-based bloom filter structures (shared with SST)
+use crate::storage::engines::row_based::bloom_filter::SstableBloomFilter;
 // NOTE: Quantization now uses unified engine from compute module
 
 // Import row-based common structures
@@ -210,9 +210,6 @@ impl SwiftFile {
                 compression_config,
             );
             
-            // Set SWIFT-specific fields
-            block.sequence_number = block_id as u64;
-            
             // Build quantized representations for the block
             let vectors: Vec<Vec<f32>> = chunk.iter()
                 .map(|r| r.vector.clone())
@@ -250,7 +247,7 @@ impl SwiftFile {
                     max_entries: None,
                     strategy: crate::core::bloom::BloomStrategy::ByteAligned,
                 };
-                let bloom_stats = crate::storage::engines::sst::bloom_filter::BloomFilterStats::default();
+                let bloom_stats = crate::storage::engines::row_based::bloom_filter::BloomFilterStats::default();
                 superblock.bloom_filter = Some(SstableBloomFilter::new(
                     bloom_config,
                     Vec::new(), // Empty key filter data initially
@@ -297,9 +294,6 @@ impl SwiftFile {
                 compression_config,
             );
             
-            // Set SWIFT-specific fields
-            block.sequence_number = block_id as u64;
-            
             // Build quantized representations for the block
             let vectors: Vec<Vec<f32>> = chunk.iter()
                 .map(|r| r.vector.clone())
@@ -331,7 +325,7 @@ impl SwiftFile {
                     max_entries: None,
                     strategy: crate::core::bloom::BloomStrategy::ByteAligned,
                 };
-                let bloom_stats = crate::storage::engines::sst::bloom_filter::BloomFilterStats::default();
+                let bloom_stats = crate::storage::engines::row_based::bloom_filter::BloomFilterStats::default();
                 superblock.bloom_filter = Some(SstableBloomFilter::new(
                     bloom_config,
                     Vec::new(), // Empty key filter data initially

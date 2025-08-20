@@ -344,8 +344,8 @@ impl MultiTierDeduplicator {
         // Add non-ID results
         final_results.extend(self.results_without_id);
 
-        // Sort by score (descending - higher score is better)
-        final_results.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap());
+        // Sort by similarity (descending - higher similarity is better)
+        final_results.sort_by(|a, b| b.similarity.partial_cmp(&a.similarity).unwrap());
         
         // Limit to k results
         final_results.truncate(k);

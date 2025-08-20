@@ -9,7 +9,7 @@ mod tests {
         strategies::CompositeBloomFilter,
     };
     use crate::core::bloom::strategies::composite::CompositeBloomFilterBuilder;
-    use crate::storage::engines::sst::bloom_filter::{SstableBloomFilter, BloomFilterStats};
+    use crate::storage::engines::row_based::bloom_filter::{SstableBloomFilter, BloomFilterStats};
     use std::collections::HashMap;
 use tracing::{debug, error, info};
     

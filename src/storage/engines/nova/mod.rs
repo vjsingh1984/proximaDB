@@ -130,8 +130,8 @@ pub struct NovaFile {
     /// SuperBlock hierarchy for efficient pruning
     pub superblocks: Vec<SuperBlock>,
     
-    /// Advanced zone maps for multi-dimensional pruning
-    pub advanced_zone_maps: Option<AdvancedZoneMap>,
+    /// Advanced zone maps for multi-dimensional pruning (optimized: basic zone maps)
+    pub advanced_zone_maps: Option<hierarchical_stats::BasicZoneMaps>,
     
     /// Quantized column metadata
     pub quantized_columns: quantized_columns::QuantizedColumnMetadata,

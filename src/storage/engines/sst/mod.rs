@@ -35,7 +35,8 @@
 //! - **Composite Bloom Filters**: Multi-level bloom filters for 95% scan reduction
 //! - **Decompression Cache**: Configurable cache for frequently accessed blocks
 
-pub mod bloom_filter;
+// bloom_filter moved to row_based module for reuse
+use crate::storage::engines::row_based::bloom_filter;
 pub mod compaction;
 pub mod decompression_cache;
 pub mod flush_eventlog_integration;
@@ -94,14 +95,26 @@ use std::collections::{BTreeMap, HashMap};
 use std::path::PathBuf;
 use tracing::{debug, error, info, warn, trace};
 use std::sync::Arc;
+use tokio::sync::RwLock;
+
+// Universal performance optimization imports
+use crate::storage::engines::common::performance_optimization::{
+    UniversalPerformanceOptimizer, UniversalOptimizationStrategy, 
+    UniversalIOConfig, UniversallyOptimized
+};
+use crate::storage::persistence::filesystem::StorageTier;
+use crate::core::hardware_capabilities::HardwareCapabilities;
 
 // Import row-based common structures
 use crate::storage::engines::row_based::block_structures::{
     RowBasedDataBlock as DataBlock,
+    RowBasedBlockMetadata,
     RowBasedBlockMetadata as DataBlockMetadata,
     BlockCompressionConfig as DataBlockCompressionConfig,
     SuperBlock,
     ColumnStatistics,
+    QuantizationStatistics,
+    BlockStatistics,
 };
 
 /// Common SST filename generation utilities
@@ -1040,20 +1053,20 @@ impl DataBlock {
         metadata_data.write_all(&(self.has_deletes as u8).to_le_bytes())?;
         
         // Write DataBlockMetadata fields
-        let meta = &self.metadata_stats;
-        metadata_data.write_all(&meta.record_count.to_le_bytes())?;
-        metadata_data.write_all(&meta.size_bytes.to_le_bytes())?;
-        metadata_data.write_all(&meta.compressed_size.to_le_bytes())?;
-        metadata_data.write_all(&meta.timestamp.to_le_bytes())?;
-        metadata_data.write_all(&meta.compaction_level.to_le_bytes())?;
-        metadata_data.write_all(&(meta.has_deletes as u8).to_le_bytes())?;
-        metadata_data.write_all(&(meta.has_updates as u8).to_le_bytes())?;
-        metadata_data.write_all(&meta.version_range.0.to_le_bytes())?;
-        metadata_data.write_all(&meta.version_range.1.to_le_bytes())?;
-        
-        // Write column_stats
-        metadata_data.write_all(&(meta.column_stats.len() as u32).to_le_bytes())?;
-        for (col_name, stats) in &meta.column_stats {
+        if let Some(ref meta) = self.metadata_stats {
+            metadata_data.write_all(&meta.record_count.to_le_bytes())?;
+            metadata_data.write_all(&meta.size_bytes.to_le_bytes())?;
+            metadata_data.write_all(&meta.compressed_size.to_le_bytes())?;
+            metadata_data.write_all(&meta.timestamp.to_le_bytes())?;
+            metadata_data.write_all(&meta.compaction_level.to_le_bytes())?;
+            metadata_data.write_all(&(meta.has_deletes as u8).to_le_bytes())?;
+            metadata_data.write_all(&(meta.has_updates as u8).to_le_bytes())?;
+            metadata_data.write_all(&meta.version_range.0.to_le_bytes())?;
+            metadata_data.write_all(&meta.version_range.1.to_le_bytes())?;
+            
+            // Write column_stats
+            metadata_data.write_all(&(meta.column_stats.len() as u32).to_le_bytes())?;
+            for (col_name, stats) in &meta.column_stats {
             metadata_data.write_all(&(col_name.len() as u32).to_le_bytes())?;
             metadata_data.write_all(col_name.as_bytes())?;
             
@@ -1087,13 +1100,29 @@ impl DataBlock {
                 metadata_data.write_all(&0u8.to_le_bytes())?; // No distinct count
             }
         }
+        } else {
+            // Write zeros for missing metadata
+            metadata_data.write_all(&0u32.to_le_bytes())?; // record_count
+            metadata_data.write_all(&0u64.to_le_bytes())?; // size_bytes
+            metadata_data.write_all(&0u64.to_le_bytes())?; // compressed_size
+            metadata_data.write_all(&0i64.to_le_bytes())?; // timestamp
+            metadata_data.write_all(&0u8.to_le_bytes())?;  // compaction_level
+            metadata_data.write_all(&0u8.to_le_bytes())?;  // has_deletes
+            metadata_data.write_all(&0u8.to_le_bytes())?;  // has_updates
+            metadata_data.write_all(&0i64.to_le_bytes())?; // version_range.0
+            metadata_data.write_all(&0i64.to_le_bytes())?; // version_range.1
+            metadata_data.write_all(&0u32.to_le_bytes())?; // column_stats len
+        }
         
         // Write bloom filter
         match &self.block_bloom_filter {
             Some(bloom) => {
                 metadata_data.write_all(&1u8.to_le_bytes())?;
-                metadata_data.write_all(&(bloom.len() as u32).to_le_bytes())?;
-                metadata_data.write_all(bloom)?;
+                // Convert to serialized form
+                let serialized: bloom_filter::SerializedSstableBloomFilter = bloom.clone().into();
+                let bloom_bytes = bincode::serialize(&serialized)?;
+                metadata_data.write_all(&(bloom_bytes.len() as u32).to_le_bytes())?;
+                metadata_data.write_all(&bloom_bytes)?;
             }
             None => {
                 metadata_data.write_all(&0u8.to_le_bytes())?;
@@ -1108,41 +1137,19 @@ impl DataBlock {
         
         // Apply compression if beneficial using unified compression module
         // Remove threshold check - it's causing testing issues and is unnecessary
-        debug!("🔍 DataBlock::serialize_with_config: raw_data.len() = {}, enable_compression = {}", 
-               raw_data.len(), config.enable_compression);
+        debug!("🔍 DataBlock::serialize_with_config: raw_data.len() = {}, algorithm = {:?}", 
+               raw_data.len(), config.algorithm);
         
-        if config.enable_compression {
-            // Get compression algorithm from config
-            let compression_algo = if let Some(ref compression) = config.collection_compression {
-                // Convert from proto to unified enum
-                use crate::proto::proximadb::CompressionAlgorithm as ProtoCompressionAlgorithm;
-                match ProtoCompressionAlgorithm::try_from(compression.algorithm) {
-                    Ok(ProtoCompressionAlgorithm::CompressionZstd) => CompressionAlgorithm::Zstd,
-                    Ok(ProtoCompressionAlgorithm::CompressionLz4) => CompressionAlgorithm::Lz4,
-                    Ok(ProtoCompressionAlgorithm::CompressionSnappy) => CompressionAlgorithm::Snappy,
-                    Ok(ProtoCompressionAlgorithm::CompressionGzip) => CompressionAlgorithm::Gzip,
-                    Ok(ProtoCompressionAlgorithm::CompressionBrotli) => CompressionAlgorithm::Brotli,
-                    Ok(ProtoCompressionAlgorithm::CompressionBzip2) => CompressionAlgorithm::Bzip2,
-                    Ok(ProtoCompressionAlgorithm::CompressionDeflate) => CompressionAlgorithm::Deflate,
-                    Ok(ProtoCompressionAlgorithm::CompressionXz) => CompressionAlgorithm::Xz,
-                    Ok(ProtoCompressionAlgorithm::CompressionZlib) => CompressionAlgorithm::Zlib,
-                    Ok(ProtoCompressionAlgorithm::CompressionLz4hc) => CompressionAlgorithm::Lz4hc,
-                    Ok(ProtoCompressionAlgorithm::CompressionLzma) => CompressionAlgorithm::Lzma,
-                    Ok(ProtoCompressionAlgorithm::CompressionLzo) => CompressionAlgorithm::Lzo,
-                    _ => CompressionAlgorithm::None,
-                }
-            } else {
-                // Use algorithm from DataBlockCompressionConfig directly
-                // It's already the unified CompressionAlgorithm type
-                config.compression_algorithm.clone()
-            };
+        if config.algorithm != CompressionAlgorithm::None {
+            // Use the compression algorithm from config
+            let compression_algo = config.algorithm.clone();
             
             // Try compression using unified module
             if let Ok(compressed) = unified_compression::compress(
                 &raw_data, 
                 compression_algo.clone(), 
-                config.compression_level, 
-                CompressionContext::SstBlock
+                config.compression_level as i32, 
+                unified_compression::CompressionContext::SstBlock
             ) {
                 let compression_ratio = compressed.len() as f32 / raw_data.len() as f32;
                 
@@ -1438,14 +1445,27 @@ impl DataBlock {
         Ok(DataBlock {
             block_id,
             records,
-            uncompressed_size,
-            compression_algorithm: CompressionAlgorithm::None,
-            // REMOVED: compression_ratio
-            metadata_stats,
-            block_bloom_filter,
-            has_deletes,
             quantized_vectors: None,
-            quantization_level: None,  // Always present, may be empty initially
+            quantization_level: None,
+            quantized_section: None,
+            metadata: metadata_stats,
+            compression_config: DataBlockCompressionConfig {
+                algorithm: CompressionAlgorithm::None,
+                compression_level: 0,
+                enable_vector_compression: false,
+                enable_metadata_compression: false,
+                compression_threshold_bytes: 0,
+                dictionary_compression: false,
+            },
+            compression_algorithm: CompressionAlgorithm::None,
+            uncompressed_size,
+            bloom_filter: block_bloom_filter.clone(),
+            block_bloom_filter,
+            id_range: (String::new(), String::new()),
+            timestamp_range: (0, 0),
+            statistics: BlockStatistics::default(),
+            metadata_stats: None,  // This is Option<BlockMetadataStats>, not DataBlockMetadata
+            has_deletes,
         })
     }
     
@@ -1559,6 +1579,8 @@ impl BatchExtractionStats {
 }
 
 #[derive(Debug)]
+// SST-specific optimization structures removed - now using universal module
+
 pub struct SstStorage {
     config: SstConfig,
     // NO collection_id - passed in parameters
@@ -1575,7 +1597,10 @@ pub struct SstStorage {
     decompression_cache: Arc<decompression_cache::DecompressionCache>,
     // Shared quantization engine
     quantization_engine: Arc<UnifiedQuantizationEngine>,
-    // AXIS queue updater for async indexing
+    
+    // Universal performance optimization (replaces SST-specific optimization)
+    /// Universal performance optimizer eliminating code duplication
+    universal_optimizer: UniversalPerformanceOptimizer,
 }
 
 impl SstStorage {
@@ -1618,6 +1643,11 @@ impl SstStorage {
             config.clone(),
         ).await?));
 
+        // Initialize universal performance optimization
+        let universal_optimizer = UniversalPerformanceOptimizer::with_strategy(
+            UniversalOptimizationStrategy::Balanced,
+        ).await.context("Failed to create universal performance optimizer")?;
+
         Ok(Self {
             config,
             compaction_manager,
@@ -1627,6 +1657,7 @@ impl SstStorage {
             distance_compute,
             decompression_cache,
             quantization_engine,
+            universal_optimizer,
         })
     }
     
@@ -1684,9 +1715,115 @@ impl SstStorage {
         Ok(())
     }
     
+    // ============================================================================
+    // UNIVERSAL PERFORMANCE OPTIMIZATION INTEGRATION
+    // ============================================================================
+    
+    /// Fast read optimization using universal optimizer memory-mapped files
+    async fn mmap_sstable_file(&self, file_path: &str) -> Result<Vec<u8>> {
+        // Use universal optimizer for memory-mapped file access
+        if let Some(mmap) = self.universal_optimizer.get_memory_mapped_file(file_path).await? {
+            Ok(mmap.to_vec())
+        } else {
+            // Fallback to regular file reading through universal optimizer
+            self.universal_optimizer.read_data_optimized(file_path).await
+        }
+    }
+    
+    /// Block-level I/O optimization with universal parallel reads
+    async fn parallel_block_read(&self, file_paths: &[String], block_indices: &[usize]) -> Result<Vec<Vec<u8>>> {
+        // Use universal optimizer for parallel operations
+        let read_operations: Vec<_> = file_paths.iter().zip(block_indices.iter())
+            .map(|(file_path, &block_idx)| {
+                let file_path = file_path.clone();
+                async move {
+                    Self::read_block_optimized(&file_path, block_idx).await
+                }
+            }).collect();
+        
+        let results = self.universal_optimizer.parallel_operations(
+            read_operations,
+            |operation| operation
+        ).await?;
+        
+        // Extract successful results
+        let mut final_results = Vec::new();
+        for result in results {
+            final_results.push(result?);
+        }
+        
+        Ok(final_results)
+    }
+    
+    /// Optimized block reading with universal memory management
+    async fn read_block_optimized(file_path: &str, block_idx: usize) -> Result<Vec<u8>> {
+        // TODO: Implement actual block reading logic with universal memory pool
+        // For now, return placeholder data - this should read specific block from SSTable file
+        Ok(vec![0u8; 64 * 1024]) // 64KB placeholder block
+    }
+    
+    /// Storage tier optimization using universal optimizer
+    async fn optimize_sstable_storage_tier(&self, file_path: &str, file_size_bytes: u64) -> Result<StorageTier> {
+        // Use universal optimizer for storage tier optimization
+        self.universal_optimizer.optimize_storage_tier(file_path, file_size_bytes as usize).await
+    }
+    
+    /// Distance computation using universal hardware-accelerated computation
+    async fn compute_distances_sstable_optimized(&self, query: &[f32], candidates: &[Vec<f32>], metric: crate::compute::distance_computation::DistanceMetric) -> Result<Vec<f32>> {
+        // Use universal optimizer for hardware-accelerated distance computation
+        self.universal_optimizer.compute_distances_accelerated(query, candidates, metric).await
+    }
+    
+    /// Memory pool optimization using universal optimizer
+    async fn get_sstable_buffer(&self, size: usize) -> Result<Vec<f32>> {
+        self.universal_optimizer.get_memory_buffer(size).await
+    }
+}
 
+// ============================================================================
+// UNIVERSAL PERFORMANCE OPTIMIZATION TRAIT IMPLEMENTATION  
+// ============================================================================
 
+#[async_trait]
+impl UniversallyOptimized for SstStorage {
+    fn get_universal_optimizer(&self) -> &UniversalPerformanceOptimizer {
+        &self.universal_optimizer
+    }
+    
+    async fn setup_engine_optimizations(&self) -> Result<()> {
+        // SST-specific optimizations: Setup SSTable-specific caching and prefetching
+        info!("🔧 SST: Setting up engine-specific optimizations");
+        
+        // Enable prefetching for SSTable files based on access patterns
+        let sstable_files = vec!["example_sstable.sst".to_string()]; // TODO: Get actual SSTable files
+        self.universal_optimizer.prefetch_data(&sstable_files).await?;
+        
+        // Setup SSTable-specific cache eviction if needed
+        self.universal_optimizer.evict_cache_if_needed().await?;
+        
+        info!("✅ SST: Engine-specific optimizations setup complete");
+        Ok(())
+    }
+    
+    async fn collect_performance_metrics(&self) -> Result<HashMap<String, serde_json::Value>> {
+        let mut metrics = HashMap::new();
+        
+        // SST-specific metrics
+        metrics.insert("engine_type".to_string(), serde_json::Value::String("SST".to_string()));
+        metrics.insert("optimization_strategy".to_string(), 
+            serde_json::Value::String(format!("{:?}", self.universal_optimizer.get_strategy())));
+        
+        // Universal optimizer configuration
+        let config = self.universal_optimizer.get_config();
+        metrics.insert("cache_size_mb".to_string(), serde_json::Value::Number(serde_json::Number::from(config.cache_size_mb)));
+        metrics.insert("parallel_operations".to_string(), serde_json::Value::Number(serde_json::Number::from(config.parallel_operations)));
+        metrics.insert("enable_prefetching".to_string(), serde_json::Value::Bool(config.enable_prefetching));
+        
+        Ok(metrics)
+    }
+}
 
+impl SstStorage {
     // All writes go through WAL → Flush → SSTable directly
     // No intermediate memtable needed
 

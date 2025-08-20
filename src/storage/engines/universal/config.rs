@@ -80,6 +80,31 @@ pub struct ProgressiveRefinementConfig {
     pub min_improvement_threshold: f32,
 }
 
+impl Default for ProgressiveRefinementConfig {
+    fn default() -> Self {
+        let mut candidates_per_stage = HashMap::new();
+        candidates_per_stage.insert(RefinementStage::Binary, 1000);
+        candidates_per_stage.insert(RefinementStage::INT8, 500);
+        candidates_per_stage.insert(RefinementStage::PQ, 200);
+        candidates_per_stage.insert(RefinementStage::FP32, 100);
+        
+        let mut quality_thresholds = HashMap::new();
+        quality_thresholds.insert(RefinementStage::Binary, 0.6);
+        quality_thresholds.insert(RefinementStage::INT8, 0.7);
+        quality_thresholds.insert(RefinementStage::PQ, 0.8);
+        quality_thresholds.insert(RefinementStage::FP32, 0.9);
+        
+        Self {
+            candidates_per_stage,
+            quality_thresholds,
+            enable_parallel_processing: true,
+            max_memory_usage_mb: 256,
+            enable_stage_skipping: true,
+            min_improvement_threshold: 0.05,
+        }
+    }
+}
+
 /// Hardware acceleration configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HardwareAccelerationConfig {

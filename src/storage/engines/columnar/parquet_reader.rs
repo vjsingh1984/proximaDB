@@ -354,10 +354,25 @@ impl UnifiedParquetReader {
         }
         // Cache miss - read from storage
         debug!("Footer cache MISS for {}, reading from storage", file_path);
-        // Read file data
+        // Read file data - try memory mapping first for local files
         let fs = self.filesystem.get_filesystem(file_path)?;
-        let file_data = fs.read(file_path).await?;
-        let bytes = bytes::Bytes::from(file_data);
+        
+        let bytes = if fs.supports_mmap() {
+            // Try to use memory mapping for local files
+            if let Some(mmap) = fs.get_mmap(file_path).await? {
+                debug!("Using memory-mapped access for {}", file_path);
+                // Convert mmap to Bytes (zero-copy if possible)
+                bytes::Bytes::copy_from_slice(&mmap[..])
+            } else {
+                // Fallback to regular read
+                let file_data = fs.read(file_path).await?;
+                bytes::Bytes::from(file_data)
+            }
+        } else {
+            // Cloud storage or other non-mmap filesystem
+            let file_data = fs.read(file_path).await?;
+            bytes::Bytes::from(file_data)
+        };
         // Parse metadata
         let reader_builder = ParquetRecordBatchReaderBuilder::try_new(bytes)?;
         let metadata = Arc::new(reader_builder.metadata().clone());

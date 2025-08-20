@@ -1297,6 +1297,141 @@ PUT /api/v1/collections/{collection_id}/config/operations
 4. **Elastic Capacity**: Scale up during maintenance windows, scale down during peak traffic
 5. **Failure Resilience**: Spot termination doesn't affect primary operations
 
+== API and Service Layer Enhancements (Technical Debt)
+
+=== Arrow IPC Integration for Vector Operations Service
+
+==== Current State
+The Vector Operations Service currently uses protobuf for all data serialization, which works well for individual vector operations but can be inefficient for bulk operations.
+
+==== Proposed Enhancement
+Implement Arrow IPC (Inter-Process Communication) format at the service/API layer for efficient bulk data transfer.
+
+==== Design Principles
+1. **Service Layer Responsibility**: Arrow IPC belongs at the API/service boundary, NOT in storage engines
+2. **Storage Engine Independence**: Storage engines should continue returning `VectorRecord` or iterators
+3. **Protocol Choice**: Arrow IPC is for wire protocol and bulk data transfer, not internal storage
+
+==== Implementation Architecture
+
+[source,rust]
+----
+// Enhanced VectorOperationsService with Arrow IPC support
+pub struct VectorOperationsService {
+    storage_engine: Arc<dyn UnifiedStorageEngine>,
+    arrow_exporter: Arc<ArrowExporter>,  // NEW
+    arrow_importer: Arc<ArrowImporter>,  // NEW
+}
+
+impl VectorOperationsService {
+    // Bulk export API using Arrow IPC
+    pub async fn export_vectors_arrow(
+        &self,
+        collection_id: &str,
+        filter: Option<FilterExpression>,
+        batch_size: usize,
+    ) -> Result<impl Stream<Item = Result<RecordBatch>>> {
+        // Get iterator from storage engine
+        let vector_iter = self.storage_engine
+            .scan_vectors(collection_id, filter)
+            .await?;
+        
+        // Convert to Arrow RecordBatch stream
+        self.arrow_exporter.create_stream(
+            vector_iter,
+            batch_size,
+            ArrowFormat::IPC,  // Or Parquet for files
+        ).await
+    }
+    
+    // Bulk import API using Arrow IPC
+    pub async fn import_vectors_arrow(
+        &self,
+        collection_id: &str,
+        arrow_stream: impl Stream<Item = Result<RecordBatch>>,
+    ) -> Result<ImportResult> {
+        // Convert Arrow batches to VectorRecords
+        let vector_stream = self.arrow_importer
+            .convert_stream(arrow_stream)
+            .await?;
+        
+        // Use existing storage engine bulk insert
+        self.storage_engine
+            .bulk_insert_stream(collection_id, vector_stream)
+            .await
+    }
+    
+    // Streaming search results in Arrow format
+    pub async fn search_vectors_arrow(
+        &self,
+        query: &VectorQuery,
+        format: ArrowFormat,
+    ) -> Result<impl Stream<Item = Result<RecordBatch>>> {
+        // Execute search using existing pipeline
+        let results = self.search_vectors_unified(query).await?;
+        
+        // Convert to Arrow for efficient transfer
+        self.arrow_exporter.convert_results(
+            results,
+            format,
+            query.include_vectors,
+            query.include_metadata,
+        ).await
+    }
+}
+
+pub enum ArrowFormat {
+    IPC,        // For streaming/RPC
+    Parquet,    // For file export
+    Feather,    // For DataFrame compatibility
+}
+----
+
+==== Use Cases
+
+1. **Bulk Export Operations**
+   - Export entire collections for backup
+   - Data migration between clusters
+   - Integration with data lakes (export to Parquet)
+
+2. **High-Volume Client Operations**
+   - Python/Java clients using Arrow for zero-copy
+   - Batch processing pipelines
+   - Analytics workloads
+
+3. **Streaming Results**
+   - Large search result sets (>10K vectors)
+   - Continuous query subscriptions
+   - Real-time data feeds
+
+4. **Inter-Service Communication**
+   - Future distributed ProximaDB clusters
+   - Microservice architectures
+   - Cross-datacenter replication
+
+==== Benefits
+
+1. **Zero-Copy Transfer**: Arrow's columnar format enables zero-copy between processes
+2. **Language Interoperability**: Native support in Python, Java, Go, Rust
+3. **Compression**: Built-in compression for network transfer
+4. **Schema Evolution**: Arrow schemas support versioning
+5. **Streaming**: Efficient streaming of large datasets
+
+==== Implementation Priority
+
+* **Phase 1**: Add Arrow export API for bulk operations
+* **Phase 2**: Implement Arrow import for bulk ingestion
+* **Phase 3**: Support streaming search results in Arrow format
+* **Phase 4**: Optimize Python/Java SDKs to use Arrow natively
+
+==== Technical Debt Notes
+
+This enhancement is marked as technical debt because:
+1. Current protobuf serialization works but is suboptimal for bulk operations
+2. Many modern data tools expect Arrow/Parquet format
+3. Would significantly improve Python SDK performance
+4. Enables future distributed architecture
+
 == Conclusion
 
 This unified design provides:
@@ -1306,5 +1441,6 @@ This unified design provides:
 3. **Performance optimization** by minimizing conflicts
 4. **Production readiness** with monitoring and controls
 5. **Future-proof architecture** ready for cloud delegation and cost optimization
+6. **Clear technical debt tracking** for service layer enhancements like Arrow IPC
 
 The system balances automation with manual control, allowing operators to tune behavior based on workload characteristics while maintaining strong consistency guarantees. The architecture is designed to evolve from single-node to distributed cloud deployment without major rewrites, enabling significant cost savings as the system scales.

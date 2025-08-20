@@ -18,7 +18,7 @@ use tracing::{debug, info, warn};
 use crate::core::VectorRecord;
 use crate::core::search::{FilterExpression, ComparisonOperator};
 use crate::storage::engines::sst::{IndexEntry, DataBlock, VectorFormatType};
-use crate::storage::engines::sst::bloom_filter::SstableBloomFilter;
+use crate::storage::engines::row_based::bloom_filter::SstableBloomFilter;
 use crate::storage::engines::sst::optimized_row_filter::{SSTRowFilterEvaluator, SSTBatchFilterEvaluator};
 use crate::storage::engines::sst::readers::unified_sstable_reader::ReadStrategy;
 

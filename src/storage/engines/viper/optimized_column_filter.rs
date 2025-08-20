@@ -223,7 +223,7 @@ impl VIPERColumnFilterEvaluator {
                 .map_err(|e| anyhow::anyhow!("Failed to create filesystem factory: {}", e))?;
             let reader = crate::storage::engines::columnar::UnifiedParquetReader::new(
                 Arc::new(filesystem_factory)
-            );
+            ).await;
             
             // Read all records to extract column data
             // TODO: Optimize to read specific columns only
@@ -356,10 +356,13 @@ impl VIPERSelectiveReader {
             .block_on(crate::storage::persistence::filesystem::FilesystemFactory::new(filesystem_config))
             .expect("Failed to create filesystem factory");
         
-        Self {
-            reader: crate::storage::engines::columnar::UnifiedParquetReader::new(
+        let reader = tokio::runtime::Handle::current()
+            .block_on(crate::storage::engines::columnar::UnifiedParquetReader::new(
                 Arc::new(filesystem_factory)
-            ),
+            ));
+        
+        Self {
+            reader,
         }
     }
     

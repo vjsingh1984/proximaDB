@@ -296,12 +296,12 @@ impl StorageEngineAdapter for PRISMAdapter {
             vectors.push(VectorRecord {
                 id: Some(id.to_string()),
                 vector: vec![0.0; 128], // Placeholder vector
-                metadata: HashMap::new(),
-                timestamp: chrono::Utc::now().timestamp() as i64,
-                updated_at: Some(chrono::Utc::now().timestamp() as i64),
+                metadata: vec![], // Empty metadata items
+                timestamp: chrono::Utc::now().timestamp() as u32,
+                updated_at: Some(chrono::Utc::now().timestamp() as u32),
                 expires_at: None,
                 version: Some(1),
-                similarity: None,
+                quantized_vector: None,
             });
         }
         
@@ -475,12 +475,12 @@ impl StorageEngineAdapter for NOVAAdapter {
             vectors.push(VectorRecord {
                 id: Some(id.to_string()),
                 vector: vec![0.0; 256], // NOVA typically handles larger vectors
-                metadata: HashMap::new(),
-                timestamp: chrono::Utc::now().timestamp() as i64,
-                updated_at: Some(chrono::Utc::now().timestamp() as i64),
+                metadata: vec![], // Empty metadata items
+                timestamp: chrono::Utc::now().timestamp() as u32,
+                updated_at: Some(chrono::Utc::now().timestamp() as u32),
                 expires_at: None,
                 version: Some(1),
-                similarity: None,
+                quantized_vector: None,
             });
         }
         

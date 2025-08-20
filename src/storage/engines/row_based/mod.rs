@@ -2,6 +2,8 @@
 //! 
 //! This module provides common row-based storage functionality used by both SST and SWIFT engines,
 //! eliminating code duplication and ensuring consistent optimizations across row-based storage engines.
+//! 
+//! Now includes SharedSstFormatReader for bandwidth-optimized cloud storage access.
 //!
 //! ## Common Capabilities Provided
 //!
@@ -69,12 +71,14 @@
 //! - **Testing**: Unified test suite for common components
 
 pub mod block_structures;
+pub mod bloom_filter;  // Row-based bloom filter for SST and Swift
 pub mod compression_config;
 pub mod index_structures;
 // Quantization now handled by unified compute module
 pub mod batch_operations;
 pub mod utilities;
 pub mod header_metadata;
+pub mod shared_sst_reader;  // NEW: Shared reader for bandwidth optimization
 
 // Re-exports for common use
 pub use block_structures::{
@@ -101,6 +105,12 @@ pub use header_metadata::{
 pub use utilities::{
     RowBasedUtilities, FilenameGenerator, PathResolver, 
     MemoryEstimator, PerformanceProfiler,
+};
+
+// NEW: Export shared SST reader components
+pub use shared_sst_reader::{
+    SharedSstFormatReader, SstMmapStrategy, SstRegion,
+    BlockInfo, ReaderStatsSummary as SstReaderStats,
 };
 
 use anyhow::Result;
@@ -468,7 +478,7 @@ mod tests {
         );
         
         assert_eq!(config.dimension, 384);
-        assert_eq!(config.storage.as_ref().and_then(|s| s.compression.as_ref()).compression_level, 1);
+        assert_eq!(config.compression.global_compression.algorithm, CompressionAlgorithm::Lz4);
         assert_eq!(config.records_per_block, 4000);
         assert_eq!(config.performance.max_concurrent_operations, 16);
     }
@@ -479,7 +489,7 @@ mod tests {
         
         assert!(config.indexing.bloom_filter_enabled);
         assert!(config.performance.memory_pool_enabled);
-        assert!(config.quantization.enable_progressive_quantization);
+        assert!(config.quantization.enable_progressive);
         assert_eq!(config.indexing.id_index_type, IdIndexType::Hybrid);
     }
     

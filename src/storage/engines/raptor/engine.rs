@@ -6,6 +6,8 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use anyhow::Result;
 use uuid::Uuid;
+use memmap2::MmapOptions;
+use std::fs::File;
 
 use crate::storage::traits::{UnifiedStorageEngine, StorageEngineStrategy, FlushParameters, FlushResult, CompactionParameters, CompactionResult, SearchContext};
 use crate::storage::persistence::filesystem::{FilesystemFactory, FilesystemConfig};
@@ -25,6 +27,15 @@ use crate::index::axis::types::ClusterAssignment;
 use crate::storage::persistence::filesystem::{FileSystem, FileOptions, StorageTier};
 use crate::storage::persistence::filesystem::TierConfig;
 
+// Universal performance optimization imports
+use crate::storage::engines::common::performance_optimization::{
+    UniversalPerformanceOptimizer, UniversalOptimizationStrategy, 
+    UniversalIOConfig, UniversallyOptimized
+};
+use crate::core::compression::{StandardCompression, CompressionAlgorithm, CompressionContext};
+use crate::core::hardware_capabilities::HardwareCapabilities;
+// VectorMemoryPool now managed by universal optimizer
+
 /// Internal search result used during processing
 #[derive(Debug, Clone)]
 struct InternalSearchResult {
@@ -37,12 +48,15 @@ struct InternalSearchResult {
 /// Vector search result for compatibility
 type VectorSearchResult = InternalSearchResult;
 
+// Old optimization structures removed - now using UniversalPerformanceOptimizer
+// The universal optimizer provides all these capabilities through a unified interface
+
 pub struct RaptorEngine {
     config: RaptorConfig,
     collection_id: String,
     base_path: String,
     
-    // Core components
+    // Core components  
     rowgroup_manager: Arc<RwLock<RowGroupManager>>,
     writer: Arc<RwLock<RaptorWriter>>,
     reader: Arc<RaptorReader>,
@@ -58,6 +72,12 @@ pub struct RaptorEngine {
     filesystem: Arc<dyn FileSystem>,
     tier_config: TierConfig,
     file_options: FileOptions,
+    
+    // Universal performance optimization (replaces RAPTOR-specific optimization)
+    universal_optimizer: UniversalPerformanceOptimizer,
+    
+    // Keep hardware capabilities for RAPTOR-specific needs (like SIMD)
+    hardware_capabilities: Arc<HardwareCapabilities>,
     
     // Cache and metadata
     cache: Arc<RwLock<RowGroupCache>>,
@@ -113,7 +133,7 @@ impl RaptorEngine {
         );
         
         let hnsw_manager = Arc::new(RwLock::new(
-            HnswManager::new(config.clone()).await?
+            HnswManager::new(config.clone(), collection_id.clone()).await?
         ));
         
         // Initialize AXIS clustering integration
@@ -148,6 +168,11 @@ impl RaptorEngine {
             EngineMetrics::new()
         ));
         
+        // Initialize universal performance optimization
+        let universal_optimizer = UniversalPerformanceOptimizer::with_strategy(
+            UniversalOptimizationStrategy::Balanced, // RAPTOR uses balanced strategy
+        ).await?;
+
         Ok(Self {
             config,
             collection_id,
@@ -163,6 +188,8 @@ impl RaptorEngine {
             filesystem,
             tier_config,
             file_options,
+            universal_optimizer,
+            hardware_capabilities,
             cache,
             file_registry,
             metrics,
@@ -180,6 +207,84 @@ impl RaptorEngine {
         ];
         
         Arc::new(Schema::new(fields))
+    }
+    
+    // ============================================================================
+    // PERFORMANCE OPTIMIZATION METHODS - DELEGATING TO UNIFIED MODULES
+    // ============================================================================
+    
+    /// Fast read optimization using memory mapping (delegates to universal optimizer)
+    async fn mmap_read_file(&self, file_path: &str) -> Result<Vec<u8>> {
+        // Try memory mapping first
+        if let Some(mmap) = self.universal_optimizer.get_memory_mapped_file(file_path).await? {
+            Ok(mmap.to_vec())
+        } else {
+            // Fallback to optimized reading for cloud storage
+            self.universal_optimizer.read_data_optimized(file_path).await
+        }
+    }
+    
+    /// I/O bandwidth optimization with vectorized reads (delegates to universal optimizer)
+    async fn vectorized_read(&self, file_paths: &[String]) -> Result<Vec<Vec<u8>>> {
+        // Use universal optimizer's parallel operations
+        let read_operations: Vec<_> = file_paths.iter()
+            .map(|path| {
+                let path = path.clone();
+                let optimizer = &self.universal_optimizer;
+                async move {
+                    optimizer.read_data_optimized(&path).await
+                }
+            }).collect();
+        
+        self.universal_optimizer.parallel_operations(
+            read_operations,
+            |operation| operation
+        ).await.map(|results| {
+            results.into_iter().collect::<Result<Vec<_>, _>>()
+        })?
+    }
+    
+    /// Cloud storage cost optimization - determine optimal storage tier (delegates to universal optimizer)
+    async fn optimize_storage_tier(&self, file_path: &str, access_frequency: f32) -> Result<StorageTier> {
+        // Estimate file size for tier optimization decision
+        let estimated_size = 1024 * 1024; // Default 1MB if size unknown
+        self.universal_optimizer.optimize_storage_tier(file_path, estimated_size).await
+    }
+    
+    /// Compression optimization for bandwidth and cost (delegates to universal optimizer)
+    async fn compress_data_optimized(&self, data: &[u8]) -> Result<Vec<u8>> {
+        // Determine tier based on data characteristics
+        let tier = if data.len() > 10 * 1024 * 1024 { // > 10MB
+            StorageTier::Cold
+        } else if data.len() > 1024 * 1024 { // > 1MB
+            StorageTier::Warm
+        } else {
+            StorageTier::Hot
+        };
+        
+        self.universal_optimizer.compress_for_tier(data, tier).await
+    }
+    
+    /// Prefetch optimization for fast reads (delegates to universal optimizer)
+    async fn prefetch_data(&self, file_path: &str) -> Result<()> {
+        // Use universal optimizer's intelligent prefetching
+        self.universal_optimizer.prefetch_data(&[file_path.to_string()]).await
+    }
+    
+    /// SIMD-optimized vector operations (delegates to universal optimizer)
+    async fn simd_vector_distance(&self, query: &[f32], candidates: &[Vec<f32>]) -> Result<Vec<f32>> {
+        // Use universal optimizer's hardware-accelerated distance computation
+        self.universal_optimizer.compute_distances_accelerated(
+            query,
+            candidates,
+            DistanceMetric::Euclidean, // Default metric for RAPTOR
+        ).await
+    }
+    
+    
+    /// Memory pool optimization for vector allocations (delegates to universal optimizer)
+    async fn get_pooled_buffer(&self, size: usize) -> Result<Vec<f32>> {
+        self.universal_optimizer.get_memory_buffer(size).await
     }
     
     async fn insert_batch_internal(&self, records: Vec<VectorRecord>) -> Result<()> {
@@ -984,5 +1089,66 @@ impl RaptorEngine {
             timestamp: timestamp.unwrap_or(0),
             ..Default::default()
         })
+    }
+}
+
+/// Implementation of UniversallyOptimized trait for RAPTOR engine
+#[async_trait]
+impl UniversallyOptimized for RaptorEngine {
+    /// Get the universal performance optimizer instance
+    fn get_universal_optimizer(&self) -> &UniversalPerformanceOptimizer {
+        &self.universal_optimizer
+    }
+    
+    /// RAPTOR-specific optimization setup
+    async fn setup_engine_optimizations(&self) -> Result<()> {
+        // RAPTOR-specific optimizations for columnar analytics with clustering
+        tracing::info!("🔧 RAPTOR Engine: Setting up universal performance optimizations");
+        
+        // Initialize RAPTOR-specific optimizations
+        let config = self.universal_optimizer.get_config();
+        tracing::debug!("   Cache size: {}MB", config.cache_size_mb);
+        tracing::debug!("   Parallel operations: {}", config.parallel_operations);
+        tracing::debug!("   Prefetching enabled: {}", config.enable_prefetching);
+        tracing::debug!("   Memory mapping enabled: {}", config.enable_memory_mapping);
+        
+        // RAPTOR is ready for high-performance columnar operations
+        tracing::info!("✅ RAPTOR Engine: Universal optimizations configured for columnar analytics");
+        Ok(())
+    }
+    
+    /// RAPTOR-specific performance metrics
+    async fn collect_performance_metrics(&self) -> Result<HashMap<String, serde_json::Value>> {
+        let mut metrics = HashMap::new();
+        
+        // Basic RAPTOR metrics
+        let engine_metrics = self.metrics.read().await;
+        metrics.insert("raptor_total_rows".to_string(), serde_json::Value::Number(
+            serde_json::Number::from(engine_metrics.total_rows)
+        ));
+        metrics.insert("raptor_total_files".to_string(), serde_json::Value::Number(
+            serde_json::Number::from(engine_metrics.total_files)
+        ));
+        metrics.insert("raptor_memory_usage_bytes".to_string(), serde_json::Value::Number(
+            serde_json::Number::from(engine_metrics.memory_usage_bytes)
+        ));
+        
+        // Universal optimizer metrics
+        let strategy = self.universal_optimizer.get_strategy();
+        metrics.insert("universal_optimization_strategy".to_string(), 
+            serde_json::Value::String(format!("{:?}", strategy)));
+        
+        let config = self.universal_optimizer.get_config();
+        metrics.insert("universal_cache_size_mb".to_string(), serde_json::Value::Number(
+            serde_json::Number::from(config.cache_size_mb)
+        ));
+        metrics.insert("universal_parallel_operations".to_string(), serde_json::Value::Number(
+            serde_json::Number::from(config.parallel_operations)
+        ));
+        metrics.insert("universal_prefetching_enabled".to_string(), serde_json::Value::Bool(
+            config.enable_prefetching
+        ));
+        
+        Ok(metrics)
     }
 }

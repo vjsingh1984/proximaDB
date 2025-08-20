@@ -48,7 +48,7 @@ pub struct DistanceTableCache {
 }
 
 /// Cache statistics
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub struct CacheStats {
     pub hits: u64,
     pub misses: u64,
@@ -134,7 +134,7 @@ impl DistanceTableCache {
     /// Get cache statistics
     pub async fn get_statistics(&self) -> CacheStats {
         let stats = self.stats.read().await;
-        let mut result = stats.clone();
+        let mut result = (*stats).clone();
         
         if result.total_requests > 0 {
             result.hit_rate_percent = (result.hits as f32 / result.total_requests as f32) * 100.0;

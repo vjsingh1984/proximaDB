@@ -422,8 +422,8 @@ impl ProgressiveRefinementPipeline {
                 query_vector,
                 &[quantized_data],
                 distance_metric,
-                &SelectedFormat::Int8,
-            ).await?;
+                &SelectedFormat::INT8,
+            ).await.map_err(|e| AdapterError::DistanceComputation(format!("INT8 distance computation failed: {}", e)))?;
             
             if let Some(result) = results.first() {
                 scored_candidates.push((candidate.clone(), result.similarity));
@@ -471,8 +471,8 @@ impl ProgressiveRefinementPipeline {
                 query_vector,
                 &[quantized_data],
                 distance_metric,
-                &SelectedFormat::PQ { segments, bits },
-            ).await?;
+                &SelectedFormat::PQ,
+            ).await.map_err(|e| AdapterError::DistanceComputation(format!("PQ distance computation failed: {}", e)))?;
             
             if let Some(result) = results.first() {
                 scored_candidates.push((candidate.clone(), result.similarity));
@@ -516,12 +516,13 @@ impl ProgressiveRefinementPipeline {
                 self.convert_to_fp32(&candidate.data)?
             };
             
-            // Compute full precision distance
-            let result = self.distance_engine.compute_similarity(
+            // Compute full precision distance using UnifiedDistanceCompute
+            // This handles all 13 supported distance metrics and returns proper SimilarityResult
+            let result = self.distance_engine.calculate_distance(
                 query_vector,
                 &candidate_vector,
                 distance_metric,
-            ).map_err(|e| AdapterError::DistanceComputation(format!("FP32 distance computation failed: {}", e)))?;
+            );
             
             scored_candidates.push((candidate.clone(), result.rank_value));
             distance_calculations += 1;
@@ -577,11 +578,16 @@ impl ProgressiveRefinementPipeline {
         // Convert to INT8 format
         let int8_data: Vec<i8> = data.iter().map(|&b| b as i8).collect();
         
-        Ok(QuantizedVectorData::Int8(Int8VectorData {
-            values: int8_data,
-            scale: 1.0,
-            zero_point: 0,
-        }))
+        Ok(QuantizedVectorData {
+            fp32: None,
+            binary: None,
+            int8: Some(Int8VectorData {
+                values: int8_data,
+                scale: 1.0,
+                zero_point: 0,
+            }),
+            pq: None,
+        })
     }
     
     fn convert_to_quantized_pq(&self, data: &[u8], segments: usize, _bits: usize) -> AdapterResult<crate::compute::distance_computation::QuantizedVectorData> {
@@ -590,11 +596,16 @@ impl ProgressiveRefinementPipeline {
         // Convert to PQ format - simplified implementation
         let codes: Vec<u8> = data.iter().take(segments).copied().collect();
         
-        Ok(QuantizedVectorData::PQ(PQVectorData {
-            codes,
-            codebook: vec![vec![0.0; 8]; segments], // Placeholder codebook
-            codebook_hash: 0, // Placeholder hash
-        }))
+        Ok(QuantizedVectorData {
+            fp32: None,
+            binary: None,
+            int8: None,
+            pq: Some(PQVectorData {
+                codes,
+                codebook: vec![vec![0.0; 8]; segments], // Placeholder codebook
+                codebook_hash: 0, // Placeholder hash
+            }),
+        })
     }
     
     fn convert_to_fp32(&self, data: &[u8]) -> AdapterResult<Vec<f32>> {

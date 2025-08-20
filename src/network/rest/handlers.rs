@@ -467,6 +467,7 @@ pub struct CollectionResponse {
     pub affected_count: i64,
     pub total_count: Option<i64>,
     pub metadata: HashMap<String, String>,
+    pub error_message: Option<String>,
     pub error_code: Option<String>,
     pub processing_time_us: i64,
 }
@@ -614,6 +615,7 @@ pub struct VectorOperationResponse {
     pub metrics: RestOperationMetrics,
     pub results: Option<Vec<SearchVectorRecord>>,
     pub vector_ids: Vec<String>,
+    pub error_message: Option<String>,
     pub error_code: Option<String>,
 }
 
@@ -798,7 +800,7 @@ pub async fn collection_operation(
         affected_count: proto_response.affected_count,
         total_count: proto_response.total_count,
         metadata: proto_response.metadata.into_iter().collect(),
-        error_message: None,
+        error_message: proto_response.error_message,
         error_code: proto_response.error_code,
         processing_time_us: proto_response.processing_time_us,
     };
@@ -879,7 +881,7 @@ pub async fn vector_batch(
         },
         results: None,
         vector_ids: proto_response.vector_ids,
-        error_message: None,
+        error_message: proto_response.error_message,
         error_code: proto_response.error_code,
     };
     
@@ -948,7 +950,7 @@ pub async fn vector_search(
         },
         results: Some(results),
         vector_ids: vec![],
-        error_message: None,
+        error_message: proto_response.error_message,
         error_code: proto_response.error_code,
     };
     
@@ -1726,7 +1728,7 @@ pub async fn delete_collection(
         affected_count: proto_response.affected_count,
         total_count: proto_response.total_count,
         metadata: proto_response.metadata.into_iter().collect(),
-        error_message: None,
+        error_message: proto_response.error_message,
         error_code: proto_response.error_code,
         processing_time_us: proto_response.processing_time_us,
     };
@@ -1814,7 +1816,7 @@ pub async fn delete_vectors(
         },
         results: None,
         vector_ids: proto_response.vector_ids,
-        error_message: None,
+        error_message: proto_response.error_message,
         error_code: proto_response.error_code,
     };
     

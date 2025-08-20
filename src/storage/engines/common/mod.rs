@@ -10,8 +10,18 @@ pub mod metadata_filters;
 pub mod compression_common;
 pub mod search_modes;
 pub mod progressive_search;
+/// Universal performance optimization module for all storage engines
+pub mod performance_optimization;
+
+/// Tiered caching system for storage engines
+pub mod tiered_cache;
+
+/// Collection-partitioned caching system for efficient similarity search
+pub mod collection_partitioned_cache;
+
+/// Integrated cache system combining tiered and collection-partitioned approaches
+pub mod integrated_cache;
 // TODO: Create these modules when needed:
-// pub mod performance_config;
 // pub mod validation_common;
 // pub mod statistics_common;
 // pub mod batch_common;
@@ -36,11 +46,32 @@ pub use search_modes::{
     UniversalSearchMode, SearchCapabilities, SearchOptimizations,
     CandidateRecord, SearchCandidate, ProgressiveSearchResult,
 };
-// TODO: Re-enable these exports when modules are created:
-// pub use performance_config::{
-//     UniversalPerformanceConfig, PerformanceCapabilities, ResourceRequirements,
-//     OptimizationHints, HardwareOptimizations,
-// };
+
+// Universal performance optimization exports
+pub use performance_optimization::{
+    UniversalPerformanceOptimizer, UniversalOptimizationStrategy, UniversalIOConfig,
+    UniversallyOptimized, AccessStats,
+};
+
+// Tiered cache exports
+pub use tiered_cache::{
+    TieredCache, TieredCacheConfig, CacheItemType, CacheKey,
+    MemoryTierConfig, DiskTierConfig, EvictionConfig, PrefetchConfig,
+    CacheStats as TieredCacheStats,
+};
+
+// Collection-partitioned cache exports
+pub use collection_partitioned_cache::{
+    CollectionPartitionedCache, CollectionCacheConfig, CollectionPartition,
+    RegionType, CacheStatsSummary, CollectionEvictionPolicy,
+};
+
+// Integrated cache exports - THIS IS THE RECOMMENDED CACHE SYSTEM
+pub use integrated_cache::{
+    IntegratedCache, IntegratedCacheConfig, MemoryConfig, DiskConfig,
+    StorageHints, RegionType as CacheRegionType, FileRegion,
+    CacheStatsSummary as IntegratedCacheStats,
+};
 // pub use validation_common::{
 //     UniversalValidationConfig, ValidationCapabilities, ValidationReport,
 //     RecordValidationError, IntegrityCheck,

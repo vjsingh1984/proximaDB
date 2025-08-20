@@ -166,7 +166,7 @@ fn default_affinity() -> bool {
 impl Default for AssignmentConfig {
     fn default() -> Self {
         Self {
-            // strategy removed -  default_assignment_strategy(),
+            strategy: default_assignment_strategy(),
             affinity: default_affinity(),
         }
     }
@@ -453,7 +453,7 @@ impl Default for CompactionConfig {
             l0_size_threshold_mb: default_l0_size_threshold_mb(),
             level_multiplier: default_level_multiplier(),
             max_levels: default_max_levels(),
-            // strategy removed -  default_compaction_strategy(),
+            strategy: default_compaction_strategy(),
             target_file_size_mb: default_target_file_size_mb(),
         }
     }

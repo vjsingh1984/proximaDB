@@ -101,6 +101,11 @@ impl Default for SearchParams {
             enable_metadata_filtering_hint: Some(true),
             custom_hints: None,
             requires_ordering: None,
+            runtime_hints: None,
+            enable_progressive_search: Some(false),
+            progressive_scenario: None,
+            progressive_recalls: None,
+            optimization_hint: None,
         }
     }
 }

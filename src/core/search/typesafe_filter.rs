@@ -55,7 +55,7 @@ impl TypeSafeFilterEvaluator {
                 let expected_type = self.column_types.get(field).copied().unwrap_or(FilterableDataType::FilterableString);
                 
                 // Get the actual metadata value
-                let metadata_item = metadata.get(field);
+                let metadata_item = metadata.get(field.as_str());
                 
                 match (metadata_item, operator) {
                     (Some(item), ComparisonOperator::Equals) => {
@@ -299,7 +299,6 @@ fn extract_conditions_recursive(
                 
                 if let Some(tv) = typed_value {
                     conditions.insert(field.clone(), TypedCondition {
-                        data_type,
                         operator: operator.clone(),
                         value: tv,
                     });

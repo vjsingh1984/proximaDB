@@ -50,7 +50,7 @@ pub struct SstableBloomFilter {
 
 /// Serializable version of SstableBloomFilter to work around bincode limitations
 #[derive(Debug, Serialize, Deserialize)]
-struct SerializedSstableBloomFilter {
+pub struct SerializedSstableBloomFilter {
     // BloomFilterConfig fields flattened to avoid Option<f64> issues
     // strategy removed -  u8,
     bits_per_key: u32,

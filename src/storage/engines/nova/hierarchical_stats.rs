@@ -545,6 +545,86 @@ impl Default for SelectivityHints {
     }
 }
 
+/// Basic zone maps for simplified NOVA design (optimized version)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BasicZoneMaps {
+    /// Per-dimension range statistics  
+    pub dimension_ranges: Vec<DimensionRange>,
+    
+    /// Total vectors covered by these zone maps
+    pub total_vectors: u64,
+    
+    /// When these zone maps were created
+    pub creation_time: chrono::DateTime<chrono::Utc>,
+}
+
+/// Range information for a single dimension
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DimensionRange {
+    /// Dimension index
+    pub dimension_index: usize,
+    
+    /// Minimum value in this dimension
+    pub min_value: f32,
+    
+    /// Maximum value in this dimension  
+    pub max_value: f32,
+    
+    /// Selectivity (0.0-1.0) for this dimension
+    pub selectivity: f32,
+}
+
+/// Simplified enhanced row group stats for the optimized NOVA design
+impl EnhancedRowGroupStats {
+    /// Create basic enhanced stats with simplified fields (optimized design)
+    pub fn create_basic(
+        row_group_id: u32,
+        vector_count: u64,
+        dimension: usize,
+        min_values: Vec<f32>,
+        max_values: Vec<f32>,
+        centroid: Vec<f32>,
+        null_counts: Vec<u64>,
+        estimated_selectivity: f32,
+        compression_ratio: f32,
+        access_frequency: u64,
+    ) -> Self {
+        Self {
+            row_group_id,
+            parquet_metadata: None,
+            vector_zone_map: ZoneMap {
+                min_values,
+                max_values,
+                centroid,
+                variance: vec![0.0; dimension], // Simplified - not computed in basic version
+                norm_bounds: (0.0, 0.0), // Simplified - not computed in basic version
+                dimension,
+            },
+            quantized_selectivity: QuantizedSelectivity {
+                binary_effectiveness: estimated_selectivity * 0.8,
+                int8_accuracy: estimated_selectivity * 0.9,
+                pq_quality: estimated_selectivity * 0.85,
+                progressive_efficiency: estimated_selectivity * 0.75,
+            },
+            compression_ratio,
+            search_cost_estimate: SearchCostEstimate {
+                io_cost: vector_count as f32 * 0.1,
+                cpu_cost: vector_count as f32 * 0.05,
+                memory_cost: vector_count as f32 * 0.02,
+                estimated_latency_ms: vector_count as f32 * 0.001, // 1μs per vector estimate
+                confidence: 0.7, // Medium confidence for basic stats
+            },
+            access_stats: AccessStats {
+                access_count: 0,
+                last_access: chrono::Utc::now(),
+                avg_selectivity: estimated_selectivity,
+                cache_hit_rate: 0.0,
+                access_frequency: access_frequency as f32,
+            },
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

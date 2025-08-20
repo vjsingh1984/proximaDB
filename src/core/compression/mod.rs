@@ -24,10 +24,10 @@ mod parquet {
         pub enum Compression {
             UNCOMPRESSED,
             SNAPPY,
-            GZIP(u32),
+            GZIP(GzipLevel),
             LZ4,
-            ZSTD(i32),
-            BROTLI(u32),
+            ZSTD(ZstdLevel),
+            BROTLI(BrotliLevel),
             LZO,
         }
         
@@ -38,6 +38,11 @@ mod parquet {
                 Ok(Self(level))
             }
         }
+        impl Default for GzipLevel {
+            fn default() -> Self {
+                Self(6)  // Default gzip compression level
+            }
+        }
         
         #[derive(Debug, Clone)]
         pub struct ZstdLevel(i32);
@@ -46,12 +51,22 @@ mod parquet {
                 Ok(Self(level))
             }
         }
+        impl Default for ZstdLevel {
+            fn default() -> Self {
+                Self(3)  // Default zstd compression level
+            }
+        }
         
         #[derive(Debug, Clone)]
         pub struct BrotliLevel(u32);
         impl BrotliLevel {
             pub fn try_new(level: u32) -> Result<Self, String> {
                 Ok(Self(level))
+            }
+        }
+        impl Default for BrotliLevel {
+            fn default() -> Self {
+                Self(6)  // Default brotli compression level
             }
         }
     }
@@ -138,9 +153,7 @@ pub fn map_to_parquet_compression(algorithm: &CompressionAlgorithm) -> Option<pa
         CompressionAlgorithm::Mixed => {
             // Mixed compression defaults to ZSTD level 3 for Parquet
             // Per-column optimization is handled at the engine level
-            Some(parquet::basic::Compression::ZSTD(
-                parquet::basic::ZstdLevel::try_new(3).unwrap_or_default()
-            ))
+            Some(parquet::basic::Compression::ZSTD(Default::default()))
         }
         // These are not supported by Arrow Parquet - fallback to Snappy
         CompressionAlgorithm::Bzip2 | 
@@ -421,7 +434,7 @@ pub fn create_parquet_writer_properties(
     let builder = WriterProperties::builder();
     
     // Apply compression with level if supported
-    let builder = match (compression, level) {
+    let builder = match (&compression, level) {
         (parquet::basic::Compression::GZIP(_), Some(level)) => {
             let gzip_level = parquet::basic::GzipLevel::try_new(level as u32)
                 .map_err(|e| anyhow!("Invalid GZIP level {}: {}", level, e))?;
@@ -442,7 +455,8 @@ pub fn create_parquet_writer_properties(
         }
     };
     
-    Ok(builder.build())
+    builder.build()
+        .map_err(|e| anyhow!("Failed to build WriterProperties: {}", e))
 }
 
 /// Column data types for mixed compression optimization
@@ -523,14 +537,12 @@ pub fn detect_column_type(column_name: &str, context: &CompressionContext) -> Co
 pub fn create_mixed_parquet_writer_properties() -> Result<WriterProperties> {
     // Mixed compression uses ZSTD level 3 as the default for Parquet
     // Individual columns can override this through per-column settings
-    let compression = parquet::basic::Compression::ZSTD(
-        parquet::basic::ZstdLevel::try_new(3)
-            .map_err(|e| anyhow!("Invalid ZSTD level 3: {}", e))?
-    );
+    let compression = parquet::basic::Compression::ZSTD(Default::default());
     
     let properties = WriterProperties::builder()
         .set_compression(compression)
-        .build();
+        .build()
+        .map_err(|e| anyhow!("Failed to build WriterProperties: {}", e))?;
     
     Ok(properties)
 }

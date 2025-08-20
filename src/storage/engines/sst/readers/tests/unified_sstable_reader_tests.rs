@@ -7,7 +7,7 @@ mod tests {
     use crate::storage::engines::sst::readers::unified_sstable_reader::{
         UnifiedSstableReader, CollectionContext,
     };
-    use crate::storage::engines::sst::bloom_filter::{
+    use crate::storage::engines::row_based::bloom_filter::{
         MetadataBloomFilter,
     };
     use crate::core::config::{BloomFilterConfig, SstConfig};

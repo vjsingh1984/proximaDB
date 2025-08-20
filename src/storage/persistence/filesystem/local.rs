@@ -265,6 +265,42 @@ impl FileSystem for LocalFileSystem {
             },
         }
     }
+    
+    async fn get_mmap(&self, path: &str) -> FsResult<Option<memmap2::Mmap>> {
+        use memmap2::MmapOptions;
+        use std::fs::File;
+        
+        // Extract path from URL
+        let path_str = self.resolve_path(path)?;
+        let resolved_path = PathBuf::from(path_str);
+        
+        // Open file for memory mapping (synchronous operation)
+        let file = File::open(&resolved_path)
+            .map_err(|e| match e.kind() {
+                std::io::ErrorKind::NotFound => FilesystemError::NotFound(
+                    format!("File not found for mmap: {}", path)
+                ),
+                std::io::ErrorKind::PermissionDenied => FilesystemError::PermissionDenied(
+                    resolved_path.display().to_string(),
+                ),
+                _ => FilesystemError::Io(e),
+            })?;
+        
+        // Create memory map
+        // Safety: We're creating a read-only mmap which is safe for concurrent access
+        let mmap = unsafe {
+            MmapOptions::new()
+                .map(&file)
+                .map_err(|e| FilesystemError::Io(e))?
+        };
+        
+        tracing::debug!("Created memory map for file: {} (size: {} bytes)", path, mmap.len());
+        Ok(Some(mmap))
+    }
+    
+    fn supports_mmap(&self) -> bool {
+        true // Local filesystem supports memory mapping
+    }
 
     async fn write(&self, path: &str, data: &[u8], options: Option<FileOptions>) -> FsResult<()> {
         let path_str = self.resolve_path(path)?;

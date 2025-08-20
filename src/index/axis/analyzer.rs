@@ -16,7 +16,7 @@ use super::{
     AccessFrequencyMetrics, CollectionCharacteristics, MetadataComplexity, PerformanceMetrics,
     QueryDistribution, QueryPatternAnalysis, QueryPatternType, TemporalPattern,
 };
-use crate::core::{avro_unified::VectorRecord, String};
+use crate::core::{service_types::VectorRecord, String};
 
 /// Analyzer for collection characteristics and behavior patterns
 pub struct CollectionAnalyzer {

@@ -220,9 +220,11 @@ impl ConfigLoader {
         config.storage.wal_config.write_buffer_directory = 
             resolve_path(&config.storage.wal_config.write_buffer_directory)?;
         
-        // Resolve SST data directory
-        config.storage.sst_config.data_directory = 
-            resolve_path(&config.storage.sst_config.data_directory)?;
+        // Resolve SST data directory if configured
+        if let Some(ref mut sst_config) = config.storage.sst_config {
+            sst_config.data_directory = 
+                resolve_path(&sst_config.data_directory)?;
+        }
         
         // Resolve VIPER data directory if configured
         if let Some(ref mut viper_config) = config.storage.viper_config {

@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 use crate::core::{VectorRecord, compression::CompressionAlgorithm};
-use crate::storage::engines::sst::bloom_filter::SstableBloomFilter;
+use crate::storage::engines::row_based::bloom_filter::SstableBloomFilter;
 // Quantization now handled by unified compute module
 
 /// Quantized section for hierarchical storage
@@ -40,9 +40,6 @@ pub struct RowBasedDataBlock {
     /// - u16 (65,536) would be insufficient for large files
     /// - u32 provides conservative headroom even though files rarely exceed 10GB in practice
     pub block_id: u32,
-    
-    /// Sequence number for ordering (used by SST and Swift)
-    pub sequence_number: u64,
     
     /// Data organization
     pub records: Vec<VectorRecord>,
@@ -306,7 +303,6 @@ impl RowBasedDataBlock {
         
         Self {
             block_id,
-            sequence_number: 0, // Will be set by writer
             records: records.clone(),
             quantized_vectors: None,
             quantization_level: None,
