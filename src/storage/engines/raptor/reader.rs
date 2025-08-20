@@ -68,6 +68,7 @@ use roaring::RoaringBitmap;
 use crate::core::storage::compression::{CompressionConfig, CompressionAlgorithm};
 use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
 use crate::storage::persistence::filesystem::{FileSystem, FilesystemFactory, FilesystemConfig};
+use crate::core::hardware_capabilities::HardwareCapabilities;
 // INTEGRATION: RAPTOR uses Arrow IPC format (not Parquet), but can leverage columnar concepts
 use crate::storage::engines::common::zero_copy_io_system::ZeroCopyIOSystem;
 use super::{RaptorConfig, RowGroup};
@@ -92,46 +93,8 @@ pub struct RaptorReader {
     zero_copy_system: Arc<ZeroCopyIOSystem>,
     collection_id: String,
     
-    // SIMD support detection
-    simd_support: SimdSupport,
-}
-
-#[derive(Clone, Copy)]
-enum SimdSupport {
-    #[cfg(target_arch = "x86_64")]
-    AVX512,
-    #[cfg(target_arch = "x86_64")]
-    AVX2,
-    #[cfg(target_arch = "x86_64")]
-    SSE,
-    #[cfg(target_arch = "aarch64")]
-    NEON,
-    None,
-}
-
-impl SimdSupport {
-    fn detect() -> Self {
-        #[cfg(target_arch = "x86_64")]
-        {
-            if is_x86_feature_detected!("avx512f") {
-                return SimdSupport::AVX512;
-            }
-            if is_x86_feature_detected!("avx2") {
-                return SimdSupport::AVX2;
-            }
-            if is_x86_feature_detected!("sse4.2") {
-                return SimdSupport::SSE;
-            }
-        }
-        
-        #[cfg(target_arch = "aarch64")]
-        {
-            // NEON is mandatory on AArch64
-            return SimdSupport::NEON;
-        }
-        
-        SimdSupport::None
-    }
+    // Hardware capabilities from global detection
+    hardware_caps: Arc<HardwareCapabilities>,
 }
 
 impl RaptorReader {
@@ -167,6 +130,9 @@ impl RaptorReader {
         // Initialize distance calculator using unified implementation
         let distance_calculator = Arc::new(UnifiedDistanceCompute::default());
         
+        // Get hardware capabilities (already detected at startup)
+        let hardware_caps = HardwareCapabilities::get();
+        
         Ok(Self {
             base_path,
             config,
@@ -178,7 +144,7 @@ impl RaptorReader {
             prefetch_queue: Arc::new(RwLock::new(Vec::new())),
             zero_copy_system,
             collection_id,
-            simd_support: SimdSupport::detect(),
+            hardware_caps,
         })
     }
     
@@ -872,13 +838,17 @@ impl RaptorReader {
                     .and_then(|d| d.iter().position(|v| v == value))
                     .ok_or_else(|| anyhow::anyhow!("Value not in dictionary"))?;
                 
-                // Use SIMD based on platform
-                match self.simd_support {
-                    #[cfg(target_arch = "x86_64")]
-                    SimdSupport::AVX2 => self.simd_eq_avx2(indices, target_idx as u8),
-                    #[cfg(target_arch = "aarch64")]
-                    SimdSupport::NEON => self.simd_eq_neon(indices, target_idx as u8),
-                    _ => self.scalar_eq(indices, target_idx as u8),
+                // Use SIMD based on detected hardware capabilities
+                if self.hardware_caps.has_avx512() {
+                    self.simd_eq_avx512(indices, target_idx as u8)
+                } else if self.hardware_caps.has_avx2() {
+                    self.simd_eq_avx2(indices, target_idx as u8)
+                } else if self.hardware_caps.has_sse4() {
+                    self.simd_eq_sse4(indices, target_idx as u8)
+                } else if self.hardware_caps.has_neon() {
+                    self.simd_eq_neon(indices, target_idx as u8)
+                } else {
+                    self.scalar_eq(indices, target_idx as u8)
                 }
             },
             
@@ -898,8 +868,9 @@ impl RaptorReader {
         }
     }
     
-    #[cfg(target_arch = "aarch64")]
     fn simd_eq_neon(&self, indices: &[u8], target: u8) -> Result<RoaringBitmap> {
+        #[cfg(target_arch = "aarch64")]
+        {
         use std::arch::aarch64::*;
         
         let mut bitmap = RoaringBitmap::new();
@@ -930,10 +901,57 @@ impl RaptorReader {
         }
         
         Ok(bitmap)
+        }
+        
+        #[cfg(not(target_arch = "aarch64"))]
+        {
+            // Fallback to scalar for non-ARM platforms
+            self.scalar_eq(indices, target)
+        }
     }
     
-    #[cfg(target_arch = "x86_64")]
+    fn simd_eq_avx512(&self, indices: &[u8], target: u8) -> Result<RoaringBitmap> {
+        #[cfg(target_arch = "x86_64")]
+        {
+        use std::arch::x86_64::*;
+        
+        let mut bitmap = RoaringBitmap::new();
+        unsafe {
+            let target_vec = _mm512_set1_epi8(target as i8);
+            
+            for (chunk_idx, chunk) in indices.chunks_exact(64).enumerate() {
+                let data = _mm512_loadu_si512(chunk.as_ptr() as *const i32);
+                let cmp = _mm512_cmpeq_epi8_mask(data, target_vec);
+                
+                // Set bits based on mask
+                for i in 0..64 {
+                    if (cmp >> i) & 1 == 1 {
+                        bitmap.insert((chunk_idx * 64 + i) as u32);
+                    }
+                }
+            }
+        }
+        
+        // Handle remaining elements
+        let remainder_start = indices.len() - indices.len() % 64;
+        for (i, &val) in indices.iter().skip(remainder_start).enumerate() {
+            if val == target {
+                bitmap.insert((remainder_start + i) as u32);
+            }
+        }
+        
+        Ok(bitmap)
+        }
+        
+        #[cfg(not(target_arch = "x86_64"))]
+        {
+            self.scalar_eq(indices, target)
+        }
+    }
+    
     fn simd_eq_avx2(&self, indices: &[u8], target: u8) -> Result<RoaringBitmap> {
+        #[cfg(target_arch = "x86_64")]
+        {
         use std::arch::x86_64::*;
         
         let mut bitmap = RoaringBitmap::new();
@@ -962,6 +980,52 @@ impl RaptorReader {
         }
         
         Ok(bitmap)
+        }
+        
+        #[cfg(not(target_arch = "x86_64"))]
+        {
+            self.scalar_eq(indices, target)
+        }
+    }
+    
+    fn simd_eq_sse4(&self, indices: &[u8], target: u8) -> Result<RoaringBitmap> {
+        #[cfg(target_arch = "x86_64")]
+        {
+        use std::arch::x86_64::*;
+        
+        let mut bitmap = RoaringBitmap::new();
+        unsafe {
+            let target_vec = _mm_set1_epi8(target as i8);
+            
+            for (chunk_idx, chunk) in indices.chunks_exact(16).enumerate() {
+                let data = _mm_loadu_si128(chunk.as_ptr() as *const __m128i);
+                let cmp = _mm_cmpeq_epi8(data, target_vec);
+                let mask = _mm_movemask_epi8(cmp) as u16;
+                
+                // Set bits based on mask
+                for i in 0..16 {
+                    if (mask >> i) & 1 == 1 {
+                        bitmap.insert((chunk_idx * 16 + i) as u32);
+                    }
+                }
+            }
+        }
+        
+        // Handle remaining elements
+        let remainder_start = indices.len() - indices.len() % 16;
+        for (i, &val) in indices.iter().skip(remainder_start).enumerate() {
+            if val == target {
+                bitmap.insert((remainder_start + i) as u32);
+            }
+        }
+        
+        Ok(bitmap)
+        }
+        
+        #[cfg(not(target_arch = "x86_64"))]
+        {
+            self.scalar_eq(indices, target)
+        }
     }
     
     fn scalar_eq(&self, indices: &[u8], target: u8) -> Result<RoaringBitmap> {
