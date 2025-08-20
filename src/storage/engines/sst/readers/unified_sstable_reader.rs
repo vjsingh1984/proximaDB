@@ -44,32 +44,37 @@ type BloomFilter = SstableBloomFilter;
 /// SSTable reading strategies for different access patterns
 #[derive(Debug, Clone)]
 pub enum SstableReadingStrategy {
-    /// Full scan of all blocks
+    /// Selective reads via cache with range optimization for normal queries
+    SelectiveWithCache {
+        use_range_reads: bool,
+        enable_bloom_filters: bool,
+        enable_cache_lookup: bool,
+        enable_metadata_cache: bool,
+    },
+    /// Full read strategy for compaction operations - avoid cache pollution
+    CompactionFullRead {
+        skip_bloom_filters: bool,
+        skip_indexes: bool,
+        bypass_write_cache: bool,
+        use_disk_cache_if_exists: bool,
+        sequential_io: bool,
+    },
+    /// Legacy strategies for backward compatibility
     FullScan {
         use_block_cache: bool,
     },
-    /// Scan specific range of blocks using index
     IndexRangeScan {
         start_block: usize,
         end_block: usize,
         use_bloom_filter: bool,
     },
-    /// Filter blocks based on metadata criteria
     MetadataFiltered {
         selected_blocks: Vec<usize>,
         skip_bloom_check: bool,
     },
-    /// Hybrid strategy combining multiple approaches
     Hybrid {
         primary_strategy: Box<SstableReadingStrategy>,
         fallback_blocks: Vec<usize>,
-    },
-    /// Optimized for compaction operations
-    CompactionOptimized {
-        skip_bloom_filters: bool,
-        skip_indexes: bool,
-        bypass_cache: bool,
-        sequential_io: bool,
     },
 }
 // NOTE: Removed specialized cache imports - using only zero-copy system for caching
