@@ -21,6 +21,10 @@ pub mod zero_copy_reader_integration;
 /// Used by SST, SWIFT, RAPTOR, and PRISM for efficient vector storage
 pub mod fastlanes_encoding;
 
+/// Tensor-specific encoding operations (sparse tensors, quantization, transpose)
+/// Re-exported through fastlanes_encoding for consolidated access
+pub mod fastlanes_tensor_encoding;
+
 // Legacy cache module removed - use zero_copy_io_system instead
 
 // UNIFIED ZERO-COPY I/O SYSTEM - Complete intelligent cloud storage solution

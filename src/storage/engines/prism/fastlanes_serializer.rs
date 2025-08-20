@@ -3,11 +3,11 @@ use std::collections::HashMap;
 use serde::{Serialize, Deserialize};
 
 use crate::core::VectorRecord;
-use crate::storage::engines::common::fastlanes_tensor_encoding::{
+use crate::storage::engines::common::fastlanes_encoding::{
     FastLanesEncoder, FastLanesDecoder, FastLanesScheme, markers
 };
-use crate::storage::engines::common::fastlanes_tensor_encoding;
-use crate::compute::quantization::unified::QuantizationType;
+use crate::storage::engines::common::fastlanes_encoding;
+use crate::storage::engines::common::fastlanes_encoding::QuantizationType;
 
 /// PRISM Multi-Resolution Serializer with FastLanes
 /// 
@@ -301,8 +301,8 @@ impl PrismFastLanesSerializer {
     }
 
     fn encode_pq(&self, records: &[VectorRecord], bits: usize) -> Result<Vec<u8>> {
-        // Use common PQ encoding from fastlanes_tensor_encoding
-        fastlanes_tensor_encoding::encode_quantized_tensor(
+        // Use common PQ encoding from fastlanes_encoding
+        fastlanes_encoding::encode_quantized_tensor(
             &records.iter().flat_map(|r| r.vector.clone()).collect::<Vec<_>>(),
             records.len(),
             records[0].vector.len(),
@@ -387,7 +387,7 @@ impl PrismFastLanesSerializer {
 
     fn decode_pq(&self, data: &[u8], num_vectors: usize, dimension: usize, bits: usize) -> Result<Vec<Vec<f32>>> {
         // Use common PQ decoding
-        let (flattened, _, _, _) = fastlanes_tensor_encoding::decode_quantized_tensor(data)?;
+        let (flattened, _, _, _) = fastlanes_encoding::decode_quantized_tensor(data)?;
         
         let mut vectors = Vec::with_capacity(num_vectors);
         for i in 0..num_vectors {

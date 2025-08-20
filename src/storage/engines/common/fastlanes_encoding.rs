@@ -550,6 +550,9 @@ pub fn analyze_and_choose_scheme(data: &[i64]) -> FastLanesScheme {
     }
 }
 
+// Re-export everything from tensor encoding for consolidated access
+pub use super::fastlanes_tensor_encoding::*;
+
 #[cfg(test)]
 mod tests {
     use super::*;

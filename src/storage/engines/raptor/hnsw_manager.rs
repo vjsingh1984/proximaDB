@@ -7,8 +7,8 @@ use std::cmp::Ordering;
 use crate::core::VectorRecord;
 use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
 use crate::compute::distance_computation::DistanceMetric;
-use crate::storage::engines::common::fastlanes_tensor_encoding::{FastLanesEncoder, FastLanesDecoder, FastLanesScheme};
-use crate::storage::engines::common::fastlanes_tensor_encoding::{
+use crate::storage::engines::common::fastlanes_encoding::{FastLanesEncoder, FastLanesDecoder, FastLanesScheme};
+use crate::storage::engines::common::fastlanes_encoding::{
     encode_quantized_tensor, decode_quantized_tensor, QuantizationType,
     encode_sparse_tensor, decode_sparse_tensor, SparseFormat,
     transpose_to_columnar, transpose_to_row_major,
@@ -200,7 +200,7 @@ impl HnswManager {
     
     /// Encode query vector using FastLanes for efficient HNSW navigation
     fn encode_query_vector(&self, query: &[f32]) -> Result<Vec<u8>> {
-        use crate::storage::engines::common::fastlanes_tensor_encoding::{FastLanesEncoder, FastLanesScheme};
+        use crate::storage::engines::common::fastlanes_encoding::{FastLanesEncoder, FastLanesScheme};
         
         // Use same encoding as stored vectors for consistency
         let encoder = FastLanesEncoder::new(FastLanesScheme::FrameOfReference {
