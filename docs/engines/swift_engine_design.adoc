@@ -47,39 +47,38 @@ pub struct SwiftEngine {
 }
 ----
 
-=== Tree-Based Navigation Architecture
+=== Hierarchical SuperBlock Architecture
 
-SWIFT implements a sophisticated B+ tree structure for instant vector access:
+SWIFT implements a three-tier hierarchical structure using shared row_based infrastructure:
 
 [source,rust]
 ----
-pub struct BPlusTree<K, V> {
-    root: NodeId,
-    node_cache: LruCache<NodeId, TreeNode<K, V>>,
-    leaf_cache: LruCache<NodeId, LeafNode<K, V>>,
-    metadata: TreeMetadata,
+// SWIFT uses shared row_based SuperBlock and DataBlock structures
+use crate::storage::engines::row_based::block_structures::{
+    SuperBlock, RowBasedDataBlock as DataBlock
+};
+
+pub struct SwiftFile {
+    header: SwiftHeader,                    // SWIFT-specific file header with magic *b"SWFT"
+    superblocks: Vec<SuperBlock>,           // Hierarchical superblock structure
+    id_index: IdIndex,                      // O(log n) ID lookups
+    quantized_index: QuantizedIndex,        // Progressive search support
+    metadata_index: MetadataIndex,          // Metadata filtering
 }
 
-pub struct TreeNode<K, V> {
-    keys: Vec<K>,
-    children: Vec<NodeId>,
-    level: u16,
-    modification_time: Timestamp,
+pub struct SuperBlock {
+    superblock_encoding_marker: u8,        // 0x80-0x8F for SWIFT encodings
+    blocks: Vec<DataBlock>,                 // Child blocks (64 blocks per superblock)
+    superblock_encoding_metadata: Option<FastLanesMetadata>, // SIMD-optimized encoding
+    bloom_filter: Option<SstableBloomFilter>, // Shared bloom filter from row_based
+    centroid: Option<Vec<f32>>,             // SWIFT-specific: superblock centroid
+    quantized_signature: Vec<u8>,           // SWIFT-specific: quantized signature
 }
 
-pub struct LeafNode<K, V> {
-    entries: Vec<(K, V)>,
-    next_leaf: Option<NodeId>,
-    prev_leaf: Option<NodeId>,
-    modification_time: Timestamp,
-}
-
-pub struct VectorLocation {
-    sstable_id: SstableId,
-    block_id: BlockId,
-    record_offset: u32,
-    vector_size: u32,
-    quantization_level: QuantizationLevel,
+pub struct RecordLocation {
+    superblock_idx: u32,
+    block_idx: u32,
+    offset_in_block: usize,
 }
 ----
 
@@ -88,16 +87,16 @@ pub struct VectorLocation {
 SWIFT operates in two complementary modes:
 
 **Index-Driven Mode:**
-* Uses B+ tree for direct vector access
-* O(log n) lookup complexity
-* Ideal for ID-based queries
-* Minimal I/O for targeted access
+* Uses hierarchical ID index for direct vector access
+* O(log n) lookup complexity through SuperBlock → Block → Record navigation
+* Ideal for ID-based queries when AXIS returns top-k IDs
+* Minimal I/O for targeted access using RecordLocation
 
 **Index-Free Mode:**
-* Traditional SST scanning approach
-* O(n) scanning with bloom filters
-* Ideal for range queries and analytics
-* Compatible with existing SST operations
+* Progressive search with quantization refinement
+* Binary → INT8 → PQ → FP32 pipeline for similarity search
+* Ideal for similarity search and analytics
+* Compatible with shared row_based scanning operations
 
 [source,rust]
 ----

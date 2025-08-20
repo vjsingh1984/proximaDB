@@ -67,7 +67,7 @@ impl HnswGraphBuilder {
                 avg_connectivity: 0.0,
                 compression_ratio: 0.0,
             },
-            encoder: FastLanesEncoder::new(),
+            encoder: FastLanesEncoder::new(FastLanesScheme::BitPacked { bits: 16 }),
             node_order: None,
         }
     }
@@ -142,27 +142,16 @@ impl HnswGraphBuilder {
             result.extend_from_slice(&(id_bytes.len() as u16).to_le_bytes());
             result.extend_from_slice(id_bytes);
             
-            // Compress encoded vector with FastLanes
+            // Write already encoded vector directly (it's already FastLanes encoded)
             if !node.encoded_vector.is_empty() {
-                let compressed = self.encoder.encode_f32_block(
-                    &node.encoded_vector,
-                    fastlanes_encoding::FastLanesScheme::FrameOfReference
-                )?;
-                result.extend_from_slice(&(compressed.len() as u32).to_le_bytes());
-                result.extend_from_slice(&compressed);
+                result.extend_from_slice(&(node.encoded_vector.len() as u32).to_le_bytes());
+                result.extend_from_slice(&node.encoded_vector);
             } else {
                 result.extend_from_slice(&0u32.to_le_bytes());
             }
             
-            // Store metadata if present
-            if let Some(ref metadata) = node.metadata {
-                result.push(1); // Has metadata
-                let meta_bytes = bincode::serialize(metadata)?;
-                result.extend_from_slice(&(meta_bytes.len() as u32).to_le_bytes());
-                result.extend_from_slice(&meta_bytes);
-            } else {
-                result.push(0); // No metadata
-            }
+            // No metadata field on GraphNode - skip metadata storage
+            result.push(0); // No metadata
         }
         
         // Serialize edges with adjacency list compression
@@ -247,8 +236,8 @@ impl HnswGraphBuilder {
             offset += 4;
             
             let encoded_vector = if vector_len > 0 {
-                let encoder = FastLanesEncoder::new();
-                encoder.decode_f32_block(&data[offset..offset + vector_len])?
+                // The vector is already encoded, just copy the bytes
+                data[offset..offset + vector_len].to_vec()
             } else {
                 vec![]
             };
@@ -274,7 +263,8 @@ impl HnswGraphBuilder {
                 id,
                 encoded_vector,
                 decoded_vector: vec![], // Will be decoded on demand
-                metadata,
+                neighbors: vec![],
+                level: 0,
             });
         }
         
@@ -706,9 +696,8 @@ impl HnswAwareCompactionManager {
         
         // Select centroid from each major cluster as entry point
         let num_entry_points = self.config.hnsw_config.as_ref()
-            .map(|c| c.num_entry_points)
-            
-            .min(clusters.len());
+            .map(|c| c.num_entry_points.min(clusters.len()))
+            .unwrap_or(1);
         
         // Sort clusters by size and select largest
         let mut sorted_clusters = clusters.to_vec();
@@ -869,7 +858,8 @@ impl HnswAwareFlushManager {
                 id: id.clone(),
                 encoded_vector: vector.clone(),
                 decoded_vector: vec![],
-                metadata,
+                neighbors: vec![],
+                level: 0,
             };
             
             // Determine layer using exponential decay
@@ -933,9 +923,10 @@ mod tests {
         for i in 0..10 {
             let node = GraphNode {
                 id: format!("node_{}", i),
-                encoded_vector: vec![0.1 * i as f32; 128],
-                decoded_vector: vec![],
-                metadata: Some(serde_json::json!({"index": i})),
+                encoded_vector: vec![],  // Should be bytes, not floats
+                decoded_vector: vec![0.1 * i as f32; 128],
+                neighbors: vec![],
+                level: 0,
             };
             builder.add_node(node, (i % 3) as u8);
         }

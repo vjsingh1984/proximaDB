@@ -6,7 +6,7 @@
 
 == Executive Summary
 
-RAPTOR (Row-Aligned Predicated Tensor Optimized Repository) is a high-performance storage engine for ProximaDB optimized for *HNSW locality*, *columnar tensor storage*, and *selective rowgroup loading*. It achieves sub-10ms search latency through intelligent data organization and SIMD acceleration.
+RAPTOR (Row-Aligned Predicated Tensor Optimized Repository) is a high-performance storage engine for ProximaDB featuring *smart row group sizing*, *hybrid row-columnar architecture*, and *semantic accuracy optimization*. It achieves sub-10ms search latency through intelligent data organization based on vector dimensionality and cloud I/O characteristics.
 
 === Key Differentiators
 
@@ -14,52 +14,79 @@ RAPTOR (Row-Aligned Predicated Tensor Optimized Repository) is a high-performanc
 |===
 | Feature | Description | Impact
 
-| *1K Vector RowGroups*
-| Optimized for HNSW's localized access patterns
-| 100x less memory usage per query
+| *Smart Row Group Sizing*
+| Dimension-aware sizing: 0.6x-1.3x factor based on semantic accuracy
+| Higher dimensional vectors get smaller, more precise row groups
 
-| *Columnar Tensor Storage*
-| FastLanes encoding with per-dimension optimization
-| 3-5x compression ratio
+| *Hybrid Row-Columnar*
+| Row groups for locality + columnar within groups for SIMD
+| Optimal HNSW navigation + FastLanes compression
 
-| *Selective Loading*
-| RowGroup-level caching with range reads
-| 20-40x lower latency
+| *Cloud I/O Optimization*
+| Aligns with S3 (2MB), GCS (4MB), ADLS (2MB) optimal chunk sizes
+| Minimizes API calls and transfer time
 
-| *Single L0 Strategy*
-| Aggressive compaction for unified HNSW graph
-| Optimal graph connectivity
+| *Shared Infrastructure*
+| Uses row_based module with SST and SWIFT engines
+| Eliminates code duplication, consistent optimizations
 |===
 
 == Architecture Overview
 
-=== Storage Layout
+=== Storage Layout (RAPTOR Native Format)
 
 [source,mermaid]
 ----
 graph TB
-    subgraph "RAPTOR File Structure"
-        Header["Header: RPTR Magic<br/>Schema & Metadata"]
+    subgraph "RAPTOR File Structure (Native .rapt Format)"
+        Magic["RAPTOR Magic (4 bytes)<br/>*b'RPTR' file identifier"]
+        FileHeader["RaptorFileMetadata<br/>Schema, compression, HNSW config"]
         
-        subgraph "RowGroup Structure"
-            RG["RowGroup (1K vectors)<br/>~4MB compressed"]
-            Tensor["Columnar Tensors<br/>Transposed & FastLanes"]
-            Meta["Metadata Columns<br/>Dictionary/RLE encoded"]
-            HNSW["Local HNSW Segment<br/>Quantized navigation"]
-            BTree["B-Tree Index<br/>O(log n) ID lookups"]
+        subgraph "RowGroup Headers Array"
+            RGH0["RowGroupMetadata[0]<br/>Offset, size, vector count"]
+            RGH1["RowGroupMetadata[1]<br/>Min/max dimensions, bloom"]
+            RGHn["RowGroupMetadata[n]<br/>HNSW graph metadata"]
         end
         
-        Global["Global Indexes<br/>HNSW bridges + B-tree root"]
-        Footer["Footer<br/>RowGroup offsets & stats"]
+        subgraph "Smart-Sized RowGroup (Dimension-Aware)"
+            subgraph "Columnar Data Block (FastLanes Encoded)"
+                Marker["Encoding Marker (1 byte)<br/>0xA1: FastLanes tensor"]
+                IDCol["Transposed ID Column<br/>Variable length + offsets"]
+                D0["Dimension 0 Column<br/>N × f32 → FastLanes encoded"]
+                D1["Dimension 1 Column<br/>N × f32 → Chosen encoding"]
+                Dn["Dimension d Column<br/>N × f32 → Optimal scheme"]
+                Meta["Metadata Columns<br/>Columnar string/int/float"]
+            end
+            
+            subgraph "Quantization Levels (Progressive Search)"
+                Binary["Binary Quantized<br/>1 bit/dim for filtering"]
+                INT8["INT8 Quantized<br/>8 bits/dim for approximation"]
+                PQ["PQ Quantized<br/>4-8 bits/dim for ranking"]
+                FP32["Full Precision<br/>32 bits/dim for final rerank"]
+            end
+        end
+        
+        subgraph "Variable Metadata Section"
+            GlobalBloom["Global Bloom Filter<br/>File-level existence check"]
+            IndexData["Index Entries<br/>Block navigation info"]
+        end
     end
     
-    Header --> RG
-    RG --> Tensor
-    Tensor --> Meta
-    Meta --> HNSW
-    HNSW --> BTree
-    BTree --> Global
-    Global --> Footer
+    GlobalHeader --> BH0
+    BH0 --> BH1
+    BH1 --> BHn
+    BHn --> Marker
+    Marker --> IDCol
+    IDCol --> D0
+    D0 --> D1
+    D1 --> Dn
+    Dn --> Meta
+    Meta --> Binary
+    Binary --> INT8
+    INT8 --> PQ
+    PQ --> FP32
+    FP32 --> GlobalBloom
+    GlobalBloom --> IndexData
 ----
 
 === HNSW Integration Strategy
@@ -110,23 +137,132 @@ pub struct HnswStrategy {
 
 == Core Innovations
 
-=== 1. Columnar Tensor Transformation
+=== 1. Smart Row Group Sizing with Semantic Accuracy Factor
 
-==== Row to Columnar Conversion
+==== Dimension-Aware Sizing Strategy
 
-Traditional row storage wastes compression opportunities:
+RAPTOR introduces intelligent row group sizing based on the principle that *higher dimensional vectors provide more accurate semantic distance*. This allows for smaller, more precise row groups that improve search quality while maintaining I/O efficiency.
+
+[source,mermaid]
 ----
-Vector_0: [d0, d1, d2, ..., d383]  // Poor compression
-Vector_1: [d0, d1, d2, ..., d383]  // Similar values scattered
-...
+graph LR
+    subgraph "Semantic Accuracy Factor"
+        LowDim["Low Dimensions<br/>(≤128d)<br/>Factor: 1.3x<br/>Need larger groups for stats"]
+        MedDim["Medium Dimensions<br/>(384-768d)<br/>Factor: 1.0x<br/>Baseline sizing"]
+        HighDim["High Dimensions<br/>(≥1536d)<br/>Factor: 0.6-0.8x<br/>Smaller for precision"]
+    end
+    
+    subgraph "Cloud I/O Alignment"
+        S3["S3 Standard<br/>2MB optimal chunk"]
+        GCS["GCS Standard<br/>4MB optimal chunk"]
+        ADLS["ADLS Gen2<br/>2MB optimal chunk"]
+    end
+    
+    subgraph "Final Row Group Size"
+        OpenAI["OpenAI 1536d<br/>~800 vectors<br/>~1.6MB per group"]
+        BERT["BERT 768d<br/>~1200 vectors<br/>~2.3MB per group"]
+        Word2Vec["Word2Vec 128d<br/>~2600 vectors<br/>~1.3MB per group"]
+    end
+    
+    LowDim --> Word2Vec
+    MedDim --> BERT
+    HighDim --> OpenAI
+    S3 --> OpenAI
+    GCS --> BERT
+    ADLS --> Word2Vec
 ----
 
-RAPTOR columnar storage maximizes compression:
+[source,rust]
 ----
-Dimension_0: [v0_d0, v1_d0, ..., v999_d0]  // Delta encoding
-Dimension_1: [v0_d1, v1_d1, ..., v999_d1]  // Frame-of-Reference
-...
+/// Calculate semantic accuracy factor - higher dimensions = smaller row groups for precision
+fn calculate_semantic_accuracy_factor(dimension: usize) -> f32 {
+    match dimension {
+        // Very low dimensions: Need larger row groups for statistical significance
+        d if d <= 128 => 1.3,
+        // Low-medium dimensions: Moderate adjustment  
+        d if d <= 384 => 1.1,
+        // Medium dimensions: Baseline
+        d if d <= 768 => 1.0,
+        // High dimensions: Can use smaller row groups for better precision
+        d if d <= 1536 => 0.8,
+        // Very high dimensions: Small row groups for maximum precision
+        d if d <= 2048 => 0.7,
+        // Ultra-high dimensions: Minimal row groups
+        _ => 0.6,
+    }
+}
 ----
+
+==== Benefits of Semantic-Aware Sizing
+
+[cols="2,3,3"]
+|===
+| Vector Type | Traditional Fixed Size | Smart Semantic Sizing
+
+| *Word2Vec (128d)*
+| 1000 vectors, 50% precision waste
+| 2600 vectors, optimal statistical power
+
+| *BERT (768d)*
+| 1000 vectors, baseline efficiency
+| 1200 vectors, balanced approach
+
+| *OpenAI (1536d)*
+| 1000 vectors, precision loss
+| 800 vectors, maximum semantic accuracy
+
+| *Research (4096d)*
+| 1000 vectors, significant precision loss
+| 600 vectors, research-grade precision
+|===
+
+=== 2. Hybrid Row Group + Columnar Architecture
+
+==== The Two-Level Design
+
+RAPTOR solves the row vs columnar dilemma with a two-level architecture based on shared `row_based` infrastructure:
+
+**Level 1: Smart Row Groups** (I/O and HNSW locality)
+----
+Row Group 0: [600-2600 vectors] -> Cloud-optimized I/O (1-4MB)
+Row Group 1: [dimension-aware]  -> Semantic accuracy optimized
+Row Group 2: [query-pattern]    -> High/medium/low selectivity tuned
+----
+
+**Level 2: Columnar Within Groups** (FastLanes + SIMD efficiency)
+----
+Within Row Group 0 (using TransposedVectors):
+  Encoding Marker: 0xA1              // FastLanes tensor encoding
+  ID Column:       [id_0, id_1, ...]  // Variable length with fixed offsets
+  Dimensions[0]:   [v0_d0, v1_d0, ...] // Per-dimension FastLanes encoding
+  Dimensions[1]:   [v0_d1, v1_d1, ...] // Chosen optimal scheme per dim
+  ...
+  Dimensions[d-1]: [v0_dd, v1_dd, ...] // Independent compression
+  Metadata:        String/numeric/boolean column families
+  
+  Quantized Data:  // Progressive search support
+    Binary:        [1-bit approximation]
+    INT8:          [8-bit quantization]  
+    PQ:            [4-8 bit product quantization]
+    FP32:          [Full precision for reranking]
+----
+
+==== Why This Architecture Works
+
+**Problem with Pure Row Storage:**
+- Vectors stored sequentially: [vec0, vec1, vec2, ...]
+- To get dimension 0 of all vectors: Must parse through entire dataset
+- FastLanes can't work on non-contiguous data
+
+**Problem with Pure Columnar:**
+- HNSW neighbors scattered across different I/O units
+- Loading 1000 vectors requires 1000 separate reads
+- Destroys graph locality benefits
+
+**RAPTOR's Hybrid Solution:**
+- Row groups preserve HNSW locality (neighbors stay together)
+- Columnar within groups enables SIMD (contiguous dimension arrays)
+- Single I/O loads all data needed for local graph traversal
 
 ==== FastLanes Encoding Selection
 
@@ -375,43 +511,112 @@ pub struct RaptorConfig {
 }
 ----
 
-==== RowGroup Structure
+==== Hybrid RowGroup Structure
 
 [source,rust]
 ----
-pub struct RowGroup {
+pub struct HybridRowGroup {
+    // Row group metadata
     pub id: u32,
     pub offset: u64,
     pub compressed_size: u64,
-    pub row_count: usize,
+    pub vector_count: usize,  // Always ~1000
     
-    // Statistics for filtering
-    pub vector_stats: VectorStats,
+    // COLUMNAR storage within row group
+    pub columns: ColumnarBlock {
+        // IDs with fixed-size offsets for direct indexing
+        id_column: IdColumn {
+            offsets: [u32; 1000],    // Fixed array, O(1) access
+            data: Vec<u8>,           // Concatenated variable-length IDs
+        },
+        
+        // Vector data stored dimension-major
+        vector_columns: TransposedVectors {
+            dimensions: Vec<DimensionColumn>,  // 384 columns of 1000 f32 each
+            fastlanes_encoded: Vec<Vec<u8>>,   // Per-dimension encoding
+        },
+        
+        // Metadata as proper column families
+        metadata_columns: HashMap<String, TypedColumn>,
+    },
+    
+    // HNSW local segment for graph locality
+    pub local_hnsw: LocalHnswSegment {
+        entry_points: Vec<u32>,              // Local indices [0..999]
+        edges: Vec<(u32, u32, f32)>,         // (from, to, distance)
+        global_connections: Vec<(u32, u32)>, // Cross-rowgroup edges
+    },
+    
+    // Bloom filter for existence checks
+    pub id_bloom_filter: Option<BloomFilter>,
+    
+    // Statistics for pruning
+    pub vector_stats: VectorRangeStats,  // Min/max per dimension
     pub metadata_stats: HashMap<String, ColumnStats>,
-    
-    // Indexes
-    pub bloom_filter_offset: Option<u64>,
-    pub hnsw_segment: Option<LocalHnswSegment>,
-    
-    // Cached data (during compaction)
-    pub vectors: Option<Vec<VectorRecord>>,
+}
+
+pub struct DimensionColumn {
+    pub dimension_id: u16,
+    pub encoding: FastLanesScheme,    // Optimal encoding for this dimension
+    pub encoded_data: Vec<u8>,        // FastLanes compressed
+    pub min_value: f32,               // For pruning
+    pub max_value: f32,
 }
 ----
 
-==== SIMD Operations
+==== Columnar SIMD Operations
 
 [source,rust]
 ----
-impl RaptorReader {
-    fn compute_distances(&self, query: &[f32], vectors: &[Vec<f32>]) -> Vec<f32> {
+impl HybridRaptorReader {
+    /// Efficient distance computation using columnar layout
+    fn compute_distances_columnar(
+        &self, 
+        query: &[f32], 
+        rowgroup: &HybridRowGroup
+    ) -> Vec<f32> {
+        let dimension_count = query.len();
+        let vector_count = rowgroup.vector_count;
+        let mut distances = vec![0.0f32; vector_count];
+        
+        // Process each dimension using SIMD
+        for (dim_idx, &query_dim) in query.iter().enumerate() {
+            let dim_column = &rowgroup.columns.vector_columns.dimensions[dim_idx];
+            
+            // Decode dimension values (FastLanes → f32 array)
+            let dim_values = self.fastlanes_decoder.decode_f32(
+                &dim_column.encoded_data,
+                dim_column.encoding,
+                vector_count
+            )?;
+            
+            // SIMD compute: (query_dim - vector_dim)²
+            let squared_diffs = self.simd_squared_diff(query_dim, &dim_values);
+            
+            // Accumulate into distance array
+            self.simd_accumulate(&mut distances, &squared_diffs);
+        }
+        
+        // Final square root for Euclidean distance
+        self.simd_sqrt(&mut distances);
+        
+        distances
+    }
+    
+    /// Hardware-specific SIMD implementations
+    fn simd_squared_diff(&self, query_val: f32, column_vals: &[f32]) -> Vec<f32> {
         let hardware = HardwareCapabilities::get();
         
         match hardware {
-            _ if hardware.has_avx512() => self.distance_avx512(query, vectors),
-            _ if hardware.has_avx2() => self.distance_avx2(query, vectors),
-            _ if hardware.has_sse4() => self.distance_sse4(query, vectors),
-            _ if hardware.has_neon() => self.distance_neon(query, vectors),
-            _ => self.distance_scalar(query, vectors),
+            _ if hardware.has_avx512() => {
+                // Process 16 f32 values at once
+                self.avx512_squared_diff(query_val, column_vals)
+            },
+            _ if hardware.has_avx2() => {
+                // Process 8 f32 values at once
+                self.avx2_squared_diff(query_val, column_vals)
+            },
+            _ => self.scalar_squared_diff(query_val, column_vals),
         }
     }
 }

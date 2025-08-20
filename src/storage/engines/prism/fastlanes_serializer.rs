@@ -277,27 +277,103 @@ impl PrismFastLanesSerializer {
     }
 
     fn encode_int8(&self, records: &[VectorRecord]) -> Result<Vec<u8>> {
-        // Quantize to INT8
-        let mut int8_data = Vec::new();
+        // Use the new FastLanes INT8 encoding
+        let mut all_int8_data = Vec::new();
+        
         for record in records {
             // Find min/max for scaling
             let min = record.vector.iter().fold(f32::INFINITY, |a, &b| a.min(b));
             let max = record.vector.iter().fold(f32::NEG_INFINITY, |a, &b| a.max(b));
             let scale = (max - min) / 255.0;
             
-            // Store scale and zero_point
-            int8_data.extend_from_slice(&scale.to_le_bytes());
-            int8_data.extend_from_slice(&min.to_le_bytes());
+            // Store scale and offset as metadata
+            all_int8_data.extend_from_slice(&scale.to_le_bytes());
+            all_int8_data.extend_from_slice(&min.to_le_bytes());
             
-            // Quantize vector
-            let quantized: Vec<u8> = record.vector.iter()
-                .map(|&v| ((v - min) / scale) as u8)
+            // Quantize vector to INT8
+            let quantized: Vec<i8> = record.vector.iter()
+                .map(|&v| (((v - min) / scale).clamp(0.0, 255.0) as i16 - 128) as i8)
                 .collect();
-            int8_data.extend_from_slice(&quantized);
+            
+            // Use FastLanes INT8 encoding
+            let encoded = self.int8_encoder.encode_int8(&quantized)?;
+            all_int8_data.extend_from_slice(&(encoded.len() as u32).to_le_bytes());
+            all_int8_data.extend_from_slice(&encoded);
         }
         
-        // Use Delta encoding for smooth gradients
-        self.int8_encoder.encode_u8_block(&int8_data)
+        Ok(all_int8_data)
+    }
+    
+    /// Encode with StorageQuantizationEngine integration
+    pub async fn encode_with_quantization(
+        &self,
+        records: &[VectorRecord],
+        quantization_engine: &crate::compute::quantization::storage_engine::StorageQuantizationEngine,
+        level: ResolutionLevel,
+    ) -> Result<Vec<u8>> {
+        use crate::compute::quantization::types::UnifiedQuantizationLevel;
+        
+        // Extract vectors
+        let vectors: Vec<Vec<f32>> = records.iter()
+            .map(|r| r.vector.clone())
+            .collect();
+        
+        // Quantize using the engine
+        let quantized_vectors = quantization_engine.quantize_batch(&vectors).await?;
+        
+        let mut result = Vec::new();
+        
+        // Write PRISM marker and resolution level
+        result.push(markers::PRISM_MULTI_RESOLUTION);
+        result.push(level as u8);
+        
+        // Process each quantized vector with appropriate FastLanes encoding
+        for (idx, quantized) in quantized_vectors.iter().enumerate() {
+            let encoded_data = match &quantized.quantization_level {
+                UnifiedQuantizationLevel::None => {
+                    // Full precision FP32
+                    self.fp32_encoder.encode_f32(&vectors[idx])?
+                },
+                UnifiedQuantizationLevel::Binary(_) => {
+                    // Binary quantization
+                    self.binary_encoder.encode_binary(&quantized.data)?
+                },
+                UnifiedQuantizationLevel::Scalar(ref config) if config.bits_per_dimension == 8 => {
+                    // INT8 quantization
+                    let int8_data: Vec<i8> = quantized.data.iter()
+                        .map(|&b| b as i8)
+                        .collect();
+                    self.int8_encoder.encode_int8(&int8_data)?
+                },
+                UnifiedQuantizationLevel::Product(ref config) if config.bits == 4 => {
+                    // PQ4 quantization
+                    self.pq_encoder.encode_pq4(&quantized.data, config.num_subvectors)?
+                },
+                UnifiedQuantizationLevel::Product(ref config) if config.bits == 8 => {
+                    // PQ8 quantization
+                    self.pq_encoder.encode_pq8(&quantized.data, config.num_subvectors)?
+                },
+                _ => {
+                    // Fallback to raw data
+                    quantized.data.clone()
+                }
+            };
+            
+            // Write encoded vector with metadata
+            result.extend_from_slice(&(encoded_data.len() as u32).to_le_bytes());
+            result.extend_from_slice(&encoded_data);
+            
+            // Write vector ID if available
+            if let Some(id) = &records[idx].id {
+                let id_bytes = id.as_bytes();
+                result.extend_from_slice(&(id_bytes.len() as u16).to_le_bytes());
+                result.extend_from_slice(id_bytes);
+            } else {
+                result.extend_from_slice(&0u16.to_le_bytes());
+            }
+        }
+        
+        Ok(result)
     }
 
     fn encode_pq(&self, records: &[VectorRecord], bits: usize) -> Result<Vec<u8>> {

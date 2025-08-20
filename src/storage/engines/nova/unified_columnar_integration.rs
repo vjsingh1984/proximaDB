@@ -333,16 +333,17 @@ impl NovaUnifiedEngine {
         })
     }
     
-    /// Streaming insert with hierarchical statistics
-    pub async fn streaming_insert(
+    /// Streaming insert with hierarchical statistics and quantization
+    pub async fn streaming_insert_with_quantization(
         &self,
         collection_id: &str,
         vector_stream: impl futures::Stream<Item = VectorRecord> + Send + Unpin,
+        quantization_engine: Option<Arc<crate::compute::quantization::storage_engine::StorageQuantizationEngine>>,
     ) -> Result<StreamingInsertResult> {
         let start_time = std::time::Instant::now();
         let session_id = format!("insert_{}_{}", collection_id, chrono::Utc::now().timestamp());
         
-        info!("Starting streaming insert for collection: {}", collection_id);
+        info!("Starting streaming insert with quantization for collection: {}", collection_id);
         
         // Initialize streaming session
         let session = self.streaming_processor.start_session(

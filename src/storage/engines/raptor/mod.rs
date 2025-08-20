@@ -16,6 +16,8 @@ pub mod hnsw_manager;
 pub mod hnsw_compaction;
 pub mod unified_reader;     // Consolidated reader
 pub mod rowgroup_cache;     // RowGroup-level caching for selective loading
+pub mod rowgroup_manager;   // Smart row group management with hybrid architecture
+pub mod smart_rowgroup_sizing; // Smart sizing based on dimensions and cloud I/O
 pub mod simd_ops;
 pub mod simd_encoder;
 pub mod artus_bloom;
@@ -40,3 +42,5 @@ pub use engine::RaptorEngine;
 pub use writer::RaptorWriter;
 pub use reader::RaptorReader;
 pub use unified_reader::RaptorUnifiedReader;
+pub use rowgroup_manager::{RowGroupManager, HybridRowGroup, ColumnarBlock, TransposedVectors};
+pub use smart_rowgroup_sizing::{SmartRowGroupSizer, OptimalRowGroupSize, CloudIOProfile, CommonConfigurations};

@@ -900,14 +900,16 @@ impl FlushManager {
         Ok(buffer)
     }
 
-    /// INT8 Quantization: Linear quantization preserving vector relationships
-    /// INT8 quantization using collection config parameters
+    /// INT8 Quantization for Parquet columnar storage
+    /// Uses Parquet's native DELTA_BINARY_PACKED encoding for optimal compression
     fn quantize_to_int8(&self, fp32_vector: &[f32], quant_config: &crate::proto::proximadb::QuantizationConfig) -> Vec<i8> {
+        // Note: Parquet handles encoding internally, no need for FastLanes
+        
         if fp32_vector.is_empty() {
             return Vec::new();
         }
         
-        debug!("🔧 VIPER: Enhanced INT8 quantization with quality_threshold={:?}", 
+        debug!("🔧 VIPER: Enhanced INT8 quantization for Parquet storage, quality_threshold={:?}", 
                quant_config.quality_threshold);
         
         // Use collection-specific quality threshold for better precision
@@ -926,11 +928,16 @@ impl FlushManager {
         // Apply quality scaling factor
         let scale_factor = if quality_threshold > 0.9 { 0.9 } else { 0.8 };
         
-        fp32_vector.iter().map(|&val| {
+        let quantized: Vec<i8> = fp32_vector.iter().map(|&val| {
             let normalized = (val - min_val) / range;
             let scaled = (normalized * 255.0 - 128.0) * scale_factor;
             scaled.clamp(-128.0, 127.0) as i8
-        }).collect()
+        }).collect();
+        
+        // For Parquet columnar storage, we return the raw INT8 values
+        // The Parquet writer will apply its own encoding (DELTA_BINARY_PACKED)
+        // Row-based engines (SST, RAPTOR, SWIFT, PRISM) use FastLanes for SIMD optimization
+        quantized
     }
     
     /// PQ8 quantization using collection config parameters  

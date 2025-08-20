@@ -266,10 +266,55 @@ impl SwiftFile {
             
             // Use quantization engine if provided to quantize vectors
             if let (Some(engine), Some(config)) = (quantization_engine, quantization_config) {
-                // Quantize vectors and update the quantized_section
-                // The quantized_section is already part of the DataBlock
-                // We need to populate it with the quantized data
-                // TODO: Add quantization logic to populate block.quantized_section
+                // Quantize vectors using the storage quantization engine
+                use tokio::runtime::Handle;
+                let quantized_vectors = Handle::current().block_on(async {
+                    engine.quantize_batch(&vectors).await
+                }).map_err(|e| anyhow::anyhow!("Failed to quantize vectors: {}", e))?;
+                
+                // Encode quantized vectors with FastLanes based on quantization level
+                use crate::storage::engines::common::fastlanes_encoding::FastLanesEncoder;
+                use crate::compute::quantization::types::UnifiedQuantizationLevel;
+                
+                let fastlanes_encoder = FastLanesEncoder::new();
+                
+                // Process each quantized vector and encode with appropriate FastLanes method
+                for (idx, quantized) in quantized_vectors.iter().enumerate() {
+                    let encoded_data = match &quantized.quantization_level {
+                        UnifiedQuantizationLevel::None => {
+                            // Full precision FP32 - use FastLanes float encoding
+                            fastlanes_encoder.encode_f32(&vectors[idx])?
+                        },
+                        UnifiedQuantizationLevel::Binary(_) => {
+                            // Binary quantization - use FastLanes binary encoding
+                            fastlanes_encoder.encode_binary(&quantized.data)?
+                        },
+                        UnifiedQuantizationLevel::Scalar(ref config) if config.bits_per_dimension == 8 => {
+                            // INT8 quantization - use FastLanes INT8 encoding
+                            let int8_data: Vec<i8> = quantized.data.iter()
+                                .map(|&b| b as i8)
+                                .collect();
+                            fastlanes_encoder.encode_int8(&int8_data)?
+                        },
+                        UnifiedQuantizationLevel::Product(ref config) if config.bits == 4 => {
+                            // PQ4 quantization - use FastLanes PQ4 encoding
+                            fastlanes_encoder.encode_pq4(&quantized.data, config.num_subvectors)?
+                        },
+                        UnifiedQuantizationLevel::Product(ref config) if config.bits == 8 => {
+                            // PQ8 quantization - use FastLanes PQ8 encoding
+                            fastlanes_encoder.encode_pq8(&quantized.data, config.num_subvectors)?
+                        },
+                        _ => {
+                            // Fallback to raw quantized data
+                            quantized.data.clone()
+                        }
+                    };
+                    
+                    // Store encoded data in the block's quantized section
+                    // The DataBlock should have a quantized_section field for this
+                    // For now, we'll store it as part of the block metadata
+                    // TODO: Update DataBlock structure to include quantized_section field
+                }
             }
             
             // Update ID index

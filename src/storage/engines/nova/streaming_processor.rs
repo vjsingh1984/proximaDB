@@ -51,13 +51,15 @@ pub enum ProcessingStage {
     BloomFilter,
     /// Dimensional pruning using zone maps
     ZoneMapPruning,
-    /// Binary quantization filtering
+    /// Binary quantization filtering with Parquet encoding
     BinaryFilter,
-    /// INT8 quantization filtering
+    /// INT8 quantization filtering with Parquet encoding
     Int8Filter,
-    /// Product quantization filtering
-    PQFilter,
-    /// Full precision processing
+    /// PQ4 quantization filtering with Parquet encoding
+    PQ4Filter,
+    /// PQ8 quantization filtering with Parquet encoding
+    PQ8Filter,
+    /// Full precision processing with Parquet native format
     FullPrecision,
 }
 
@@ -114,13 +116,14 @@ impl StreamingRowGroupProcessor {
         let semaphore = Arc::new(Semaphore::new(config.max_concurrent_processors));
         let memory_tracker = Arc::new(RwLock::new(MemoryTracker::new(config.max_memory_bytes)));
         
-        // Default processing pipeline
+        // Default processing pipeline with all quantization levels
         let processing_pipeline = vec![
             ProcessingStage::BloomFilter,
             ProcessingStage::ZoneMapPruning,
             ProcessingStage::BinaryFilter,
             ProcessingStage::Int8Filter,
-            ProcessingStage::PQFilter,
+            ProcessingStage::PQ4Filter,
+            ProcessingStage::PQ8Filter,
             ProcessingStage::FullPrecision,
         ];
         
@@ -319,12 +322,16 @@ impl StreamingRowGroupProcessor {
                     }
                 }
                 ProcessingStage::Int8Filter => {
-                    // INT8 quantization filtering
+                    // INT8 quantization filtering with Parquet encoding
                     candidates = Self::apply_int8_filtering(context, task, candidates, &mut records_processed, &mut records_filtered).await?;
                 }
-                ProcessingStage::PQFilter => {
-                    // Product quantization filtering
-                    candidates = Self::apply_pq_filtering(context, task, candidates, &mut records_processed, &mut records_filtered).await?;
+                ProcessingStage::PQ4Filter => {
+                    // PQ4 quantization filtering with Parquet encoding
+                    candidates = Self::apply_pq_filtering(context, task, candidates, &mut records_processed, &mut records_filtered, 4).await?;
+                }
+                ProcessingStage::PQ8Filter => {
+                    // PQ8 quantization filtering with Parquet encoding
+                    candidates = Self::apply_pq_filtering(context, task, candidates, &mut records_processed, &mut records_filtered, 8).await?;
                 }
                 ProcessingStage::FullPrecision => {
                     // Full precision processing

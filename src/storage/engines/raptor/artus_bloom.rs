@@ -2,8 +2,9 @@
 // Provides per-column bloom filters based on cardinality and access patterns
 
 use anyhow::Result;
-// Use internal bloom filter implementation from SST engine
-use crate::storage::engines::sst::bloom_filter::{BloomFilter, BloomFilterFactory, BloomFilterConfig};
+// Use core bloom filter implementation
+use crate::core::bloom::{BloomFilterConfig, BloomFilterStrategy};
+use crate::core::bloom::factory::BloomFilterFactory;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
@@ -63,7 +64,7 @@ impl Default for ArtusBloomConfig {
 pub struct ArtusBloomManager {
     config: ArtusBloomConfig,
     /// Bloom filters per column
-    column_blooms: HashMap<String, Bloom<String>>,
+    column_blooms: HashMap<String, Box<dyn BloomFilterStrategy>>,
     /// Column statistics for intelligent management
     column_stats: HashMap<String, ArtusColumnStats>,
     /// Serialized bloom filters for persistence
@@ -132,7 +133,14 @@ impl ArtusBloomManager {
         );
 
         // Create bloom filter with calculated parameters
-        let bloom = Bloom::new_for_fp_rate(stats.cardinality, fp_rate);
+        let config = BloomFilterConfig {
+            bits_per_key: 10,
+            false_positive_rate: Some(self.config.false_positive_rate),
+            expected_items: stats.cardinality,
+            enabled: true,
+            hash_algorithm: crate::core::bloom::HashAlgorithm::Murmur3,
+        };
+        let bloom = BloomFilterFactory::create(&config);
         
         self.column_blooms.insert(stats.column_name.clone(), bloom);
         self.column_stats.insert(stats.column_name.clone(), stats);
@@ -143,7 +151,7 @@ impl ArtusBloomManager {
     /// Add value to column's bloom filter
     pub fn add_to_bloom(&mut self, column: &str, value: &str) {
         if let Some(bloom) = self.column_blooms.get_mut(column) {
-            bloom.set(value);
+            bloom.insert(value.as_bytes());
             
             // Update access statistics
             if let Some(stats) = self.column_stats.get_mut(column) {
@@ -154,14 +162,14 @@ impl ArtusBloomManager {
 
     /// Check if value might exist in column
     pub fn check_bloom(&self, column: &str, value: &str) -> Option<bool> {
-        self.column_blooms.get(column).map(|bloom| bloom.check(value))
+        self.column_blooms.get(column).map(|bloom| bloom.might_contain(value.as_bytes()))
     }
 
     /// Batch add values to bloom filter
     pub fn batch_add_to_bloom(&mut self, column: &str, values: &[String]) {
         if let Some(bloom) = self.column_blooms.get_mut(column) {
             for value in values {
-                bloom.set(value);
+                bloom.insert(value.as_bytes());
             }
             
             // Update statistics
@@ -201,11 +209,11 @@ impl ArtusBloomManager {
             let stats = self.column_stats.get(column);
             BloomStats {
                 column: column.to_string(),
-                size_bytes: bloom.number_of_bits() / 8,
-                num_hash_functions: bloom.number_of_hash_functions(),
-                items_added: stats.map(|s| s.cardinality),
+                size_bytes: bloom.memory_usage(),
+                num_hash_functions: bloom.hash_count() as usize,
+                items_added: stats.map(|s| s.cardinality).unwrap_or(0),
                 false_positive_rate: self.config.false_positive_rate,
-                access_frequency: stats.map(|s| s.access_frequency),
+                access_frequency: stats.map(|s| s.access_frequency).unwrap_or(0),
             }
         })
     }
@@ -241,32 +249,32 @@ impl ArtusBloomManager {
     }
 
     /// Estimate current false positive rate
-    fn estimate_false_positive_rate(&self, bloom: &Bloom<String>, items: usize) -> f64 {
-        let m = bloom.number_of_bits() as f64;
-        let k = bloom.number_of_hash_functions() as f64;
+    fn estimate_false_positive_rate(&self, bloom: &dyn BloomFilterStrategy, items: usize) -> f64 {
+        let m = bloom.bit_count() as f64;
+        let k = bloom.hash_count() as f64;
         let n = items as f64;
         
-        (1.0 - (-k * n / m).exp()).powf(k)
+        (1.0_f64 - (-k * n / m).exp()).powf(k)
     }
 
     /// Custom serialization for bloom filter
-    fn serialize_bloom(&self, bloom: &Bloom<String>) -> Result<Vec<u8>> {
+    fn serialize_bloom(&self, bloom: &dyn BloomFilterStrategy) -> Result<Vec<u8>> {
         // Simple serialization: store bitmap and parameters
         let mut bytes = Vec::new();
         
         // Write parameters
-        bytes.extend_from_slice(&bloom.number_of_bits().to_le_bytes());
-        bytes.extend_from_slice(&bloom.number_of_hash_functions().to_le_bytes());
+        bytes.extend_from_slice(&(bloom.bit_count() as u64).to_le_bytes());
+        bytes.extend_from_slice(&(bloom.hash_count() as u64).to_le_bytes());
         
         // Write bitmap (simplified - actual implementation would use bloom's bitmap)
         // This is a placeholder - real implementation would access bloom's internal bitmap
-        bytes.extend_from_slice(&vec![0u8; bloom.number_of_bits() / 8]);
+        bytes.extend_from_slice(&vec![0u8; bloom.bit_count() / 8]);
         
         Ok(bytes)
     }
 
     /// Custom deserialization for bloom filter
-    fn deserialize_bloom(&self, bytes: &[u8]) -> Result<Bloom<String>> {
+    fn deserialize_bloom(&self, bytes: &[u8]) -> Result<Box<dyn BloomFilterStrategy>> {
         if bytes.len() < 16 {
             return Err(anyhow::anyhow!("Invalid bloom filter data"));
         }
@@ -277,7 +285,14 @@ impl ArtusBloomManager {
         
         // Create bloom with parameters
         // Note: This is simplified - actual implementation would restore bitmap
-        let bloom = Bloom::new(bits as usize / 8, hash_functions as usize);
+        let config = BloomFilterConfig {
+            bits_per_key: (bits / self.column_stats.len() as u64 / 8) as u32,
+            false_positive_rate: Some(0.01),
+            expected_items: self.column_stats.values().map(|s| s.cardinality).sum(),
+            enabled: true,
+            hash_algorithm: crate::core::bloom::HashAlgorithm::Murmur3,
+        };
+        let bloom = BloomFilterFactory::create(&config);
         
         Ok(bloom)
     }
@@ -297,13 +312,20 @@ pub struct BloomStats {
 /// Multi-column bloom filter for compound predicates
 pub struct CompoundBloomFilter {
     columns: Vec<String>,
-    bloom: Bloom<String>,
+    bloom: Box<dyn BloomFilterStrategy>,
     stats: ArtusColumnStats,
 }
 
 impl CompoundBloomFilter {
     pub fn new(columns: Vec<String>, cardinality: usize) -> Self {
-        let bloom = Bloom::new_for_fp_rate(cardinality, 0.01);
+        let config = BloomFilterConfig {
+            bits_per_key: 10,
+            false_positive_rate: Some(0.01),
+            expected_items: cardinality,
+            enabled: true,
+            hash_algorithm: crate::core::bloom::HashAlgorithm::Murmur3,
+        };
+        let bloom = BloomFilterFactory::create(&config);
         
         let stats = ArtusColumnStats {
             column_name: columns.join("+"),
@@ -325,14 +347,14 @@ impl CompoundBloomFilter {
     /// Add compound value (concatenation of column values)
     pub fn add(&mut self, values: &[String]) {
         let compound = values.join("|");
-        self.bloom.set(&compound);
+        self.bloom.insert(compound.as_bytes());
         self.stats.access_frequency += 1;
     }
 
     /// Check compound predicate
     pub fn check(&self, values: &[String]) -> bool {
         let compound = values.join("|");
-        self.bloom.check(&compound)
+        self.bloom.might_contain(compound.as_bytes())
     }
 }
 

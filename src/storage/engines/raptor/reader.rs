@@ -399,7 +399,7 @@ impl RaptorReader {
         RecordBatch::try_new(
             schema,
             vec![id_array, vector_array, metadata_array, version_array, timestamp_array],
-        )
+        ).map_err(|e| anyhow::anyhow!("Failed to create RecordBatch: {}", e))
     }
     
     fn decode_sparse_tensor_batch(&self, data: &[u8]) -> Result<RecordBatch> {
@@ -531,7 +531,7 @@ impl RaptorReader {
         RecordBatch::try_new(
             schema,
             vec![id_array, vector_array, metadata_array, version_array, timestamp_array],
-        )
+        ).map_err(|e| anyhow::anyhow!("Failed to create RecordBatch: {}", e))
     }
     
     fn decode_quantized_tensor_batch(&self, data: &[u8]) -> Result<RecordBatch> {
@@ -677,7 +677,7 @@ impl RaptorReader {
         RecordBatch::try_new(
             schema,
             vec![id_array, vector_array, metadata_array, version_array, timestamp_array],
-        )
+        ).map_err(|e| anyhow::anyhow!("Failed to create RecordBatch: {}", e))
     }
     
     fn create_schema(&self) -> Arc<arrow_schema::Schema> {

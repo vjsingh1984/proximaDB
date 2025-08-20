@@ -15,9 +15,10 @@ use crate::proto::proximadb::Collection;
 use crate::core::VectorRecord;
 use crate::core::search::{SearchResult, FilterExpression};
 use crate::compute::distance_computation::DistanceMetric;
-use super::{RaptorConfig, RaptorWriter, RaptorUnifiedReader};
+use super::{RaptorConfig, RaptorWriter, RaptorUnifiedReader, RowGroupManager};
 use super::compaction::CompactionManager;
 use super::hnsw_manager::HnswManager;
+use super::smart_rowgroup_sizing::{SmartRowGroupSizer, CommonConfigurations};
 
 // Deep integration with AXIS clustering
 use crate::index::axis::clustering::{ClusteringConfig, ClusteringAlgorithm, KMeansConfig, ClusterManager};
@@ -149,8 +150,20 @@ impl RaptorEngine {
         base_path: String,
         config: RaptorConfig,
     ) -> Result<Self> {
-        let schema = Self::create_default_schema();
-        let rowgroup_manager = Arc::new(RwLock::new(RowGroupManager::new(schema.clone())));
+        // Create smart row group sizer based on configuration
+        let smart_sizer = if let Some(dimension) = config.vector_dimension {
+            SmartRowGroupSizer::for_s3_standard(dimension, 200) // 200 bytes avg metadata
+                .with_query_pattern(super::smart_rowgroup_sizing::QueryPattern::Mixed)
+        } else {
+            // Default configuration for common OpenAI embeddings
+            CommonConfigurations::openai_s3()
+        };
+        
+        let rowgroup_manager = Arc::new(RwLock::new(RowGroupManager::new(
+            config.clone(),
+            smart_sizer,
+            None, // No quantization engine for now
+        )?));
         
         // Initialize filesystem with proper abstraction
         let filesystem_factory = FilesystemFactory::new(FilesystemConfig::default()).await?;
@@ -1367,9 +1380,10 @@ impl UnifiedStorageEngine for RaptorEngine {
         let mut results = Vec::new();
         for res in internal_results {
             results.push(SearchResult {
-                vector_id: res.id,
-                semantic_similarity: res.score,
-                timestamp: chrono::Utc::now(),
+                id: res.id,
+                similarity: res.score,
+                timestamp: Some(chrono::Utc::now().timestamp() as u32),
+                ..Default::default()
             });
         }
         

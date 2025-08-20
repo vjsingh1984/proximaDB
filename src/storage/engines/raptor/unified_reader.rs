@@ -9,6 +9,7 @@ use arrow_array::RecordBatch;
 use crate::storage::persistence::filesystem::zero_copy_filesystem::ZeroCopyFilesystem;
 use crate::storage::transaction_coordinator::TransactionCoordinator;
 use crate::storage::persistence::filesystem::{FileSystem, FileOptions};
+use crate::storage::engines::common::zero_copy_io_system::traits::CacheTemperature;
 use super::RaptorConfig;
 
 /// Comprehensive metadata for RAPTOR files
@@ -193,7 +194,7 @@ impl RaptorUnifiedReader {
                 selectivity_hint: 0.3, // Moderate selectivity for RAPTOR HNSW navigation
                 collection_id: "raptor".to_string(), // Generic collection ID for RAPTOR
                 concurrent_queries: 1,
-                cache_temperature: 0.5,
+                cache_temperature: CacheTemperature::Warm,
             };
             
             // Make bandwidth-optimized decisions
@@ -237,7 +238,7 @@ impl RaptorUnifiedReader {
                 selectivity_hint: 1.0, // Read everything
                 collection_id: "raptor".to_string(),
                 concurrent_queries: 1,
-                cache_temperature: 0.0, // Don't pollute cache
+                cache_temperature: CacheTemperature::Cold, // Don't pollute cache
             };
             
             // Make bandwidth-optimized decisions for compaction

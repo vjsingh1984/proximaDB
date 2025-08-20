@@ -141,7 +141,12 @@ impl CompactionManager {
     
     /// Get compaction configuration for unified framework integration
     pub fn get_compaction_config(&self) -> CompactionConfig {
-        self.config.compaction_config.clone().unwrap_or(CompactionConfig {
+        // Convert from config::CompactionConfig to local CompactionConfig
+        self.config.compaction_config.as_ref().map(|cc| CompactionConfig {
+            max_level: cc.max_level,
+            l0_trigger_file_count: cc.l0_trigger_file_count,
+            target_file_size: cc.target_file_size,
+        }).unwrap_or(CompactionConfig {
             max_level: 0,
             l0_trigger_file_count: 2,
             target_file_size: usize::MAX,

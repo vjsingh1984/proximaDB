@@ -9,7 +9,9 @@ use dashmap::DashMap;
 
 // Reuse existing platform capabilities
 use crate::core::compression::{StandardCompression, CompressionAlgorithm, CompressionContext};
+use super::common::{RowPageMetadata, HnswSegmentMetadata};
 use crate::compute::quantization::storage_engine::StorageQuantizationEngine;
+use crate::compute::quantization::types::UnifiedQuantizationLevel;
 use crate::storage::persistence::filesystem::{FileSystem, FileOptions, FilesystemFactory};
 use crate::storage::engines::common::fastlanes_encoding::{FastLanesEncoder, FastLanesScheme};
 use crate::core::hardware_capabilities::HardwareCapabilities;
@@ -305,14 +307,52 @@ impl RaptorWriter {
             uuid::Uuid::new_v4().as_bytes().clone()
         };
         
-        // Quantize vector using unified engine
-        let quantized = self.quantization_engine.quantize_vector(&vector.vector)?;
+        // Quantize vector using unified engine (batch API with single vector)
+        let quantized_batch = self.quantization_engine.quantize_batch(&[vector.vector.clone()]).await?;
+        let quantized = quantized_batch.into_iter().next()
+            .ok_or_else(|| anyhow::anyhow!("Failed to quantize vector"))?;
         
-        // Compress quantized vector
-        let compressed_vector = self.compression.compress(
-            &quantized,
-            CompressionContext::Vector,
-        )?;
+        // Encode quantized vector with FastLanes based on quantization level
+        let fastlanes_encoder = FastLanesEncoder::new();
+        let encoded_vector = match quantized.quantization_level {
+            UnifiedQuantizationLevel::None => {
+                // Full precision FP32 - use FastLanes float encoding
+                fastlanes_encoder.encode_f32(&vector.vector)?
+            },
+            UnifiedQuantizationLevel::Binary(_) => {
+                // Binary quantization - use FastLanes binary encoding
+                fastlanes_encoder.encode_binary(&quantized.data)?
+            },
+            UnifiedQuantizationLevel::Scalar(ref config) if config.bits_per_dimension == 8 => {
+                // INT8 quantization - use FastLanes INT8 encoding
+                let int8_data: Vec<i8> = quantized.data.iter()
+                    .map(|&b| b as i8)
+                    .collect();
+                fastlanes_encoder.encode_int8(&int8_data)?
+            },
+            UnifiedQuantizationLevel::Product(ref config) if config.bits == 4 => {
+                // PQ4 quantization - use FastLanes PQ4 encoding
+                fastlanes_encoder.encode_pq4(&quantized.data, config.num_subvectors)?
+            },
+            UnifiedQuantizationLevel::Product(ref config) if config.bits == 8 => {
+                // PQ8 quantization - use FastLanes PQ8 encoding
+                fastlanes_encoder.encode_pq8(&quantized.data, config.num_subvectors)?
+            },
+            _ => {
+                // Fallback to raw quantized data
+                quantized.data.clone()
+            }
+        };
+        
+        // Compress encoded vector if configured
+        let compressed_vector = if matches!(self.config.compression, RaptorCompressionCodec::None) {
+            encoded_vector
+        } else {
+            self.compression.compress(
+                &encoded_vector,
+                CompressionContext::Vector,
+            )?
+        };
         
         // Encode metadata as binary (using bincode)
         let metadata_bytes = if !vector.metadata.is_empty() {
@@ -341,11 +381,11 @@ impl RaptorWriter {
         self.btree_builder.entries.push((id.to_vec(), location));
         
         // Add to HNSW with quantized vector for navigation
-        let hnsw_quantized = self.quantization_engine.quantize_for_index(&vector.vector)?;
+        // For HNSW, we use the same quantized representation for efficient graph navigation
         self.hnsw_builder.nodes.push(HnswNode {
             node_id: self.file_metadata.num_rows as u32,
             row_location: location,
-            quantized_vector: hnsw_quantized,
+            quantized_vector: quantized.data, // Use the quantized data directly
             edges: Vec::new(), // Will be built during HNSW construction
         });
         
@@ -387,7 +427,7 @@ impl RaptorWriter {
             // Write to filesystem using zero-copy API
             let offset = self.filesystem.append(&self.file_path, &compressed).await?;
             
-            // Create page metadata
+            // Create page metadata with unified compression context
             let page_metadata = RowPageMetadata {
                 page_id: page.page_id,
                 file_offset: offset as i64,
@@ -396,12 +436,14 @@ impl RaptorWriter {
                 num_rows: page.rows.len() as i32,
                 first_id: page.rows.first().map(|r| r.id.to_vec()).unwrap_or_default(),
                 last_id: page.rows.last().map(|r| r.id.to_vec()).unwrap_or_default(),
-                compression: match self.compression.algorithm() {
-                    CompressionAlgorithm::None => CompressionCodec::None,
-                    CompressionAlgorithm::Lz4 => CompressionCodec::Lz4,
-                    CompressionAlgorithm::Zstd => CompressionCodec::Zstd { level: 3 },
-                    CompressionAlgorithm::Snappy => CompressionCodec::Snappy,
-                    _ => CompressionCodec::None,
+                compression_codec: match self.compression.algorithm() {
+                    CompressionAlgorithm::None => "none".to_string(),
+                    CompressionAlgorithm::Lz4 => "lz4".to_string(),
+                    CompressionAlgorithm::Zstd => "zstd".to_string(),
+                    CompressionAlgorithm::Snappy => "snappy".to_string(),
+                    CompressionAlgorithm::Gzip => "gzip".to_string(),
+                    CompressionAlgorithm::Brotli => "brotli".to_string(),
+                    _ => "zstd".to_string(), // Default fallback
                 },
             };
             
@@ -439,94 +481,27 @@ impl RaptorWriter {
         // Write page header
         encoded.extend(&(page.rows.len() as u32).to_le_bytes());
         
-        // Columnar encoding for vectors - transpose and encode by dimension
+        // Columnar encoding for vectors - already encoded in compact rows
+        // The row.vector field contains the quantized and FastLanes-encoded data
+        // We write it directly without re-encoding since it's already optimized
         if !page.rows.is_empty() {
-            // Extract and decompress vectors for columnar encoding
-            let mut vectors = Vec::new();
+            // For columnar storage, we could optionally reorganize by quantization level
+            // but for now we keep the row-oriented storage for simplicity
+            
+            // Write each row's encoded vector data
             for row in &page.rows {
-                // row.vector is already compressed/quantized - decompress for columnar re-encoding
-                let decompressed = self.compression.decompress(
-                    &row.vector,
-                    CompressionContext::Vector,
-                )?;
-                vectors.push(decompressed);
-            }
-            
-            // Get dimension from first vector
-            let dimension = vectors[0].len() / std::mem::size_of::<f32>();
-            
-            // Transpose to columnar layout for better compression
-            let mut columns: Vec<Vec<f32>> = vec![vec![]; dimension];
-            for vector_bytes in &vectors {
-                // Convert bytes back to f32 values
-                let floats: Vec<f32> = vector_bytes.chunks_exact(4)
-                    .map(|chunk| f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
-                    .collect();
+                // Write row ID
+                encoded.extend(&row.id);
                 
-                for (dim_idx, &value) in floats.iter().enumerate() {
-                    if dim_idx < dimension {
-                        columns[dim_idx].push(value);
-                    }
-                }
-            }
-            
-            // Write dimension count
-            encoded.extend(&(dimension as u32).to_le_bytes());
-            
-            // Encode each dimension column with FastLanes
-            for (dim_idx, column) in columns.iter().enumerate() {
-                // Analyze column for optimal encoding
-                let (min_val, max_val) = column.iter()
-                    .fold((f32::MAX, f32::MIN), |(min, max), &val| {
-                        (min.min(val), max.max(val))
-                    });
+                // Write vector data length and data
+                encoded.extend(&(row.vector.len() as u32).to_le_bytes());
+                encoded.extend(&row.vector);
                 
-                let range = max_val - min_val;
-                
-                // Choose optimal encoding based on data characteristics
-                let scheme = if range < 1e-6 {
-                    // Near-constant values - use run-length encoding
-                    FastLanesScheme::RunLength
-                } else if dim_idx < 32 && range < 10.0 {
-                    // Early dimensions often have smaller ranges - use frame of reference
-                    FastLanesScheme::FrameOfReference {
-                        reference: min_val as i64,
-                        bits: ((range.log2().ceil() as u8) + 1).min(16),
-                    }
-                } else if column.windows(2).all(|w| (w[1] - w[0]).abs() < 0.1) {
-                    // Sequential values with small deltas - use delta encoding
-                    FastLanesScheme::Delta { bits: 8 }
-                } else {
-                    // General case - bit packed encoding
-                    FastLanesScheme::BitPacked { bits: 16 }
-                };
-                
-                let encoder = FastLanesEncoder::new(scheme);
-                // Use FastLanes float encoding with full fidelity
-                let encoded_column = encoder.encode_f32(&column)?;
-                
-                // Write encoding scheme marker
-                encoded.push(match scheme {
-                    FastLanesScheme::RunLength => 0x01,
-                    FastLanesScheme::FrameOfReference { .. } => 0x02,
-                    FastLanesScheme::Delta { .. } => 0x03,
-                    FastLanesScheme::BitPacked { .. } => 0x04,
-                    _ => 0x00,
-                });
-                
-                // Write encoded column length and data
-                encoded.extend(&(encoded_column.len() as u32).to_le_bytes());
-                encoded.extend(&encoded_column);
+                // Write metadata length and data
+                encoded.extend(&(row.metadata.len() as u32).to_le_bytes());
+                encoded.extend(&row.metadata);
             }
         }
-        
-        // Store IDs separately (row-wise is fine for IDs)
-        for row in &page.rows {
-            encoded.extend(&row.id);
-        }
-        
-        // Store metadata with intelligent columnar encoding
-        self.encode_metadata_columns(&page, &mut encoded)?;
         
         Ok(encoded)
     }

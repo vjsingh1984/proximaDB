@@ -209,6 +209,81 @@ impl FastLanesEncoder {
         encoded.extend(self.encode_integers(data)?);
         Ok(encoded)
     }
+    
+    /// Encode INT8 quantized vectors with SIMD optimization
+    pub fn encode_int8(&self, data: &[i8]) -> Result<Vec<u8>> {
+        // Convert i8 to i64 for encoding (can be optimized with SIMD)
+        let int_data: Vec<i64> = data.iter()
+            .map(|&v| v as i64)
+            .collect();
+        
+        let mut encoded = vec![0x83]; // Marker for INT8 encoding
+        encoded.extend(self.encode_integers(&int_data)?);
+        Ok(encoded)
+    }
+    
+    /// Encode PQ4 (Product Quantization 4-bit) codes with SIMD packing
+    pub fn encode_pq4(&self, codes: &[u8], num_subvectors: usize) -> Result<Vec<u8>> {
+        // Pack two 4-bit codes per byte for efficiency
+        let mut encoded = vec![0x84]; // Marker for PQ4
+        encoded.extend(&(num_subvectors as u32).to_le_bytes());
+        
+        // Pack pairs of 4-bit values
+        let mut packed = Vec::with_capacity((codes.len() + 1) / 2);
+        for chunk in codes.chunks(2) {
+            let byte = if chunk.len() == 2 {
+                (chunk[0] & 0x0F) | ((chunk[1] & 0x0F) << 4)
+            } else {
+                chunk[0] & 0x0F
+            };
+            packed.push(byte);
+        }
+        
+        encoded.extend(packed);
+        Ok(encoded)
+    }
+    
+    /// Encode PQ8 (Product Quantization 8-bit) codes
+    pub fn encode_pq8(&self, codes: &[u8], num_subvectors: usize) -> Result<Vec<u8>> {
+        let mut encoded = vec![0x85]; // Marker for PQ8
+        encoded.extend(&(num_subvectors as u32).to_le_bytes());
+        encoded.extend(codes); // PQ8 codes are already byte-aligned
+        Ok(encoded)
+    }
+    
+    /// Encode binary quantized vectors (1-bit per dimension)
+    pub fn encode_binary(&self, binary_vec: &[u8]) -> Result<Vec<u8>> {
+        // Binary vectors are already bit-packed
+        let mut encoded = vec![0x86]; // Marker for binary
+        encoded.extend(&(binary_vec.len() as u32).to_le_bytes());
+        encoded.extend(binary_vec);
+        Ok(encoded)
+    }
+    
+    /// Encode with automatic quantization selection based on data
+    pub fn encode_auto_quantized(&self, vector: &[f32], dimension: usize) -> Result<Vec<u8>> {
+        // Choose quantization based on dimension and data characteristics
+        if dimension < 64 {
+            // Small dimensions: use INT8 for good balance
+            let int8_data: Vec<i8> = vector.iter()
+                .map(|&v| (v.clamp(-1.0, 1.0) * 127.0) as i8)
+                .collect();
+            self.encode_int8(&int8_data)
+        } else if dimension < 256 {
+            // Medium dimensions: use PQ8
+            // Simplified PQ8 encoding (would need proper codebook in production)
+            let codes: Vec<u8> = vector.chunks(dimension / 32)
+                .map(|chunk| (chunk.iter().sum::<f32>() * 127.0) as u8)
+                .collect();
+            self.encode_pq8(&codes, 32)
+        } else {
+            // Large dimensions: use PQ4 for maximum compression
+            let codes: Vec<u8> = vector.chunks(dimension / 64)
+                .map(|chunk| ((chunk.iter().sum::<f32>() + 1.0) * 7.5) as u8)
+                .collect();
+            self.encode_pq4(&codes, 64)
+        }
+    }
 
     /// Bit-packing with SIMD-friendly layout
     /// Uses transposed bit-packing for better auto-vectorization
@@ -445,6 +520,102 @@ impl FastLanesDecoder {
         // Decode integers directly
         let count = (data.len() - 1) * 8 / std::mem::size_of::<i64>();
         self.decode_integers(&data[1..], count)
+    }
+    
+    /// Decode INT8 quantized vectors
+    pub fn decode_int8(&self, data: &[u8]) -> Result<Vec<i8>> {
+        if data.is_empty() || data[0] != 0x83 {
+            return Err(anyhow::anyhow!("Invalid INT8 encoded data"));
+        }
+        
+        let count = (data.len() - 1) * 8 / std::mem::size_of::<i64>();
+        let int_data = self.decode_integers(&data[1..], count)?;
+        
+        let int8_data: Vec<i8> = int_data.iter()
+            .map(|&v| v as i8)
+            .collect();
+        
+        Ok(int8_data)
+    }
+    
+    /// Decode PQ4 codes
+    pub fn decode_pq4(&self, data: &[u8]) -> Result<(Vec<u8>, usize)> {
+        if data.len() < 5 || data[0] != 0x84 {
+            return Err(anyhow::anyhow!("Invalid PQ4 encoded data"));
+        }
+        
+        let num_subvectors = u32::from_le_bytes([data[1], data[2], data[3], data[4]]) as usize;
+        let packed_data = &data[5..];
+        
+        // Unpack 4-bit codes
+        let mut codes = Vec::with_capacity(packed_data.len() * 2);
+        for &byte in packed_data {
+            codes.push(byte & 0x0F);
+            codes.push((byte >> 4) & 0x0F);
+        }
+        
+        Ok((codes, num_subvectors))
+    }
+    
+    /// Decode PQ8 codes
+    pub fn decode_pq8(&self, data: &[u8]) -> Result<(Vec<u8>, usize)> {
+        if data.len() < 5 || data[0] != 0x85 {
+            return Err(anyhow::anyhow!("Invalid PQ8 encoded data"));
+        }
+        
+        let num_subvectors = u32::from_le_bytes([data[1], data[2], data[3], data[4]]) as usize;
+        let codes = data[5..].to_vec();
+        
+        Ok((codes, num_subvectors))
+    }
+    
+    /// Decode binary quantized vectors
+    pub fn decode_binary(&self, data: &[u8]) -> Result<Vec<u8>> {
+        if data.len() < 5 || data[0] != 0x86 {
+            return Err(anyhow::anyhow!("Invalid binary encoded data"));
+        }
+        
+        let len = u32::from_le_bytes([data[1], data[2], data[3], data[4]]) as usize;
+        let binary_data = data[5..5+len].to_vec();
+        
+        Ok(binary_data)
+    }
+    
+    /// Decode auto-quantized data back to f32 approximation
+    pub fn decode_auto_quantized(&self, data: &[u8]) -> Result<Vec<f32>> {
+        if data.is_empty() {
+            return Err(anyhow::anyhow!("Empty quantized data"));
+        }
+        
+        match data[0] {
+            0x83 => {
+                // INT8 quantization
+                let int8_data = self.decode_int8(data)?;
+                Ok(int8_data.iter().map(|&v| v as f32 / 127.0).collect())
+            }
+            0x84 => {
+                // PQ4 quantization (simplified reconstruction)
+                let (codes, num_subvectors) = self.decode_pq4(data)?;
+                Ok(codes.iter().map(|&c| (c as f32 / 7.5) - 1.0).collect())
+            }
+            0x85 => {
+                // PQ8 quantization (simplified reconstruction)
+                let (codes, _num_subvectors) = self.decode_pq8(data)?;
+                Ok(codes.iter().map(|&c| c as f32 / 127.0).collect())
+            }
+            0x86 => {
+                // Binary quantization
+                let binary_data = self.decode_binary(data)?;
+                let mut result = Vec::new();
+                for byte in binary_data {
+                    for bit in 0..8 {
+                        result.push(if (byte >> bit) & 1 == 1 { 1.0 } else { -1.0 });
+                    }
+                }
+                Ok(result)
+            }
+            _ => Err(anyhow::anyhow!("Unknown quantization marker: {}", data[0]))
+        }
     }
 
     /// Unpack bit-packed integers

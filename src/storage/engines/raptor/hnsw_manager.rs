@@ -17,11 +17,11 @@ use crate::storage::engines::common::fastlanes_encoding::{
 // HNSW graph structures
 #[derive(Debug, Clone)]
 pub struct GraphNode {
-    id: String,
-    encoded_vector: Vec<u8>,
-    decoded_vector: Vec<f32>,
-    neighbors: Vec<String>,  // IDs of connected nodes
-    level: usize,
+    pub id: String,
+    pub encoded_vector: Vec<u8>,
+    pub decoded_vector: Vec<f32>,
+    pub neighbors: Vec<String>,  // IDs of connected nodes
+    pub level: usize,
 }
 
 #[derive(Debug)]
@@ -48,7 +48,7 @@ struct SearchCandidate {
 impl Ord for SearchCandidate {
     fn cmp(&self, other: &Self) -> Ordering {
         // Reverse order for min-heap
-        other.distance.partial_cmp(&self.distance)
+        other.distance.partial_cmp(&self.distance).unwrap_or(Ordering::Equal)
     }
 }
 
@@ -480,8 +480,8 @@ impl HnswManager {
     fn convert_axis_results(&self, axis_results: Vec<crate::index::axis::ScoredResult>) -> Vec<HnswSearchResult> {
         axis_results.into_iter()
             .map(|result| HnswSearchResult {
-                id: result.id.to_string(),
-                score: result.score,
+                id: result.vector_id.to_string(),
+                score: result.similarity,
                 vector: None, // Not needed for search results
                 metadata: None, // Would extract from result if needed
             })

@@ -98,6 +98,53 @@ pub struct RowGroupMetadata {
     pub centroid: Option<Vec<f32>>,
 }
 
+impl Default for RowGroupMetadata {
+    fn default() -> Self {
+        Self {
+            id: 0,
+            offset: 0,
+            compressed_size: 0,
+            uncompressed_size: 0,
+            row_count: 0,
+            vector_stats: VectorStats::default(),
+            metadata_stats: HashMap::new(),
+            bloom_filter_offset: None,
+            hnsw_segment_offset: None,
+            compression_codec: "zstd".to_string(),
+            min_timestamp: None,
+            max_timestamp: None,
+            centroid: None,
+        }
+    }
+}
+
+/// Row page metadata for detailed page-level tracking
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RowPageMetadata {
+    pub page_id: u32,
+    pub file_offset: i64,
+    pub compressed_size: i64,
+    pub uncompressed_size: i64,
+    pub num_rows: i32,
+    pub first_id: Vec<u8>,
+    pub last_id: Vec<u8>,
+    pub compression_codec: String,
+}
+
+/// HNSW segment metadata for row group navigation
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HnswSegmentMetadata {
+    pub segment_id: u32,
+    pub row_group_id: u32,
+    pub file_offset: i64,
+    pub compressed_size: i64,
+    pub uncompressed_size: i64,
+    pub num_nodes: i32,
+    pub entry_point: Option<u32>,
+    pub max_level: u32,
+    pub compression_codec: String,
+}
+
 // ====== Vector Statistics (unified) ======
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]

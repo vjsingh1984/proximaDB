@@ -30,6 +30,9 @@ pub struct RaptorConfig {
     pub bloom_fpp: f64,
     pub enable_statistics: bool,
     
+    // Vector settings
+    pub vector_dimension: Option<usize>,
+    
     // Compaction settings
     pub compaction_threshold_files: usize,
     pub compaction_min_size_mb: usize,
@@ -117,6 +120,9 @@ impl Default for RaptorConfig {
             enable_bloom_filters: true,
             bloom_fpp: 0.01,
             enable_statistics: true,
+            
+            // Vector settings
+            vector_dimension: None, // Will be determined from data
             
             // Aggressive compaction for HNSW graph consistency:
             // - Trigger at 2 files to maintain single navigable graph
