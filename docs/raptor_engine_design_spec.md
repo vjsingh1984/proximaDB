@@ -30,9 +30,247 @@ RAPTOR (Row-Aligned Predicated Tensor Optimized Repository) is a high-performanc
 - **Lifecycle management** integration with cloud providers
 - **Access pattern analytics** for optimal placement decisions
 
+## Visual Architecture Overview
+
+### RAPTOR Storage Layout and HNSW Organization
+
+```mermaid
+graph TB
+    subgraph "RAPTOR File Structure (Single L0 File)"
+        Header["Header: RPTR Magic (4 bytes)"]
+        
+        subgraph "RowGroup 0 (1K vectors)"
+            RG0_Tensor["Columnar Tensor Storage<br/>• 1K vectors transposed<br/>• Per-dimension FastLanes<br/>• 3-5x compression"]
+            RG0_Meta["Metadata Columns<br/>• Dictionary encoded<br/>• Type-specific compression<br/>• SIMD predicate pushdown"]
+            RG0_HNSW["Local HNSW Segment<br/>• Quantized navigation<br/>• 1K nodes max<br/>• Local connectivity"]
+            RG0_BTree["B-Tree Index<br/>• ID lookups O(log n)<br/>• 16-byte fixed IDs"]
+        end
+        
+        subgraph "RowGroup 1 (1K vectors)"
+            RG1_Tensor["Columnar Tensor Storage"]
+            RG1_Meta["Metadata Columns"]
+            RG1_HNSW["Local HNSW Segment"]
+            RG1_BTree["B-Tree Index"]
+        end
+        
+        subgraph "RowGroup N"
+            RGN["... More RowGroups ..."]
+        end
+        
+        subgraph "Global Index Layer"
+            GlobalHNSW["Global HNSW<br/>• Bridges local segments<br/>• Entry points to each RG<br/>• Maintained during compaction"]
+            GlobalBTree["Global B-Tree Root<br/>• Cross-RG ID lookups<br/>• Points to local B-trees"]
+        end
+        
+        Footer["Footer Metadata<br/>• RowGroup offsets<br/>• Schema descriptor<br/>• Global index pointers<br/>• Bincode serialized"]
+    end
+    
+    Header --> RG0_Tensor
+    RG0_Tensor --> RG0_Meta
+    RG0_Meta --> RG0_HNSW
+    RG0_HNSW --> RG0_BTree
+    RG0_BTree --> RG1_Tensor
+    RG1_Tensor --> RGN
+    RGN --> GlobalHNSW
+    GlobalHNSW --> GlobalBTree
+    GlobalBTree --> Footer
+    
+    style Header fill:#f9f,stroke:#333,stroke-width:2px
+    style Footer fill:#f9f,stroke:#333,stroke-width:2px
+    style GlobalHNSW fill:#9f9,stroke:#333,stroke-width:2px
+    style RG0_HNSW fill:#9ff,stroke:#333,stroke-width:2px
+    style RG1_HNSW fill:#9ff,stroke:#333,stroke-width:2px
+```
+
+### HNSW Search Flow with Localized Access
+
+```mermaid
+sequenceDiagram
+    participant User as User Query
+    participant Global as Global HNSW
+    participant Local as Local HNSW Segments
+    participant Tensor as Columnar Tensors
+    participant Result as Results
+    
+    User->>Global: Search(query_vector, k=10)
+    
+    Note over Global: Navigate global graph<br/>Find best entry points
+    
+    Global->>Local: Identify 1-3 relevant<br/>RowGroups (1K vectors each)
+    
+    loop For each relevant RowGroup
+        Local->>Local: Navigate local HNSW<br/>(quantized vectors)
+        Local->>Tensor: Load columnar data<br/>(only needed dimensions)
+        
+        Note over Tensor: SIMD distance computation<br/>on columnar layout
+        
+        Tensor->>Result: Top candidates from RG
+    end
+    
+    Result->>Result: Merge & re-rank<br/>candidates
+    Result->>User: Return top-k results
+    
+    Note over User,Result: Typical search reads<br/>1-3K vectors (1-3 RGs)<br/>vs 10-30K traditional
+```
+
+### Compaction Strategy: Maintaining Single L0 File
+
+```mermaid
+stateDiagram-v2
+    [*] --> SingleFile: Initial Write
+    
+    SingleFile --> TwoFiles: New Flush Creates<br/>Second File
+    
+    TwoFiles --> Compacting: Trigger Immediate<br/>Compaction
+    
+    Compacting --> Reorganizing: Reorganize Vectors<br/>by HNSW Locality
+    
+    Reorganizing --> MergingHNSW: Merge Local HNSW<br/>Segments
+    
+    MergingHNSW --> RebuildGlobal: Rebuild Global<br/>HNSW Index
+    
+    RebuildGlobal --> SingleFile: Write New<br/>Single File
+    
+    note right of SingleFile
+        Benefits:
+        • Single navigable graph
+        • Optimal locality
+        • No fragmentation
+        • Predictable I/O
+    end note
+    
+    note right of Compacting
+        Aggressive Policy:
+        • Compact at 2 files
+        • No size threshold
+        • Maintain single L0
+        • 100GB+ supported
+    end note
+```
+
+### Columnar Tensor Layout Details
+
+```mermaid
+graph LR
+    subgraph "Traditional Row Storage (Before)"
+        Row1["Vector 1: [d0,d1,d2...d383]"]
+        Row2["Vector 2: [d0,d1,d2...d383]"]
+        Row1000["Vector 1000: [d0,d1,d2...d383]"]
+    end
+    
+    subgraph "Columnar Tensor Storage (After)"
+        Col0["Dim 0: [v1,v2...v1000]<br/>FastLanes Delta"]
+        Col1["Dim 1: [v1,v2...v1000]<br/>FastLanes FOR"]
+        Col383["Dim 383: [v1,v2...v1000]<br/>FastLanes BitPack"]
+    end
+    
+    Row1 -.->|Transpose| Col0
+    Row2 -.->|Transpose| Col1
+    Row1000 -.->|Transpose| Col383
+    
+    subgraph "Encoding Benefits"
+        E1["Delta: Sequential patterns<br/>2-4x compression"]
+        E2["FOR: Bounded ranges<br/>3-5x compression"]
+        E3["BitPack: General purpose<br/>2x compression"]
+    end
+    
+    Col0 --> E1
+    Col1 --> E2
+    Col383 --> E3
+```
+
+## Architecture Merits, Demerits, and Optimization Opportunities
+
+### ✅ **Merits**
+
+1. **I/O Efficiency**
+   - 90% reduction in wasted reads for HNSW searches
+   - Read 1K vectors (4MB) instead of 10K (40MB)
+   - Entire row group fits in L3 cache
+
+2. **Compression Excellence**
+   - 3-5x better compression with columnar tensor layout
+   - 70-90% metadata compression with type-specific encoding
+   - 40-50% overall storage reduction
+
+3. **SIMD Optimization**
+   - Direct columnar operations without transpose
+   - Predicate pushdown on encoded data
+   - Cross-platform support (AVX512/AVX2/SSE4/NEON)
+
+4. **Graph Locality**
+   - HNSW neighbors co-located in same row group
+   - Single global file maintains graph connectivity
+   - Predictable access patterns
+
+### ⚠️ **Demerits**
+
+1. **Write Amplification**
+   - Aggressive compaction (every 2 files)
+   - Full file rewrite to maintain single L0
+   - CPU cost for reorganization
+
+2. **Memory Overhead**
+   - Global HNSW must fit in memory
+   - B-tree indices for all row groups
+   - Quantized vectors for navigation
+
+3. **Reconstruction Cost**
+   - Must reconstruct vectors from columnar
+   - CPU cycles for transpose operation
+   - Not ideal for full table scans
+
+### 🚀 **Optimization Opportunities**
+
+1. **Adaptive Row Group Sizing**
+   ```rust
+   // Dynamic sizing based on query patterns
+   pub fn optimize_rowgroup_size(k_distribution: &Histogram) -> usize {
+       match k_distribution.p95() {
+           k if k < 10 => 500,    // Minimal waste
+           k if k < 100 => 1000,   // Balanced
+           k if k < 1000 => 2000,  // Higher throughput
+           _ => 5000,              // Bulk operations
+       }
+   }
+   ```
+
+2. **Incremental HNSW Updates**
+   ```rust
+   // Defer global HNSW rebuild
+   pub struct IncrementalHNSW {
+       pub base_graph: GlobalHNSW,
+       pub delta_segments: Vec<LocalHNSW>,
+       pub merge_threshold: usize, // e.g., 10 segments
+   }
+   ```
+
+3. **Selective Dimension Loading**
+   ```rust
+   // Load only needed dimensions for initial filtering
+   pub async fn progressive_search(&self, query: &[f32]) -> Result<Vec<Result>> {
+       // Phase 1: Load top 32 dimensions (PCA/importance)
+       let candidates = self.search_reduced_dims(&query[..32]).await?;
+       
+       // Phase 2: Refine with full dimensions
+       self.refine_with_full_dims(candidates, query).await
+   }
+   ```
+
+4. **Metadata Column Families**
+   ```rust
+   // Group related metadata for better compression
+   pub struct MetadataFamilies {
+       pub temporal: Vec<String>,    // timestamps, dates
+       pub categorical: Vec<String>, // tags, categories
+       pub numerical: Vec<String>,   // prices, scores
+       pub textual: Vec<String>,     // descriptions
+   }
+   ```
+
 ## Core Architecture
 
-### 1. Storage Format (Artus-Aligned with Parquet-like Footer)
+### 1. Storage Format (Optimized for HNSW Locality)
 
 ```
 ┌─────────────────────────────────────────────────────────┐

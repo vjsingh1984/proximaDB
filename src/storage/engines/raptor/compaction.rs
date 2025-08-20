@@ -1,8 +1,10 @@
 use anyhow::Result;
 use std::sync::Arc;
 use tokio::sync::Mutex;
+use std::collections::{HashMap, HashSet};
 use super::{RaptorConfig, hnsw_compaction::HnswAwareCompactionManager};
 use super::hnsw_manager::HnswManager;
+use crate::proto::proximadb::VectorRecord;
 
 /// Unified compaction manager for RAPTOR that integrates with the framework
 /// but uses aggressive single-file strategy for HNSW graph maintenance
@@ -40,16 +42,14 @@ impl CompactionManager {
         self
     }
     
-    /// Check if compaction is needed based on RAPTOR's aggressive policy
+    /// Check if compaction is needed based on RAPTOR's aggressive single-file policy
     pub async fn needs_compaction(&self) -> Result<bool> {
-        if let Some(ref hnsw_compaction) = self.hnsw_compaction {
-            // HNSW mode: compact when we have more than 1 file
-            hnsw_compaction.needs_compaction().await
-        } else {
-            // Non-HNSW mode: use standard threshold
-            let files = self.list_files().await?;
-            Ok(files.len() >= self.config.compaction_threshold_files)
-        }
+        // RAPTOR maintains exactly ONE L0 file for optimal HNSW locality
+        // Trigger compaction immediately when a second file appears
+        let files = self.list_raptor_files().await?;
+        
+        // If we have 2 or more files, compact immediately
+        Ok(files.len() >= 2)
     }
     
     /// Perform compaction using unified framework with RAPTOR-specific settings
@@ -83,6 +83,11 @@ impl CompactionManager {
         }
         
         Ok(())
+    }
+    
+    /// List all RAPTOR files in the base path
+    async fn list_raptor_files(&self) -> Result<Vec<String>> {
+        self.list_files().await
     }
     
     /// List all RAPTOR files in the base path
@@ -142,6 +147,165 @@ impl CompactionManager {
             target_file_size: usize::MAX,
         })
     }
+    
+    /// Reorganize vectors by HNSW locality during compaction
+    /// This ensures vectors that are neighbors in HNSW are co-located in row groups
+    pub async fn reorganize_by_hnsw_locality(
+        &self,
+        vectors: Vec<VectorRecord>,
+        hnsw_graph: &HnswGraph,
+    ) -> Result<Vec<RowGroup>> {
+        let mut row_groups = Vec::new();
+        let mut visited = HashSet::new();
+        let mut current_group = Vec::new();
+        
+        // Build adjacency map from HNSW graph
+        let adjacency = self.build_adjacency_map(hnsw_graph);
+        
+        // Start from entry points and traverse by locality
+        for entry_point in &hnsw_graph.entry_points {
+            if visited.contains(entry_point) {
+                continue;
+            }
+            
+            // BFS traversal to gather connected components
+            let mut queue = vec![*entry_point];
+            
+            while let Some(node_id) = queue.pop() {
+                if visited.contains(&node_id) {
+                    continue;
+                }
+                
+                visited.insert(node_id);
+                
+                // Add vector to current group
+                if let Some(vector) = vectors.iter().find(|v| {
+                    v.id.as_ref().map(|id| id == &format!("node_{}", node_id)).unwrap_or(false)
+                }) {
+                    current_group.push(vector.clone());
+                    
+                    // If group is full (1K vectors), start new group
+                    if current_group.len() >= 1000 {
+                        row_groups.push(RowGroup {
+                            vectors: current_group.clone(),
+                            local_hnsw: self.build_local_hnsw(&current_group),
+                        });
+                        current_group.clear();
+                    }
+                }
+                
+                // Add neighbors to queue
+                if let Some(neighbors) = adjacency.get(&node_id) {
+                    for &neighbor in neighbors {
+                        if !visited.contains(&neighbor) {
+                            queue.push(neighbor);
+                        }
+                    }
+                }
+            }
+        }
+        
+        // Handle remaining vectors
+        if !current_group.is_empty() {
+            row_groups.push(RowGroup {
+                vectors: current_group,
+                local_hnsw: LocalHnswSegment::new(),
+            });
+        }
+        
+        // Add any unvisited vectors (shouldn't happen with proper HNSW)
+        for vector in vectors {
+            let node_id = self.extract_node_id(&vector);
+            if !visited.contains(&node_id) {
+                // Find the best row group or create new one
+                if let Some(last_group) = row_groups.last_mut() {
+                    if last_group.vectors.len() < 1000 {
+                        last_group.vectors.push(vector);
+                    } else {
+                        row_groups.push(RowGroup {
+                            vectors: vec![vector],
+                            local_hnsw: LocalHnswSegment::new(),
+                        });
+                    }
+                }
+            }
+        }
+        
+        tracing::info!(
+            "RAPTOR: Reorganized {} vectors into {} row groups by HNSW locality",
+            vectors.len(),
+            row_groups.len()
+        );
+        
+        Ok(row_groups)
+    }
+    
+    /// Build adjacency map from HNSW graph
+    fn build_adjacency_map(&self, graph: &HnswGraph) -> HashMap<u32, Vec<u32>> {
+        let mut adjacency = HashMap::new();
+        
+        for edge in &graph.edges {
+            adjacency.entry(edge.from)
+                .or_insert_with(Vec::new)
+                .push(edge.to);
+            adjacency.entry(edge.to)
+                .or_insert_with(Vec::new)
+                .push(edge.from);
+        }
+        
+        adjacency
+    }
+    
+    /// Build local HNSW segment for a row group
+    fn build_local_hnsw(&self, vectors: &[VectorRecord]) -> LocalHnswSegment {
+        // Simplified - would actually build proper HNSW
+        LocalHnswSegment {
+            num_nodes: vectors.len(),
+            entry_point: 0,
+        }
+    }
+    
+    /// Extract node ID from vector record
+    fn extract_node_id(&self, vector: &VectorRecord) -> u32 {
+        vector.id.as_ref()
+            .and_then(|id| id.strip_prefix("node_"))
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(0)
+    }
+}
+
+/// Represents a row group with localized vectors
+pub struct RowGroup {
+    pub vectors: Vec<VectorRecord>,
+    pub local_hnsw: LocalHnswSegment,
+}
+
+/// Local HNSW segment for a row group
+pub struct LocalHnswSegment {
+    pub num_nodes: usize,
+    pub entry_point: u32,
+}
+
+impl LocalHnswSegment {
+    pub fn new() -> Self {
+        Self {
+            num_nodes: 0,
+            entry_point: 0,
+        }
+    }
+}
+
+/// HNSW graph structure
+pub struct HnswGraph {
+    pub entry_points: Vec<u32>,
+    pub edges: Vec<HnswEdge>,
+}
+
+/// Edge in HNSW graph
+pub struct HnswEdge {
+    pub from: u32,
+    pub to: u32,
+    pub distance: f32,
 }
 
 /// Compaction configuration for unified framework
