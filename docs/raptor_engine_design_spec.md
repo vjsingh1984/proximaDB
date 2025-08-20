@@ -872,6 +872,16 @@ graph TB
         end
         
         RW --> RF
+        RF --> HM
+        HM --> VI
+        QP --> PE
+        PE --> VS
+        VS --> RP
+        SO --> QC
+        QC --> CC
+        CC --> PC
+    end
+```
 
 ## Performance Optimization Architecture
 
