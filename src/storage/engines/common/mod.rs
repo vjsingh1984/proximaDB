@@ -3,8 +3,6 @@
 
 // Core universal modules
 pub mod search_common;
-#[deprecated(since = "0.2.0", note = "Use unified_query_optimizer module instead")]
-pub mod metadata_filters;
 // NOTE: quantization_common and quantization_adapter have been removed
 // All engines now use the unified quantization engine from compute module directly
 pub mod compression_common;
@@ -13,14 +11,46 @@ pub mod progressive_search;
 /// Universal performance optimization module for all storage engines
 pub mod performance_optimization;
 
-/// Tiered caching system for storage engines
-pub mod tiered_cache;
+/// UNIFIED ZERO-COPY I/O SYSTEM - Complete solution for intelligent cloud storage access
+pub mod zero_copy_io_system;
 
-/// Collection-partitioned caching system for efficient similarity search
-pub mod collection_partitioned_cache;
+/// Zero-copy reader integration examples and utilities
+pub mod zero_copy_reader_integration;
 
-/// Integrated cache system combining tiered and collection-partitioned approaches
-pub mod integrated_cache;
+/// FastLanes SIMD-optimized encoding for columnar data within blocks
+/// Used by SST, SWIFT, RAPTOR, and PRISM for efficient vector storage
+pub mod fastlanes_encoding;
+
+// Legacy cache module removed - use zero_copy_io_system instead
+
+// UNIFIED ZERO-COPY I/O SYSTEM - Complete intelligent cloud storage solution
+pub use zero_copy_io_system::{
+    // Main system components
+    ZeroCopyIOSystem, ZeroCopyIOSystemBuilder, WorkloadType,
+    
+    // Core functionality
+    OptimizedIOResult, IOStrategy, IOSavings,
+    
+    // Configuration
+    ZeroCopyIOConfig, MetadataCacheConfig, DownloadOptimizerConfig,
+    SizeBasedThresholds, NetworkAdjustments, AccessPredictionConfig,
+    
+    // Metrics and monitoring
+    SystemPerformanceMetrics, MetadataCacheMetrics, DownloadOptimizerMetrics,
+    
+    // Common traits and types
+    MetadataSerializer, EngineMetadata, QueryContext, DataRange,
+    FileAccessRequest, RequestPriority, QueryType,
+    
+    // Access tracking
+    AccessPatternTracker, AccessEvent,
+    
+    // Preset configurations
+    presets,
+    
+    // Constants
+    VERSION as ZERO_COPY_IO_VERSION, MAGIC_BYTES,
+};
 // TODO: Create these modules when needed:
 // pub mod validation_common;
 // pub mod statistics_common;
@@ -31,12 +61,7 @@ pub mod integrated_cache;
 pub mod compression_adapter;
 
 // DEPRECATED: These types now live in unified_query_optimizer
-// Re-exported here for backward compatibility only
-#[deprecated(since = "0.2.0", note = "Import from crate::query::unified_query_optimizer instead")]
-pub use metadata_filters::{
-    UniversalMetadataFilter, UniversalFilterCondition, UniversalFilterLogic,
-    FilterableColumn, ColumnStatistics, ColumnDataType,
-};
+// Removed deprecated metadata_filters module - import from crate::query::unified_query_optimizer instead
 // NOTE: Quantization exports removed - use compute::quantization module directly
 pub use compression_common::{
     UniversalCompressionConfig, CompressionCapabilities, CompressionStrategy,
@@ -53,25 +78,16 @@ pub use performance_optimization::{
     UniversallyOptimized, AccessStats,
 };
 
-// Tiered cache exports
-pub use tiered_cache::{
-    TieredCache, TieredCacheConfig, CacheItemType, CacheKey,
-    MemoryTierConfig, DiskTierConfig, EvictionConfig, PrefetchConfig,
-    CacheStats as TieredCacheStats,
+// Duplicate zero-copy I/O system export removed - see consolidated version above
+
+// Zero-copy reader integration utilities
+pub use zero_copy_reader_integration::{
+    ZeroCopyReaderIntegration, EnhancedReader, ReaderMetrics,
+    EnhancedSstReader, EnhancedParquetReader, EnhancedSwiftReader,
+    ReaderMigrationHelper,
 };
 
-// Collection-partitioned cache exports
-pub use collection_partitioned_cache::{
-    CollectionPartitionedCache, CollectionCacheConfig, CollectionPartition,
-    RegionType, CacheStatsSummary, CollectionEvictionPolicy,
-};
-
-// Integrated cache exports - THIS IS THE RECOMMENDED CACHE SYSTEM
-pub use integrated_cache::{
-    IntegratedCache, IntegratedCacheConfig, MemoryConfig, DiskConfig,
-    StorageHints, RegionType as CacheRegionType, FileRegion,
-    CacheStatsSummary as IntegratedCacheStats,
-};
+// Legacy exports removed - use zero_copy_io_system instead
 // pub use validation_common::{
 //     UniversalValidationConfig, ValidationCapabilities, ValidationReport,
 //     RecordValidationError, IntegrityCheck,

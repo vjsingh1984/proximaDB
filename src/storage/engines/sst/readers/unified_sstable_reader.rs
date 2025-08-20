@@ -26,10 +26,17 @@ use crate::core::search::{SearchParams, SearchResult, FilterExpression};
 use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
 use crate::storage::persistence::filesystem::{FilesystemFactory, FileSystem};
 use crate::storage::engines::row_based::bloom_filter::SstableBloomFilter;
+use crate::storage::engines::row_based::shared_sst_reader::{SharedSstFormatReader, SstMmapStrategy, SstRegion};
 use crate::storage::engines::sst::{SstableHeader, DataBlock, IndexEntry, VectorFormatType};  // OPTIMIZED: Removed SstRecord import
 use crate::core::compression::CompressionAlgorithm;
 use crate::core::bloom::{BloomFilterConfig, BloomStrategy};
 use super::block_filter::{IntelligentBlockFilter, BlockFilter, QueryType};
+
+// ZERO-COPY CACHE INTEGRATION
+use crate::storage::engines::common::zero_copy_io_system::{
+    ZeroCopyIOSystem, MetadataSerializer, EngineMetadata, QueryContext, DataRange,
+    FileAccessRequest, RequestPriority, IOStrategy
+};
 
 // Type alias for bloom filter
 type BloomFilter = SstableBloomFilter;
@@ -65,26 +72,26 @@ pub enum SstableReadingStrategy {
         sequential_io: bool,
     },
 }
-use crate::storage::cache::specialized::{VectorStore, IndexNodeCache, BitmapFilterCache};
-use crate::storage::cache::specialized::vector_store::SstBlockKey;
+// NOTE: Removed specialized cache imports - using only zero-copy system for caching
+// Old: VectorStore, IndexNodeCache, BitmapFilterCache replaced by ZeroCopyIOSystem
 
-/// Unified SSTable Reader with automatic optimization selection
+/// Unified SSTable Reader with zero-copy cache-first architecture
+/// Leverages SharedSstFormatReader for actual file operations (eliminates code duplication)
 pub struct UnifiedSstableReader {
-    filesystem: Arc<FilesystemFactory>,
-    // REPLACED: Using central cache module instead of custom BlockCache
-    vector_cache: Arc<VectorStore>,        // For data blocks
-    index_node_cache: Arc<IndexNodeCache>, // For SSTable indices
-    bloom_cache: Arc<BitmapFilterCache>,   // For bloom filters
+    // CORE READER: Delegates low-level file operations to shared infrastructure
+    shared_reader: Arc<SharedSstFormatReader>,
     strategy_selector: Arc<ReadingStrategySelector>,
+    // UNIFIED CACHE: Only zero-copy system for all caching needs (data blocks, indexes, bloom filters)
+    zero_copy_system: Arc<ZeroCopyIOSystem>,
+    collection_id: String,
 }
 
 impl std::fmt::Debug for UnifiedSstableReader {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("UnifiedSstableReader")
-            .field("filesystem", &"FilesystemFactory")
-            .field("vector_cache_info", &"VectorStore")
-            .field("index_node_cache_info", &"IndexNodeCache")
-            .field("bloom_cache_info", &"BitmapFilterCache")
+            .field("shared_reader", &"SharedSstFormatReader")
+            .field("zero_copy_system", &"ZeroCopyIOSystem")
+            .field("collection_id", &self.collection_id)
             .field("strategy_selector", &self.strategy_selector)
             .finish()
     }
@@ -1312,64 +1319,97 @@ impl UnifiedSstableReader {
         Ok(())
     }
     
-    /// Create a new unified reader with central cache integration
-    pub fn new(filesystem: Arc<FilesystemFactory>) -> Self {
-        let config = ReaderConfig::default();
-        Self::with_cache(
-            filesystem,
-            Arc::new(VectorStore::new(config.block_cache_size / (1024 * 1024))), // Convert to MB
-            Arc::new(IndexNodeCache::new(config.index_cache_size / (1024 * 1024))),
-            Arc::new(BitmapFilterCache::new(50)), // 50MB for bloom filters
-            config,
-        )
-    }
-    
-    /// Create with external cache instances for sharing
-    pub fn with_cache(
+    /// Create unified reader with zero-copy system (leverages SharedSstFormatReader for file ops)
+    /// 
+    /// # Architecture Decision
+    /// - No VectorCache: High-dimensional vectors benefit from OS page cache + mmap
+    /// - No IndexNodeCache/BloomCache: File-specific metadata handled by zero-copy system
+    /// - Single cache layer: Zero-copy system with filename-based metadata verification
+    /// - Code Reuse: Delegates file operations to SharedSstFormatReader (eliminates duplication)
+    pub fn new(
         filesystem: Arc<FilesystemFactory>,
-        vector_cache: Arc<VectorStore>,
-        index_node_cache: Arc<IndexNodeCache>,
-        bloom_cache: Arc<BitmapFilterCache>,
-        config: ReaderConfig,
+        zero_copy_system: Arc<ZeroCopyIOSystem>,
+        collection_id: String,
     ) -> Self {
-        Self {
+        let config = ReaderConfig::default();
+        
+        // Create default SST mmap strategy optimized for search workloads
+        let mmap_strategy = SstMmapStrategy {
+            always_mmap: vec![
+                SstRegion::BloomFilter,     // Always cache bloom filters
+                SstRegion::IndexBlock,      // Always cache index blocks
+            ],
+            conditional_mmap: vec![
+                (SstRegion::DataBlock, 0.7), // Cache data blocks if memory pressure < 70%
+            ],
+            never_mmap: vec![
+                SstRegion::Footer,          // Footers are small, don't need mmap
+            ],
+        };
+        
+        // Create shared reader for actual file operations
+        let shared_reader = Arc::new(SharedSstFormatReader::new(
             filesystem,
-            vector_cache,
-            index_node_cache,
-            bloom_cache,
+            mmap_strategy,
+            zero_copy_system.clone(),
+            collection_id.clone(),
+        ));
+        
+        Self {
+            shared_reader,
             strategy_selector: Arc::new(ReadingStrategySelector::new(config)),
+            zero_copy_system,
+            collection_id,
         }
     }
     
-    /// Search vectors using optimized strategies
+    /// Search vectors using cache-first zero-copy architecture
     pub async fn search_vectors(
         &self,
         params: &SearchParams,
         collection_context: &CollectionContext,
     ) -> Result<Vec<SearchResult>> {
-        debug!("🔍 SSTABLE READER: Starting search with {} files, k={}", 
+        debug!("🔍 SSTABLE READER: Starting cache-first search with {} files, k={}", 
               collection_context.sstable_files.len(),
               params.top_k.unwrap_or(10));
         
         // CRITICAL: Create distance compute locally per query to avoid cross-query contamination
-        // This ensures thread safety and correct distance metric for each query
         let distance_compute = UnifiedDistanceCompute::default();
         
-        // Debug: print file paths
-        for (i, file_path) in collection_context.sstable_files.iter().enumerate() {
-            debug!("📁 SSTable file {}: {}", i, file_path);
+        // CACHE-FIRST PATTERN: Check zero-copy metadata cache for each file
+        // Cache key format: filename:collection_id:engine (filename-first for optimal sequential matching)
+        let mut cached_metadata = Vec::new();
+        let mut files_needing_load = Vec::new();
+        
+        for file_path in &collection_context.sstable_files {
+            debug!("📁 Checking cache for SSTable file: {}", file_path);
+            
+            // Filename-first key format optimizes sequential matching due to higher cardinality
+            let cache_key = format!("{}:{}:sst", file_path, self.collection_id);
+            
+            match self.zero_copy_system.get_cached_metadata(&cache_key).await {
+                Ok(Some(metadata)) => {
+                    debug!("✅ Cache HIT for file: {}", file_path);
+                    cached_metadata.push((file_path.clone(), metadata));
+                }
+                Ok(None) => {
+                    debug!("❌ Cache MISS for file: {}", file_path);
+                    files_needing_load.push(file_path.clone());
+                }
+                Err(e) => {
+                    warn!("⚠️ Cache error for file {}: {}, falling back to load", file_path, e);
+                    files_needing_load.push(file_path.clone());
+                }
+            }
         }
         
-        // Debug: print filter expression
-        if let Some(filter) = &params.filter_expression {
-            debug!("🔎 Filter expression: {:?}", filter);
-        }
+        debug!("📊 Cache stats: {} hits, {} misses", cached_metadata.len(), files_needing_load.len());
         
         // 1. Select optimal reading strategy
         let search_strategy = self.strategy_selector.select_strategy(params, collection_context)?;
-        debug!("📊 Selected // search_strategy removed -  {:?}", search_strategy);
+        debug!("📊 Selected strategy: {:?}", search_strategy);
         
-        // 2. Apply strategy to read relevant blocks
+        // 2. Apply strategy to read relevant blocks (zero-copy system handles caching)
         let relevant_blocks = self.apply_strategy(&search_strategy, params, collection_context).await?;
         debug!("📦 SSTABLE READER: Loaded {} data blocks total from all files", relevant_blocks.len());
         

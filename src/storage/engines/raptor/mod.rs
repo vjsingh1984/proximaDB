@@ -8,6 +8,8 @@ pub mod writer;
 pub mod reader;
 pub mod compaction;
 pub mod hnsw_manager;
+pub mod hnsw_compaction;
+pub mod unified_reader;     // Consolidated reader
 pub mod simd_ops;
 pub mod metadata;
 
@@ -18,6 +20,6 @@ pub use config::RaptorConfig;
 pub use engine::RaptorEngine;
 pub use rowgroup::{RowGroup, RowGroupManager};
 pub use writer::RaptorWriter;
-pub use reader::RaptorReader;
+pub use unified_reader::RaptorUnifiedReader;  // Export the unified reader
 
 use anyhow::Result;

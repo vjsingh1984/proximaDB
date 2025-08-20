@@ -130,17 +130,128 @@ impl RaptorWriter {
     }
     
     async fn compress_rowgroup(&self, batch: &RecordBatch) -> Result<Vec<u8>> {
-        // Serialize batch to bytes (using Arrow IPC format)
-        let mut buffer = Vec::new();
-        {
-            use arrow_ipc::writer::StreamWriter;
-            let mut writer = StreamWriter::try_new(&mut buffer, &self.schema)?;
-            writer.write(batch)?;
-            writer.finish()?;
+        // FASTLANES: Always encode RecordBatch using FastLanes for tensor optimization
+        // First byte is the encoding marker (RAPTOR uses 0xA0-0xAF range)
+        let mut result = Vec::new();
+        
+        // Always use FastLanes tensor encoding for best performance
+        let encoding_marker = 0xA1; // FastLanes tensor encoding
+        result.push(encoding_marker);
+        
+        // Use FastLanes encoding for tensor optimization
+        let encoded = self.encode_batch_with_fastlanes(batch, encoding_marker)?;
+        result.extend(encoded);
+        
+        Ok(result)
+    }
+    
+    fn encode_batch_with_fastlanes(&self, batch: &RecordBatch, marker: u8) -> Result<Vec<u8>> {
+        use crate::storage::engines::common::fastlanes_encoding::{FastLanesEncoder, FastLanesScheme};
+        use std::io::Write;
+        
+        // Extract vectors from RecordBatch
+        let vectors = self.extract_vectors_from_batch(batch)?;
+        
+        if vectors.is_empty() {
+            return Ok(Vec::new());
         }
         
-        // Simplified compression - would use actual compression engine
-        Ok(buffer)
+        let dimension = vectors[0].len();
+        
+        // Transpose to columnar for SIMD optimization
+        let mut columns: Vec<Vec<f32>> = vec![vec![]; dimension];
+        for vector in &vectors {
+            for (dim_idx, &value) in vector.iter().enumerate() {
+                if dim_idx < dimension {
+                    columns[dim_idx].push(value);
+                }
+            }
+        }
+        
+        // Analyze tensor data for optimal encoding
+        let mut min_val = f32::MAX;
+        let mut max_val = f32::MIN;
+        for column in &columns {
+            for &val in column {
+                min_val = min_val.min(val);
+                max_val = max_val.max(val);
+            }
+        }
+        
+        let range = max_val - min_val;
+        
+        // Choose optimal encoding for tensor data
+        let scheme = if range < 1e-6 {
+            FastLanesScheme::RunLength
+        } else if range < 100.0 {
+            FastLanesScheme::FrameOfReference { 
+                reference: min_val as i64, 
+                bits: (range.log2().ceil() as u8).max(8) 
+            }
+        } else {
+            FastLanesScheme::BitPacked { bits: 16 } // Good for dense tensors
+        };
+        
+        let encoder = FastLanesEncoder::new(scheme);
+        let mut encoded_data = Vec::new();
+        
+        // Write metadata
+        encoded_data.write_all(&(dimension as u32).to_le_bytes())?;
+        encoded_data.write_all(&(vectors.len() as u32).to_le_bytes())?;
+        
+        // Encode each dimension column
+        for column in columns {
+            let encoded_column = encoder.encode_f32(&column)?;
+            encoded_data.write_all(&(encoded_column.len() as u32).to_le_bytes())?;
+            encoded_data.write_all(&encoded_column)?;
+        }
+        
+        // Also encode IDs from RecordBatch
+        if let Some(id_col) = batch.column_by_name("id") {
+            if let Some(id_array) = id_col.as_any().downcast_ref::<arrow_array::StringArray>() {
+                for i in 0..id_array.len() {
+                    if let Some(id) = id_array.value_opt(i) {
+                        let id_bytes = id.as_bytes();
+                        encoded_data.write_all(&(id_bytes.len() as u32).to_le_bytes())?;
+                        encoded_data.write_all(id_bytes)?;
+                    } else {
+                        encoded_data.write_all(&0u32.to_le_bytes())?;
+                    }
+                }
+            }
+        }
+        
+        // Encode timestamps if present
+        if let Some(ts_col) = batch.column_by_name("timestamp") {
+            if let Some(ts_array) = ts_col.as_any().downcast_ref::<arrow_array::Int64Array>() {
+                for i in 0..ts_array.len() {
+                    let timestamp = ts_array.value(i);
+                    encoded_data.write_all(&timestamp.to_le_bytes())?;
+                }
+            }
+        }
+        
+        Ok(encoded_data)
+    }
+    
+    fn extract_vectors_from_batch(&self, batch: &RecordBatch) -> Result<Vec<Vec<f32>>> {
+        let mut vectors = Vec::new();
+        
+        if let Some(vector_col) = batch.column_by_name("vector") {
+            if let Some(float_array) = vector_col.as_any().downcast_ref::<arrow_array::Float32Array>() {
+                // Assuming vectors are stored flat with known dimension
+                let dimension = self.config.dimension;
+                let num_vectors = float_array.len() / dimension;
+                
+                for i in 0..num_vectors {
+                    let start = i * dimension;
+                    let end = start + dimension;
+                    vectors.push(float_array.values()[start..end].to_vec());
+                }
+            }
+        }
+        
+        Ok(vectors)
     }
     
     fn calculate_uncompressed_size(&self, batch: &RecordBatch) -> u64 {

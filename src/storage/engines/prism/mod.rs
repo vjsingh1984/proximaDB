@@ -9,6 +9,8 @@ pub mod tree;
 pub mod core;
 pub mod cache;
 pub mod compaction;
+pub mod fastlanes_serializer;
+pub mod memory_optimizer;
 
 // Configuration structures
 pub use engine::*;

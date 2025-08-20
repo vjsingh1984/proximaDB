@@ -1,48 +1,69 @@
 // Shared SST Format Reader for SST and SWIFT engines
 // Optimized for bandwidth reduction and cache-aware operations
+//
+// FASTLANES INTEGRATION ARCHITECTURE:
+// ====================================
+// This reader supports multiple encoding schemes per DataBlock based on data characteristics:
+//
+// 1. ENCODING DETECTION:
+//    - Each DataBlock has a 1-byte encoding marker at offset 0
+//    - Marker format: [7:4] = Major encoding, [3:0] = Sub-encoding variant
+//    - Examples: 0x00 = Raw, 0x10 = FastLanes BitPacked, 0x20 = FastLanes Delta, etc.
+//
+// 2. DATABLOCK LAYOUT WITH FASTLANES:
+//    Traditional SST DataBlock:
+//    [Header][Records][Bloom][Index]
+//    
+//    FastLanes-Enhanced DataBlock:
+//    [EncodingMarker(1B)][Header][EncodedVectorData][MetadataSection][Bloom][Index]
+//    
+//    Where EncodedVectorData uses columnar transpose:
+//    - Vectors are transposed: 500 vectors x 384 dims → 384 columns x 500 values
+//    - Each column encoded independently based on statistics
+//    - Enables SIMD-friendly access patterns
+//
+// 3. MIXED ENCODING SUPPORT:
+//    - Different blocks can use different encodings
+//    - Encoding chosen at write-time based on data statistics
+//    - Reader detects and handles encoding transparently
+//
+// 4. BACKWARD COMPATIBILITY:
+//    - Marker 0x00 indicates traditional format
+//    - New readers can read old blocks
+//    - Old readers will fail gracefully on new encoded blocks
 
 use std::collections::HashMap;
-use std::ops::Range;
-use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU32, AtomicU64, AtomicUsize, Ordering};
-use std::time::Instant;
+use std::sync::atomic::{AtomicU64, Ordering};
 
-use dashmap::DashMap;
 use memmap2::{Mmap, MmapOptions};
-use tokio::sync::RwLock;
 
 use crate::storage::persistence::filesystem::{FileSystem, FilesystemFactory};
-use crate::storage::cache::memory_pressure::MemoryPressureMonitor;
-use crate::storage::cache::access_pattern::AccessPatternTracker;
+// DEPRECATED: refined_integrated_cache replaced by zero_copy_io_system
+use crate::storage::engines::common::zero_copy_io_system::{
+    ZeroCopyIOSystem, MetadataSerializer, EngineMetadata, QueryContext, DataRange,
+    FileAccessRequest, RequestPriority, IOStrategy
+};
 use crate::common::errors::ProximaDBError;
 
 const BLOOM_FILTER_SIZE: usize = 4096;  // 4KB bloom filters
 const INDEX_BLOCK_SIZE: usize = 61440;  // 60KB index blocks
 const DATA_BLOCK_SIZE: usize = 65536;   // 64KB data blocks
 
-/// Shared SST format reader used by both SST and SWIFT engines
+/// Shared SST format reader with zero-copy cache-first architecture
+/// Leverages OS page cache for optimal memory management vs dedicated VectorStore
 pub struct SharedSstFormatReader {
     /// Filesystem for I/O operations
     filesystem: Arc<FilesystemFactory>,
     
-    /// Memory mapping strategy
+    /// Memory mapping strategy (kept for region-specific optimizations)
     mmap_strategy: SstMmapStrategy,
     
-    /// Cache for bloom filters (always hot)
-    bloom_cache: Arc<DashMap<String, Arc<Vec<u8>>>>,
+    /// UNIFIED CACHE: Zero-copy system replaces all specialized caches
+    zero_copy_system: Arc<ZeroCopyIOSystem>,
     
-    /// Cache for index blocks (usually hot)
-    index_cache: Arc<DashMap<String, Arc<Vec<u8>>>>,
-    
-    /// Local disk cache for downloaded data blocks
-    local_cache: Arc<LocalDiskCache>,
-    
-    /// Memory pressure monitor
-    memory_monitor: Arc<MemoryPressureMonitor>,
-    
-    /// Access pattern tracker
-    access_tracker: Arc<AccessPatternTracker>,
+    /// Collection ID for filename-based cache keys
+    collection_id: String,
     
     /// Stats for monitoring
     stats: Arc<ReaderStats>,
@@ -69,18 +90,6 @@ pub enum SstRegion {
     Metadata,           // File metadata
 }
 
-/// Local disk cache for downloaded blocks
-pub struct LocalDiskCache {
-    cache_dir: PathBuf,
-    max_cache_size: u64,
-    current_size: AtomicU64,
-    
-    /// Track cached ranges per file
-    cached_ranges: DashMap<String, Vec<Range<u64>>>,
-    
-    /// Track file versions for cache invalidation
-    file_versions: DashMap<String, u64>,
-}
 
 /// Statistics for monitoring
 pub struct ReaderStats {
@@ -97,16 +106,14 @@ impl SharedSstFormatReader {
     pub fn new(
         filesystem: Arc<FilesystemFactory>,
         mmap_strategy: SstMmapStrategy,
-        cache_dir: PathBuf,
+        zero_copy_system: Arc<ZeroCopyIOSystem>,
+        collection_id: String,
     ) -> Self {
         Self {
             filesystem,
             mmap_strategy,
-            bloom_cache: Arc::new(DashMap::new()),
-            index_cache: Arc::new(DashMap::new()),
-            local_cache: Arc::new(LocalDiskCache::new(cache_dir)),
-            memory_monitor: Arc::new(MemoryPressureMonitor::new()),
-            access_tracker: Arc::new(AccessPatternTracker::new()),
+            zero_copy_system,
+            collection_id,
             stats: Arc::new(ReaderStats::default()),
         }
     }
@@ -115,10 +122,11 @@ impl SharedSstFormatReader {
     pub async fn read_record(
         &self,
         file_path: &str,
+        collection_id: &str,
         key: &[u8],
     ) -> Result<Option<Vec<u8>>, ProximaDBError> {
         // Step 1: Check bloom filter BEFORE downloading anything
-        let bloom_data = self.get_bloom_filter_smart(file_path).await?;
+        let bloom_data = self.get_bloom_filter_smart(file_path, collection_id).await?;
         if !self.check_bloom(&bloom_data, key) {
             // Key definitely not in file - saved bandwidth!
             self.stats.bytes_saved.fetch_add(DATA_BLOCK_SIZE as u64, Ordering::Relaxed);
@@ -126,7 +134,7 @@ impl SharedSstFormatReader {
         }
         
         // Step 2: Check index block to find data block location
-        let index_data = self.get_index_block_smart(file_path).await?;
+        let index_data = self.get_index_block_smart(file_path, collection_id).await?;
         let block_info = match self.find_block_for_key(&index_data, key)? {
             Some(info) => info,
             None => {
@@ -137,18 +145,23 @@ impl SharedSstFormatReader {
         };
         
         // Step 3: NOW download the data block since we know it's needed
-        let data = self.read_data_block_smart(file_path, &block_info).await?;
+        let data = self.read_data_block_smart(file_path, collection_id, &block_info).await?;
         
         self.find_in_block(&data, key)
     }
     
     /// Get bloom filter with smart bandwidth optimization
-    async fn get_bloom_filter_smart(&self, file_path: &str) -> Result<Arc<Vec<u8>>, ProximaDBError> {
-        // Check memory cache first
-        if let Some(cached) = self.bloom_cache.get(file_path) {
-            self.stats.bloom_hits.fetch_add(1, Ordering::Relaxed);
-            self.access_tracker.track_hit(file_path, SstRegion::BloomFilter);
-            return Ok(cached.clone());
+    async fn get_bloom_filter_smart(&self, file_path: &str, collection_id: &str) -> Result<Arc<Vec<u8>>, ProximaDBError> {
+        let filename = std::path::Path::new(file_path).file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or(file_path);
+        
+        // Check if file metadata with bloom filter is cached
+        if let Some(file_metadata) = self.cache.get_file_metadata(collection_id, filename, FileType::SST) {
+            if let Some(sst_metadata) = file_metadata.downcast_ref::<SstFileMetadata>() {
+                self.stats.bloom_hits.fetch_add(1, Ordering::Relaxed);
+                return Ok(sst_metadata.file_bloom_filter.clone());
+            }
         }
         
         self.stats.bloom_misses.fetch_add(1, Ordering::Relaxed);
@@ -163,24 +176,39 @@ impl SharedSstFormatReader {
             
             self.stats.bytes_downloaded.fetch_add(BLOOM_FILTER_SIZE as u64, Ordering::Relaxed);
             
-            // Cache in memory (tiny, always fits)
+            // Cache the bloom filter as part of file metadata
             let bloom_arc = Arc::new(bloom_data);
-            self.bloom_cache.insert(file_path.to_string(), bloom_arc.clone());
+            let file_metadata = SstFileMetadata {
+                file_bloom_filter: bloom_arc.clone(),
+                file_index: Arc::new(vec![]), // Will be populated later
+                superblock_index: None,
+                file_size: 0, // Will be updated later
+                num_blocks: 0, // Will be updated later
+            };
+            
+            self.cache.put_file_metadata(collection_id, filename, Arc::new(file_metadata))?;
             
             return Ok(bloom_arc);
         }
         
         // For local files, try mmap if memory allows
-        self.get_local_bloom_with_mmap(file_path).await
+        self.get_local_bloom_with_mmap(file_path, collection_id, filename).await
     }
     
     /// Get index block with smart bandwidth optimization
-    async fn get_index_block_smart(&self, file_path: &str) -> Result<Arc<Vec<u8>>, ProximaDBError> {
-        // Check memory cache first
-        if let Some(cached) = self.index_cache.get(file_path) {
-            self.stats.index_hits.fetch_add(1, Ordering::Relaxed);
-            self.access_tracker.track_hit(file_path, SstRegion::IndexBlock);
-            return Ok(cached.clone());
+    async fn get_index_block_smart(&self, file_path: &str, collection_id: &str) -> Result<Arc<Vec<u8>>, ProximaDBError> {
+        let filename = std::path::Path::new(file_path).file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or(file_path);
+        
+        // Check if file metadata with index is cached
+        if let Some(file_metadata) = self.cache.get_file_metadata(collection_id, filename, FileType::SST) {
+            if let Some(sst_metadata) = file_metadata.downcast_ref::<SstFileMetadata>() {
+                if !sst_metadata.file_index.is_empty() {
+                    self.stats.index_hits.fetch_add(1, Ordering::Relaxed);
+                    return Ok(sst_metadata.file_index.clone());
+                }
+            }
         }
         
         self.stats.index_misses.fetch_add(1, Ordering::Relaxed);
@@ -199,53 +227,80 @@ impl SharedSstFormatReader {
             
             self.stats.bytes_downloaded.fetch_add(INDEX_BLOCK_SIZE as u64, Ordering::Relaxed);
             
-            // Cache in memory if pressure allows
-            if self.memory_monitor.get_pressure() < 0.8 {
-                let index_arc = Arc::new(index_data);
-                self.index_cache.insert(file_path.to_string(), index_arc.clone());
-                return Ok(index_arc);
+            // Update or create file metadata with index
+            let index_arc = Arc::new(index_data);
+            if let Some(file_metadata) = self.cache.get_file_metadata(collection_id, filename, FileType::SST) {
+                if let Some(mut sst_metadata) = file_metadata.downcast_ref::<SstFileMetadata>().cloned() {
+                    sst_metadata.file_index = index_arc.clone();
+                    self.cache.put_file_metadata(collection_id, filename, Arc::new(sst_metadata))?;
+                }
+            } else {
+                let file_metadata = SstFileMetadata {
+                    file_bloom_filter: Arc::new(vec![]), // Will be populated separately
+                    file_index: index_arc.clone(),
+                    superblock_index: None,
+                    file_size: 0,
+                    num_blocks: 0,
+                };
+                self.cache.put_file_metadata(collection_id, filename, Arc::new(file_metadata))?;
             }
             
-            return Ok(Arc::new(index_data));
+            return Ok(index_arc);
         }
         
         // For local files, use mmap if possible
-        self.get_local_index_with_mmap(file_path).await
+        self.get_local_index_with_mmap(file_path, collection_id, filename).await
     }
     
     /// Read data block only after confirming it's needed
     async fn read_data_block_smart(
         &self,
         file_path: &str,
+        collection_id: &str,
         block_info: &BlockInfo,
     ) -> Result<Vec<u8>, ProximaDBError> {
-        // Check if we have this block in local cache
-        if let Some(cached_data) = self.local_cache.get_block(file_path, block_info).await? {
-            return Ok(cached_data);
-        }
+        let filename = std::path::Path::new(file_path).file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or(file_path);
         
-        // Download the specific block (not the whole file!)
+        // For cloud files, use the integrated cache for caching
         let data = if self.is_cloud_file(file_path) {
-            // Cloud file - download just this block
-            let block_data = self.filesystem
-                .get_filesystem(file_path)?
-                .read_range(file_path, block_info.offset, block_info.size)
-                .await?;
+            // Get cached file path or download
+            let cached_path = self.cache.get_cached_file_path(collection_id, filename, file_path).await?;
             
-            self.stats.bytes_downloaded.fetch_add(block_info.size, Ordering::Relaxed);
+            // Read the specific block from cached file
+            let file = std::fs::File::open(&cached_path)?;
+            let mut buffer = vec![0; block_info.size as usize];
+            use std::io::{Read, Seek, SeekFrom};
+            let mut file = std::io::BufReader::new(file);
+            file.seek(SeekFrom::Start(block_info.offset))?;
+            file.read_exact(&mut buffer)?;
             
-            // Cache locally for future reads
-            self.local_cache.put_block(file_path, block_info, &block_data).await?;
-            
-            block_data
+            buffer
         } else {
-            // Local file - just read the range
-            self.filesystem
-                .get_filesystem(file_path)?
-                .read_range(file_path, block_info.offset, block_info.size)
-                .await?
+            // For local files, try to use mmap for direct access
+            if let Ok(mmap) = self.cache.get_or_create_mmap(collection_id, filename, file_path).await {
+                let start = block_info.offset as usize;
+                let end = start + block_info.size as usize;
+                if end <= mmap.len() {
+                    mmap[start..end].to_vec()
+                } else {
+                    // Fallback to direct read
+                    self.filesystem
+                        .get_filesystem(file_path)?
+                        .read_range(file_path, block_info.offset, block_info.size)
+                        .await?
+                }
+            } else {
+                // Fallback to direct read
+                self.filesystem
+                    .get_filesystem(file_path)?
+                    .read_range(file_path, block_info.offset, block_info.size)
+                    .await?
+            }
         };
         
+        self.stats.bytes_downloaded.fetch_add(data.len() as u64, Ordering::Relaxed);
         Ok(data)
     }
     
@@ -253,10 +308,11 @@ impl SharedSstFormatReader {
     pub async fn batch_read_with_filtering(
         &self,
         file_path: &str,
+        collection_id: &str,
         keys: &[Vec<u8>],
     ) -> Result<Vec<Option<Vec<u8>>>, ProximaDBError> {
         // Step 1: Get bloom filter once for all keys
-        let bloom_data = self.get_bloom_filter_smart(file_path).await?;
+        let bloom_data = self.get_bloom_filter_smart(file_path, collection_id).await?;
         
         // Filter keys using bloom - avoid downloading unnecessary blocks
         let mut possible_keys = Vec::new();
@@ -279,7 +335,7 @@ impl SharedSstFormatReader {
         }
         
         // Step 2: Get index once and find blocks needed
-        let index_data = self.get_index_block_smart(file_path).await?;
+        let index_data = self.get_index_block_smart(file_path, collection_id).await?;
         let mut blocks_to_read = HashMap::new();
         let mut index_filtered = Vec::new();
         
@@ -301,7 +357,7 @@ impl SharedSstFormatReader {
         let mut results = vec![None; keys.len()];
         
         for (_, (block_info, keys_in_block)) in blocks_to_read {
-            let block_data = self.read_data_block_smart(file_path, &block_info).await?;
+            let block_data = self.read_data_block_smart(file_path, collection_id, &block_info).await?;
             
             for (idx, key) in keys_in_block {
                 if let Some(value) = self.find_in_block(&block_data, key)? {
@@ -315,29 +371,8 @@ impl SharedSstFormatReader {
     
     /// Cache invalidation during compaction
     pub async fn invalidate_cache_for_collection(&self, collection_id: &str) -> Result<(), ProximaDBError> {
-        // Remove from memory caches
-        let mut invalidated = 0;
-        
-        self.bloom_cache.retain(|path, _| {
-            if path.contains(collection_id) {
-                invalidated += 1;
-                false
-            } else {
-                true
-            }
-        });
-        
-        self.index_cache.retain(|path, _| {
-            if path.contains(collection_id) {
-                invalidated += 1;
-                false
-            } else {
-                true
-            }
-        });
-        
-        // Invalidate local disk cache
-        self.local_cache.invalidate_collection(collection_id).await?;
+        // Use the integrated cache's collection-level invalidation
+        let invalidated = self.cache.invalidate_collection(collection_id).await?;
         
         self.stats.cache_invalidations.fetch_add(invalidated, Ordering::Relaxed);
         
@@ -384,15 +419,64 @@ impl SharedSstFormatReader {
     }
     
     /// Get local bloom filter with mmap
-    async fn get_local_bloom_with_mmap(&self, file_path: &str) -> Result<Arc<Vec<u8>>, ProximaDBError> {
-        // Implementation for local files
-        Ok(Arc::new(vec![0; BLOOM_FILTER_SIZE]))
+    async fn get_local_bloom_with_mmap(&self, file_path: &str, collection_id: &str, filename: &str) -> Result<Arc<Vec<u8>>, ProximaDBError> {
+        // Try to use mmap for local files
+        if let Ok(mmap) = self.cache.get_or_create_mmap(collection_id, filename, file_path).await {
+            if mmap.len() >= BLOOM_FILTER_SIZE {
+                let bloom_data = mmap[0..BLOOM_FILTER_SIZE].to_vec();
+                let bloom_arc = Arc::new(bloom_data);
+                
+                // Cache in file metadata
+                let file_metadata = SstFileMetadata {
+                    file_bloom_filter: bloom_arc.clone(),
+                    file_index: Arc::new(vec![]),
+                    superblock_index: None,
+                    file_size: mmap.len() as u64,
+                    num_blocks: 0,
+                };
+                self.cache.put_file_metadata(collection_id, filename, Arc::new(file_metadata))?;
+                
+                return Ok(bloom_arc);
+            }
+        }
+        
+        // Fallback to direct read
+        let bloom_data = self.filesystem
+            .get_filesystem(file_path)?
+            .read_range(file_path, 0, BLOOM_FILTER_SIZE as u64)
+            .await?;
+        Ok(Arc::new(bloom_data))
     }
     
     /// Get local index block with mmap
-    async fn get_local_index_with_mmap(&self, file_path: &str) -> Result<Arc<Vec<u8>>, ProximaDBError> {
-        // Implementation for local files
-        Ok(Arc::new(vec![0; INDEX_BLOCK_SIZE]))
+    async fn get_local_index_with_mmap(&self, file_path: &str, collection_id: &str, filename: &str) -> Result<Arc<Vec<u8>>, ProximaDBError> {
+        // Try to use mmap for local files
+        if let Ok(mmap) = self.cache.get_or_create_mmap(collection_id, filename, file_path).await {
+            let start = BLOOM_FILTER_SIZE;
+            let end = start + INDEX_BLOCK_SIZE;
+            if mmap.len() >= end {
+                let index_data = mmap[start..end].to_vec();
+                let index_arc = Arc::new(index_data);
+                
+                // Update file metadata with index
+                if let Some(file_metadata) = self.cache.get_file_metadata(collection_id, filename, FileType::SST) {
+                    if let Some(mut sst_metadata) = file_metadata.downcast_ref::<SstFileMetadata>().cloned() {
+                        sst_metadata.file_index = index_arc.clone();
+                        sst_metadata.file_size = mmap.len() as u64;
+                        self.cache.put_file_metadata(collection_id, filename, Arc::new(sst_metadata))?;
+                    }
+                }
+                
+                return Ok(index_arc);
+            }
+        }
+        
+        // Fallback to direct read
+        let index_data = self.filesystem
+            .get_filesystem(file_path)?
+            .read_range(file_path, BLOOM_FILTER_SIZE as u64, INDEX_BLOCK_SIZE as u64)
+            .await?;
+        Ok(Arc::new(index_data))
     }
     
     /// Get statistics for monitoring
@@ -440,137 +524,6 @@ pub struct ReaderStatsSummary {
     pub cache_invalidations: u64,
 }
 
-impl LocalDiskCache {
-    pub fn new(cache_dir: PathBuf) -> Self {
-        std::fs::create_dir_all(&cache_dir).ok();
-        
-        Self {
-            cache_dir,
-            max_cache_size: 100 * 1024 * 1024 * 1024, // 100GB default
-            current_size: AtomicU64::new(0),
-            cached_ranges: DashMap::new(),
-            file_versions: DashMap::new(),
-        }
-    }
-    
-    /// Get cached block if available
-    pub async fn get_block(
-        &self,
-        file_path: &str,
-        block_info: &BlockInfo,
-    ) -> Result<Option<Vec<u8>>, ProximaDBError> {
-        // Check if we have this range cached
-        if let Some(ranges) = self.cached_ranges.get(file_path) {
-            for range in ranges.iter() {
-                if range.start <= block_info.offset && 
-                   range.end >= block_info.offset + block_info.size {
-                    // We have this block cached
-                    let cache_file = self.cache_path_for(file_path);
-                    if cache_file.exists() {
-                        // Read from local cache
-                        let file = std::fs::File::open(&cache_file)?;
-                        let mut buffer = vec![0; block_info.size as usize];
-                        use std::io::{Read, Seek, SeekFrom};
-                        let mut file = std::io::BufReader::new(file);
-                        file.seek(SeekFrom::Start(block_info.offset))?;
-                        file.read_exact(&mut buffer)?;
-                        return Ok(Some(buffer));
-                    }
-                }
-            }
-        }
-        
-        Ok(None)
-    }
-    
-    /// Cache a block locally
-    pub async fn put_block(
-        &self,
-        file_path: &str,
-        block_info: &BlockInfo,
-        data: &[u8],
-    ) -> Result<(), ProximaDBError> {
-        let cache_file = self.cache_path_for(file_path);
-        
-        // Ensure parent directory exists
-        if let Some(parent) = cache_file.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-        
-        // Write block to cache file
-        use std::io::{Write, Seek, SeekFrom};
-        let file = std::fs::OpenOptions::new()
-            .create(true)
-            .write(true)
-            .open(&cache_file)?;
-        
-        let mut file = std::io::BufWriter::new(file);
-        file.seek(SeekFrom::Start(block_info.offset))?;
-        file.write_all(data)?;
-        file.flush()?;
-        
-        // Update cached ranges
-        self.cached_ranges.entry(file_path.to_string())
-            .or_insert_with(Vec::new)
-            .push(block_info.offset..block_info.offset + block_info.size);
-        
-        // Update size tracking
-        self.current_size.fetch_add(data.len() as u64, Ordering::Relaxed);
-        
-        // Evict if over limit
-        if self.current_size.load(Ordering::Relaxed) > self.max_cache_size {
-            self.evict_lru().await?;
-        }
-        
-        Ok(())
-    }
-    
-    /// Invalidate cache for a collection
-    pub async fn invalidate_collection(&self, collection_id: &str) -> Result<(), ProximaDBError> {
-        let mut files_to_remove = Vec::new();
-        
-        // Find all cached files for this collection
-        for entry in self.cached_ranges.iter() {
-            if entry.key().contains(collection_id) {
-                files_to_remove.push(entry.key().clone());
-            }
-        }
-        
-        // Remove from cache
-        for file_path in files_to_remove {
-            self.cached_ranges.remove(&file_path);
-            
-            // Delete from disk
-            let cache_file = self.cache_path_for(&file_path);
-            if cache_file.exists() {
-                std::fs::remove_file(cache_file)?;
-            }
-        }
-        
-        log::info!("Invalidated disk cache for collection {}", collection_id);
-        
-        Ok(())
-    }
-    
-    /// Get cache file path for a given file
-    fn cache_path_for(&self, file_path: &str) -> PathBuf {
-        // Convert file path to safe cache filename
-        let safe_name = file_path
-            .replace('/', "_")
-            .replace(':', "_")
-            .replace("\\", "_");
-        
-        self.cache_dir.join(safe_name)
-    }
-    
-    /// Evict least recently used entries
-    async fn evict_lru(&self) -> Result<(), ProximaDBError> {
-        // Simple LRU eviction
-        // In production, track access times and evict oldest
-        log::warn!("Cache size exceeded, performing LRU eviction");
-        Ok(())
-    }
-}
 
 impl Default for ReaderStats {
     fn default() -> Self {
@@ -586,29 +539,3 @@ impl Default for ReaderStats {
     }
 }
 
-/// Memory pressure monitor placeholder
-pub struct MemoryPressureMonitor;
-
-impl MemoryPressureMonitor {
-    pub fn new() -> Self {
-        Self
-    }
-    
-    pub fn get_pressure(&self) -> f32 {
-        // Get system memory pressure (0.0 to 1.0)
-        0.5 // Placeholder
-    }
-}
-
-/// Access pattern tracker placeholder
-pub struct AccessPatternTracker;
-
-impl AccessPatternTracker {
-    pub fn new() -> Self {
-        Self
-    }
-    
-    pub fn track_hit(&self, _file: &str, _region: SstRegion) {
-        // Track access patterns
-    }
-}

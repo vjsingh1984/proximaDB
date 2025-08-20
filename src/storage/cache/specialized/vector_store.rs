@@ -5,6 +5,16 @@ use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use serde::{Deserialize, Serialize};
 use anyhow::Result;
 
+/// DEPRECATED: VectorStore is being phased out in favor of OS page cache + zero-copy system
+/// 
+/// # Deprecation Rationale
+/// - High-dimensional vectors benefit more from OS page cache than in-memory caching
+/// - OS can handle pages optimally based on file access patterns
+/// - Zero-copy system provides file-specific metadata caching
+/// - Reduces memory pressure for large vector datasets
+/// 
+/// Use `ZeroCopyIOSystem` with filename-based cache keys instead.
+
 /// Partitioned key for collection-aware storage
 #[derive(Debug, Clone, Hash, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PartitionedVectorKey {
@@ -40,6 +50,10 @@ impl CacheValue for VectorRecord {
 }
 
 /// Specialized cache for vector data with optimizations for batch operations and collection partitioning
+#[deprecated(
+    since = "0.1.7",
+    note = "VectorStore deprecated in favor of OS page cache + ZeroCopyIOSystem. Use zero-copy system with filename-based keys for better memory efficiency on high-dimensional vectors."
+)]
 pub struct VectorStore {
     /// Collection identifier for partitioning (optional for backward compatibility)
     collection_id: Option<String>,

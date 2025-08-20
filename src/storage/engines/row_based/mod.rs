@@ -79,6 +79,8 @@ pub mod batch_operations;
 pub mod utilities;
 pub mod header_metadata;
 pub mod shared_sst_reader;  // NEW: Shared reader for bandwidth optimization
+pub mod sst_metadata_serializer;  // NEW: Zero-copy metadata serialization for SST
+pub mod swift_metadata_serializer;  // NEW: Zero-copy metadata serialization for SWIFT
 
 // Re-exports for common use
 pub use block_structures::{
@@ -111,6 +113,12 @@ pub use utilities::{
 pub use shared_sst_reader::{
     SharedSstFormatReader, SstMmapStrategy, SstRegion,
     BlockInfo, ReaderStatsSummary as SstReaderStats,
+};
+
+// NEW: Export zero-copy metadata serialization components
+pub use sst_metadata_serializer::{
+    SstMetadataSerializer, SstMetadata, SstGlobalHeader,
+    SstBlockHeader,
 };
 
 use anyhow::Result;

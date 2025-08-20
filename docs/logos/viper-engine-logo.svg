@@ -1,0 +1,114 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 200" width="400" height="200">
+  <!-- VIPER Engine Logo: Vector-optimized Intelligent Parquet with Efficient Retrieval -->
+  <!-- Design: Sleek snake with columnar data representation -->
+  
+  <defs>
+    <!-- Gradient for the viper -->
+    <linearGradient id="viperGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#00D4FF;stop-opacity:1" />
+      <stop offset="50%" style="stop-color:#0099FF;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#0066CC;stop-opacity:1" />
+    </linearGradient>
+    
+    <!-- Gradient for columns -->
+    <linearGradient id="columnGradient" x1="0%" y1="100%" x2="0%" y2="0%">
+      <stop offset="0%" style="stop-color:#00D4FF;stop-opacity:0.3" />
+      <stop offset="100%" style="stop-color:#0099FF;stop-opacity:0.8" />
+    </linearGradient>
+    
+    <!-- Pattern for scales -->
+    <pattern id="scales" x="0" y="0" width="10" height="10" patternUnits="userSpaceOnUse">
+      <rect width="10" height="10" fill="#0099FF"/>
+      <circle cx="5" cy="5" r="3" fill="#00D4FF" opacity="0.6"/>
+    </pattern>
+    
+    <!-- Glow effect -->
+    <filter id="glow">
+      <feGaussianBlur stdDeviation="3" result="coloredBlur"/>
+      <feMerge>
+        <feMergeNode in="coloredBlur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+  
+  <!-- Background -->
+  <rect width="400" height="200" fill="#0A0A0A"/>
+  
+  <!-- Columnar data visualization (Parquet columns) -->
+  <g opacity="0.7">
+    <!-- Column 1 -->
+    <rect x="250" y="30" width="20" height="90" fill="url(#columnGradient)" rx="2"/>
+    <rect x="250" y="30" width="20" height="30" fill="#00D4FF" opacity="0.6" rx="2"/>
+    
+    <!-- Column 2 -->
+    <rect x="280" y="40" width="20" height="80" fill="url(#columnGradient)" rx="2"/>
+    <rect x="280" y="40" width="20" height="25" fill="#00D4FF" opacity="0.6" rx="2"/>
+    
+    <!-- Column 3 -->
+    <rect x="310" y="35" width="20" height="85" fill="url(#columnGradient)" rx="2"/>
+    <rect x="310" y="35" width="20" height="40" fill="#00D4FF" opacity="0.6" rx="2"/>
+    
+    <!-- Column 4 -->
+    <rect x="340" y="45" width="20" height="75" fill="url(#columnGradient)" rx="2"/>
+    <rect x="340" y="45" width="20" height="20" fill="#00D4FF" opacity="0.6" rx="2"/>
+    
+    <!-- Column 5 -->
+    <rect x="370" y="38" width="20" height="82" fill="url(#columnGradient)" rx="2"/>
+    <rect x="370" y="38" width="20" height="35" fill="#00D4FF" opacity="0.6" rx="2"/>
+  </g>
+  
+  <!-- Stylized viper -->
+  <g transform="translate(30, 50)" filter="url(#glow)">
+    <!-- Body curve -->
+    <path d="M 0 30 Q 30 20, 60 25 T 120 30 T 180 25" 
+          stroke="url(#viperGradient)" stroke-width="12" fill="none" 
+          stroke-linecap="round"/>
+    
+    <!-- Pattern overlay for scales effect -->
+    <path d="M 0 30 Q 30 20, 60 25 T 120 30 T 180 25" 
+          stroke="url(#scales)" stroke-width="10" fill="none" 
+          stroke-linecap="round" opacity="0.5"/>
+    
+    <!-- Head -->
+    <ellipse cx="185" cy="24" rx="15" ry="10" fill="url(#viperGradient)"/>
+    
+    <!-- Eye -->
+    <circle cx="190" cy="22" r="3" fill="#FFD700"/>
+    <ellipse cx="190" cy="22" rx="1" ry="3" fill="#000"/>
+    
+    <!-- Fangs -->
+    <path d="M 198 28 L 196 32 L 197 28" fill="#FFF" opacity="0.9"/>
+    <path d="M 195 28 L 193 32 L 194 28" fill="#FFF" opacity="0.9"/>
+    
+    <!-- Tongue -->
+    <path d="M 200 25 L 205 23 M 200 25 L 205 27" 
+          stroke="#FF0066" stroke-width="1.5" stroke-linecap="round"/>
+  </g>
+  
+  <!-- Parquet logo hint -->
+  <g transform="translate(260, 125)" opacity="0.4">
+    <rect x="0" y="0" width="8" height="12" fill="#00D4FF"/>
+    <rect x="10" y="2" width="8" height="10" fill="#0099FF"/>
+    <rect x="20" y="0" width="8" height="12" fill="#00D4FF"/>
+  </g>
+  
+  <!-- Text -->
+  <text x="200" y="160" font-family="'Segoe UI', Arial, sans-serif" font-size="36" 
+        font-weight="bold" fill="#FFFFFF" text-anchor="middle">VIPER</text>
+  
+  <text x="200" y="182" font-family="'Segoe UI', Arial, sans-serif" font-size="11" 
+        fill="#00D4FF" text-anchor="middle" letter-spacing="2">COLUMNAR PARQUET ENGINE</text>
+  
+  <!-- Performance badges -->
+  <g transform="translate(20, 160)">
+    <rect x="0" y="0" width="50" height="18" rx="3" fill="none" stroke="#00D4FF" stroke-width="1"/>
+    <text x="25" y="12" font-family="monospace" font-size="9" fill="#00D4FF" text-anchor="middle">95% I/O↓</text>
+  </g>
+  
+  <g transform="translate(330, 160)">
+    <rect x="0" y="0" width="50" height="18" rx="3" fill="none" stroke="#00D4FF" stroke-width="1"/>
+    <text x="25" y="12" font-family="monospace" font-size="9" fill="#00D4FF" text-anchor="middle">CLOUD</text>
+  </g>
+</svg>

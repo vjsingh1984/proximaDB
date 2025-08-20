@@ -127,6 +127,10 @@ pub struct TransactionalOperationMetadata {
     pub staging_url: String,
     pub final_url: String,
     pub status: TransactionalOperationStatus,
+    /// Flag indicating if this operation is managed by ZeroCopyFilesystem
+    /// When true, AtomicCoordinator will skip staging operations and not error
+    /// if files are not found during finalize/cleanup operations
+    pub zero_copy_managed: bool,
 }
 
 /// Atomic operation status
@@ -400,12 +404,52 @@ impl TransactionCoordinator {
             staging_url,
             final_url,
             status: TransactionalOperationStatus::Preparing,
+            zero_copy_managed: false, // Default to false for traditional operations
         };
 
         // Track operation using DashMap
         self.active_operations.insert(operation_id.clone(), metadata.clone());
 
         info!("✅ Atomic operation prepared: {}", operation_id);
+        Ok(metadata)
+    }
+
+    /// Begin zero-copy managed atomic operation - for ZeroCopyFilesystem
+    /// This creates an operation metadata but lets ZeroCopyFilesystem handle staging/moving
+    pub async fn begin_zero_copy_managed_operation(
+        &self,
+        staging_config: &StagingConfig,
+    ) -> Result<TransactionalOperationMetadata> {
+        let operation_id = Uuid::new_v4().to_string();
+
+        info!("🚀 Beginning zero-copy managed operation: {}", operation_id);
+        debug!("Configuration: {:?}", staging_config);
+
+        // Generate staging and final URLs (for tracking purposes)
+        let staging_url = self.generate_staging_url(staging_config, &operation_id);
+        let final_url = self.generate_final_url(staging_config);
+
+        debug!("📁 Staging URL: {}", staging_url);
+        debug!("📁 Final URL: {}", final_url);
+
+        // Note: We don't create directories here since ZeroCopyFilesystem handles everything
+
+        // Create operation metadata with zero_copy_managed flag set to true
+        let metadata = TransactionalOperationMetadata {
+            operation_id: operation_id.clone(),
+            operation_type: staging_config.operation_type.clone(),
+            collection_id: staging_config.collection_id.clone(),
+            started_at: Utc::now(),
+            staging_url,
+            final_url,
+            status: TransactionalOperationStatus::Preparing,
+            zero_copy_managed: true, // This operation is managed by ZeroCopyFilesystem
+        };
+
+        // Track operation using DashMap
+        self.active_operations.insert(operation_id.clone(), metadata.clone());
+
+        info!("✅ Zero-copy managed atomic operation prepared: {}", operation_id);
         Ok(metadata)
     }
 
@@ -492,12 +536,30 @@ impl TransactionCoordinator {
         info!("    final_url: {}", metadata.final_url);
         info!("    operation_type: {:?}", metadata.operation_type);
         info!("    collection_id: {:?}", metadata.collection_id);
+        info!("    zero_copy_managed: {}", metadata.zero_copy_managed);
         
         debug!("📋 [DEBUG] Operation metadata:");
         debug!("    staging_url: {}", metadata.staging_url);
         debug!("    final_url: {}", metadata.final_url);
+        debug!("    zero_copy_managed: {}", metadata.zero_copy_managed);
 
-        // Update status to finalizing
+        // Check if this operation is managed by ZeroCopyFilesystem
+        if metadata.zero_copy_managed {
+            info!("🚀 [DEBUG] Operation is managed by ZeroCopyFilesystem - skipping staging operations");
+            debug!("🚀 [DEBUG] ZeroCopyFilesystem has already handled staging and atomic move");
+            
+            // Update status directly to completed since ZeroCopyFilesystem handled the operation
+            self.update_operation_status(operation_id, TransactionalOperationStatus::Completed)
+                .await?;
+            
+            // Remove from active operations
+            self.active_operations.remove(operation_id);
+            
+            info!("🎉 Zero-copy managed operation completed: {}", operation_id);
+            return Ok(());
+        }
+
+        // Update status to finalizing for traditional operations
         self.update_operation_status(operation_id, TransactionalOperationStatus::Finalizing)
             .await?;
 
@@ -622,9 +684,15 @@ impl TransactionCoordinator {
             )
             .await?;
 
-            // Cleanup staging directory
-            self.filesystem.delete(&metadata.staging_url).await.ok();
-            debug!("🧹 Cleaned up staging directory after abort");
+            // Check if this operation is managed by ZeroCopyFilesystem
+            if metadata.zero_copy_managed {
+                info!("🚀 [DEBUG] Abort operation is managed by ZeroCopyFilesystem - skipping staging cleanup");
+                debug!("🚀 [DEBUG] ZeroCopyFilesystem will handle its own cleanup if needed");
+            } else {
+                // Cleanup staging directory for traditional operations
+                self.filesystem.delete(&metadata.staging_url).await.ok();
+                debug!("🧹 Cleaned up staging directory after abort");
+            }
 
             // Remove from active operations using DashMap
             self.active_operations.remove(operation_id);

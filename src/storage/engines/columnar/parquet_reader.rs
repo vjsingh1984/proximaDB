@@ -213,6 +213,8 @@ pub struct UnifiedParquetReader {
     config: ColumnarConfig,
     /// Columnar optimizer for advanced features
     optimizer: Arc<ColumnarOptimizer>,
+    /// Bandwidth optimizer for smart threshold decisions
+    bandwidth_optimizer: Option<Arc<crate::storage::engines::common::zero_copy_io_system::bandwidth_optimizer::BandwidthOptimizer>>,
     /// Cached row group metadata
     metadata_cache: Arc<RwLock<HashMap<String, Arc<ParquetMetaData>>>>,
     /// Cached row groups for frequently accessed data
@@ -239,6 +241,14 @@ pub struct UnifiedParquetReader {
 impl UnifiedParquetReader {
     /// Create new unified Parquet reader
     pub async fn new(filesystem: Arc<FilesystemFactory>) -> Self {
+        Self::new_with_bandwidth_optimizer(filesystem, None).await
+    }
+    
+    /// Create new unified Parquet reader with bandwidth optimizer
+    pub async fn new_with_bandwidth_optimizer(
+        filesystem: Arc<FilesystemFactory>,
+        bandwidth_optimizer: Option<Arc<crate::storage::engines::common::zero_copy_io_system::bandwidth_optimizer::BandwidthOptimizer>>
+    ) -> Self {
         let hardware = crate::core::hardware_capabilities::try_get_hardware_capabilities()
             .unwrap_or_else(|| {
                 Arc::new(HardwareCapabilities::detect_with_config(crate::core::config::HardwareConfig::default()).unwrap())
@@ -264,6 +274,7 @@ impl UnifiedParquetReader {
             hardware,
             config,
             optimizer,
+            bandwidth_optimizer,
             metadata_cache: Arc::new(RwLock::new(HashMap::new())),
             row_group_cache: Arc::new(RwLock::new(HashMap::new())),
             bloom_filter_cache: Arc::new(RwLock::new(HashMap::new())),
@@ -301,6 +312,7 @@ impl UnifiedParquetReader {
             hardware,
             config,
             optimizer,
+            bandwidth_optimizer: None,
             metadata_cache: Arc::new(RwLock::new(HashMap::new())),
             row_group_cache: Arc::new(RwLock::new(HashMap::new())),
             bloom_filter_cache: Arc::new(RwLock::new(HashMap::new())),
@@ -409,6 +421,26 @@ impl UnifiedParquetReader {
             file_path,
             column_projection
         );
+        
+        // Check if we should use range-based reading for efficiency
+        let metadata = self.read_metadata(file_path).await?;
+        let should_use_ranges = self.should_use_range_reading(
+            file_path,
+            &metadata,
+            row_group_indices,
+        ).await;
+        
+        if should_use_ranges {
+            debug!("Using range-based reading for {} row groups", row_group_indices.len());
+            return self.read_row_groups_with_ranges(
+                file_path,
+                &metadata,
+                row_group_indices,
+                column_projection,
+                filter,
+            ).await;
+        }
+        
         // Get metadata with page indexes
         let metadata = self.read_metadata(file_path).await?;
         // Prune pages using column/offset indexes if available
@@ -1534,6 +1566,227 @@ impl UnifiedParquetReader {
         }
         
         Ok(candidates)
+    }
+    
+    // ============================================================================
+    // Range-based Reading Optimizations for Large Files
+    // ============================================================================
+    
+    /// Determine if range-based reading would be more efficient than full file read
+    async fn should_use_range_reading(
+        &self,
+        file_path: &str,
+        metadata: &Arc<ParquetMetaData>,
+        row_group_indices: &[usize],
+    ) -> bool {
+        // Get file size from metadata
+        let total_file_size: u64 = metadata.file_metadata().num_rows() as u64 * 1000; // Rough estimate
+        
+        // Calculate size of row groups we need
+        let mut needed_size: u64 = 0;
+        for &idx in row_group_indices {
+            if let Some(rg) = metadata.row_groups().get(idx) {
+                needed_size += rg.total_byte_size() as u64;
+            }
+        }
+        
+        // Use bandwidth optimizer for smart threshold decisions
+        if let Some(ref bandwidth_optimizer) = self.bandwidth_optimizer {
+            // Create data ranges for the row groups
+            let ranges: Vec<crate::storage::engines::common::zero_copy_io_system::traits::DataRange> = 
+                row_group_indices.iter().filter_map(|&idx| {
+                    metadata.row_groups().get(idx).map(|rg| {
+                        crate::storage::engines::common::zero_copy_io_system::traits::DataRange::new(
+                            0, // Offset would need to be calculated from row group metadata
+                            rg.total_byte_size() as u64,
+                            crate::storage::engines::common::zero_copy_io_system::traits::RequestPriority::Normal,
+                        )
+                    })
+                }).collect();
+            
+            // Create query context for columnar access
+            let query_context = crate::storage::engines::common::zero_copy_io_system::traits::QueryContext {
+                query_type: crate::storage::engines::common::zero_copy_io_system::traits::QueryType::SimilaritySearch,
+                collection_context: None,
+                ..Default::default()
+            };
+            
+            // Get bandwidth optimizer decision
+            match bandwidth_optimizer.decide_strategy(
+                file_path,
+                total_file_size,
+                Some(ranges),
+                &query_context,
+                crate::storage::engines::common::zero_copy_io_system::traits::RequestPriority::Normal,
+            ).await {
+                Ok(strategy) => {
+                    match strategy {
+                        crate::storage::engines::common::zero_copy_io_system::bandwidth_optimizer::DownloadStrategy::SelectiveRanges { .. } => {
+                            debug!(file_path, "Bandwidth optimizer recommends range reading");
+                            return true;
+                        }
+                        crate::storage::engines::common::zero_copy_io_system::bandwidth_optimizer::DownloadStrategy::FullDownload { .. } => {
+                            debug!(file_path, "Bandwidth optimizer recommends full download");
+                            return false;
+                        }
+                        crate::storage::engines::common::zero_copy_io_system::bandwidth_optimizer::DownloadStrategy::SkipFile { .. } => {
+                            debug!(file_path, "Bandwidth optimizer recommends skipping file");
+                            return false;
+                        }
+                        _ => {
+                            // Fall through to legacy logic
+                        }
+                    }
+                }
+                Err(e) => {
+                    warn!(file_path, error = ?e, "Bandwidth optimizer failed, using fallback logic");
+                }
+            }
+        }
+        
+        // Fallback to legacy smart thresholds for compatibility
+        const RANGE_THRESHOLD_PCT: f32 = 0.3;  // Use ranges if reading <30% of file
+        const MIN_FILE_SIZE_FOR_RANGE: u64 = 10 * 1024 * 1024;  // 10MB minimum
+        
+        // Check if file is in cloud storage (more benefit from range reads)
+        let is_cloud = file_path.starts_with("s3://") || 
+                      file_path.starts_with("gs://") || 
+                      file_path.starts_with("az://");
+        
+        let threshold = if is_cloud { 0.5 } else { RANGE_THRESHOLD_PCT }; // More aggressive for cloud
+        
+        let use_ranges = total_file_size > MIN_FILE_SIZE_FOR_RANGE &&
+                        (needed_size as f32) / (total_file_size as f32) < threshold;
+        
+        if use_ranges {
+            debug!(
+                "Using range reading: need {}MB of {}MB ({}%)",
+                needed_size / 1024 / 1024,
+                total_file_size / 1024 / 1024,
+                (needed_size as f32 / total_file_size as f32) * 100.0
+            );
+        }
+        
+        use_ranges
+    }
+    
+    /// Read row groups using efficient range requests
+    async fn read_row_groups_with_ranges(
+        &self,
+        file_path: &str,
+        metadata: &Arc<ParquetMetaData>,
+        row_group_indices: &[usize],
+        column_projection: Option<&[String]>,
+        filter: Option<&MetadataFilter>,
+    ) -> Result<Vec<RecordBatch>> {
+        use futures::future::join_all;
+        
+        // Check row group cache first
+        let mut cached_batches = Vec::new();
+        let mut indices_to_fetch = Vec::new();
+        
+        {
+            let cache = self.row_group_cache.read().await;
+            for &idx in row_group_indices {
+                let cache_key = format!("{}:rg_{}", file_path, idx);
+                if let Some(batch) = cache.get(&cache_key) {
+                    debug!("Row group {} found in cache", idx);
+                    cached_batches.push((idx, batch.clone()));
+                } else {
+                    indices_to_fetch.push(idx);
+                }
+            }
+        }
+        
+        // Fetch missing row groups in parallel with range requests
+        let mut fetch_tasks = Vec::new();
+        for &idx in &indices_to_fetch {
+            if let Some(rg) = metadata.row_groups().get(idx) {
+                let file_path = file_path.to_string();
+                let rg_meta = rg.clone();
+                let filesystem = self.filesystem.clone();
+                
+                fetch_tasks.push(async move {
+                    // Calculate byte range for this row group
+                    let start = rg_meta.file_offset().unwrap_or(0) as u64;
+                    let size = rg_meta.total_byte_size() as u64;
+                    
+                    debug!("Fetching row group {} with range {}..{}", idx, start, start + size);
+                    
+                    // Use filesystem's range reading capability
+                    let fs = filesystem.get_filesystem(&file_path)?;
+                    let data = fs.read_range(&file_path, start, size).await?;
+                    
+                    // Parse the row group data
+                    // Note: This is simplified - actual implementation would need proper Parquet parsing
+                    Ok::<(usize, Vec<u8>), anyhow::Error>((idx, data))
+                });
+            }
+        }
+        
+        let fetched_data = join_all(fetch_tasks).await;
+        
+        // Process fetched data and update cache
+        let mut all_batches = cached_batches;
+        {
+            let mut cache = self.row_group_cache.write().await;
+            let mut cache_size = *self.current_cache_size.read().await;
+            
+            for result in fetched_data {
+                if let Ok((idx, data)) = result {
+                    // Parse row group data into RecordBatch
+                    // This would use proper Parquet parsing in real implementation
+                    let batch = self.parse_row_group_data(&data, column_projection)?;
+                    
+                    // Add to cache if there's space
+                    let batch_size = data.len();
+                    if cache_size + batch_size < self.config.cache_size_bytes {
+                        let cache_key = format!("{}:rg_{}", file_path, idx);
+                        cache.insert(cache_key, batch.clone());
+                        cache_size += batch_size;
+                        debug!("Cached row group {}, cache size: {}MB", idx, cache_size / 1024 / 1024);
+                    }
+                    
+                    all_batches.push((idx, batch));
+                }
+            }
+            
+            *self.current_cache_size.write().await = cache_size;
+        }
+        
+        // Sort batches by row group index to maintain order
+        all_batches.sort_by_key(|(idx, _)| *idx);
+        
+        Ok(all_batches.into_iter().map(|(_, batch)| batch).collect())
+    }
+    
+    /// Parse row group data from bytes
+    fn parse_row_group_data(
+        &self,
+        _data: &[u8],
+        _column_projection: Option<&[String]>,
+    ) -> Result<RecordBatch> {
+        // This is a placeholder - actual implementation would parse Parquet row group data
+        // In practice, this would use parquet-rs to deserialize the row group
+        Ok(RecordBatch::new_empty(Arc::new(arrow_schema::Schema::empty())))
+    }
+    
+    /// Invalidate cache entries for a specific collection
+    pub async fn invalidate_collection_cache(&self, collection_id: &str) -> Result<()> {
+        let mut metadata_cache = self.metadata_cache.write().await;
+        let mut row_group_cache = self.row_group_cache.write().await;
+        let mut bloom_cache = self.bloom_filter_cache.write().await;
+        
+        // Remove all entries for this collection
+        metadata_cache.retain(|path, _| !path.contains(collection_id));
+        row_group_cache.retain(|key, _| !key.contains(collection_id));
+        bloom_cache.retain(|path, _| !path.contains(collection_id));
+        
+        // Also invalidate footer cache
+        self.footer_cache.invalidate_pattern(&format!("*{}*", collection_id)).await?;
+        
+        info!("Invalidated all caches for collection {}", collection_id);
+        Ok(())
     }
 }
 

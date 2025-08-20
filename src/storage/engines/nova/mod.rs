@@ -72,6 +72,7 @@ pub mod optimized_operations;
 
 // New optimized modules
 pub mod hierarchical_stats;
+pub mod hierarchical_cache;
 pub mod streaming_processor;
 pub mod progressive_search;
 pub mod zone_maps;
@@ -90,6 +91,7 @@ pub use unified_columnar_integration::{
     ZoneMap, AdvancedSearchOptions,
 };
 pub use hierarchical_stats::{SuperBlock, EnhancedRowGroupStats};
+pub use hierarchical_cache::{NovaHierarchicalCache, HierarchicalStats, GlobalStatistics, OptimizationHints};
 pub use streaming_processor::{StreamingRowGroupProcessor, StreamingConfig};
 pub use progressive_search::{ProgressiveColumnarSearch, ProgressiveSearchConfig};
 pub use zone_maps::{AdvancedZoneMap, CostBasedOptimizer, ZoneMapConfig};

@@ -43,6 +43,12 @@ pub enum ProximaDBError {
     #[error("Invalid input: {0}")]
     InvalidInput(String),
     
+    #[error("Invalid cache key format: {0}")]
+    InvalidCacheKey(String),
+    
+    #[error("Unknown engine type: {0}")]
+    UnknownEngineType(String),
+    
     #[error("Internal error: {0}")]
     Internal(String),
 }

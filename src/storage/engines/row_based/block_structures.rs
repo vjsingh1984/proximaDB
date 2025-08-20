@@ -7,7 +7,33 @@ use std::collections::HashMap;
 
 use crate::core::{VectorRecord, compression::CompressionAlgorithm};
 use crate::storage::engines::row_based::bloom_filter::SstableBloomFilter;
+use crate::storage::engines::common::fastlanes_encoding::FastLanesScheme;
 // Quantization now handled by unified compute module
+
+/// FastLanes encoding metadata for efficient vector block encoding
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FastLanesMetadata {
+    /// Encoding scheme used for this block
+    pub scheme: FastLanesScheme,
+    /// Original dimension of vectors
+    pub dimension: usize,
+    /// Number of vectors in this block
+    pub vector_count: usize,
+    /// Bits per value (for BitPacked encoding)
+    pub bits_per_value: Option<u8>,
+    /// Base value (for Delta/FrameOfReference)
+    pub base_value: Option<i64>,
+    /// Dictionary size (for Dictionary encoding)
+    pub dict_size: Option<usize>,
+    /// Patch count (for PatchedBase)
+    pub patch_count: Option<usize>,
+    /// Statistics for adaptive decoding
+    pub min_value: f32,
+    pub max_value: f32,
+    pub range_bits: u8,
+    /// Compression ratio achieved
+    pub compression_ratio: f32,
+}
 
 /// Quantized section for hierarchical storage
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -30,6 +56,21 @@ pub struct BlockMetadataStats {
 /// Shared data block structure for row-based engines
 #[derive(Debug, Clone)]
 pub struct RowBasedDataBlock {
+    /// FASTLANES ENCODING MARKER (1 byte) - First byte of serialized block
+    /// Format: [7:4] Major encoding type | [3:0] Sub-variant
+    /// 0x00: Raw/Uncompressed (backward compatible)
+    /// 0x10-0x1F: FastLanes BitPacked variants
+    /// 0x20-0x2F: FastLanes Delta encoding
+    /// 0x30-0x3F: FastLanes FrameOfReference
+    /// 0x40-0x4F: FastLanes PatchedBase
+    /// 0x50-0x5F: FastLanes Dictionary
+    /// 0x60-0x6F: FastLanes RunLength
+    /// 0x70-0x7F: Reserved for future
+    pub encoding_marker: u8,
+    
+    /// FastLanes encoding metadata (when marker != 0x00)
+    pub encoding_metadata: Option<FastLanesMetadata>,
+    
     /// Block identification - u32 supports 4.3 billion blocks (4.3 trillion vectors)
     /// This is sufficient for 34+ petabytes of storage
     /// 
@@ -170,6 +211,14 @@ pub struct BlockStatistics {
 /// SuperBlock structure for hierarchical organization
 #[derive(Debug)]
 pub struct SuperBlock {
+    /// SUPERBLOCK ENCODING MARKER (for SWIFT hierarchical encoding)
+    /// 0x80-0x8F: SWIFT SuperBlock encodings
+    /// 0xFF: Inherit from child blocks (mixed encoding)
+    pub superblock_encoding_marker: u8,
+    
+    /// SuperBlock-level FastLanes metadata (when using unified encoding)
+    pub superblock_encoding_metadata: Option<FastLanesMetadata>,
+    
     /// SuperBlock identification
     pub id: u32,
     pub file_path: String,
@@ -301,7 +350,17 @@ impl RowBasedDataBlock {
             kv.key == "_deleted" && kv.value.as_str() == Some("true")
         ));
         
+        // Analyze vectors to choose optimal encoding
+        let encoding_marker = Self::choose_optimal_encoding_marker(&records);
+        let encoding_metadata = if encoding_marker != 0x00 {
+            Some(Self::create_encoding_metadata(&records, encoding_marker))
+        } else {
+            None
+        };
+        
         Self {
+            encoding_marker,
+            encoding_metadata,
             block_id,
             records: records.clone(),
             quantized_vectors: None,
@@ -376,12 +435,121 @@ impl RowBasedDataBlock {
         }
         self.statistics.last_accessed_at = chrono::Utc::now().timestamp();
     }
+    
+    /// Choose optimal encoding based on vector statistics
+    fn choose_optimal_encoding_marker(records: &[VectorRecord]) -> u8 {
+        if records.is_empty() || records[0].vector.is_empty() {
+            return 0x00; // Raw for empty blocks
+        }
+        
+        // Analyze vector statistics
+        let mut min_val = f32::MAX;
+        let mut max_val = f32::MIN;
+        let mut total_delta = 0.0f32;
+        let mut prev_values: Option<Vec<f32>> = None;
+        
+        for record in records {
+            for (i, &val) in record.vector.iter().enumerate() {
+                min_val = min_val.min(val);
+                max_val = max_val.max(val);
+                
+                // Calculate delta for adjacent vectors
+                if let Some(ref prev) = prev_values {
+                    if i < prev.len() {
+                        total_delta += (val - prev[i]).abs();
+                    }
+                }
+            }
+            prev_values = Some(record.vector.clone());
+        }
+        
+        let range = max_val - min_val;
+        let avg_delta = if records.len() > 1 {
+            total_delta / (records.len() as f32 * records[0].vector.len() as f32)
+        } else {
+            range
+        };
+        
+        // Decision tree for encoding selection
+        if range < 1e-6 {
+            // Near-constant values
+            0x60 // RunLength encoding
+        } else if avg_delta < range / 4.0 {
+            // Strong temporal correlation
+            0x20 // Delta encoding
+        } else if range < 100.0 && min_val.abs() < 1000.0 {
+            // Small range, use FrameOfReference
+            0x30 // FrameOfReference
+        } else {
+            // Default to BitPacking for general case
+            0x10 // BitPacked - most versatile for SIMD
+        }
+    }
+    
+    /// Create encoding metadata for the chosen scheme
+    fn create_encoding_metadata(records: &[VectorRecord], marker: u8) -> FastLanesMetadata {
+        let dimension = if !records.is_empty() {
+            records[0].vector.len()
+        } else {
+            0
+        };
+        
+        // Calculate statistics
+        let mut min_val = f32::MAX;
+        let mut max_val = f32::MIN;
+        for record in records {
+            for &val in &record.vector {
+                min_val = min_val.min(val);
+                max_val = max_val.max(val);
+            }
+        }
+        
+        let range = max_val - min_val;
+        let range_bits = if range > 0.0 {
+            (range.log2().ceil() as u8).max(1)
+        } else {
+            1
+        };
+        
+        // Determine scheme from marker
+        let scheme = match marker & 0xF0 {
+            0x10 => FastLanesScheme::BitPacked { bits: range_bits },
+            0x20 => FastLanesScheme::Delta { base: min_val as i64 },
+            0x30 => FastLanesScheme::FrameOfReference { 
+                reference: min_val as i64, 
+                bits: range_bits 
+            },
+            0x40 => FastLanesScheme::PatchedBase { 
+                base: ((min_val + max_val) / 2.0) as i64,
+                patch_bits: 8 
+            },
+            0x50 => FastLanesScheme::Dictionary { dict_bits: 8 },
+            0x60 => FastLanesScheme::RunLength,
+            _ => FastLanesScheme::Uncompressed,
+        };
+        
+        FastLanesMetadata {
+            scheme,
+            dimension,
+            vector_count: records.len(),
+            bits_per_value: Some(range_bits),
+            base_value: Some(min_val as i64),
+            dict_size: None,
+            patch_count: None,
+            min_value: min_val,
+            max_value: max_val,
+            range_bits,
+            compression_ratio: 1.0, // Will be calculated during actual encoding
+        }
+    }
 }
 
 impl SuperBlock {
     /// Create a new SuperBlock
     pub fn new(id: u32, file_path: String) -> Self {
         Self {
+            superblock_encoding_marker: 0xFF, // Default to inherit from child blocks
+            superblock_encoding_metadata: None,
             id,
             file_path,
             timestamp: chrono::Utc::now().timestamp(),

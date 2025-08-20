@@ -72,6 +72,7 @@ pub mod native_metadata;
 pub mod hybrid_writer;
 pub mod config_builder;
 pub mod shared_parquet_reader;  // NEW: Shared reader for bandwidth optimization
+pub mod parquet_metadata_serializer;  // NEW: Zero-copy metadata serialization for Parquet
 // quantization_config_conversion moved to common/quantization_adapter.rs
 
 // New unified columnar infrastructure
@@ -125,6 +126,12 @@ pub use shared_parquet_reader::{
     SharedParquetFormatReader, ParquetMmapStrategy, ColumnMmapStrategy,
     ParquetFooterCache as SharedFooterCache, RowGroupMetadata,
     ReaderStatsSummary as ParquetReaderStats,
+};
+
+// NEW: Export zero-copy metadata serialization components
+pub use parquet_metadata_serializer::{
+    ParquetMetadataSerializer, ParquetMetadata, ParquetFooterHeader,
+    ParquetRowGroupHeader, ParquetColumnHeader,
 };
 
 // New unified infrastructure exports

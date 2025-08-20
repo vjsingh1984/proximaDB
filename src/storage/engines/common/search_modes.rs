@@ -6,7 +6,12 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 use crate::compute::distance_computation::DistanceMetric;
-use super::metadata_filters::UniversalMetadataFilter;
+
+/// Placeholder for metadata filtering - use crate::query::unified_query_optimizer::UnifiedMetadataFilter instead
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MetadataFilter {
+    pub placeholder: bool,
+}
 
 /// Universal search mode that works across all storage engines
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -39,7 +44,7 @@ pub enum UniversalSearchMode {
         query_vector: Vec<f32>,
         top_k: usize,
         distance_metric: DistanceMetric,
-        metadata_filter: UniversalMetadataFilter,
+        metadata_filter: MetadataFilter,
         search_params: SimilaritySearchParams,
     },
     
@@ -47,7 +52,7 @@ pub enum UniversalSearchMode {
     HybridSearch {
         vector_query: Option<Vec<f32>>,
         text_query: Option<String>,
-        metadata_filter: Option<UniversalMetadataFilter>,
+        metadata_filter: Option<MetadataFilter>,
         fusion_params: HybridFusionParams,
         top_k: usize,
     },

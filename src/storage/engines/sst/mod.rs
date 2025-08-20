@@ -929,6 +929,133 @@ impl DataBlock {
     // Note: new() method is inherited from RowBasedDataBlock in row_based module
     // SST-specific initialization can be done after calling the base new() method
     
+    /// Encode vectors using FastLanes SIMD-optimized encoding
+    fn encode_with_fastlanes(&self) -> anyhow::Result<Vec<u8>> {
+        use crate::storage::engines::common::fastlanes_encoding::FastLanesEncoder;
+        use std::io::Write;
+        
+        let metadata = self.encoding_metadata.as_ref()
+            .ok_or_else(|| anyhow::anyhow!("FastLanes metadata missing"))?;
+        
+        // Transpose vectors from row-major to column-major for SIMD
+        let mut columns: Vec<Vec<f32>> = vec![vec![]; metadata.dimension];
+        for record in &self.records {
+            for (dim_idx, &value) in record.vector.iter().enumerate() {
+                if dim_idx < metadata.dimension {
+                    columns[dim_idx].push(value);
+                }
+            }
+        }
+        
+        // Encode each dimension column using the chosen scheme
+        let encoder = FastLanesEncoder::new(metadata.scheme.clone());
+        let mut encoded_data = Vec::new();
+        
+        // Write metadata first
+        encoded_data.write_all(&(metadata.dimension as u32).to_le_bytes())?;
+        encoded_data.write_all(&(metadata.vector_count as u32).to_le_bytes())?;
+        
+        // Encode each column
+        for column in columns {
+            let encoded_column = encoder.encode_f32(&column)?;
+            encoded_data.write_all(&(encoded_column.len() as u32).to_le_bytes())?;
+            encoded_data.write_all(&encoded_column)?;
+        }
+        
+        // Also encode metadata and IDs
+        for record in &self.records {
+            // Encode ID
+            if let Some(ref id) = record.id {
+                encoded_data.write_all(&(id.len() as u32).to_le_bytes())?;
+                encoded_data.write_all(id.as_bytes())?;
+            } else {
+                encoded_data.write_all(&0u32.to_le_bytes())?;
+            }
+            
+            // Encode timestamp
+            encoded_data.write_all(&record.timestamp.to_le_bytes())?;
+        }
+        
+        Ok(encoded_data)
+    }
+    
+    /// Decode vectors from FastLanes format
+    fn decode_with_fastlanes(data: &[u8], marker: u8) -> anyhow::Result<Vec<VectorRecord>> {
+        use crate::storage::engines::common::fastlanes_encoding::{FastLanesDecoder, FastLanesScheme};
+        use std::io::Read;
+        
+        let mut cursor = std::io::Cursor::new(data);
+        
+        // Read metadata
+        let mut buf = [0u8; 4];
+        cursor.read_exact(&mut buf)?;
+        let dimension = u32::from_le_bytes(buf) as usize;
+        
+        cursor.read_exact(&mut buf)?;
+        let vector_count = u32::from_le_bytes(buf) as usize;
+        
+        // Determine scheme from marker
+        let scheme = match marker & 0xF0 {
+            0x10 => FastLanesScheme::BitPacked { bits: 16 },
+            0x20 => FastLanesScheme::Delta { base: 0 },
+            0x30 => FastLanesScheme::FrameOfReference { reference: 0, bits: 16 },
+            0x60 => FastLanesScheme::RunLength,
+            _ => FastLanesScheme::Uncompressed,
+        };
+        
+        let decoder = FastLanesDecoder::new(scheme);
+        
+        // Decode each dimension column
+        let mut columns = Vec::with_capacity(dimension);
+        for _ in 0..dimension {
+            cursor.read_exact(&mut buf)?;
+            let column_len = u32::from_le_bytes(buf) as usize;
+            
+            let mut column_data = vec![0u8; column_len];
+            cursor.read_exact(&mut column_data)?;
+            
+            let decoded_column = decoder.decode_f32(&column_data, vector_count)?;
+            columns.push(decoded_column);
+        }
+        
+        // Transpose back from column-major to row-major
+        let mut records = Vec::with_capacity(vector_count);
+        for i in 0..vector_count {
+            let mut vector = Vec::with_capacity(dimension);
+            for col in &columns {
+                vector.push(col[i]);
+            }
+            
+            // Read ID
+            cursor.read_exact(&mut buf)?;
+            let id_len = u32::from_le_bytes(buf) as usize;
+            let id = if id_len > 0 {
+                let mut id_bytes = vec![0u8; id_len];
+                cursor.read_exact(&mut id_bytes)?;
+                Some(String::from_utf8(id_bytes)?)
+            } else {
+                None
+            };
+            
+            // Read timestamp
+            cursor.read_exact(&mut buf)?;
+            let timestamp = u32::from_le_bytes(buf);
+            
+            records.push(VectorRecord {
+                id,
+                vector,
+                timestamp,
+                metadata: vec![],
+                updated_at: None,
+                expires_at: None,
+                version: None,
+                quantized_vector: None,
+            });
+        }
+        
+        Ok(records)
+    }
+    
     /// Calculate metadata statistics for intelligent block filtering
     fn calculate_metadata_stats(records: &[VectorRecord]) -> DataBlockMetadata {
         let mut stats = DataBlockMetadata::default();
@@ -1032,16 +1159,13 @@ impl DataBlock {
     pub fn serialize_with_config(&self, config: &DataBlockCompressionConfig) -> anyhow::Result<Vec<u8>> {
         use std::io::Write;
         
-        // Serialize each record with optimized vector serialization using the new trait
-        use crate::core::VectorRecordSerialization;
+        // FASTLANES ENCODING: Always use FastLanes for efficient SIMD-optimized encoding
+        let mut result = Vec::new();
+        result.push(self.encoding_marker);
         
-        let mut records_data = Vec::new();
-        for record in &self.records {
-            let record_data = record.serialize_with_config(&config.vector_config)
-                .context("Failed to serialize record with optimized config")?;
-            records_data.write_all(&(record_data.len() as u32).to_le_bytes())?;
-            records_data.write_all(&record_data)?;
-        }
+        // Always use FastLanes encoding for best performance
+        // The encoding_marker and metadata are set intelligently during DataBlock creation
+        let records_data = self.encode_with_fastlanes()?;
         
         // Custom serialization for hierarchical metadata to avoid bincode issues with serde_json::Value
         let mut metadata_data = Vec::new();
@@ -1197,40 +1321,50 @@ impl DataBlock {
 // Local marker functions removed - now using centralized functions from unified_compression::markers
 
 impl DataBlock {
-    /// Deserialize with automatic compression detection
+    /// Deserialize with automatic FastLanes decoding
     pub fn deserialize(data: &[u8]) -> anyhow::Result<Self> {
         if data.is_empty() {
             return Err(anyhow::anyhow!("Empty data for DataBlock deserialization"));
         }
         
-        // Constants for self-contained block compression markers
-        // Use centralized compression markers instead of local constants
+        let marker = data[0];
+        debug!("🔍 DataBlock::deserialize: marker = 0x{:02x}, total size = {} bytes", marker, data.len());
         
-        // Check if it's a compression marker we recognize
-        let algorithm = get_compression_algorithm_from_marker(data[0]);
-        
-        debug!("🔍 DataBlock::deserialize: marker = 0x{:02x}, algorithm = {:?}, total size = {} bytes",
-               data[0], algorithm, data.len());
-        
-        match algorithm {
-            CompressionAlgorithm::None => {
-                // Check if it's the uncompressed marker or legacy bincode
-                if data[0] == MARKER_UNCOMPRESSED {
-                    debug!("📖 DataBlock reading uncompressed format: {} bytes", data.len() - 1);
-                    Self::deserialize_uncompressed(&data[1..])
-                } else {
-                    // Bincode format for backward compatibility
-                    debug!("📖 DataBlock reading legacy bincode format: {} bytes", data.len());
-                    let mut block: DataBlock = bincode::deserialize(data)
-                        .map_err(|e| anyhow::anyhow!("Failed to deserialize DataBlock: {}", e))?;
-                    block.compression_algorithm = CompressionAlgorithm::None;
-                    Ok(block)
-                }
+        // Check if it's a FastLanes encoding marker
+        match marker & 0xF0 {
+            0x10 | 0x20 | 0x30 | 0x40 | 0x50 | 0x60 => {
+                // FastLanes encoded block
+                debug!("📖 DataBlock reading FastLanes encoded format: marker=0x{:02x}", marker);
+                let records = Self::decode_with_fastlanes(&data[1..], marker)?;
+                
+                // Create DataBlock from decoded records
+                // The constructor will re-analyze and set encoding metadata
+                Ok(DataBlock::new(
+                    records,
+                    DataBlockCompressionConfig::default(),
+                ))
             }
             _ => {
-                // Use unified decompression
-                debug!("📖 DataBlock reading compressed format with {:?}", algorithm);
-                Self::deserialize_with_unified_compression(&data[1..], algorithm)
+                // Check for compression markers (for potential future use)
+                let algorithm = get_compression_algorithm_from_marker(marker);
+                
+                match algorithm {
+                    CompressionAlgorithm::None => {
+                        if marker == MARKER_UNCOMPRESSED {
+                            debug!("📖 DataBlock reading uncompressed format: {} bytes", data.len() - 1);
+                            Self::deserialize_uncompressed(&data[1..])
+                        } else {
+                            // Fallback for any unrecognized format
+                            debug!("📖 DataBlock reading with fallback deserialization");
+                            Self::deserialize_uncompressed(&data[1..])
+                        }
+                    }
+                    _ => {
+                        // Use unified decompression
+                        debug!("📖 DataBlock reading compressed format with {:?}", algorithm);
+                        Self::deserialize_with_unified_compression(&data[1..], algorithm)
+                    }
+                }
             }
         }
     }

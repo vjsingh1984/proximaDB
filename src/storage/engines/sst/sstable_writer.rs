@@ -9,6 +9,46 @@
 //! 
 //! Creates optimized SSTable files with bloom filters, indexes, and block-based storage.
 //! Uses unified atomic write strategies for cross-cloud compatibility.
+//!
+//! FASTLANES ENCODING INTEGRATION:
+//! ================================
+//! This writer intelligently chooses encoding schemes per DataBlock based on data analysis:
+//!
+//! 1. ENCODING DECISION PROCESS:
+//!    - Analyze vector statistics (range, deltas, patterns)
+//!    - Choose optimal encoding (BitPacked, Delta, FrameOfReference, etc.)
+//!    - Transpose vectors for columnar encoding within blocks
+//!    - Write encoding marker as first byte of block
+//!
+//! 2. VECTOR ENCODING STRATEGY:
+//!    a) Collect block of vectors (typically 500-1000)
+//!    b) Transpose to columnar layout: vectors[N][D] → columns[D][N]
+//!    c) Analyze each dimension column independently
+//!    d) Apply dimension-specific encoding:
+//!       - Constant dimensions → Run-length encoding
+//!       - Small range → Frame of Reference
+//!       - Sequential → Delta encoding
+//!       - General → BitPacking
+//!
+//! 3. ENCODING MARKERS (1 byte):
+//!    0x00: Raw/Uncompressed (backward compatible)
+//!    0x10: FastLanes BitPacked
+//!    0x20: FastLanes Delta
+//!    0x30: FastLanes FrameOfReference
+//!    0x40: FastLanes PatchedBase (for outliers)
+//!    0x50: FastLanes Dictionary
+//!    0x60: FastLanes RunLength
+//!    0xF0-0xFF: Reserved for future encodings
+//!
+//! 4. METADATA ENCODING:
+//!    - Timestamps: Always delta encoded
+//!    - IDs: Dictionary encoded if repetitive
+//!    - Versions: BitPacked (small range)
+//!
+//! 5. ADAPTIVE STRATEGY:
+//!    - Monitor encoding effectiveness
+//!    - Fall back to raw if encoding increases size
+//!    - Track statistics for future optimization
 
 use anyhow::Result;
 use std::collections::HashMap;
