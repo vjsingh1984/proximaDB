@@ -235,7 +235,7 @@ impl SstCompactor {
             debug!("   📂 Opening file {}: {}", idx, file_path);
             let mut direct_reader = SstDirectReader::open(self.filesystem_factory.clone(), file_path).await?;
             // Try to get record count from header or estimate
-            let iterator = direct_reader.read_all_records(file_path.clone()).await?;
+            let iterator = direct_reader.stream_vector_records(file_path.clone()).await?;
             debug!("   ✅ Created streaming iterator for file {}", file_path);
             streaming_iterators.push((idx, iterator));
         }
@@ -317,7 +317,7 @@ impl SstCompactor {
 
         // Process all records from the heap
         while let Some(Reverse(entry)) = heap.pop() {
-            let record_id = entry.record.id.clone();
+            let record_id = entry.record.id.clone().unwrap_or_default();
             
             // Collect all versions of each ID
             id_versions.entry(record_id.clone())
@@ -343,8 +343,9 @@ impl SstCompactor {
             
             // Track if this ID has any tombstones
             // A tombstone is indicated by expires_at being set and in the past
-            let current_time = chrono::Utc::now().timestamp_millis() as i64;
-            let has_tombstone = versions.iter().any(|r| r.expires_at > 0 && r.expires_at < current_time);
+            let current_time = chrono::Utc::now().timestamp() as u32;
+            let has_tombstone = versions.iter().any(|r| 
+                r.expires_at.map_or(false, |exp| exp > 0 && exp < current_time));
             if has_tombstone {
                 debug!("Skipping tombstoned record: {}", id);
                 stats.tombstoned_ids.push(id.clone());
@@ -472,7 +473,7 @@ impl SstCompactor {
 
         // Collect all records grouped by ID
         while let Some(Reverse(entry)) = heap.pop() {
-            let record_id = entry.record.id.clone();
+            let record_id = entry.record.id.clone().unwrap_or_default();
             stats.records_read += 1;
             
             // Collect all versions of each ID
@@ -511,8 +512,9 @@ impl SstCompactor {
             
             // Track if this ID has any tombstones
             // A tombstone is indicated by expires_at being set and in the past
-            let current_time = chrono::Utc::now().timestamp_millis() as i64;
-            let has_tombstone = versions.iter().any(|r| r.expires_at > 0 && r.expires_at < current_time);
+            let current_time = chrono::Utc::now().timestamp() as u32;
+            let has_tombstone = versions.iter().any(|r| 
+                r.expires_at.map_or(false, |exp| exp > 0 && exp < current_time));
             if has_tombstone {
                 debug!("Skipping tombstoned record: {}", id);
                 stats.tombstoned_ids.push(id.clone());
@@ -635,8 +637,8 @@ impl SstCompactor {
             CompactionSortStrategy::ById => {
                 records.sort_by(|a, b| {
                     // Check if either record is append-only
-                    let a_is_append = Self::is_append_only(&a.id);
-                    let b_is_append = Self::is_append_only(&b.id);
+                    let a_is_append = a.id.as_ref().map_or(true, |id| Self::is_append_only(id));
+                    let b_is_append = b.id.as_ref().map_or(true, |id| Self::is_append_only(id));
                     
                     match (a_is_append, b_is_append) {
                         (true, true) => {
@@ -700,27 +702,22 @@ impl SstCompactor {
                 
                 let vector_ids: Vec<String> = records
                     .iter()
-                    .map(|sst_record| sst_record.id.clone())
+                    .map(|sst_record| sst_record.id.clone().unwrap_or_default())
                     .collect();
                 
                 // Quantize vectors for similarity clustering
                 let runtime = tokio::runtime::Handle::current();
                 let sorted_indices = runtime.block_on(async {
-                    // Quantize the vectors using the base quantization engine
-                    let quantized_data = adapter.base_engine()
+                    // Quantize the vectors using the quantization engine directly
+                    let quantized_data = adapter
                         .quantize_batch(&vectors, Some(vector_ids.as_slice()))
                         .await
                         .map_err(|e| anyhow::anyhow!("Quantization failed: {}", e))?;
                     
                     // Create similarity clusters based on PQ codes for optimal compression
-                    let clusters = adapter.create_similarity_clusters(&quantized_data)
-                        .map_err(|e| anyhow::anyhow!("Clustering failed: {}", e))?;
-                    
-                    // Return sorted indices based on similarity clusters
-                    let mut sorted_indices = Vec::new();
-                    for cluster in clusters {
-                        sorted_indices.extend(cluster.indices);
-                    }
+                    // For now, just return indices in original order
+                    // TODO: Implement proper PQ-based clustering when method is available
+                    let sorted_indices: Vec<usize> = (0..vectors.len()).collect();
                     
                     Ok::<Vec<usize>, anyhow::Error>(sorted_indices)
                 }).map_err(|e| anyhow::anyhow!("PQ sorting failed: {}", e))?;
@@ -790,9 +787,9 @@ impl SstCompactor {
         let sorted_records: Vec<(String, VectorRecord)> = records
             .into_iter()
             .map(|r| {
-                let id = r.id.clone();
+                let id = r.id.clone().unwrap_or_default();
                 stats.records_written += 1;
-                stats.bytes_written += bincode::serialized_size(&r);
+                stats.bytes_written += bincode::serialized_size(&r).unwrap_or(0);
                 (id, r)
             })
             .collect();
