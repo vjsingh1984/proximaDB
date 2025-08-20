@@ -8,7 +8,7 @@ use std::sync::Arc;
 use bytemuck::{Pod, Zeroable, cast_slice, try_cast_slice};
 use serde::{Serialize, Deserialize};
 
-use crate::storage::engines::common::zero_copy_metadata_cache::{
+use crate::storage::engines::common::zero_copy_io_system::{
     MetadataSerializer, EngineMetadata, QueryContext, DataRange,
 };
 use crate::storage::engines::row_based::bloom_filter::SstableBloomFilter;

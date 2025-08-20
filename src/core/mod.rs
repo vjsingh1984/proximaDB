@@ -17,7 +17,7 @@ pub mod storage_layout;
 pub mod memory;
 pub mod proto_metadata_helper;
 pub mod bloom;
-// pub mod errors;  // 🔴 UNUSED MODULE - Never imported
+pub mod errors;  // Error types for ProximaDB
 pub mod hardware_capabilities;
 
 #[cfg(test)]

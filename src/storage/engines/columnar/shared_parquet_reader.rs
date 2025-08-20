@@ -710,8 +710,8 @@ impl Default for ReaderStats {
 /// Filter expression placeholder
 pub struct FilterExpression;
 
-/// Memory pressure monitor (reuse from SST reader)
-pub use super::shared_sst_reader::MemoryPressureMonitor;
+/// Access pattern tracker (reuse from cache module)
+pub use crate::storage::cache::AccessPatternTracker;
 
-/// Access pattern tracker (reuse from SST reader)  
-pub use super::shared_sst_reader::AccessPatternTracker;
+/// Memory pressure monitor placeholder (define locally if needed)
+pub struct MemoryPressureMonitor;
