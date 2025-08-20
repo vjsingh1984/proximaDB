@@ -358,7 +358,7 @@ impl ZeroCopyIOSystem {
                 required_ranges,
                 query_context,
                 RequestPriority::Normal,
-            ).await?
+            ).await.map_err(|e| ProximaDBError::Internal(format!("Download strategy error: {}", e)))?
         };
 
         // Step 5: Convert to IOStrategy and create execution plan
@@ -790,7 +790,7 @@ impl ZeroCopyIOSystem {
         // Parse cache key format: "file_path:collection_id:engine" (filename-first for optimal matching)
         let parts: Vec<&str> = cache_key.rsplitn(3, ':').collect();
         if parts.len() < 3 {
-            return Err(ProximaDBError::InvalidCacheKey(cache_key.to_string()));
+            return Err(ProximaDBError::Config(format!("Invalid cache key: {}", cache_key)));
         }
 
         // Since rsplitn splits from the right, reverse the order
@@ -867,7 +867,7 @@ impl ZeroCopyIOSystem {
             "Successfully populated cache from file"
         );
         
-        Ok(())
+        Ok(metadata_obj)
     }
 }
 

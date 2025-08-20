@@ -73,6 +73,7 @@ pub mod hybrid_writer;
 pub mod config_builder;
 pub mod shared_parquet_reader;  // NEW: Shared reader for bandwidth optimization
 pub mod parquet_metadata_serializer;  // NEW: Zero-copy metadata serialization for Parquet
+pub mod nova_metadata_serializer;     // NEW: Zero-copy metadata serialization for NOVA
 // quantization_config_conversion moved to common/quantization_adapter.rs
 
 // New unified columnar infrastructure

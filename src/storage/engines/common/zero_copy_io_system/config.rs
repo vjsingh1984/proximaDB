@@ -11,6 +11,21 @@ use crate::core::error::ProximaDBError;
 use crate::storage::persistence::filesystem::FilesystemFactory;
 use super::{ZeroCopyIOSystem, MetadataSerializer};
 
+/// Workload types for configuration presets
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub enum WorkloadType {
+    /// High-performance setup (minimize latency)
+    HighPerformance,
+    /// High-throughput batch processing
+    HighThroughput,
+    /// Analytics workloads with complex queries
+    Analytics, 
+    /// Real-time latency-sensitive operations
+    RealTime,
+    /// Mixed workload with balanced settings
+    Balanced,
+}
+
 /// Complete system configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ZeroCopyIOConfig {
@@ -370,7 +385,9 @@ impl ZeroCopyIOSystemBuilder {
         
         // Require filesystem
         let filesystem = self.filesystem
-            .ok_or_else(|| ProximaDBError::Config("Filesystem is required".into()))?;
+            .as_ref()
+            .ok_or_else(|| ProximaDBError::Config("Filesystem is required".into()))?
+            .clone();
         
         // Register default serializers if none provided
         if self.serializers.is_empty() {
