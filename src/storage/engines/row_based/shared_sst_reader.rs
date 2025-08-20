@@ -37,6 +37,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use memmap2::{Mmap, MmapOptions};
+use tracing::{debug, info, warn};
 
 use crate::storage::persistence::filesystem::{FileSystem, FilesystemFactory};
 // DEPRECATED: refined_integrated_cache replaced by zero_copy_io_system
@@ -44,7 +45,7 @@ use crate::storage::engines::common::zero_copy_io_system::{
     ZeroCopyIOSystem, MetadataSerializer, EngineMetadata, QueryContext, DataRange,
     FileAccessRequest, RequestPriority, IOStrategy
 };
-use crate::common::errors::ProximaDBError;
+use crate::core::errors::ProximaDBError;
 
 const BLOOM_FILTER_SIZE: usize = 4096;  // 4KB bloom filters
 const INDEX_BLOCK_SIZE: usize = 61440;  // 60KB index blocks
@@ -376,7 +377,7 @@ impl SharedSstFormatReader {
         
         self.stats.cache_invalidations.fetch_add(invalidated, Ordering::Relaxed);
         
-        log::info!(
+        info!(
             "Invalidated {} cache entries for collection {} during compaction",
             invalidated,
             collection_id

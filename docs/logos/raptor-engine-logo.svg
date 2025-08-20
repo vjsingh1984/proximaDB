@@ -1,28 +1,29 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 200" width="400" height="200">
   <!-- RAPTOR Engine Logo: Row-Aligned Performance Tensor Optimized Repository -->
-  <!-- Design: Radiant tensor processing core with intelligent row alignment -->
+  <!-- Design: Radiant performance core with intelligent row processing -->
   
   <defs>
-    <!-- Radiant tensor core gradient -->
-    <radialGradient id="tensorGradient" cx="50%" cy="50%" r="50%">
+    <!-- Radiant performance gradient -->
+    <radialGradient id="performanceGradient" cx="50%" cy="50%" r="50%">
       <stop offset="0%" style="stop-color:#FFD700;stop-opacity:1" />
-      <stop offset="30%" style="stop-color:#FF6B35;stop-opacity:0.9" />
+      <stop offset="30%" style="stop-color:#FF8C00;stop-opacity:0.9" />
       <stop offset="60%" style="stop-color:#4A90E2;stop-opacity:0.7" />
       <stop offset="100%" style="stop-color:#7B68EE;stop-opacity:0.5" />
     </radialGradient>
     
-    <!-- Gradient for row data -->
-    <linearGradient id="dataGradient" x1="0%" y1="0%" x2="100%" y2="0%">
+    <!-- Row data gradient -->
+    <linearGradient id="rowDataGradient" x1="0%" y1="0%" x2="100%" y2="0%">
       <stop offset="0%" style="stop-color:#4A90E2;stop-opacity:0.8" />
-      <stop offset="50%" style="stop-color:#7B68EE;stop-opacity:0.8" />
-      <stop offset="100%" style="stop-color:#4A90E2;stop-opacity:0.8" />
-    </radialGradient>
+      <stop offset="50%" style="stop-color:#FFD700;stop-opacity:0.9" />
+      <stop offset="100%" style="stop-color:#7B68EE;stop-opacity:0.8" />
+    </linearGradient>
     
-    <!-- Performance flow gradient -->
-    <linearGradient id="performanceGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+    <!-- Processing flow gradient -->
+    <linearGradient id="flowGradient" x1="0%" y1="0%" x2="100%" y2="0%">
       <stop offset="0%" style="stop-color:#FFD700;stop-opacity:0.9" />
-      <stop offset="100%" style="stop-color:#FF6B35;stop-opacity:0.7" />
+      <stop offset="50%" style="stop-color:#FF8C00;stop-opacity:0.8" />
+      <stop offset="100%" style="stop-color:#4A90E2;stop-opacity:0.7" />
     </linearGradient>
     
     <!-- Radiant glow filter -->
@@ -34,103 +35,104 @@
       </feMerge>
     </filter>
     
-    <!-- Tensor pattern -->
-    <pattern id="tensorPattern" x="0" y="0" width="8" height="8" patternUnits="userSpaceOnUse">
-      <rect width="8" height="8" fill="none"/>
-      <circle cx="4" cy="4" r="1.5" fill="#FFD700" opacity="0.6"/>
-      <circle cx="4" cy="4" r="0.5" fill="#FFF" opacity="0.9"/>
+    <!-- Performance pattern -->
+    <pattern id="performancePattern" x="0" y="0" width="10" height="10" patternUnits="userSpaceOnUse">
+      <rect width="10" height="10" fill="none"/>
+      <circle cx="5" cy="5" r="2" fill="#FFD700" opacity="0.5"/>
+      <circle cx="5" cy="5" r="1" fill="#FFF" opacity="0.8"/>
     </pattern>
   </defs>
   
   <!-- Background -->
-  <rect width="400" height="200" fill="#0A0E27"/>
+  <rect width="400" height="200" fill="#0A0A0A"/>
   
   <!-- Row data visualization (representing row-aligned storage) -->
-  <g opacity="0.6">
+  <g opacity="0.7">
     <!-- Row 1 -->
-    <rect x="20" y="40" width="360" height="8" rx="2" fill="url(#dataGradient)"/>
+    <rect x="20" y="40" width="350" height="6" rx="3" fill="url(#rowDataGradient)"/>
     <!-- Row 2 -->
-    <rect x="20" y="55" width="340" height="8" rx="2" fill="url(#dataGradient)"/>
+    <rect x="20" y="52" width="340" height="6" rx="3" fill="url(#rowDataGradient)"/>
     <!-- Row 3 -->
-    <rect x="20" y="70" width="350" height="8" rx="2" fill="url(#dataGradient)"/>
+    <rect x="20" y="64" width="360" height="6" rx="3" fill="url(#rowDataGradient)"/>
     <!-- Row 4 -->
-    <rect x="20" y="85" width="330" height="8" rx="2" fill="url(#dataGradient)"/>
+    <rect x="20" y="76" width="330" height="6" rx="3" fill="url(#rowDataGradient)"/>
     <!-- Row 5 -->
-    <rect x="20" y="100" width="355" height="8" rx="2" fill="url(#dataGradient)"/>
+    <rect x="20" y="88" width="355" height="6" rx="3" fill="url(#rowDataGradient)"/>
+    <!-- Row 6 -->
+    <rect x="20" y="100" width="345" height="6" rx="3" fill="url(#rowDataGradient)"/>
   </g>
   
-  <!-- Central tensor processing core -->
-  <g transform="translate(120, 60)" filter="url(#radiantGlow)">
-    <!-- Main tensor core -->
-    <circle cx="0" cy="0" r="30" fill="url(#tensorGradient)" opacity="0.9"/>
-    <circle cx="0" cy="0" r="25" fill="url(#tensorPattern)"/>
-    <circle cx="0" cy="0" r="20" fill="none" stroke="#FFD700" stroke-width="2" opacity="0.8"/>
-    <circle cx="0" cy="0" r="15" fill="none" stroke="#4A90E2" stroke-width="1" opacity="0.7"/>
-    <circle cx="0" cy="0" r="10" fill="none" stroke="#FF6B35" stroke-width="1" opacity="0.6"/>
+  <!-- Central performance processing core -->
+  <g transform="translate(120, 70)" filter="url(#radiantGlow)">
+    <!-- Main processing core -->
+    <circle cx="0" cy="0" r="35" fill="url(#performanceGradient)" opacity="0.9"/>
+    <circle cx="0" cy="0" r="30" fill="url(#performancePattern)"/>
+    <circle cx="0" cy="0" r="25" fill="none" stroke="#FFD700" stroke-width="2" opacity="0.8"/>
+    <circle cx="0" cy="0" r="20" fill="none" stroke="#FF8C00" stroke-width="1.5" opacity="0.7"/>
+    <circle cx="0" cy="0" r="15" fill="none" stroke="#4A90E2" stroke-width="1" opacity="0.6"/>
     
-    <!-- Tensor alignment indicators -->
-    <rect x="-2" y="-20" width="4" height="40" fill="#FFD700" opacity="0.7"/>
-    <rect x="-20" y="-2" width="40" height="4" fill="#4A90E2" opacity="0.7"/>
+    <!-- Row alignment indicators -->
+    <rect x="-25" y="-2" width="50" height="4" fill="#FFD700" opacity="0.8"/>
+    <rect x="-2" y="-25" width="4" height="50" fill="#4A90E2" opacity="0.6"/>
     
-    <!-- Performance nodes -->
-    <circle cx="-12" cy="-12" r="3" fill="#FFD700"/>
-    <circle cx="12" cy="-12" r="3" fill="#4A90E2"/>
-    <circle cx="12" cy="12" r="3" fill="#FF6B35"/>
-    <circle cx="-12" cy="12" r="3" fill="#7B68EE"/>
+    <!-- Performance optimization nodes -->
+    <circle cx="-15" cy="-15" r="4" fill="#FFD700"/>
+    <circle cx="15" cy="-15" r="4" fill="#FF8C00"/>
+    <circle cx="15" cy="15" r="4" fill="#4A90E2"/>
+    <circle cx="-15" cy="15" r="4" fill="#7B68EE"/>
   </g>
   
   <!-- Performance flow streams -->
   <g opacity="0.8">
     <!-- Input performance stream -->
-    <path d="M 20 75 Q 50 70, 85 75" 
-          stroke="url(#performanceGradient)" stroke-width="5" fill="none" 
+    <path d="M 30 70 Q 60 65, 85 70" 
+          stroke="url(#flowGradient)" stroke-width="6" fill="none" 
           stroke-linecap="round"/>
-    <circle cx="15" cy="75" r="4" fill="#FFD700"/>
+    <circle cx="25" cy="70" r="5" fill="#FFD700"/>
     
     <!-- Output optimization stream -->
-    <path d="M 155 75 Q 185 70, 220 75 Q 250 77, 280 75" 
-          stroke="url(#performanceGradient)" stroke-width="6" fill="none" 
+    <path d="M 155 70 Q 190 65, 220 70 Q 250 72, 280 70" 
+          stroke="url(#flowGradient)" stroke-width="7" fill="none" 
           stroke-linecap="round"/>
     
-    <!-- Efficiency indicators -->
-    <g transform="translate(200, 65)">
-      <path d="M 0 0 L 10 5 L 0 10 Z" fill="#FFD700"/>
-      <path d="M 6 0 L 16 5 L 6 10 Z" fill="#4A90E2" opacity="0.7"/>
+    <!-- Performance indicators -->
+    <g transform="translate(210, 60)">
+      <path d="M 0 0 L 12 6 L 0 12 Z" fill="#FFD700"/>
+      <path d="M 8 0 L 20 6 L 8 12 Z" fill="#FF8C00" opacity="0.7"/>
     </g>
   </g>
   
-  <!-- HNSW Intelligence Network -->
-  <g opacity="0.7">
-    <!-- Neural connections -->
-    <path d="M 300 60 Q 320 50, 340 55" stroke="#FFD700" stroke-width="2" fill="none" opacity="0.6"/>
-    <path d="M 340 55 Q 350 62, 350 70" stroke="#4A90E2" stroke-width="2" fill="none" opacity="0.6"/>
-    <path d="M 300 60 Q 310 67, 310 75" stroke="#FF6B35" stroke-width="2" fill="none" opacity="0.6"/>
-    <path d="M 310 75 Q 320 77, 330 80" stroke="#7B68EE" stroke-width="2" fill="none" opacity="0.6"/>
+  <!-- Intelligent network connections -->
+  <g opacity="0.6">
+    <!-- Smart connections -->
+    <path d="M 300 50 Q 320 45, 340 50" stroke="#FFD700" stroke-width="2" fill="none"/>
+    <path d="M 340 50 Q 350 60, 350 70" stroke="#4A90E2" stroke-width="2" fill="none"/>
+    <path d="M 300 80 Q 320 85, 340 80" stroke="#FF8C00" stroke-width="2" fill="none"/>
     
     <!-- Intelligence nodes -->
-    <circle cx="300" cy="60" r="4" fill="#FFD700" opacity="0.8"/>
-    <circle cx="320" cy="50" r="3" fill="#4A90E2" opacity="0.8"/>
-    <circle cx="340" cy="55" r="4" fill="#FF6B35" opacity="0.8"/>
+    <circle cx="300" cy="50" r="4" fill="#FFD700" opacity="0.9"/>
+    <circle cx="320" cy="45" r="3" fill="#4A90E2" opacity="0.8"/>
+    <circle cx="340" cy="50" r="4" fill="#FF8C00" opacity="0.9"/>
     <circle cx="350" cy="70" r="3" fill="#7B68EE" opacity="0.8"/>
-    <circle cx="310" cy="75" r="3" fill="#FFD700" opacity="0.8"/>
-    <circle cx="330" cy="80" r="4" fill="#4A90E2" opacity="0.8"/>
+    <circle cx="300" cy="80" r="3" fill="#FFD700" opacity="0.8"/>
+    <circle cx="340" cy="80" r="4" fill="#4A90E2" opacity="0.9"/>
   </g>
   
   <!-- Text -->
-  <text x="200" y="160" font-family="'Segoe UI', Arial, sans-serif" font-size="36" 
+  <text x="200" y="155" font-family="'Segoe UI', Arial, sans-serif" font-size="36" 
         font-weight="bold" fill="#FFFFFF" text-anchor="middle" filter="url(#radiantGlow)">RAPTOR</text>
   
-  <text x="200" y="182" font-family="'Segoe UI', Arial, sans-serif" font-size="11" 
+  <text x="200" y="175" font-family="'Segoe UI', Arial, sans-serif" font-size="11" 
         fill="#FFD700" text-anchor="middle" letter-spacing="2">INTELLIGENT ROW-ALIGNED ENGINE</text>
   
   <!-- Positive performance badges -->
-  <g transform="translate(20, 160)">
-    <rect x="0" y="0" width="60" height="18" rx="9" fill="none" stroke="#FFD700" stroke-width="1"/>
-    <text x="30" y="12" font-family="monospace" font-size="9" fill="#FFD700" text-anchor="middle">⚡ TENSOR OPT</text>
+  <g transform="translate(20, 155)">
+    <rect x="0" y="0" width="65" height="16" rx="8" fill="none" stroke="#FFD700" stroke-width="1"/>
+    <text x="32" y="11" font-family="monospace" font-size="8" fill="#FFD700" text-anchor="middle">⚡ OPTIMIZED</text>
   </g>
   
-  <g transform="translate(320, 160)">
-    <rect x="0" y="0" width="60" height="18" rx="9" fill="none" stroke="#4A90E2" stroke-width="1"/>
-    <text x="30" y="12" font-family="monospace" font-size="9" fill="#4A90E2" text-anchor="middle">🚀 HNSW READY</text>
+  <g transform="translate(315, 155)">
+    <rect x="0" y="0" width="65" height="16" rx="8" fill="none" stroke="#4A90E2" stroke-width="1"/>
+    <text x="32" y="11" font-family="monospace" font-size="8" fill="#4A90E2" text-anchor="middle">🚀 TENSOR AI</text>
   </g>
 </svg>
