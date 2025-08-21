@@ -20,7 +20,7 @@ ProximaDB's unified quantization architecture provides a single, collection-driv
 
 == Architecture Overview
 
-[mermaid]
+[source,mermaid]
 ----
 graph TB
     subgraph "Collection Configuration"
@@ -191,7 +191,7 @@ impl StorageQuantizationEngine {
 
 === Storage Adapter Pattern
 
-[mermaid]
+[source,mermaid]
 ----
 graph LR
     subgraph "Common Quantization"
@@ -314,7 +314,7 @@ impl StorageQuantizationEngine {
 
 === How PQ Works
 
-[mermaid]
+[source,mermaid]
 ----
 graph TB
     subgraph "Training Phase"
@@ -570,7 +570,7 @@ cargo bench quantization_bench
 
 === With Storage Engines
 
-[mermaid]
+[source,mermaid]
 ----
 sequenceDiagram
     participant C as Collection
@@ -592,7 +592,7 @@ sequenceDiagram
 
 === With Search Pipeline
 
-[mermaid]
+[source,mermaid]
 ----
 sequenceDiagram
     participant U as User Query

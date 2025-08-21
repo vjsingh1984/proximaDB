@@ -24,6 +24,7 @@ use tracing::{debug, info, warn};
 use crate::compute::distance_computation::DistanceMetric;
 use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
 use crate::core::search::{SearchResult, SearchDebugInfo};
+use crate::proto::proximadb::SearchVectorRecord;
 use crate::services::vector_operations_service::VectorOperationsService;
 
 /// Configuration for streaming search
@@ -251,20 +252,33 @@ impl StreamingSearchService {
         let mut deduped_wal_results = Vec::new();
         
         if !wal_results.is_empty() {
-            // Deduplicate WAL results if enabled
-            for result in wal_results {
-                let should_include = if let Some(ref mut seen) = seen_ids {
-                    if result.id.is_empty() {
-                        true // Include empty IDs
-                    } else {
-                        seen.insert(result.id.clone()) // Deduplicate by ID
-                    }
-                } else {
-                    true // No deduplication
-                };
+            // Process each SearchResult (which contains multiple records)
+            for search_result in wal_results {
+                let mut filtered_records = Vec::new();
                 
-                if should_include {
-                    deduped_wal_results.push(result);
+                // Deduplicate individual records within the SearchResult
+                for record in search_result.results {
+                    let should_include = if let Some(ref mut seen) = seen_ids {
+                        if record.id.is_empty() {
+                            true // Include empty IDs
+                        } else {
+                            seen.insert(record.id.clone()) // Deduplicate by ID
+                        }
+                    } else {
+                        true // No deduplication
+                    };
+                    
+                    if should_include {
+                        filtered_records.push(record);
+                    }
+                }
+                
+                if !filtered_records.is_empty() {
+                    deduped_wal_results.push(SearchResult {
+                        results: filtered_records,
+                        total_found: search_result.total_found,
+                        collection_id: search_result.collection_id,
+                    });
                 }
             }
             
@@ -300,69 +314,54 @@ impl StreamingSearchService {
                 search_k
             ).await?;
             
-            // Split results for compatibility
-            let viper_results = results.clone();
-            let lsm_results = Vec::new();
+            // Convert search results to SearchResult format
+            let mut all_records = Vec::new();
+            for search_result in results {
+                // Extract all SearchVectorRecords from the results
+                for record in search_result.results {
+                    all_records.push(record);
+                }
+            }
             
-            // Merge and sort storage results
-            let mut storage_results = Vec::new();
-            storage_results.extend(viper_results);
-            storage_results.extend(lsm_results);
-            
-            // Sort by timestamp descending (placeholder for score-based sorting)
-            // TODO: Use proper search result structure with scores
-            storage_results.sort_by(|a, b| {
-                b.timestamp.cmp(&a.timestamp)
+            // Sort by score (higher is better)
+            all_records.sort_by(|a, b| {
+                b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal)
             });
             
             // Deduplicate storage results against WAL results if enabled
-            let mut deduped_storage_results = Vec::new();
-            for result in storage_results {
+            let mut deduped_storage_records = Vec::new();
+            for record in all_records {
                 let should_include = if let Some(ref mut seen) = seen_ids {
-                    if result.id.is_empty() {
+                    if record.id.is_empty() {
                         true // Include empty IDs
                     } else {
-                        seen.insert(result.id.clone()) // Deduplicate by ID
+                        seen.insert(record.id.clone()) // Deduplicate by ID
                     }
                 } else {
                     true // No deduplication
                 };
                 
                 if should_include {
-                    // Convert VectorRecord to SearchResult
-                    let metadata = result.metadata.iter()
-                        .map(|(key, value)| (key.clone(), value.clone()))
-                        .collect();
-                    
-                    let search_result = SearchResult {
-                        id: result.id.clone(),
-                        vector_id: Some(result.id.clone()),
-                        score: 1.0, // TODO: Calculate actual score
-                        similarity: None,
-                        // rank removed -  None,
-                        vector: result.vector.clone(),
-                        metadata,
-                        debug_info: None,
-                        version: result.version,
-                        timestamp: result.timestamp,
-                        semantic_similarity: None,
-                        engine_stats: None,
-                        index_path: None,
-                        quantization_info: None,
-                    };
-                    deduped_storage_results.push(search_result);
-                    if deduped_storage_results.len() >= remaining_k {
+                    deduped_storage_records.push(record);
+                    if deduped_storage_records.len() >= remaining_k {
                         break;
                     }
                 }
             }
             
-            if !deduped_storage_results.is_empty() {
+            if !deduped_storage_records.is_empty() {
                 batch_id += 1;
-                total_results += deduped_storage_results.len();
+                total_results += deduped_storage_records.len();
+                
+                // Wrap records in SearchResult
+                let storage_search_result = SearchResult {
+                    results: deduped_storage_records,
+                    total_found: total_results as i64,
+                    collection_id: Some(collection_id.to_string()),
+                };
                 
                 let batch = SearchResultBatch {
-                    results: deduped_storage_results,
+                    results: vec![storage_search_result],
                     is_final: false,
                     batch_id,
                     timestamp: chrono::Utc::now().timestamp_millis(),
@@ -434,29 +433,26 @@ impl StreamingSearchService {
                         &distance_metric,
                     );
                     
-                    let result = SearchResult {
+                    // Convert metadata from proto to Vec<MetadataItem>
+                    let metadata = record.metadata.iter()
+                        .map(|(k, v)| crate::proto::proximadb::MetadataItem {
+                            key: k.clone(),
+                            value: serde_json::to_string(v).unwrap_or_default(),
+                        })
+                        .collect();
+                    
+                    let search_record = crate::proto::proximadb::SearchVectorRecord {
                         id: record.id.clone().unwrap_or_default(),
-                        vector_id: record.id.clone(),
+                        vector: record.vector.clone(),
+                        metadata,
                         score: similarity.normalized_score,
                         similarity: Some(similarity.rank_value),
-                        // rank removed -  None,
-                        vector: Some(record.vector.clone()),
-                        metadata: crate::core::proto_metadata_helper::proto_metadata_to_json(&record.metadata),
-                        debug_info: Some(SearchDebugInfo {
-                            algorithm: format!("StreamingWAL::{:?}", distance_metric),
-                            candidates_evaluated: 0,
-                            processing_time_us: 0, // TODO: Add timing
-                        }),
-                        semantic_similarity: Some(similarity),
-                        quantization_info: None,
-                        engine_stats: None,
                         version: record.version,
                         timestamp: Some(record.timestamp),
-                        index_path: None,
-                        // timestamp_datetime removed - duplicate field
                     };
                     
-                    results.push(result);
+                    // Need to collect SearchVectorRecords and wrap in SearchResult
+                    results.push(search_record);
                 }
             }
             
@@ -464,8 +460,15 @@ impl StreamingSearchService {
             results.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
             results.truncate(k);
             
-            debug!("✅ STREAMING_WAL: Found {} results", results.len());
-            Ok(results)
+            // Wrap SearchVectorRecords in a SearchResult
+            let search_result = SearchResult {
+                results,
+                total_found: results.len() as i64,
+                collection_id: Some(collection_id.to_string()),
+            };
+            
+            debug!("✅ STREAMING_WAL: Found {} results", search_result.results.len());
+            Ok(vec![search_result])
         } else {
             debug!("❌ STREAMING_WAL: No WAL behavior available");
             Ok(Vec::new())

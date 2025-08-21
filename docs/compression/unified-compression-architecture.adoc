@@ -20,7 +20,7 @@ ProximaDB's unified compression architecture provides centralized, context-aware
 
 == Architecture Overview
 
-[mermaid]
+[source,mermaid]
 ----
 graph TB
     subgraph "Data Sources"
@@ -238,7 +238,7 @@ impl StandardCompression {
 
 === Compression Contexts
 
-[mermaid]
+[source,mermaid]
 ----
 graph LR
     subgraph "Context Types"
@@ -338,7 +338,7 @@ impl SstBlockWriter {
 
 === VIPER Parquet Compression
 
-[mermaid]
+[source,mermaid]
 ----
 graph TB
     subgraph "VIPER Column Storage"
@@ -404,7 +404,7 @@ impl ViperWriter {
 
 == Compression Decision Flow
 
-[mermaid]
+[source,mermaid]
 ----
 graph TB
     START[Data to Compress] --> DETECT[Detect Data Type]
@@ -494,7 +494,7 @@ Space Savings: 3.63 GB (54% reduction)
 
 === I/O Impact
 
-[mermaid]
+[source,mermaid]
 ----
 graph LR
     subgraph "Without Compression"

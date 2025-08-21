@@ -20,7 +20,7 @@ ProximaDB's unified cache architecture provides a multi-tier, intelligent cachin
 
 == Architecture Overview
 
-[mermaid]
+[source,mermaid]
 ----
 graph TB
     subgraph "Storage Tiers"
@@ -90,7 +90,7 @@ graph TB
 
 === Cache Access Pattern
 
-[mermaid]
+[source,mermaid]
 ----
 sequenceDiagram
     participant Client
@@ -181,7 +181,7 @@ impl VectorStore {
 
 === BitmapFilterCache - Bloom Filter Cache
 
-[mermaid]
+[source,mermaid]
 ----
 graph LR
     subgraph "Bloom Filter Hierarchy"
@@ -265,7 +265,7 @@ Block Level (Per Block)
 
 === CrossCacheOrchestrator Architecture
 
-[mermaid]
+[source,mermaid]
 ----
 graph TB
     subgraph "CrossCacheOrchestrator"
@@ -354,7 +354,7 @@ impl CrossCacheOrchestrator {
 
 === Pattern Detection Algorithm
 
-[mermaid]
+[source,mermaid]
 ----
 graph LR
     subgraph "Access Pattern Tracking"
@@ -461,7 +461,7 @@ history_size = 10000
 
 === Staging for Atomic Writes
 
-[mermaid]
+[source,mermaid]
 ----
 sequenceDiagram
     participant Writer
@@ -599,7 +599,7 @@ impl CrossCacheOrchestrator {
 
 === Memory Pressure Handling
 
-[mermaid]
+[source,mermaid]
 ----
 graph TB
     MP[Memory Pressure<br/>Detection] --> L1{Pressure<br/>Level?}

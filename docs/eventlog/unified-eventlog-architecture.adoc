@@ -21,7 +21,7 @@ The EventLog system provides a lightweight, Kafka-like commit log that decouples
 
 == Problem Solved
 
-[mermaid]
+[source,mermaid]
 ----
 graph LR
     subgraph "Before: Synchronous Indexing"
@@ -45,9 +45,57 @@ graph LR
 
 == Architecture Overview
 
+=== Deployment Modes
+
+==== Embedded Mode (Default)
+* Runs within the main ProximaDB process
+* Direct in-memory access with zero network overhead
+* Automatic recovery on startup
+* Best for single-node deployments
+
+[source,rust]
+----
+// In server initialization
+let event_log_service = EventLogServiceFactory::create(
+    config,
+    filesystem_factory,
+    collection_cache,
+    None, // Defaults to embedded
+).await?;
+----
+
+==== Standalone Mode (Microservices)
+* Runs as separate service with REST/gRPC API
+* Can scale independently
+* Useful for high-throughput scenarios
+* Enables horizontal scaling
+
+[source,bash]
+----
+# Set environment variables
+export EVENTLOG_MODE=standalone
+export EVENTLOG_BIND_ADDRESS=0.0.0.0
+export EVENTLOG_PORT=8080
+----
+
+==== Distributed Mode (Multi-node)
+* Runs across multiple nodes with peer-to-peer synchronization
+* Coordinator-based consensus for consistency
+* Fault-tolerant with automatic failover
+* Production-ready for large deployments
+
+[source,bash]
+----
+# Node configuration
+export EVENTLOG_MODE=distributed
+export EVENTLOG_NODE_ID=node1
+export EVENTLOG_COORDINATOR_URL=http://coordinator:8080
+export EVENTLOG_PEERS=node2,node3
+----
+
 === System Components
 
-[mermaid]
+[source,mermaid]
 ----
 graph TB
     subgraph "Storage Layer"
@@ -78,7 +126,7 @@ graph TB
 
 === Data Flow Sequence
 
-[mermaid]
+[source,mermaid]
 ----
 sequenceDiagram
     participant Storage
@@ -169,7 +217,7 @@ pub enum EventLogEntry {
 
 === Flush Integration
 
-[mermaid]
+[source,mermaid]
 ----
 graph LR
     subgraph "Flush Pipeline"
@@ -237,7 +285,7 @@ impl EventLogProducer {
 
 === AXIS Consumer Architecture
 
-[mermaid]
+[source,mermaid]
 ----
 graph TB
     subgraph "Consumer Group"
@@ -352,6 +400,23 @@ impl AxisEventConsumer {
 
 == Queue-Aware Compaction
 
+=== Configuration
+
+[source,rust]
+----
+pub struct CompactionConfig {
+    /// Enable queue-aware compaction
+    pub queue_aware_compaction: bool,
+    
+    /// Maximum time to wait for queue to drain  
+    pub max_queue_wait: Duration,
+    
+    /// Urgency threshold for forced compaction (0.0-1.0)
+    /// If disk usage exceeds this ratio, compaction proceeds regardless
+    pub urgency_threshold: f64,
+}
+----
+
 === Protection Mechanism
 
 ....
@@ -446,7 +511,7 @@ impl CompactionManager {
 
 === Crash Recovery
 
-[mermaid]
+[source,mermaid]
 ----
 graph TB
     START[Server Start] --> CHECK[Check EventLog]
@@ -558,7 +623,7 @@ Savings: 47.5% reduction in write volume
 
 === Throughput Improvements
 
-[mermaid]
+[source,mermaid]
 ----
 graph LR
     subgraph "Throughput Comparison"
@@ -719,7 +784,7 @@ impl EventLogMetrics {
 
 === Storage Engine Integration
 
-[mermaid]
+[source,mermaid]
 ----
 sequenceDiagram
     participant SST as SST Engine
