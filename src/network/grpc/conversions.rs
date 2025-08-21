@@ -34,6 +34,8 @@ impl From<InternalSearchResult> for SearchVectorRecord {
             similarity: native.similarity,
             version: native.version,
             timestamp: native.timestamp,
+            source: None,  // Not available in InternalSearchResult
+            expanded_context: vec![],  // Not available in InternalSearchResult
         }
     }
 }
@@ -68,6 +70,8 @@ impl From<&InternalSearchResult> for SearchVectorRecord {
             similarity: native.similarity,
             version: native.version,
             timestamp: native.timestamp,
+            source: None,  // Not available in InternalSearchResult
+            expanded_context: vec![],  // Not available in InternalSearchResult
         }
     }
 }

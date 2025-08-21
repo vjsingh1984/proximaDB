@@ -38,7 +38,10 @@ impl SimdEncoding {
     /// Convert to FastLanesScheme for delegation
     fn to_fastlanes_scheme(&self) -> FastLanesScheme {
         match self {
-            SimdEncoding::Raw => FastLanesScheme::Raw,
+            SimdEncoding::Raw => {
+                // Use BitPacked with full width as there's no Raw variant
+                FastLanesScheme::BitPacked { bits: 32 }
+            }
             SimdEncoding::BitPacked { bits_per_value } => {
                 FastLanesScheme::BitPacked { bits: *bits_per_value }
             }
@@ -53,10 +56,8 @@ impl SimdEncoding {
             }
             SimdEncoding::RunLength => FastLanesScheme::RunLength,
             SimdEncoding::Dictionary { dict_size } => {
-                FastLanesScheme::Dictionary {
-                    dict_size: *dict_size as usize,
-                    indices_bits: 16,
-                }
+                // Dictionary variant doesn't have fields in common fastlanes_encoding
+                FastLanesScheme::Dictionary
             }
         }
     }
@@ -72,7 +73,7 @@ impl FastLanesEncoder {
     pub fn new(encoding: SimdEncoding) -> Self {
         let scheme = encoding.to_fastlanes_scheme();
         Self {
-            inner: CommonFastLanesEncoder::new_with_scheme(scheme),
+            inner: CommonFastLanesEncoder::new(scheme),
             encoding,
         }
     }
@@ -126,8 +127,9 @@ pub struct FastLanesDecoder {
 
 impl FastLanesDecoder {
     pub fn new(encoding: SimdEncoding) -> Self {
+        let scheme = encoding.to_fastlanes_scheme();
         Self {
-            inner: CommonFastLanesDecoder::new(),
+            inner: CommonFastLanesDecoder::new(scheme),
             encoding,
         }
     }

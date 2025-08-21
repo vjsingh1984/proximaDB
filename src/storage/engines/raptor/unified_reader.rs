@@ -386,12 +386,10 @@ impl RaptorUnifiedReader {
             }
             
             locality_clusters.push(LocalityClusterInfo {
-                cluster_id: i,
+                cluster_id: i as u32,
                 start_offset: cluster_start,
-                size_bytes: cluster_size,
-                num_vectors,
-                centroid_id: format!("cluster_{}_centroid", i),
-                rowgroup_indices: cluster_rowgroups,
+                size: cluster_size,
+                vector_count: num_vectors,
             });
         }
         
@@ -435,7 +433,6 @@ impl RaptorUnifiedReader {
             footer_size,
             dimension,
             total_vectors,
-            quantization_type: Some("mixed".to_string()),
         })
     }
 
@@ -499,16 +496,15 @@ impl RaptorUnifiedReader {
         &self,
         metadata: &RaptorFileMetadata,
         rowgroups: &[usize],
-    ) -> Vec<usize> {
+    ) -> Vec<u32> {
+        // Simple implementation: return cluster IDs that might contain the rowgroups
+        // Since we don't have rowgroup_indices in LocalityClusterInfo, we estimate
         let mut clusters = Vec::new();
         
         for cluster in &metadata.locality_clusters {
-            for &rg_idx in rowgroups {
-                if cluster.rowgroup_indices.contains(&rg_idx) {
-                    if !clusters.contains(&cluster.cluster_id) {
-                        clusters.push(cluster.cluster_id);
-                    }
-                }
+            // Add cluster if not already present
+            if !clusters.contains(&cluster.cluster_id) {
+                clusters.push(cluster.cluster_id);
             }
         }
         

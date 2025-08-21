@@ -793,7 +793,7 @@ impl ProximaDb for ProximaDbGrpcService {
             
             // Extract search results from response
             let search_results = if let Some(search_result) = search_response.results {
-                search_result.results.into_iter().map(|r| crate::core::search::SearchResult {
+                search_result.results.into_iter().map(|r| crate::core::search::InternalSearchResult {
                     id: r.id.clone(),
                     vector_id: Some(r.id.clone()),
                     score: r.score,
@@ -948,13 +948,23 @@ impl ProximaDb for ProximaDbGrpcService {
                         .await
                         .map_err(|e| Status::internal(format!("Multi-query search {} failed: {}", index, e)))?;
                     
-                    // Now we have proper SearchResults, use the conversion function
-                    let proto_results = convert_search_results(
-                        search_results,
-                        include_vectors,
-                        include_metadata,
-                    );
-                    all_proto_results.extend(proto_results);
+                    // Extract SearchVectorRecords from SearchResults
+                    // search_results is Vec<SearchResult> where each has a 'results' field
+                    for search_result in search_results {
+                        // The results are already SearchVectorRecords, just filter by include flags
+                        let mut proto_records = search_result.results;
+                        if !include_vectors {
+                            for record in &mut proto_records {
+                                record.vector.clear();
+                            }
+                        }
+                        if !include_metadata {
+                            for record in &mut proto_records {
+                                record.metadata.clear();
+                            }
+                        }
+                        all_proto_results.extend(proto_records);
+                    }
                 }
                 
                 let processing_time = start_time.elapsed().as_micros() as i64;
@@ -1062,14 +1072,21 @@ impl ProximaDb for ProximaDbGrpcService {
                     })?;
 
                 // Convert search results to JSON format for compatibility
+                // Note: search_results is Vec<SearchResult> where SearchResult has a 'results' field
+                let all_records: Vec<_> = search_results.iter()
+                    .flat_map(|sr| sr.results.iter())
+                    .collect();
+                    
                 let query_json = serde_json::json!({
-                    "results": search_results.iter().map(|result| {
+                    "results": all_records.iter().map(|result| {
                         serde_json::json!({
                             "id": result.id,
                             "score": result.score,
                             "similarity": result.similarity,
-                            "vector": if include_vectors { result.vector.as_ref() } else { None },
-                            "metadata_info": if include_metadata { Some(&result.metadata) } else { None },
+                            "vector": if include_vectors { Some(&result.vector) } else { None },
+                            "metadata_info": if include_metadata { 
+                                Some(result.metadata.iter().map(|m| (m.key.clone(), m.value.clone())).collect::<std::collections::HashMap<_, _>>())
+                            } else { None },
                             "version": result.version
                         })
                     }).collect::<Vec<_>>()
@@ -1174,6 +1191,8 @@ impl ProximaDb for ProximaDbGrpcService {
                     },
                 version: result.get("version").and_then(|v| v.as_u64()).map(|v| v as u32),
                 timestamp: result.get("timestamp").and_then(|v| v.as_u64()).map(|v| v as u32),
+                source: None,  // Source content not available in JSON
+                expanded_context: vec![],  // Expanded context not available in JSON
             })
                 .collect();
 

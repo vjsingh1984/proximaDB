@@ -134,6 +134,7 @@ impl ArtusBloomManager {
 
         // Create bloom filter with calculated parameters
         let config = BloomFilterConfig {
+            strategy: crate::core::bloom::BloomStrategy::ByteAligned,
             bits_per_key: 10,
             false_positive_rate: Some(self.config.false_positive_rate),
             expected_items: stats.cardinality,
@@ -286,6 +287,7 @@ impl ArtusBloomManager {
         // Create bloom with parameters
         // Note: This is simplified - actual implementation would restore bitmap
         let config = BloomFilterConfig {
+            strategy: crate::core::bloom::BloomStrategy::ByteAligned,
             bits_per_key: (bits / self.column_stats.len() as u64 / 8) as u32,
             false_positive_rate: Some(0.01),
             expected_items: self.column_stats.values().map(|s| s.cardinality).sum(),
@@ -319,6 +321,7 @@ pub struct CompoundBloomFilter {
 impl CompoundBloomFilter {
     pub fn new(columns: Vec<String>, cardinality: usize) -> Self {
         let config = BloomFilterConfig {
+            strategy: crate::core::bloom::BloomStrategy::ByteAligned,
             bits_per_key: 10,
             false_positive_rate: Some(0.01),
             expected_items: cardinality,
