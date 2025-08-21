@@ -95,7 +95,7 @@ pub struct NovaColumnHeader {
 }
 
 /// Complete NOVA metadata structure
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct NovaMetadata {
     /// File footer information
     pub footer: NovaFooterHeader,
@@ -217,7 +217,14 @@ impl EngineMetadata for NovaMetadata {
     }
 
     fn clone_box(&self) -> Box<dyn EngineMetadata> {
-        Box::new(self.clone())
+        Box::new(NovaMetadata {
+            footer: self.footer.clone(),
+            column_groups: self.column_groups.clone(),
+            columns: self.columns.clone(),
+            variable_data: self.variable_data.clone(),
+            schema: parking_lot::RwLock::new(self.schema.read().clone()),
+            column_stats: parking_lot::RwLock::new(self.column_stats.read().clone()),
+        })
     }
 }
 
@@ -520,7 +527,7 @@ impl MetadataSerializer for NovaMetadataSerializer {
 
     fn deserialize_metadata(&self, data: &[u8]) -> Result<Box<dyn EngineMetadata>, ProximaDBError> {
         if data.len() < std::mem::size_of::<NovaFooterHeader>() + 4 {
-            return Err(ProximaDBError::InvalidArgument(
+            return Err(ProximaDBError::InvalidInput(
                 "NOVA metadata too small".into()
             ));
         }
@@ -544,7 +551,7 @@ impl MetadataSerializer for NovaMetadataSerializer {
         
         for _ in 0..num_groups {
             if offset + group_size > data.len() {
-                return Err(ProximaDBError::InvalidArgument(
+                return Err(ProximaDBError::InvalidInput(
                     "Insufficient data for NOVA column group headers".into()
                 ));
             }
@@ -560,7 +567,7 @@ impl MetadataSerializer for NovaMetadataSerializer {
         
         for _ in 0..num_groups {
             if offset + 4 > data.len() {
-                return Err(ProximaDBError::InvalidArgument(
+                return Err(ProximaDBError::InvalidInput(
                     "Insufficient data for NOVA column count".into()
                 ));
             }
@@ -573,7 +580,7 @@ impl MetadataSerializer for NovaMetadataSerializer {
             let mut group_columns = Vec::with_capacity(num_columns as usize);
             for _ in 0..num_columns {
                 if offset + column_size > data.len() {
-                    return Err(ProximaDBError::InvalidArgument(
+                    return Err(ProximaDBError::InvalidInput(
                         "Insufficient data for NOVA column headers".into()
                     ));
                 }
@@ -587,7 +594,7 @@ impl MetadataSerializer for NovaMetadataSerializer {
 
         // 5. Read variable data
         if offset + 4 > data.len() {
-            return Err(ProximaDBError::InvalidArgument(
+            return Err(ProximaDBError::InvalidInput(
                 "Insufficient data for NOVA variable data size".into()
             ));
         }
@@ -598,7 +605,7 @@ impl MetadataSerializer for NovaMetadataSerializer {
         offset += 4;
 
         if offset + variable_data_size > data.len() {
-            return Err(ProximaDBError::InvalidArgument(
+            return Err(ProximaDBError::InvalidInput(
                 "Insufficient data for NOVA variable data".into()
             ));
         }

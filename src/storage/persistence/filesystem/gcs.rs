@@ -384,7 +384,7 @@ impl GcsClient {
         } else {
             request = request.header(
                 "x-goog-storage-class",
-                self.config.default_storage_class.as_str(),
+                self.config.default_storage_class.as_deref(),
             );
         }
 
@@ -576,13 +576,13 @@ impl FileSystem for GcsFileSystem {
                 .map_err(|e| FilesystemError::Network(e.to_string()))?;
 
             let size = metadata_json["size"]
-                .as_str()
+                .as_deref()
                 .and_then(|s| s.parse::<u64>().ok())
                 ;
 
-            let etag = metadata_json["etag"].as_str().map(|s| s.to_string());
+            let etag = metadata_json["etag"].as_deref().map(|s| s.to_string());
             let storage_class = metadata_json["storageClass"]
-                .as_str()
+                .as_deref()
                 .map(|s| s.to_string());
 
             tracing::debug!("✅ GCS metadata retrieved: {} bytes", size);

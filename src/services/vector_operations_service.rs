@@ -36,10 +36,11 @@ use tracing::{debug, info, warn};
 use crate::storage::traits::CollectionMetadataProvider;
 
 use crate::core::VectorRecord;
+use crate::core::search::FilterExpression; 
 use crate::proto::proximadb::Collection;
 use crate::query::unified_query_optimizer::{
     UnifiedQueryOptimizer, UnifiedQueryContext, UnifiedExecutionPlan,
-    ExecutionStep, OptimizationGoal, UnifiedMetadataFilter,
+    ExecutionStep, OptimizationGoal,
 };
 use crate::storage::engines::sst::SstStorage;
 
@@ -47,6 +48,9 @@ use crate::storage::engines::sst::SstStorage;
 pub struct VectorOperationsService {
     /// Storage engine - using concrete type for now due to trait object safety
     storage_engine: Arc<SstStorage>,
+    
+    /// WAL/Memtable for unflushed vectors (required for two-stage search)
+    wal_manager: Arc<crate::storage::persistence::write_ahead_log::WriteAheadLogManager>,
     
     /// SINGLE unified query optimizer (replaced two separate optimizers)
     query_optimizer: Arc<UnifiedQueryOptimizer>,
@@ -56,17 +60,22 @@ pub struct VectorOperationsService {
 }
 
 impl VectorOperationsService {
-    /// Create new service with consolidated optimizer
-    pub fn new(storage_engine: Arc<SstStorage>) -> Self {
-        info!("🚀 Initializing VectorOperationsService with CONSOLIDATED optimizer");
+    /// Create new service with consolidated optimizer and WAL manager for two-stage search
+    pub fn new(
+        storage_engine: Arc<SstStorage>,
+        wal_manager: Arc<crate::storage::persistence::write_ahead_log::WriteAheadLogManager>,
+    ) -> Self {
+        info!("🚀 Initializing VectorOperationsService with CONSOLIDATED optimizer and two-stage search");
         info!("   ✅ Eliminated ~650 lines of duplicate optimization code");
         info!("   ✅ Single optimizer handles both search and filtering");
         info!("   ✅ Progressive quantization-aware search enabled");
+        info!("   ✅ Two-stage search: WAL/memtable → Storage engine");
         
         let optimizer_config = crate::query::unified_query_optimizer::UnifiedOptimizerConfig::default();
         
         Self {
             storage_engine,
+            wal_manager,
             query_optimizer: Arc::new(UnifiedQueryOptimizer::new(optimizer_config)),
             collection_cache: Arc::new(dashmap::DashMap::new()),
         }
@@ -81,7 +90,7 @@ impl VectorOperationsService {
         k: usize,
         scenario: Option<&str>,
         custom_recalls: Option<crate::core::search::ProgressiveRecalls>,
-    ) -> Result<Vec<VectorRecord>> {
+    ) -> Result<Vec<crate::core::search::SearchResult>> {
         use crate::core::search::progressive_quantization::{
             ProgressiveSearchConfig, SearchScenario, ObservedRecalls
         };
@@ -131,9 +140,11 @@ impl VectorOperationsService {
         // Create search parameters with progressive search enabled
         let search_params = crate::core::search::SearchParams {
             query_vectors: Some(vec![query_vector]),
+            vector: None, // query_vectors is used for the actual vector
             top_k: Some(k),
             distance_metric: None,
             filter_expression: None,
+            filters: None, // Legacy field - we use filter_expression instead
             accuracy_threshold: None,
             include_expired: Some(false),
             timeout_ms: Some(30000), // 30s timeout
@@ -156,9 +167,15 @@ impl VectorOperationsService {
         };
         
         // Execute with unified optimizer configured for progressive search
+        let query_vector = search_params.query_vectors
+            .as_ref()
+            .and_then(|vecs| vecs.first())
+            .cloned()
+            .unwrap_or_else(|| vec![0.0; 128]); // Default vector if none provided
+        
         self.search_vectors_with_filters(
             collection_id,
-            search_params.query_vectors.unwrap()[0].clone(),
+            query_vector,
             k,
             None,
             OptimizationGoal::BalancedSpeedRecall,
@@ -171,9 +188,9 @@ impl VectorOperationsService {
         collection_id: &str,
         query_vector: Vec<f32>,
         top_k: usize,
-        filter: Option<UnifiedMetadataFilter>,
+        filter: Option<FilterExpression>,
         optimization_goal: OptimizationGoal,
-    ) -> Result<Vec<VectorRecord>> {
+    ) -> Result<Vec<crate::core::search::SearchResult>> {
         debug!("🔍 Executing unified search+filter query for collection {}", collection_id);
         
         // Get collection
@@ -181,10 +198,12 @@ impl VectorOperationsService {
         
         // Create unified context (combines what used to be two separate contexts)
         let search_params = crate::core::search::SearchParams {
-            query_vectors: Some(vec![query_vector]),
+            query_vectors: Some(vec![query_vector.clone()]),
+            vector: None, // query_vectors is used for the actual vector
             top_k: Some(top_k),
             distance_metric: None, // TODO: Add distance_metric parameter if needed
-            filter_expression: None,
+            filter_expression: filter.clone(),
+            filters: None, // Legacy field - using filter_expression instead
             accuracy_threshold: None,
             include_expired: Some(false),
             timeout_ms: None,
@@ -203,15 +222,17 @@ impl VectorOperationsService {
             optimization_hint: Some(optimization_goal.to_string()),
         };
         
+        let query_vector_clone = query_vector.clone();
+        let query_vectors = vec![query_vector_clone];
         let context = UnifiedQueryContext {
             collection: collection.clone(),
             search_params: Some(&search_params),
-            filter_params: filter.as_ref(),
+            filter_params: None, // No longer using UnifiedMetadataFilter
             optimization_goal,
             available_files: self.get_available_files(collection_id).await?,
             total_vectors: self.get_vector_count(collection_id).await?,
             total_columns: self.get_column_count(collection_id).await?,
-            query_vectors: Some(&[query_vector]),
+            query_vectors: Some(&query_vectors),
         };
         
         // SINGLE optimization call (replaced two separate optimization calls)
@@ -219,8 +240,8 @@ impl VectorOperationsService {
         
         debug!("📋 Unified execution plan created with {} steps", execution_plan.execution_steps.len());
         
-        // Execute the unified plan
-        self.execute_unified_plan(collection_id, execution_plan).await
+        // Execute the unified plan with search parameters
+        self.execute_unified_plan(collection_id, execution_plan, query_vector, top_k, filter).await
     }
     
     /// Execute unified plan - NEW capability for combined operations
@@ -228,9 +249,12 @@ impl VectorOperationsService {
         &self,
         collection_id: &str,
         plan: UnifiedExecutionPlan,
-    ) -> Result<Vec<VectorRecord>> {
-        let mut results = Vec::new();
-        let mut intermediate_results: Option<Vec<VectorRecord>> = None;
+        query_vector: Vec<f32>,
+        top_k: usize,
+        filter: Option<FilterExpression>,
+    ) -> Result<Vec<crate::core::search::SearchResult>> {
+        let mut results: Vec<crate::core::search::SearchResult> = Vec::new();
+        let mut intermediate_results: Option<Vec<crate::core::search::SearchResult>> = None;
         
         for step in plan.execution_steps {
             match step {
@@ -253,6 +277,9 @@ impl VectorOperationsService {
                         search_method,
                         early_termination,
                         intermediate_results.as_ref(),
+                        query_vector.clone(),
+                        top_k,
+                        filter.clone(),
                     ).await?;
                 }
                 
@@ -382,34 +409,112 @@ impl VectorOperationsService {
         Ok(())
     }
     
-    /// Execute combined filtered search - NEW capability!
+    /// Execute combined filtered search with TWO-STAGE search architecture
     async fn execute_filtered_search(
         &self,
         collection_id: &str,
         search_method: crate::query::unified_query_optimizer::SearchExecutionMethod,
-        early_termination: crate::query::unified_query_optimizer::EarlyTerminationConfig,
-        input_vectors: Option<&Vec<VectorRecord>>,
-    ) -> Result<Vec<VectorRecord>> {
-        info!("🎯 Executing OPTIMIZED combined filter+search");
-        info!("   This operation is 15-25% faster than separate execution!");
+        early_termination: crate::storage::engines::columnar::common::EarlyTerminationConfig,
+        input_vectors: Option<&Vec<crate::core::search::SearchResult>>,
+        query_vector: Vec<f32>,
+        top_k: usize,
+        filter: Option<FilterExpression>,
+    ) -> Result<Vec<crate::core::search::SearchResult>> {
+        info!("🎯 Executing TWO-STAGE optimized filter+search for collection {}", collection_id);
+        info!("   Stage 1: WAL/memtable search for recent unflushed vectors");
+        info!("   Stage 2: Storage engine search for flushed/compacted vectors");
         
-        // Implementation would call storage engine with combined operation
-        // This is a NEW capability enabled by consolidation
+        // Get collection for distance metric
+        let collection = self.get_or_load_collection(collection_id).await?;
+        let distance_metric = match collection.config.as_ref() {
+            Some(cfg) => crate::proto::proximadb::DistanceMetric::try_from(cfg.distance_metric)
+                .unwrap_or(crate::proto::proximadb::DistanceMetric::Cosine),
+            None => crate::proto::proximadb::DistanceMetric::Cosine,
+        };
         
-        // Placeholder for actual implementation
-        Ok(vec![])
+        // Stage 1: Search WAL/memtable for unflushed vectors
+        debug!("🔍 Stage 1: Searching WAL/memtable for collection {} with {} filter conditions", 
+               collection_id, 
+               if filter.is_some() { "WITH" } else { "NO" });
+        let wal_results = self.wal_manager.search_unflushed_vectors(
+            collection_id,
+            &query_vector,
+            top_k * 2, // Get more candidates from WAL to merge later
+            distance_metric,
+            filter.as_ref(), // Pass the FilterExpression directly
+            true, // include_vectors
+            true, // include_metadata
+        ).await?;
+        info!("✅ Stage 1 complete: Found {} unflushed vectors from WAL", wal_results.len());
+        
+        // Stage 2: Search storage engine for flushed vectors
+        debug!("🔍 Stage 2: Searching storage engine for collection {}", collection_id);
+        
+        // Create search context for storage engine with same filter expression
+        let search_params = crate::core::search::SearchParams {
+            query_vectors: Some(vec![query_vector.clone()]),
+            vector: None, // query_vectors is used for the actual vector
+            top_k: Some(top_k),
+            distance_metric: Some(distance_metric),
+            filter_expression: filter.clone(), // Pass the same FilterExpression to storage engine
+            filters: None, // Legacy field - using filter_expression instead
+            accuracy_threshold: None,
+            include_expired: Some(false),
+            timeout_ms: None,
+            enable_two_stage: Some(false), // Already doing two-stage at this level
+            custom_hints: None,
+            enable_clustering_hint: None,
+            enable_metadata_filtering_hint: None,
+            quantization_hint: None,
+            runtime_hints: None,
+            requires_ordering: Some(true),
+            enable_progressive_search: Some(true),
+            progressive_scenario: None,
+            progressive_recalls: None,
+            optimization_hint: None,
+        };
+        
+        // Get the collection from cache for SearchContext
+        let collection = self.get_or_load_collection(collection_id).await?;
+        
+        let search_context = crate::storage::traits::SearchContext::new(
+            Arc::new(search_params),
+            collection.clone(),
+        );
+        
+        // Call the trait method through the Arc
+        use crate::storage::traits::UnifiedStorageEngine;
+        let storage_results = self.storage_engine.search_vectors_unified(&search_context).await?;
+        info!("✅ Stage 2 complete: Found {} vectors from storage", storage_results.len());
+        
+        // Merge and rank results from both stages
+        let mut all_results = Vec::with_capacity(wal_results.len() + storage_results.len());
+        all_results.extend(wal_results);
+        all_results.extend(storage_results);
+        
+        // Sort by score (ascending for distance, descending for similarity)
+        all_results.sort_by(|a, b| {
+            a.score.partial_cmp(&b.score).unwrap_or(std::cmp::Ordering::Equal)
+        });
+        
+        // Take top-k
+        all_results.truncate(top_k);
+        
+        info!("✅ TWO-STAGE search complete: Returning {} results", all_results.len());
+        Ok(all_results)
     }
     
     // Helper methods (simplified for demonstration)
     
     async fn get_or_load_collection(&self, collection_id: &str) -> Result<Arc<Collection>> {
-        if let Some(cached) = self.collection_cache.get(&collection_id) {
+        let collection_id_string = collection_id.to_string();
+        if let Some(cached) = self.collection_cache.get(&collection_id_string) {
             Ok(cached.clone())
         } else {
             // Load from storage
             let collection = self.storage_engine.get_collection(collection_id).await?;
             let arc_collection = Arc::new(collection);
-            self.collection_cache.insert(collection_id.to_string(), arc_collection.clone());
+            self.collection_cache.insert(collection_id_string, arc_collection.clone());
             Ok(arc_collection)
         }
     }
@@ -419,20 +524,20 @@ impl VectorOperationsService {
     }
     
     async fn get_vector_count(&self, collection_id: &str) -> Result<usize> {
-        let stats = self.storage_engine.get_collection_stats(collection_id).await?;
+        let stats = self.storage_engine.get_collection_stats(collection_id)?;
         // Stats is a serde_json::Value, extract the vector count
         let count = stats.get("vector_count")
             .and_then(|v| v.as_u64())
-             as usize;
+            .unwrap_or(0) as usize;
         Ok(count)
     }
     
     async fn get_column_count(&self, collection_id: &str) -> Result<usize> {
-        let meta = self.storage_engine.get_collection_metadata(collection_id).await?;
+        let meta = self.storage_engine.get_collection_metadata(collection_id)?;
         // Meta is a serde_json::Value, extract the column count
-        let count = meta.get("collection_id")
+        let count = meta.get("column_count")
             .and_then(|v| v.as_u64())
-             as usize; // Default to 10 columns
+            .unwrap_or(10) as usize; // Default to 10 columns
         Ok(count)
     }
     
@@ -442,8 +547,8 @@ impl VectorOperationsService {
         collection_id: &str,
         conditions: Vec<crate::query::unified_query_optimizer::FilterCondition>,
         method: crate::query::unified_query_optimizer::FilterExecutionMethod,
-        input: Option<&Vec<VectorRecord>>,
-    ) -> Result<Vec<VectorRecord>> {
+        input: Option<&Vec<crate::core::search::SearchResult>>,
+    ) -> Result<Vec<crate::core::search::SearchResult>> {
         // Implementation
         Ok(vec![])
     }
@@ -454,8 +559,8 @@ impl VectorOperationsService {
         method: crate::query::unified_query_optimizer::SearchExecutionMethod,
         quantization: Option<crate::query::unified_query_optimizer::QuantizationStrategy>,
         candidates: usize,
-        input: Option<&Vec<VectorRecord>>,
-    ) -> Result<Vec<VectorRecord>> {
+        input: Option<&Vec<crate::core::search::SearchResult>>,
+    ) -> Result<Vec<crate::core::search::SearchResult>> {
         // Implementation
         Ok(vec![])
     }
@@ -465,7 +570,7 @@ impl VectorOperationsService {
         collection_id: &str,
         index_type: crate::query::unified_query_optimizer::IndexType,
         params: crate::query::unified_query_optimizer::IndexLookupParams,
-    ) -> Result<Vec<VectorRecord>> {
+    ) -> Result<Vec<crate::core::search::SearchResult>> {
         // Implementation
         Ok(vec![])
     }
@@ -474,8 +579,8 @@ impl VectorOperationsService {
         &self,
         collection_id: &str,
         filter_type: crate::query::unified_query_optimizer::BloomFilterType,
-        input: Option<&Vec<VectorRecord>>,
-    ) -> Result<Vec<VectorRecord>> {
+        input: Option<&Vec<crate::core::search::SearchResult>>,
+    ) -> Result<Vec<crate::core::search::SearchResult>> {
         // Implementation
         Ok(vec![])
     }
@@ -521,12 +626,18 @@ impl VectorOperationsService {
     
     pub async fn search_vectors(
         &self,
-        _collection_id: &str,
-        _query_vector: Vec<f32>,
-        _top_k: usize,
-    ) -> Result<Vec<VectorRecord>> {
-        // TODO: Implement vector search
-        Ok(vec![])
+        collection_id: &str,
+        query_vector: Vec<f32>,
+        top_k: usize,
+    ) -> Result<Vec<crate::core::search::SearchResult>> {
+        // Use the search_vectors_with_filters without any filters
+        self.search_vectors_with_filters(
+            collection_id,
+            query_vector,
+            top_k,
+            None,
+            OptimizationGoal::Balanced,
+        ).await
     }
     
     pub async fn force_flush_all(&self) -> Result<()> {

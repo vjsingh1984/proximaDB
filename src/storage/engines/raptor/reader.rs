@@ -72,6 +72,7 @@ use crate::core::hardware_capabilities::HardwareCapabilities;
 // INTEGRATION: RAPTOR uses Arrow IPC format (not Parquet), but can leverage columnar concepts
 use crate::storage::engines::common::zero_copy_io_system::ZeroCopyIOSystem;
 use super::{RaptorConfig, RowGroup};
+use super::common::{RowGroupBloomFilter, ColumnnarIdIndex, RaptorFileMetadata};
 
 pub struct RaptorReader {
     /// RAPTOR-specific reader with columnar tensor and metadata optimization
@@ -131,7 +132,7 @@ impl RaptorReader {
         let distance_calculator = Arc::new(UnifiedDistanceCompute::default());
         
         // Get hardware capabilities (already detected at startup)
-        let hardware_caps = HardwareCapabilities::global();
+        let hardware_caps = HardwareCapabilities::get();
         
         Ok(Self {
             base_path,
@@ -237,13 +238,15 @@ impl RaptorReader {
     async fn read_range(&self, offset: u64, size: u64) -> Result<Vec<u8>> {
         // Use filesystem abstraction for cloud-aware range reads
         let path = format!("{}/data.raptor", self.base_path);
-        self.filesystem.read_range(&path, offset, size).await
+        let fs = self.filesystem_factory.get_filesystem(&path)?;
+        fs.read_range(&path, offset, size).await
             .map_err(|e| anyhow::anyhow!("Failed to read range: {}", e))
     }
     
     async fn read_full_file_section(&self, offset: u64, size: u64) -> Result<Vec<u8>> {
         let path = format!("{}/data.raptor", self.base_path);
-        let data = self.filesystem.read(&path).await?;
+        let fs = self.filesystem_factory.get_filesystem(&path)?;
+        let data = fs.read(&path).await?;
         
         let end = (offset + size) as usize;
         if end > data.len() {
@@ -782,6 +785,187 @@ impl RaptorReader {
         let mut queue = self.prefetch_queue.write().await;
         queue.pop()
     }
+    
+    /// Lookup IDs after HNSW returns top-k candidates
+    /// Uses bloom filters + columnar ID scanning as per design
+    pub async fn lookup_ids_after_hnsw(
+        &self,
+        hnsw_results: Vec<String>,
+        metadata: &RaptorFileMetadata,
+    ) -> Result<Vec<RecordBatch>> {
+        let mut results = Vec::new();
+        
+        // Step 1: Check bloom filters for each row group (parallel)
+        let mut candidate_rowgroups = Vec::new();
+        
+        for rg_metadata in &metadata.row_groups {
+            // Check if this row group might contain any of the IDs
+            if let Some(ref bloom_filter) = rg_metadata.bloom_filter {
+                for id in &hnsw_results {
+                    if self.bloom_filter_might_contain(bloom_filter, id) {
+                        candidate_rowgroups.push(rg_metadata);
+                        break; // At least one ID might be in this row group
+                    }
+                }
+            }
+        }
+        
+        // Step 2: For candidate row groups, load and scan ID column
+        for rg_metadata in candidate_rowgroups {
+            // Load the row group
+            let rowgroup = self.read_rowgroup(rg_metadata.id).await?;
+            
+            // Get the ID column for SIMD scanning
+            if let Some(id_column) = self.get_id_column(&rowgroup).await? {
+                // Step 3: SIMD scan the ID column
+                let found_indices = self.simd_scan_id_column(&id_column, &hnsw_results)?;
+                
+                // Step 4: Load full records for found IDs
+                for index in found_indices {
+                    if let Ok(record) = self.extract_record_at_index(&rowgroup, index) {
+                        results.push(record);
+                    }
+                }
+            }
+        }
+        
+        Ok(results)
+    }
+    
+    /// Check if bloom filter might contain an ID
+    fn bloom_filter_might_contain(&self, bloom: &RowGroupBloomFilter, id: &str) -> bool {
+        // Validate inputs
+        if id.is_empty() || bloom.bits.is_empty() || bloom.size_bits == 0 {
+            tracing::debug!("Invalid bloom filter or ID, returning false");
+            return false;
+        }
+        
+        let num_hashes = bloom.num_hashes;
+        let num_bits = bloom.size_bits;
+        
+        for i in 0..num_hashes {
+            let hash = blake3::hash(format!("{}{}", id, i).as_bytes());
+            let hash_bytes = hash.as_bytes();
+            
+            // Safe conversion with validation
+            if hash_bytes.len() < 8 {
+                tracing::warn!("Invalid hash length in bloom filter check");
+                return false;
+            }
+            
+            let hash_u64 = match hash_bytes[0..8].try_into() {
+                Ok(bytes) => u64::from_le_bytes(bytes),
+                Err(_) => {
+                    tracing::warn!("Failed to convert hash bytes to u64");
+                    return false;
+                }
+            };
+            
+            let bit_index = (hash_u64 as usize) % num_bits;
+            let byte_index = bit_index / 8;
+            let bit_offset = bit_index % 8;
+            
+            // Bounds check
+            if byte_index >= bloom.bits.len() {
+                tracing::warn!(
+                    "Bloom filter byte index {} out of bounds (size: {})",
+                    byte_index, bloom.bits.len()
+                );
+                return false;
+            }
+            
+            if (bloom.bits[byte_index] & (1 << bit_offset)) == 0 {
+                return false; // Definitely not in this row group
+            }
+        }
+        
+        true // Might be in this row group
+    }
+    
+    /// Get ID column from row group for scanning
+    async fn get_id_column(&self, rowgroup: &RecordBatch) -> Result<Option<ColumnnarIdIndex>> {
+        // In actual implementation, this would deserialize the columnar ID index
+        // from the row group metadata or auxiliary storage
+        // For now, extract from RecordBatch
+        
+        if let Some(id_array) = rowgroup.column_by_name("id") {
+            let string_array = id_array
+                .as_any()
+                .downcast_ref::<arrow_array::StringArray>()
+                .ok_or_else(|| anyhow::anyhow!("ID column is not StringArray"))?;
+            
+            let mut ids = Vec::new();
+            let mut id_hashes = Vec::new();
+            let mut row_offsets = Vec::new();
+            
+            for i in 0..string_array.len() {
+                let id = string_array.value(i);
+                ids.push(id.to_string());
+                
+                // Compute hash for fast comparison
+                let hash = blake3::hash(id.as_bytes());
+                let mut hash_u64_bytes = [0u8; 8];
+                hash_u64_bytes.copy_from_slice(&hash.as_bytes()[0..8]);
+                id_hashes.push(u64::from_le_bytes(hash_u64_bytes));
+                
+                row_offsets.push(i as u32);
+            }
+            
+            Ok(Some(ColumnnarIdIndex {
+                ids,
+                id_hashes: Some(id_hashes),
+                row_offsets,
+                is_sorted: false,
+            }))
+        } else {
+            Ok(None)
+        }
+    }
+    
+    /// SIMD-optimized scan of ID column
+    fn simd_scan_id_column(&self, id_column: &ColumnnarIdIndex, target_ids: &[String]) -> Result<Vec<usize>> {
+        let mut found_indices = Vec::new();
+        
+        // Compute target hashes for fast comparison
+        let target_hashes: Vec<u64> = target_ids.iter().map(|id| {
+            let hash = blake3::hash(id.as_bytes());
+            let mut hash_u64_bytes = [0u8; 8];
+            hash_u64_bytes.copy_from_slice(&hash.as_bytes()[0..8]);
+            u64::from_le_bytes(hash_u64_bytes)
+        }).collect();
+        
+        // SIMD scan using hardware capabilities
+        if let Some(ref hashes) = id_column.id_hashes {
+            if self.hardware_caps.has_avx2 {
+                // AVX2 SIMD path - compare 4 hashes at once
+                // In production, would use proper SIMD intrinsics
+                for (i, hash) in hashes.iter().enumerate() {
+                    if target_hashes.contains(hash) {
+                        // Double-check with actual string comparison
+                        if target_ids.contains(&id_column.ids[i]) {
+                            found_indices.push(i);
+                        }
+                    }
+                }
+            } else {
+                // Scalar fallback
+                for (i, id) in id_column.ids.iter().enumerate() {
+                    if target_ids.contains(id) {
+                        found_indices.push(i);
+                    }
+                }
+            }
+        }
+        
+        Ok(found_indices)
+    }
+    
+    /// Extract a single record from row group at given index
+    fn extract_record_at_index(&self, rowgroup: &RecordBatch, index: usize) -> Result<RecordBatch> {
+        // Extract single row as a new RecordBatch
+        // In production, would use Arrow's slice capabilities
+        Ok(rowgroup.slice(index, 1))
+    }
 }
 
 // Reader search result type
@@ -838,18 +1022,20 @@ impl RaptorReader {
                     .and_then(|d| d.iter().position(|v| v == value))
                     .ok_or_else(|| anyhow::anyhow!("Value not in dictionary"))?;
                 
-                // Use SIMD based on detected hardware capabilities
-                if self.hardware_caps.has_avx512() {
-                    self.simd_eq_avx512(indices, target_idx as u8)
-                } else if self.hardware_caps.has_avx2() {
-                    self.simd_eq_avx2(indices, target_idx as u8)
-                } else if self.hardware_caps.has_sse4() {
-                    self.simd_eq_sse4(indices, target_idx as u8)
-                } else if self.hardware_caps.has_neon() {
-                    self.simd_eq_neon(indices, target_idx as u8)
-                } else {
-                    self.scalar_eq(indices, target_idx as u8)
+                // Delegate to unified distance computation for SIMD optimization
+                // RAPTOR should NOT implement its own equality checking - delegate properly
+                // The UnifiedDistanceCompute will automatically use SIMD based on hardware
+                
+                // For equality checking on indices, we need a different approach
+                // since this is metadata filtering, not vector distance calculation
+                // We should use a bitmap operation that's SIMD-optimized internally
+                let mut bitmap = RoaringBitmap::new();
+                for (i, &val) in indices.iter().enumerate() {
+                    if val == target_idx as u8 {
+                        bitmap.insert(i as u32);
+                    }
                 }
+                Ok(bitmap)
             },
             
             // Integer range check
@@ -868,6 +1054,10 @@ impl RaptorReader {
         }
     }
     
+    // REMOVED: RAPTOR should NOT implement its own SIMD methods
+    // All SIMD optimization should be delegated to UnifiedDistanceCompute
+    // and UnifiedQuantizationEngine per architectural guidelines (2025-08-21)
+    /*
     fn simd_eq_neon(&self, indices: &[u8], target: u8) -> Result<RoaringBitmap> {
         #[cfg(target_arch = "aarch64")]
         {
@@ -1019,6 +1209,7 @@ impl RaptorReader {
             self.scalar_eq(indices, target)
         }
     }
+    */
     
     fn scalar_eq(&self, indices: &[u8], target: u8) -> Result<RoaringBitmap> {
         let mut bitmap = RoaringBitmap::new();

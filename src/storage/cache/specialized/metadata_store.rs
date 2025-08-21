@@ -13,7 +13,7 @@ use std::collections::HashMap;
 impl CacheValue for Value {
     fn size_bytes(&self) -> usize {
         // Estimate JSON size - rough approximation
-        serde_json::to_string(self).map(|s| s.len())
+        serde_json::to_string(self).map(|s| s.len()).unwrap_or(256)
     }
 }
 

@@ -143,7 +143,7 @@ async fn test_get_before_delete_update_consistency() {
 
     // Update: Construct new version with same ID but new vector
     let updated_vector = create_vector_record(
-        current_vector.id.as_str(), // Use same ID
+        current_vector.id.as_deref(), // Use same ID
         vec![4.0, 5.0, 6.0], // New vector
         Some(current_vector.version + 1), // Increment version
         None,
@@ -162,7 +162,7 @@ async fn test_get_before_delete_update_consistency() {
     // Delete: Construct tombstone with same ID
     let current_time = chrono::Utc::now().timestamp() as u32; // Current time in seconds
     let delete_vector = create_vector_record(
-        current_vector.id.as_str(), // Use same ID
+        current_vector.id.as_deref(), // Use same ID
         vec![0.0, 0.0, 0.0], // Vector content irrelevant for delete
         Some(found_vector.version + 1), // Increment version
         Some(current_time - 1), // Mark as expired 1 second ago

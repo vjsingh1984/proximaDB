@@ -262,7 +262,7 @@ impl HnswGraphBuilder {
             builder.nodes.insert(id.clone(), GraphNode {
                 id,
                 encoded_vector,
-                decoded_vector: vec![], // Will be decoded on demand
+                // decoded_vector removed - fetch from rowgroup when needed // Will be decoded on demand
                 neighbors: vec![],
                 level: 0,
             });
@@ -803,7 +803,7 @@ impl HnswAwareCompactionManager {
         &self,
         file_path: &str,
         graph_data: &[u8],
-    ) -> Result<super::unified_reader::RaptorFileMetadata> {
+    ) -> Result<super::common::RaptorFileMetadata> {
         use tokio::fs;
         
         let file_metadata = fs::metadata(file_path).await?;
@@ -812,20 +812,63 @@ impl HnswAwareCompactionManager {
         // Parse the graph data to get statistics
         let graph_builder = HnswGraphBuilder::deserialize_from_disk(graph_data)?;
         
-        Ok(super::unified_reader::RaptorFileMetadata {
+        Ok(super::common::RaptorFileMetadata {
+            // Core file metadata
+            version: 1,
+            created_at: chrono::Utc::now().timestamp(),
+            created_by: "ProximaDB RAPTOR Compactor".to_string(),
+            file_path: file_path.to_string(),
             file_size,
-            num_rowgroups: 1, // After compaction, single monolithic file
+            
+            // Row and vector counts
+            total_rows: graph_builder.metadata.num_nodes,
+            total_vectors: graph_builder.metadata.num_nodes,
+            dimension: 768, // Would get from config
+            
+            // Collection info
+            collection_id: self.collection_id.clone(),
+            
+            // Row groups (single after compaction)
+            row_groups: vec![],  // Would need proper RowGroupMetadata
+            num_rowgroups: 1,
             rowgroup_offsets: vec![0],
             rowgroup_sizes: vec![file_size],
-            global_hnsw_offset: 8, // After header
+            rowgroup_vector_counts: vec![graph_builder.metadata.num_nodes],
+            
+            // Schema
+            schema: super::common::SchemaDescriptor {
+                vector_dimension: 768,  // Would get from config
+                metadata_fields: vec![],
+                version: 1,
+            },
+            
+            // HNSW metadata
+            hnsw_metadata: None,  // Would populate from graph_builder
+            global_hnsw_offset: 8,  // After header
             global_hnsw_size: graph_data.len() as u64,
-            footer_offset: file_size - 1024, // Typical footer size
-            footer_size: 1024,
-            dimension: 768, // Would get from config
-            total_vectors: graph_builder.metadata.num_nodes,
+            hnsw_entry_points: vec![],
+            hnsw_num_layers: 0,
+            global_hnsw_entry: None,
+            
+            // Bloom filter
+            bloom_filter_metadata: None,
+            
+            // Compression
             compression_codec: "zstd".to_string(),
-            created_at: chrono::Utc::now().timestamp(),
+            
+            // Metadata storage
+            custom_metadata: std::collections::HashMap::new(),
+            key_value_metadata: vec![],
+            
+            // Footer info
+            footer_offset: file_size - 1024,  // Typical footer size
+            footer_size: 1024,
+            
+            // Access tracking
             last_accessed: chrono::Utc::now().timestamp(),
+            
+            // Locality clusters
+            locality_clusters: vec![],
         })
     }
 }
@@ -854,10 +897,14 @@ impl HnswAwareFlushManager {
         // Process vectors and build graph incrementally
         for (id, vector, metadata) in vectors {
             // Create graph node
+            // Encode vector as bytes (4 bytes per f32)
+            let encoded_vector: Vec<u8> = vector.iter()
+                .flat_map(|f| f.to_le_bytes())
+                .collect();
             let node = GraphNode {
                 id: id.clone(),
-                encoded_vector: vector.clone(),
-                decoded_vector: vec![],
+                encoded_vector,
+                // decoded_vector removed - fetch from rowgroup when needed
                 neighbors: vec![],
                 level: 0,
             };

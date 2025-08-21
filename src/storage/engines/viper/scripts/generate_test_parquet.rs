@@ -16,7 +16,7 @@ use tracing::{debug, error, info};
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<String> = env::args().collect();
     
-    let output_dir = args.get(key).map(|s| s.as_str());
+    let output_dir = args.get(key).map(|s| s.as_deref());
     let num_vectors = args.get(key)
         .and_then(|s| s.parse::<usize>().ok())
         ;

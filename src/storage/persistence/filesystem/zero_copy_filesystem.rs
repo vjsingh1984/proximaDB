@@ -555,7 +555,7 @@ impl ZeroCopyFilesystemBuilder {
     /// Build the zero-copy filesystem wrapper
     pub fn build(self, underlying_fs: Arc<dyn FileSystem>) -> Result<ZeroCopyFilesystem, ProximaDBError> {
         let io_system = self.io_system.ok_or_else(|| {
-            ProximaDBError::InvalidArgument("ZeroCopyIOSystem is required".into())
+            ProximaDBError::InvalidInput("ZeroCopyIOSystem is required".into())
         })?;
 
         Ok(ZeroCopyFilesystem::new(

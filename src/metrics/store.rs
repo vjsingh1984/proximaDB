@@ -446,13 +446,13 @@ impl MetricsPersistenceLayer {
                 let entries = self.filesystem_factory.list(&partition_path).await?;
                 for entry in entries {
                     if entry.name.starts_with("collection_") && entry.name.ends_with(".json") {
-                        let collection_id = entry.name
+                        if let Some(id) = entry.name
                             .strip_prefix("collection_")
-                            .and_then(|s| s.strip_suffix(".json"))
-                            
-                            .to_string();
-                        if !collection_id.is_empty() && !collections.contains(&collection_id) {
-                            collections.push(collection_id);
+                            .and_then(|s| s.strip_suffix(".json")) {
+                            let collection_id = id.to_string();
+                            if !collection_id.is_empty() && !collections.contains(&collection_id) {
+                                collections.push(collection_id);
+                            }
                         }
                     }
                 }

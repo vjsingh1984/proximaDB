@@ -150,7 +150,7 @@ graph TB
         
         subgraph "RowGroup Headers Array"
             RGH0["RowGroupMetadata[0]<br/>Offset, size, vector count"]
-            RGH1["RowGroupMetadata[1]<br/>Min/max dimensions, bloom"]
+            RGH1["RowGroupMetadata[1]<br/>Min/max dimensions, bloom filter"]
             RGHn["RowGroupMetadata[n]<br/>HNSW graph metadata"]
         end
         
@@ -173,7 +173,8 @@ graph TB
         end
         
         subgraph "Variable Metadata Section"
-            GlobalBloom["Global Bloom Filter<br/>File-level existence check"]
+            PerRGBloom["Per-RowGroup Bloom Filters<br/>Fast membership test"]
+            GlobalStats["Global Statistics<br/>Min/max IDs per rowgroup"]
             IndexData["Index Entries<br/>Block navigation info"]
         end
     end
@@ -191,8 +192,93 @@ graph TB
     Binary --> INT8
     INT8 --> PQ
     PQ --> FP32
-    FP32 --> GlobalBloom
-    GlobalBloom --> IndexData
+    FP32 --> PerRGBloom
+    PerRGBloom --> GlobalStats
+    GlobalStats --> IndexData
+----
+
+=== Bloom Filter Implementation for HNSW-Organized Data
+
+==== Per-RowGroup Bloom Filters
+
+[source,rust]
+----
+/// Per-RowGroup bloom filter for fast membership testing
+pub struct RowGroupBloomFilter {
+    /// Bloom filter bits (typically 10 bits per ID for 1% false positive)
+    pub bits: Vec<u8>,
+    
+    /// Number of hash functions (typically 7 for optimal)
+    pub num_hashes: usize,
+    
+    /// Number of IDs in this row group
+    pub num_ids: usize,
+    
+    /// False positive rate (typically 0.01)
+    pub false_positive_rate: f64,
+}
+
+/// Columnar ID storage within row group
+pub struct ColumnnarIdIndex {
+    /// IDs stored columnar for SIMD scanning
+    pub ids: Vec<String>,
+    
+    /// Optional: Pre-computed hashes for faster comparison
+    pub id_hashes: Vec<u64>,
+    
+    /// Offsets to full row data
+    pub row_offsets: Vec<u32>,
+}
+
+impl RowGroupBloomFilter {
+    /// O(1) membership test
+    pub fn might_contain(&self, id: &str) -> bool {
+        // Standard bloom filter check
+        // Returns true if ID might be in row group
+    }
+    
+    /// Batch membership test (cache-friendly)
+    pub fn batch_might_contain(&self, ids: &[String]) -> Vec<bool> {
+        // Check multiple IDs efficiently
+    }
+}
+
+impl ColumnnarIdIndex {
+    /// SIMD-optimized columnar scan
+    pub fn find_ids(&self, target_ids: &[String]) -> Vec<(String, u32)> {
+        // Use SIMD to scan ID column in parallel
+        // Returns (id, row_offset) pairs for found IDs
+    }
+    
+    /// Binary search for sorted IDs (optional optimization)
+    pub fn binary_search(&self, id: &str) -> Option<u32> {
+        // If IDs are sorted within row group
+    }
+}
+
+/// Complete ID lookup workflow
+pub async fn lookup_ids_after_hnsw(
+    hnsw_results: Vec<String>,  // IDs from HNSW top-k
+    row_groups: &[RowGroupMetadata],
+) -> Vec<VectorRecord> {
+    // Step 1: Check bloom filters (parallel)
+    let candidate_rgs = row_groups.par_iter()
+        .filter(|rg| {
+            hnsw_results.iter().any(|id| rg.bloom_filter.might_contain(id))
+        })
+        .collect::<Vec<_>>();
+    
+    // Step 2: Scan ID columns in candidate row groups
+    let found_records = candidate_rgs.par_iter()
+        .flat_map(|rg| {
+            let id_column = load_id_column(rg);
+            id_column.find_ids(&hnsw_results)
+        })
+        .collect::<Vec<_>>();
+    
+    // Step 3: Load full records
+    load_full_records(found_records).await
+}
 ----
 
 === HNSW Integration Strategy
@@ -322,20 +408,80 @@ fn calculate_semantic_accuracy_factor(dimension: usize) -> f32 {
 | 600 vectors, research-grade precision
 |===
 
-=== 2. Hybrid Row Group + Columnar Architecture
+=== 2. Bloom Filter + Columnar Scan for ID Lookup (HNSW-Optimized)
 
-==== The Two-Level Design
+==== Why Bloom Filters Over B-tree for HNSW-Organized Data
 
-RAPTOR solves the row vs columnar dilemma with a two-level architecture based on shared `row_based` infrastructure:
+With HNSW organizing vectors by **similarity** rather than ID order, IDs are scattered across row groups:
 
-**Level 1: Smart Row Groups** (I/O and HNSW locality)
+* **HNSW Reality**: Row groups contain semantically similar vectors with random IDs
+* **B-tree Overhead**: 40-60MB index for scattered IDs with no range query benefit
+* **Bloom Solution**: 180KB total for 1M vectors, perfect for membership testing
+
+[source,text]
+----
+┌─────────────── RAPTOR ID Lookup Strategy ──────────────────────┐
+│                                                                 │
+│  HNSW Returns Top-K: ["id_423", "id_999", "id_001"]           │
+│                           ↓                                     │
+│  ┌──────────────────────────────────────────────────────┐     │
+│  │  Step 1: Bloom Filter Check (O(1) per row group)     │     │
+│  │                                                       │     │
+│  │  Row Group 0 Bloom: id_423? NO  id_999? NO  id_001? YES│   │
+│  │  Row Group 1 Bloom: id_423? YES id_999? NO  id_001? NO │   │
+│  │  Row Group 2 Bloom: id_423? NO  id_999? YES id_001? NO │   │
+│  │                                                       │     │
+│  │  Result: Only scan RG0, RG1, RG2 (skip 997 others)   │     │
+│  └──────────────────────────────────────────────────────┘     │
+│                           ↓                                     │
+│  ┌──────────────────────────────────────────────────────┐     │
+│  │  Step 2: Columnar ID Scan (SIMD-optimized)          │     │
+│  │                                                       │     │
+│  │  Row Group 0 ID Column:                              │     │
+│  │  ["id_847", "id_001", "id_234", ...] → Found at idx 1│    │
+│  │                                                       │     │
+│  │  Row Group 1 ID Column:                              │     │
+│  │  ["id_423", "id_765", "id_112", ...] → Found at idx 0│    │
+│  │                                                       │     │
+│  │  Row Group 2 ID Column:                              │     │
+│  │  ["id_333", "id_999", "id_567", ...] → Found at idx 1│    │
+│  └──────────────────────────────────────────────────────┘     │
+│                           ↓                                     │
+│  ┌──────────────────────────────────────────────────────┐     │
+│  │  Step 3: Read Full Rows at Found Indices             │     │
+│  │                                                       │     │
+│  │  RG0[1] → Complete vector + metadata for id_001      │     │
+│  │  RG1[0] → Complete vector + metadata for id_423      │     │
+│  │  RG2[1] → Complete vector + metadata for id_999      │     │
+│  └──────────────────────────────────────────────────────┘     │
+│                                                                 │
+│  Memory: 180KB bloom filters vs 40MB B-tree                    │
+│  Performance: 1ms total (same as B-tree)                       │
+│  Advantage: 200x less memory, works with scattered IDs         │
+└─────────────────────────────────────────────────────────────┘
+----
+
+=== 3. Hybrid Row Group + Columnar Architecture
+
+==== The Three-Level Design
+
+RAPTOR combines bloom filters with columnar storage for HNSW-organized data:
+
+**Level 1: Per-RowGroup Bloom Filters** (Fast membership testing)
+----
+RowGroup 0 Bloom (180 bits) → Skip or Scan decision
+RowGroup 1 Bloom (180 bits) → Skip or Scan decision
+...
+----
+
+**Level 2: Smart Row Groups** (HNSW locality, not ID locality)
 ----
 Row Group 0: [600-2600 vectors] -> Cloud-optimized I/O (1-4MB)
 Row Group 1: [dimension-aware]  -> Semantic accuracy optimized
 Row Group 2: [query-pattern]    -> High/medium/low selectivity tuned
 ----
 
-**Level 2: Columnar Within Groups** (FastLanes + SIMD efficiency)
+**Level 3: Columnar Within Groups** (FastLanes + SIMD efficiency)
 ----
 Within Row Group 0 (using TransposedVectors):
   Encoding Marker: 0xA1              // FastLanes tensor encoding
@@ -653,8 +799,11 @@ pub struct HybridRowGroup {
         global_connections: Vec<(u32, u32)>, // Cross-rowgroup edges
     },
     
-    // Bloom filter for existence checks
-    pub id_bloom_filter: Option<BloomFilter>,
+    // Bloom filter for ID membership testing (HNSW-optimized)
+    pub id_bloom_filter: Option<RowGroupBloomFilter>,
+    
+    // Columnar ID index for SIMD scanning
+    pub id_column_index: Option<ColumnnarIdIndex>,
     
     // Statistics for pruning
     pub vector_stats: VectorRangeStats,  // Min/max per dimension

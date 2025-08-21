@@ -331,7 +331,7 @@ impl MetadataSerializer for SwiftMetadataSerializer {
 
     fn deserialize_metadata(&self, data: &[u8]) -> Result<Box<dyn EngineMetadata>, ProximaDBError> {
         if data.len() < std::mem::size_of::<SwiftGlobalHeader>() + 4 {
-            return Err(ProximaDBError::InvalidArgument(
+            return Err(ProximaDBError::InvalidInput(
                 "SWIFT metadata too small".into()
             ));
         }
@@ -355,7 +355,7 @@ impl MetadataSerializer for SwiftMetadataSerializer {
         
         for _ in 0..num_segments {
             if offset + segment_size > data.len() {
-                return Err(ProximaDBError::InvalidArgument(
+                return Err(ProximaDBError::InvalidInput(
                     "Insufficient data for SWIFT segment headers".into()
                 ));
             }
@@ -367,7 +367,7 @@ impl MetadataSerializer for SwiftMetadataSerializer {
 
         // 4. Read variable data
         if offset + 4 > data.len() {
-            return Err(ProximaDBError::InvalidArgument(
+            return Err(ProximaDBError::InvalidInput(
                 "Insufficient data for SWIFT variable data size".into()
             ));
         }
@@ -378,7 +378,7 @@ impl MetadataSerializer for SwiftMetadataSerializer {
         offset += 4;
 
         if offset + variable_data_size > data.len() {
-            return Err(ProximaDBError::InvalidArgument(
+            return Err(ProximaDBError::InvalidInput(
                 "Insufficient data for SWIFT variable data".into()
             ));
         }

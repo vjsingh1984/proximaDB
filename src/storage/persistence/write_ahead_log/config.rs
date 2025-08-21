@@ -372,7 +372,7 @@ impl From<&crate::core::config::WalStorageConfig> for WALConfig {
 
         // Apply optional configuration overrides from config.toml
         if let Some(strategy_type) = &core_config.strategy_type {
-            wal_config.strategy_type = match strategy_type.as_str() {
+            wal_config.strategy_type = match strategy_type.as_deref() {
                 "Avro" => WriteBufferStrategyType::AvroBatch,
                 "Bincode" => WriteBufferStrategyType::BincodeBatch,
                 "AvroBatch" => WriteBufferStrategyType::AvroBatch,
@@ -384,7 +384,7 @@ impl From<&crate::core::config::WalStorageConfig> for WALConfig {
         }
 
         if let Some(memtable_type) = &core_config.memtable_type {
-            wal_config.memtable.memtable_type = match memtable_type.as_str() {
+            wal_config.memtable.memtable_type = match memtable_type.as_deref() {
                 "BTree" => MemTableType::BTree,
                 "HashMap" => MemTableType::HashMap,
                 "SkipList" => MemTableType::SkipList,
@@ -394,7 +394,7 @@ impl From<&crate::core::config::WalStorageConfig> for WALConfig {
         }
 
         if let Some(sync_mode) = &core_config.sync_mode {
-            wal_config.performance.sync_mode = match sync_mode.as_str() {
+            wal_config.performance.sync_mode = match sync_mode.as_deref() {
                 "Always" => SyncMode::Always,
                 "PerBatch" => SyncMode::PerBatch,
                 "Periodic" => SyncMode::Periodic,

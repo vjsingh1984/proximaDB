@@ -273,7 +273,7 @@ impl StoragePathResolver {
         &self,
         instance_id: Option<u32>,
     ) -> Result<PathBuf, StorageLayoutError> {
-        let instance_id = instance_id;
+        let instance_id = instance_id.unwrap_or(0);
         let base_path = self.get_base_path(instance_id)?;
 
         Ok(base_path
@@ -396,7 +396,7 @@ impl StoragePathResolver {
             CollectionAssignmentStrategy::Manual { assignments } => assignments
                 .get(collection_uuid)
                 .copied()
-                ,
+                .unwrap_or(1), // Default to instance 1 if not found
         };
 
         self.assignment_cache

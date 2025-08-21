@@ -280,7 +280,7 @@ impl ZeroOverheadCollection {
     /// Get vector by index
     #[inline]
     pub fn get_by_index(&self, index: usize) -> Option<VectorView> {
-        self.vectors/* TODO: Fix Option::get() - use indexing or as_ref() */.map(|vector| {
+        self.vectors.get(index).map(|vector| {
             VectorView {
                 vector,
                 config: &self.config,

@@ -133,7 +133,7 @@ impl SqlExecutor {
         // Execute search
         let search_results = self.vector_service.search_vectors(
             &plan.collection,
-            search_params.query_vector,
+            search_params.query_vector.clone(),
             search_params.top_k,
         ).await?;
         
@@ -146,56 +146,34 @@ impl SqlExecutor {
             for field in &plan.select_fields {
                 match field.as_str() {
                     "id" => {
-                        data.insert("id".to_string(), serde_json::Value::String(result.id.clone().unwrap_or_default()));
+                        data.insert("id".to_string(), serde_json::Value::String(result.id.clone()));
                     }
                     "vector" => {
-                        if !result.vector.is_empty() {
-                            let vec_json: Vec<serde_json::Value> = result.vector
-                                .iter()
-                                .map(|&v| serde_json::Value::Number(
-                                    serde_json::Number::from_f64(v as f64).unwrap()
-                                ))
-                                .collect();
-                            data.insert("vector".to_string(), serde_json::Value::Array(vec_json));
+                        if let Some(ref vector) = result.vector {
+                            if !vector.is_empty() {
+                                let vec_json: Vec<serde_json::Value> = vector
+                                    .iter()
+                                    .map(|&v| serde_json::Value::Number(
+                                        serde_json::Number::from_f64(v as f64).unwrap()
+                                    ))
+                                    .collect();
+                                data.insert("vector".to_string(), serde_json::Value::Array(vec_json));
+                            }
                         }
                     }
                     "metadata_info" => {
-                        // Convert metadata to JSON
+                        // Convert metadata HashMap to JSON
                         let mut metadata_map = serde_json::Map::new();
-                        for metadata_item in &result.metadata {
-                            if let Some(value) = &metadata_item.value {
-                                let json_value = match value {
-                                    crate::proto::proximadb::metadata_item::Value::StringValue(s) => serde_json::Value::String(s.clone()),
-                                    crate::proto::proximadb::metadata_item::Value::NumberValue(n) => {
-                                        serde_json::Value::Number(serde_json::Number::from_f64(*n).unwrap_or_else(|| serde_json::Number::from(0)))
-                                    },
-                                    crate::proto::proximadb::metadata_item::Value::BoolValue(b) => serde_json::Value::Bool(*b),
-                                };
-                                metadata_map.insert(
-                                    metadata_item.key.clone(),
-                                    json_value
-                                );
-                            }
+                        for (key, value) in &result.metadata {
+                            metadata_map.insert(key.clone(), value.clone());
                         }
                         data.insert("metadata_info".to_string(), serde_json::Value::Object(metadata_map));
                     }
                     field if field.starts_with("metadata.") => {
                         // Extract specific metadata field
                         let key = &field[9..]; // Skip "metadata."
-                        if let Some(metadata_item) = result.metadata.iter().find(|item| item.key == key) {
-                            if let Some(value) = &metadata_item.value {
-                                let json_value = match value {
-                                    crate::proto::proximadb::metadata_item::Value::StringValue(s) => serde_json::Value::String(s.clone()),
-                                    crate::proto::proximadb::metadata_item::Value::NumberValue(n) => {
-                                        serde_json::Value::Number(serde_json::Number::from_f64(*n).unwrap_or_else(|| serde_json::Number::from(0)))
-                                    },
-                                    crate::proto::proximadb::metadata_item::Value::BoolValue(b) => serde_json::Value::Bool(*b),
-                                };
-                                data.insert(
-                                    field.to_string(),
-                                    json_value
-                                );
-                            }
+                        if let Some(value) = result.metadata.get(key) {
+                            data.insert(field.to_string(), value.clone());
                         }
                     }
                     _ => {} // Ignore unknown fields

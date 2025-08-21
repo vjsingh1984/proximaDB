@@ -25,6 +25,9 @@ pub enum VectorDBError {
 
     #[error("Quantization error: {0}")]
     Quantization(String),
+
+    #[error("Invalid input: {0}")]
+    InvalidInput(String),
 }
 
 // Type alias for backward compatibility

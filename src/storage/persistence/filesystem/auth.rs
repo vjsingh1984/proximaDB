@@ -199,24 +199,24 @@ impl InstanceMetadataProvider {
             .map_err(|e| FilesystemError::Auth(format!("Failed to parse credentials: {}", e)))?;
 
         let access_key_id = creds_json["AccessKeyId"]
-            .as_str()
+            .as_deref()
             .ok_or_else(|| {
                 FilesystemError::Auth("AccessKeyId not found in credentials".to_string())
             })?
             .to_string();
 
         let secret_access_key = creds_json["SecretAccessKey"]
-            .as_str()
+            .as_deref()
             .ok_or_else(|| {
                 FilesystemError::Auth("SecretAccessKey not found in credentials".to_string())
             })?
             .to_string();
 
-        let session_token = creds_json["Token"].as_str().map(|s| s.to_string());
+        let session_token = creds_json["Token"].as_deref().map(|s| s.to_string());
 
         // Parse expiration
         let expiration = creds_json["Expiration"]
-            .as_str()
+            .as_deref()
             .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
             .map(|dt| {
                 Instant::now()
@@ -275,23 +275,23 @@ impl CredentialProvider for EcsTaskMetadataProvider {
         })?;
 
         let access_key_id = creds_json["AccessKeyId"]
-            .as_str()
+            .as_deref()
             .ok_or_else(|| {
                 FilesystemError::Auth("AccessKeyId not found in ECS credentials".to_string())
             })?
             .to_string();
 
         let secret_access_key = creds_json["SecretAccessKey"]
-            .as_str()
+            .as_deref()
             .ok_or_else(|| {
                 FilesystemError::Auth("SecretAccessKey not found in ECS credentials".to_string())
             })?
             .to_string();
 
-        let session_token = creds_json["Token"].as_str().map(|s| s.to_string());
+        let session_token = creds_json["Token"].as_deref().map(|s| s.to_string());
 
         let expiration = creds_json["Expiration"]
-            .as_str()
+            .as_deref()
             .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
             .map(|dt| {
                 Instant::now()
@@ -452,7 +452,7 @@ impl AzureCredentialProvider for AzureManagedIdentityProvider {
             .map_err(|e| FilesystemError::Auth(format!("Failed to parse Azure token: {}", e)))?;
 
         let access_token = token_json["access_token"]
-            .as_str()
+            .as_deref()
             .ok_or_else(|| {
                 FilesystemError::Auth("access_token not found in Azure response".to_string())
             })?
@@ -509,7 +509,7 @@ impl GcsCredentialProvider for GcsApplicationDefaultProvider {
             .map_err(|e| FilesystemError::Auth(format!("Failed to parse GCS token: {}", e)))?;
 
         let access_token = token_json["access_token"]
-            .as_str()
+            .as_deref()
             .ok_or_else(|| {
                 FilesystemError::Auth("access_token not found in GCS response".to_string())
             })?

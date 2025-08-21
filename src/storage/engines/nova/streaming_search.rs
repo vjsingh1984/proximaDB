@@ -671,11 +671,11 @@ impl PerformanceTracker {
         // Update thresholds based on performance
         if performance.latency_ms > 1000 {
             // Increase pruning aggressiveness
-            let current = self.adaptive_thresholds.get("pruning_threshold");
+            let current = self.adaptive_thresholds.get("pruning_threshold").copied().unwrap_or(0.5);
             self.adaptive_thresholds.insert("pruning_threshold".to_string(), (current * 1.1).min(0.9));
         } else if performance.latency_ms < 100 {
             // Decrease pruning aggressiveness for better quality
-            let current = self.adaptive_thresholds.get("pruning_threshold");
+            let current = self.adaptive_thresholds.get("pruning_threshold").copied().unwrap_or(0.5);
             self.adaptive_thresholds.insert("pruning_threshold".to_string(), (current * 0.9).max(0.1));
         }
     }

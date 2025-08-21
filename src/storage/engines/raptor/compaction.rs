@@ -185,7 +185,7 @@ impl CompactionManager {
                 
                 // Add vector to current group
                 if let Some(vector) = vectors.iter().find(|v| {
-                    v.id.as_ref().map(|id| id == &format!("node_{}", node_id)).unwrap_or(false)
+                    v.id.as_ref().map(|id: &String| id == &format!("node_{}", node_id)).unwrap_or(false)
                 }) {
                     current_group.push(vector.clone());
                     

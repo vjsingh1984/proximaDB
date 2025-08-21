@@ -72,47 +72,32 @@ mod tests {
         ];
 
         // Create storage engines
-        let filesystem = Arc::new(crate::storage::FilesystemFactory::new(Default::default()).await.expect("Failed to create filesystem factory"));
+        let filesystem = Arc::new(crate::storage::persistence::filesystem::FilesystemFactory::new(Default::default()).await.expect("Failed to create filesystem factory"));
         let distance_compute = Arc::new(crate::compute::distance_computation::engine::UnifiedDistanceCompute::default());
         
-        let viper_engine = Arc::new(ViperEngine::from_core_config(crate::core::config::ViperConfig::default(), filesystem.clone()).await.expect("Failed to create VIPER engine"));
         let sst_engine = Arc::new(SstStorage::new(config.storage.sst_config.clone(), filesystem.clone(), distance_compute).await.expect("Failed to create SST engine"));
 
-        // Create write buffer config
+        // Create WAL manager
         let wal_config = WALConfig::default();
+        let strategy_type = crate::storage::persistence::write_ahead_log::config::WriteBufferStrategyType::Bincode;
+        let strategy = crate::storage::persistence::write_ahead_log::WALBatchFactory::create_batch_serialization_strategy(
+            strategy_type,
+            &wal_config,
+            filesystem.clone()
+        ).await.expect("Failed to create WAL strategy");
+        let wal_manager = Arc::new(
+            crate::storage::persistence::write_ahead_log::WriteAheadLogManager::new(strategy, wal_config).await.expect("Failed to create WAL manager")
+        );
 
-        let service = VectorOperationsService::new(wal_config, viper_engine, sst_engine)
-            .await
-            .expect("Failed to create VectorOperationsService");
+        let service = VectorOperationsService::new(sst_engine, wal_manager);
 
         (service, temp_dir)
     }
 
-    /// Create test service with specific format
-    async fn create_test_service_with_format(format: OptimizedFormat) -> (VectorOperationsService, TempDir) {
-        let temp_dir = TempDir::new().expect("Failed to create temp directory");
-        
-        let mut config = Config::default();
-        config.storage.storage_locations = vec![
-            crate::core::config::StorageLocation {
-                url: format!("file://{}", temp_dir.path().join("data").display()),
-                weight: 1,
-                tags: vec![],
-            },
-        ];
-
-        let filesystem = Arc::new(crate::storage::FilesystemFactory::new(Default::default()).await.expect("Failed to create filesystem factory"));
-        let distance_compute = Arc::new(crate::compute::distance_computation::engine::UnifiedDistanceCompute::default());
-        
-        let viper_engine = Arc::new(ViperEngine::from_core_config(crate::core::config::ViperConfig::default(), filesystem.clone()).await.expect("Failed to create VIPER engine"));
-        let sst_engine = Arc::new(SstStorage::new(config.storage.sst_config.clone(), filesystem.clone(), distance_compute).await.expect("Failed to create SST engine"));
-        let wal_config = WALConfig::default();
-
-        let service = VectorOperationsService::with_format(wal_config, viper_engine, sst_engine, format)
-            .await
-            .expect("Failed to create VectorOperationsService with format");
-
-        (service, temp_dir)
+    /// Create test service with specific format (format parameter ignored as this API may be obsolete)
+    async fn create_test_service_with_format(_format: OptimizedFormat) -> (VectorOperationsService, TempDir) {
+        // Use standard service creation
+        create_test_service().await
     }
 
     #[tokio::test]

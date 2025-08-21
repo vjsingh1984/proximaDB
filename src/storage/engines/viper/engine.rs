@@ -44,7 +44,7 @@ use super::compaction::CompactionManager;
 use super::flush::FlushManager;
 // use super::ml_clustering::MLClusteringEngine; // Moved to AXIS
 use super::utilities::ViperUtilities;
-use super::unified_search_engine::ViperUnifiedSearchEngine;
+// Unified search engine removed - using IntegratedSearchOptimizer
 use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
 use super::types::CollectionMetadata;
 use anyhow::Context;
@@ -70,9 +70,9 @@ pub struct ViperEngine {
     flush_manager: FlushManager,
     // ml_clustering_engine: MLClusteringEngine, // Moved to AXIS
     utilities: ViperUtilities,
-    search_engine: Arc<ViperUnifiedSearchEngine>,
+    // search_engine: Arc<ViperUnifiedSearchEngine>, // Removed - using IntegratedSearchOptimizer
     /// Engine statistics
-    stats: Arc<RwLock<EngineStats>>,
+    stats: Arc<EngineStats>,  // Lock-free atomic metrics
     /// Collection metadata cache
     collections: Arc<RwLock<HashMap<String, CollectionMetadata>>>,
     /// Unified quantization engine from compute module
@@ -179,16 +179,8 @@ impl ViperEngine {
             flush_manager,
             // ml_clustering_engine, // Moved to AXIS
             utilities,
-            // Initialize search engine with unified parquet reader
-            search_engine: Arc::new(ViperUnifiedSearchEngine::new(
-                Arc::new(super::readers::UnifiedParquetReader::new(filesystem.clone()).await),
-                Arc::new(UnifiedDistanceCompute::default()),
-                Arc::new(crate::compute::quantization::unified::UnifiedQuantizationEngine::new(
-                    Arc::new(UnifiedDistanceCompute::default()),
-                    Arc::new(crate::compute::quantization::unified::InMemoryCodebookStore::new()),
-                )),
-            )),
-            stats: Arc::new(RwLock::new(EngineStats::default())),
+            // Search engine removed - using IntegratedSearchOptimizer
+            stats: Arc::new(EngineStats::default()),
             collections: Arc::new(RwLock::new(HashMap::new())),
             quantization_engine,
             universal_optimizer,
@@ -582,7 +574,7 @@ impl ViperEngine {
                         for field in batch.schema().fields() {
                             let field_name = field.name();
                             // Skip core fields - only process filterable metadata columns
-                            if !matches!(field_name.as_str(), "id" | "collection_id" | "vector" | "timestamp" | "created_at" | "updated_at" | "version" | "expires_at" | "extra_meta") {
+                            if !matches!(field_name.as_deref(), "id" | "collection_id" | "vector" | "timestamp" | "created_at" | "updated_at" | "version" | "expires_at" | "extra_meta") {
                                 if let Some(column) = batch.column_by_name(field_name) {
                                     if !column.is_null(row_idx) {
                                         // Convert Arrow value to String based on data type
@@ -646,9 +638,20 @@ impl ViperEngine {
         Ok(best_match.map(|(record, _, _)| record))
     }
     
-    /// Get engine statistics
-    pub async fn get_stats(&self) -> EngineStats {
-        self.stats.read().await.clone()
+    /// Get engine statistics (creates a snapshot)
+    pub async fn get_stats(&self) -> super::types::EngineStatsSnapshot {
+        super::types::EngineStatsSnapshot {
+            total_vectors: self.stats.total_vectors.load(std::sync::atomic::Ordering::Relaxed),
+            total_size_bytes: self.stats.total_size_bytes.load(std::sync::atomic::Ordering::Relaxed),
+            active_collections: self.stats.active_collections.load(std::sync::atomic::Ordering::Relaxed),
+            flush_operations: self.stats.flush_operations.load(std::sync::atomic::Ordering::Relaxed),
+            compaction_operations: self.stats.compaction_operations.load(std::sync::atomic::Ordering::Relaxed),
+            total_storage_size_bytes: self.stats.total_storage_size_bytes.load(std::sync::atomic::Ordering::Relaxed),
+            active_clusters: self.stats.active_clusters.load(std::sync::atomic::Ordering::Relaxed),
+            active_partitions: self.stats.active_partitions.load(std::sync::atomic::Ordering::Relaxed),
+            avg_compression_ratio: self.stats.get_compression_ratio(),
+            avg_ml_prediction_accuracy: self.stats.get_ml_accuracy(),
+        }
     }
     
     // 🔴 UNUSED SCHEMA CACHE METHODS - CANDIDATES FOR REMOVAL
@@ -945,13 +948,10 @@ impl UnifiedStorageEngine for ViperEngine {
             &self.core_config,
             params.collection_config.as_ref(), // Pass collection config from params
         ).await?;
-        // Update engine statistics
-        {
-            let mut stats = self.stats.write().await;
-            stats.flush_operations += 1;
-            stats.total_vectors += flush_result.entries_flushed;
-            stats.total_size_bytes += flush_result.bytes_written;
-        }
+        // Update engine statistics using atomic operations (lock-free)
+        self.stats.flush_operations.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        self.stats.total_vectors.fetch_add(flush_result.entries_flushed, std::sync::atomic::Ordering::Relaxed);
+        self.stats.total_size_bytes.fetch_add(flush_result.bytes_written, std::sync::atomic::Ordering::Relaxed);
         // Add engine-specific metrics
         flush_result.engine_metrics.insert(
             "engine_version".to_string(),
@@ -993,7 +993,7 @@ impl UnifiedStorageEngine for ViperEngine {
         // Get input files from hints or use default empty list
         let input_files = params.hints.get("input_files")
             .and_then(|v| v.as_array())
-            .map(|arr| arr.iter().filter_map(|v| v.as_str()).map(|s| s.to_string()).collect::<Vec<String>>())
+            .map(|arr| arr.iter().filter_map(|v| v.as_deref()).map(|s| s.to_string()).collect::<Vec<String>>())
             .unwrap_or_default();
         info!("🗜️ VIPER Engine: Starting compaction for collection {} with {} hinted input files", 
               collection_id, input_files.len());
@@ -1027,10 +1027,8 @@ impl UnifiedStorageEngine for ViperEngine {
             // Estimate entries per file (this could be more accurate with metadata)
             input_files.len() as u64 * 100 // Assume ~100 entries per file for tests
         };
-        {
-            let mut stats = self.stats.write().await;
-            stats.compaction_operations += 1;
-        }
+        // Update compaction metrics atomically
+        self.stats.compaction_operations.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         Ok(crate::storage::traits::CompactionResult {
             success: true,
             collections_affected: vec![collection_id.clone()],
@@ -1067,6 +1065,8 @@ impl UnifiedStorageEngine for ViperEngine {
         &self,
         ctx: &crate::storage::traits::SearchContext,
     ) -> Result<Vec<crate::core::search::SearchResult>> {
+        let search_start = std::time::Instant::now();
+        
         // Extract parameters from context
         let collection_id = ctx.collection_id();
         let storage_url = ctx.collection_storage_path()
@@ -1079,9 +1079,110 @@ impl UnifiedStorageEngine for ViperEngine {
         let include_vectors = ctx.search_params.include_vectors;
         let include_metadata = ctx.search_params.include_metadata;
         
-        debug!("search_vectors_unified called for collection: {} with storage_url: {}", collection_id, storage_url);
-        // VIPER ENGINE OPTIMIZATION: Use unified search engine
-        info!("🔍 VIPER: Searching collection {} with unified search engine at {}", collection_id, storage_url);
+        info!("🚀 VIPER: Enhanced unified search with orchestration for collection {}", collection_id);
+        
+        // ========================================================================
+        // PHASE 1: SEARCH ORCHESTRATION AND STRATEGY SELECTION
+        // ========================================================================
+        
+        // TODO: Get AXIS manager and cost estimator from service context
+        // For now, skip orchestration and use columnar-optimized search
+        // This will be implemented when AXIS manager integration is complete
+        
+        let use_orchestration = false; // Feature flag for orchestration
+        
+        if use_orchestration {
+            // Future: Create search orchestrator for intelligent routing
+            /*
+            let axis_manager = self.get_axis_manager().await?;
+            let cost_estimator = self.get_cost_estimator().await?;
+            
+            let mut orchestrator = crate::core::search::integrated_search_optimization::IntegratedSearchOptimizer::new(
+                ctx.clone(),
+                axis_manager,
+                cost_estimator,
+            ).await?;
+            
+            debug!("📋 Collection Analysis Results:");
+            let analysis = orchestrator.get_collection_analysis();
+            debug!("  📊 Dimension: {}, Distance: {:?}", analysis.dimension, analysis.distance_metric);
+            debug!("  🔧 Quantization enabled: {}, Progressive: {}", 
+                   analysis.quantization_enabled, analysis.progressive_search_enabled);
+            debug!("  📈 Dataset size: {:?}, Query complexity: {:.2}", 
+                   analysis.estimated_dataset_size, analysis.query_complexity);
+            debug!("  🔍 Has filters: {}, Available levels: {:?}", 
+                   analysis.has_filters, analysis.available_quantization_levels);
+            
+            // Select optimal strategy for columnar data
+            let strategy = orchestrator.select_optimal_strategy().await?;
+            
+            info!(
+                "🎯 VIPER Strategy Selected: {} (estimated cost: {:.2}ms)",
+                match &strategy {
+                    crate::core::search::integrated_search_optimization::ExecutionStrategy::IndexFirst { estimated_cost_ms, .. } => {
+                        format!("IndexFirst (cost: {:.2}ms)", estimated_cost_ms)
+                    },
+                    crate::core::search::integrated_search_optimization::ExecutionStrategy::ProgressiveQuantization { estimated_cost_ms, .. } => {
+                        format!("ProgressiveQuantization (cost: {:.2}ms)", estimated_cost_ms)
+                    },
+                    crate::core::search::integrated_search_optimization::ExecutionStrategy::DirectFP32 { estimated_cost_ms, .. } => {
+                        format!("DirectFP32 (cost: {:.2}ms)", estimated_cost_ms)
+                    },
+                },
+                match &strategy {
+                    crate::core::search::integrated_search_optimization::ExecutionStrategy::IndexFirst { estimated_cost_ms, .. } => *estimated_cost_ms,
+                    crate::core::search::integrated_search_optimization::ExecutionStrategy::ProgressiveQuantization { estimated_cost_ms, .. } => *estimated_cost_ms,
+                    crate::core::search::integrated_search_optimization::ExecutionStrategy::DirectFP32 { estimated_cost_ms, .. } => *estimated_cost_ms,
+                }
+            );
+            
+            // Execute columnar-optimized strategy (placeholder for future implementation)
+            // For now, fall through to existing implementation
+            */
+        }
+        
+        // ========================================================================
+        // PHASE 2: CURRENT IMPLEMENTATION WITH ENHANCED LOGGING
+        // ========================================================================
+        
+        info!("🔍 VIPER: Using columnar search implementation (orchestration disabled)");
+        debug!("🗃️  VIPER: Collection {} at storage_url: {}", collection_id, storage_url);
+        
+        // ========================================================================
+        // PHASE 3: ENHANCED COLLECTION CONFIGURATION ANALYSIS  
+        // ========================================================================
+        
+        debug!("📊 VIPER Collection Configuration Analysis:");
+        debug!("  🎯 Query vector dimension: {}", query_vector.len());
+        debug!("  📏 Top-k requested: {}", k);
+        debug!("  📐 Distance metric: {:?}", distance_metric);
+        debug!("  🔍 Has filter expression: {}", filter_expression.is_some());
+        debug!("  📥 Include vectors: {}, Include metadata: {}", include_vectors, include_metadata);
+        if let Some(filter) = filter_expression {
+            debug!("  🔎 Filter details: {:?}", filter);
+        }
+        
+        // Analyze collection quantization capabilities (VIPER-specific)
+        let collection_config = &ctx.collection.config;
+        if let Some(config) = collection_config {
+            debug!("  🗃️  VIPER Columnar Analysis:");
+            debug!("    📏 Collection dimension: {}", config.dimension);
+            debug!("    🔧 Storage engine: {:?}", config.storage_engine);
+            debug!("    🔍 Filterable columns: {} defined", config.filterable_columns.len());
+            
+            if let Some(quant_config) = &config.quantization {
+                debug!("  🔧 VIPER Quantization Analysis:");
+                debug!("    ✅ Enabled: {}", quant_config.enabled);
+                debug!("    🎛️  Strategy: {:?}", quant_config.strategy);
+                debug!("    🔄 Progressive search: {}", quant_config.enable_progressive_search);
+                debug!("    📋 Custom levels: {} defined", quant_config.custom_levels.len());
+                debug!("    🗃️  VIPER will use columnar quantization for optimal I/O");
+            } else {
+                debug!("  🔧 Quantization: Not configured (FP32 columnar only)");
+            }
+        } else {
+            debug!("  🔧 Collection config: Not available");
+        }
         // Use search params from context (already available as Arc)
         if let Some(filter_expr) = filter_expression {
             debug!("Search with filter expression: {:?}", filter_expr);
@@ -1118,7 +1219,7 @@ impl UnifiedStorageEngine for ViperEngine {
             storage_info: crate::core::search::StorageInfo {
                 is_cloud_storage: false,
                 storage_type: "VIPER".to_string(),
-                estimated_size_mb: self.stats.read().await.total_size_bytes as f64 / (1024.0 * 1024.0),
+                estimated_size_mb: self.stats.total_size_bytes.load(std::sync::atomic::Ordering::Relaxed) as f64 / (1024.0 * 1024.0),
                 file_count: parquet_files.len(),
                 supports_range_requests: true,
                 file_paths: Some(parquet_files.clone()),
@@ -1167,29 +1268,109 @@ impl UnifiedStorageEngine for ViperEngine {
                 result.metadata = HashMap::new();
             }
         }
+        // ========================================================================
+        // PHASE 4: PERFORMANCE TRACKING AND FINAL LOGGING
+        // ========================================================================
+        
+        let total_search_time = search_start.elapsed();
+        
+        info!(
+            "🏁 VIPER Unified Search Completed - Collection: {}, Results: {}/{}, Time: {:.2}ms",
+            collection_id,
+            results.len(),
+            k,
+            total_search_time.as_secs_f32() * 1000.0
+        );
+        
+        // Enhanced result analysis for columnar engine
+        debug!("📈 VIPER Search Results Analysis:");
+        debug!("  📊 Total results found: {}", results.len());
+        debug!("  🎯 Requested top-k: {}", k);
+        debug!("  ✅ Results coverage: {:.1}%", 
+               if k > 0 { (results.len() as f32 / k as f32 * 100.0).min(100.0) } else { 0.0 });
+        debug!("  ⏱️  Total search time: {:.2}ms", total_search_time.as_secs_f32() * 1000.0);
+        debug!("  🗃️  Parquet files processed: {}", result_set.results.len());
+        debug!("  📥 Vector inclusion: {}, Metadata inclusion: {}", include_vectors, include_metadata);
+        
+        // Log sample results with enhanced details
+        if !results.is_empty() {
+            debug!("🔍 VIPER Sample Results (top 3):");
+            for (i, result) in results.iter().take(3).enumerate() {
+                debug!(
+                    "  Result {}: id={}, score={:.4}, similarity={:?}, has_vector={}, metadata_fields={}",
+                    i + 1,
+                    result.id,
+                    result.score,
+                    result.similarity,
+                    result.vector.is_some(),
+                    result.metadata.len()
+                );
+                
+                // Log metadata details for first result (columnar-specific)
+                if i == 0 && !result.metadata.is_empty() {
+                    debug!("    📋 VIPER Metadata sample: {:?}", 
+                           result.metadata.iter()
+                               .take(3)
+                               .map(|(k, v)| format!("{}={:?}", k, v))
+                               .collect::<Vec<_>>()
+                               .join(", "));
+                }
+            }
+        } else {
+            debug!("🔍 No results found for VIPER columnar search");
+        }
+        
+        // Log performance characteristics (columnar-specific)
+        if total_search_time.as_millis() > 200 {
+            warn!(
+                "⚠️ Slow VIPER columnar search detected: {:.2}ms for collection {} with {} results",
+                total_search_time.as_secs_f32() * 1000.0,
+                collection_id,
+                results.len()
+            );
+        } else if total_search_time.as_millis() < 20 {
+            debug!(
+                "🚀 Fast VIPER columnar search: {:.2}ms for collection {} with {} results",
+                total_search_time.as_secs_f32() * 1000.0,
+                collection_id,
+                results.len()
+            );
+        }
+        
+        // Log columnar-specific insights
+        debug!("🗃️  VIPER Columnar Performance Insights:");
+        debug!("  📁 Parquet files accessed: {}", result_set.results.len());
+        if total_search_time.as_millis() > 0 {
+            let throughput = results.len() as f32 / total_search_time.as_secs_f32();
+            debug!("  🚀 Search throughput: {:.1} results/second", throughput);
+        }
+        
         Ok(results)
     }
     async fn collect_engine_metrics(&self) -> Result<HashMap<String, serde_json::Value>> {
-        let stats = self.stats.read().await;
         let mut metrics = HashMap::new();
-        // Basic engine metrics
+        // Basic engine metrics (using atomic operations)
+        let total_size = self.stats.total_size_bytes.load(std::sync::atomic::Ordering::Relaxed);
         metrics.insert("total_storage_bytes".to_string(), serde_json::Value::Number(
-            serde_json::Number::from(stats.total_size_bytes)
+            serde_json::Number::from(total_size)
         ));
         metrics.insert("memory_usage_bytes".to_string(), serde_json::Value::Number(
-            serde_json::Number::from(stats.total_size_bytes / 10) // Estimate 10% in memory
+            serde_json::Number::from(total_size / 10) // Estimate 10% in memory
         ));
         metrics.insert("collection_count".to_string(), serde_json::Value::Number(
             serde_json::Number::from(self.collections.read().await.len())
         ));
+        let total_vectors = self.stats.total_vectors.load(std::sync::atomic::Ordering::Relaxed);
         metrics.insert("total_vectors".to_string(), serde_json::Value::Number(
-            serde_json::Number::from(stats.total_vectors)
+            serde_json::Number::from(total_vectors)
         ));
+        let flush_ops = self.stats.flush_operations.load(std::sync::atomic::Ordering::Relaxed);
         metrics.insert("flush_operations".to_string(), serde_json::Value::Number(
-            serde_json::Number::from(stats.flush_operations)
+            serde_json::Number::from(flush_ops)
         ));
+        let compaction_ops = self.stats.compaction_operations.load(std::sync::atomic::Ordering::Relaxed);
         metrics.insert("compaction_operations".to_string(), serde_json::Value::Number(
-            serde_json::Number::from(stats.compaction_operations)
+            serde_json::Number::from(compaction_ops)
         ));
         // VIPER-specific metrics
         metrics.insert("engine_version".to_string(), serde_json::Value::String(crate::version::PROXIMADB_VERSION.to_string()));
@@ -1289,16 +1470,15 @@ impl UniversallyOptimized for ViperEngine {
     async fn collect_performance_metrics(&self) -> Result<HashMap<String, serde_json::Value>> {
         let mut metrics = HashMap::new();
         
-        // Basic VIPER metrics
-        let stats = self.stats.read().await;
+        // Basic VIPER metrics (using atomic operations for lock-free access)
         metrics.insert("viper_total_vectors".to_string(), serde_json::Value::Number(
-            serde_json::Number::from(stats.total_vectors)
+            serde_json::Number::from(self.stats.total_vectors.load(std::sync::atomic::Ordering::Relaxed))
         ));
         metrics.insert("viper_flush_operations".to_string(), serde_json::Value::Number(
-            serde_json::Number::from(stats.flush_operations)
+            serde_json::Number::from(self.stats.flush_operations.load(std::sync::atomic::Ordering::Relaxed))
         ));
         metrics.insert("viper_compaction_operations".to_string(), serde_json::Value::Number(
-            serde_json::Number::from(stats.compaction_operations)
+            serde_json::Number::from(self.stats.compaction_operations.load(std::sync::atomic::Ordering::Relaxed))
         ));
         metrics.insert("viper_collections_count".to_string(), serde_json::Value::Number(
             serde_json::Number::from(self.collections.read().await.len())

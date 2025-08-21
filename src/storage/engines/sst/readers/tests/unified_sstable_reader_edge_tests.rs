@@ -8,7 +8,7 @@ mod edge_tests {
         UnifiedSstableReader, CollectionContext, ReaderConfig,
     };
     use crate::storage::engines::sst::{SstRecord, SstableWriter};
-    use crate::storage::engines::row_based::bloom_filter::{
+    use crate::core::bloom::{
         BloomFilterConfig,
     };
     use crate::core::config::SstConfig;
@@ -970,7 +970,7 @@ mod edge_tests {
         
         for (field, (min, max, null_count, distinct_count)) in &stats {
             assert!(!field.is_empty());
-            match field.as_str() {
+            match field.as_deref() {
                 "numeric_field" => {
                     let (min_val, max_val, null_cnt, distinct_cnt) = (min, max, null_count, distinct_count);
                     assert!(distinct_cnt <= &usize::MAX);

@@ -57,7 +57,7 @@ use crate::core::{DistanceMetric, VectorRecord};
 use crate::core::compression::CompressionAlgorithm;
 
 // SYNERGY: Reuse row-based bloom filter structures (shared with SST)
-use crate::storage::engines::row_based::bloom_filter::SstableBloomFilter;
+use crate::core::bloom::SstableBloomFilter;
 // FastLanes encoding for columnar vector optimization
 use crate::storage::engines::common::fastlanes_encoding::FastLanesScheme;
 // NOTE: Quantization now uses unified engine from compute module
@@ -342,10 +342,12 @@ impl SwiftFile {
                 let bloom_config = crate::core::bloom::BloomFilterConfig {
                     bits_per_key: 10,
                     false_positive_rate: Some(0.01),
-                    max_entries: None,
+                    expected_items: 1000,
                     strategy: crate::core::bloom::BloomStrategy::ByteAligned,
+                    enabled: true,
+                    hash_algorithm: crate::core::bloom::HashAlgorithm::default(),
                 };
-                let bloom_stats = crate::storage::engines::row_based::bloom_filter::BloomFilterStats::default();
+                let bloom_stats = crate::core::bloom::BloomFilterStats::default();
                 superblock.bloom_filter = Some(SstableBloomFilter::new(
                     bloom_config,
                     Vec::new(), // Empty key filter data initially
@@ -424,10 +426,12 @@ impl SwiftFile {
                 let bloom_config = crate::core::bloom::BloomFilterConfig {
                     bits_per_key: 10,
                     false_positive_rate: Some(0.01),
-                    max_entries: None,
+                    expected_items: 1000,
                     strategy: crate::core::bloom::BloomStrategy::ByteAligned,
+                    enabled: true,
+                    hash_algorithm: crate::core::bloom::HashAlgorithm::default(),
                 };
-                let bloom_stats = crate::storage::engines::row_based::bloom_filter::BloomFilterStats::default();
+                let bloom_stats = crate::core::bloom::BloomFilterStats::default();
                 superblock.bloom_filter = Some(SstableBloomFilter::new(
                     bloom_config,
                     Vec::new(), // Empty key filter data initially

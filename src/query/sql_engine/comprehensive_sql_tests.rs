@@ -329,7 +329,7 @@ use tracing::{debug, error, info};
                 match order_by.order_type {
                     OrderType::VectorSimilarity { metric, .. } => {
                         // Verify the metric was parsed correctly
-                        let parsed_metric = match metric.to_lowercase().as_str() {
+                        let parsed_metric = match metric.to_lowercase().as_deref() {
                             "cosine" => DistanceMetric::Cosine,
                             "euclidean" => DistanceMetric::Euclidean,
                             "dot_product" => DistanceMetric::DotProduct,
@@ -395,7 +395,7 @@ use tracing::{debug, error, info};
             // Verify the distance metric
             if let Some(order_by) = &parsed_query.order_by {
                 if let OrderType::VectorSimilarity { metric, .. } = &order_by.order_type {
-                    let parsed_metric = match metric.to_lowercase().as_str() {
+                    let parsed_metric = match metric.to_lowercase().as_deref() {
                         "cosine" => DistanceMetric::Cosine,
                         "euclidean" => DistanceMetric::Euclidean,
                         "dot_product" => DistanceMetric::DotProduct,

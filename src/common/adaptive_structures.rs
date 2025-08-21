@@ -52,6 +52,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::hash::Hash;
 use std::sync::Arc;
+use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
 use tokio::sync::RwLock;
 use tracing::{debug, info};
@@ -998,7 +999,16 @@ where
             let mut wm = self.workload_metrics.write().await;
             wm.reads_per_second += 1.0; // Simplified - should be rate-calculated
             if value.is_some() {
-                wm.cache_hit_rate = self.metrics.hit_rate_percent();
+                wm.cache_hit_rate = {
+                    let hits = self.metrics.hits.load(Ordering::Relaxed);
+                    let misses = self.metrics.misses.load(Ordering::Relaxed);
+                    let total = hits + misses;
+                    if total > 0 {
+                        (hits as f64 / total as f64) * 100.0
+                    } else {
+                        0.0
+                    }
+                };
             }
         }
         
@@ -1132,7 +1142,16 @@ where
             let mut wm = self.workload_metrics.write().await;
             wm.reads_per_second += 1.0; // Simplified - should be rate-calculated
             if value.is_some() {
-                wm.cache_hit_rate = self.metrics.hit_rate_percent();
+                wm.cache_hit_rate = {
+                    let hits = self.metrics.hits.load(Ordering::Relaxed);
+                    let misses = self.metrics.misses.load(Ordering::Relaxed);
+                    let total = hits + misses;
+                    if total > 0 {
+                        (hits as f64 / total as f64) * 100.0
+                    } else {
+                        0.0
+                    }
+                };
             }
         }
         

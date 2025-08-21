@@ -38,7 +38,7 @@ mod metadata_backend_tests {
             mmap_enabled: true,
             lsm_config: Default::default(),
             cache_size_mb: 10,
-            bloom_filter_config: Some(crate::core::bloom::BloomFilterConfig {
+            bloom_filter_config: Some(crate::storage::engines::row_based::bloom_filter::BloomFilterConfig {
                 bits_per_key: 10,
                 enabled: true,
                 ..Default::default()

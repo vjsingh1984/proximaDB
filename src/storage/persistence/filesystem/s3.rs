@@ -408,7 +408,7 @@ impl S3Client {
         } else {
             request = request.header(
                 "x-amz-storage-class",
-                self.config.default_storage_class.as_str(),
+                self.config.default_storage_class.as_deref(),
             );
         }
 

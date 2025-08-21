@@ -362,7 +362,7 @@ impl AxisClusteringEngine {
             .push(vector);
 
         // Check if we need to recompute
-        let pending_count = pending.get(collection_id).map(|v| v.len());
+        let pending_count = pending.get(collection_id).map(|v| v.len()).unwrap_or(0);
         if pending_count >= self.config.recompute_threshold {
             // TODO: Trigger recomputation
             tracing::info!(
@@ -640,8 +640,8 @@ impl AxisClusteringEngine {
             silhouette_score,
             davies_bouldin_index: avg_intra_cluster_distance / avg_inter_cluster_distance.max(0.001),
             calinski_harabasz_index: avg_inter_cluster_distance / avg_intra_cluster_distance.max(0.001),
-            avg_intra_cluster_distance,
-            avg_inter_cluster_distance,
+            avg_intra_cluster_similarity: avg_intra_cluster_distance,
+            avg_inter_cluster_similarity: avg_inter_cluster_distance,
         })
     }
 }

@@ -477,7 +477,7 @@ impl FlushManager {
             .collect();
 
         for record in records {
-            ids.push(record.id.as_str().to_string());
+            ids.push(record.id.as_deref().to_string());
             collection_ids.push(collection_id.to_string());
             vectors.push(record.vector.clone());
             
@@ -488,7 +488,7 @@ impl FlushManager {
                 
                 if let Some(quant_config) = quantization {
                     debug!("🔧 VIPER: Applying collection quantization config for vector {}", 
-                           record.id.as_str());
+                           record.id.as_deref());
                     
                     info!("🎯 VIPER: Collection quantization enabled - strategy={:?}", 
                           quant_config.strategy);
@@ -597,7 +597,7 @@ impl FlushManager {
                 match FilterableDataType::try_from(filterable_column.data_type) {
                     Ok(FilterableDataType::FilterableString) => {
                         let string_values: Vec<Option<String>> = values.iter()
-                            .map(|v| if v.is_null() { None } else { Some(v.as_str().to_string()) })
+                            .map(|v| if v.is_null() { None } else { Some(v.as_deref().to_string()) })
                             .collect();
                         Arc::new(StringArray::from(string_values))
                     }
@@ -861,7 +861,7 @@ impl FlushManager {
         for filterable_column in &filterable_metadata {
             if let Some(encoding_hint) = filterable_column.encoding_hint {
                 use crate::proto::proximadb::ColumnEncoding;
-                let column_path = parquet::schema::types::ColumnPath::from(filterable_column.name.as_str());
+                let column_path = parquet::schema::types::ColumnPath::from(filterable_column.name.as_deref());
                 
                 match ColumnEncoding::try_from(encoding_hint) {
                     Ok(ColumnEncoding::EncodingDictionary) => {
@@ -1160,8 +1160,8 @@ impl FlushManager {
             // No filterable columns, sort by vector ID for consistent ordering
             let mut sorted_records = records.to_vec();
             sorted_records.sort_by(|a, b| {
-                let a_id = a.id.as_str();
-                let b_id = b.id.as_str();
+                let a_id = a.id.as_deref();
+                let b_id = b.id.as_deref();
                 a_id.cmp(b_id)
             });
             
@@ -1212,7 +1212,7 @@ impl FlushManager {
             
             // Convert to Parquet compression
             if let Some(parquet_compression) = map_to_parquet_compression(&optimal_algorithm) {
-                let column_path = parquet::schema::types::ColumnPath::from(name.as_str());
+                let column_path = parquet::schema::types::ColumnPath::from(name.as_deref());
                 
                 debug!("🔧 VIPER Mixed: {} -> {:?} (type: {:?})", 
                        name, optimal_algorithm, data_type);

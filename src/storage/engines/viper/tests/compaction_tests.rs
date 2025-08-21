@@ -1053,7 +1053,7 @@ async fn test_compaction_with_metadata_filtering() {
         
         let category_count = search_results.iter()
             .filter(|r| {
-                r.metadata.get(key).and_then(|v| v.as_str()) == Some(category)
+                r.metadata.get(key).and_then(|v| v.as_deref()) == Some(category)
             })
             .count();
         

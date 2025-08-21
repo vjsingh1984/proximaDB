@@ -390,20 +390,20 @@ impl ZeroCopyIOSystemBuilder {
         
         // Validate cache configuration
         if cache_config.max_memory_mb == 0 {
-            return Err(ProximaDBError::InvalidArgument("Max memory must be > 0".into()));
+            return Err(ProximaDBError::InvalidInput("Max memory must be > 0".into()));
         }
         
         if cache_config.max_entries == 0 {
-            return Err(ProximaDBError::InvalidArgument("Max entries must be > 0".into()));
+            return Err(ProximaDBError::InvalidInput("Max entries must be > 0".into()));
         }
         
         // Validate download configuration
         if download_config.base_threshold_percent < 0.0 || download_config.base_threshold_percent > 100.0 {
-            return Err(ProximaDBError::InvalidArgument("Base threshold must be 0-100%".into()));
+            return Err(ProximaDBError::InvalidInput("Base threshold must be 0-100%".into()));
         }
         
         if download_config.cost_optimization.max_range_requests == 0 {
-            return Err(ProximaDBError::InvalidArgument("Max range requests must be > 0".into()));
+            return Err(ProximaDBError::InvalidInput("Max range requests must be > 0".into()));
         }
         
         Ok(())

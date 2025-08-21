@@ -63,16 +63,18 @@ use crate::storage::persistence::filesystem::{
 
 use super::{DataBlock, IndexEntry};  // OPTIMIZED: Removed SstRecord import
 use crate::core::VectorRecord;  // OPTIMIZED: Direct VectorRecord usage
+use crate::core::bloom::{BloomFilterConfig, HashAlgorithm, BloomFilterStrategy};
+use crate::core::bloom::factory::BloomFilterFactory;
 // Using unified quantization engine directly from compute module
 use crate::storage::engines::common::compression_common::{
     AdaptiveCompressionSettings, AdaptiveStrategy,
     ContextAwareCompressionConfig,
 };
 use crate::metrics::compression::CompressionDataType;
-use crate::core::bloom::{
-    BloomFilterConfig, BloomStrategy, BloomFilterStrategy, HashAlgorithm,
-    factory::BloomFilterFactory,
-};
+// use crate::core::bloom::{
+//     BloomFilterConfig, BloomStrategy, BloomFilterStrategy, HashAlgorithm,
+//     factory::BloomFilterFactory,
+// };
 use crate::core::bloom::strategies::composite::CompositeBloomFilterBuilder;
 use crate::proto::proximadb::CompressionConfig;
 
@@ -409,11 +411,14 @@ impl SstableWriter {
         // Use shared SST metadata serializer from row_based module
         use crate::storage::engines::row_based::sst_metadata_serializer::{SstGlobalHeader, SstBlockHeader, SstMetadata};
         
+        // Calculate offsets manually since atomic writer doesn't track position
+        let mut current_offset = 0u64;
+        
         // Create global header
         let global_header = SstGlobalHeader {
-            file_size: atomic_writer.current_offset() as u64,
+            file_size: 0, // Will be updated after writing all data
             num_blocks: data_blocks.len() as u32,
-            bloom_filter_offset: atomic_writer.current_offset() as u32,
+            bloom_filter_offset: current_offset as u32,
             bloom_filter_size: combined_bloom_filter.serialize()?.len() as u32,
             index_offset: 0, // Will be set after bloom filter
             index_size: index_entries.iter().map(|e| e.serialize().unwrap().len()).sum::<usize>() as u32,
@@ -428,10 +433,10 @@ impl SstableWriter {
         let mut block_headers = Vec::new();
         for (i, block) in data_blocks.iter().enumerate() {
             let header = SstBlockHeader {
-                offset: block.offset,
-                compressed_size: block.compressed_size as u32,
-                uncompressed_size: block.uncompressed_size as u32,
-                record_count: block.record_count as u32,
+                offset: 0, // Will be calculated during writing
+                compressed_size: 0, // Will be calculated during compression
+                uncompressed_size: 0, // Will be calculated
+                record_count: block.records.len() as u32,
                 bloom_offset: 0, // Block-level bloom filter offset (if any)
                 bloom_size: 0,   // Block-level bloom filter size
                 min_key_hash: 0, // TODO: calculate from block data
@@ -442,19 +447,32 @@ impl SstableWriter {
             block_headers.push(header);
         }
         
+        // Accumulate all data to write atomically
+        let mut output_data = Vec::new();
+        
         // Write index entries
         for entry in &index_entries {
-            atomic_writer.write(&entry.serialize()?).await?;
+            output_data.extend_from_slice(&entry.serialize()?);
         }
         
         // Write bloom filter
-        atomic_writer.write(&combined_bloom_filter.serialize()?).await?;
+        output_data.extend_from_slice(&combined_bloom_filter.serialize()?);
         
-        // Write footer
-        atomic_writer.write(&footer.serialize()?).await?;
+        // Create footer with proper metadata
+        let footer = SstMetadata {
+            global: global_header,
+            blocks: block_headers,
+            variable_data: Vec::new(), // No variable data needed here
+            global_bloom: None,
+            encoding_metadata: None,
+        };
         
-        // Finalize
-        atomic_writer.finalize(&fs).await?;
+        // Serialize footer using bincode
+        let footer_bytes = bincode::serialize(&footer)?;
+        output_data.extend_from_slice(&footer_bytes);
+        
+        // Write all data atomically
+        atomic_writer.write_atomic(&*fs, &self.path.to_string_lossy(), &output_data, None).await?;
         
         Ok(())
     }
@@ -481,19 +499,25 @@ impl SstableWriter {
         // and let FastLanes handle the encoding optimization
         let mut data_block = DataBlock::new(
             block_id,
-            current_block.to_vec(),
-            crate::storage::engines::row_based::BlockCompressionConfig {
-                algorithm: self.compression_config.compression.clone(),
-                level: self.compression_config.compression_level,
-            }
+            current_block.to_vec()
         );
         
         // Set block-level bloom filter
         // Convert Vec<u8> bloom filters to SstableBloomFilter
         data_block.block_bloom_filter = if let Some(key_bloom) = block_key_bloom {
-            Some(super::bloom_filter::SstableBloomFilter::from_bytes(key_bloom))
+            Some(super::bloom_filter::SstableBloomFilter::new(
+                self.bloom_config.clone(),
+                key_bloom,
+                Vec::new(),
+                super::bloom_filter::BloomFilterStats::default(),
+            ))
         } else if let Some(metadata_bloom) = block_metadata_bloom {
-            Some(super::bloom_filter::SstableBloomFilter::from_bytes(metadata_bloom))
+            Some(super::bloom_filter::SstableBloomFilter::new(
+                self.bloom_config.clone(),
+                Vec::new(),
+                metadata_bloom,
+                super::bloom_filter::BloomFilterStats::default(),
+            ))
         } else {
             None
         };
@@ -549,7 +573,7 @@ impl SstableWriter {
         if let Some(first_record) = current_block.first() {
             let first_id = first_record.id.as_ref().clone();
             index_entries.push(IndexEntry {
-                key: first_id.unwrap_or_else(|| "unknown".to_string()),
+                key: first_id.cloned().unwrap_or_else(|| "unknown".to_string()),
                 offset: 0, // Will be calculated during read
                 size: block_size,
                 block_id,
@@ -678,19 +702,25 @@ impl SstableWriter {
         // Create DataBlock with hierarchical metadata
         let mut data_block = DataBlock::new(
             block_id,
-            current_block.to_vec(),
-            crate::storage::engines::row_based::BlockCompressionConfig {
-                algorithm: self.compression_config.compression.clone(),
-                level: self.compression_config.compression_level,
-            }
+            current_block.to_vec()
         );
         
         // Set block-level bloom filter (combines key and metadata blooms into one)
         // Convert Vec<u8> bloom filters to SstableBloomFilter
         data_block.block_bloom_filter = if let Some(key_bloom) = block_key_bloom {
-            Some(super::bloom_filter::SstableBloomFilter::from_bytes(key_bloom))
+            Some(super::bloom_filter::SstableBloomFilter::new(
+                self.bloom_config.clone(),
+                key_bloom,
+                Vec::new(),
+                super::bloom_filter::BloomFilterStats::default(),
+            ))
         } else if let Some(metadata_bloom) = block_metadata_bloom {
-            Some(super::bloom_filter::SstableBloomFilter::from_bytes(metadata_bloom))
+            Some(super::bloom_filter::SstableBloomFilter::new(
+                self.bloom_config.clone(),
+                Vec::new(),
+                metadata_bloom,
+                super::bloom_filter::BloomFilterStats::default(),
+            ))
         } else {
             None
         };
@@ -1067,12 +1097,12 @@ impl SstableWriter {
         let scheme = if has_constants {
             FastLanesScheme::RunLength
         } else if has_small_range {
-            FastLanesScheme::FrameOfReference
+            FastLanesScheme::FrameOfReference {}
         } else if has_deltas {
-            FastLanesScheme::Delta
+            FastLanesScheme::Delta {}
         } else {
             // Default to bit packing for dense data
-            FastLanesScheme::BitPacked
+            FastLanesScheme::BitPacked {}
         };
 
         debug!("🔍 FastLanes scheme selected: {:?}", scheme);

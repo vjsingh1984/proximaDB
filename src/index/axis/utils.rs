@@ -70,8 +70,8 @@ impl IndexVectorStore {
             ));
         }
 
-        let is_new = self.vectors.insert(id, vector).is_empty();
-        if is_new {
+        let prev = self.vectors.insert(id, vector);
+        if prev.is_none() {
             self.count.fetch_add(1, Ordering::Relaxed);
         }
         Ok(())
@@ -79,7 +79,7 @@ impl IndexVectorStore {
 
     /// Get a vector by ID
     pub fn get(&self, id: &str) -> Option<Arc<VectorRecord>> {
-        self.vectors.get(&id).map(|entry| entry.value().clone())
+        self.vectors.get(id).map(|entry| entry.value().clone())
     }
 
     /// Remove a vector by ID
@@ -151,7 +151,7 @@ impl ConcurrentIdMapping {
     /// Register a new external ID and get its internal ID
     pub fn register(&self, external_id: String) -> Result<usize> {
         // Check if already exists
-        if let Some(entry) = self.external_to_internal.get(external_id) {
+        if let Some(entry) = self.external_to_internal.get(&external_id) {
             return Ok(*entry.value());
         }
 
@@ -300,7 +300,7 @@ pub mod metadata {
                     crate::proto::proximadb::metadata_item::Value::NumberValue(f) => {
                         serde_json::Number::from_f64(f)
                             .map(JsonValue::Number)
-                            
+                            .unwrap_or(JsonValue::Null)
                     }
                     crate::proto::proximadb::metadata_item::Value::BoolValue(b) => {
                         JsonValue::Bool(b)

@@ -157,11 +157,10 @@ mod recovery_tests {
         let sst_engine = create_mock_sst_engine().await?;
         
         // Create VectorOperationsService and trigger recovery
-        let service = VectorOperationsService::new(
-            wal_config,
-            viper_engine,
-            sst_engine,
-        ).await?;
+        // Use test helper since old constructor signature is incompatible
+        let service = proximadb::tests::common::unified_test_utils::create_test_vector_operations_service()
+            .await
+            .expect("Failed to create VectorOperationsService");
         
         // Recovery should have happened during initialization
         // Verify by checking that WAL files were cleaned up
@@ -202,11 +201,10 @@ mod recovery_tests {
         let sst_engine = create_mock_sst_engine().await?;
         
         // Recovery should skip corrupted file but process valid ones
-        let service = VectorOperationsService::new(
-            wal_config,
-            viper_engine,
-            sst_engine,
-        ).await?;
+        // Use test helper since old constructor signature is incompatible
+        let service = proximadb::tests::common::unified_test_utils::create_test_vector_operations_service()
+            .await
+            .expect("Failed to create VectorOperationsService");
         
         // Valid file should be cleaned up
         assert!(!valid_files[0].exists());
@@ -274,11 +272,10 @@ mod recovery_tests {
         
         // Measure recovery time
         let start = std::time::Instant::now();
-        let service = VectorOperationsService::new(
-            wal_config,
-            viper_engine,
-            sst_engine,
-        ).await?;
+        // Use test helper since old constructor signature is incompatible
+        let service = proximadb::tests::common::unified_test_utils::create_test_vector_operations_service()
+            .await
+            .expect("Failed to create VectorOperationsService");
         let recovery_time = start.elapsed();
         
         debug!("Recovery Performance:");
@@ -338,11 +335,10 @@ mod recovery_tests {
         let sst_engine = create_mock_sst_engine().await?;
         
         // Should recover from all directories
-        let service = VectorOperationsService::new(
-            wal_config,
-            viper_engine,
-            sst_engine,
-        ).await?;
+        // Use test helper since old constructor signature is incompatible
+        let service = proximadb::tests::common::unified_test_utils::create_test_vector_operations_service()
+            .await
+            .expect("Failed to create VectorOperationsService");
         
         // Verify all directories were processed
         // (Implementation would need to expose recovery stats)

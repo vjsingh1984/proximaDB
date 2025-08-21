@@ -241,7 +241,7 @@ async fn load_block_from_disk(
         id_range: (String::new(), String::new()),
         // min_timestamp removed -  0,
         // max_timestamp removed -  0,
-        metadata_stats: HashMap::new(),
+        metadata_stats: None,
     })
 }
 

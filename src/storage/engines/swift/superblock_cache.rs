@@ -16,7 +16,7 @@ use crate::storage::engines::row_based::block_structures::{
     SuperBlock as SwiftSuperBlock, RowBasedDataBlock, 
     BlockMetadataStats
 };
-use crate::storage::engines::row_based::bloom_filter::SstableBloomFilter;
+use crate::core::bloom::SstableBloomFilter;
 
 /// SWIFT-specific superblock cache optimized for tree navigation and instant traversal
 pub struct SwiftSuperBlockCache {

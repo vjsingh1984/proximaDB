@@ -363,7 +363,8 @@ impl CompactionManager {
         // Insert task in priority order
         let insert_pos = queue
             .iter()
-            .position(|existing_task| existing_task.priority < task.priority);
+            .position(|existing_task| existing_task.priority < task.priority)
+            .unwrap_or(queue.len()); // Insert at end if no lower priority task found
 
         queue.insert(insert_pos, task);
 
@@ -778,7 +779,7 @@ impl CompactionManager {
         // FASTEST: Direct VectorRecord to writer (no SstRecord conversions!)
         let mut sorted_vector_records: Vec<(String, VectorRecord)> = Vec::new();
         for (seq, vector) in sorted_vectors.into_iter().enumerate() {
-            let vector_id = vector.id.as_str().to_string();
+            let vector_id = vector.id.as_deref().unwrap_or("").to_string();
             
             // Handle append-only vectors (empty/null IDs) specially
             let key = if vector_id.is_empty() {
@@ -824,7 +825,7 @@ impl CompactionManager {
         }
 
         // Use task-specific block size if provided, otherwise fall back to server config
-        let block_size_kb = task.block_size_kb;
+        let block_size_kb = task.block_size_kb.unwrap_or(64); // Default to 64KB blocks
         let block_size = (block_size_kb * 1024) as usize;
         
         // TODO: Pass filesystem from compaction manager - for now create a new factory

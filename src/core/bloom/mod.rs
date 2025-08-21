@@ -29,7 +29,7 @@ pub trait BloomFilterStrategy: Send + Sync {
     fn bit_count(&self) -> usize;
     
     /// Get the number of hash functions used
-    fn hash_count(&self) -> u32;
+    fn hash_count(&self) -> usize;
     
     /// Serialize the bloom filter to bytes
     fn serialize(&self) -> Result<Vec<u8>>;
@@ -88,7 +88,7 @@ pub fn json_to_metadata_item(key: &str, value: &serde_json::Value) -> crate::pro
     let proto_value = match value {
         serde_json::Value::String(s) => Some(ProtoValue::StringValue(s.clone())),
         serde_json::Value::Number(n) => {
-            Some(ProtoValue::NumberValue(n.as_f64()))
+            n.as_f64().map(ProtoValue::NumberValue)
         }
         serde_json::Value::Bool(b) => Some(ProtoValue::BoolValue(*b)),
         _ => None, // Null, Array, Object not supported in MetadataItem
@@ -134,6 +134,7 @@ impl Default for HashAlgorithm {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BloomFilterConfig {
     /// Strategy to use
+    pub strategy: BloomStrategy,
     
     /// Bits per key (for ByteAligned/BitPacked)
     pub bits_per_key: u32,
@@ -154,7 +155,7 @@ pub struct BloomFilterConfig {
 impl Default for BloomFilterConfig {
     fn default() -> Self {
         Self {
-            // strategy removed -  BloomStrategy::ByteAligned,
+            strategy: BloomStrategy::ByteAligned,
             bits_per_key: 10,
             false_positive_rate: None,
             expected_items: 10000,
@@ -168,7 +169,7 @@ impl BloomFilterConfig {
     /// Create config for SSTable usage
     pub fn for_sstable(expected_items: usize) -> Self {
         Self {
-            // strategy removed -  BloomStrategy::ByteAligned,
+            strategy: BloomStrategy::ByteAligned,
             bits_per_key: 10,
             expected_items,
             ..Default::default()
@@ -178,7 +179,7 @@ impl BloomFilterConfig {
     /// Create config for memtable usage
     pub fn for_memtable(expected_items: usize) -> Self {
         Self {
-            // strategy removed -  BloomStrategy::BitPacked,
+            strategy: BloomStrategy::BitPacked,
             bits_per_key: 8,
             expected_items,
             ..Default::default()
@@ -247,6 +248,32 @@ impl SerializedBloomFilter {
 /// Hash functions for bloom filters
 pub mod hash {
     use std::hash::{Hash, Hasher};
+    
+    /// xxHash 64-bit placeholder implementation
+    pub fn xxhash64(data: &[u8]) -> u64 {
+        // Simple placeholder - in production, use xxhash-rust crate
+        let mut hash = 0u64;
+        for (i, &byte) in data.iter().enumerate() {
+            hash = hash.wrapping_mul(0x1b873593).wrapping_add(byte as u64);
+            hash = hash.rotate_left((i % 32) as u32);
+        }
+        hash
+    }
+    
+    /// CityHash 64-bit placeholder implementation
+    pub fn cityhash64(data: &[u8]) -> u64 {
+        // Simple placeholder - in production, use cityhash crate
+        let mut hash = 0x9ae16a3b2f90404fu64;
+        for chunk in data.chunks(8) {
+            let mut value = 0u64;
+            for (i, &byte) in chunk.iter().enumerate() {
+                value |= (byte as u64) << (i * 8);
+            }
+            hash = hash.wrapping_mul(0xc3a5c85c97cb3127).wrapping_add(value);
+            hash = hash.rotate_left(31);
+        }
+        hash
+    }
     
     /// MurmurHash3 32-bit implementation
     pub fn murmur3_32(key: &[u8], seed: u32) -> u32 {
@@ -341,3 +368,382 @@ mod tests {
         assert_eq!(hash::murmur3_32(key, 0), hash1);
     }
 }
+
+// ============================================================================
+// Additional types and aliases for storage engine compatibility
+// ============================================================================
+
+/// Stats for bloom filter usage
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct BloomFilterStats {
+    pub key_count: u64,
+    pub metadata_columns: u64,
+    pub total_keys: u64,
+    pub key_lookups_saved: u64,
+    pub metadata_queries_saved: u64,
+}
+
+/// Combined bloom filter for SSTable (keys + metadata)
+/// Memory target: ~8MB per collection (down from ~40MB)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(from = "SerializedSstableBloomFilter", into = "SerializedSstableBloomFilter")]
+pub struct SstableBloomFilter {
+    /// Key filter configuration
+    pub key_filter_config: BloomFilterConfig,
+    /// Key filter data
+    pub key_filter_data: Vec<u8>,
+    /// Metadata filter data  
+    pub metadata_filter_data: Vec<u8>,
+    /// Statistics
+    pub stats: BloomFilterStats,
+    /// Memory usage tracking
+    #[serde(skip)]
+    memory_usage: Option<usize>,
+}
+
+impl SstableBloomFilter {
+    /// Create a new SstableBloomFilter
+    pub fn new(
+        key_filter_config: BloomFilterConfig,
+        key_filter_data: Vec<u8>,
+        metadata_filter_data: Vec<u8>,
+        stats: BloomFilterStats,
+    ) -> Self {
+        let memory_usage = std::mem::size_of::<Self>() + key_filter_data.len() + metadata_filter_data.len();
+        Self {
+            key_filter_config,
+            key_filter_data,
+            metadata_filter_data,
+            stats,
+            memory_usage: Some(memory_usage),
+        }
+    }
+    
+    /// Check if key might exist
+    pub fn might_contain_key(&self, key: &str) -> Result<bool> {
+        // For now, return true conservatively
+        // TODO: Implement proper deserialization once strategies are fixed
+        Ok(true)
+    }
+    
+    /// Check if metadata might match using MetadataItem for type safety
+    pub fn might_match_metadata(&self, _column: &str, _item: &crate::proto::proximadb::MetadataItem) -> Result<bool> {
+        if self.metadata_filter_data.is_empty() {
+            return Ok(false);
+        }
+        // Conservative approach: assume metadata might match
+        Ok(true)
+    }
+    
+    /// Get total size in bytes
+    pub fn total_size_bytes(&self) -> usize {
+        self.key_filter_data.len() + self.metadata_filter_data.len()
+    }
+    
+    /// Get memory usage in bytes
+    pub fn memory_usage_bytes(&self) -> usize {
+        self.memory_usage.unwrap_or_else(|| {
+            std::mem::size_of::<Self>() + 
+            self.key_filter_data.len() + 
+            self.metadata_filter_data.len()
+        })
+    }
+    
+    /// Check if within target memory limit (8MB)
+    pub fn is_within_memory_target(&self) -> bool {
+        self.memory_usage_bytes() < 8 * 1024 * 1024
+    }
+    
+    /// Custom serialization using manual byte layout to avoid bincode issues
+    pub fn serialize(&self) -> Result<Vec<u8>> {
+        use std::io::Write;
+        let mut buffer = Vec::new();
+        
+        // Write a simple header
+        buffer.write_all(b"BF01")?; // Magic bytes + version
+        
+        // Write config
+        let strategy_byte = match self.key_filter_config.strategy {
+            BloomStrategy::BitPacked => 0u8,
+            BloomStrategy::ByteAligned => 1u8,
+            BloomStrategy::Simple => 2u8,
+            BloomStrategy::Composite => 3u8,
+        };
+        buffer.write_all(&[strategy_byte])?;
+        buffer.write_all(&self.key_filter_config.bits_per_key.to_le_bytes())?;
+        let fpr = self.key_filter_config.false_positive_rate.unwrap_or(f64::NAN);
+        buffer.write_all(&fpr.to_le_bytes())?;
+        buffer.write_all(&self.key_filter_config.expected_items.to_le_bytes())?;
+        buffer.write_all(&[if self.key_filter_config.enabled { 1u8 } else { 0u8 }])?;
+        
+        let hash_byte = match self.key_filter_config.hash_algorithm {
+            HashAlgorithm::Murmur3 => 0u8,
+            HashAlgorithm::XXHash => 1u8,
+            HashAlgorithm::CityHash => 2u8,
+        };
+        buffer.write_all(&[hash_byte])?;
+        
+        // Write stats
+        buffer.write_all(&self.stats.key_count.to_le_bytes())?;
+        buffer.write_all(&self.stats.metadata_columns.to_le_bytes())?;
+        buffer.write_all(&self.stats.total_keys.to_le_bytes())?;
+        buffer.write_all(&self.stats.key_lookups_saved.to_le_bytes())?;
+        buffer.write_all(&self.stats.metadata_queries_saved.to_le_bytes())?;
+        
+        // Write data lengths and data
+        buffer.write_all(&(self.key_filter_data.len() as u32).to_le_bytes())?;
+        buffer.write_all(&self.key_filter_data)?;
+        
+        buffer.write_all(&(self.metadata_filter_data.len() as u32).to_le_bytes())?;
+        buffer.write_all(&self.metadata_filter_data)?;
+        
+        Ok(buffer)
+    }
+    
+    /// Custom deserialization using manual byte layout to avoid bincode issues
+    pub fn deserialize(data: &[u8]) -> Result<Self> {
+        use std::io::Read;
+        let mut cursor = std::io::Cursor::new(data);
+        
+        // Read and validate header
+        let mut magic = [0u8; 4];
+        cursor.read_exact(&mut magic)?;
+        if &magic != b"BF01" {
+            return Err(anyhow::anyhow!("Invalid bloom filter format"));
+        }
+        
+        // Read config
+        let mut strategy_buf = [0u8; 1];
+        cursor.read_exact(&mut strategy_buf)?;
+        let strategy = match strategy_buf[0] {
+            0 => BloomStrategy::BitPacked,
+            1 => BloomStrategy::ByteAligned,
+            2 => BloomStrategy::Simple,
+            3 => BloomStrategy::Composite,
+            _ => BloomStrategy::ByteAligned,
+        };
+        
+        let mut bits_per_key_buf = [0u8; 4];
+        cursor.read_exact(&mut bits_per_key_buf)?;
+        let bits_per_key = u32::from_le_bytes(bits_per_key_buf);
+        
+        let mut fpr_buf = [0u8; 8];
+        cursor.read_exact(&mut fpr_buf)?;
+        let fpr = f64::from_le_bytes(fpr_buf);
+        let false_positive_rate = if fpr.is_nan() { None } else { Some(fpr) };
+        
+        let mut expected_items_buf = [0u8; 8];
+        cursor.read_exact(&mut expected_items_buf)?;
+        let expected_items = usize::from_le_bytes(expected_items_buf);
+        
+        let mut enabled_buf = [0u8; 1];
+        cursor.read_exact(&mut enabled_buf)?;
+        let enabled = enabled_buf[0] != 0;
+        
+        let mut hash_buf = [0u8; 1];
+        cursor.read_exact(&mut hash_buf)?;
+        let hash_algorithm = match hash_buf[0] {
+            0 => HashAlgorithm::Murmur3,
+            1 => HashAlgorithm::XXHash,
+            2 => HashAlgorithm::CityHash,
+            _ => HashAlgorithm::Murmur3,
+        };
+        
+        // Read stats
+        let mut stats_buf = [0u8; 8];
+        
+        cursor.read_exact(&mut stats_buf)?;
+        let key_count = u64::from_le_bytes(stats_buf);
+        
+        cursor.read_exact(&mut stats_buf)?;
+        let metadata_columns = u64::from_le_bytes(stats_buf);
+        
+        cursor.read_exact(&mut stats_buf)?;
+        let total_keys = u64::from_le_bytes(stats_buf);
+        
+        cursor.read_exact(&mut stats_buf)?;
+        let key_lookups_saved = u64::from_le_bytes(stats_buf);
+        
+        cursor.read_exact(&mut stats_buf)?;
+        let metadata_queries_saved = u64::from_le_bytes(stats_buf);
+        
+        // Read data
+        let mut len_buf = [0u8; 4];
+        cursor.read_exact(&mut len_buf)?;
+        let key_data_len = u32::from_le_bytes(len_buf) as usize;
+        
+        let mut key_filter_data = vec![0u8; key_data_len];
+        cursor.read_exact(&mut key_filter_data)?;
+        
+        cursor.read_exact(&mut len_buf)?;
+        let meta_data_len = u32::from_le_bytes(len_buf) as usize;
+        
+        let mut metadata_filter_data = vec![0u8; meta_data_len];
+        cursor.read_exact(&mut metadata_filter_data)?;
+        
+        // Create the structures
+        let stats = BloomFilterStats {
+            key_count,
+            metadata_columns,
+            total_keys,
+            key_lookups_saved,
+            metadata_queries_saved,
+        };
+        
+        let key_filter_config = BloomFilterConfig {
+            strategy,
+            bits_per_key,
+            false_positive_rate,
+            expected_items,
+            enabled,
+            hash_algorithm,
+        };
+        
+        Ok(Self::new(
+            key_filter_config,
+            key_filter_data,
+            metadata_filter_data,
+            stats,
+        ))
+    }
+}
+
+/// Hierarchical bloom filter configuration for SST files
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HierarchicalBloomConfig {
+    pub global_key_filter: BloomFilterConfig,
+    pub global_metadata_filter: BloomFilterConfig,
+    pub block_key_filter: BloomFilterConfig,
+    pub block_metadata_filter: BloomFilterConfig,
+    pub block_count_threshold: usize,
+    pub metadata_column_threshold: usize,
+}
+
+/// Bloom filter builder for incremental construction
+pub struct BloomFilterBuilder {
+    config: BloomFilterConfig,
+    filter: Box<dyn BloomFilterStrategy>,
+}
+
+impl BloomFilterBuilder {
+    pub fn new(config: BloomFilterConfig) -> Self {
+        let filter = factory::BloomFilterFactory::create(config.clone());
+        Self { config, filter }
+    }
+    
+    pub fn add(&mut self, key: &[u8]) {
+        self.filter.insert(key);
+    }
+    
+    pub fn build(self) -> Box<dyn BloomFilterStrategy> {
+        self.filter
+    }
+}
+
+/// Serializable version of SstableBloomFilter to work around bincode limitations
+#[derive(Debug, Serialize, Deserialize)]
+pub struct SerializedSstableBloomFilter {
+    // BloomFilterConfig fields flattened to avoid Option<f64> issues
+    strategy: u8,
+    bits_per_key: u32,
+    false_positive_rate: f64,  // Use NaN for None
+    expected_items: usize,
+    enabled: bool,
+    hash_algorithm: u8,
+    
+    // Filter data
+    key_filter_data: Vec<u8>,
+    metadata_filter_data: Vec<u8>,
+    
+    // Stats fields
+    key_count: u64,
+    metadata_columns: u64,
+    total_keys: u64,
+    key_lookups_saved: u64,
+    metadata_queries_saved: u64,
+}
+
+// Implement conversion for serde
+impl From<SerializedSstableBloomFilter> for SstableBloomFilter {
+    fn from(serialized: SerializedSstableBloomFilter) -> Self {
+        let strategy = match serialized.strategy {
+            0 => BloomStrategy::BitPacked,
+            1 => BloomStrategy::ByteAligned,
+            2 => BloomStrategy::Simple,
+            3 => BloomStrategy::Composite,
+            _ => BloomStrategy::ByteAligned,
+        };
+        
+        let hash_algorithm = match serialized.hash_algorithm {
+            0 => HashAlgorithm::Murmur3,
+            1 => HashAlgorithm::XXHash,
+            2 => HashAlgorithm::CityHash,
+            _ => HashAlgorithm::Murmur3,
+        };
+        
+        let false_positive_rate = if serialized.false_positive_rate.is_nan() {
+            None
+        } else {
+            Some(serialized.false_positive_rate)
+        };
+        
+        let memory_usage = std::mem::size_of::<Self>() + 
+            serialized.key_filter_data.len() + 
+            serialized.metadata_filter_data.len();
+        
+        Self {
+            key_filter_config: BloomFilterConfig {
+                strategy,
+                bits_per_key: serialized.bits_per_key,
+                false_positive_rate,
+                expected_items: serialized.expected_items,
+                enabled: serialized.enabled,
+                hash_algorithm,
+            },
+            key_filter_data: serialized.key_filter_data,
+            metadata_filter_data: serialized.metadata_filter_data,
+            stats: BloomFilterStats {
+                key_count: serialized.key_count,
+                metadata_columns: serialized.metadata_columns,
+                total_keys: serialized.total_keys,
+                key_lookups_saved: serialized.key_lookups_saved,
+                metadata_queries_saved: serialized.metadata_queries_saved,
+            },
+            memory_usage: Some(memory_usage),
+        }
+    }
+}
+
+impl From<SstableBloomFilter> for SerializedSstableBloomFilter {
+    fn from(bf: SstableBloomFilter) -> Self {
+        Self {
+            strategy: match bf.key_filter_config.strategy {
+                BloomStrategy::BitPacked => 0,
+                BloomStrategy::ByteAligned => 1,
+                BloomStrategy::Simple => 2,
+                BloomStrategy::Composite => 3,
+            },
+            bits_per_key: bf.key_filter_config.bits_per_key,
+            false_positive_rate: bf.key_filter_config.false_positive_rate.unwrap_or(f64::NAN),
+            expected_items: bf.key_filter_config.expected_items,
+            enabled: bf.key_filter_config.enabled,
+            hash_algorithm: match bf.key_filter_config.hash_algorithm {
+                HashAlgorithm::Murmur3 => 0,
+                HashAlgorithm::XXHash => 1,
+                HashAlgorithm::CityHash => 2,
+            },
+            key_filter_data: bf.key_filter_data,
+            metadata_filter_data: bf.metadata_filter_data,
+            key_count: bf.stats.key_count,
+            metadata_columns: bf.stats.metadata_columns,
+            total_keys: bf.stats.total_keys,
+            key_lookups_saved: bf.stats.key_lookups_saved,
+            metadata_queries_saved: bf.stats.metadata_queries_saved,
+        }
+    }
+}
+
+// Type aliases for compatibility
+pub type BloomFilter = Box<dyn BloomFilterStrategy>;
+// Note: MetadataBloomFilter is a trait, not a type alias
+pub type CompositeBloomFilter = Box<dyn BloomFilterStrategy>;

@@ -73,8 +73,8 @@ impl CollectionPartition {
 
         // Update vector ID index for fast lookups
         for vector_record in batch.vector_records.iter() {
-            if !vector_record.id.as_str().is_empty() {
-                self.vector_id_index.insert(vector_record.id.as_str().to_string(), batch_id.clone());
+            if !vector_record.id.as_deref().is_empty() {
+                self.vector_id_index.insert(vector_record.id.as_deref().to_string(), batch_id.clone());
             }
         }
 
@@ -102,7 +102,7 @@ impl CollectionPartition {
         // Search through all batches to find the latest version
         for batch in self.wal_batches.values() {
             for vector_record in batch.vector_records.iter() {
-                if !vector_record.id.as_str().is_empty() && vector_record.id.as_str().unwrap_or("") == vector_id {
+                if !vector_record.id.as_deref().is_empty() && vector_record.id.as_deref().unwrap_or("") == vector_id {
                     let sequence = batch.timestamp.duration_since(std::time::UNIX_EPOCH).unwrap().as_millis() as u64;
                     let version = vector_record.version;
                     
@@ -162,8 +162,8 @@ impl CollectionPartition {
             if let Some(batch) = self.wal_batches.remove(&batch_id) {
                 // Remove vector IDs from index
                 for vector_record in batch.vector_records.iter() {
-                    if !vector_record.id.as_str().is_empty() {
-                        self.vector_id_index.remove(vector_record.id.as_str());
+                    if !vector_record.id.as_deref().is_empty() {
+                        self.vector_id_index.remove(vector_record.id.as_deref());
                     }
                 }
                 
@@ -199,8 +199,8 @@ impl CollectionPartition {
                 let sequence = batch.timestamp.duration_since(std::time::UNIX_EPOCH).unwrap().as_millis() as u64;
                 let version = vector_record.version;
                 
-                if !vector_record.id.as_str().is_empty() {
-                    let vector_id = vector_record.id.as_str();
+                if !vector_record.id.as_deref().is_empty() {
+                    let vector_id = vector_record.id.as_deref();
                     // Check if this is the latest version (prioritize version number over timestamp)
                     let is_newer = match id_to_latest.get(vector_id) {
                         Some((_, existing_seq, existing_version)) => {
@@ -217,7 +217,7 @@ impl CollectionPartition {
                     
                     if is_newer {
                         id_to_latest.insert(
-                            vector_record.id.as_str().to_string(),
+                            vector_record.id.as_deref().to_string(),
                             (vector_record.clone(), sequence, version)
                         );
                     }
@@ -308,8 +308,8 @@ impl CollectionPartition {
                 let sequence = wal_batch.timestamp.duration_since(std::time::UNIX_EPOCH).unwrap().as_millis() as u64;
                 let version = vector_record.version;
                 
-                if !vector_record.id.as_str().is_empty() {
-                    let vector_id = vector_record.id.as_str();
+                if !vector_record.id.as_deref().is_empty() {
+                    let vector_id = vector_record.id.as_deref();
                     // Check if this is the latest version (prioritize version number over timestamp)
                     let is_newer = match id_to_latest.get(vector_id) {
                         Some((_, _, existing_seq, existing_version)) => {
@@ -327,12 +327,12 @@ impl CollectionPartition {
                     if is_newer {
                         let score = distance_compute.calculate_distance(query_vector, &vector_record.vector, distance_metric);
                         id_to_latest.insert(
-                            vector_record.id.as_str().to_string(),
+                            vector_record.id.as_deref().to_string(),
                             (score, vector_record.clone(), sequence, version)
                         );
                         
                         tracing::debug!("📝 Updated latest version for ID {}: seq={}, version={:?}", 
-                                       vector_record.id.as_str(), sequence, version);
+                                       vector_record.id.as_deref(), sequence, version);
                     }
                 } else {
                     // No ID - include directly (no MVCC possible), but check expiry

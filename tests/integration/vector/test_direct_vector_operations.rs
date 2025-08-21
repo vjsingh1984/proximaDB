@@ -36,12 +36,10 @@ async fn create_test_services() -> (VectorOperationsService, CollectionService, 
         2 * 1024 * 1024,  // 2MB flush threshold
     ));
     
-    // Create VectorOperationsService
-    let direct_vector_service = VectorOperationsService::new(
-        filesystem.clone(),
-        memtable.clone(),
-        temp_dir.path().to_path_buf(),
-    );
+    // Create VectorOperationsService using test utilities
+    let direct_vector_service = proximadb::tests::common::unified_test_utils::create_test_vector_operations_service()
+        .await
+        .expect("Failed to create VectorOperationsService");
     
     // Create CollectionService
     let collection_service = CollectionService::new(

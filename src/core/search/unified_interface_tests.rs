@@ -290,7 +290,7 @@ mod tests {
         let quantization_engine = Arc::new(UnifiedQuantizationEngine::new());
         let collection_service = Arc::new(CollectionService::new_for_testing());
         
-        let orchestrator = UnifiedSearchOrchestrator::new(
+        let orchestrator = IntegratedSearchOptimizer::new(
             distance_compute,
             quantization_engine,
             collection_service,
@@ -305,7 +305,7 @@ mod tests {
         let quantization_engine = Arc::new(UnifiedQuantizationEngine::new());
         let collection_service = Arc::new(CollectionService::new_for_testing());
         
-        let mut orchestrator = UnifiedSearchOrchestrator::new(
+        let mut orchestrator = IntegratedSearchOptimizer::new(
             distance_compute,
             quantization_engine,
             collection_service,
@@ -374,7 +374,7 @@ mod tests {
         let quantization_engine = Arc::new(UnifiedQuantizationEngine::new());
         let collection_service = Arc::new(CollectionService::new_for_testing());
         
-        let mut orchestrator = UnifiedSearchOrchestrator::new(
+        let mut orchestrator = IntegratedSearchOptimizer::new(
             distance_compute,
             quantization_engine,
             collection_service,
@@ -414,7 +414,7 @@ mod tests {
         let quantization_engine = Arc::new(UnifiedQuantizationEngine::new());
         let collection_service = Arc::new(CollectionService::new_for_testing());
         
-        let mut orchestrator = UnifiedSearchOrchestrator::new(
+        let mut orchestrator = IntegratedSearchOptimizer::new(
             distance_compute,
             quantization_engine,
             collection_service,
@@ -455,7 +455,7 @@ mod tests {
         let quantization_engine = Arc::new(UnifiedQuantizationEngine::new());
         let collection_service = Arc::new(CollectionService::new_for_testing());
         
-        let orchestrator = UnifiedSearchOrchestrator::new(
+        let orchestrator = IntegratedSearchOptimizer::new(
             distance_compute,
             quantization_engine,
             collection_service,
@@ -495,7 +495,7 @@ mod tests {
         let quantization_engine = Arc::new(UnifiedQuantizationEngine::new());
         let collection_service = Arc::new(CollectionService::new_for_testing());
         
-        let orchestrator = UnifiedSearchOrchestrator::new(
+        let orchestrator = IntegratedSearchOptimizer::new(
             distance_compute,
             quantization_engine,
             collection_service,
@@ -533,7 +533,7 @@ mod tests {
         let quantization_engine = Arc::new(UnifiedQuantizationEngine::new());
         let collection_service = Arc::new(CollectionService::new_for_testing());
         
-        let orchestrator = UnifiedSearchOrchestrator::new(
+        let orchestrator = IntegratedSearchOptimizer::new(
             distance_compute,
             quantization_engine,
             collection_service,

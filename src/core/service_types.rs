@@ -238,7 +238,7 @@ impl VectorRecord {
     /// Update record and increment version
     pub fn update(&mut self) -> &mut Self {
         self.updated_at = Some(Utc::now().timestamp_millis());
-        self.version = Some(self.version + 1);
+        self.version = Some(self.version.unwrap_or(0) + 1);
         self
     }
 

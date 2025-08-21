@@ -20,6 +20,7 @@
 //! for all API operations that can be used by both REST and gRPC handlers.
 
 use std::sync::Arc;
+use std::collections::HashMap;
 use anyhow::{anyhow, Result, Context};
 use tracing::{info, error, debug};
 
@@ -139,7 +140,7 @@ impl UnifiedHandlers {
                 // Parse the response to get actual stats
                 match serde_json::from_slice::<serde_json::Value>(&response_bytes) {
                     Ok(response_json) => {
-                        let success = response_json.get("success").and_then(|v| v.as_bool());
+                        let success = response_json.get("success").and_then(|v| v.as_bool()).unwrap_or(false);
                         let vector_ids: Vec<String> = response_json.get("vector_ids")
                             .and_then(|v| v.as_array())
                             .map(|arr| arr.iter()
@@ -386,13 +387,8 @@ impl UnifiedHandlers {
                     similarity: Some(1.0), // Perfect match for get_vector
                     vector: if include_vector { vector_record.vector } else { vec![] },
                     metadata: if include_metadata { 
-                        // Convert HashMap to MetadataItem vector
-                        vector_record.metadata.into_iter()
-                            .map(|(k, v)| crate::proto::proximadb::MetadataItem {
-                                key: k,
-                                value: v.to_string(),
-                            })
-                            .collect()
+                        // Metadata is already Vec<MetadataItem>
+                        vector_record.metadata
                     } else { 
                         vec![] 
                     },
@@ -522,19 +518,35 @@ impl UnifiedHandlers {
             request.top_k as usize,
         ).await {
             Ok(search_results) => {
-                // VectorOperationsService returns VectorRecord, convert to SearchVectorRecord
-                let results: Vec<crate::proto::proximadb::SearchVectorRecord> = search_results.into_iter().enumerate().map(|(index, result)| {
-                    let vector = if include_vectors { result.vector } else { vec![] };
-                    let metadata = if include_metadata { result.metadata } else { vec![] };
+                // VectorOperationsService returns SearchResult, convert to SearchVectorRecord
+                let results: Vec<crate::proto::proximadb::SearchVectorRecord> = search_results.into_iter().map(|result| {
+                    let vector = if include_vectors.unwrap_or(true) { 
+                        result.vector.unwrap_or_default()
+                    } else { 
+                        vec![]
+                    };
+                    let metadata = if include_metadata.unwrap_or(true) { 
+                        // Convert HashMap<String, serde_json::Value> to Vec<MetadataItem>
+                        result.metadata.into_iter().map(|(key, value)| {
+                            crate::proto::proximadb::MetadataItem {
+                                key,
+                                value: Some(crate::proto::proximadb::metadata_item::Value::StringValue(
+                                    value.to_string()
+                                )),
+                            }
+                        }).collect()
+                    } else { 
+                        vec![]
+                    };
                     
                     crate::proto::proximadb::SearchVectorRecord {
-                        id: result.id.unwrap_or_else(|| format!("result_{}", index)),
-                        score: 1.0, // Default score since VectorRecord doesn't have similarity
-                        similarity: Some(1.0), // Default similarity
+                        id: result.id,
+                        score: result.score,
+                        similarity: result.similarity,
                         vector,
                         metadata,
                         version: result.version,
-                        timestamp: Some(result.timestamp),
+                        timestamp: result.timestamp,
                     }
                 }).collect();
                 
@@ -788,7 +800,7 @@ impl UnifiedHandlers {
             Ok(response) => {
                 if response.success {
                     Ok((true, None, None, 1, None, None))
-                } else if response.error_code.as_str() == Some("NOT_FOUND") {
+                } else if response.error_code.as_deref() == Some("NOT_FOUND") {
                     Ok((false, None, None, 0, Some("Collection not found".to_string()), Some("NOT_FOUND".to_string())))
                 } else {
                     Ok((false, None, None, 0, response.error_code.clone(), response.error_code))
@@ -818,7 +830,7 @@ impl UnifiedHandlers {
         Ok(collections.into_iter()
             .find(|c| {
                 c.id == collection_id || 
-                c.config.as_ref().map(|cfg| cfg.name == collection_id)
+                c.config.as_ref().map(|cfg| cfg.name == collection_id).unwrap_or(false)
             }))
     }
     

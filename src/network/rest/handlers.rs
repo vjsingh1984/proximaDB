@@ -67,7 +67,7 @@ impl IntoResponse for ErrorResponse {
             "error_code": self.error_code
         }));
         
-        (StatusCode::from_u16(self.status), body).into_response()
+        (StatusCode::from_u16(self.status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR), body).into_response()
     }
 }
 
@@ -113,13 +113,17 @@ impl CollectionConfigJson {
         let mut config = CollectionConfig {
             name: self.name.clone(),
             dimension: self.dimension,
-            distance_metric: conversions::parse_distance_metric(&self.distance_metric.as_str()).into(),
-            storage_engine: conversions::parse_storage_engine(&self.storage_engine.as_str()).into(),
+            distance_metric: self.distance_metric.as_deref()
+                .and_then(|s| conversions::parse_distance_metric(s).ok())
+                .unwrap_or(crate::proto::proximadb::DistanceMetric::Cosine) as i32,
+            storage_engine: self.storage_engine.as_deref()
+                .and_then(|s| conversions::parse_storage_engine(s).ok())
+                .unwrap_or(crate::proto::proximadb::StorageEngine::Viper) as i32,
             filterable_columns: self.filterable_columns.clone().unwrap_or_default(),
             index_configs: self.index_configs.clone().unwrap_or_default(),
             quantization: self.quantization.clone(),
-            storage_config: self.storage.clone(),
-            primary_index: self.primary_index.clone().unwrap_or_default(),
+            storage_config: self.storage_config.clone(),
+            primary_index: self.primary_index.clone(),
             auto_index_selection: self.auto_index_selection,
             description: self.description.clone(),
             tags: self.tags.clone().unwrap_or_default(),
@@ -133,14 +137,14 @@ impl CollectionConfigJson {
         Self {
             name: proto.name.clone(),
             dimension: proto.dimension,
-            distance_metric: Some(conversions::distance_metric_to_string(proto.distance_metric())),
-            storage_engine: Some(conversions::storage_engine_to_string(proto.storage_engine())),
+            distance_metric: Some(conversions::distance_metric_to_string(proto.distance_metric).to_owned()),
+            storage_engine: Some(conversions::storage_engine_to_string(proto.storage_engine).to_owned()),
             filterable_columns: if proto.filterable_columns.is_empty() { None } else { Some(proto.filterable_columns.clone()) },
             index_configs: if proto.index_configs.is_empty() { None } else { Some(proto.index_configs.clone()) },
             quantization: proto.quantization.clone(),
-            storage_config: proto.storage.clone(),
-            primary_index: if proto.primary_index.is_empty() { None } else { Some(proto.primary_index.clone()) },
-            auto_index_selection: Some(proto.auto_index_selection),
+            storage_config: proto.storage_config.clone(),
+            primary_index: proto.primary_index.clone(),
+            auto_index_selection: proto.auto_index_selection,
             description: proto.description.clone(),
             tags: if proto.tags.is_empty() { None } else { Some(proto.tags.clone()) },
             owner: proto.owner.clone(),
@@ -963,8 +967,8 @@ pub async fn get_vector(
     Path((collection_id, vector_id)): Path<(String, String)>,
     Query(params): Query<GetVectorParams>,
 ) -> Result<JsonResponse<VectorGetResponse>, ErrorResponse> {
-    let include_vector = params.include_vector;
-    let include_metadata = params.include_metadata;
+    let include_vector = params.include_vector.unwrap_or(true);
+    let include_metadata = params.include_metadata.unwrap_or(true);
     
     match state.unified_handlers.handle_get_vector(
         &collection_id,
@@ -1040,9 +1044,8 @@ pub async fn execute_sql(
             
             let response = SqlQueryResponse {
                 rows: result.rows,
-                columns: result.columns.into_iter().map(|(name, data_type)| ColumnInfo {
+                columns: result.columns.into_iter().map(|(name, _data_type)| ColumnInfo {
                     name,
-                    data_type,
                 }).collect(),
                 row_count: result.row_count,
                 execution_time_ms: elapsed_ms,
@@ -1085,11 +1088,11 @@ pub async fn get_collection_metrics(
 ) -> Result<JsonResponse<ApiResponse<serde_json::Value>>, StatusCode> {
     // Parse query options
     let include_hints = params.get("include_hints")
-        .map(|v| v.parse())
-        ;
-    let _include_history = params.get("include_hints")
-        .map(|v| v.parse())
-        ;
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(false);
+    let _include_history = params.get("include_history")
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(false);
     
     // TODO: Delegate to metrics query service when integrated
     match state.unified_handlers.get_collection_metrics(&collection_id, include_hints).await {
@@ -1185,7 +1188,7 @@ fn convert_index_config_to_proto(config: IndexConfiguration) -> IndexConfig {
         update_mode,
         async_update_timeout_ms: config.async_update_timeout_ms,
         async_update_batch_size: config.async_update_batch_size,
-        enable_background_optimization: config.enable_background_optimization,
+        enable_background_optimization: config.enable_background_optimization.unwrap_or(false),
         hnsw_config: config.hnsw_config.map(|c| HnswConfig {
             m: c.m,
             ef_construction: c.ef_construction,
@@ -1230,18 +1233,21 @@ fn convert_index_config_to_proto(config: IndexConfiguration) -> IndexConfig {
             bucket_width: c.bucket_width,
             binary_vectors: c.binary_vectors,
             max_candidates: c.max_candidates,
-            projection: match c.projection.as_str() {
-                "binary" => RandomProjectionType::Binary as i32,
-                "sparse" => RandomProjectionType::Sparse as i32,
+            projection: match c.projection.as_ref().map(|s| s.as_str()) {
+                Some("binary") => RandomProjectionType::Binary as i32,
+                Some("sparse") => RandomProjectionType::Sparse as i32,
                 _ => RandomProjectionType::Gaussian as i32,
             },
         }),
         build_concurrency: config.build_concurrency,
         memory_limit_mb: config.memory_limit_mb,
         checkpoint_interval_ms: config.checkpoint_interval_ms,
-        is_primary: config.is_primary,
+        is_primary: config.is_primary.unwrap_or(false),
         use_cases: config.use_cases.unwrap_or_default(),
         selectivity_threshold: config.selectivity_threshold,
+        use_quantization: None,  // Will inherit from collection by default
+        quantization_override: None,  // No quantization override by default
+        queue_representation: None,  // Default queue representation
     }
 }
 
@@ -1250,7 +1256,7 @@ fn convert_quantization_config_to_proto(config: RestQuantizationConfig) -> Quant
     // Map from REST structure to new granular proto structure
     let strategy = if let Some(sq) = &config.storage_quantization {
         // Try to infer strategy from the level type in storage config
-        match sq.level.as_str() {
+        match sq.level.level_type.as_str() {
             "pq" | "pq4" | "pq8" | "int8" | "scalar" | "binary" => {
                 crate::proto::proximadb::quantization_config::Strategy::CustomLevels
             },
@@ -1367,42 +1373,19 @@ fn convert_index_config_from_proto(config: IndexConfig) -> IndexConfiguration {
 
 /// Convert quantization config from proto
 fn convert_quantization_config_from_proto(config: QuantizationConfig) -> RestQuantizationConfig {
+    // The new proto structure is simpler - map to REST structure with defaults
     RestQuantizationConfig {
         enabled: config.enabled,
-        storage_quantization: config.storage_quantization.map(|sq| StorageQuantizationConfig {
-            enabled: sq.enabled,
-            // TODO: Restore when convert_quantization_level_from_proto is available
-            level: RestQuantizationLevel {
-                level_type: "none".to_string(),
-                bits: None,
-                scale: None,
-                offset: None,
-                num_subvectors: None,
-                bits_per_code: None,
-                codebook_id: None,
-                adaptive_subvectors: None,
-                threshold: None,
-                sign_based: None,
-                clamp_values: None,
-                type_id: None,
-                bits_per_element: None,
-                config: None,
-            },
-            codebook_id: sq.codebook_id,
-            progressive_quantization: sq.progressive_quantization,
-            storage_compatibility: match sq.storage_compatibility {
-                x if x == StorageEngineCompatibility::ViperOnly as i32 => "viper_only",
-                x if x == StorageEngineCompatibility::AllEngines as i32 => "all_engines",
-                x if x == StorageEngineCompatibility::LsmAndViper as i32 => "lsm_and_viper",
-                _ => "viper_only",
-            }.to_string(),
-        }),
-        index_quantization: config.index_quantization.map(|iq| IndexQuantizationConfig {
-            enabled: iq.enabled,
-            strategies: iq.strategies.into_iter().map(|s| RestIndexQuantizationStrategy {
-                index_name: s.index_name,
-                level: RestQuantizationLevel { // s.level.map(convert_quantization_level_from_proto).unwrap_or(RestQuantizationLevel {
-                    level_type: "none".to_string(),
+        storage_quantization: if config.enabled {
+            // Create a default storage quantization config based on the strategy
+            Some(StorageQuantizationConfig {
+                enabled: true,
+                level: RestQuantizationLevel {
+                    level_type: match config.strategy {
+                        x if x == crate::proto::proximadb::quantization_config::Strategy::Aggressive as i32 => "pq4",
+                        x if x == crate::proto::proximadb::quantization_config::Strategy::Minimal as i32 => "int8",
+                        _ => "pq8",
+                    }.to_string(),
                     bits: None,
                     scale: None,
                     offset: None,
@@ -1417,39 +1400,46 @@ fn convert_quantization_config_from_proto(config: QuantizationConfig) -> RestQua
                     bits_per_element: None,
                     config: None,
                 },
-                build_async: s.build_async,
-                codebook_id: s.codebook_id,
-            }).collect(),
-            auto_select_strategy: iq.auto_select_strategy,
-        }),
-        search_quantization: config.search_quantization.map(|sq| SearchQuantizationConfig {
-            enabled: sq.enabled,
-            default_level: RestQuantizationLevel { // sq.default_level.map(convert_quantization_level_from_proto).unwrap_or(RestQuantizationLevel {
-                level_type: "none".to_string(),
-                bits: None,
-                scale: None,
-                offset: None,
-                num_subvectors: None,
-                bits_per_code: None,
                 codebook_id: None,
-                adaptive_subvectors: None,
-                threshold: None,
-                sign_based: None,
-                clamp_values: None,
-                type_id: None,
-                bits_per_element: None,
-                config: None,
-            },
-            adaptive_precision: sq.adaptive_precision,
-            accuracy_threshold: sq.accuracy_threshold,
-            candidate_multiplier: sq.candidate_multiplier,
-        }),
-        compression_ratio_target: Some(config.compression_ratio_target),
-        validation: config.validation.map(|v| QuantizationValidation {
-            accuracy_threshold: v.accuracy_threshold,
-            validation_sample_size: v.validation_sample_size,
-            enable_quality_monitoring: v.enable_quality_monitoring,
-            retraining_threshold: v.retraining_threshold,
+                progressive_quantization: config.enable_progressive_search,
+                storage_compatibility: "all_engines".to_string(),
+            })
+        } else {
+            None
+        },
+        index_quantization: None, // Index quantization inherits from storage by default
+        search_quantization: if config.enable_progressive_search {
+            Some(SearchQuantizationConfig {
+                enabled: true,
+                default_level: RestQuantizationLevel {
+                    level_type: "auto".to_string(),
+                    bits: None,
+                    scale: None,
+                    offset: None,
+                    num_subvectors: None,
+                    bits_per_code: None,
+                    codebook_id: None,
+                    adaptive_subvectors: None,
+                    threshold: None,
+                    sign_based: None,
+                    clamp_values: None,
+                    type_id: None,
+                    bits_per_element: None,
+                    config: None,
+                },
+                adaptive_precision: config.enable_adaptive_training,
+                accuracy_threshold: config.quality_threshold,
+                candidate_multiplier: 2, // Default multiplier
+            })
+        } else {
+            None
+        },
+        compression_ratio_target: None, // Not in new proto structure
+        validation: Some(QuantizationValidation {
+            accuracy_threshold: config.quality_threshold,
+            validation_sample_size: config.training_sample_size,
+            enable_quality_monitoring: config.enable_adaptive_training,
+            retraining_threshold: 0.9, // Default threshold
         }),
     }
 }
@@ -1582,9 +1572,9 @@ fn convert_from_proto_collection(proto: ProtoCollection) -> Collection {
         id: proto.id,
         config: CollectionConfigJson::from_proto(&config),
         stats: CollectionStats {
-            vector_count: proto.stats.as_ref().map(|s| s.vector_count),
-            index_size_bytes: proto.stats.as_ref().map(|s| s.index_size_bytes),
-            data_size_bytes: proto.stats.as_ref().map(|s| s.data_size_bytes),
+            vector_count: proto.stats.as_ref().map(|s| s.vector_count).unwrap_or(0),
+            index_size_bytes: proto.stats.as_ref().map(|s| s.index_size_bytes).unwrap_or(0),
+            data_size_bytes: proto.stats.as_ref().map(|s| s.data_size_bytes).unwrap_or(0),
         },
         timestamp: proto.created_at,
         updated_at: proto.updated_at,
@@ -1629,7 +1619,7 @@ pub async fn list_collections(
                 timestamp: c.created_at,
                 updated_at: c.updated_at,
                 vector_count: stats.map(|s| s.vector_count),
-                indexed: stats.map(|s| s.index_size_bytes > 0),
+                indexed: stats.map(|s| s.index_size_bytes > 0).unwrap_or(false),
             }
         })
         .collect();
@@ -1679,7 +1669,7 @@ pub async fn get_collection(
                 timestamp: c.created_at,
                 updated_at: c.updated_at,
                 vector_count: stats.map(|s| s.vector_count),
-                indexed: stats.map(|s| s.index_size_bytes > 0),
+                indexed: stats.map(|s| s.index_size_bytes > 0).unwrap_or(false),
             };
             Ok(JsonResponse(collection_info))
         }

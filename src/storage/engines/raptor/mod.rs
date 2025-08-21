@@ -35,6 +35,7 @@ pub use common::{
     FastLanesScheme, VectorEncoding, ColumnEncoding,
     IoStrategy, CachePolicy, ReadPattern,
     LocalityCluster, BloomFilterMetadata,
+    RowGroupBloomFilter, ColumnnarIdIndex,  // Added bloom filter types
 };
 
 pub use config::{RaptorConfig, CompactionConfig, HnswConfig};

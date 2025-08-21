@@ -61,7 +61,7 @@ pub enum SerializationError {
 pub type Result<T> = std::result::Result<T, SerializationError>;
 
 /// Index types that can be serialized
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum IndexType {
     Hnsw,
     Ivf,

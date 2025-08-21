@@ -540,7 +540,7 @@ impl ConfigLoader {
             .metadata_inference_samples(toml_config.metadata_inference_samples);
         
         // Handle compression
-        let compression = match toml_config.storage.as_ref().and_then(|s| s.compression.as_ref()).as_str() {
+        let compression = match toml_config.storage.as_ref().and_then(|s| s.compression.as_ref()).as_deref() {
             "zstd" => CompressionAlgorithm::Zstd,
             "lz4" => CompressionAlgorithm::Lz4,
             "snappy" => CompressionAlgorithm::Snappy,
@@ -617,7 +617,7 @@ impl ConfigLoader {
         let mut builder = HybridWriterBuilder::new();
         
         // Set mode
-        match toml_config.initial_mode.as_str() {
+        match toml_config.initial_mode.as_deref() {
             "streaming" => builder = builder.streaming_mode(),
             "batch" => builder = builder.batch_mode(),
             _ => {} // Keep adaptive

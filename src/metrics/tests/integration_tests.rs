@@ -221,7 +221,8 @@ use tracing::{debug, error, info};
         // VectorOperationsService constructor requires engines which are not available in this test
         // This test needs to be rewritten to use actual engine instances
         /*
-        let mut direct_service = VectorOperationsService::new(config, viper_engine, sst_engine).await.unwrap();
+        // Note: This test is marked as ignore due to complex constructor requirements
+        // let mut direct_service = VectorOperationsService::new(sst_engine, wal_manager);
         
         // Register metrics updater with VectorOperationsService
         // TODO: Add set_metrics_updater to VectorOperationsService
@@ -415,7 +416,8 @@ use tracing::{debug, error, info};
         // Set up all components with metrics
         // Skipping VectorOperationsService test due to constructor requirements
         /*
-        let mut direct_service = VectorOperationsService::new(config, viper_engine, sst_engine).await.unwrap();
+        // Note: This test is marked as ignore due to complex constructor requirements
+        // let mut direct_service = VectorOperationsService::new(sst_engine, wal_manager);
         // TODO: Add set_metrics_updater to VectorOperationsService
         // direct_service.set_metrics_updater(metrics_updater.clone());
         

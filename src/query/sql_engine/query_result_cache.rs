@@ -137,7 +137,7 @@ impl CachedQueryResult {
             .unwrap_or_default()
             .as_secs();
         
-        now - self.created_at >= ttl_seconds
+        now - self.timestamp >= ttl_seconds
     }
 }
 

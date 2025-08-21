@@ -84,7 +84,7 @@ impl CollectionService {
         let mut enriched_config = config.clone();
         
         // Ensure storage_config exists and set compression within it
-        if enriched_config.storage_config.is_empty() {
+        if enriched_config.storage_config.is_none() {
             enriched_config.storage_config = Some(crate::proto::proximadb::StorageConfig {
                 enable_all_optimizations: Some(true),  // All optimizations on by default
                 ..Default::default()
@@ -102,7 +102,7 @@ impl CollectionService {
         
         // Add default quantization configuration if not provided
         // Use smart defaults based on vector dimension for optimal performance
-        if enriched_config.quantization.is_empty() {
+        if enriched_config.quantization.is_none() {
             use crate::compute::quantization::QuantizationSmartDefaults;
             
             match QuantizationSmartDefaults::generate_for_dimension(config.dimension as u32) {
@@ -404,13 +404,13 @@ impl CollectionService {
         
         // No IndexConfig found, create smart defaults based on algorithm
         let config = proto.config.as_ref().ok_or_else(|| anyhow::anyhow!("Collection has no config"))?;
-        let indexing_algorithm = match config.primary_index {
-            1 => crate::core::IndexingAlgorithm::Hnsw,
-            2 => crate::core::IndexingAlgorithm::Ivf,
-            3 => crate::core::IndexingAlgorithm::Pq,
-            4 => crate::core::IndexingAlgorithm::Flat,
-            5 => crate::core::IndexingAlgorithm::Annoy,
-            6 => crate::core::IndexingAlgorithm::Lsh,
+        let indexing_algorithm = match config.primary_index.as_deref() {
+            Some("hnsw") => crate::core::IndexingAlgorithm::Hnsw,
+            Some("ivf") => crate::core::IndexingAlgorithm::Ivf,
+            Some("pq") => crate::core::IndexingAlgorithm::Pq,
+            Some("flat") => crate::core::IndexingAlgorithm::Flat,
+            Some("annoy") => crate::core::IndexingAlgorithm::Annoy,
+            Some("lsh") => crate::core::IndexingAlgorithm::Lsh,
             _ => crate::core::IndexingAlgorithm::Hnsw,
         };
         
@@ -881,7 +881,7 @@ impl CollectionService {
         let mut updated_collection = collection.clone();
         if let Some(ref mut config) = updated_collection.config {
             // Ensure storage_config exists
-            if config.storage_config.is_empty() {
+            if config.storage_config.is_none() {
                 config.storage_config = Some(crate::proto::proximadb::StorageConfig::default());
             }
             // Set compression in storage_config
@@ -1454,7 +1454,7 @@ mod tests {
             
             if !should_succeed {
                 assert_eq!(
-                    result.error_code.as_str(), Some(expected_error_code),
+                    result.error_code.as_deref(), Some(expected_error_code),
                     "Name '{}' error code mismatch", name
                 );
                 

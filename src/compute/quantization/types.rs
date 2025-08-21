@@ -6,13 +6,13 @@
 use serde::{Deserialize, Serialize};
 
 /// Unified quantization level configuration
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub struct UnifiedQuantizationLevel {
     pub level_type: Option<QuantizationLevelType>,
 }
 
 /// Quantization level types
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub enum QuantizationLevelType {
     None(NoQuantization),
     Uniform(UniformQuantization),
@@ -62,6 +62,43 @@ pub struct CustomQuantization {
 }
 
 impl UnifiedQuantizationLevel {
+    /// Common quantization level constants for easy access
+    pub const Binary: Self = Self {
+        level_type: Some(QuantizationLevelType::Binary(BinaryQuantization {
+            threshold: None,
+            sign_based: false,
+        })),
+    };
+    
+    pub const Int8: Self = Self {
+        level_type: Some(QuantizationLevelType::Scalar(ScalarQuantization {
+            bits: 8,
+            scale: 1.0,
+            offset: 0.0,
+            clamp_values: true,
+        })),
+    };
+    
+    /// Create a PQ4 constant (requires runtime initialization due to parameter)
+    pub const Pq4: Self = Self {
+        level_type: Some(QuantizationLevelType::Pq(ProductQuantization {
+            bits_per_code: 4,
+            num_subvectors: 8, // Default value
+            codebook_id: None,
+            adaptive_subvectors: false,
+        })),
+    };
+    
+    /// Create a PQ8 constant (requires runtime initialization due to parameter)
+    pub const Pq8: Self = Self {
+        level_type: Some(QuantizationLevelType::Pq(ProductQuantization {
+            bits_per_code: 8,
+            num_subvectors: 8, // Default value
+            codebook_id: None,
+            adaptive_subvectors: false,
+        })),
+    };
+    
     /// Create a PQ8 configuration (common case)
     pub fn pq8(num_subvectors: u8) -> Self {
         Self {

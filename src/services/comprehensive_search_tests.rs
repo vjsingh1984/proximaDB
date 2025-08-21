@@ -35,8 +35,8 @@ mod tests {
     use crate::storage::engines::viper::FilterValue;
     use crate::proto::proximadb::{VectorRecord, MetadataItem};
     use crate::services::vector_operations_service::VectorOperationsService;
-    use crate::storage::engines::viper::unified_search_engine::{ViperUnifiedSearchEngine, ViperSearchConfig};
-    use crate::storage::engines::sst::unified_search_engine::{SstUnifiedSearchEngine, SstSearchConfig};
+    // use crate::storage::engines::viper::unified_search_engine::{ViperUnifiedSearchEngine, ViperSearchConfig}; // Removed
+    // use crate::storage::engines::sst::unified_search_engine::{SstUnifiedSearchEngine, SstSearchConfig}; // Removed
     use crate::storage::engines::viper::readers::unified_parquet_reader::UnifiedParquetReader;
     use crate::storage::engines::sst::readers::unified_sstable_reader::UnifiedSstableReader;
     use crate::compute::quantization::unified::UnifiedQuantizationEngine;

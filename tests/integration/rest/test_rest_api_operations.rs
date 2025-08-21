@@ -43,12 +43,12 @@ async fn create_test_app() -> (Router, TempDir) {
         2 * 1024 * 1024,  // 2MB flush threshold
     ));
     
-    // Create services
-    let direct_vector_service = Arc::new(VectorOperationsService::new(
-        filesystem.clone(),
-        memtable.clone(),
-        temp_dir.path().to_path_buf(),
-    ));
+    // Create services using test utilities
+    let direct_vector_service = Arc::new(
+        proximadb::tests::common::unified_test_utils::create_test_vector_operations_service()
+            .await
+            .expect("Failed to create VectorOperationsService")
+    );
     
     let collection_service = Arc::new(CollectionService::new(
         filesystem.clone(),

@@ -264,6 +264,7 @@ pub enum ImplementationEffort {
 }
 
 /// Metrics collector with atomic counters for thread-safe updates
+/// Integrated with ProximaDB's unified metrics framework
 pub struct MetricsCollector {
     // Atomic counters for high-frequency updates
     cache_hits: AtomicU64,
@@ -276,6 +277,18 @@ pub struct MetricsCollector {
     total_bytes_processed: AtomicU64,
     errors: AtomicU64,
     
+    // Memory and disk cache metrics (unified framework integration)
+    memory_cache_size_bytes: AtomicU64,
+    disk_cache_size_bytes: AtomicU64,
+    memory_cache_entries: AtomicU64,
+    disk_cache_entries: AtomicU64,
+    cache_evictions: AtomicU64,
+    cache_insertions: AtomicU64,
+    
+    // Latency tracking for unified framework
+    total_cache_hit_latency_ns: AtomicU64,
+    total_cache_miss_latency_ns: AtomicU64,
+    
     // Start time for uptime calculation
     start_time: Instant,
     
@@ -285,11 +298,17 @@ pub struct MetricsCollector {
     // Historical data for trend analysis
     historical_metrics: Vec<SystemPerformanceMetrics>,
     max_history_size: usize,
+    
+    // Integration with unified metrics framework
+    unified_collector: Option<Arc<crate::metrics::collectors::FilesystemMetricsCollector>>,
 }
 
 impl MetricsCollector {
     /// Create new metrics collector
     pub fn new() -> Self {
+        // Create unified metrics collector
+        let unified_collector = Some(Arc::new(crate::metrics::collectors::FilesystemMetricsCollector::new()));
+        
         Self {
             cache_hits: AtomicU64::new(0),
             cache_misses: AtomicU64::new(0),
@@ -300,21 +319,100 @@ impl MetricsCollector {
             total_operations: AtomicU64::new(0),
             total_bytes_processed: AtomicU64::new(0),
             errors: AtomicU64::new(0),
+            memory_cache_size_bytes: AtomicU64::new(0),
+            disk_cache_size_bytes: AtomicU64::new(0),
+            memory_cache_entries: AtomicU64::new(0),
+            disk_cache_entries: AtomicU64::new(0),
+            cache_evictions: AtomicU64::new(0),
+            cache_insertions: AtomicU64::new(0),
+            total_cache_hit_latency_ns: AtomicU64::new(0),
+            total_cache_miss_latency_ns: AtomicU64::new(0),
             start_time: Instant::now(),
             alert_handlers: Vec::new(),
             historical_metrics: Vec::new(),
             max_history_size: 1000,
+            unified_collector,
         }
     }
 
-    /// Record cache hit
+    /// Record cache hit with latency tracking
     pub fn record_cache_hit(&self) {
         self.cache_hits.fetch_add(1, Ordering::Relaxed);
+    }
+    
+    /// Record cache hit with timing for unified metrics
+    pub fn record_cache_hit_with_timing(&self, latency_ns: u64) {
+        self.cache_hits.fetch_add(1, Ordering::Relaxed);
+        self.total_cache_hit_latency_ns.fetch_add(latency_ns, Ordering::Relaxed);
+        
+        // Update unified collector
+        if let Some(ref collector) = self.unified_collector {
+            collector.zerocopy_metrics().record_cache_hit(latency_ns);
+        }
     }
 
     /// Record cache miss
     pub fn record_cache_miss(&self) {
         self.cache_misses.fetch_add(1, Ordering::Relaxed);
+        
+        // Update unified collector
+        if let Some(ref collector) = self.unified_collector {
+            collector.zerocopy_metrics().memory_cache_misses.fetch_add(1, Ordering::Relaxed);
+        }
+    }
+    
+    /// Record cache miss with timing for unified metrics
+    pub fn record_cache_miss_with_timing(&self, latency_ns: u64) {
+        self.cache_misses.fetch_add(1, Ordering::Relaxed);
+        self.total_cache_miss_latency_ns.fetch_add(latency_ns, Ordering::Relaxed);
+        
+        // Update unified collector
+        if let Some(ref collector) = self.unified_collector {
+            collector.zerocopy_metrics().record_cache_miss(latency_ns);
+        }
+    }
+    
+    /// Update memory cache metrics
+    pub fn update_memory_cache_metrics(&self, size_bytes: u64, entries: u64) {
+        self.memory_cache_size_bytes.store(size_bytes, Ordering::Relaxed);
+        self.memory_cache_entries.store(entries, Ordering::Relaxed);
+        
+        // Update unified collector
+        if let Some(ref collector) = self.unified_collector {
+            let metrics = collector.zerocopy_metrics();
+            metrics.memory_cache_size_bytes.store(size_bytes, Ordering::Relaxed);
+            metrics.memory_cache_entries.store(entries, Ordering::Relaxed);
+        }
+    }
+    
+    /// Update disk cache metrics
+    pub fn update_disk_cache_metrics(&self, size_bytes: u64, entries: u64) {
+        self.disk_cache_size_bytes.store(size_bytes, Ordering::Relaxed);
+        self.disk_cache_entries.store(entries, Ordering::Relaxed);
+        
+        // Update unified collector
+        if let Some(ref collector) = self.unified_collector {
+            let metrics = collector.zerocopy_metrics();
+            metrics.disk_cache_size_bytes.store(size_bytes, Ordering::Relaxed);
+            metrics.disk_cache_entries.store(entries, Ordering::Relaxed);
+        }
+    }
+    
+    /// Record cache eviction
+    pub fn record_cache_eviction(&self, count: u64) {
+        self.cache_evictions.fetch_add(count, Ordering::Relaxed);
+        
+        // Update unified collector
+        if let Some(ref collector) = self.unified_collector {
+            collector.zerocopy_metrics().memory_cache_evictions.fetch_add(count, Ordering::Relaxed);
+        }
+    }
+    
+    /// Record cache insertion
+    pub fn record_cache_insertion(&self) {
+        self.cache_insertions.fetch_add(1, Ordering::Relaxed);
+        
+        // Update unified collector - no direct equivalent, tracked via cache size updates
     }
 
     /// Record file skipped
@@ -626,6 +724,11 @@ impl MetricsCollector {
         }
     }
 
+    /// Get the unified metrics collector for registration
+    pub fn unified_collector(&self) -> Option<Arc<crate::metrics::collectors::FilesystemMetricsCollector>> {
+        self.unified_collector.clone()
+    }
+    
     fn calculate_trend(&self, values: Vec<f64>) -> TrendDirection {
         if values.len() < 2 {
             return TrendDirection::Stable;

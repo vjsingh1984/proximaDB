@@ -76,7 +76,7 @@ mod tests {
                     
                     metadata_stats.min_values.entry(item.key.clone())
                         .and_modify(|v| {
-                            if let (Ok(existing), Ok(new)) = (v.as_str().unwrap().parse::<f32>(), value_str.parse::<f32>()) {
+                            if let (Ok(existing), Ok(new)) = (v.as_deref().unwrap().parse::<f32>(), value_str.parse::<f32>()) {
                                 if new < existing {
                                     *v = serde_json::Value::String(value_str.clone());
                                 }
@@ -86,7 +86,7 @@ mod tests {
 
                     metadata_stats.max_values.entry(item.key.clone())
                         .and_modify(|v| {
-                            if let (Ok(existing), Ok(new)) = (v.as_str().unwrap().parse::<f32>(), value_str.parse::<f32>()) {
+                            if let (Ok(existing), Ok(new)) = (v.as_deref().unwrap().parse::<f32>(), value_str.parse::<f32>()) {
                                 if new > existing {
                                     *v = serde_json::Value::String(value_str.clone());
                                 }
@@ -209,7 +209,7 @@ mod tests {
         for record in &records {
             let category = record.metadata.iter()
                 .find(|(k, _)| k == "category")
-                .map(|(_, v)| v.as_str())
+                .map(|(_, v)| v.as_deref())
                 .unwrap();
             assert_eq!(category, "cat_0", "All records should match filter");
         }

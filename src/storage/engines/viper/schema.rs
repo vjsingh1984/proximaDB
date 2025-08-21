@@ -219,8 +219,8 @@ impl SchemaManager {
             cols.iter()
                 .filter_map(|col| {
                     if let (Some(name), Some(data_type_str)) = (
-                        col.get("name").and_then(|v| v.as_str()),
-                        col.get("type").and_then(|v| v.as_str())
+                        col.get("name").and_then(|v| v.as_deref()),
+                        col.get("type").and_then(|v| v.as_deref())
                     ) {
                         let data_type = match data_type_str {
                             "string" => FilterableDataType::String,

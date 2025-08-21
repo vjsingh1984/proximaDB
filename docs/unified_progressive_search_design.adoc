@@ -1,0 +1,632 @@
+= Unified Progressive Search Design Specification
+:sectnums:
+:toc: left
+:toclevels: 3
+:source-highlighter: rouge
+:icons: font
+:docdate: 2025-08-21
+:author: ProximaDB Engineering Team
+:version: 1.0
+:status: Implementation Phase
+
+== Document Status
+
+[cols="2,3,5"]
+|===
+|Phase |Status |Description
+
+|*Phase 1: Analysis & Design*
+|✅ *COMPLETED*
+|Analyzed existing search architecture, designed unified progressive search orchestration
+
+|*Phase 2: Core Infrastructure*
+|🚧 *IN PROGRESS*
+|Implementing SearchOrchestrator and AXIS index integration
+
+|*Phase 3: SST Engine Implementation*
+|📋 *PENDING*
+|SST engine progressive search with cost estimation
+
+|*Phase 4: VIPER Engine Implementation*
+|📋 *PENDING*
+|VIPER engine progressive search with same pattern
+
+|*Phase 5: Testing & Validation*
+|📋 *PENDING*
+|Comprehensive testing across all storage engines
+|===
+
+== Executive Summary
+
+=== Overview
+This document specifies the unified progressive search architecture for ProximaDB that provides intelligent routing between index-first search, progressive quantization search, and direct FP32 search based on collection configuration and cost analysis.
+
+=== Key Requirements
+* Use `search_vectors_unified` as the common entry point (trait-defined)
+* Analyze collection configuration to detect quantization capabilities
+* Integrate with existing AXIS indexes hydrated by flush/write operations
+* Implement cost-based routing with real benchmarking data
+* Provide comprehensive logging for each decision branch
+* Avoid code proliferation through shared orchestrator pattern
+
+=== Architecture Principles
+* **Per-Search Orchestrator Pattern**: Each search operation gets its own orchestrator instance for optimal concurrency
+* **Engine Component Access**: Orchestrator has full access to engine readers, writers, indexes, and cache without duplicating logic
+* **Collection-Driven Configuration**: All search decisions based on collection's QuantizationConfig and IndexConfig
+* **Progressive Refinement**: Multi-stage search using Binary → INT8 → PQ → FP32 refinement
+
+== Current Architecture Analysis
+
+=== Existing Implementation Status
+
+==== SearchContext Infrastructure ✅
+Location: `/src/storage/traits.rs:SearchContext`
+
+[source,rust]
+----
+#[derive(Debug, Clone)]
+pub struct SearchContext {
+    /// Original search parameters (immutable reference)
+    pub search_params: Arc<crate::core::search::SearchParams>,
+    
+    /// Collection configuration from cache (immutable reference)
+    /// Contains storage_assignment with storage URL
+    pub collection: Arc<Collection>,
+    
+    /// Additional context that might be needed during search
+    /// (can be extended without breaking existing code)
+    pub metadata: SearchContextMetadata,
+}
+----
+
+==== Existing search_vectors_unified Implementations ✅
+
+*SST Engine* - `/src/storage/engines/sst/mod.rs:2790-2840`:
+[source,rust]
+----
+async fn search_vectors_unified(
+    &self,
+    ctx: &crate::storage::traits::SearchContext,
+) -> Result<Vec<crate::core::search::SearchResult>> {
+    // Extract parameters from context
+    let collection_id = ctx.collection_id();
+    let storage_url = ctx.collection_storage_path()
+        .ok_or_else(|| anyhow::anyhow!("No storage URL in context"))?;
+    let query_vector = ctx.query_vector()
+        .ok_or_else(|| anyhow::anyhow!("No query vector in context"))?;
+    let k = ctx.top_k();
+    let distance_metric = ctx.distance_metric();
+    let filter_expression = ctx.search_params.filter_expression.as_ref();
+    // ... existing implementation
+}
+----
+
+*VIPER Engine* - `/src/storage/engines/viper/engine.rs:1072-1108`:
+[source,rust]
+----
+async fn search_vectors_unified(
+    &self,
+    ctx: &crate::storage::traits::SearchContext,
+) -> Result<Vec<crate::core::search::SearchResult>> {
+    // Extract parameters from context
+    let collection_id = ctx.collection_id();
+    let storage_url = ctx.collection_storage_path()
+        .ok_or_else(|| anyhow::anyhow!("No storage URL in context"))?;
+    let query_vector = ctx.query_vector()
+        .ok_or_else(|| anyhow::anyhow!("No query vector in context"))?;
+    // ... existing implementation
+}
+----
+
+==== AXIS Index Infrastructure ✅
+Location: `/src/index/axis/manager.rs`
+
+Key Methods Available:
+* `insert()` - Add vectors to indexes with collection-based quantization
+* `query()` - Execute hybrid queries using adaptive indexes
+* `get_collection_strategy()` - Get current IndexSelectionStrategy
+* `handle_flushed_vectors()` - Process newly flushed vectors for indexing
+* `get_collection_indexes()` - Get all indexes for a collection
+
+=== Quantization Configuration Infrastructure ✅
+Location: `/proto/proximadb.proto`
+
+[source,protobuf]
+----
+message QuantizationConfig {
+  bool enabled = 1;
+  enum Strategy {
+    SMART_DEFAULTS = 0;           // Auto-select Binary + INT8 + PQ based on dimension
+    CUSTOM_LEVELS = 1;            // User provides specific quantization levels
+    MINIMAL = 2;                  // Only essential quantization
+    AGGRESSIVE = 3;               // Maximum compression
+  }
+  Strategy strategy = 2;
+  repeated QuantizationLevel custom_levels = 3;
+  bool enable_progressive_search = 4;
+}
+----
+
+== Unified Progressive Search Architecture
+
+=== Core Components
+
+==== SearchOrchestrator
+**Purpose**: Centralized decision-making for search strategy selection based on collection configuration and cost analysis.
+
+**Location**: `/src/core/search/progressive_orchestrator.rs` (existing module to extend)
+
+**Key Responsibilities**:
+* Analyze collection's QuantizationConfig to determine available search paths
+* Evaluate AXIS index availability for index-first search
+* Perform cost-based routing between search strategies
+* Execute progressive quantization refinement when applicable
+* Provide comprehensive logging for all decision branches
+
+==== Search Strategy Selection Logic
+
+[source,rust]
+----
+pub enum SearchStrategy {
+    /// Use AXIS indexes first, then storage fallback
+    IndexFirst {
+        available_indexes: Vec<IndexType>,
+        fallback_to_progressive: bool,
+    },
+    
+    /// Progressive quantization search (Binary → INT8 → PQ → FP32)
+    ProgressiveQuantization {
+        levels: Vec<QuantizationLevel>,
+        filter_threshold: f32,
+        candidate_multiplier: usize,
+    },
+    
+    /// Direct FP32 search (no quantization)
+    DirectFP32 {
+        use_bloom_filters: bool,
+        parallel_blocks: usize,
+    },
+}
+----
+
+=== Decision Tree Algorithm
+
+==== Phase 1: Collection Configuration Analysis
+[source,rust]
+----
+// 1. Check if quantization is enabled in collection
+let quantization_enabled = collection.config
+    .quantization_config
+    .map(|q| q.enabled)
+    .unwrap_or(false);
+
+// 2. Determine available quantization levels based on strategy
+let available_levels = if quantization_enabled {
+    match collection.config.quantization_config.strategy {
+        SmartDefaults => determine_smart_defaults(collection.config.dimension),
+        CustomLevels => collection.config.quantization_config.custom_levels,
+        Minimal => vec![QuantizationLevel::Int8],
+        Aggressive => vec![QuantizationLevel::Binary, QuantizationLevel::Pq4, QuantizationLevel::Pq8],
+    }
+} else {
+    vec![] // No quantization available
+};
+
+// 3. Check progressive search enablement
+let progressive_enabled = collection.config
+    .quantization_config
+    .map(|q| q.enable_progressive_search)
+    .unwrap_or(false);
+----
+
+==== Phase 2: AXIS Index Availability Check
+[source,rust]
+----
+// 1. Get collection's index strategy from AXIS manager
+let index_strategy = axis_manager
+    .get_collection_strategy(collection_id)
+    .await
+    .ok();
+
+// 2. Check if indexes are available and populated
+let available_indexes = if let Some(strategy) = index_strategy {
+    axis_manager
+        .get_collection_indexes(collection_id)
+        .await
+        .unwrap_or_default()
+} else {
+    vec![]
+};
+
+// 3. Determine index readiness
+let indexes_ready = !available_indexes.is_empty() && 
+    validate_index_completeness(&available_indexes).await;
+----
+
+==== Phase 3: Cost-Based Strategy Selection
+[source,rust]
+----
+// 1. Estimate costs for each available strategy
+let index_cost = if indexes_ready {
+    estimate_index_search_cost(&available_indexes, k, query_complexity)
+} else {
+    f32::INFINITY // Not available
+};
+
+let progressive_cost = if progressive_enabled && !available_levels.is_empty() {
+    estimate_progressive_search_cost(&available_levels, dataset_size, k)
+} else {
+    f32::INFINITY // Not available
+};
+
+let direct_cost = estimate_direct_search_cost(dataset_size, k, has_filters);
+
+// 2. Select strategy with lowest cost
+let selected_strategy = match (index_cost, progressive_cost, direct_cost) {
+    (i, p, d) if i <= p && i <= d => SearchStrategy::IndexFirst { /* ... */ },
+    (_, p, d) if p <= d => SearchStrategy::ProgressiveQuantization { /* ... */ },
+    _ => SearchStrategy::DirectFP32 { /* ... */ },
+};
+----
+
+=== Implementation Phases
+
+==== Phase 1: Core Infrastructure ✅ COMPLETED
+**Status**: Analysis and design completed
+**Duration**: 2 days
+**Deliverables**:
+- [x] Current architecture analysis
+- [x] SearchContext integration points identified
+- [x] AXIS index interface analysis
+- [x] Quantization configuration mapping
+
+==== Phase 2: SearchOrchestrator Foundation 🚧 IN PROGRESS
+**Status**: Implementation started
+**Duration**: 3-4 days
+**Deliverables**:
+- [ ] Core SearchOrchestrator struct and methods
+- [ ] Collection configuration analysis logic
+- [ ] AXIS index availability checking
+- [ ] Cost estimation framework
+
+==== Phase 3: SST Engine Integration 📋 PENDING
+**Status**: Awaiting Phase 2 completion
+**Duration**: 2-3 days
+**Deliverables**:
+- [ ] Enhanced SST `search_vectors_unified` with orchestrator
+- [ ] Progressive quantization search for SST hierarchical blocks
+- [ ] Real benchmarking data for SST cost estimation
+- [ ] Comprehensive logging and comments
+
+==== Phase 4: VIPER Engine Integration 📋 PENDING  
+**Status**: Awaiting Phase 3 completion
+**Duration**: 2-3 days
+**Deliverables**:
+- [ ] Enhanced VIPER `search_vectors_unified` with orchestrator
+- [ ] Progressive search for VIPER columnar quantization
+- [ ] Cost estimation for columnar operations
+- [ ] Unified logging pattern
+
+==== Phase 5: Testing & Optimization 📋 PENDING
+**Status**: Awaiting Phase 4 completion
+**Duration**: 2-3 days
+**Deliverables**:
+- [ ] Integration tests across all engines
+- [ ] Performance benchmarks
+- [ ] Cost estimation accuracy validation
+- [ ] Documentation updates
+
+== Integration Points
+
+=== AXIS Index Integration Strategy
+
+==== Current AXIS Infrastructure ✅
+* **Index Hydration**: Flush and write operations already hydrate indexes via `handle_flushed_vectors()`
+* **Index Types**: GlobalIdIndex, MetadataIndex, DenseVectorIndex, SparseVectorIndex available
+* **Strategy Management**: Collection-specific IndexSelectionStrategy maintained by AxisManager
+
+==== Integration Method
+[source,rust]
+----
+// Within search_vectors_unified implementation:
+
+// 1. Check AXIS index availability
+let axis_indexes = self.axis_manager
+    .get_collection_indexes(collection_id)
+    .await?;
+
+// 2. If indexes available, try index-first search
+if !axis_indexes.is_empty() {
+    let index_results = self.axis_manager
+        .query(HybridQuery {
+            collection_id: collection_id.to_string(),
+            vector_query: Some(VectorQuery::Dense {
+                vector: query_vector.clone(),
+                similarity_threshold: 0.0,
+            }),
+            top_k: k,
+            // ... other parameters
+        })
+        .await?;
+    
+    // 3. If index results sufficient, return early
+    if index_results.results.len() >= k {
+        return convert_to_search_results(index_results);
+    }
+}
+
+// 4. Fallback to progressive/direct search
+// ... continue with storage-based search
+----
+
+=== Quantization Configuration Analysis
+
+==== Smart Defaults Strategy
+Based on vector dimension, automatically select optimal quantization levels:
+
+[source,rust]
+----
+fn determine_smart_defaults(dimension: u32) -> Vec<QuantizationLevel> {
+    match dimension {
+        d if d < 64 => vec![QuantizationLevel::Int8],
+        d if d < 128 => vec![QuantizationLevel::Binary, QuantizationLevel::Int8],
+        d if d < 512 => vec![QuantizationLevel::Binary, QuantizationLevel::Int8, QuantizationLevel::Pq8],
+        _ => vec![QuantizationLevel::Binary, QuantizationLevel::Pq4, QuantizationLevel::Pq8],
+    }
+}
+----
+
+==== Progressive Search Execution
+Multi-stage refinement using collection's quantization levels:
+
+[source,rust]
+----
+async fn execute_progressive_search(
+    &self,
+    ctx: &SearchContext,
+    available_levels: &[QuantizationLevel],
+) -> Result<Vec<SearchResult>> {
+    let mut candidates = vec![];
+    let mut stage = 1;
+    
+    // Stage 1: Binary filtering (if available)
+    if available_levels.contains(&QuantizationLevel::Binary) {
+        tracing::info!("🔍 Stage {}: Binary filtering", stage);
+        candidates = self.binary_filter_search(ctx).await?;
+        stage += 1;
+    }
+    
+    // Stage 2: INT8 refinement (if available)
+    if available_levels.contains(&QuantizationLevel::Int8) && !candidates.is_empty() {
+        tracing::info!("🔍 Stage {}: INT8 refinement on {} candidates", stage, candidates.len());
+        candidates = self.int8_refine_search(ctx, candidates).await?;
+        stage += 1;
+    }
+    
+    // Stage 3: PQ refinement (if available)
+    if available_levels.iter().any(|l| matches!(l, QuantizationLevel::Pq4 | QuantizationLevel::Pq8)) {
+        tracing::info!("🔍 Stage {}: PQ refinement on {} candidates", stage, candidates.len());
+        candidates = self.pq_refine_search(ctx, candidates).await?;
+        stage += 1;
+    }
+    
+    // Stage 4: Full precision reranking
+    tracing::info!("🔍 Stage {}: Full precision reranking of {} candidates", stage, candidates.len());
+    let final_results = self.fp32_rerank_search(ctx, candidates).await?;
+    
+    tracing::info!("✅ Progressive search completed in {} stages", stage);
+    Ok(final_results)
+}
+----
+
+== Cost Estimation Framework
+
+=== Benchmarking Infrastructure
+
+==== SearchCostEstimator
+**Purpose**: Provide accurate cost estimates based on real performance data
+
+[source,rust]
+----
+pub struct SearchCostEstimator {
+    // Historical performance data
+    index_search_times: HistogramMap<IndexType, Duration>,
+    progressive_search_times: HistogramMap<QuantizationLevel, Duration>,
+    direct_search_times: HistogramMap<DatasetSize, Duration>,
+    
+    // System characteristics
+    hardware_profile: HardwareProfile,
+    storage_profile: StorageProfile,
+}
+
+impl SearchCostEstimator {
+    /// Estimate cost for index-first search
+    pub fn estimate_index_cost(
+        &self,
+        indexes: &[IndexType],
+        k: usize,
+        query_complexity: f32,
+    ) -> f32 {
+        // Use historical data and system characteristics
+        // to estimate search time and resource usage
+    }
+    
+    /// Estimate cost for progressive quantization search
+    pub fn estimate_progressive_cost(
+        &self,
+        levels: &[QuantizationLevel],
+        dataset_size: u64,
+        k: usize,
+    ) -> f32 {
+        // Account for multi-stage execution and
+        // candidate filtering at each stage
+    }
+    
+    /// Estimate cost for direct FP32 search
+    pub fn estimate_direct_cost(
+        &self,
+        dataset_size: u64,
+        k: usize,
+        has_filters: bool,
+    ) -> f32 {
+        // Consider full dataset scan costs
+        // and filter evaluation overhead
+    }
+}
+----
+
+=== Cost Factors
+
+==== Index Search Cost Factors
+* Index type and size
+* Query vector complexity
+* Hardware capabilities (SIMD, GPU availability)
+* Memory hierarchy (L1/L2 cache, RAM, storage)
+
+==== Progressive Search Cost Factors
+* Number of quantization stages
+* Candidate reduction ratio at each stage
+* Quantization/dequantization overhead
+* Memory access patterns
+
+==== Direct Search Cost Factors
+* Dataset size and storage layout
+* Filter selectivity and complexity
+* I/O bandwidth and latency
+* Parallel processing capabilities
+
+== Comprehensive Logging Strategy
+
+=== Decision Branch Logging
+
+==== Configuration Analysis Logging
+[source,rust]
+----
+tracing::info!(
+    "🔍 Search Configuration Analysis for collection: {}",
+    collection_id
+);
+tracing::debug!(
+    "  📊 Collection dimension: {}, quantization_enabled: {}, progressive_enabled: {}",
+    dimension,
+    quantization_enabled,
+    progressive_enabled
+);
+tracing::debug!(
+    "  🎯 Available quantization levels: {:?}",
+    available_levels
+);
+----
+
+==== Strategy Selection Logging
+[source,rust]
+----
+tracing::info!(
+    "💡 Strategy Selection - Index cost: {:.2}ms, Progressive cost: {:.2}ms, Direct cost: {:.2}ms",
+    index_cost,
+    progressive_cost,
+    direct_cost
+);
+tracing::info!(
+    "✅ Selected strategy: {:?} (estimated cost: {:.2}ms)",
+    selected_strategy,
+    min_cost
+);
+----
+
+==== Execution Path Logging
+[source,rust]
+----
+// For each stage of progressive search
+tracing::info!(
+    "🔍 Stage {}: {} - {} candidates → {} candidates ({}% reduction)",
+    stage,
+    stage_name,
+    input_candidates,
+    output_candidates,
+    reduction_percentage
+);
+
+// For index search
+tracing::info!(
+    "🔍 Index Search: {} indexes queried, {} results in {:.2}ms",
+    indexes.len(),
+    results.len(),
+    duration.as_secs_f32() * 1000.0
+);
+----
+
+=== Performance Metrics Logging
+
+==== Timing and Resource Usage
+[source,rust]
+----
+tracing::info!(
+    "📈 Search Performance - Total: {:.2}ms, CPU: {:.2}ms, I/O: {:.2}ms, Memory: {}MB",
+    total_duration.as_secs_f32() * 1000.0,
+    cpu_time.as_secs_f32() * 1000.0,
+    io_time.as_secs_f32() * 1000.0,
+    memory_used_mb
+);
+----
+
+==== Result Quality Metrics
+[source,rust]
+----
+tracing::info!(
+    "🎯 Search Quality - Requested: {}, Returned: {}, Recall: {:.2}%, Precision: {:.2}%",
+    k,
+    results.len(),
+    recall_percentage,
+    precision_percentage
+);
+----
+
+== Testing Strategy
+
+=== Unit Tests
+* SearchOrchestrator configuration analysis
+* Cost estimation accuracy
+* Strategy selection logic
+* Progressive search stage execution
+
+=== Integration Tests
+* End-to-end search across all engines
+* AXIS index integration
+* Collection configuration variations
+* Performance regression testing
+
+=== Performance Benchmarks
+* Search latency across strategies
+* Memory usage optimization
+* I/O efficiency measurements
+* Scalability testing
+
+== Future Enhancements
+
+=== Adaptive Learning
+* **Cost Model Refinement**: Continuously update cost estimates based on actual performance
+* **Strategy Optimization**: Learn optimal strategies for specific workload patterns
+* **Auto-tuning**: Automatically adjust quantization parameters for best performance
+
+=== Multi-Modal Search
+* **Hybrid Vector Types**: Support both dense and sparse vectors in progressive search
+* **Metadata Integration**: Combine vector similarity with metadata filtering in single pass
+* **Cross-Collection Search**: Federated search across multiple collections
+
+=== Advanced Optimization
+* **Query Plan Caching**: Cache optimal strategies for similar queries
+* **Parallel Strategy Execution**: Execute multiple strategies in parallel and return fastest
+* **Hardware-Aware Optimization**: Adapt strategies based on available hardware resources
+
+== Conclusion
+
+The unified progressive search architecture provides a comprehensive framework for intelligent search strategy selection based on collection configuration and real-time cost analysis. The phased implementation approach ensures systematic delivery of functionality while maintaining high code quality and performance standards.
+
+The design leverages existing ProximaDB infrastructure (AXIS indexes, quantization engines, storage traits) to minimize implementation complexity while maximizing search performance and scalability.
+
+---
+*Document Version*: 1.0 +
+*Last Updated*: 2025-08-21 +
+*Next Review*: After Phase 2 completion +
+*Status*: Implementation Phase 2 In Progress

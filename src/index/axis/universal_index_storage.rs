@@ -28,6 +28,7 @@
 use anyhow::{anyhow, Result};
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use serde::{Deserialize, Serialize};
+use crate::errors::ProximaDBError;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -220,7 +221,7 @@ impl<T: IndexData> UniversalIndexStorage<T> {
                 .filter(|entry| {
                     self.data_locations.get(entry.key())
                         .map(|loc| matches!(*loc, StorageLocation::Memory))
-                        
+                        .unwrap_or(false)
                 })
                 .map(|entry| (entry.key().clone(), *entry.value()))
                 .collect();
@@ -327,7 +328,16 @@ impl<T: IndexData> UniversalIndexStorage<T> {
                         .await
                         .map_err(|e| anyhow!("Failed to create filesystem: {}", e))?;
                 let filesystem = Arc::new(filesystem_factory);
-                let reader = UnifiedSstableReader::new(filesystem);
+                // Create zero-copy system for the reader
+                let zero_copy_config = crate::storage::engines::common::zero_copy_io_system::config::ZeroCopyIOConfig::default();
+                let zero_copy_system = Arc::new(
+                    crate::storage::engines::common::zero_copy_io_system::orchestrator::ZeroCopyIOSystem::new(
+                        zero_copy_config,
+                        filesystem.clone(),
+                        vec![],
+                    ).await.map_err(|e| ProximaDBError::Storage(format!("Failed to create zero-copy system: {}", e)))?
+                );
+                let reader = UnifiedSstableReader::new(filesystem, zero_copy_system, self.collection_id.clone());
                 // UnifiedSstableReader's get_vector returns a VectorRecord, not raw bytes
                 // We need to handle this differently
                 if let Some(_vector_record) = reader.get_vector(&file_path.to_string_lossy(), id).await? {

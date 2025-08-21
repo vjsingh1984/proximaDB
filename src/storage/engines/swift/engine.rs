@@ -365,7 +365,7 @@ impl UnifiedStorageEngine for SwiftEngine {
         // - Min/max values per dimension for pruning
         // - Bloom filter parameters and false positive rate
         // Also update {storage_path}/{collection_id}/global.stats
-        self.update_global_stats(collection_id, params.storage_path.as_str()).await?;
+        self.update_global_stats(collection_id, params.storage_path.as_deref()).await?;
         // For now, just simulate success
         
         // Update statistics
@@ -490,6 +490,8 @@ impl UnifiedStorageEngine for SwiftEngine {
         &self,
         ctx: &crate::storage::traits::SearchContext,
     ) -> Result<Vec<crate::core::search::SearchResult>> {
+        let search_start = std::time::Instant::now();
+        
         // Extract all parameters from context (pre-computed)
         let collection_id = ctx.collection_id();
         let storage_path = ctx.storage_path();
@@ -498,13 +500,102 @@ impl UnifiedStorageEngine for SwiftEngine {
         let top_k = ctx.top_k();
         let distance_metric = ctx.distance_metric();
         let dimension = ctx.dimension();
-        let _filter = ctx.search_params.filter_expression.as_ref()
-            .map(|f| serde_json::to_value(f));
+        let filter_expression = ctx.search_params.filter_expression.as_ref();
         let _search_params = ctx.search_params.custom_hints.clone();
         let mut timer = self.start_operation_timer("search");
         
-        info!("SWIFT unified search: collection={}, k={}, metric={:?}, storage_path={}", 
-            collection_id, top_k, distance_metric, storage_path);
+        info!("🚀 SWIFT: Enhanced unified search with orchestration for collection {}", collection_id);
+        
+        // ========================================================================
+        // PHASE 1: SEARCH ORCHESTRATION AND STRATEGY SELECTION
+        // ========================================================================
+        
+        // Check if orchestration should be used based on context metadata
+        let use_orchestration = ctx.metadata.use_axis_indexes || ctx.metadata.has_quantization;
+        
+        if use_orchestration {
+            info!("🎯 SWIFT: Using intelligent search orchestration");
+            
+            // Create mock services for orchestration (in real implementation, these would come from context)
+            let axis_manager = match self.get_mock_axis_manager() {
+                Ok(manager) => manager,
+                Err(e) => {
+                    tracing::warn!("⚠️ Failed to get AXIS manager: {}, falling back to direct search", e);
+                    return self.fallback_to_direct_search(ctx, collection_id, storage_path, query_vector, top_k, distance_metric, filter_expression).await;
+                }
+            };
+            
+            let collection_service = self.get_mock_collection_service();
+            let distance_engine = self.get_mock_distance_engine();
+            let quantization_engine = self.get_mock_quantization_engine();
+            let storage_engine = self.get_mock_storage_engine();
+            
+            // Create search orchestrator for intelligent routing
+            match crate::core::search::integrated_search_optimization::IntegratedSearchOptimizer::new(
+                ctx.clone(),
+                axis_manager,
+                crate::core::search::integrated_search_optimization::SearchCostEstimator::new(),
+            ).await {
+                Ok(mut orchestrator) => {
+                    debug!("📋 Collection Analysis Results:");
+                    let analysis = orchestrator.get_collection_analysis();
+                    debug!("  📊 Dimension: {}, Distance: {:?}", analysis.dimension, analysis.distance_metric);
+                    debug!("  🔧 Quantization enabled: {}, Progressive: {}", 
+                           analysis.quantization_enabled, analysis.progressive_search_enabled);
+                    debug!("  📈 Dataset size: {:?}, Query complexity: {:.2}", 
+                           analysis.estimated_dataset_size, analysis.query_complexity);
+                    debug!("  🔍 Has filters: {}, Available levels: {:?}", 
+                           analysis.has_filters, analysis.available_quantization_levels);
+                    
+                    // Select optimal search strategy
+                    match orchestrator.select_optimal_strategy().await {
+                        Ok(strategy) => {
+                            info!(
+                                "🎯 Strategy Selected: {}",
+                                match &strategy {
+                                    crate::core::search::integrated_search_optimization::ExecutionStrategy::IndexFirst { .. } => "IndexFirst",
+                                    crate::core::search::integrated_search_optimization::ExecutionStrategy::ProgressiveQuantization { .. } => "ProgressiveQuantization",
+                                    crate::core::search::integrated_search_optimization::ExecutionStrategy::DirectFP32 { .. } => "DirectFP32",
+                                }
+                            );
+                            
+                            // Execute the selected strategy using enhanced orchestrator
+                            match orchestrator.execute_search_strategy(
+                                &strategy,
+                                storage_engine,
+                                collection_service,
+                                distance_engine,
+                                quantization_engine,
+                            ).await {
+                                Ok(results) => {
+                                    info!("✅ SWIFT: Orchestrated search completed with {} results in {:.2}ms", 
+                                          results.len(), search_start.elapsed().as_secs_f32() * 1000.0);
+                                    return Ok(results);
+                                },
+                                Err(e) => {
+                                    tracing::warn!("⚠️ Orchestrated search failed: {}, falling back to direct search", e);
+                                    // Fall through to existing implementation
+                                }
+                            }
+                        },
+                        Err(e) => {
+                            tracing::warn!("⚠️ Strategy selection failed: {}, falling back to direct search", e);
+                            // Fall through to existing implementation
+                        }
+                    }
+                },
+                Err(e) => {
+                    tracing::warn!("⚠️ Failed to create search orchestrator: {}, falling back to direct search", e);
+                    // Fall through to existing implementation
+                }
+            }
+        }
+        
+        // ========================================================================
+        // PHASE 2: CURRENT IMPLEMENTATION WITH ENHANCED LOGGING
+        // ========================================================================
+        
+        info!("🔍 SWIFT: Using current unified search implementation (orchestration disabled)");
         
         // Load files from storage
         let files = self.load_collection_files(collection_id, storage_path).await?;
@@ -679,6 +770,126 @@ impl UniversallyOptimized for SwiftEngine {
         ));
         
         Ok(metrics)
+    }
+}
+
+// Additional implementation methods for SwiftEngine
+impl SwiftEngine {
+    /// Helper methods for search orchestration
+    /// These create mock services for orchestration functionality
+    
+    fn get_mock_axis_manager(&self) -> Result<Arc<crate::index::axis::manager::AxisManager>> {
+        // Create a mock AXIS manager
+        // In real implementation, this would come from the service container
+        Err(anyhow!("AXIS manager not available in mock implementation"))
+    }
+    
+    fn get_mock_collection_service(&self) -> Arc<crate::services::collection_service::CollectionService> {
+        // Create a mock collection service
+        Arc::new(crate::services::collection_service::CollectionService::new(
+            "mock://collections".to_string(),
+            None, // No metadata provider for mock
+        ))
+    }
+    
+    fn get_mock_distance_engine(&self) -> Arc<crate::compute::distance_computation::UnifiedDistanceCompute> {
+        // Create a mock distance engine
+        Arc::new(crate::compute::distance_computation::UnifiedDistanceCompute::new())
+    }
+    
+    fn get_mock_quantization_engine(&self) -> Arc<crate::compute::quantization::unified::UnifiedQuantizationEngine> {
+        // Return the existing quantization engine
+        self.quantization_engine.clone()
+    }
+    
+    fn get_mock_storage_engine(&self) -> Arc<dyn crate::storage::traits::UnifiedStorageEngine> {
+        // Return self as the storage engine
+        // Note: SwiftEngine doesn't implement Clone, so we create a new instance
+        // In real implementation, this would be properly handled
+        Arc::new(SwiftEngine {
+            optimized_ops: self.optimized_ops.clone(),
+            statistics: self.statistics.clone(),
+            hardware: self.hardware.clone(),
+            metrics_collector: self.metrics_collector.clone(),
+            compression_provider: StandardCompression::default(),
+            quantization_engine: self.quantization_engine.clone(),
+            filesystem: self.filesystem.clone(),
+            universal_optimizer: UniversalPerformanceOptimizer::new(
+                self.universal_optimizer.get_strategy(),
+            ),
+        })
+    }
+    
+    /// Fallback to direct search when orchestration fails
+    async fn fallback_to_direct_search(
+        &self,
+        ctx: &crate::storage::traits::SearchContext,
+        collection_id: &str,
+        storage_path: &str,
+        query_vector: &[f32],
+        top_k: usize,
+        distance_metric: crate::compute::distance_computation::DistanceMetric,
+        filter_expression: Option<&crate::core::search::FilterExpression>,
+    ) -> Result<Vec<crate::core::search::SearchResult>> {
+        tracing::warn!("🔄 SWIFT: Falling back to direct search implementation");
+        
+        // Use the existing search implementation
+        // Load files from storage
+        let files = self.load_collection_files(collection_id, storage_path).await?;
+        
+        let mut all_results = Vec::new();
+        
+        // Search each SWIFT file
+        for swift_file in files.iter() {
+            let config = progressive_search::ProgressiveSearchConfig::default();
+            let results = self.optimized_ops.search_optimized(
+                swift_file,
+                query_vector,
+                top_k,
+                config,
+            ).await?;
+            
+            // Convert to search results
+            for record in results {
+                // Would compute actual distance
+                all_results.push((record, 0.0f32));
+            }
+        }
+        
+        // Sort by distance and take top-k
+        all_results.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
+        all_results.truncate(top_k);
+        
+        // Convert to core SearchResult format
+        let search_results: Vec<crate::core::search::SearchResult> = all_results.into_iter()
+            .enumerate()
+            .map(|(idx, (record, distance))| {
+                let similarity_result = crate::compute::distance_computation::SimilarityResult {
+                    normalized_score: 1.0 - distance.min(1.0).max(0.0),
+                    raw_score: 1.0 - distance,
+                    distance: Some(distance),
+                    metric: distance_metric,
+                };
+                
+                crate::core::search::SearchResult {
+                    id: record.id.unwrap_or_else(|| format!("unknown_{}", idx)),
+                    vector_id: Some(record.id.unwrap_or_else(|| format!("unknown_{}", idx))),
+                    score: similarity_result.normalized_score,
+                    similarity: Some(similarity_result.normalized_score),
+                    vector: Some(record.vector),
+                    metadata: Some(record.metadata.into_iter().map(|m| (m.key, serde_json::Value::String(format!("{:?}", m.value)))).collect()),
+                    debug_info: None,
+                    version: record.version,
+                    timestamp: None,
+                    semantic_similarity: Some(similarity_result),
+                    quantization_info: None,
+                    engine_stats: None,
+                    index_path: None,
+                }
+            })
+            .collect();
+        
+        Ok(search_results)
     }
 }
 

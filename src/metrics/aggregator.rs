@@ -201,8 +201,8 @@ impl MetricsAggregationEngine {
             metric_name: metric_name.to_string(),
             trend,
             slope,
-            current_value: values.last().cloned(),
-            predicted_next: values.last().cloned() + slope,
+            current_value: values.last().cloned().unwrap_or(0.0),
+            predicted_next: values.last().cloned().unwrap_or(0.0) + slope,
         })
     }
 }

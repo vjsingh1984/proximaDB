@@ -257,7 +257,16 @@ impl PostingListStorage {
                         .await
                         .map_err(|e| anyhow!("Failed to create filesystem: {}", e))?
                 );
-                let _reader = UnifiedSstableReader::new(filesystem);
+                // Create zero-copy system for the reader
+                let zero_copy_config = crate::storage::engines::common::zero_copy_io_system::config::ZeroCopyIOConfig::default();
+                let zero_copy_system = Arc::new(
+                    crate::storage::engines::common::zero_copy_io_system::orchestrator::ZeroCopyIOSystem::new(
+                        zero_copy_config,
+                        filesystem.clone(),
+                        vec![],
+                    ).await.map_err(|e| anyhow!("Failed to create zero-copy system: {}", e))?
+                );
+                let _reader = UnifiedSstableReader::new(filesystem, zero_copy_system, cluster_id.to_string());
                 let entries = Vec::new();
                 
                 // Read all entries for this cluster

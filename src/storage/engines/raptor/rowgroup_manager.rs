@@ -270,8 +270,18 @@ impl RowGroupManager {
     
     /// Add vectors to a specific row group
     async fn add_vectors_to_row_group(&mut self, row_group_id: Uuid, vectors: Vec<VectorRecord>) -> Result<()> {
-        let row_group = self.row_groups.get_mut(&row_group_id)
-            .ok_or_else(|| anyhow::anyhow!("Row group not found"))?;
+        // Check if row group exists first
+        if !self.row_groups.contains_key(&row_group_id) {
+            return Err(anyhow::anyhow!("Row group not found"));
+        }
+        
+        // Process vectors and prepare metadata before getting mutable reference
+        let metadata_maps: Vec<_> = vectors.iter()
+            .map(|record| record.metadata.clone())
+            .collect();
+        
+        // Now get mutable reference and update
+        let row_group = self.row_groups.get_mut(&row_group_id).unwrap();
         
         // Initialize transposed vectors if first batch
         if row_group.columnar_data.transposed_vectors.dimensions.is_empty() && !vectors.is_empty() {
@@ -285,7 +295,9 @@ impl RowGroupManager {
         for vector in vectors {
             // Add vector ID
             row_group.columnar_data.vector_ids.push(
-                vector.id.clone().unwrap_or_else(|| format!("vec_{}", row_group.vector_count))
+                vector.id.as_ref()
+                    .map(|id| id.clone())
+                    .unwrap_or_else(|| format!("vec_{}", row_group.vector_count))
             );
             
             // Add vector data (transpose: vector[d] -> dimensions[d].push(value))
@@ -297,10 +309,72 @@ impl RowGroupManager {
             
             // Add metadata (columnar format)
             if !vector.metadata.is_empty() {
-                self.add_metadata_columnar(&mut row_group.columnar_data.metadata_columns, vector.metadata)?;
+                // Convert Vec<MetadataItem> to HashMap
+                let metadata_map: HashMap<String, serde_json::Value> = vector.metadata.iter()
+                    .map(|item| (item.key.clone(), match &item.value {
+                        Some(crate::proto::proximadb::metadata_item::Value::StringValue(s)) => serde_json::Value::String(s.clone()),
+                        Some(crate::proto::proximadb::metadata_item::Value::NumberValue(n)) => serde_json::Value::Number(serde_json::Number::from_f64(*n).unwrap_or_else(|| serde_json::Number::from(0))),
+                        Some(crate::proto::proximadb::metadata_item::Value::BoolValue(b)) => serde_json::Value::Bool(*b),
+                        None => serde_json::Value::Null,
+                    }))
+                    .collect();
+                // Inline metadata addition to avoid borrow conflict
+                for (key, value) in metadata_map {
+                    match value {
+                        serde_json::Value::String(s) => {
+                            row_group.columnar_data.metadata_columns.string_columns
+                                .entry(key)
+                                .or_insert_with(Vec::new)
+                                .push(Some(s));
+                        }
+                        serde_json::Value::Number(n) => {
+                            row_group.columnar_data.metadata_columns.numeric_columns
+                                .entry(key)
+                                .or_insert_with(Vec::new)
+                                .push(n.as_f64());
+                        }
+                        serde_json::Value::Bool(b) => {
+                            row_group.columnar_data.metadata_columns.boolean_columns
+                                .entry(key)
+                                .or_insert_with(Vec::new)
+                                .push(Some(b));
+                        }
+                        _ => {
+                            // For null or other types, add null to string columns
+                            row_group.columnar_data.metadata_columns.string_columns
+                                .entry(key)
+                                .or_insert_with(Vec::new)
+                                .push(None);
+                        }
+                    }
+                }
             } else {
-                // Add empty metadata
-                self.add_empty_metadata_columnar(&mut row_group.columnar_data.metadata_columns)?;
+                // Add null values for all known columns
+                // Collect all known column names from existing columns
+                let mut all_keys = std::collections::HashSet::new();
+                all_keys.extend(row_group.columnar_data.metadata_columns.string_columns.keys().cloned());
+                all_keys.extend(row_group.columnar_data.metadata_columns.numeric_columns.keys().cloned());
+                all_keys.extend(row_group.columnar_data.metadata_columns.boolean_columns.keys().cloned());
+                
+                for key in all_keys {
+                    // Check which type the column is and add null value
+                    if row_group.columnar_data.metadata_columns.string_columns.contains_key(&key) {
+                        row_group.columnar_data.metadata_columns.string_columns
+                            .get_mut(&key)
+                            .unwrap()
+                            .push(None);
+                    } else if row_group.columnar_data.metadata_columns.numeric_columns.contains_key(&key) {
+                        row_group.columnar_data.metadata_columns.numeric_columns
+                            .get_mut(&key)
+                            .unwrap()
+                            .push(None);
+                    } else if row_group.columnar_data.metadata_columns.boolean_columns.contains_key(&key) {
+                        row_group.columnar_data.metadata_columns.boolean_columns
+                            .get_mut(&key)
+                            .unwrap()
+                            .push(None);
+                    }
+                }
             }
             
             row_group.vector_count += 1;
@@ -447,14 +521,14 @@ impl RowGroupManager {
             // Note: quantized is Vec<StorageQuantizedData>, need to extract data appropriately
             // For now, create empty structure as the exact mapping needs clarification
             row_group.columnar_data.quantized_data = Some(QuantizedColumnarData {
-                binary: Vec::new(), // Would extract from quantized[*].filter
-                int8: Vec::new(),   // Would extract from quantized[*].fast
-                pq4: Vec::new(),    // Would extract from quantized[*].primary if PQ4
-                pq8: Vec::new(),    // Would extract from quantized[*].primary if PQ8
+                binary: Some(Vec::new()), // Would extract from quantized[*].filter
+                int8: Some(Vec::new()),   // Would extract from quantized[*].fast
+                pq4: Some(Vec::new()),    // Would extract from quantized[*].primary if PQ4
+                pq8: Some(Vec::new()),    // Would extract from quantized[*].primary if PQ8
                 quantization_params: QuantizationParams {
                     scale: 1.0,
                     offset: 0.0,
-                    codebook: Vec::new(), // Would extract from quantization metadata
+                    codebook: Some(Vec::new()), // Would extract from quantization metadata
                 },
             });
             

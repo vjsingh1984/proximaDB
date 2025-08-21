@@ -150,7 +150,7 @@ impl ColumnarSchemaManager {
     
     /// Create field for filterable column
     fn create_filterable_field(&self, column: &FilterableColumn) -> Result<Field> {
-        let data_type = match column.data_type.as_str() {
+        let data_type = match column.data_type.as_deref() {
             "string" | "text" => DataType::Utf8,
             "int" | "integer" | "long" => DataType::Int64,
             "float" | "double" => DataType::Float64,

@@ -31,9 +31,7 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use tracing::{debug, info, trace};
 
-// High-performance optimizations for database workloads
-// use std::hint::likely; // Unstable feature - removed for compilation
-// use std::simd::{f32x8, Simd}; // Unstable feature - removed for compilation
+// SIMD optimizations already integrated via create_distance_calculator factory
 
 // Use proto enum as the single source of truth for DistanceMetric
 pub use crate::proto::proximadb::DistanceMetric;
@@ -117,7 +115,7 @@ impl PartialOrd for SimilarityResult {
 
 impl Ord for SimilarityResult {
     fn cmp(&self, other: &Self) -> Ordering {
-        self.partial_cmp(other)
+        self.partial_cmp(other).unwrap_or(Ordering::Equal)
     }
 }
 
@@ -976,7 +974,7 @@ impl UnifiedDistanceCompute {
         // Sort by rank_value (lower = better) and limit to k
         all_results.sort_by(|a, b| {
             a.0.rank_value.partial_cmp(&b.0.rank_value)
-                
+                .unwrap_or(std::cmp::Ordering::Equal)
         });
         all_results.truncate(k);
         
@@ -1339,9 +1337,9 @@ impl UnifiedDistanceCompute {
                 service.get_proto_collection(collection_id).await
             {
                 // Distance metric is in the config field of proto Collection
-                let metric = collection.config.as_ref().map(|c| c.distance_metric);
+                let metric = collection.config.as_ref().and_then(|c| Some(c.distance_metric));
                 debug!("🎯 Using collection default distance metric: {:?}", metric);
-                return match metric {
+                return match metric.unwrap_or(1) {
                     1 => DistanceMetric::Cosine,
                     2 => DistanceMetric::Euclidean,
                     3 => DistanceMetric::DotProduct,

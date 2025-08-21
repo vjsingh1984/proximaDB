@@ -12,13 +12,8 @@ use serde::{Serialize, Deserialize};
 use crate::core::compression::{StandardCompression, CompressionAlgorithm, CompressionContext};
 use super::common::{RowPageMetadata, HnswSegmentMetadata, VectorStats};
 
-// Simple metadata structure for B-tree index
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct BTreeIndexMetadata {
-    pub offset: u64,
-    pub size: u64,
-    pub num_entries: u32,
-}
+// Import bloom filter types from common
+use super::common::{RowGroupBloomFilter, ColumnnarIdIndex};
 use crate::compute::quantization::storage_engine::StorageQuantizationEngine;
 use crate::compute::quantization::types::UnifiedQuantizationLevel;
 use crate::storage::persistence::filesystem::{FileSystem, FileOptions, FilesystemFactory};
@@ -53,7 +48,8 @@ pub struct RaptorWriter {
     file_metadata: RaptorFileMetadata,
     
     // Indexes being built
-    btree_builder: BTreeBuilder,
+    bloom_builder: BloomFilterBuilder,
+    id_column_builder: IdColumnBuilder,
     hnsw_builder: HnswBuilder,
     column_projections: ColumnProjectionsBuilder,
 }
@@ -72,9 +68,17 @@ struct CompactRow {
     metadata: Vec<u8>, // Binary-encoded metadata
 }
 
-/// B-tree builder for ID index
-struct BTreeBuilder {
-    entries: Vec<(Vec<u8>, RowLocation)>,
+/// Bloom filter builder for row group
+struct BloomFilterBuilder {
+    ids: Vec<String>,
+    target_false_positive_rate: f64,
+}
+
+/// Columnar ID index builder
+struct IdColumnBuilder {
+    ids: Vec<String>,
+    id_hashes: Vec<u64>,
+    row_offsets: Vec<u32>,
 }
 
 /// HNSW builder
@@ -198,6 +202,14 @@ enum MetadataEncoding {
     RunLength,   // All values the same
 }
 
+/// Metadata structure for bloom filter storage
+#[derive(Debug)]
+struct BloomFilterMetadata {
+    offset: u64,
+    size: u64,
+    num_entries: u32,
+}
+
 impl MetadataEncoding {
     fn to_byte(&self) -> u8 {
         match self {
@@ -246,18 +258,41 @@ impl RaptorWriter {
             dimension,
         ));
         
-        // Initialize file metadata
+        // Initialize file metadata (matching consolidated struct)
         let file_metadata = RaptorFileMetadata {
             version: 1,
             created_by: "ProximaDB RAPTOR v1.0".to_string(),
             created_at: chrono::Utc::now().timestamp(),
-            num_rows: 0,
+            file_path: file_path.clone(),
+            file_size: 0,
+            total_rows: 0,
+            total_vectors: 0,
+            dimension,
             collection_id: collection_id.clone(),
             row_groups: Vec::new(),
-            schema: SchemaDescriptor { fields: Vec::new() },
-            key_value_metadata: Vec::new(),
-            global_btree_root: None,
+            num_rowgroups: 0,
+            rowgroup_offsets: Vec::new(),
+            rowgroup_sizes: Vec::new(),
+            rowgroup_vector_counts: Vec::new(),
+            schema: SchemaDescriptor {
+                vector_dimension: dimension,
+                metadata_fields: Vec::new(),
+                version: 1,
+            },
+            hnsw_metadata: None,
+            global_hnsw_offset: 0,
+            global_hnsw_size: 0,
+            hnsw_entry_points: Vec::new(),
+            hnsw_num_layers: 0,
             global_hnsw_entry: None,
+            bloom_filter_metadata: None,
+            compression_codec: format!("{:?}", config.compression),
+            custom_metadata: HashMap::new(),
+            key_value_metadata: Vec::new(),
+            footer_offset: 0,
+            footer_size: 0,
+            last_accessed: 0,
+            locality_clusters: Vec::new(),
         };
         
         // Write header magic at file start
@@ -277,7 +312,15 @@ impl RaptorWriter {
             current_rowgroup: None,
             row_groups: Vec::new(),
             file_metadata,
-            btree_builder: BTreeBuilder { entries: Vec::new() },
+            bloom_builder: BloomFilterBuilder { 
+                ids: Vec::new(),
+                target_false_positive_rate: 0.01,
+            },
+            id_column_builder: IdColumnBuilder {
+                ids: Vec::new(),
+                id_hashes: Vec::new(),
+                row_offsets: Vec::new(),
+            },
             hnsw_builder: HnswBuilder { nodes: Vec::new() },
             column_projections: ColumnProjectionsBuilder {
                 metadata_columns: HashMap::new(),
@@ -388,8 +431,15 @@ impl RaptorWriter {
         
         let location = RowLocation { page_id, offset_in_page };
         
-        // Update indexes
-        self.btree_builder.entries.push((id.to_vec(), location));
+        // Update bloom filter and columnar ID index
+        let id_string = vector.id.clone().unwrap_or_else(|| format!("{:x}", blake3::hash(&id)));
+        self.bloom_builder.ids.push(id_string.clone());
+        self.id_column_builder.ids.push(id_string.clone());
+        let hash_bytes = blake3::hash(id_string.as_bytes());
+        let mut hash_u64_bytes = [0u8; 8];
+        hash_u64_bytes.copy_from_slice(&hash_bytes.as_bytes()[0..8]);
+        self.id_column_builder.id_hashes.push(u64::from_le_bytes(hash_u64_bytes));
+        self.id_column_builder.row_offsets.push(offset_in_page as u32);
         
         // Add to HNSW with quantized vector for navigation
         // For HNSW, we use the same quantized representation for efficient graph navigation
@@ -454,6 +504,12 @@ impl RaptorWriter {
             
             // Add to current row group or create new one
             if self.row_groups.is_empty() || self.should_start_new_rowgroup() {
+                // Reset bloom filter and ID column builders for new row group
+                self.bloom_builder.ids.clear();
+                self.id_column_builder.ids.clear();
+                self.id_column_builder.id_hashes.clear();
+                self.id_column_builder.row_offsets.clear();
+                
                 self.row_groups.push(RowGroupMetadata {
                     id: self.row_groups.len() as u32,
                     offset: 0,
@@ -604,6 +660,7 @@ impl RaptorWriter {
         // Also encode IDs from RecordBatch
         if let Some(id_col) = batch.column_by_name("id") {
             if let Some(id_array) = id_col.as_any().downcast_ref::<arrow_array::StringArray>() {
+                use arrow_array::Array;
                 for i in 0..id_array.len() {
                     if !id_array.is_null(i) {
                         let id = id_array.value(i);
@@ -680,10 +737,12 @@ impl RaptorWriter {
                 rg.hnsw_segment_offset = Some(hnsw_meta.offset);
             }
             
-            // Write B-tree index
-            let btree_meta = self.write_btree_index().await?;
-            // Note: btree_index not available in common.rs RowGroupMetadata
-            // Would store in separate structure or extend the metadata
+            // Write bloom filter for this row group
+            let bloom_meta = self.write_bloom_filter().await?;
+            rg.bloom_filter_offset = Some(bloom_meta.offset);
+            
+            // Store columnar ID index as part of row group
+            // This enables SIMD scanning after bloom filter check
         }
         
         Ok(())
@@ -751,7 +810,9 @@ impl RaptorWriter {
         )?;
         
         // Get current file size before append
-        let offset = self.filesystem.file_size(&self.file_path).await.unwrap_or(0);
+        let offset = self.filesystem.metadata(&self.file_path).await
+            .map(|m| m.size)
+            .unwrap_or(0);
         
         // Write to file
         self.filesystem.append(&self.file_path, &compressed).await?;
@@ -791,15 +852,21 @@ impl RaptorWriter {
         }
         
         // Compress HNSW data
+        // RAPTOR should delegate compression to unified module
         let compressed = self.compression.compress(
             &hnsw_data,
-            CompressionAlgorithm::ZSTD,
+            CompressionAlgorithm::Zstd { level: 6 },
             6,
             CompressionContext::SstBlock,
         )?;
         
+        // Get current file size for offset
+        let offset = self.filesystem.metadata(&self.file_path).await
+            .map(|m| m.size)
+            .unwrap_or(0);
+        
         // Write to file
-        let offset = self.filesystem.append(&self.file_path, &compressed).await?;
+        self.filesystem.append(&self.file_path, &compressed).await?;
         
         Ok(HnswSegmentMetadata {
             file_offset: offset as i64,
@@ -1001,48 +1068,135 @@ impl RaptorWriter {
         indices.iter().map(|&i| i as u8).collect()
     }
     
-    /// Write B-tree index to disk
-    async fn write_btree_index(&mut self) -> Result<BTreeIndexMetadata> {
-        // Sort entries by ID
-        self.btree_builder.entries.sort_by(|a, b| a.0.cmp(&b.0));
-        
-        // Build B-tree pages (simplified - actual B-tree is more complex)
-        let mut btree_data = Vec::new();
-        
-        // Write number of entries
-        btree_data.extend(&(self.btree_builder.entries.len() as u32).to_le_bytes());
-        
-        // Write each entry
-        for (id, location) in &self.btree_builder.entries {
-            // Write ID length and data
-            btree_data.extend(&(id.len() as u32).to_le_bytes());
-            btree_data.extend(id);
-            
-            // Write location
-            btree_data.extend(&location.page_id.to_le_bytes());
-            btree_data.extend(&location.offset_in_page.to_le_bytes());
+    /// Write bloom filter for this row group
+    async fn write_bloom_filter(&mut self) -> Result<BloomFilterMetadata> {
+        // Validate we have IDs to build bloom filter
+        if self.bloom_builder.ids.is_empty() {
+            return Err(anyhow::anyhow!("Cannot create bloom filter with no IDs"));
         }
         
-        // Compress B-tree data
+        // Calculate optimal bloom filter size
+        let num_ids = self.bloom_builder.ids.len();
+        let bits_per_id = 10; // For 1% false positive rate
+        let num_bits = num_ids.saturating_mul(bits_per_id);
+        
+        // Validate bloom filter size is reasonable (cap at 128MB)
+        // This supports up to ~107.3 million vectors at 1% false positive rate
+        const MAX_BLOOM_SIZE_BYTES: usize = 128 * 1024 * 1024;
+        let num_bytes = (num_bits + 7) / 8;
+        if num_bytes > MAX_BLOOM_SIZE_BYTES {
+            return Err(anyhow::anyhow!(
+                "Bloom filter size {} bytes exceeds maximum {} bytes (supports up to ~107M vectors)", 
+                num_bytes, MAX_BLOOM_SIZE_BYTES
+            ));
+        }
+        
+        // Create bloom filter
+        let mut bloom_bits = vec![0u8; num_bytes];
+        let num_hashes = 7; // Optimal for 1% false positive
+        
+        // Add all IDs to bloom filter
+        for id in &self.bloom_builder.ids {
+            // Validate ID is not empty
+            if id.is_empty() {
+                tracing::warn!("Skipping empty ID in bloom filter");
+                continue;
+            }
+            
+            for i in 0..num_hashes {
+                let hash = blake3::hash(format!("{}{}", id, i).as_bytes());
+                let hash_bytes = hash.as_bytes();
+                
+                // Safe conversion with validation
+                if hash_bytes.len() < 8 {
+                    return Err(anyhow::anyhow!("Invalid hash length for bloom filter"));
+                }
+                
+                let bit_index = (u64::from_le_bytes(
+                    hash_bytes[0..8].try_into()
+                        .map_err(|_| anyhow::anyhow!("Failed to convert hash to u64"))?
+                ) as usize) % num_bits;
+                
+                let byte_index = bit_index / 8;
+                let bit_offset = bit_index % 8;
+                
+                // Bounds check (should never fail with modulo, but safety first)
+                if byte_index >= bloom_bits.len() {
+                    return Err(anyhow::anyhow!(
+                        "Bloom filter byte index {} out of bounds (size: {})",
+                        byte_index, bloom_bits.len()
+                    ));
+                }
+                
+                bloom_bits[byte_index] |= 1 << bit_offset;
+            }
+        }
+        
+        // Write columnar ID index (for SIMD scanning after bloom check)
+        let mut id_column_data = Vec::new();
+        
+        // Write number of IDs
+        id_column_data.extend(&(self.id_column_builder.ids.len() as u32).to_le_bytes());
+        
+        // Write ID strings (columnar format for SIMD)
+        for id in &self.id_column_builder.ids {
+            id_column_data.extend(&(id.len() as u32).to_le_bytes());
+            id_column_data.extend(id.as_bytes());
+        }
+        
+        // Write ID hashes (for fast comparison)
+        for hash in &self.id_column_builder.id_hashes {
+            id_column_data.extend(&hash.to_le_bytes());
+        }
+        
+        // Write row offsets
+        for offset in &self.id_column_builder.row_offsets {
+            id_column_data.extend(&offset.to_le_bytes());
+        }
+        
+        // Combine bloom filter and ID column
+        let mut combined_data = Vec::new();
+        combined_data.extend(&(bloom_bits.len() as u32).to_le_bytes());
+        combined_data.extend(&bloom_bits);
+        combined_data.extend(&id_column_data);
+        
+        // Compress using unified compression
         let compressed = self.compression.compress(
-            &btree_data,
-            CompressionAlgorithm::ZSTD,
+            &combined_data,
+            CompressionAlgorithm::Zstd { level: 6 },
             6,
             CompressionContext::SstBlock,
         )?;
         
         // Get current file size before append
-        let offset = self.filesystem.file_size(&self.file_path).await.unwrap_or(0);
+        let offset = self.filesystem.metadata(&self.file_path).await
+            .map(|m| m.size)
+            .unwrap_or(0);
         
         // Write to file
         self.filesystem.append(&self.file_path, &compressed).await?;
         
-        Ok(BTreeIndexMetadata {
+        // Create and store bloom filter metadata
+        let bloom_filter = RowGroupBloomFilter {
+            bits: bloom_bits.clone(),
+            num_hashes,
+            num_ids,
+            size_bits: num_bits,
+            false_positive_rate: self.bloom_builder.target_false_positive_rate,
+        };
+        
+        // Store in current row group
+        if let Some(rg) = self.row_groups.last_mut() {
+            rg.bloom_filter = Some(bloom_filter);
+        }
+        
+        Ok(BloomFilterMetadata {
             offset,
             size: compressed.len() as u64,
-            num_entries: self.btree_builder.entries.len() as u32,
+            num_entries: self.bloom_builder.ids.len() as u32,
         })
     }
+    
     
     // Add missing fields to struct
     fn initialize_missing_fields(&mut self) {

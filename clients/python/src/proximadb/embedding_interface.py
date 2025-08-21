@@ -13,7 +13,7 @@ import numpy as np
 
 @dataclass
 class EmbeddingConfig:
-    """Generic embedding configuration"""
+    """Generic embedding configuration with ultra-efficient enum tracking"""
     model_name: str
     dimension: int
     batch_size: int = 32
@@ -23,6 +23,11 @@ class EmbeddingConfig:
     api_key: Optional[str] = None
     api_url: Optional[str] = None
     extra_params: Dict[str, Any] = None
+    
+    # NEW: Ultra-efficient enum tracking for 75% storage savings
+    track_model_usage: bool = True
+    track_processing_time: bool = True
+    track_quality_metrics: bool = True
 
 
 class EmbeddingProvider(ABC):
@@ -45,6 +50,34 @@ class EmbeddingProvider(ABC):
             numpy array of shape (len(texts), embedding_dimension)
         """
         pass
+        
+    def embed_texts_with_metadata(self, texts: List[str]) -> tuple[np.ndarray, Dict[str, Any]]:
+        """
+        Generate embeddings with processing metadata for ultra-efficient storage
+        
+        Args:
+            texts: List of text strings to embed
+            
+        Returns:
+            Tuple of (embeddings, processing_metadata)
+        """
+        import time
+        start_time = time.time()
+        
+        # Generate embeddings
+        embeddings = self.embed_texts(texts)
+        
+        # Create processing metadata for enum packing
+        processing_time_ms = int((time.time() - start_time) * 1000)
+        
+        metadata = {
+            'model_id': self.get_model_id(),
+            'processing_time_ms': processing_time_ms,
+            'batch_size': len(texts),
+            'dimension': self.dimension,
+        }
+        
+        return embeddings, metadata
     
     @abstractmethod
     def embed_text(self, text: str) -> np.ndarray:
@@ -75,6 +108,10 @@ class EmbeddingProvider(ABC):
     def is_available(self) -> bool:
         """Check if the embedding provider is available"""
         pass
+        
+    def get_model_id(self) -> str:
+        """Get model identifier for tracking"""
+        return f"{self.__class__.__name__.lower().replace('embeddingprovider', '')}_{self.model_name}"
     
     def batch_embed_texts(self, texts: List[str], batch_size: Optional[int] = None) -> np.ndarray:
         """

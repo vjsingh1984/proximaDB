@@ -419,7 +419,7 @@ impl FilesystemManager {
         let parsed_url = Url::parse(url)?;
         // let auth_provider = self.auth_providers.get(key).cloned();
 
-        let filesystem: Box<dyn FileSystem> = match key.scheme.as_str() {
+        let filesystem: Box<dyn FileSystem> = match key.scheme.as_deref() {
             "file" => {
                 let mut local_config = self.config.local.clone().unwrap_or_default();
                 // Set root directory to the base path from URL

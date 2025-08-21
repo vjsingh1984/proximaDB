@@ -193,7 +193,7 @@ impl ProximaDb for ProximaDbGrpcService {
 
                 // Debug log the received config
                 debug!("📊 gRPC CREATE received config: name={}, dimension={}, distance_metric={}, storage_engine={}, indexing_algorithm={}", 
-                    config.name, config.dimension, config.distance_metric, config.storage_engine, config.primary_index);
+                    config.name, config.dimension, config.distance_metric, config.storage_engine, config.primary_index.as_deref().unwrap_or("none"));
 
                 // Parse proto types to native types - using proto enum directly
                 let _distance_metric = match crate::proto::proximadb::DistanceMetric::try_from(config.distance_metric) {
@@ -209,10 +209,8 @@ impl ProximaDb for ProximaDbGrpcService {
                     _ => crate::proto::proximadb::StorageEngine::Viper,
                 };
                 
-                let _indexing_algorithm = match crate::proto::proximadb::IndexingAlgorithm::try_from(config.primary_index) {
-                    Ok(algo) => algo,
-                    _ => crate::proto::proximadb::IndexingAlgorithm::Hnsw,
-                };
+                // Primary index is now a string name, not an algorithm enum
+                let _primary_index_name = config.primary_index.clone();
                 
                 // Using native proto types directly - no JSON conversion needed!
 
@@ -425,7 +423,7 @@ impl ProximaDb for ProximaDbGrpcService {
                 }
                 
                 // Check if any updates were provided
-                if description.is_empty() && tags.is_empty() && owner.is_empty() && config.is_empty() {
+                if description.is_none() && tags.is_none() && owner.is_none() && config.is_none() {
                     return Err(Status::invalid_argument("No valid updates provided"));
                 }
                 
@@ -436,18 +434,15 @@ impl ProximaDb for ProximaDbGrpcService {
                         dimension: 0, // 0 means don't update
                         distance_metric: 0, // 0 means don't update
                         storage_engine: 0, // 0 means don't update
-                        primary_indexing_algorithm: 0, // 0 means don't update
-                        description: description,
+                        storage_config: None,
+                        description: description.flatten(), // Flatten Option<Option<String>> to Option<String>
                         tags: tags.unwrap_or_default(),
-                        owner: owner,
+                        owner: owner.flatten(), // Flatten Option<Option<String>> to Option<String>
                         filterable_columns: vec![],
                         index_configs: vec![],
                         quantization: None,
-                        primary_index: String::new(),
-                        auto_index_selection: false,
-                        compression: None,  // SDK-driven (2025-08-06)
-                        optimization_hints: None,  // SDK-driven (2025-08-06)
-                        storage_location: None,  // Optional storage location
+                        primary_index: None,
+                        auto_index_selection: None,
                     })
                 } else {
                     None
@@ -484,7 +479,7 @@ impl ProximaDb for ProximaDbGrpcService {
                     }))
                 } else {
                     // Convert error codes to appropriate gRPC Status
-                    let status = match result.error_code.as_str() {
+                    let status = match result.error_code.as_deref() {
                         Some("COLLECTION_NOT_FOUND") => Status::not_found(
                             format!("Collection not found: {:?}", result.error_code),
                         ),
@@ -754,8 +749,12 @@ impl ProximaDb for ProximaDbGrpcService {
                     _ => Some(crate::compute::distance_computation::DistanceMetric::Cosine),
                 };
                 let mut params = crate::core::search::SearchParams {
+                    query_vectors: None, // Will be set by the search handler
+                    vector: None, // Deprecated - use query_vectors instead
                     top_k: Some(req.top_k as usize),
                     distance_metric,
+                    filter_expression: None, // Will be set if metadata filters exist
+                    filters: None, // Legacy field
                     ..Default::default()
                 };
                 if let Some(filters) = &metadata_filters {
@@ -867,8 +866,8 @@ impl ProximaDb for ProximaDbGrpcService {
                         "distance": result.similarity, // Raw distance value
                         "vector": if include_vectors { Some(&result.vector) } else { None },
                         "metadata_info": if include_metadata { Some(&result.metadata) } else { None },
-                        "rank": result.rank,
-                        "algorithm_used": result.debug_info.as_ref().map(|d| d.algorithm.as_str())
+                        "version": result.version,
+                        "algorithm_used": result.debug_info.as_ref().map(|d| d.algorithm.clone())
                     })
                 }).collect::<Vec<_>>()
             })).map_err(|e| Status::internal(format!("Serialization failed: {}", e)))?
@@ -949,7 +948,7 @@ impl ProximaDb for ProximaDbGrpcService {
                         .await
                         .map_err(|e| Status::internal(format!("Multi-query search {} failed: {}", index, e)))?;
                     
-                    // Direct conversion for each query
+                    // Now we have proper SearchResults, use the conversion function
                     let proto_results = convert_search_results(
                         search_results,
                         include_vectors,
@@ -1068,9 +1067,10 @@ impl ProximaDb for ProximaDbGrpcService {
                         serde_json::json!({
                             "id": result.id,
                             "score": result.score,
-                            "vector": if include_vectors { Some(&result.vector) } else { None },
+                            "similarity": result.similarity,
+                            "vector": if include_vectors { result.vector.as_ref() } else { None },
                             "metadata_info": if include_metadata { Some(&result.metadata) } else { None },
-                            "rank": result.rank
+                            "version": result.version
                         })
                     }).collect::<Vec<_>>()
                 });
@@ -1116,10 +1116,10 @@ impl ProximaDb for ProximaDbGrpcService {
         );
 
         // Convert results to gRPC format
-        let results = search_results
+        let results: Vec<crate::proto::proximadb::SearchVectorRecord> = search_results
             .get("results")
             .and_then(|r| r.as_array())
-            
+            .unwrap_or(&vec![])
             .iter()
             .map(|result| crate::proto::proximadb::SearchVectorRecord {
                 id: result
@@ -1180,7 +1180,7 @@ impl ProximaDb for ProximaDbGrpcService {
             let total_results = search_results
                 .get("metadata")
                 .and_then(|v| v.as_i64())
-                ;
+                .unwrap_or(results.len() as i64);
 
             Ok(Response::new(VectorOperationResponse {
                 success: true,

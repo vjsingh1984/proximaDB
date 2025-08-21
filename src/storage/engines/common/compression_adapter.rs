@@ -154,7 +154,7 @@ impl UniversalCompressionAdapter {
             CompressionDataType::IndexData => CompressionContext::SstBlock, // Best fit
             CompressionDataType::Custom(ref name) => {
                 // Map custom contexts to best fit
-                match name.as_str() {
+                match name.as_deref() {
                     "bloom_filter" | "index_node" => CompressionContext::SstBlock,
                     "vector_batch" | "embedding" => CompressionContext::VectorSerialization,
                     "columnar_chunk" => CompressionContext::ParquetColumn,

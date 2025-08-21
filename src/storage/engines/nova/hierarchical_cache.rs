@@ -11,7 +11,7 @@ use tracing::{debug, info, warn};
 use dashmap::DashMap;
 use serde::{Serialize, Deserialize};
 
-use crate::storage::persistence::filesystem::zero_copy_filesystem::ZeroCopyFilesystem;
+use crate::storage::persistence::filesystem::{FileSystem, zero_copy_filesystem::ZeroCopyFilesystem};
 
 /// NOVA's 3-tier hierarchical statistics structure
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -141,7 +141,7 @@ pub struct NovaHierarchicalCache {
     global_stats: Arc<RwLock<GlobalStatistics>>,
     
     /// Filesystem for loading stats from disk
-    filesystem: Arc<ZeroCopyFilesystem>,
+    filesystem: Arc<dyn FileSystem>,
     
     /// Cache statistics
     cache_stats: Arc<CacheStatistics>,
@@ -188,7 +188,7 @@ struct CacheStatistics {
 
 impl NovaHierarchicalCache {
     pub fn new(
-        filesystem: Arc<ZeroCopyFilesystem>,
+        filesystem: Arc<dyn FileSystem>,
         block_cache_size: usize,
         rowgroup_ttl_sec: u64,
     ) -> Self {

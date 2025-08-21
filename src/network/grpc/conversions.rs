@@ -1,11 +1,11 @@
 //! Direct conversions between native types and proto messages
 //! Eliminates redundant JSON/Avro serialization
 
-use crate::core::search::results::SearchResult as NativeSearchResult;
+use crate::core::search::results::InternalSearchResult;
 use crate::proto::proximadb::{SearchVectorRecord, SearchResult as ProtoSearchResult, MetadataItem};
 
-impl From<NativeSearchResult> for SearchVectorRecord {
-    fn from(native: NativeSearchResult) -> Self {
+impl From<InternalSearchResult> for SearchVectorRecord {
+    fn from(native: InternalSearchResult) -> Self {
         SearchVectorRecord {
             id: native.id,
             vector: native.vector.unwrap_or_default(),
@@ -38,8 +38,8 @@ impl From<NativeSearchResult> for SearchVectorRecord {
     }
 }
 
-impl From<&NativeSearchResult> for SearchVectorRecord {
-    fn from(native: &NativeSearchResult) -> Self {
+impl From<&InternalSearchResult> for SearchVectorRecord {
+    fn from(native: &InternalSearchResult) -> Self {
         SearchVectorRecord {
             id: native.id.clone(),
             vector: native.vector.clone().unwrap_or_default(),
@@ -74,7 +74,7 @@ impl From<&NativeSearchResult> for SearchVectorRecord {
 
 /// Convert a vector of native search results directly to proto SearchVectorRecord
 pub fn convert_search_results(
-    native_results: Vec<NativeSearchResult>,
+    native_results: Vec<InternalSearchResult>,
     include_vectors: bool,
     include_metadata: bool,
 ) -> Vec<SearchVectorRecord> {
@@ -95,7 +95,7 @@ pub fn convert_search_results(
 
 /// Convert with reference to avoid moves
 pub fn convert_search_results_ref(
-    native_results: &[NativeSearchResult],
+    native_results: &[InternalSearchResult],
     include_vectors: bool,
     include_metadata: bool,
 ) -> Vec<SearchVectorRecord> {

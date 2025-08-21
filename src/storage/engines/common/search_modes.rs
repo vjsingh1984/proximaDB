@@ -1105,23 +1105,28 @@ pub struct CandidateRecord {
     /// Optional metadata
     pub metadata: Option<HashMap<String, serde_json::Value>>,
     
-    /// Search context information
-    pub search_context: Option<SearchContext>,
+    /// Search stage context information
+    pub search_context: Option<SearchStageContext>,
 }
 
-/// Search context information
+/// Type alias for backward compatibility - DEPRECATED: Use SearchStageContext
+#[deprecated(since = "0.1.4", note = "Use SearchStageContext to avoid confusion with query context")]
+pub type SearchContext = SearchStageContext;
+
+/// Search stage context information - tracks which stage found a candidate
+/// This is NOT the overall search request context (that's UnifiedQueryContext)
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SearchContext {
-    /// Search stage that found this candidate
+pub struct SearchStageContext {
+    /// Search stage that found this candidate (e.g., "binary", "int8", "pq", "fp32")
     pub search_stage: Option<String>,
     
-    /// Approximation quality
+    /// Approximation quality at this stage (0.0-1.0)
     pub approximation_quality: Option<f32>,
     
-    /// Computation cost
+    /// Computation cost for this stage
     pub computation_cost: Option<f32>,
     
-    /// Additional context
+    /// Additional stage-specific context
     pub additional_context: HashMap<String, serde_json::Value>,
 }
 

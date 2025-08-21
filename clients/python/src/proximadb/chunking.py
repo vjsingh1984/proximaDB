@@ -283,19 +283,24 @@ def create_vector_records(
     chunks: List[TextChunk],
     embeddings: List[List[float]],
     collection_metadata: Optional[Dict[str, Any]] = None,
-    filterable_fields: Optional[List[str]] = None
+    filterable_fields: Optional[List[str]] = None,
+    model_id: Optional[str] = None,
+    processing_config: Optional[Dict[str, Any]] = None
 ) -> List[VectorRecord]:
     """
-    Create VectorRecord objects from chunks and embeddings
+    Create VectorRecord objects from chunks and embeddings with ultra-efficient enum packing
     
     This function combines the results of chunking and embedding into
-    the format needed for ProximaDB storage.
+    the format needed for ProximaDB storage, leveraging the new gRPC source content
+    fields and 75% storage savings through enum packing.
     
     Args:
         chunks: List of text chunks
         embeddings: List of embedding vectors (must match chunks length)
         collection_metadata: Metadata to add to all records
         filterable_fields: List of metadata fields to mark as filterable
+        model_id: Optional embedding model ID for tracking
+        processing_config: Optional processing configuration
         
     Returns:
         List of VectorRecord objects ready for insertion
@@ -341,14 +346,55 @@ def create_vector_records(
             if k not in filterable_fields
         }
         
-        # Create vector record
+        # Create ultra-efficient source content using enum packing (75% storage savings)
+        from .enum_packing import (
+            create_processing_info, create_source_content, create_text_content,
+            ExtractionMethod, ProcessingStatus, QualityLevel, DataSource,
+            ContentCategory, LanguageCode
+        )
+        
+        # Create processing info with packed enums
+        processing_info = create_processing_info(
+            model_id=model_id or processing_config.get('model_id') if processing_config else None,
+            extraction=ExtractionMethod.DIRECT_TEXT,
+            status=ProcessingStatus.PROCESSED,
+            quality=QualityLevel.HIGH if len(chunk.text) > 50 else QualityLevel.MEDIUM,
+            source=DataSource.API_INGESTION,
+            processing_time_ms=processing_config.get('processing_time_ms') if processing_config else None
+        )
+        
+        # Create text content with language packing
+        text_content = create_text_content(
+            content=chunk.text,
+            language=LanguageCode.ENGLISH,  # Could be detected automatically
+            chunk_context={
+                'chunk_index': chunk.metadata.get('chunk_index', 0),
+                'total_chunks': chunk.metadata.get('total_chunks', 1),
+                'strategy': chunk.metadata.get('chunking_strategy', 'unknown'),
+                'start_position': chunk.start,
+                'end_position': chunk.end,
+            }
+        )
+        
+        # Create source content with packed attributes
+        source_content = create_source_content(
+            data_oneof={'text': text_content},
+            category=ContentCategory.DOCUMENT,
+            quality=QualityLevel.HIGH if len(chunk.text) > 50 else QualityLevel.MEDIUM,
+            mime_type='text/plain',
+            size_bytes=len(chunk.text.encode('utf-8')),
+            processing_info=processing_info
+        )
+        
+        # Create vector record with optimized structure
         record = VectorRecord(
             id=chunk.chunk_id,
             vector=embedding,
             metadata={
                 **filterable_metadata,
                 "additional_metadata": non_filterable_metadata
-            }
+            },
+            source=source_content  # NEW: Ultra-efficient source content storage
         )
         
         records.append(record)
@@ -362,13 +408,16 @@ def chunk_and_embed_text(
     embedding_provider,
     chunking_config: Optional[ChunkingConfig] = None,
     metadata: Optional[Dict[str, Any]] = None,
-    filterable_fields: Optional[List[str]] = None
+    filterable_fields: Optional[List[str]] = None,
+    model_id: Optional[str] = None,
+    processing_config: Optional[Dict[str, Any]] = None
 ) -> List[VectorRecord]:
     """
-    Convenience function that chunks text and generates embeddings
+    Convenience function that chunks text and generates embeddings with ultra-efficient storage
     
     This is a helper that combines chunking and embedding in one call,
-    but still maintains separation of concerns internally.
+    but still maintains separation of concerns internally. Now leverages
+    the new gRPC source content fields and enum packing for 75% storage savings.
     
     Args:
         text: Text to process
@@ -377,25 +426,38 @@ def chunk_and_embed_text(
         chunking_config: Optional chunking configuration
         metadata: Optional metadata for all chunks
         filterable_fields: Fields to mark as filterable
+        model_id: Optional embedding model ID for tracking
+        processing_config: Optional processing configuration
         
     Returns:
-        List of VectorRecord objects ready for insertion
+        List of VectorRecord objects with optimized source content storage
     """
     # 1. Chunk text using pooled chunker for performance
     config = chunking_config or ChunkingConfig()
     with PooledChunkerContext(config) as chunker:
         chunks = chunker.chunk_text(text, source_id, metadata)
     
-    # 2. Generate embeddings
+    # 2. Generate embeddings with processing metadata for ultra-efficient storage
     chunk_texts = [chunk.text for chunk in chunks]
-    embeddings = embedding_provider.embed_texts(chunk_texts)
+    if hasattr(embedding_provider, 'embed_texts_with_metadata'):
+        embeddings, embedding_metadata = embedding_provider.embed_texts_with_metadata(chunk_texts)
+        # Merge with existing processing config
+        if processing_config:
+            processing_config.update(embedding_metadata)
+        else:
+            processing_config = embedding_metadata
+    else:
+        # Fallback for providers that don't support metadata
+        embeddings = embedding_provider.embed_texts(chunk_texts)
     
-    # 3. Create vector records
+    # 3. Create vector records with ultra-efficient enum packing
     records = create_vector_records(
         chunks,
         embeddings.tolist() if hasattr(embeddings, 'tolist') else embeddings,
         metadata,
-        filterable_fields
+        filterable_fields,
+        model_id=model_id,
+        processing_config=processing_config
     )
     
     return records

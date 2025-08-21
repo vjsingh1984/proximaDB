@@ -50,7 +50,7 @@ impl Default for CompactionConfig {
             background_compaction: true,
             compaction_threads: std::thread::available_parallelism()
                 .map(|n| n.get())
-                
+                .unwrap_or(4)
                 .min(4),
         }
     }

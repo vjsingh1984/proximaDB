@@ -53,6 +53,12 @@ impl<K> PartitionedKey<K> {
     }
 }
 
+impl<K: std::fmt::Display> std::fmt::Display for PartitionedKey<K> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}:{}", self.collection_id, self.key)
+    }
+}
+
 /// Clustering method for IVF training
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum IvfClusteringMethod {
@@ -831,7 +837,7 @@ impl UnifiedIvfIndex {
             .collect();
         
         candidates.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
-        candidates.first().map(|c| c.0)
+        candidates.first().map(|c| c.0).unwrap_or(0)
     }
     
     fn update_centroids_from_assignments(
@@ -1003,8 +1009,7 @@ impl UnifiedIvfIndex {
             access_correlations: Arc::new(DashMap::new()),
             product_quantizer: None,
             
-            // NEW: Queue-based vector consumption
-            queue_consumer: None,
+            // NEW: Queue-based vector consumption - handled externally
             preferred_extraction_mode,
             quantized_vectors: Arc::new(DashMap::new()),
         })
@@ -1137,19 +1142,19 @@ impl UnifiedIvfIndex {
         let vector_key = PartitionedKey::new(self.collection_id.clone(), id.clone());
         
         // Convert HashMap metadata to Vec<MetadataItem>
-        let metadata_items = metadata.iter().map(|map| {
+        let metadata_items = metadata.map(|map| {
             map.into_iter().map(|(key, value)| {
                 crate::proto::proximadb::MetadataItem {
                     key,
                     value: Some(match value {
                         serde_json::Value::String(s) => crate::proto::proximadb::metadata_item::Value::StringValue(s),
-                        serde_json::Value::Number(n) => crate::proto::proximadb::metadata_item::Value::NumberValue(n.as_f64()),
+                        serde_json::Value::Number(n) => crate::proto::proximadb::metadata_item::Value::NumberValue(n.as_f64().unwrap_or(0.0)),
                         serde_json::Value::Bool(b) => crate::proto::proximadb::metadata_item::Value::BoolValue(b),
                         _ => crate::proto::proximadb::metadata_item::Value::StringValue(value.to_string()),
                     }),
                 }
             }).collect()
-        }).unwrap_or_else(Vec::new);
+        }).unwrap_or_else(|| Vec::new());
         
         // Get or create zero-overhead collection for this collection_id
         let collections = self.vectors.clone();
@@ -1183,7 +1188,7 @@ impl UnifiedIvfIndex {
             return Err(anyhow!("Index must be trained before searching"));
         }
         
-        let n_probe = n_probe;
+        let n_probe = n_probe.unwrap_or(1); // Default to 1 probe if not specified
         self.search_count.fetch_add(1, Ordering::Relaxed);
         
         // Step 1: Find nearest centroids (always in memory - fast)
@@ -1211,9 +1216,10 @@ impl UnifiedIvfIndex {
                     if let Some(collection_entry) = self.vectors.get(vector_id) {
                         let collection = collection_entry.read().unwrap();
                         if let Some(view) = collection.get(vector_id) {
-                            let vector_data = view.as_f32();
-                            let distance = self.distance_compute.calculate_distance(query, vector_data, &DistanceMetric::Euclidean).rank_value;
-                            candidates.push((vector_id.clone(), distance));
+                            if let Some(vector_data) = view.as_f32() {
+                                let distance = self.distance_compute.calculate_distance(query, vector_data, &DistanceMetric::Euclidean).rank_value;
+                                candidates.push((vector_id.clone(), distance));
+                            }
                         }
                     }
                 }
@@ -1478,7 +1484,7 @@ impl UnifiedIvfIndex {
         k: usize,
         n_probe: Option<usize>,
     ) -> Result<Vec<(String, f32)>> {
-        if !self.has_quantized_storage() || self.product_quantizer.is_empty() {
+        if !self.has_quantized_storage() || self.product_quantizer.is_none() {
             // No quantized vectors or PQ available, use standard search
             return self.search(query, k, n_probe).await;
         }
@@ -1530,7 +1536,7 @@ impl crate::index::axis::index_factory::AxisVectorIndex for UnifiedIvfIndex {
     async fn remove(&self, id: &str) -> Result<()> {
         // Remove vector from vectors map
         let key = PartitionedKey::new(self.collection_id.clone(), id.to_string());
-        self.vectors.remove(&key);
+        self.vectors.remove(&key.to_string());
         
         // Note: We don't remove from posting lists here as that would require
         // scanning all clusters. This will be handled during compaction.

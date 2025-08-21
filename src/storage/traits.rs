@@ -654,7 +654,7 @@ pub trait UnifiedStorageEngine: Send + Sync {
             .and_then(|v| v.as_array())
             .map(|arr| {
                 arr.iter()
-                    .filter_map(|v| v.as_str())
+                    .filter_map(|v| v.as_deref())
                     .map(|s| s.to_string())
                     .collect()
             })
@@ -1046,7 +1046,7 @@ impl SearchContext {
             storage_strategy: config
                 .and_then(|c| c.storage.as_ref())
                 .and_then(|s| s.engine.as_ref())
-                .map(|e| match e.as_str() {
+                .map(|e| match e.as_deref() {
                     "VIPER" => StorageEngineStrategy::Viper,
                     "SST" => StorageEngineStrategy::Lsm,
                     "PRISM" => StorageEngineStrategy::Prism,
@@ -1065,7 +1065,7 @@ impl SearchContext {
             performance_tier: config
                 .and_then(|c| c.storage.as_ref())
                 .and_then(|s| s.performance_tier.as_ref())
-                .map(|pt| match pt.as_str() {
+                .map(|pt| match pt.as_deref() {
                     "hot" => PerformanceTier::Hot,
                     "warm" => PerformanceTier::Warm,
                     "cold" => PerformanceTier::Cold,
@@ -1202,7 +1202,7 @@ impl SearchContext {
     /// Get storage URL from collection's storage assignment
     pub fn storage_url(&self) -> Option<&str> {
         self.collection.storage_assignment.as_ref()
-            .and_then(|sa| sa.base_url.as_str())
+            .and_then(|sa| sa.base_url.as_deref())
     }
     
     /// Get collection-specific storage path

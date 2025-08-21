@@ -67,6 +67,7 @@
 //!    - Cache-friendly compressed representations
 
 use anyhow::{anyhow, Result};
+use crate::storage::engines::common::zero_copy_io_system::traits::CacheTemperature;
 use async_trait::async_trait;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -329,7 +330,7 @@ impl PrismEngine {
                 selectivity_hint: 0.2, // High selectivity for PRISM metadata-first approach
                 collection_id: "prism".to_string(),
                 concurrent_queries: 1,
-                cache_temperature: 0.7, // High cache temperature for memory-first PRISM
+                cache_temperature: CacheTemperature::Hot, // High cache temperature for memory-first PRISM
             };
             
             // PRISM typically works with in-memory data, so this is mainly for cold storage access
@@ -374,7 +375,7 @@ impl PrismEngine {
                 selectivity_hint: 1.0, // Read everything
                 collection_id: "prism".to_string(),
                 concurrent_queries: 1,
-                cache_temperature: 0.0, // Don't pollute cache for compaction
+                cache_temperature: CacheTemperature::Cold, // Don't pollute cache for compaction
             };
             
             // Make bandwidth-optimized decisions for compaction

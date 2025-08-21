@@ -317,6 +317,9 @@ impl IndexConfig {
             is_primary: true, // Default to primary index
             use_cases: vec![], // Default empty use cases
             selectivity_threshold: None, // Default no selectivity threshold
+            use_quantization: None, // Default: inherit from collection config
+            quantization_override: None, // Default: no override
+            queue_representation: None, // Default: auto-detect from queue
         }
     }
 

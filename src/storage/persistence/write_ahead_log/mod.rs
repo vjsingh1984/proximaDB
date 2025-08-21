@@ -19,7 +19,7 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tracing::{debug, info};
 
-use crate::core::bloom::BloomFilterStrategy;
+// use crate::core::bloom::BloomFilterStrategy; // Type doesn't exist
 
 use crate::compute::distance_computation::engine::{DistanceComputeProvider, UnifiedDistanceCompute};
 use crate::compute::distance_computation::DistanceMetric;
@@ -48,6 +48,7 @@ pub mod compaction_coordinator;
 pub mod enhanced_flush_result;
 pub mod compaction_axis_integration;
 pub mod compaction_types;
+pub mod parallel_search;
 pub mod flush_result_optimization;
 
 // Optimized WAL components (Phase 1 implementation) - now consolidated into WriteAheadLogManager
@@ -134,7 +135,7 @@ impl WALOperation {
     pub fn extract_vector_record(&self) -> Result<VectorRecord, anyhow::Error> {
         // Proto-first architecture: payload format determines deserialization
         if self.operation_type == "upsert_batch" || self.operation_type == "delete_batch" {
-            match self.payload_format.as_str() {
+            match self.payload_format.as_deref() {
                 "proto" => {
                     // Deserialize from proto bytes
                     use crate::storage::persistence::write_ahead_log::serialization::{ProtocolBuffersSerializer, VectorBatchSerializer};
@@ -1321,8 +1322,8 @@ impl WriteAheadLogManager {
 
     /// Get WAL behavior wrapper for direct batch access (optimization for search)
     /// Returns the wrapper that provides access to unflushed batches in memory
-    pub fn get_wal_behavior_wrapper(&self) -> Option<&crate::storage::memtable::specialized::wal_behavior::WALBehaviorWrapper> {
-        self.shared_wal_behavior.get_wal_behavior()
+    pub fn get_wal_behavior_wrapper(&self) -> Arc<crate::storage::memtable::specialized::wal_behavior::WALBehaviorWrapper> {
+        self.shared_wal_behavior.get_or_init(&self.config.memtable)
     }
 
     // 🎯 MODERN BATCH API (Recommended)
@@ -1448,14 +1449,10 @@ impl WriteAheadLogManager {
         );
         
         // Step 1: Get unflushed batches through strategy (which accesses global memtable)
-        let batches = if let Some(wal_behavior) = self.shared_wal_behavior.get_wal_behavior() {
-            wal_behavior.get_unflushed_batches(collection_id)
-                .await
-                .context("Failed to get unflushed batches from strategy WAL behavior")?
-        } else {
-            tracing::debug!("No WAL behavior available for collection {}", collection_id);
-            return Ok(vec![]);
-        };
+        let wal_behavior = self.shared_wal_behavior.get_or_init(&self.config.memtable);
+        let batches = wal_behavior.get_unflushed_batches(collection_id)
+            .await
+            .context("Failed to get unflushed batches from strategy WAL behavior")?;
         
         if batches.is_empty() {
             tracing::debug!("No unflushed batches found for collection {}", collection_id);
@@ -1617,14 +1614,14 @@ impl WriteAheadLogManager {
                     | ComparisonOperator::Contains 
                     | ComparisonOperator::StartsWith 
                     | ComparisonOperator::EndsWith => {
-                        if let Some(str_value) = value.as_str() {
+                        if let Some(str_value) = value.as_deref() {
                             conditions.push((field.clone(), str_value.to_string()));
                         }
                     }
                     _ => {
                         // For other operators (>, <, etc.), we still include the field
                         // The bloom filter will help eliminate batches that don't have the field at all
-                        if let Some(str_value) = value.as_str() {
+                        if let Some(str_value) = value.as_deref() {
                             conditions.push((field.clone(), str_value.to_string()));
                         }
                     }
@@ -1701,10 +1698,10 @@ impl WriteAheadLogManager {
         
         match operator {
             ComparisonOperator::Equals => {
-                left == right.as_str()
+                left == right.as_deref()
             }
             ComparisonOperator::NotEquals => {
-                left != right.as_str()
+                left != right.as_deref()
             }
             ComparisonOperator::GreaterThan => {
                 if let (Ok(left_num), Some(right_num)) = (left.parse::<f64>(), right.as_f64()) {
@@ -1735,13 +1732,13 @@ impl WriteAheadLogManager {
                 }
             }
             ComparisonOperator::Contains => {
-                left.contains(right.as_str())
+                left.contains(right.as_deref())
             }
             ComparisonOperator::StartsWith => {
-                left.starts_with(right.as_str())
+                left.starts_with(right.as_deref())
             }
             ComparisonOperator::EndsWith => {
-                left.ends_with(right.as_str())
+                left.ends_with(right.as_deref())
             }
             _ => false, // Other operators not implemented yet
         }
@@ -1880,11 +1877,11 @@ impl WriteAheadLogManager {
         _sequences: &[u64],
     ) -> Result<WALVectorBatch> {
         // Get the batch from the strategy's memory
-        if let Some(wal_behavior) = self.shared_wal_behavior.get_wal_behavior() {
-            let collection_vectors = wal_behavior
-                .get_collection_vectors(&collection_id.to_string())
-                .await
-                .context("Failed to get collection vectors from memtable")?;
+        let wal_behavior = self.shared_wal_behavior.get_or_init(&self.config.memtable);
+        let collection_vectors = wal_behavior
+            .get_collection_vectors(&collection_id.to_string())
+            .await
+            .context("Failed to get collection vectors from memtable")?;
             
             // Filter vectors by sequences (for now, just take all vectors since we don't have reliable sequence mapping)
             let batch_vectors: Vec<VectorRecord> = collection_vectors;
@@ -1902,11 +1899,8 @@ impl WriteAheadLogManager {
                 timestamp: std::time::SystemTime::now(),
                 total_size_bytes,
                 is_flushed: false,
-            metadata_bloom_filter: None,
+                metadata_bloom_filter: None,
             })
-        } else {
-            Err(anyhow::anyhow!("WAL behavior not available for batch extraction"))
-        }
     }
 
     // Temporarily disabled - atomic sync methods

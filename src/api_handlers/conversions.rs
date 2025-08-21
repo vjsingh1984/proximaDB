@@ -224,38 +224,35 @@ impl CollectionRequestBuilder {
             StorageEngine::Viper as i32 // Explicit default only when not provided
         };
             
-        let primary_indexing_algorithm = if let Some(algo_str) = json.get("primary_indexing_algorithm").and_then(|v| v.as_str()) {
-            parse_indexing_algorithm(algo_str)
-                .map_err(|e| format!("Invalid primary_indexing_algorithm: {}", e))? as i32
+        // primary_indexing_algorithm is no longer a direct field - use index_configs instead
+        // Parse it as a legacy field to create an index_config if needed
+        let index_configs = if let Some(algo_str) = json.get("primary_indexing_algorithm").and_then(|v| v.as_str()) {
+            // Create a default index config from the legacy field
+            vec![] // TODO: Create IndexConfig from legacy field if needed
         } else {
-            IndexingAlgorithm::Hnsw as i32 // Explicit default only when not provided
+            vec![]
         };
             
         Ok(CollectionConfig {
             name,
             dimension,
-            distance_metric,
-            storage_engine,
-            primary_indexing_algorithm,
-            filterable_columns: vec![], // TODO: Parse if needed
-            index_configs: vec![], // TODO: Parse if needed
-            quantization: None, // TODO: Parse if needed
+            distance_metric: distance_metric as i32,
+            storage_engine: storage_engine as i32,
+            storage_config: None, // TODO: Parse StorageConfig if needed
+            index_configs,
             primary_index: json.get("primary_index")
                 .and_then(|v| v.as_str())
-                .map(String::from)
-                .unwrap_or_default(),
+                .map(String::from),
             auto_index_selection: json.get("auto_index_selection")
-                .and_then(|v| v.as_bool())
-                ,
+                .and_then(|v| v.as_bool()),
+            filterable_columns: vec![], // TODO: Parse FilterableColumnSpec if needed
+            quantization: None, // TODO: Parse QuantizationConfig if needed
             description: json.get("description").and_then(|v| v.as_str()).map(String::from),
             tags: json.get("tags")
                 .and_then(|v| v.as_array())
                 .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
                 .unwrap_or_default(),
             owner: json.get("owner").and_then(|v| v.as_str()).map(String::from),
-            compression: None,  // SDK-driven compression (2025-08-06)
-            optimization_hints: None,  // Storage optimization hints (2025-08-06)
-            storage_location: None,  // Optional storage location
         })
     }
 }
@@ -271,11 +268,11 @@ pub fn collection_to_json(collection: &Collection) -> serde_json::Value {
             "dimension": c.dimension,
             "distance_metric": distance_metric_to_string(c.distance_metric),
             "storage_engine": storage_engine_to_string(c.storage_engine),
-            "primary_indexing_algorithm": indexing_algorithm_to_string(c.primary_index),
+            // primary_indexing_algorithm removed - use index_configs instead
             "filterable_columns": c.filterable_columns,
             "index_configs": c.index_configs,
             "quantization": c.quantization,
-            "primary_index_name": if c.primary_index.is_empty() { None } else { Some(&c.primary_index) },
+            "primary_index": c.primary_index.as_ref(),
             "enable_automatic_index_selection": c.auto_index_selection,
             "description": c.description.as_ref(),
             "tags": c.tags,
@@ -429,7 +426,7 @@ impl VectorSearchRequestBuilder {
             
         let top_k = json.get("top_k")
             .and_then(|v| v.as_i64())
-             as i32;
+            .unwrap_or(10) as i32;
             
         // Parse search optimization
         let search_optimization = if let Some(opt_json) = json.get("search_optimization") {
@@ -441,18 +438,18 @@ impl VectorSearchRequestBuilder {
         // Parse include fields - support both new and old formats
         let include_fields = if let Some(fields_json) = json.get("include_fields") {
             Some(crate::proto::proximadb::IncludeFields {
-                vector: fields_json.get("vector").and_then(|v| v.as_bool()),
-                metadata: fields_json.get("metadata").and_then(|v| v.as_bool()),
-                similarity: fields_json.get("similarity").and_then(|v| v.as_bool()),
-                // rank removed -  fields_json.get(key).and_then(|v| v.as_bool()),
+                vector: fields_json.get("vector").and_then(|v| v.as_bool()).unwrap_or(true),
+                metadata: fields_json.get("metadata").and_then(|v| v.as_bool()).unwrap_or(true),
+                score: fields_json.get("score").and_then(|v| v.as_bool()).unwrap_or(true),
+                rank: fields_json.get("rank").and_then(|v| v.as_bool()).unwrap_or(false),
             })
         } else {
             // Fallback to old format fields
             Some(crate::proto::proximadb::IncludeFields {
-                vector: json.get("include_vector").and_then(|v| v.as_bool()),
-                metadata: json.get("include_metadata").and_then(|v| v.as_bool()),
-                similarity: true,
-                // rank removed -  true,
+                vector: json.get("include_vector").and_then(|v| v.as_bool()).unwrap_or(true),
+                metadata: json.get("include_metadata").and_then(|v| v.as_bool()).unwrap_or(true),
+                score: true,
+                rank: false,
             })
         };
             
@@ -513,13 +510,13 @@ impl VectorSearchRequestBuilder {
             
         Ok(SearchParams {
             top_k: json.get("top_k").and_then(|v| v.as_u64()).map(|v| v as u32),
-            filters,
+            filters, // Legacy field for backward compatibility
             accuracy_threshold: json.get("accuracy_threshold").and_then(|v| v.as_f64()).map(|f| f as f32),
-            include_expired: Some(json.get("include_expired").and_then(|v| v.as_bool())),
+            include_expired: json.get("include_expired").and_then(|v| v.as_bool()),
             timeout_ms: json.get("timeout_ms").and_then(|v| v.as_u64()),
-            enable_two_stage: Some(json.get("enable_two_stage").and_then(|v| v.as_bool())),
-            enable_clustering_hint: Some(json.get("enable_clustering_hint").and_then(|v| v.as_bool())),
-            enable_metadata_filtering_hint: Some(json.get("enable_metadata_filtering_hint").and_then(|v| v.as_bool())),
+            enable_two_stage: json.get("enable_two_stage").and_then(|v| v.as_bool()),
+            enable_clustering_hint: json.get("enable_clustering_hint").and_then(|v| v.as_bool()),
+            enable_metadata_filtering_hint: json.get("enable_metadata_filtering_hint").and_then(|v| v.as_bool()),
             // TODO: Parse quantization hint when needed
             quantization_hint: None,
             custom_hints: Default::default(),

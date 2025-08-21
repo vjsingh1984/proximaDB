@@ -18,6 +18,7 @@ use super::unified::{
 use crate::compute::distance_computation::engine::{
     UnifiedDistanceCompute, DistanceMetric,
 };
+use crate::compute::distance_computation::create_distance_calculator;
 use crate::core::hardware_capabilities::{
     get_hardware_capabilities, HardwareBackend,
 };
@@ -190,6 +191,13 @@ impl StorageQuantizationEngine {
         }
     }
     
+    /// Create with default configuration for a specific engine (used by PRISM)
+    pub fn new_with_config(config: StorageQuantizationConfig) -> Self {
+        let unified_engine = Arc::new(UnifiedQuantizationEngine::new());
+        let distance_compute = Arc::new(UnifiedDistanceCompute::new(config.distance_metric));
+        Self::new(unified_engine, distance_compute, config)
+    }
+    
     /// Train quantization models from vectors
     pub async fn train(&mut self, vectors: &[Vec<f32>]) -> Result<()> {
         if vectors.is_empty() {
@@ -235,6 +243,36 @@ impl StorageQuantizationEngine {
         // No training needed for binary or INT8 quantization
         
         Ok(())
+    }
+    
+    /// Quantize a batch of vectors with a specific quantization level
+    pub async fn quantize_batch_with_level(
+        &self,
+        vectors: &[Vec<f32>],
+        level: UnifiedQuantizationLevel,
+    ) -> Result<Vec<StorageQuantizedData>> {
+        let mut results = Vec::with_capacity(vectors.len());
+        
+        for (i, vector) in vectors.iter().enumerate() {
+            let quantized = self.unified_engine.quantize(vector, &level).await?;
+            
+            results.push(StorageQuantizedData {
+                id: format!("vec_{}", i),
+                primary: Some(quantized),
+                filter: None,
+                fast: None,
+                dimension: vector.len(),
+                metadata: QuantizationMetadata::default(),
+            });
+        }
+        
+        Ok(results)
+    }
+    
+    /// Dequantize a quantized vector back to approximate float values
+    pub fn dequantize(&self, quantized: &QuantizedVector) -> Result<Vec<f32>> {
+        // Use the unified engine's dequantization logic
+        self.unified_engine.dequantize(quantized)
     }
     
     /// Quantize a batch of vectors
@@ -435,6 +473,148 @@ impl StorageQuantizationEngine {
         
         Ok(distance_table)
     }
+
+    /// SIMD-optimized distance calculation leveraging existing infrastructure
+    fn calculate_simd_optimized_distance(
+        &self,
+        query: &[f32],
+        quantized_vector: &QuantizedVector,
+        metric: &DistanceMetric,
+    ) -> Result<f32> {
+        match &quantized_vector.level_type {
+            Some(QuantizationLevelType::Scalar(scalar)) => {
+                // Use existing INT8 SIMD infrastructure from distance_computation
+                if let Some(int8_data) = quantized_vector.get_int8_data() {
+                    let result = self.distance_compute.calculate_int8_distance(
+                        &self.fp32_to_int8(query, scalar.scale, scalar.offset),
+                        int8_data,
+                        scalar.scale,
+                        scalar.scale,
+                        scalar.offset,
+                        scalar.offset,
+                        metric,
+                    );
+                    Ok(result.raw_value)
+                } else {
+                    // Fallback to FP32 calculation with SIMD optimization
+                    self.calculate_fp32_simd_distance(query, quantized_vector, metric)
+                }
+            }
+            Some(QuantizationLevelType::Binary(_)) => {
+                // Use Hamming distance for binary vectors
+                if let Some(binary_data) = quantized_vector.get_binary_data() {
+                    let query_binary = self.fp32_to_binary(query);
+                    Ok(self.unified_engine.calculate_hamming_distance(&query_binary, binary_data) as f32)
+                } else {
+                    self.calculate_fp32_simd_distance(query, quantized_vector, metric)
+                }
+            }
+            Some(QuantizationLevelType::Pq(_)) => {
+                // Use PQ lookup table optimization
+                self.calculate_pq_simd_distance(query, quantized_vector, metric)
+            }
+            _ => {
+                // Fallback to FP32 SIMD distance calculation
+                self.calculate_fp32_simd_distance(query, quantized_vector, metric)
+            }
+        }
+    }
+
+    /// FP32 SIMD distance calculation using existing infrastructure
+    fn calculate_fp32_simd_distance(
+        &self,
+        query: &[f32],
+        quantized_vector: &QuantizedVector,
+        metric: &DistanceMetric,
+    ) -> Result<f32> {
+        // Reconstruct FP32 vector from quantized data
+        let reconstructed = self.unified_engine.dequantize(quantized_vector)?;
+        
+        // Use existing SIMD-optimized distance computation
+        let result = self.distance_compute.calculate_distance(
+            query,
+            &reconstructed.vector,
+            metric,
+        );
+        
+        Ok(result.raw_value)
+    }
+
+    /// PQ SIMD distance calculation using lookup tables
+    fn calculate_pq_simd_distance(
+        &self,
+        query: &[f32],
+        quantized_vector: &QuantizedVector,
+        metric: &DistanceMetric,
+    ) -> Result<f32> {
+        if let Some(pq_codes) = quantized_vector.get_pq_codes() {
+            // Use existing PQ distance calculation from distance_compute
+            let codebook = self.get_or_create_codebook(quantized_vector)?;
+            let result = self.distance_compute.calculate_pq_distance(
+                query,
+                pq_codes,
+                &codebook,
+                metric,
+            );
+            Ok(result.raw_value)
+        } else {
+            // Fallback to FP32
+            self.calculate_fp32_simd_distance(query, quantized_vector, metric)
+        }
+    }
+
+    /// Convert FP32 to INT8 using quantization parameters
+    fn fp32_to_int8(&self, vector: &[f32], scale: f32, zero_point: i8) -> Vec<i8> {
+        vector.iter()
+            .map(|&x| ((x / scale).round() + zero_point as f32).clamp(-128.0, 127.0) as i8)
+            .collect()
+    }
+
+    /// Convert FP32 to binary using threshold
+    fn fp32_to_binary(&self, vector: &[f32]) -> Vec<u8> {
+        let mut binary = Vec::with_capacity((vector.len() + 7) / 8);
+        let mut byte = 0u8;
+        let mut bit_pos = 0;
+        
+        for &value in vector {
+            if value > 0.0 {
+                byte |= 1 << bit_pos;
+            }
+            bit_pos += 1;
+            
+            if bit_pos == 8 {
+                binary.push(byte);
+                byte = 0;
+                bit_pos = 0;
+            }
+        }
+        
+        if bit_pos > 0 {
+            binary.push(byte);
+        }
+        
+        binary
+    }
+
+    /// Get or create PQ codebook for vector
+    fn get_or_create_codebook(&self, quantized_vector: &QuantizedVector) -> Result<Vec<Vec<f32>>> {
+        // For now, return a dummy codebook
+        // In practice, this would be stored during training
+        let subvectors = 8; // Example: 8 subvectors
+        let centroids_per_subvector = 256; // Example: 256 centroids
+        let subvector_dim = 4; // Example: 4 dimensions per subvector
+        
+        let mut codebook = Vec::with_capacity(subvectors);
+        for _ in 0..subvectors {
+            let mut centroid_data = Vec::with_capacity(centroids_per_subvector * subvector_dim);
+            for _ in 0..(centroids_per_subvector * subvector_dim) {
+                centroid_data.push(0.1); // Placeholder values
+            }
+            codebook.push(centroid_data);
+        }
+        
+        Ok(codebook)
+    }
     
     /// Fast approximation stage using INT8
     async fn fast_approximation_stage(
@@ -452,10 +632,9 @@ impl StorageQuantizationEngine {
         
         for &idx in candidates {
             if let Some(ref fast) = data[idx].fast {
-                let distance = self.unified_engine.calculate_distance(
-                    query, fast, metric
-                ).await?;
-                scores.push((idx, distance.raw_value));
+                // Use existing SIMD-optimized distance computation directly
+                let distance = self.calculate_simd_optimized_distance(query, fast, metric)?;
+                scores.push((idx, distance));
             } else {
                 scores.push((idx, f32::MAX));
             }

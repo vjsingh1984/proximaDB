@@ -218,7 +218,7 @@ impl MetadataIndex {
             if let Some(metadata) = record.metadata.as_ref() {
                 for (key, value) in metadata {
                     // Only index filterable columns
-                    if !self.filterable_columns.contains(key.as_str()) {
+                    if !self.filterable_columns.contains(key.as_deref()) {
                         continue;
                     }
                     
@@ -291,7 +291,7 @@ impl MetadataIndex {
                 }
             }
             ColumnIndex::FullText { token_to_blocks, total_tokens } => {
-                if let Some(text) = value.as_str() {
+                if let Some(text) = value.as_deref() {
                     // Simple tokenization (in production, use proper tokenizer)
                     for token in text.split_whitespace() {
                         let bitset = token_to_blocks.entry(token.to_lowercase())

@@ -113,7 +113,7 @@ mod base_traits_tests {
         }
 
         fn error(&self) -> Option<&str> {
-            self.error.as_str()
+            self.error.as_deref()
         }
 
         fn processing_time_us(&self) -> Option<u64> {

@@ -86,7 +86,7 @@ impl<V: Clone> Clone for StoredItem<V> {
     fn clone(&self) -> Self {
         Self {
             value: self.value.clone(),
-            timestamp: self.created_at,
+            timestamp: self.timestamp,
             last_accessed: self.last_accessed,
             access_count: AtomicUsize::new(self.access_count.load(Ordering::Relaxed)),
             size_bytes: self.size_bytes,
@@ -98,7 +98,7 @@ impl<V: std::fmt::Debug> std::fmt::Debug for StoredItem<V> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("StoredItem")
             .field("value", &self.value)
-            .field("created_at", &self.created_at)
+            .field("created_at", &self.timestamp)
             .field("last_accessed", &self.last_accessed)
             .field("access_count", &self.access_count.load(Ordering::Relaxed))
             .field("size_bytes", &self.size_bytes)
@@ -189,7 +189,7 @@ where
         });
 
         // Update metrics for new item
-        if old_value.is_empty() {
+        if old_value.is_none() {
             self.metrics.increment_entries();
         }
         self.metrics.add_memory_bytes(size_bytes as i64);
@@ -224,7 +224,7 @@ where
     pub fn remove(&self, key: &K) -> Option<V> {
         let start = Instant::now();
         
-        if let Some((_, item)) = self.storage.remove("key1") {
+        if let Some((_, item)) = self.storage.remove(key) {
             self.metrics.decrement_entries();
             self.metrics.add_memory_bytes(-(item.size_bytes as i64));
             self.metrics.record_success(start.elapsed());
@@ -273,7 +273,7 @@ where
     /// Get access metadata for a key
     pub fn access_info(&self, key: &K) -> Option<AccessInfo> {
         self.storage.get(key).map(|entry| AccessInfo {
-            timestamp: entry.created_at,
+            timestamp: entry.timestamp,
             last_accessed: entry.last_accessed,
             access_count: entry.access_count.load(Ordering::Relaxed),
             size_bytes: entry.size_bytes,
@@ -414,7 +414,16 @@ impl AtomicMetrics {
             operations: self.operations.load(Ordering::Relaxed),
             hits: self.hits.load(Ordering::Relaxed),
             misses: self.misses.load(Ordering::Relaxed),
-            hit_rate: self.hit_rate_percent(),
+            hit_rate: {
+                let hits = self.hits.load(Ordering::Relaxed);
+                let misses = self.misses.load(Ordering::Relaxed);
+                let total = hits + misses;
+                if total > 0 {
+                    (hits as f64 / total as f64) * 100.0
+                } else {
+                    0.0
+                }
+            },
             avg_operation_time: self.avg_operation_time(),
         }
     }
@@ -581,7 +590,7 @@ where
     }
 
     pub fn contains(&self, key: &K) -> bool {
-        self.inner.contains_key(key)
+        self.inner.contains(key)
     }
 
     pub fn len(&self) -> usize {

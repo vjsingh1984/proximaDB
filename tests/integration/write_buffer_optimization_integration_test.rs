@@ -172,12 +172,22 @@ async fn create_direct_vector_service(config: &WalOptimizationTestConfig) -> Res
         distance_compute
     ).await?);
     
-    // Create VectorOperationsService with test configuration
-    VectorOperationsService::new(
-        wal_config,
-        viper_engine,
-        sst_engine,
-    ).await
+    // Create WAL manager
+    let filesystem_factory_for_wal = Arc::new(proximadb::storage::persistence::filesystem::FilesystemFactory::new(
+        proximadb::storage::persistence::filesystem::FilesystemConfig::default()
+    ).await?);
+    let strategy_type = proximadb::storage::persistence::write_ahead_log::config::WriteBufferStrategyType::Bincode;
+    let strategy = proximadb::storage::persistence::write_ahead_log::WALBatchFactory::create_batch_serialization_strategy(
+        strategy_type,
+        &wal_config,
+        filesystem_factory_for_wal.clone()
+    ).await?;
+    let wal_manager = Arc::new(
+        proximadb::storage::persistence::write_ahead_log::WriteAheadLogManager::new(strategy, wal_config).await?
+    );
+
+    // Create VectorOperationsService with new constructor
+    Ok(VectorOperationsService::new(sst_engine, wal_manager))
 }
 
 fn _generate_test_vectors(count: usize, dimension: usize) -> Vec<Vec<f32>> {

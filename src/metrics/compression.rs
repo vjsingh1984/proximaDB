@@ -195,7 +195,7 @@ impl CompressionMetricsTracker {
             compression_time,
             algorithm: algorithm.to_string(),
             level,
-            // data_type removed -  CompressionDataType::Mixed,
+            data_type: CompressionDataType::Mixed,
         };
         
         self.record_compression(collection_id, result.clone());
@@ -235,7 +235,7 @@ impl CompressionMetricsTracker {
         self.update_block_size_distribution(&mut metrics.block_size_distribution, compressed_size);
         
         metrics.last_compression_at = Some(chrono::Utc::now().timestamp_millis());
-        if metrics.first_compression_at.is_empty() {
+        if metrics.first_compression_at.is_none() {
             metrics.first_compression_at = metrics.last_compression_at;
         }
     }
@@ -329,7 +329,7 @@ impl CompressionMetricsTracker {
             
             // VIPER recommendations
             if metrics.engine_type == "viper" {
-                if metrics.viper_quantized_type.is_empty() && metrics.total_uncompressed_bytes > 100_000_000 {
+                if metrics.viper_quantized_type.is_none() && metrics.total_uncompressed_bytes > 100_000_000 {
                     recommendations.push(CompressionRecommendation {
                         recommendation_type: RecommendationType::EnableQuantization,
                         description: format!(

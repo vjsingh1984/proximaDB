@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 use crate::core::{VectorRecord, compression::CompressionAlgorithm};
-use crate::storage::engines::row_based::bloom_filter::SstableBloomFilter;
+use crate::core::bloom::SstableBloomFilter;
 use crate::storage::engines::common::fastlanes_encoding::FastLanesScheme;
 // Quantization now handled by unified compute module
 
@@ -347,7 +347,7 @@ impl RowBasedDataBlock {
         
         // Check for deletes (tombstone records)
         let has_deletes = records.iter().any(|r| r.metadata.iter().any(|kv| 
-            kv.key == "_deleted" && kv.value.as_str() == Some("true")
+            kv.key == "_deleted" && kv.value.as_deref() == Some("true")
         ));
         
         // Analyze vectors to choose optimal encoding

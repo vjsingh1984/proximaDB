@@ -14,7 +14,7 @@ use serde_json::Value as JsonValue;
 use std::collections::HashMap;
 use tracing::{debug, trace};
 
-use crate::storage::engines::row_based::bloom_filter::SstableBloomFilter;
+use crate::core::bloom::SstableBloomFilter;
 use crate::storage::engines::sst::IndexEntry;
 
 /// Query filter for intelligent block skipping

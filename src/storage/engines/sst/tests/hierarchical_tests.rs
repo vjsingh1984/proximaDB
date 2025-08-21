@@ -309,8 +309,8 @@ mod tests {
             block0.metadata_stats.min_values.get(key),
             block0.metadata_stats.max_values.get(key)
         ) {
-            let min_val: i32 = min_score.as_str().unwrap().parse().unwrap();
-            let max_val: i32 = max_score.as_str().unwrap().parse().unwrap();
+            let min_val: i32 = min_score.as_deref().unwrap().parse().unwrap();
+            let max_val: i32 = max_score.as_deref().unwrap().parse().unwrap();
             assert!(min_val <= max_val, "Min score should be <= max score");
         }
     }

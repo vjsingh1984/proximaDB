@@ -226,7 +226,7 @@ pub fn create_vector_schema(
     if config.enable_binary {
         fields.push(Field::new(
             "vector_binary",
-            DataType::FixedSizeBinary((dimension + 7) / 8),
+            DataType::FixedSizeBinary(((dimension + 7) / 8) as i32),
             true,
         ));
     }

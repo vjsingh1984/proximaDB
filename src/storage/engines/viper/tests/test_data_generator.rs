@@ -356,7 +356,7 @@ impl TestDataGenerator {
         // Add metadata columns
         let categories: ArrayRef = Arc::new(StringArray::from_iter(
             metadata.iter().map(|m| {
-                m.get(key).and_then(|v| v.as_str()).map(|s| s.to_string())
+                m.get(key).and_then(|v| v.as_deref()).map(|s| s.to_string())
             })
         ));
         columns.push(categories);

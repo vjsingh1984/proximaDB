@@ -197,15 +197,12 @@ impl StorageEngineFactory {
                 }
             }
             ProtoStorageEngine::Nova => {
-                if let Ok(mut nova) = Arc::try_unwrap(engine).and_then(|e| e.downcast::<NovaEngine>()) {
-                    nova.set_metrics_collector(metrics_collector.clone());
-                    // Register engine with collector
-                    let weak_ref = Arc::downgrade(&(Arc::new(nova) as Arc<dyn UnifiedStorageEngine>));
-                    tokio::spawn(async move {
-                        metrics_collector.register_engine("NOVA".to_string(), weak_ref).await;
-                    });
-                    return Ok(Arc::new(nova) as Arc<dyn UnifiedStorageEngine>);
-                }
+                // NOVA engine already created, just register it
+                let weak_ref = Arc::downgrade(&engine);
+                let collector = metrics_collector.clone();
+                tokio::spawn(async move {
+                    collector.register_engine("NOVA".to_string(), weak_ref).await;
+                });
             }
             _ => {
                 // For other engines, just register without metrics modification

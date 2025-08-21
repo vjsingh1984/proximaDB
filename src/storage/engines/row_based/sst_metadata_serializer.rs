@@ -11,7 +11,7 @@ use serde::{Serialize, Deserialize};
 use crate::storage::engines::common::zero_copy_io_system::{
     MetadataSerializer, EngineMetadata, QueryContext, DataRange,
 };
-use crate::storage::engines::row_based::bloom_filter::SstableBloomFilter;
+use crate::core::bloom::SstableBloomFilter;
 use crate::core::error::ProximaDBError;
 
 /// SST Global metadata (fixed size, bytemuck-compatible)
@@ -268,7 +268,7 @@ impl MetadataSerializer for SstMetadataSerializer {
         
         // Deserialize global header
         if data.len() < offset + std::mem::size_of::<SstGlobalHeader>() {
-            return Err(ProximaDBError::InvalidArgument("Invalid SST metadata size".into()));
+            return Err(ProximaDBError::InvalidInput("Invalid SST metadata size".into()));
         }
         
         let global = *bytemuck::from_bytes::<SstGlobalHeader>(
@@ -278,7 +278,7 @@ impl MetadataSerializer for SstMetadataSerializer {
         
         // Deserialize block count
         if data.len() < offset + 4 {
-            return Err(ProximaDBError::InvalidArgument("Invalid SST metadata".into()));
+            return Err(ProximaDBError::InvalidInput("Invalid SST metadata".into()));
         }
         let block_count = u32::from_le_bytes([data[offset], data[offset+1], data[offset+2], data[offset+3]]);
         offset += 4;
@@ -288,7 +288,7 @@ impl MetadataSerializer for SstMetadataSerializer {
         let total_block_size = block_count as usize * block_header_size;
         
         if data.len() < offset + total_block_size {
-            return Err(ProximaDBError::InvalidArgument("Invalid SST block headers".into()));
+            return Err(ProximaDBError::InvalidInput("Invalid SST block headers".into()));
         }
         
         let block_data = &data[offset..offset + total_block_size];
@@ -297,14 +297,14 @@ impl MetadataSerializer for SstMetadataSerializer {
         
         // Deserialize variable data size
         if data.len() < offset + 4 {
-            return Err(ProximaDBError::InvalidArgument("Invalid SST variable data size".into()));
+            return Err(ProximaDBError::InvalidInput("Invalid SST variable data size".into()));
         }
         let var_data_size = u32::from_le_bytes([data[offset], data[offset+1], data[offset+2], data[offset+3]]);
         offset += 4;
         
         // Deserialize variable data
         if data.len() < offset + var_data_size as usize {
-            return Err(ProximaDBError::InvalidArgument("Invalid SST variable data".into()));
+            return Err(ProximaDBError::InvalidInput("Invalid SST variable data".into()));
         }
         let variable_data = data[offset..offset + var_data_size as usize].to_vec();
         

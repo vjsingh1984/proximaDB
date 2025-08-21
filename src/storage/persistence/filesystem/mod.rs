@@ -1222,7 +1222,7 @@ impl FilesystemFactory {
     
     /// List all available filesystem types
     pub fn available_filesystems(&self) -> Vec<&str> {
-        self.filesystems.keys().map(|s| s.as_str()).collect()
+        self.filesystems.keys().map(|s| s.as_deref()).collect()
     }
 
     /// Create a zero-copy filesystem wrapper for intelligent caching and optimization

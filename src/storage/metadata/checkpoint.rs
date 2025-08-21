@@ -264,7 +264,7 @@ impl FilestoreCheckpointManager {
         let mut collection_data_json: Option<String> = None;
 
         for (field_name, field_value) in fields {
-            match field_name.as_str() {
+            match field_name.as_deref() {
                 "operation_type" => {
                     if let apache_avro::types::Value::String(s) = field_value {
                         op_type_str = s;
@@ -298,7 +298,7 @@ impl FilestoreCheckpointManager {
             }
         }
 
-        let op_type = match op_type_str.as_str() {
+        let op_type = match op_type_str.as_deref() {
             "Create" => OperationType::Create,
             "Update" => OperationType::Update,
             "Delete" => OperationType::Delete,

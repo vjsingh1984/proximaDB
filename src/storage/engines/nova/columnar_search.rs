@@ -377,7 +377,7 @@ impl NovaColumnarSearch {
             let batch = self.parquet_reader.read_row_groups_projected(
                 &nova_file.metadata.collection_id,
                 &[rg_idx],
-                projection.as_str(),
+                projection.as_deref(),
             ).await?;
             
             // Compute distances for all vectors in batch
@@ -938,7 +938,7 @@ impl ColumnarSearchConfig {
             // Parse parameters from JSON
             let mut config = Self::default();
             
-            if let Some(mode) = params.get("search_mode").and_then(|v| v.as_str()) {
+            if let Some(mode) = params.get("search_mode").and_then(|v| v.as_deref()) {
                 config.search_mode = match mode {
                     "progressive" => SearchMode::Progressive,
                     "streaming" => SearchMode::Streaming,

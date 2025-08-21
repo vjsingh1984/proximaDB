@@ -692,7 +692,7 @@ impl UnifiedParquetReader {
             let batches = self.read_row_groups_projected(
                 file_path,
                 &relevant_groups,
-                projection.as_str(),
+                projection.as_deref(),
             ).await?;
             // Process batches to find candidates
             for (batch_idx, batch) in batches.iter().enumerate() {
@@ -1482,7 +1482,7 @@ impl UnifiedParquetReader {
                 } else {
                     None
                 };
-                self.read_parquet_file(file_path, projection.as_str(), filter).await
+                self.read_parquet_file(file_path, projection.as_deref(), filter).await
             },
             ReadingStrategy::MetadataFiltered { .. } => {
                 // Use metadata filtering to select row groups

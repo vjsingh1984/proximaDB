@@ -41,7 +41,6 @@
 //! code sharing with NOVA and future columnar engines.
 
 pub mod readers;
-pub mod unified_search_engine; // NEW: Unified search engine implementation
 pub mod factory;
 pub mod flush_eventlog_integration;
 pub mod pipeline;
@@ -59,8 +58,6 @@ pub mod compaction;
 pub mod flush;
 pub mod engine;
 
-// Unified columnar infrastructure integration
-pub mod unified_columnar_integration;
 
 // Test modules
 
@@ -70,11 +67,6 @@ mod tests;
 // Re-export main VIPER types
 pub use factory::ViperFactory;
 
-// Re-export unified columnar integration
-pub use unified_columnar_integration::{
-    ViperUnifiedEngine, ViperSpecificConfig, InsertResult, SearchResult, 
-    ProgressiveSearchResult, ViperPerformanceMetrics,
-};
 // Clustering exports moved to AXIS
 pub use pipeline::ViperPipeline;
 // Quantization now handled by unified compute module
@@ -101,8 +93,7 @@ pub use flush_eventlog_integration::ViperFlushHandler;
 pub use engine::ViperEngine;
 // pub use clustering_models::{ClusteringModelManager, EfficientClusteringModel, ClusteringStats}; // Moved to AXIS
 
-// NEW: Unified architecture exports
-pub use unified_search_engine::{ViperUnifiedSearchEngine, ViperSearchConfig as UnifiedViperSearchConfig};
+// Unified search engine removed - using IntegratedSearchOptimizer from core::search
 
 // Clean Release 1 API - Pure data access layer with search optimization
 pub use readers::{

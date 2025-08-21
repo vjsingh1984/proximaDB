@@ -218,7 +218,7 @@ where
     }
     
     fn error(&self) -> Option<&str> {
-        self.error_code.as_str()
+        self.error_code.as_deref()
     }
     
     fn processing_time_us(&self) -> Option<u64> {

@@ -567,14 +567,14 @@ impl HardwareQuery {
     pub fn has_avx512() -> bool {
         try_get_hardware_capabilities()
             .map(|caps| caps.has_avx512())
-            
+            .unwrap_or(false)
     }
     
     /// Check if GPU acceleration is available
     pub fn has_gpu() -> bool {
         try_get_hardware_capabilities()
             .map(|caps| caps.has_gpu())
-            
+            .unwrap_or(false)
     }
     
     /// Get the number of CPU cores
@@ -595,7 +595,7 @@ impl HardwareQuery {
     pub fn recommended_cache_size() -> u64 {
         try_get_hardware_capabilities()
             .map(|caps| caps.memory.recommended_cache_size)
-             // 1GB default
+            .unwrap_or(1024 * 1024 * 1024) // 1GB default
     }
 }
 

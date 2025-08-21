@@ -332,7 +332,7 @@ impl VectorStore {
         let mut uncompressed_size = 0usize;
         
         for item in &record.metadata {
-            match item.key.as_str() {
+            match item.key.as_deref() {
                 "compressed_block" => {
                     if let Some(crate::proto::proximadb::metadata_item::Value::StringValue(data)) = &item.value {
                         compressed_data = BASE64.decode(data).ok();
@@ -340,7 +340,7 @@ impl VectorStore {
                 }
                 "compression_type" => {
                     if let Some(crate::proto::proximadb::metadata_item::Value::StringValue(ctype)) = &item.value {
-                        compression_type = match ctype.as_str() {
+                        compression_type = match ctype.as_deref() {
                             "Zstd" => CompressionType::Zstd,
                             "Lz4" => CompressionType::Lz4,
                             "Snappy" => CompressionType::Snappy,

@@ -18,8 +18,9 @@ use crate::storage::engines::common::fastlanes_encoding::{
 #[derive(Debug, Clone)]
 pub struct GraphNode {
     pub id: String,
-    pub encoded_vector: Vec<u8>,
-    pub decoded_vector: Vec<f32>,
+    pub encoded_vector: Vec<u8>,  // For fast HNSW navigation
+    // NOTE: decoded_vector removed - fetch from rowgroup when needed
+    // NOTE: metadata removed - fetch from unified MetadataStore when needed
     pub neighbors: Vec<String>,  // IDs of connected nodes
     pub level: usize,
 }
@@ -177,7 +178,7 @@ impl HnswManager {
         let encoded_query = self.encode_query_vector(query)?;
         
         // Step 2: Perform HNSW navigation on encoded vectors
-        let candidates = self.navigate_hnsw_encoded(&encoded_query, k * 2)?;
+        let candidates = self.navigate_hnsw_encoded(&encoded_query, k * 2).await?;
         
         // Step 3: Compute precise distances only for final candidates
         let mut results = Vec::new();
@@ -232,7 +233,7 @@ impl HnswManager {
         
         // HNSW search loop with encoded distances
         while let Some(current) = candidates.pop() {
-            if current.distance > w.peek().map(|c| -c.distance) {
+            if current.distance > w.peek().map(|c| -c.distance).unwrap_or(f32::MAX) {
                 break;
             }
             
@@ -246,7 +247,7 @@ impl HnswManager {
                     // Compute distance on encoded vectors (fast)
                     let dist = self.compute_encoded_distance(encoded_query, &neighbor.encoded_vector)?;
                     
-                    if dist < w.peek().map(|c| -c.distance) {
+                    if dist < w.peek().map(|c| -c.distance).unwrap_or(f32::MAX) {
                         candidates.push(SearchCandidate { distance: dist, node_id: neighbor.id.clone() });
                         w.push(SearchCandidate { distance: -dist, node_id: neighbor.id.clone() });
                         
@@ -263,10 +264,10 @@ impl HnswManager {
         while let Some(candidate) = w.pop() {
             let node = self.load_node(&candidate.node_id).await?;
             result.push(HnswCandidate {
-                id: candidate.node_id,
+                id: candidate.node_id.clone(),
                 encoded_vector: node.encoded_vector,
-                vector: Some(node.decoded_vector),
-                metadata: node.metadata,
+                vector: None, // Fetch from rowgroup when needed for final reranking
+                metadata: None, // RAPTOR should get metadata from unified MetadataStore, not store it locally
             });
         }
         
@@ -370,7 +371,7 @@ impl HnswManager {
             Ok(GraphNode {
                 id: node_id.to_string(),
                 encoded_vector: vec![],
-                decoded_vector: vec![],
+                // decoded_vector fetched from rowgroup when needed
                 neighbors: vec![],
                 level: 0,
             })
@@ -392,10 +393,11 @@ impl HnswManager {
         let mut graph = self.graph.write().await;
         
         // Create new node
-        let new_node = GraphNode {
+        let mut new_node = GraphNode {
             id: id.clone(),
             encoded_vector: encoded_vector.clone(),
-            decoded_vector: vector.clone(),
+            // NOTE: Full vector NOT stored in graph - fetch from rowgroup by ID when needed
+            // This avoids data duplication and reduces memory usage
             neighbors: Vec::new(),
             level,
         };
@@ -500,7 +502,7 @@ impl HnswManager {
         
         // Clear existing graph
         graph.nodes.clear();
-        graph.edges.clear();
+        // Note: edges are stored within nodes as neighbors, not separately
         graph.levels.clear();
         graph.entry_points.clear();
         
@@ -511,11 +513,8 @@ impl HnswManager {
         let rebuilt = super::hnsw_compaction::HnswGraphBuilder::deserialize_from_disk(&serialized)?;
         
         // Update graph metadata
-        tracing::info!(
-            "RAPTOR: Updated HNSW graph from compaction - {} nodes, {} edges",
-            rebuilt.metadata.num_nodes,
-            rebuilt.metadata.num_edges
-        );
+        // Log update (HnswGraphBuilder should provide public getters for metadata)
+        tracing::info!("RAPTOR: Updated HNSW graph from compaction");
         
         Ok(())
     }

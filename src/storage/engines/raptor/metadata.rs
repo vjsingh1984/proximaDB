@@ -2,82 +2,13 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::io::{Read, Write, Seek};
 
-/// RAPTOR file footer metadata (Parquet-style)
-/// This is stored at the END of the file like Parquet
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RaptorFileMetadata {
-    /// File format version
-    pub version: i32,
-    /// Creator string (e.g., "ProximaDB RAPTOR v1.0")
-    pub created_by: String,
-    /// Creation timestamp
-    pub created_at: i64,
-    /// Total number of rows/vectors
-    pub num_rows: i64,
-    /// Collection ID
-    pub collection_id: String,
-    /// List of row groups in the file
-    pub row_groups: Vec<RowGroupMetadata>,
-    /// Schema descriptor
-    pub schema: SchemaDescriptor,
-    /// Key-value metadata
-    pub key_value_metadata: Vec<KeyValue>,
-    
-    // RAPTOR/Artus extensions
-    /// Global B-tree root for ID lookups across row groups
-    pub global_btree_root: Option<i64>,
-    /// Global HNSW entry point for similarity search
-    pub global_hnsw_entry: Option<i32>,
-}
+// Import the consolidated RaptorFileMetadata from common
+use super::common::{RaptorFileMetadata, SchemaDescriptor, KeyValue};
 
-/// Row group metadata (stored in footer)
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RowGroupMetadata {
-    pub ordinal: i32,
-    pub total_byte_size: i64,
-    pub num_rows: i64,
-    pub row_pages: Vec<RowPageMetadata>,
-    pub column_projections_offset: Option<i64>,
-    pub hnsw_segment: Option<HnswSegmentMetadata>,
-    pub btree_index: Option<BTreeIndexMetadata>,
-    pub bloom_filter: Option<BloomFilterMetadata>,
-}
+// Import more types from common
+use super::common::{RowPageMetadata, HnswSegmentMetadata, BloomFilterMetadata, FieldDescriptor};
 
-/// Row page metadata
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RowPageMetadata {
-    pub page_id: u16,
-    pub file_offset: i64,
-    pub compressed_size: i64,
-    pub uncompressed_size: i64,
-    pub num_rows: i32,
-    pub first_id: Vec<u8>,
-    pub last_id: Vec<u8>,
-    pub compression: CompressionCodec,
-}
-
-/// Schema descriptor
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SchemaDescriptor {
-    pub fields: Vec<FieldDescriptor>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct FieldDescriptor {
-    pub name: String,
-    pub data_type: String,
-    pub nullable: bool,
-    pub metadata: Vec<KeyValue>,
-    // Vector field extensions
-    pub dimension: Option<i32>,
-    pub distance_metric: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct KeyValue {
-    pub key: String,
-    pub value: Option<String>,
-}
+// Keep only the types not defined in common.rs
 
 /// Compression codec enum
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -126,13 +57,36 @@ impl Default for RaptorFileMetadata {
             version: 1,
             created_by: "ProximaDB RAPTOR v1.0".to_string(),
             created_at: chrono::Utc::now().timestamp(),
-            num_rows: 0,
+            file_path: String::new(),
+            file_size: 0,
+            total_rows: 0,
+            total_vectors: 0,
+            dimension: 0,
             collection_id: String::new(),
             row_groups: Vec::new(),
-            schema: SchemaDescriptor { fields: Vec::new() },
-            key_value_metadata: Vec::new(),
-            global_btree_root: None,
+            num_rowgroups: 0,
+            rowgroup_offsets: Vec::new(),
+            rowgroup_sizes: Vec::new(),
+            rowgroup_vector_counts: Vec::new(),
+            schema: SchemaDescriptor {
+                vector_dimension: 0,
+                metadata_fields: Vec::new(),
+                version: 1,
+            },
+            hnsw_metadata: None,
+            global_hnsw_offset: 0,
+            global_hnsw_size: 0,
+            hnsw_entry_points: Vec::new(),
+            hnsw_num_layers: 0,
             global_hnsw_entry: None,
+            bloom_filter_metadata: None,
+            compression_codec: "zstd".to_string(),
+            custom_metadata: HashMap::new(),
+            key_value_metadata: Vec::new(),
+            footer_offset: 0,
+            footer_size: 0,
+            last_accessed: 0,
+            locality_clusters: Vec::new(),
         }
     }
 }

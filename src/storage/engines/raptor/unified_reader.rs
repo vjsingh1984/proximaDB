@@ -12,85 +12,8 @@ use crate::storage::persistence::filesystem::{FileSystem, FileOptions};
 use crate::storage::engines::common::zero_copy_io_system::traits::CacheTemperature;
 use super::RaptorConfig;
 
-/// Comprehensive metadata for RAPTOR files
-/// Contains all information needed for efficient access
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RaptorFileMetadata {
-    // File-level metadata
-    pub file_path: String,
-    pub file_size: u64,
-    pub created_at: i64,
-    pub last_accessed: i64,
-    pub compression_codec: String,
-    
-    // RowGroup metadata  
-    pub num_rowgroups: usize,
-    pub rowgroup_offsets: Vec<u64>,
-    pub rowgroup_sizes: Vec<u64>,
-    pub rowgroup_vector_counts: Vec<usize>,
-    
-    // HNSW graph metadata
-    pub global_hnsw_offset: u64,
-    pub global_hnsw_size: u64,
-    pub hnsw_entry_points: Vec<String>,
-    pub hnsw_num_layers: u8,
-    
-    // Locality cluster metadata (for high-selectivity reads)
-    pub locality_clusters: Vec<LocalityClusterInfo>,
-    
-    // Footer metadata
-    pub footer_offset: u64,
-    pub footer_size: u64,
-    
-    // Vector metadata
-    pub dimension: usize,
-    pub total_vectors: usize,
-    pub quantization_type: Option<String>,
-}
-
-/// Information about locality clusters for efficient range reads
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct LocalityClusterInfo {
-    pub cluster_id: usize,
-    pub start_offset: u64,
-    pub size_bytes: u64,
-    pub num_vectors: usize,
-    pub centroid_id: String,
-    pub rowgroup_indices: Vec<usize>, // Which rowgroups belong to this cluster
-}
-
-/// Configuration for smart I/O decisions
-#[derive(Debug, Clone)]
-pub struct IoStrategy {
-    /// Threshold for full file download (in MB)
-    pub full_download_threshold_mb: f64,
-    /// Percentage of file that triggers full download
-    pub read_percentage_threshold: f64,
-    /// Number of rowgroups that triggers full download
-    pub rowgroup_count_threshold: usize,
-    /// Estimated network bandwidth (MB/s)
-    pub network_bandwidth_mbps: f64,
-    /// Local storage read speed (MB/s)
-    pub local_ssd_speed_mbps: f64,
-    /// Enable local caching
-    pub enable_local_cache: bool,
-    /// Cache time-to-live in seconds
-    pub cache_ttl_seconds: u64,
-}
-
-impl Default for IoStrategy {
-    fn default() -> Self {
-        Self {
-            full_download_threshold_mb: 50.0,
-            read_percentage_threshold: 0.3,
-            rowgroup_count_threshold: 10,
-            network_bandwidth_mbps: 100.0,
-            local_ssd_speed_mbps: 500.0,
-            enable_local_cache: true,
-            cache_ttl_seconds: 3600, // 1 hour
-        }
-    }
-}
+// Import consolidated types from common
+use super::common::{RaptorFileMetadata, LocalityClusterInfo, IoStrategy};
 
 /// Unified RAPTOR reader that consolidates all reading functionality
 /// This is the single authoritative source for all RAPTOR read operations
@@ -112,6 +35,7 @@ pub struct RaptorUnifiedReader {
 }
 
 #[derive(Debug, Default)]
+#[derive(Clone)]
 struct ReaderStatistics {
     cache_hits: u64,
     cache_misses: u64,
@@ -188,20 +112,28 @@ impl RaptorUnifiedReader {
             use crate::storage::engines::common::zero_copy_io_system::traits::{QueryContext, QueryType, RequestPriority};
             
             let query_context = QueryContext {
+                query_vector: None,
+                metadata_filters: HashMap::new(),
+                id_lookups: Vec::new(),
+                top_k: None,
+                distance_threshold: None,
                 query_type: QueryType::VectorSearch,
+                collection_context: None,
                 priority: RequestPriority::Normal,
-                estimated_result_size: rowgroup_selection.as_ref().map(|rg| rg.len() as u64),
-                selectivity_hint: 0.3, // Moderate selectivity for RAPTOR HNSW navigation
+                estimated_result_size: rowgroup_selection.as_ref().map(|rg| rg.len()),
+                selectivity_hint: Some(0.3), // Moderate selectivity for RAPTOR HNSW navigation
                 collection_id: "raptor".to_string(), // Generic collection ID for RAPTOR
-                concurrent_queries: 1,
+                concurrent_queries: Some(1),
                 cache_temperature: CacheTemperature::Warm,
             };
             
             // Make bandwidth-optimized decisions
-            match optimizer.decide_strategy(file_path, &query_context).await {
+            // Get file size (estimate if not available)
+            let file_size = 100 * 1024 * 1024; // 100MB estimate for RAPTOR files
+            match optimizer.decide_strategy(file_path, file_size, None, &query_context, RequestPriority::Normal).await {
                 Ok(decision) => {
-                    tracing::debug!("📊 RAPTOR BANDWIDTH: File {} - strategy: {:?}, rationale: {:?}", 
-                           file_path, decision.strategy, decision.rationale);
+                    tracing::debug!("📊 RAPTOR BANDWIDTH: File {} - strategy: {:?}", 
+                           file_path, decision);
                 }
                 Err(e) => {
                     tracing::warn!("⚠️ RAPTOR BANDWIDTH: Failed to get decision for {}: {}", file_path, e);
@@ -232,21 +164,28 @@ impl RaptorUnifiedReader {
             use crate::storage::engines::common::zero_copy_io_system::traits::{QueryContext, QueryType, RequestPriority};
             
             let query_context = QueryContext {
+                query_vector: None,
+                metadata_filters: HashMap::new(),
+                id_lookups: Vec::new(),
+                top_k: None,
+                distance_threshold: None,
                 query_type: QueryType::FullScan,
+                collection_context: None,
                 priority: RequestPriority::Background,
-                estimated_result_size: 1000000, // Large result set for compaction
-                selectivity_hint: 1.0, // Read everything
+                estimated_result_size: Some(1000000), // Large result set for compaction
+                selectivity_hint: Some(1.0), // Read everything
                 collection_id: "raptor".to_string(),
-                concurrent_queries: 1,
+                concurrent_queries: Some(1),
                 cache_temperature: CacheTemperature::Cold, // Don't pollute cache
             };
             
             // Make bandwidth-optimized decisions for compaction
-            match optimizer.decide_strategy(file_path, &query_context).await {
+            let file_size = 200 * 1024 * 1024; // 200MB estimate for compaction files
+            match optimizer.decide_strategy(file_path, file_size, None, &query_context, RequestPriority::Normal).await {
                 Ok(decision) => {
                     // For compaction, prefer using disk cache if available, avoid downloading transient files
                     tracing::debug!("🔄 RAPTOR COMPACTION BANDWIDTH: File {} - strategy: {:?} (transient files avoid download)", 
-                           file_path, decision.strategy);
+                           file_path, decision);
                 }
                 Err(e) => {
                     tracing::warn!("⚠️ RAPTOR COMPACTION BANDWIDTH: Failed to get decision for {}: {}", file_path, e);
@@ -281,7 +220,7 @@ impl RaptorUnifiedReader {
                 let offset = metadata.rowgroup_offsets[rowgroup_idx];
                 let size = metadata.rowgroup_sizes[rowgroup_idx];
                 
-                let rowgroup_data = self.filesystem.read_range(file_path, offset, size as usize).await?;
+                let rowgroup_data = self.filesystem.read_range(file_path, offset, size as u64).await?;
                 let record_batch = self.parse_rowgroup_data(&rowgroup_data)?;
                 record_batches.push(record_batch);
             }
@@ -521,7 +460,8 @@ impl RaptorUnifiedReader {
         
         // Calculate percentage of file needed
         let bytes_needed: u64 = rowgroups_needed.iter()
-            .map(|&idx| metadata.rowgroup_sizes.get(idx))
+            .filter_map(|&idx| metadata.rowgroup_sizes.get(idx))
+            .map(|&size| size as u64)
             .sum();
         let read_percentage = bytes_needed as f64 / metadata.file_size as f64;
         
@@ -616,9 +556,11 @@ impl RaptorUnifiedReader {
             tracing::info!("Downloading full file to local cache: {}", local_path);
             
             // Use transaction for atomic download
-            let tx = self.transaction_coordinator.begin_transaction().await?;
-            self.filesystem.copy_file(&metadata.file_path, &local_path).await?;
-            self.transaction_coordinator.commit(tx).await?;
+            let tx_id = format!("raptor_download_{}", uuid::Uuid::new_v4());
+            let tx = self.transaction_coordinator.begin_transaction(&tx_id, vec![]).await?;
+            let data = self.filesystem.read(&metadata.file_path).await?;
+            self.filesystem.write(&local_path, &data, None).await?;
+            self.transaction_coordinator.commit_transaction(&tx_id).await?;
             
             let mut stats = self.stats.write().await;
             stats.full_downloads_performed += 1;
@@ -703,7 +645,7 @@ impl RaptorUnifiedReader {
         metadata: &RaptorFileMetadata,
         rowgroup_indices: &[usize],
     ) -> Result<Vec<RecordBatch>> {
-        let file_data = self.filesystem.read_file(local_path).await?;
+        let file_data = self.filesystem.read(local_path).await?;
         
         let mut stats = self.stats.write().await;
         stats.bytes_read_local += file_data.len() as u64;
@@ -766,13 +708,9 @@ impl RaptorUnifiedReader {
 
     /// Deserialize FastLanes encoded rowgroup
     fn deserialize_fastlanes_rowgroup(&self, data: &[u8]) -> Result<RecordBatch> {
-        // Delegate to RAPTOR engine's FastLanes deserializer
-        use super::engine::RaptorEngine;
-        let engine = RaptorEngine::new(
-            "temp".to_string(),
-            "/tmp".to_string(),
-            self.config.clone(),
-        ).await?;
+        // For now, we can't create RaptorEngine here as it requires async
+        // This would need to be refactored to either make this function async
+        // or use a different approach for FastLanes deserialization
         // For now, return a basic RecordBatch as FastLanes deserialization needs proper implementation
         use arrow_array::{StringArray, Float32Array};
         use arrow_schema::{Schema, Field, DataType};
@@ -823,7 +761,7 @@ impl RaptorUnifiedReader {
             metadata.global_hnsw_size,
         ).await?;
         
-        Ok(graph_data)
+        Ok(Bytes::from(graph_data))
     }
 
     // ========================================================================
@@ -888,9 +826,10 @@ impl RaptorUnifiedReader {
         
         let serialized = bincode::serialize(&*cache)?;
         
-        let tx = self.transaction_coordinator.begin_transaction().await?;
-        self.filesystem.write_file(&cache_file, &serialized).await?;
-        self.transaction_coordinator.commit(tx).await?;
+        let tx_id = format!("raptor_cache_{}", uuid::Uuid::new_v4());
+        let tx = self.transaction_coordinator.begin_transaction(&tx_id, vec![]).await?;
+        self.filesystem.write(&cache_file, &serialized, None).await?;
+        self.transaction_coordinator.commit_transaction(&tx_id).await?;
         
         tracing::info!("Persisted {} metadata entries", cache.len());
         Ok(())
@@ -904,7 +843,7 @@ impl RaptorUnifiedReader {
             return Ok(());
         }
         
-        let data = self.filesystem.read_file(&cache_file).await?;
+        let data = self.filesystem.read(&cache_file).await?;
         let loaded: HashMap<String, RaptorFileMetadata> = bincode::deserialize(&data)?;
         
         let mut cache = self.metadata_cache.write().await;
@@ -916,7 +855,7 @@ impl RaptorUnifiedReader {
 
     /// Get statistics about reader performance
     pub async fn get_statistics(&self) -> ReaderStatistics {
-        self.stats.read().await.clone()
+        (*self.stats.read().await).clone()
     }
 
     // ========================================================================

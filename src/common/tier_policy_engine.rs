@@ -315,10 +315,8 @@ impl CollectionStorageConfig {
     fn parse_cloud_provider(base_location: &str) -> Result<CloudProvider> {
         if base_location.starts_with("s3://") {
             let bucket = base_location.strip_prefix("s3://")
-                
-                .split('/')
-                .next()
-                
+                .and_then(|s| s.split('/').next())
+                .unwrap_or("")
                 .to_string();
             
             Ok(CloudProvider::AwsS3 {
@@ -328,10 +326,8 @@ impl CollectionStorageConfig {
             })
         } else if base_location.starts_with("gs://") {
             let bucket = base_location.strip_prefix("gs://")
-                
-                .split('/')
-                .next()
-                
+                .and_then(|s| s.split('/').next())
+                .unwrap_or("")
                 .to_string();
             
             Ok(CloudProvider::GoogleCloud {
@@ -1079,7 +1075,7 @@ impl GlobalTierManager {
             
             // In rule-based approach, determine workload type from metrics
             // For testing, use the registered workload type
-            if let Some(policy) = self.collection_policies.get(collection_id) {
+            if let Some(policy) = self.collection_policies.get(&collection_id) {
                 let workload_type = policy.workload_type.clone();
                 match workload_type {
                     WorkloadType::Index { .. } => {

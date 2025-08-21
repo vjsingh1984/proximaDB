@@ -225,7 +225,7 @@ impl OptimizedNovaOperations {
                     all_results.push((VectorRecord {
                         id: Some(format!("rg{}_row{}", rg_idx, row_offsets[idx])),
                         vector: vec.clone(),
-                        metadata: None,
+                        metadata: vec![],
                         timestamp: 0,
                         updated_at: None,
                         quantized_vector: None,

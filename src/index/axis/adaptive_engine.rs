@@ -467,7 +467,7 @@ impl AdaptiveIndexEngine {
         Ok(IndexSelectionStrategy {
             indexes: vec![
                 IndexSpecification {
-                    // data_type removed -  DataType::Identifier,
+                    data_type: DataType::Metadata, // Using Metadata type for ID indexing
                     algorithm: IndexAlgorithm::BTree { max_keys_per_node: 256 },
                     name: Some("default_id".to_string()),
                     is_primary: false,

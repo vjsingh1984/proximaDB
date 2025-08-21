@@ -243,7 +243,16 @@ impl TierDataMovement {
                 .await
                 .map_err(|e| anyhow!("Failed to create filesystem: {}", e))?
         );
-        let reader = UnifiedSstableReader::new(filesystem);
+        // Create zero-copy system for the reader
+        let zero_copy_config = crate::storage::engines::common::zero_copy_io_system::config::ZeroCopyIOConfig::default();
+        let zero_copy_system = Arc::new(
+            crate::storage::engines::common::zero_copy_io_system::orchestrator::ZeroCopyIOSystem::new(
+                zero_copy_config,
+                filesystem.clone(),
+                vec![],
+            ).await.map_err(|e| anyhow!("Failed to create zero-copy system: {}", e))?
+        );
+        let reader = UnifiedSstableReader::new(filesystem, zero_copy_system, self.collection_id.clone());
         let mut vectors = Vec::new();
         
         // SSTable reader reads individual vectors

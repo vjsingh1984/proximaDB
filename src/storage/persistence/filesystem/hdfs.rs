@@ -551,8 +551,8 @@ impl FileSystem for HdfsFileSystem {
         let file_status = &status_json["FileStatus"];
 
         let size = file_status["length"].as_u64();
-        let is_directory = file_status["type"].as_str() == Some("DIRECTORY");
-        let path_suffix = file_status["pathSuffix"].as_str();
+        let is_directory = file_status["type"].as_deref() == Some("DIRECTORY");
+        let path_suffix = file_status["pathSuffix"].as_deref();
 
         // Convert HDFS timestamps (milliseconds since epoch)
         let modification_time = file_status["modificationTime"]
@@ -562,7 +562,7 @@ impl FileSystem for HdfsFileSystem {
             .as_u64()
             .and_then(|ts| chrono::DateTime::from_timestamp_millis(ts as i64));
 
-        let permissions = file_status["permission"].as_str().map(|s| s.to_string());
+        let permissions = file_status["permission"].as_deref().map(|s| s.to_string());
 
         tracing::debug!(
             "✅ HDFS metadata retrieved: {} bytes, dir: {}",
@@ -590,15 +590,15 @@ impl FileSystem for HdfsFileSystem {
         let mut entries = Vec::new();
 
         for status in file_statuses {
-            let name = status["pathSuffix"].as_str().to_string();
+            let name = status["pathSuffix"].as_deref().to_string();
             let size = status["length"].as_u64();
-            let is_directory = status["type"].as_str() == Some("DIRECTORY");
+            let is_directory = status["type"].as_deref() == Some("DIRECTORY");
 
             let modification_time = status["modificationTime"]
                 .as_u64()
                 .and_then(|ts| chrono::DateTime::from_timestamp_millis(ts as i64));
 
-            let permissions = status["permission"].as_str().map(|s| s.to_string());
+            let permissions = status["permission"].as_deref().map(|s| s.to_string());
 
             let entry_path = if normalized_path == "/" {
                 format!("/{}", name)

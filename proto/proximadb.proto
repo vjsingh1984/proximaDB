@@ -105,9 +105,307 @@ message MetadataItem {
   }
 }
 
+// ============================================================================
+// EMBEDDING MODEL SUPPORT - Efficient storage of embedding model information
+// ============================================================================
+
+// Well-known embedding models with enum for efficient storage
+enum EmbeddingModelType {
+  EMBEDDING_MODEL_UNSPECIFIED = 0;
+  
+  // OpenAI models
+  OPENAI_TEXT_EMBEDDING_ADA_002 = 1;
+  OPENAI_TEXT_EMBEDDING_3_SMALL = 2;
+  OPENAI_TEXT_EMBEDDING_3_LARGE = 3;
+  
+  // Sentence Transformers / Hugging Face models
+  SENTENCE_TRANSFORMERS_ALL_MINILM_L6_V2 = 10;
+  SENTENCE_TRANSFORMERS_ALL_MPNET_BASE_V2 = 11;
+  SENTENCE_TRANSFORMERS_MULTI_QA_MPNET_BASE_DOT_V1 = 12;
+  SENTENCE_TRANSFORMERS_ALL_DISTILROBERTA_V1 = 13;
+  SENTENCE_TRANSFORMERS_PARAPHRASE_MULTILINGUAL_MPNET_BASE_V2 = 14;
+  
+  // Google/Universal Sentence Encoder models
+  GOOGLE_USE_V4 = 20;
+  GOOGLE_USE_MULTILINGUAL_V3 = 21;
+  GOOGLE_USE_LITE = 22;
+  
+  // Cohere models
+  COHERE_EMBED_ENGLISH_V3 = 30;
+  COHERE_EMBED_MULTILINGUAL_V3 = 31;
+  COHERE_EMBED_ENGLISH_LIGHT_V3 = 32;
+  
+  // Anthropic models
+  ANTHROPIC_VOYAGE_2 = 40;
+  ANTHROPIC_VOYAGE_CODE_2 = 41;
+  
+  // Mistral models
+  MISTRAL_EMBED = 50;
+  
+  // BGE models (Beijing Academy of AI)
+  BGE_LARGE_EN_V1_5 = 60;
+  BGE_BASE_EN_V1_5 = 61;
+  BGE_SMALL_EN_V1_5 = 62;
+  BGE_M3 = 63;
+  
+  // E5 models
+  E5_LARGE_V2 = 70;
+  E5_BASE_V2 = 71;
+  E5_SMALL_V2 = 72;
+  
+  // Instructor models
+  INSTRUCTOR_XL = 80;
+  INSTRUCTOR_LARGE = 81;
+  INSTRUCTOR_BASE = 82;
+  
+  // Custom/other models - use CUSTOM_EMBEDDING_MODEL and specify in custom_model field
+  CUSTOM_EMBEDDING_MODEL = 999;
+}
+
+// ============================================================================
+// CORE ENUMERABLE ATTRIBUTES - Efficient storage for common vector database attributes
+// ============================================================================
+
+// Content categories for efficient classification
+enum ContentCategory {
+  CONTENT_CATEGORY_UNSPECIFIED = 0;
+  DOCUMENT = 1;           // Text documents, PDFs, etc.
+  IMAGE = 2;              // Photos, diagrams, screenshots
+  AUDIO = 3;              // Speech, music, sound effects
+  VIDEO = 4;              // Video content
+  CODE = 5;               // Source code, scripts
+  TABLE = 6;              // Structured tabular data
+  CHART = 7;              // Charts, graphs, visualizations
+  EMAIL = 8;              // Email content
+  WEBPAGE = 9;            // Web pages, HTML
+  SOCIAL_MEDIA = 10;      // Tweets, posts, comments
+  KNOWLEDGE_BASE = 11;    // FAQ, documentation
+  SCIENTIFIC = 12;        // Papers, research data
+  LEGAL = 13;             // Contracts, legal documents
+  FINANCIAL = 14;         // Financial reports, statements
+  MEDICAL = 15;           // Medical records, research
+}
+
+// Quality levels for content and processing
+enum QualityLevel {
+  QUALITY_UNSPECIFIED = 0;
+  HIGH = 1;               // High-quality, verified content
+  MEDIUM = 2;             // Standard quality
+  LOW = 3;                // Lower quality, may need review
+  UNKNOWN = 4;            // Quality not assessed
+}
+
+// Processing status for tracking content lifecycle
+enum ProcessingStatus {
+  PROCESSING_STATUS_UNSPECIFIED = 0;
+  RAW = 1;                // Original, unprocessed content
+  PROCESSING = 2;         // Currently being processed
+  PROCESSED = 3;          // Successfully processed
+  FAILED = 4;             // Processing failed
+  REQUIRES_REVIEW = 5;    // Needs human review
+  APPROVED = 6;           // Human-approved content
+  DEPRECATED = 7;         // Outdated content
+}
+
+// Common language codes as enums for efficiency (ISO 639-1 subset)
+enum LanguageCode {
+  LANGUAGE_UNSPECIFIED = 0;
+  ENGLISH = 1;            // en
+  SPANISH = 2;            // es
+  FRENCH = 3;             // fr
+  GERMAN = 4;             // de
+  ITALIAN = 5;            // it
+  PORTUGUESE = 6;         // pt
+  RUSSIAN = 7;            // ru
+  CHINESE = 8;            // zh
+  JAPANESE = 9;           // ja
+  KOREAN = 10;            // ko
+  ARABIC = 11;            // ar
+  HINDI = 12;             // hi
+  DUTCH = 13;             // nl
+  SWEDISH = 14;           // sv
+  NORWEGIAN = 15;         // no
+  DANISH = 16;            // da
+  FINNISH = 17;           // fi
+  POLISH = 18;            // pl
+  CZECH = 19;             // cs
+  HUNGARIAN = 20;         // hu
+  TURKISH = 21;           // tr
+  GREEK = 22;             // el
+  HEBREW = 23;            // he
+  THAI = 24;              // th
+  VIETNAMESE = 25;        // vi
+  INDONESIAN = 26;        // id
+  MALAY = 27;             // ms
+  FILIPINO = 28;          // fil
+  CUSTOM_LANGUAGE = 999;  // Use custom_language field
+}
+
+// Data source types for provenance tracking
+enum DataSource {
+  DATA_SOURCE_UNSPECIFIED = 0;
+  USER_UPLOAD = 1;        // Direct user upload
+  API_INGESTION = 2;      // Via API
+  WEB_SCRAPING = 3;       // Web crawling/scraping
+  FILE_IMPORT = 4;        // Bulk file import
+  DATABASE_SYNC = 5;      // Database synchronization
+  THIRD_PARTY_API = 6;    // External API integration
+  BATCH_PROCESSING = 7;   // Batch job processing
+  REAL_TIME_STREAM = 8;   // Real-time streaming
+  MIGRATION = 9;          // Data migration
+  BACKUP_RESTORE = 10;    // Backup restoration
+}
+
+// Extraction methods for content processing
+enum ExtractionMethod {
+  EXTRACTION_UNSPECIFIED = 0;
+  DIRECT_TEXT = 1;        // Plain text input
+  OCR = 2;                // Optical character recognition
+  ASR = 3;                // Automatic speech recognition
+  PDF_PARSING = 4;        // PDF text extraction
+  HTML_PARSING = 5;       // HTML content extraction
+  DOCUMENT_PARSING = 6;   // Word/Office document parsing
+  IMAGE_ANALYSIS = 7;     // Image content analysis
+  VIDEO_ANALYSIS = 8;     // Video content analysis
+  API_EXTRACTION = 9;     // API-based extraction
+  MANUAL_ENTRY = 10;      // Manual data entry
+}
+
+// OPTIMIZED: Collection-level embedding model registry (store once, reference many times)
+message EmbeddingModelRegistry {
+  map<string, EmbeddingModelSpec> models = 1;  // model_id -> full specification
+}
+
+// Full embedding model specification (stored once per collection)
+message EmbeddingModelSpec {
+  EmbeddingModelType model_type = 1;          // Well-known model enum for efficient storage
+  optional string custom_model = 2;           // For CUSTOM models only
+  optional string version = 3;                // Model version/revision
+  optional string provider = 4;               // Provider (openai, huggingface, cohere, etc.)
+  
+  // Model characteristics for optimization (stored once)
+  int32 dimension = 10;                       // Vector dimension produced by this model
+  optional float max_sequence_length = 11;    // Maximum input sequence length
+  optional string normalization = 12;         // "l2", "none", "mean", etc.
+  optional bool supports_batch = 13;          // Whether model supports batch processing
+}
+
+// ============================================================================
+// SOURCE CONTENT STORAGE - Support for storing original content alongside vectors
+// ============================================================================
+
+// Main source content container with ultra-efficient packed enum storage
+message SourceContent {
+  // Flexible content storage (oneof for type safety)
+  oneof data {
+    TextContent text = 1;              // Optimized for text/documents
+    BinaryContent binary = 2;          // Images, audio, video, PDFs
+    ExternalContent external = 3;      // References to external storage
+    StructuredContent structured = 4;  // JSON/structured data
+  }
+  
+  // ULTRA-EFFICIENT: Pack 2 enums into single uint32 (massive savings)
+  optional uint32 packed_attributes = 5; // Packed: [category(8), quality(8), reserved(16)]
+  
+  // Essential metadata (optimized for performance)
+  string mime_type = 10;               // MIME type: text/plain, image/jpeg, video/mp4
+  int64 size_bytes = 11;               // Original size in bytes
+  optional int64 compressed_size = 12; // Size after compression (if applicable)
+  optional uint32 checksum = 15;      // CRC32 for integrity
+  
+  // Processing metadata (lightweight reference-based)
+  optional ProcessingInfo processing = 20;
+}
+
+// Packed enum bit layout for SourceContent.packed_attributes:
+// Bits 0-7:   ContentCategory (1-15, fits in 8 bits)
+// Bits 8-15:  QualityLevel (1-4, fits in 8 bits)
+// Bits 16-31: Reserved for future attributes
+
+// Text content with ultra-efficient packed language storage
+message TextContent {
+  string content = 1;                  // The actual text
+  optional uint32 language_code = 2;   // Packed language (1 byte) + reserved (3 bytes)
+  optional string custom_language = 3; // For language codes > 255 (ISO 639-1)
+  optional ChunkContext chunk = 4;     // Chunking information for RAG
+}
+
+// Packed language bit layout for TextContent.language_code:
+// Bits 0-7:   LanguageCode (1-28, fits in 8 bits, 999 for custom)
+// Bits 8-31:  Reserved for future language attributes
+
+// Binary content for multimedia
+message BinaryContent {
+  bytes data = 1;                      // Raw binary data
+  optional MediaMetadata media = 2;    // Media-specific metadata
+}
+
+// External storage references for large files
+message ExternalContent {
+  string uri = 1;                      // s3://, gs://, https://, file://
+  string storage_backend = 2;          // s3, gcs, azure, http, filesystem
+  map<string, string> access = 3;      // Access credentials/headers
+  optional CachePolicy cache = 4;      // Caching directives
+}
+
+// Structured data storage (JSON, etc.)
+message StructuredContent {
+  google.protobuf.Struct data = 1;     // Arbitrary JSON structure
+  string schema_version = 2;           // Schema version for evolution
+}
+
+// Chunking context for RAG applications
+message ChunkContext {
+  string document_id = 1;              // Parent document ID (mandatory)
+  string document_title = 2;           // Parent document title
+  int32 chunk_index = 3;               // Position in document (0-based)
+  int32 total_chunks = 4;              // Total chunks from parent
+  int32 char_start = 5;                // Character offset start
+  int32 char_end = 6;                  // Character offset end
+  int32 token_start = 7;               // Token offset start
+  int32 token_end = 8;                 // Token offset end
+  string preceding_text = 9;           // Context before chunk (max 200 chars)
+  string following_text = 10;          // Context after chunk (max 200 chars)
+  repeated string section_path = 11;   // ["Chapter 1", "Section 2", "Paragraph 3"]
+}
+
+// Media-specific metadata (images, audio, video)
+message MediaMetadata {
+  int32 width = 1;                     // Image/video width
+  int32 height = 2;                    // Image/video height
+  int32 duration_ms = 3;               // Audio/video duration
+  int32 bitrate = 4;                   // Audio/video bitrate
+  string codec = 5;                    // Codec information
+  map<string, string> exif = 6;        // EXIF/metadata tags
+}
+
+// ULTRA-OPTIMIZED: Processing information with packed enum storage (75% savings)
+message ProcessingInfo {
+  // MAXIMUM EFFICIENCY: Pack 4 enums into single uint32 (1 byte each)
+  optional string model_id = 1;                  // Reference to EmbeddingModelRegistry
+  optional uint32 packed_enums = 2;              // Packed: [extraction(8), status(8), quality(8), source(8)]
+  
+  // Lightweight processing metadata (essential only)
+  optional int64 processing_time_ms = 10;        // Performance monitoring
+  optional uint32 processor_version = 11;        // Processor version
+}
+
+// Packed enum bit layout for ProcessingInfo.packed_enums:
+// Bits 0-7:   ExtractionMethod (1-10, fits in 8 bits)
+// Bits 8-15:  ProcessingStatus (1-7, fits in 8 bits)  
+// Bits 16-23: QualityLevel (1-4, fits in 8 bits)
+// Bits 24-31: DataSource (1-10, fits in 8 bits)
+
+// Cache policy for external content
+message CachePolicy {
+  int64 ttl_seconds = 1;               // Time to live in cache
+  bool prefetch = 2;                   // Prefetch on search
+  string tier = 3;                     // hot, warm, cold
+}
+
 // Input record for insert/update operations - optimized for storage
 message VectorRecord {
-  optional string id = 1;                    // Auto-generated if null
+  string id = 1;                             // MANDATORY: Unique identifier for correlation (changed from optional)
   repeated float vector = 2;                 // REQUIRED for inserts
   repeated MetadataItem metadata = 3;        // Efficient key-value metadata (no JSON parsing)
   uint32 timestamp = 4;                      // Record timestamp - seconds since epoch (compact, unsigned)
@@ -117,6 +415,9 @@ message VectorRecord {
   
   // Storage-optimized fields (directly serializable to SST/Parquet)
   optional bytes quantized_vector = 8;       // Pre-quantized vector data (avoids re-quantization)
+  
+  // NEW: Source content that was embedded (separate from metadata)
+  optional SourceContent source = 10;        // Original content that generated this vector
 }
 
 // Output record for search results - aligned with core SearchResult
@@ -132,6 +433,12 @@ message SearchVectorRecord {
   // Optional fields for detailed results
   optional uint32 version = 6;               // Version (if versioning enabled)
   optional uint32 timestamp = 7;             // When record was created
+  
+  // NEW: Source content (if requested)
+  optional SourceContent source = 10;        // Original content that generated this vector
+  
+  // NEW: Expanded context (for RAG applications)
+  repeated SourceContent expanded_context = 11; // Surrounding chunks if requested
 }
 
 // Native typed metadata supporting multiple value types
@@ -189,6 +496,9 @@ message CollectionConfig {
   // ============================================================================
   repeated FilterableColumnSpec filterable_columns = 9; // Metadata columns for filtering
   optional QuantizationConfig quantization = 10;        // Vector quantization (renamed from quantization_config)
+  
+  // OPTIMIZED: Embedding model registry (store once, reference many times)
+  optional EmbeddingModelRegistry embedding_models = 14; // Collection-level embedding model specifications
   
   // ============================================================================
   // METADATA
@@ -391,28 +701,155 @@ message StorageConfig {
   // Compression configuration
   optional CompressionConfig compression = 3;      // Compression settings
   
+  // NEW: Source content storage configuration  
+  optional SourceStorageConfig source_storage = 4; // Source content storage settings
+  
   // Optimization hints to guide automatic configuration
-  optional AccessPattern access_pattern = 4;       // Expected access pattern
-  optional DataDensity data_density = 5;           // Data density characteristics
-  optional bool frequent_updates = 6;              // Whether data is frequently updated
-  optional int64 expected_size_gb = 7;             // Expected collection size in GB
-  optional float read_write_ratio = 8;             // Read/write ratio (1.0 = balanced)
+  optional AccessPattern access_pattern = 5;       // Expected access pattern
+  optional DataDensity data_density = 6;           // Data density characteristics
+  optional bool frequent_updates = 7;              // Whether data is frequently updated
+  optional int64 expected_size_gb = 8;             // Expected collection size in GB
+  optional float read_write_ratio = 9;             // Read/write ratio (1.0 = balanced)
   
   // Quick presets for common use cases
-  optional string preset = 9;  // "maximum_performance", "balanced", "memory_constrained", "cloud_optimized", "real_time", "archive"
+  optional string preset = 10;  // "maximum_performance", "balanced", "memory_constrained", "cloud_optimized", "real_time", "archive"
   
   // Master optimization control
-  optional bool enable_all_optimizations = 10;  // Master switch (default: true)
+  optional bool enable_all_optimizations = 11;  // Master switch (default: true)
   
   // Specific configuration overrides (when you need fine control)
-  optional ParquetWriterSettings parquet_writer = 11;   // Common to VIPER, NOVA
-  optional FooterCacheSettings footer_cache = 12;       // Cloud storage optimization
-  optional HybridWriterSettings hybrid_writer = 13;     // Adaptive writer strategy
+  optional ParquetWriterSettings parquet_writer = 12;   // Common to VIPER, NOVA
+  optional FooterCacheSettings footer_cache = 13;       // Cloud storage optimization
+  optional HybridWriterSettings hybrid_writer = 14;     // Adaptive writer strategy
   
   // Engine-specific settings
-  optional SstEngineSettings sst_settings = 14;         // SST-specific
-  optional ViperEngineSettings viper_settings = 15;     // VIPER-specific
-  optional NovaEngineSettings nova_settings = 16;       // NOVA-specific
+  optional SstEngineSettings sst_settings = 15;         // SST-specific
+  optional ViperEngineSettings viper_settings = 16;     // VIPER-specific
+  optional NovaEngineSettings nova_settings = 17;       // NOVA-specific
+}
+
+// ============================================================================
+// SOURCE STORAGE CONFIGURATION - Dynamic tiering and storage management
+// ============================================================================
+
+message SourceStorageConfig {
+  // Basic enable/disable
+  bool enabled = 1;                              // Enable source storage (default: true for new collections)
+  bool require_id = 2;                          // Require mandatory IDs (default: true)
+  
+  // Dynamic storage tiering (answers user's question about unknown sizes)
+  StorageTieringPolicy tiering = 3;             // Automatic tiering policy
+  
+  // Compression settings per content type
+  CompressionPolicy text_compression = 4;       // Text content compression
+  CompressionPolicy binary_compression = 5;     // Binary content compression
+  
+  // External storage configuration
+  ExternalStorageConfig external = 6;           // S3/GCS/Azure configuration
+  
+  // Chunking configuration for RAG applications
+  ChunkingConfig chunking = 7;                  // Automatic chunking settings
+  
+  // Performance tuning
+  CacheConfig cache = 8;                        // Source content caching
+  bool prefetch_on_search = 9;                  // Prefetch source during search
+}
+
+// Dynamic storage tiering policy (handles unknown sizes at ingestion time)
+message StorageTieringPolicy {
+  // Size-based thresholds (can be adjusted by compaction)
+  int64 inline_threshold = 1;                   // < N bytes: store inline (default: 100KB)
+  int64 block_threshold = 2;                    // < N bytes: store in blocks (default: 1MB)
+  int64 file_threshold = 3;                     // < N bytes: store as files (default: 10MB)
+  // > file_threshold: external storage
+  
+  // Access pattern based promotion/demotion during compaction
+  AccessBasedTiering access_policy = 4;         // Promote/demote based on usage
+  
+  // Compaction behavior
+  bool enable_promotion = 5;                    // Allow promotion during compaction (default: true)
+  bool enable_demotion = 6;                     // Allow demotion during compaction (default: true)
+  
+  // Override policy per content type
+  map<string, TierOverride> content_overrides = 7; // MIME type -> tier settings
+}
+
+// Access-based tiering for compaction (promotes hot data, demotes cold data)
+message AccessBasedTiering {
+  int32 access_threshold_promote = 1;           // Promote after N accesses
+  int64 age_threshold_demote = 2;               // Demote after N seconds without access
+  float hot_data_ratio = 3;                    // Keep N% of data in hot tier (default: 0.1)
+  bool track_access_patterns = 4;              // Enable access tracking (default: true)
+}
+
+// Per-content-type tier overrides
+message TierOverride {
+  StorageTier force_tier = 1;                  // Force specific tier
+  bool disable_promotion = 2;                  // Never promote this content type
+  bool disable_demotion = 3;                   // Never demote this content type
+}
+
+enum StorageTier {
+  STORAGE_TIER_UNSPECIFIED = 0;
+  HOT = 1;      // Memory/inline storage (< 1ms access)
+  WARM = 2;     // SSD blocks (< 10ms access)  
+  COOL = 3;     // HDD files (< 100ms access)
+  COLD = 4;     // External/object storage (< 1s access)
+}
+
+// Compression policy per content type
+message CompressionPolicy {
+  string algorithm = 1;                        // zstd, lz4, gzip, snappy, none
+  int32 level = 2;                            // Compression level (1-22 for zstd)
+  int64 min_size_to_compress = 3;             // Don't compress below N bytes
+  bool adaptive_level = 4;                     // Adjust level based on content type
+}
+
+// External storage configuration  
+message ExternalStorageConfig {
+  string backend = 1;                          // s3, gcs, azure, filesystem
+  string bucket = 2;                           // Bucket/container name
+  string prefix = 3;                           // Path prefix
+  map<string, string> credentials = 4;         // Access credentials
+  int64 signed_url_expiry = 5;                 // URL expiry in seconds
+  bool enable_cdn = 6;                         // Enable CDN for retrieval
+}
+
+// Automatic chunking configuration
+message ChunkingConfig {
+  bool enabled = 1;                            // Enable automatic chunking
+  ChunkingStrategy strategy = 2;               // Chunking strategy
+  int32 chunk_size = 3;                        // Target chunk size in tokens/chars
+  int32 overlap = 4;                           // Overlap between chunks
+  bool preserve_sentences = 5;                 // Don't break sentences
+  bool include_context = 6;                    // Include surrounding context
+  int32 context_window = 7;                    // Context window size
+}
+
+enum ChunkingStrategy {
+  CHUNKING_STRATEGY_UNSPECIFIED = 0;
+  FIXED_SIZE = 1;         // Fixed character/token size
+  SEMANTIC = 2;           // Semantic boundary detection
+  SENTENCE = 3;           // Sentence-based chunking
+  PARAGRAPH = 4;          // Paragraph-based chunking
+  CUSTOM_CHUNKING = 5;    // Custom chunking logic
+}
+
+// Source content caching configuration
+message CacheConfig {
+  bool enabled = 1;                            // Enable source caching
+  int64 cache_size_mb = 2;                     // Cache size in MB
+  int64 ttl_seconds = 3;                       // Cache TTL
+  bool cache_hot_only = 4;                     // Only cache hot tier content
+  CacheEvictionPolicy eviction = 5;           // Eviction policy
+}
+
+enum CacheEvictionPolicy {
+  CACHE_EVICTION_UNSPECIFIED = 0;
+  LRU = 1;                // Least Recently Used
+  LFU = 2;                // Least Frequently Used
+  ARC = 3;                // Adaptive Replacement Cache
+  RANDOM = 4;             // Random eviction
 }
 
 // Parquet writer settings - matches TOML configuration
@@ -770,11 +1207,27 @@ enum FilterOperation {
   ENDS_WITH = 11;
 }
 
+// Source content retrieval options for search and get operations
+message SourceRetrievalOptions {
+  bool expand_chunks = 1;                    // Include surrounding chunks for RAG
+  int32 max_chunk_expansion = 2;             // How many chunks before/after to include
+  repeated string source_fields = 3;         // Specific source fields to retrieve
+  bool resolve_external = 4;                 // Resolve external references to actual content
+  int64 max_source_size = 5;                 // Maximum source size to retrieve (bytes)
+  string tier_preference = 6;                // Preferred storage tier: hot, warm, cold
+  bool include_chunk_context = 7;            // Include full chunking context
+  bool include_processing_info = 8;          // Include processing metadata
+}
+
 message IncludeFields {
   bool vector = 1;
   bool metadata = 2;
   bool score = 3;
   bool rank = 4;
+  
+  // NEW: Source content retrieval options
+  bool source = 10;                          // Include source content
+  SourceRetrievalOptions source_options = 11; // Advanced source retrieval options
 }
 
 // Quantization parameter types for SearchParams

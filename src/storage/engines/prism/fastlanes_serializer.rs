@@ -1,28 +1,41 @@
 use anyhow::Result;
 use std::collections::HashMap;
+use std::sync::Arc;
 use serde::{Serialize, Deserialize};
 
 use crate::core::VectorRecord;
 use crate::storage::engines::common::fastlanes_encoding::{
     FastLanesEncoder, FastLanesDecoder, FastLanesScheme, markers
 };
-use crate::storage::engines::common::fastlanes_encoding;
-use crate::storage::engines::common::fastlanes_encoding::QuantizationType;
+use crate::compute::quantization::storage_engine::{
+    StorageQuantizationEngine, StorageQuantizationConfig, StorageQuantizedData
+};
+use crate::compute::quantization::unified::{
+    UnifiedQuantizationLevel, QuantizationLevelType, QuantizedVector,
+    QuantizationMetadata,
+};
 
-/// PRISM Multi-Resolution Serializer with FastLanes
+/// PRISM Multi-Resolution Serializer - Delegates to Unified Modules
 /// 
-/// PRISM uses a unique multi-resolution approach where each resolution
-/// level gets its own optimized FastLanes encoding:
-/// - Binary: BitPacked for maximum compression
-/// - INT8: Delta encoding for smooth gradients
-/// - PQ: Dictionary encoding for codebook reuse
-/// - FP32: FrameOfReference for precision with compression
-#[derive(Debug, Clone)]
+/// This serializer properly delegates all quantization operations to the
+/// unified StorageQuantizationEngine and uses FastLanes only for the final
+/// encoding/decoding of already quantized data.
+/// 
+/// PRISM's multi-resolution approach:
+/// - Binary: Delegated to unified quantization (BinaryQuantization)
+/// - INT8: Delegated to unified quantization (ScalarQuantization)
+/// - PQ: Delegated to unified quantization (ProductQuantization)
+/// - FP32: Uses FastLanes for efficient storage only
+#[derive(Clone)]
 pub struct PrismFastLanesSerializer {
-    binary_encoder: FastLanesEncoder,
-    int8_encoder: FastLanesEncoder,
-    pq_encoder: FastLanesEncoder,
+    /// Unified quantization engine for all quantization operations
+    quantization_engine: Arc<StorageQuantizationEngine>,
+    
+    /// FastLanes encoder for FP32 data only (quantized data uses unified module)
     fp32_encoder: FastLanesEncoder,
+    
+    /// FastLanes decoder for FP32 data only
+    fp32_decoder: FastLanesDecoder,
 }
 
 /// Metadata for PRISM's multi-resolution storage
@@ -47,35 +60,37 @@ pub enum ResolutionLevel {
 }
 
 impl PrismFastLanesSerializer {
-    pub fn new() -> Self {
+    pub fn new(quantization_config: StorageQuantizationConfig) -> Self {
+        // Create the unified quantization engine with PRISM's config
+        let quantization_engine = Arc::new(
+            StorageQuantizationEngine::new_with_config(quantization_config)
+        );
+        
+        // Only need FastLanes for FP32 encoding/decoding
+        // All quantization is handled by the unified engine
+        let fp32_encoder = FastLanesEncoder::new_with_scheme(
+            FastLanesScheme::FrameOfReference { 
+                reference: 0,
+                bits: 32 
+            }
+        );
+        
+        let fp32_decoder = FastLanesDecoder::new();
+        
         Self {
-            // Binary: BitPacked for maximum compression
-            binary_encoder: FastLanesEncoder::new_with_scheme(
-                FastLanesScheme::BitPacked { bits: 1 }
-            ),
-            // INT8: Delta encoding works well for smooth vectors
-            int8_encoder: FastLanesEncoder::new_with_scheme(
-                FastLanesScheme::Delta { base: 0 }
-            ),
-            // PQ: Dictionary encoding for codebook indices
-            pq_encoder: FastLanesEncoder::new_with_scheme(
-                FastLanesScheme::Dictionary { 
-                    dict_size: 256,
-                    indices_bits: 8 
-                }
-            ),
-            // FP32: Frame of Reference for full precision
-            fp32_encoder: FastLanesEncoder::new_with_scheme(
-                FastLanesScheme::FrameOfReference { 
-                    reference: 0,
-                    bits: 32 
-                }
-            ),
+            quantization_engine,
+            fp32_encoder,
+            fp32_decoder,
         }
     }
+    
+    /// Create with default config for testing
+    pub fn new_default() -> Self {
+        Self::new(StorageQuantizationConfig::default())
+    }
 
-    /// Serialize vectors at a specific resolution level
-    pub fn serialize_resolution(
+    /// Serialize vectors at a specific resolution level using unified quantization
+    pub async fn serialize_resolution(
         &self,
         records: &[VectorRecord],
         level: ResolutionLevel,
@@ -86,36 +101,72 @@ impl PrismFastLanesSerializer {
         result.push(markers::PRISM_MULTI_RESOLUTION); // 0xB0
         result.push(level as u8);
         
+        // Prepare vectors for quantization
+        let vectors: Vec<Vec<f32>> = records.iter()
+            .map(|r| r.vector.clone())
+            .collect();
+        
+        // Use unified quantization engine based on resolution level
+        let (encoded_data, encoding_scheme) = match level {
+            ResolutionLevel::Binary => {
+                // Use unified binary quantization
+                let quantized = self.quantization_engine
+                    .quantize_batch_with_level(&vectors, UnifiedQuantizationLevel::binary())
+                    .await?;
+                let data = self.encode_quantized_batch(&quantized)?;
+                (data, FastLanesScheme::BitPacked { bits: 1 })
+            },
+            ResolutionLevel::INT8 => {
+                // Use unified INT8 quantization
+                let quantized = self.quantization_engine
+                    .quantize_batch_with_level(&vectors, UnifiedQuantizationLevel::int8())
+                    .await?;
+                let data = self.encode_quantized_batch(&quantized)?;
+                (data, FastLanesScheme::Delta { base: 0 })
+            },
+            ResolutionLevel::PQ4 => {
+                // Use unified PQ4 quantization
+                let quantized = self.quantization_engine
+                    .quantize_batch_with_level(&vectors, UnifiedQuantizationLevel::pq4(16))
+                    .await?;
+                let data = self.encode_quantized_batch(&quantized)?;
+                (data, FastLanesScheme::Dictionary { dict_size: 16, indices_bits: 4 })
+            },
+            ResolutionLevel::PQ8 => {
+                // Use unified PQ8 quantization
+                let quantized = self.quantization_engine
+                    .quantize_batch_with_level(&vectors, UnifiedQuantizationLevel::pq8(16))
+                    .await?;
+                let data = self.encode_quantized_batch(&quantized)?;
+                (data, FastLanesScheme::Dictionary { dict_size: 256, indices_bits: 8 })
+            },
+            ResolutionLevel::FP16 => {
+                // FP16 not implemented in unified engine, fallback to FP32
+                let flattened: Vec<f32> = vectors.into_iter().flatten().collect();
+                let data = self.fp32_encoder.encode_f32(&flattened)?;
+                (data, FastLanesScheme::FrameOfReference { reference: 0, bits: 16 })
+            },
+            ResolutionLevel::FP32 => {
+                // Use FastLanes for FP32 encoding
+                let flattened: Vec<f32> = vectors.into_iter().flatten().collect();
+                let data = self.fp32_encoder.encode_f32(&flattened)?;
+                (data, FastLanesScheme::FrameOfReference { reference: 0, bits: 32 })
+            },
+        };
+        
         // Write metadata
         let metadata = PrismResolutionMetadata {
             resolution_level: level,
             num_vectors: records.len(),
-            dimension: records.first()
-                .map(|r| r.vector.len())
-                ,
-            encoding_scheme: self.get_scheme_for_level(level),
-            compression_ratio: 0.0, // Will be calculated
+            dimension: records.first().map(|r| r.vector.len()).unwrap_or(0),
+            encoding_scheme,
+            compression_ratio: (records.len() * records[0].vector.len() * 4) as f32 / encoded_data.len() as f32,
             quality_score: self.estimate_quality_for_level(level),
         };
         
         let metadata_bytes = bincode::serialize(&metadata)?;
         result.extend_from_slice(&(metadata_bytes.len() as u32).to_le_bytes());
         result.extend_from_slice(&metadata_bytes);
-        
-        // Encode vectors based on resolution level
-        let encoded_data = match level {
-            ResolutionLevel::Binary => self.encode_binary(records)?,
-            ResolutionLevel::INT8 => self.encode_int8(records)?,
-            ResolutionLevel::PQ4 => self.encode_pq(records, 4)?,
-            ResolutionLevel::PQ8 => self.encode_pq(records, 8)?,
-            ResolutionLevel::FP16 => self.encode_fp16(records)?,
-            ResolutionLevel::FP32 => self.encode_fp32(records)?,
-        };
-        
-        // Calculate actual compression ratio
-        let original_size = records.len() * records[0].vector.len() * 4;
-        let compressed_size = encoded_data.len();
-        let compression_ratio = original_size as f32 / compressed_size as f32;
         
         // Write encoded data
         result.extend_from_slice(&(encoded_data.len() as u32).to_le_bytes());
@@ -135,8 +186,25 @@ impl PrismFastLanesSerializer {
         Ok(result)
     }
 
+    /// Helper method to encode quantized batch data
+    fn encode_quantized_batch(&self, quantized: &[StorageQuantizedData]) -> Result<Vec<u8>> {
+        let mut result = Vec::new();
+        
+        for q in quantized {
+            // Get the primary quantized data
+            if let Some(primary) = &q.primary {
+                result.extend_from_slice(&(primary.data.len() as u32).to_le_bytes());
+                result.extend_from_slice(&primary.data);
+            } else {
+                result.extend_from_slice(&0u32.to_le_bytes());
+            }
+        }
+        
+        Ok(result)
+    }
+    
     /// Deserialize vectors from a specific resolution level
-    pub fn deserialize_resolution(
+    pub async fn deserialize_resolution(
         &self,
         data: &[u8],
     ) -> Result<(Vec<VectorRecord>, PrismResolutionMetadata)> {
@@ -177,34 +245,44 @@ impl PrismFastLanesSerializer {
         ]) as usize;
         offset += 4;
         
-        // Decode vectors based on resolution level
+        // Decode vectors based on resolution level using unified engine
         let vectors = match level {
-            ResolutionLevel::Binary => self.decode_binary(
-                &data[offset..offset + encoded_len],
-                metadata.num_vectors,
-                metadata.dimension
-            )?,
-            ResolutionLevel::INT8 => self.decode_int8(
-                &data[offset..offset + encoded_len],
-                metadata.num_vectors,
-                metadata.dimension
-            )?,
-            ResolutionLevel::PQ4 | ResolutionLevel::PQ8 => self.decode_pq(
-                &data[offset..offset + encoded_len],
-                metadata.num_vectors,
-                metadata.dimension,
-                if level == ResolutionLevel::PQ4 { 4 } else { 8 }
-            )?,
-            ResolutionLevel::FP16 => self.decode_fp16(
-                &data[offset..offset + encoded_len],
-                metadata.num_vectors,
-                metadata.dimension
-            )?,
-            ResolutionLevel::FP32 => self.decode_fp32(
-                &data[offset..offset + encoded_len],
-                metadata.num_vectors,
-                metadata.dimension
-            )?,
+            ResolutionLevel::Binary | ResolutionLevel::INT8 | ResolutionLevel::PQ4 | ResolutionLevel::PQ8 => {
+                // Decode quantized data and dequantize using unified engine
+                let quantized_data = self.decode_quantized_batch(
+                    &data[offset..offset + encoded_len],
+                    metadata.num_vectors,
+                    metadata.dimension,
+                    level
+                )?;
+                
+                // Dequantize to get approximate vectors
+                let mut vectors = Vec::new();
+                for q in quantized_data {
+                    if let Some(primary) = q.primary {
+                        // Use unified engine's dequantization
+                        let vector = self.quantization_engine.dequantize(&primary)?;
+                        vectors.push(vector);
+                    } else {
+                        // Fallback to zero vector
+                        vectors.push(vec![0.0; metadata.dimension]);
+                    }
+                }
+                vectors
+            },
+            ResolutionLevel::FP16 | ResolutionLevel::FP32 => {
+                // Decode FP32 data using FastLanes
+                let flattened = self.fp32_decoder.decode_f32(&data[offset..offset + encoded_len])?;
+                
+                // Reshape into vectors
+                let mut vectors = Vec::new();
+                for i in 0..metadata.num_vectors {
+                    let start = i * metadata.dimension;
+                    let end = start + metadata.dimension;
+                    vectors.push(flattened[start..end].to_vec());
+                }
+                vectors
+            },
         };
         offset += encoded_len;
         
@@ -238,8 +316,63 @@ impl PrismFastLanesSerializer {
         Ok((records, metadata))
     }
 
+    /// Helper to decode quantized batch
+    fn decode_quantized_batch(
+        &self,
+        data: &[u8],
+        num_vectors: usize,
+        dimension: usize,
+        level: ResolutionLevel,
+    ) -> Result<Vec<StorageQuantizedData>> {
+        let mut result = Vec::new();
+        let mut offset = 0;
+        
+        for i in 0..num_vectors {
+            let data_len = u32::from_le_bytes([
+                data[offset], data[offset + 1], data[offset + 2], data[offset + 3]
+            ]) as usize;
+            offset += 4;
+            
+            if data_len > 0 {
+                let quantized = QuantizedVector {
+                    data: data[offset..offset + data_len].to_vec(),
+                    quantization_level: match level {
+                        ResolutionLevel::Binary => UnifiedQuantizationLevel::binary(),
+                        ResolutionLevel::INT8 => UnifiedQuantizationLevel::int8(),
+                        ResolutionLevel::PQ4 => UnifiedQuantizationLevel::pq4(16),
+                        ResolutionLevel::PQ8 => UnifiedQuantizationLevel::pq8(16),
+                        _ => UnifiedQuantizationLevel::none(),
+                    },
+                    original_dimension: dimension,
+                };
+                
+                result.push(StorageQuantizedData {
+                    id: format!("vec_{}", i),
+                    primary: Some(quantized),
+                    filter: None,
+                    fast: None,
+                    dimension,
+                    metadata: Default::default(),
+                });
+                
+                offset += data_len;
+            } else {
+                result.push(StorageQuantizedData {
+                    id: format!("vec_{}", i),
+                    primary: None,
+                    filter: None,
+                    fast: None,
+                    dimension,
+                    metadata: Default::default(),
+                });
+            }
+        }
+        
+        Ok(result)
+    }
+    
     /// Progressive serialization: Serialize multiple resolution levels
-    pub fn serialize_progressive(
+    pub async fn serialize_progressive(
         &self,
         records: &[VectorRecord],
         levels: &[ResolutionLevel],
@@ -252,7 +385,7 @@ impl PrismFastLanesSerializer {
         
         // Serialize each level
         for level in levels {
-            let level_data = self.serialize_resolution(records, *level)?;
+            let level_data = self.serialize_resolution(records, *level).await?;
             result.extend_from_slice(&(level_data.len() as u32).to_le_bytes());
             result.extend_from_slice(&level_data);
         }
@@ -260,267 +393,41 @@ impl PrismFastLanesSerializer {
         Ok(result)
     }
 
-    // Encoding methods for each resolution level
-    
-    fn encode_binary(&self, records: &[VectorRecord]) -> Result<Vec<u8>> {
-        // Convert to binary vectors (sign of each dimension)
-        let mut binary_data = Vec::new();
-        for record in records {
-            let binary: Vec<u8> = record.vector.iter()
-                .map(|&v| if v >= 0.0 { 1u8 } else { 0u8 })
-                .collect();
-            binary_data.extend_from_slice(&binary);
-        }
-        
-        // Use BitPacked encoding
-        self.binary_encoder.encode_u8_block(&binary_data)
-    }
-
-    fn encode_int8(&self, records: &[VectorRecord]) -> Result<Vec<u8>> {
-        // Use the new FastLanes INT8 encoding
-        let mut all_int8_data = Vec::new();
-        
-        for record in records {
-            // Find min/max for scaling
-            let min = record.vector.iter().fold(f32::INFINITY, |a, &b| a.min(b));
-            let max = record.vector.iter().fold(f32::NEG_INFINITY, |a, &b| a.max(b));
-            let scale = (max - min) / 255.0;
-            
-            // Store scale and offset as metadata
-            all_int8_data.extend_from_slice(&scale.to_le_bytes());
-            all_int8_data.extend_from_slice(&min.to_le_bytes());
-            
-            // Quantize vector to INT8
-            let quantized: Vec<i8> = record.vector.iter()
-                .map(|&v| (((v - min) / scale).clamp(0.0, 255.0) as i16 - 128) as i8)
-                .collect();
-            
-            // Use FastLanes INT8 encoding
-            let encoded = self.int8_encoder.encode_int8(&quantized)?;
-            all_int8_data.extend_from_slice(&(encoded.len() as u32).to_le_bytes());
-            all_int8_data.extend_from_slice(&encoded);
-        }
-        
-        Ok(all_int8_data)
-    }
-    
-    /// Encode with StorageQuantizationEngine integration
-    pub async fn encode_with_quantization(
-        &self,
-        records: &[VectorRecord],
-        quantization_engine: &crate::compute::quantization::storage_engine::StorageQuantizationEngine,
-        level: ResolutionLevel,
-    ) -> Result<Vec<u8>> {
-        use crate::compute::quantization::types::UnifiedQuantizationLevel;
-        
-        // Extract vectors
-        let vectors: Vec<Vec<f32>> = records.iter()
-            .map(|r| r.vector.clone())
-            .collect();
-        
-        // Quantize using the engine
-        let quantized_vectors = quantization_engine.quantize_batch(&vectors).await?;
-        
-        let mut result = Vec::new();
-        
-        // Write PRISM marker and resolution level
-        result.push(markers::PRISM_MULTI_RESOLUTION);
-        result.push(level as u8);
-        
-        // Process each quantized vector with appropriate FastLanes encoding
-        for (idx, quantized) in quantized_vectors.iter().enumerate() {
-            let encoded_data = match &quantized.quantization_level {
-                UnifiedQuantizationLevel::None => {
-                    // Full precision FP32
-                    self.fp32_encoder.encode_f32(&vectors[idx])?
-                },
-                UnifiedQuantizationLevel::Binary(_) => {
-                    // Binary quantization
-                    self.binary_encoder.encode_binary(&quantized.data)?
-                },
-                UnifiedQuantizationLevel::Scalar(ref config) if config.bits_per_dimension == 8 => {
-                    // INT8 quantization
-                    let int8_data: Vec<i8> = quantized.data.iter()
-                        .map(|&b| b as i8)
-                        .collect();
-                    self.int8_encoder.encode_int8(&int8_data)?
-                },
-                UnifiedQuantizationLevel::Product(ref config) if config.bits == 4 => {
-                    // PQ4 quantization
-                    self.pq_encoder.encode_pq4(&quantized.data, config.num_subvectors)?
-                },
-                UnifiedQuantizationLevel::Product(ref config) if config.bits == 8 => {
-                    // PQ8 quantization
-                    self.pq_encoder.encode_pq8(&quantized.data, config.num_subvectors)?
-                },
-                _ => {
-                    // Fallback to raw data
-                    quantized.data.clone()
-                }
-            };
-            
-            // Write encoded vector with metadata
-            result.extend_from_slice(&(encoded_data.len() as u32).to_le_bytes());
-            result.extend_from_slice(&encoded_data);
-            
-            // Write vector ID if available
-            if let Some(id) = &records[idx].id {
-                let id_bytes = id.as_bytes();
-                result.extend_from_slice(&(id_bytes.len() as u16).to_le_bytes());
-                result.extend_from_slice(id_bytes);
-            } else {
-                result.extend_from_slice(&0u16.to_le_bytes());
-            }
-        }
-        
-        Ok(result)
-    }
-
-    fn encode_pq(&self, records: &[VectorRecord], bits: usize) -> Result<Vec<u8>> {
-        // Use common PQ encoding from fastlanes_encoding
-        fastlanes_encoding::encode_quantized_tensor(
-            &records.iter().flat_map(|r| r.vector.clone()).collect::<Vec<_>>(),
-            records.len(),
-            records[0].vector.len(),
-            if bits == 4 { 
-                QuantizationType::ProductQuantization4
-            } else {
-                QuantizationType::ProductQuantization8
-            }
-        )
-    }
-
-    fn encode_fp16(&self, records: &[VectorRecord]) -> Result<Vec<u8>> {
-        // Convert to half precision (simplified - would use half crate in production)
-        let mut fp16_data = Vec::new();
-        for record in records {
-            for &value in &record.vector {
-                // Simplified FP16 conversion (would use half::f16 in production)
-                let fp16_bits = self.float_to_fp16_bits(value);
-                fp16_data.extend_from_slice(&fp16_bits.to_le_bytes());
-            }
-        }
-        Ok(fp16_data)
-    }
-
-    fn encode_fp32(&self, records: &[VectorRecord]) -> Result<Vec<u8>> {
-        // Flatten all vectors
-        let flattened: Vec<f32> = records.iter()
-            .flat_map(|r| r.vector.clone())
-            .collect();
-        
-        // Use Frame of Reference encoding
-        self.fp32_encoder.encode_f32_block(&flattened)
-    }
-
-    // Decoding methods for each resolution level
-    
-    fn decode_binary(&self, data: &[u8], num_vectors: usize, dimension: usize) -> Result<Vec<Vec<f32>>> {
-        let decoded = self.binary_encoder.decode_u8_block(data)?;
-        
-        let mut vectors = Vec::with_capacity(num_vectors);
-        for i in 0..num_vectors {
-            let start = i * dimension;
-            let end = start + dimension;
-            let vector: Vec<f32> = decoded[start..end].iter()
-                .map(|&b| if b > 0 { 1.0 } else { -1.0 })
-                .collect();
-            vectors.push(vector);
-        }
-        
-        Ok(vectors)
-    }
-
-    fn decode_int8(&self, data: &[u8], num_vectors: usize, dimension: usize) -> Result<Vec<Vec<f32>>> {
-        let decoded = self.int8_encoder.decode_u8_block(data)?;
-        
-        let mut vectors = Vec::with_capacity(num_vectors);
-        let mut offset = 0;
-        
-        for _ in 0..num_vectors {
-            // Read scale and zero_point
-            let scale = f32::from_le_bytes([
-                decoded[offset], decoded[offset + 1], decoded[offset + 2], decoded[offset + 3]
-            ]);
-            offset += 4;
-            
-            let zero_point = f32::from_le_bytes([
-                decoded[offset], decoded[offset + 1], decoded[offset + 2], decoded[offset + 3]
-            ]);
-            offset += 4;
-            
-            // Dequantize vector
-            let vector: Vec<f32> = decoded[offset..offset + dimension].iter()
-                .map(|&q| (q as f32 * scale) + zero_point)
-                .collect();
-            offset += dimension;
-            
-            vectors.push(vector);
-        }
-        
-        Ok(vectors)
-    }
-
-    fn decode_pq(&self, data: &[u8], num_vectors: usize, dimension: usize, bits: usize) -> Result<Vec<Vec<f32>>> {
-        // Use common PQ decoding
-        let (flattened, _, _, _) = fastlanes_encoding::decode_quantized_tensor(data)?;
-        
-        let mut vectors = Vec::with_capacity(num_vectors);
-        for i in 0..num_vectors {
-            let start = i * dimension;
-            let end = start + dimension;
-            vectors.push(flattened[start..end].to_vec());
-        }
-        
-        Ok(vectors)
-    }
-
-    fn decode_fp16(&self, data: &[u8], num_vectors: usize, dimension: usize) -> Result<Vec<Vec<f32>>> {
-        let mut vectors = Vec::with_capacity(num_vectors);
-        let mut offset = 0;
-        
-        for _ in 0..num_vectors {
-            let mut vector = Vec::with_capacity(dimension);
-            for _ in 0..dimension {
-                let fp16_bits = u16::from_le_bytes([data[offset], data[offset + 1]]);
-                offset += 2;
-                vector.push(self.fp16_bits_to_float(fp16_bits));
-            }
-            vectors.push(vector);
-        }
-        
-        Ok(vectors)
-    }
-
-    fn decode_fp32(&self, data: &[u8], num_vectors: usize, dimension: usize) -> Result<Vec<Vec<f32>>> {
-        let flattened = self.fp32_encoder.decode_f32_block(data)?;
-        
-        let mut vectors = Vec::with_capacity(num_vectors);
-        for i in 0..num_vectors {
-            let start = i * dimension;
-            let end = start + dimension;
-            vectors.push(flattened[start..end].to_vec());
-        }
-        
-        Ok(vectors)
-    }
-
-    // Helper methods
+    // Helper methods for PRISM
     
     fn get_scheme_for_level(&self, level: ResolutionLevel) -> FastLanesScheme {
         match level {
             ResolutionLevel::Binary => FastLanesScheme::BitPacked { bits: 1 },
             ResolutionLevel::INT8 => FastLanesScheme::Delta { base: 0 },
-            ResolutionLevel::PQ4 | ResolutionLevel::PQ8 => FastLanesScheme::Dictionary {
-                dict_size: 256,
-                indices_bits: 8,
-            },
-            ResolutionLevel::FP16 | ResolutionLevel::FP32 => FastLanesScheme::FrameOfReference {
-                reference: 0,
-                bits: if level == ResolutionLevel::FP16 { 16 } else { 32 },
-            },
+            ResolutionLevel::PQ4 => FastLanesScheme::Dictionary { dict_size: 16, indices_bits: 4 },
+            ResolutionLevel::PQ8 => FastLanesScheme::Dictionary { dict_size: 256, indices_bits: 8 },
+            ResolutionLevel::FP16 => FastLanesScheme::FrameOfReference { reference: 0, bits: 16 },
+            ResolutionLevel::FP32 => FastLanesScheme::FrameOfReference { reference: 0, bits: 32 },
         }
     }
+    
+    fn estimate_quality_for_level(&self, level: ResolutionLevel) -> f32 {
+        match level {
+            ResolutionLevel::Binary => 0.3,  // 30% quality for binary
+            ResolutionLevel::INT8 => 0.6,    // 60% quality for INT8
+            ResolutionLevel::PQ4 => 0.7,     // 70% quality for PQ4
+            ResolutionLevel::PQ8 => 0.85,    // 85% quality for PQ8
+            ResolutionLevel::FP16 => 0.95,   // 95% quality for FP16
+            ResolutionLevel::FP32 => 1.0,    // 100% quality for FP32
+        }
+    }
+    
+    /// Unified encode method that always uses the quantization engine
+    pub async fn encode_with_quantization(
+        &self,
+        records: &[VectorRecord],
+        level: ResolutionLevel,
+    ) -> Result<Vec<u8>> {
+        // Simply delegate to serialize_resolution which already uses unified engine
+        self.serialize_resolution(records, level).await
+    }
+
+    // All duplicate encoding/decoding methods removed - using unified quantization engine
 
     fn estimate_quality_for_level(&self, level: ResolutionLevel) -> f32 {
         match level {
@@ -578,7 +485,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_prism_multi_resolution_serialization() -> Result<()> {
-        let serializer = PrismFastLanesSerializer::new();
+        let serializer = PrismFastLanesSerializer::new_default();
         
         // Create test vectors
         let records = vec![
@@ -629,7 +536,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_progressive_serialization() -> Result<()> {
-        let serializer = PrismFastLanesSerializer::new();
+        let serializer = PrismFastLanesSerializer::new_default();
         
         let records = vec![
             VectorRecord {

@@ -22,7 +22,8 @@ use crate::compute::quantization::storage_engine::{
 };
 use crate::core::search::{SearchParams, FilterExpression};
 use crate::proto::proximadb::{Collection, CompressionAlgorithm, QuantizationConfig};
-use crate::storage::engines::common::search_modes::SearchContext;
+use crate::storage::engines::columnar::common::EarlyTerminationConfig;
+// Removed incorrect SearchContext import - search_modes::SearchContext is for search stages, not query context
 
 // ================================================================================
 // UNIFIED CORE STRUCTURES (Consolidates both systems)
@@ -101,8 +102,8 @@ pub struct UnifiedQueryContext<'a> {
     /// Search parameters (if vector search)
     pub search_params: Option<&'a SearchParams>,
     
-    /// Filter parameters (if metadata filtering)
-    pub filter_params: Option<&'a UnifiedMetadataFilter>,
+    /// Filter parameters (if metadata filtering) - now using unified FilterExpression
+    pub filter_params: Option<&'a FilterExpression>,
     
     /// Optimization goal
     pub optimization_goal: OptimizationGoal,
@@ -129,11 +130,18 @@ pub struct UnifiedMetadataFilter {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum FilterCondition {
     Equals { column: String, value: serde_json::Value },
+    NotEquals { column: String, value: serde_json::Value },
     Range { column: String, min: serde_json::Value, max: serde_json::Value },
+    GreaterThan { column: String, value: serde_json::Value },
+    GreaterThanOrEqual { column: String, value: serde_json::Value },
+    LessThan { column: String, value: serde_json::Value },
+    LessThanOrEqual { column: String, value: serde_json::Value },
     In { column: String, values: Vec<serde_json::Value> },
+    NotIn { column: String, values: Vec<serde_json::Value> },
     IsNull { column: String },
     Like { column: String, pattern: String },
-    // ... other conditions
+    Contains { column: String, value: serde_json::Value },
+    StartsWith { column: String, prefix: String },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -153,6 +161,13 @@ pub struct FilterOptimizationHints {
 // ================================================================================
 // UNIFIED EXECUTION PLAN (Combines both search and filter plans)
 // ================================================================================
+
+/// Index strategy for query execution
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct IndexStrategy {
+    pub index_type: IndexType,
+    pub params: HashMap<String, serde_json::Value>,
+}
 
 /// Unified execution plan - the ultimate output of optimization
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -278,7 +293,8 @@ impl UnifiedCostModel {
         let search_cost = self.calculate_search_cost(&combined.search);
         
         // Optimization: filter reduces search space
-        let reduced_search_cost = search_cost * combined.filter.expected_selectivity;
+        let filter_selectivity = self.estimate_selectivity(&combined.filter.condition);
+        let reduced_search_cost = search_cost * filter_selectivity;
         
         // Parallel execution reduces total time
         let parallel_factor = if combined.can_parallelize { 0.6 } else { 1.0 };
@@ -397,8 +413,8 @@ impl UnifiedQueryOptimizer {
         match (query_analysis.has_metadata_filter, query_analysis.has_vector_search) {
             (true, true) => {
                 // COMBINED OPTIMIZATION - Key innovation!
-                let filter_selectivity = cost_analysis.filter_selectivity;
-                let search_cost = cost_analysis.search_cost;
+                let filter_selectivity = cost_analysis.filter_selectivity.unwrap_or(1.0);
+                let search_cost = cost_analysis.search_cost.unwrap_or(0.0);
                 
                 if filter_selectivity < 0.1 && search_cost > 100.0 {
                     // High selectivity filter first
@@ -406,34 +422,34 @@ impl UnifiedQueryOptimizer {
                     steps.push(ExecutionStep::MetadataFilter {
                         conditions: self.extract_filter_conditions(cost_analysis)?,
                         execution_method: self.select_filter_execution_method(cost_analysis)?,
-                        estimated_selectivity: cost_analysis.filter_selectivity,
-                        estimated_cost: cost_analysis.filter_cost,
+                        estimated_selectivity: cost_analysis.filter_selectivity.unwrap_or(1.0),
+                        estimated_cost: cost_analysis.filter_cost.unwrap_or(0.0),
                     });
                     steps.push(ExecutionStep::VectorSearch {
-                        execution_method: self.select_search_method(cost_analysis)?,
+                        execution_method: self.select_search_method(cost_analysis, query_analysis)?,
                         quantization_strategy: self.select_quantization_strategy(cost_analysis),
-                        candidates: cost_analysis.query.top_k * 10,
+                        candidates: query_analysis.top_k * 10,
                     });
                 } else if filter_selectivity > 0.5 && search_cost < 10.0 {
                     // Low selectivity filter - search first
                     trace!("Strategy: Search-first (filter selectivity too low)");
                     steps.push(ExecutionStep::VectorSearch {
-                        execution_method: self.select_search_method(cost_analysis)?,
+                        execution_method: self.select_search_method(cost_analysis, query_analysis)?,
                         quantization_strategy: self.select_quantization_strategy(cost_analysis),
-                        candidates: cost_analysis.query.top_k * 10,
+                        candidates: query_analysis.top_k * 10,
                     });
                     steps.push(ExecutionStep::MetadataFilter {
                         conditions: self.extract_filter_conditions(cost_analysis)?,
                         execution_method: self.select_filter_execution_method(cost_analysis)?,
-                        estimated_selectivity: cost_analysis.filter_selectivity,
-                        estimated_cost: cost_analysis.filter_cost,
+                        estimated_selectivity: cost_analysis.filter_selectivity.unwrap_or(1.0),
+                        estimated_cost: cost_analysis.filter_cost.unwrap_or(0.0),
                     });
                 } else {
                     // COMBINED EXECUTION - Optimal for most cases
                     trace!("Strategy: Combined filter+search execution");
                     steps.push(ExecutionStep::CombinedFilterSearch {
                         filter_pushdown: self.plan_filter_pushdown(cost_analysis)?,
-                        search_method: self.select_search_method(cost_analysis)?,
+                        search_method: self.select_search_method(cost_analysis, query_analysis)?,
                         early_termination: self.configure_early_termination(cost_analysis),
                     });
                 }
@@ -443,16 +459,16 @@ impl UnifiedQueryOptimizer {
                 steps.push(ExecutionStep::MetadataFilter {
                     conditions: self.extract_filter_conditions(cost_analysis)?,
                     execution_method: self.select_filter_execution_method(cost_analysis)?,
-                    estimated_selectivity: cost_analysis.filter_selectivity,
-                    estimated_cost: cost_analysis.filter_cost,
+                    estimated_selectivity: cost_analysis.filter_selectivity.unwrap_or(1.0),
+                    estimated_cost: cost_analysis.filter_cost.unwrap_or(0.0),
                 });
             }
             (false, true) => {
                 // Search only
                 steps.push(ExecutionStep::VectorSearch {
-                    execution_method: self.select_search_method(cost_analysis)?,
+                    execution_method: self.select_search_method(cost_analysis, query_analysis)?,
                     quantization_strategy: self.select_quantization_strategy(cost_analysis),
-                    candidates: cost_analysis.query.top_k * 10,
+                    candidates: query_analysis.top_k * 10,
                 });
             }
             _ => {
@@ -470,7 +486,14 @@ impl UnifiedQueryOptimizer {
         if let Some(index_strategy) = self.select_index_strategy(cost_analysis) {
             steps.insert(0, ExecutionStep::IndexLookup {
                 index_type: index_strategy.index_type,
-                lookup_params: index_strategy.params,
+                lookup_params: IndexLookupParams {
+                    ef_search: index_strategy.params.get("ef_search")
+                        .and_then(|v| v.as_u64())
+                        .map(|v| v as usize),
+                    nprobe: index_strategy.params.get("nprobe")
+                        .and_then(|v| v.as_u64())
+                        .map(|v| v as usize),
+                },
             });
         }
         
@@ -519,6 +542,7 @@ struct QueryAnalysis {
     has_metadata_filter: bool,
     has_aggregation: bool,
     query_complexity: QueryComplexity,
+    top_k: usize,  // Number of results requested
 }
 
 /// Cost analysis results
@@ -650,13 +674,6 @@ pub enum BloomFilterType {
 pub enum FilterPushdownOperation {
     StorageLevel { filter: FilterCondition, estimated_reduction: f64 },
     IndexLevel { filter: FilterCondition, index_name: Option<String> },
-}
-
-/// Early termination configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct EarlyTerminationConfig {
-    pub enabled: bool,
-    pub max_candidates: usize,
 }
 
 /// Optimization goals
@@ -914,7 +931,7 @@ pub fn migrate_universal_filter(filter: &crate::core::search::FilterExpression) 
                     },
                     ComparisonOperator::StartsWith => FilterCondition::StartsWith {
                         column: field.clone(),
-                        value: value.clone(),
+                        prefix: value.as_str().unwrap_or("").to_string(),
                     },
                 };
                 conditions.push(condition);
@@ -968,12 +985,17 @@ pub fn migrate_universal_filter(filter: &crate::core::search::FilterExpression) 
 
 impl UnifiedQueryOptimizer {
     /// Analyze query components (stub implementation)
-    fn analyze_query_components(&self, _context: &UnifiedQueryContext<'_>) -> Result<QueryAnalysis> {
+    fn analyze_query_components(&self, context: &UnifiedQueryContext<'_>) -> Result<QueryAnalysis> {
+        let top_k = context.search_params
+            .and_then(|p| p.top_k)
+            .unwrap_or(10); // Default to 10 if not specified
+            
         Ok(QueryAnalysis {
-            has_vector_search: true,
-            has_metadata_filter: false,
+            has_vector_search: context.search_params.is_some(),
+            has_metadata_filter: context.filter_params.is_some(),
             has_aggregation: false,
             query_complexity: QueryComplexity::Simple,
+            top_k,
         })
     }
     
@@ -981,15 +1003,10 @@ impl UnifiedQueryOptimizer {
     fn extract_filter_conditions(&self, cost_analysis: &CostAnalysis) -> Result<Vec<FilterCondition>> {
         let mut conditions = Vec::new();
         
-        // Extract conditions from the query filter if present
-        if let Some(filter) = &cost_analysis.query.filter {
-            // Create basic filter conditions from the filter
-            for (key, value) in &filter.metadata {
-                conditions.push(FilterCondition::Equals {
-                    column: key.clone(),
-                    value: value.clone(),
-                });
-            }
+        // Extract conditions from the filters in cost analysis
+        for filter_analysis in &cost_analysis.filters {
+            // Add the filter condition from the analysis
+            conditions.push(filter_analysis.condition.clone());
         }
         
         Ok(conditions)
@@ -1003,7 +1020,7 @@ impl UnifiedQueryOptimizer {
         
         let method = if estimated_dataset_size < 10000 {
             FilterExecutionMethod::SequentialScan
-        } else if cost_analysis.filter_selectivity < 0.1 {
+        } else if cost_analysis.filter_selectivity.unwrap_or(1.0) < 0.1 {
             FilterExecutionMethod::IndexLookup
         } else if estimated_dataset_size > 100000 {
             FilterExecutionMethod::ParallelScan { num_threads: 4 }
@@ -1015,7 +1032,7 @@ impl UnifiedQueryOptimizer {
     }
     
     /// Select search method based on cost analysis
-    fn select_search_method(&self, cost_analysis: &CostAnalysis) -> Result<SearchExecutionMethod> {
+    fn select_search_method(&self, cost_analysis: &CostAnalysis, query_analysis: &QueryAnalysis) -> Result<SearchExecutionMethod> {
         // Choose search method based on estimated dataset size and available indexes
         // TODO: Add dataset_size to CostAnalysis or pass it separately
         let estimated_dataset_size = (cost_analysis.total_cost * 10000.0) as usize; // Rough estimate
@@ -1029,19 +1046,19 @@ impl UnifiedQueryOptimizer {
                 stages: vec![
                     ProgressiveStage {
                         algorithm: SearchAlgorithm::BinaryFilter,
-                        candidates: cost_analysis.query.top_k * 100,
+                        candidates: query_analysis.top_k * 100,
                     },
                     ProgressiveStage {
                         algorithm: SearchAlgorithm::QuantizedSearch,
-                        candidates: cost_analysis.query.top_k * 10,
+                        candidates: query_analysis.top_k * 10,
                     },
                     ProgressiveStage {
                         algorithm: SearchAlgorithm::ExactSearch,
-                        candidates: cost_analysis.query.top_k,
+                        candidates: query_analysis.top_k,
                     },
                 ],
             }
-        } else if cost_analysis.has_indexes {
+        } else if cost_analysis.has_bloom_filters {
             // Large dataset with indexes
             SearchExecutionMethod::IndexBased {
                 index_type: IndexType::HNSW, // Default to HNSW for now
@@ -1064,7 +1081,7 @@ impl UnifiedQueryOptimizer {
         
         if estimated_dataset_size > 100000 {
             Some(QuantizationStrategy {
-                quantization_type: QuantizationType::PQ,
+                quantization_type: QuantizationType::PQ8,
                 use_two_stage: true,
                 candidate_multiplier: 10,
             })
@@ -1122,24 +1139,29 @@ impl UnifiedQueryOptimizer {
         // Return empty fallback strategies for now
         vec![]
     }
-}
-
-/// Migration helper: Convert old SearchContext to new unified format
-pub fn migrate_search_context<'a>(
-    old: &SearchContext,
-    filter: Option<&'a UnifiedMetadataFilter>,
-) -> UnifiedQueryContext<'a> {
-    UnifiedQueryContext {
-        collection: old.collection.clone(),
-        search_params: Some(old.search_params),
-        filter_params: filter,
-        optimization_goal: old.optimization_goal,
-        available_files: old.available_files.clone(),
-        total_vectors: old.total_vectors,
-        total_columns: 0, // Estimate or fetch
-        query_vectors: old.query_vectors,
+    
+    /// Configure early termination settings
+    fn configure_early_termination(&self, _cost_analysis: &CostAnalysis) -> EarlyTerminationConfig {
+        EarlyTerminationConfig {
+            enable_quality_based: true,
+            enable_count_based: true,
+            confidence_threshold: 0.95,
+        }
+    }
+    
+    /// Select index strategy based on cost analysis
+    fn select_index_strategy(&self, _cost_analysis: &CostAnalysis) -> Option<IndexStrategy> {
+        // For now, return None - can be enhanced later
+        None
     }
 }
+
+// Migration helper removed - was using wrong SearchContext type from search_modes
+// The proper flow is:
+// VectorOperationsService creates SearchParams with top_k
+// -> Creates UnifiedQueryContext with search_params
+// -> UnifiedQueryOptimizer.optimize_query() gets context
+// -> analyze_query_components extracts top_k from context.search_params
 
 impl Default for UnifiedOptimizerConfig {
     fn default() -> Self {

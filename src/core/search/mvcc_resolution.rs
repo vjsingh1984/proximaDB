@@ -93,7 +93,7 @@ impl MvccResolver {
             let mut last_valid: Option<VectorRecord> = None;
             
             for record in versions {
-                let version = record.version;
+                let version = record.version.unwrap_or(0);
                 
                 if version == expected_version {
                     // This version is continuous
@@ -113,7 +113,7 @@ impl MvccResolver {
             
             if let Some(record) = last_valid {
                 debug!("MVCC: Selected version {} for ID '{}'", 
-                       record.version, id);
+                       record.version.unwrap_or(0), id);
                 resolved.push(record);
             }
         }
@@ -385,7 +385,7 @@ mod tests {
         
         // Find the versioned record
         let versioned_record = resolved.iter()
-            .find(|r| r.id.as_str() == Some("real_id"))
+            .find(|r| r.id.as_deref() == Some("real_id"))
             .unwrap();
         assert_eq!(versioned_record.version, Some(2)); // Should get highest version
     }

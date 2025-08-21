@@ -180,7 +180,7 @@ impl AxisManager {
         // Get collection config for quantization settings
         // First try shared cache, then fall back to collection service
         let collection = if let Some(cache) = &self.shared_collection_cache {
-            cache.get(collection_id).cloned()
+            cache.get(collection_id).map(|r| r.clone())
         } else if let Some(collection_service) = &self.collection_service {
             collection_service.get_collection(collection_id).await.ok().flatten()
                 .map(|c| Arc::new(c))
@@ -563,7 +563,7 @@ impl AxisManager {
             collection_id: collection_id.to_string(),
             strategy_type: search_strategy.indexes.first()
                 .map(|idx| idx.data_type)
-                ,
+                .unwrap_or(DataType::DenseVector { dimension: 128 }), // Default to dense vector
             total_vectors: 0,    // TODO: Implement actual counting
             index_size_bytes: 0, // TODO: Implement actual size calculation
             last_updated: Utc::now(),
@@ -810,7 +810,7 @@ impl AxisManager {
         files_created: Vec<String>,
         index_config: &crate::index::config::IndexConfig,
     ) -> Result<()> {
-        let batch_size_threshold = index_config.async_update_batch_size;
+        let batch_size_threshold = index_config.async_update_batch_size.unwrap_or(1000);
         
         tracing::info!(
             "🎯 AXIS: Hybrid indexing for {} vectors (threshold: {}) in collection {}",

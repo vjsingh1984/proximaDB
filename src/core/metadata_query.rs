@@ -165,7 +165,7 @@ impl MetadataQueryEngine {
                 Ok(field_value.is_some() && !field_value.unwrap().is_null())
             }
             ComparisonOperator::NotExists => {
-                Ok(field_value.is_empty() || field_value.unwrap().is_null())
+                Ok(field_value.is_none() || field_value.unwrap().is_null())
             }
             ComparisonOperator::Regex => {
                 self.regex_operation(&field_query.field, field_value, &field_query.value)
@@ -225,7 +225,7 @@ impl MetadataQueryEngine {
     {
         match (field_value, pattern.as_str()) {
             (Some(JsonValue::String(text)), Some(pattern_str)) => {
-                Ok(string_fn(text, pattern_str))
+                Ok(string_fn(text.as_str(), pattern_str))
             }
             _ => Ok(false),
         }
@@ -256,7 +256,7 @@ impl MetadataQueryEngine {
                     compiled_regex
                 };
                 
-                Ok(regex.is_match(text))
+                Ok(regex.is_match(text.as_str()))
             }
             _ => Ok(false),
         }

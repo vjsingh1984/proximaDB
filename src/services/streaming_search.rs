@@ -254,10 +254,10 @@ impl StreamingSearchService {
             // Deduplicate WAL results if enabled
             for result in wal_results {
                 let should_include = if let Some(ref mut seen) = seen_ids {
-                    match result.id.as_str() {
-                        None => true, // Include records without IDs
-                        Some(id) if id.is_empty() => true, // Include empty IDs
-                        Some(id) => seen.insert(id.clone()), // Deduplicate by ID
+                    if result.id.is_empty() {
+                        true // Include empty IDs
+                    } else {
+                        seen.insert(result.id.clone()) // Deduplicate by ID
                     }
                 } else {
                     true // No deduplication
@@ -319,10 +319,10 @@ impl StreamingSearchService {
             let mut deduped_storage_results = Vec::new();
             for result in storage_results {
                 let should_include = if let Some(ref mut seen) = seen_ids {
-                    match result.id.as_str() {
-                        None => true, // Include records without IDs
-                        Some(id) if id.is_empty() => true, // Include empty IDs
-                        Some(id) => seen.insert(id.clone()), // Deduplicate by ID
+                    if result.id.is_empty() {
+                        true // Include empty IDs
+                    } else {
+                        seen.insert(result.id.clone()) // Deduplicate by ID
                     }
                 } else {
                     true // No deduplication
@@ -330,15 +330,25 @@ impl StreamingSearchService {
                 
                 if should_include {
                     // Convert VectorRecord to SearchResult
+                    let metadata = result.metadata.iter()
+                        .map(|(key, value)| (key.clone(), value.clone()))
+                        .collect();
+                    
                     let search_result = SearchResult {
-                        id: result.id.clone().unwrap_or_default(),
-                        vector_id: result.id.clone(),
+                        id: result.id.clone(),
+                        vector_id: Some(result.id.clone()),
                         score: 1.0, // TODO: Calculate actual score
                         similarity: None,
                         // rank removed -  None,
-                        vector: Some(result.vector.clone()),
-                        metadata: crate::core::proto_metadata_helper::proto_metadata_to_json(&result.metadata),
+                        vector: result.vector.clone(),
+                        metadata,
                         debug_info: None,
+                        version: result.version,
+                        timestamp: result.timestamp,
+                        semantic_similarity: None,
+                        engine_stats: None,
+                        index_path: None,
+                        quantization_info: None,
                     };
                     deduped_storage_results.push(search_result);
                     if deduped_storage_results.len() >= remaining_k {
@@ -451,7 +461,7 @@ impl StreamingSearchService {
             }
             
             // Sort by score
-            results.sort_by(|a, b| b.score.partial_cmp(&a.score));
+            results.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
             results.truncate(k);
             
             debug!("✅ STREAMING_WAL: Found {} results", results.len());

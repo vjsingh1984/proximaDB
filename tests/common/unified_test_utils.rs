@@ -29,6 +29,9 @@ use proximadb::storage::engines::sst::SstStorage;
 use proximadb::storage::engines::viper::ViperEngine;
 use proximadb::storage::persistence::filesystem::{FilesystemFactory, FilesystemConfig};
 use proximadb::storage::traits::{FlushParameters, CompactionParameters, UnifiedStorageEngine};
+use proximadb::storage::persistence::write_ahead_log::{WriteAheadLogManager, WALConfig, WALBatchFactory};
+use proximadb::storage::persistence::write_ahead_log::config::WriteBufferStrategyType;
+use proximadb::services::vector_operations_service::VectorOperationsService;
 
 static HARDWARE_INIT: Once = Once::new();
 
@@ -995,6 +998,56 @@ pub async fn flush_sst_with_pq_sorting(
         compression_level,
         block_size_kb,
     ).await
+}
+
+/// Create VectorOperationsService with WAL manager for testing
+pub async fn create_test_vector_operations_service() -> Result<VectorOperationsService> {
+    setup_hardware_capabilities();
+    
+    // Create test environment
+    let env = UnifiedTestEnvironment::new().await?;
+    
+    // Create SST storage engine
+    let sst_storage = env.create_sst_engine().await?;
+    
+    // Create WAL manager
+    let wal_config = WALConfig::default();
+    let filesystem_factory = Arc::new(FilesystemFactory::new(
+        FilesystemConfig::default()
+    ).await?);
+    let strategy_type = WriteBufferStrategyType::Bincode;
+    let strategy = WALBatchFactory::create_batch_serialization_strategy(
+        strategy_type,
+        &wal_config,
+        filesystem_factory.clone()
+    ).await?;
+    let wal_manager = Arc::new(
+        WriteAheadLogManager::new(strategy, wal_config).await?
+    );
+    
+    Ok(VectorOperationsService::new(Arc::new(sst_storage), wal_manager))
+}
+
+/// Create VectorOperationsService with custom storage for testing
+pub async fn create_test_vector_operations_service_with_storage(storage: Arc<SstStorage>) -> Result<VectorOperationsService> {
+    setup_hardware_capabilities();
+    
+    // Create WAL manager
+    let wal_config = WALConfig::default();
+    let filesystem_factory = Arc::new(FilesystemFactory::new(
+        FilesystemConfig::default()
+    ).await?);
+    let strategy_type = WriteBufferStrategyType::Bincode;
+    let strategy = WALBatchFactory::create_batch_serialization_strategy(
+        strategy_type,
+        &wal_config,
+        filesystem_factory.clone()
+    ).await?;
+    let wal_manager = Arc::new(
+        WriteAheadLogManager::new(strategy, wal_config).await?
+    );
+    
+    Ok(VectorOperationsService::new(storage, wal_manager))
 }
 
 #[cfg(test)]

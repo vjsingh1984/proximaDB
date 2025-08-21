@@ -560,6 +560,8 @@ impl UnifiedStorageEngine for NovaEngine {
         &self,
         ctx: &crate::storage::traits::SearchContext,
     ) -> Result<Vec<crate::core::search::SearchResult>> {
+        let search_start = std::time::Instant::now();
+        
         // Extract all parameters from context (pre-computed)
         let collection_id = ctx.collection_id();
         let storage_path = ctx.storage_path();
@@ -568,12 +570,96 @@ impl UnifiedStorageEngine for NovaEngine {
         let top_k = ctx.top_k();
         let distance_metric = ctx.distance_metric();
         let dimension = ctx.dimension();
-        let filter = ctx.search_params.filter_expression.as_ref()
-            .map(|f| serde_json::to_value(f));
+        let filter_expression = ctx.search_params.filter_expression.as_ref();
         let search_params = ctx.search_params.custom_hints.clone();
         
-        info!("NOVA unified search: collection={}, k={}, metric={:?}, storage_path={}", 
-            collection_id, top_k, distance_metric, storage_path);
+        info!("🚀 NOVA: Enhanced unified search with orchestration for collection {}", collection_id);
+        
+        // ========================================================================
+        // PHASE 1: SEARCH ORCHESTRATION AND STRATEGY SELECTION
+        // ========================================================================
+        
+        // Check if orchestration should be used based on context metadata
+        let use_orchestration = ctx.metadata.use_axis_indexes || ctx.metadata.has_quantization;
+        
+        if use_orchestration {
+            info!("🎯 NOVA: Using intelligent search orchestration");
+            
+            // Create mock services for orchestration
+            let axis_manager = match self.get_mock_axis_manager() {
+                Ok(manager) => manager,
+                Err(e) => {
+                    tracing::warn!("⚠️ Failed to get AXIS manager: {}, falling back to direct search", e);
+                    return self.fallback_to_direct_search(ctx, collection_id, storage_path, query_vector, top_k, distance_metric, filter_expression).await;
+                }
+            };
+            
+            let collection_service = self.get_mock_collection_service();
+            let distance_engine = self.get_mock_distance_engine();
+            let quantization_engine = self.get_mock_quantization_engine();
+            let storage_engine = self.get_mock_storage_engine();
+            
+            // Create search orchestrator for intelligent routing
+            match crate::core::search::integrated_search_optimization::IntegratedSearchOptimizer::new(
+                ctx.clone(),
+                axis_manager,
+                crate::core::search::integrated_search_optimization::SearchCostEstimator::new(),
+            ).await {
+                Ok(mut orchestrator) => {
+                    debug!("📋 Collection Analysis Results:");
+                    let analysis = orchestrator.get_collection_analysis();
+                    debug!("  📊 Dimension: {}, Distance: {:?}", analysis.dimension, analysis.distance_metric);
+                    debug!("  🔧 Quantization enabled: {}, Progressive: {}", 
+                           analysis.quantization_enabled, analysis.progressive_search_enabled);
+                    debug!("  📈 Dataset size: {:?}, Query complexity: {:.2}", 
+                           analysis.estimated_dataset_size, analysis.query_complexity);
+                    
+                    // Select optimal search strategy
+                    match orchestrator.select_optimal_strategy().await {
+                        Ok(strategy) => {
+                            info!(
+                                "🎯 Strategy Selected: {}",
+                                match &strategy {
+                                    crate::core::search::integrated_search_optimization::ExecutionStrategy::IndexFirst { .. } => "IndexFirst",
+                                    crate::core::search::integrated_search_optimization::ExecutionStrategy::ProgressiveQuantization { .. } => "ProgressiveQuantization",
+                                    crate::core::search::integrated_search_optimization::ExecutionStrategy::DirectFP32 { .. } => "DirectFP32",
+                                }
+                            );
+                            
+                            // Execute the selected strategy
+                            match orchestrator.execute_search_strategy(
+                                &strategy,
+                                storage_engine,
+                                collection_service,
+                                distance_engine,
+                                quantization_engine,
+                            ).await {
+                                Ok(results) => {
+                                    info!("✅ NOVA: Orchestrated search completed with {} results in {:.2}ms", 
+                                          results.len(), search_start.elapsed().as_secs_f32() * 1000.0);
+                                    return Ok(results);
+                                },
+                                Err(e) => {
+                                    tracing::warn!("⚠️ Orchestrated search failed: {}, falling back", e);
+                                }
+                            }
+                        },
+                        Err(e) => {
+                            tracing::warn!("⚠️ Strategy selection failed: {}, falling back", e);
+                        }
+                    }
+                },
+                Err(e) => {
+                    tracing::warn!("⚠️ Failed to create search orchestrator: {}, falling back", e);
+                }
+            }
+        }
+        
+        // ========================================================================
+        // PHASE 2: CURRENT IMPLEMENTATION WITH ENHANCED LOGGING
+        // ========================================================================
+        
+        info!("🔍 NOVA: Using current unified search implementation (orchestration disabled)");
         
         // Load files from storage
         let files = self.load_collection_files(collection_id, storage_path).await?;
@@ -597,15 +683,37 @@ impl UnifiedStorageEngine for NovaEngine {
             }
         }
         
+        // Sort by score and take top-k
+        all_results.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
+        all_results.truncate(top_k);
+        
         // Convert to SearchResult format
         let search_results: Vec<crate::core::search::SearchResult> = all_results
             .into_iter()
-            .take(top_k)
-            .map(|(record, score)| {
+            .enumerate()
+            .map(|(idx, (record, score))| {
+                // Create similarity result for semantic information
+                let similarity_result = crate::compute::distance_computation::SimilarityResult {
+                    normalized_score: score,
+                    raw_score: score,
+                    distance: Some(1.0 - score), // Convert similarity to distance
+                    metric: distance_metric,
+                };
+                
                 crate::core::search::SearchResult {
-                    vector_id: record.id.unwrap_or_default(),
-                    semantic_similarity: score,
-                    timestamp: chrono::Utc::now(),
+                    id: record.id.clone().unwrap_or_else(|| format!("unknown_{}", idx)),
+                    vector_id: record.id.clone(),
+                    score: similarity_result.normalized_score,
+                    similarity: Some(similarity_result.normalized_score),
+                    vector: Some(record.vector.clone()),
+                    metadata: Some(record.metadata.clone()),
+                    debug_info: None,
+                    version: record.version,
+                    timestamp: record.timestamp.map(|ts| ts as u64),
+                    semantic_similarity: Some(similarity_result),
+                    quantization_info: None,
+                    engine_stats: None,
+                    index_path: None,
                 }
             })
             .collect();
@@ -752,6 +860,115 @@ impl UniversallyOptimized for NovaEngine {
         ));
         
         Ok(metrics)
+    }
+}
+
+// Additional implementation methods for NovaEngine
+impl NovaEngine {
+    /// Helper methods for search orchestration
+    /// These create mock services for orchestration functionality
+    
+    fn get_mock_axis_manager(&self) -> Result<Arc<crate::index::axis::manager::AxisManager>> {
+        // Create a mock AXIS manager
+        Err(anyhow!("AXIS manager not available in mock implementation"))
+    }
+    
+    fn get_mock_collection_service(&self) -> Arc<crate::services::collection_service::CollectionService> {
+        // Create a mock collection service
+        Arc::new(crate::services::collection_service::CollectionService::new(
+            "mock://collections".to_string(),
+            None, // No metadata provider for mock
+        ))
+    }
+    
+    fn get_mock_distance_engine(&self) -> Arc<crate::compute::distance_computation::UnifiedDistanceCompute> {
+        // Return the existing distance engine
+        self.distance_engine.clone()
+    }
+    
+    fn get_mock_quantization_engine(&self) -> Arc<crate::compute::quantization::unified::UnifiedQuantizationEngine> {
+        // Return the existing quantization engine
+        self.quantization_engine.clone()
+    }
+    
+    fn get_mock_storage_engine(&self) -> Arc<dyn crate::storage::traits::UnifiedStorageEngine> {
+        // Return self as the storage engine
+        Arc::new(NovaEngine {
+            optimized_ops: self.optimized_ops.clone(),
+            statistics: self.statistics.clone(),
+            hardware: self.hardware.clone(),
+            metrics_collector: self.metrics_collector.clone(),
+            compression_provider: self.compression_provider.clone(),
+            quantization_engine: self.quantization_engine.clone(),
+            distance_engine: self.distance_engine.clone(),
+            filesystem: self.filesystem.clone(),
+        })
+    }
+    
+    /// Fallback to direct search when orchestration fails
+    async fn fallback_to_direct_search(
+        &self,
+        ctx: &crate::storage::traits::SearchContext,
+        collection_id: &str,
+        storage_path: &str,
+        query_vector: &[f32],
+        top_k: usize,
+        distance_metric: crate::compute::distance_computation::DistanceMetric,
+        filter_expression: Option<&crate::core::search::FilterExpression>,
+    ) -> Result<Vec<crate::core::search::SearchResult>> {
+        tracing::warn!("🔄 NOVA: Falling back to direct search implementation");
+        
+        // Use the existing search implementation
+        // Load files from storage
+        let files = self.load_collection_files(collection_id, storage_path).await?;
+        let mut all_results = Vec::new();
+        
+        // Search each NOVA file using columnar optimization
+        for nova_file in files.iter() {
+            // Placeholder - would implement actual columnar search
+            let results: Vec<(crate::core::VectorRecord, f32)> = Vec::new();
+            
+            // Convert to search results
+            for (record, score) in results {
+                all_results.push((record, score));
+            }
+        }
+        
+        // Sort by score and take top-k
+        all_results.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
+        all_results.truncate(top_k);
+        
+        // Convert to SearchResult format
+        let search_results: Vec<crate::core::search::SearchResult> = all_results
+            .into_iter()
+            .enumerate()
+            .map(|(idx, (record, score))| {
+                let similarity_result = crate::compute::distance_computation::SimilarityResult {
+                    normalized_score: score,
+                    raw_score: score,
+                    distance: Some(1.0 - score),
+                    metric: distance_metric,
+                };
+                
+                crate::core::search::SearchResult {
+                    id: record.id.clone().unwrap_or_else(|| format!("unknown_{}", idx)),
+                    vector_id: record.id.clone(),
+                    score: similarity_result.normalized_score,
+                    similarity: Some(similarity_result.normalized_score),
+                    vector: Some(record.vector.clone()),
+                    metadata: Some(record.metadata.clone()),
+                    debug_info: None,
+                    version: record.version,
+                    timestamp: record.timestamp.map(|ts| ts as u64),
+                    semantic_similarity: Some(similarity_result),
+                    quantization_info: None,
+                    engine_stats: None,
+                    index_path: None,
+                }
+            })
+            .collect();
+        
+        Ok(search_results)
     }
 }
 

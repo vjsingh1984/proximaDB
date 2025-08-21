@@ -141,7 +141,7 @@ pub struct RaptorEngine {
     // Cache and metadata
     cache: Arc<RwLock<RowGroupCache>>,
     file_registry: Arc<RwLock<FileRegistry>>,
-    metrics: Arc<RwLock<EngineMetrics>>,
+    metrics: Arc<RaptorMetrics>,  // Lock-free atomic metrics
 }
 
 impl RaptorEngine {
@@ -261,9 +261,7 @@ impl RaptorEngine {
             FileRegistry::new()
         ));
         
-        let metrics = Arc::new(RwLock::new(
-            EngineMetrics::new()
-        ));
+        let metrics = Arc::new(RaptorMetrics::new());
         
         // Get the global hardware capabilities instance
         let hardware_capabilities = Arc::new(
@@ -411,10 +409,9 @@ impl RaptorEngine {
             self.update_clustering(&batch).await?;
         }
         
-        // Update metrics
-        let mut metrics = self.metrics.write().await;
-        metrics.total_vectors += row_count;
-        metrics.insert_operations += 1;
+        // Update metrics using atomic operations (lock-free)
+        self.metrics.total_vectors.fetch_add(row_count, Ordering::Relaxed);
+        self.metrics.insert_operations.fetch_add(1, Ordering::Relaxed);
         
         // Check if compaction is needed
         if self.should_compact().await {
@@ -1074,7 +1071,7 @@ impl RaptorEngine {
         RecordBatch::try_new(
             Self::create_default_schema(),
             vec![id_array, vector_array, metadata_array, version_array, timestamp_array],
-        )
+        ).map_err(|e| anyhow::anyhow!("Failed to create RecordBatch: {}", e))
     }
     
     async fn full_scan_search(&self, query: &[f32], k: usize) -> Result<Vec<VectorSearchResult>> {
@@ -1250,6 +1247,11 @@ impl UnifiedStorageEngine for RaptorEngine {
         let mut writer = self.writer.write().await;
         let bytes_written = writer.flush().await?;
         
+        // Update unified metrics
+        self.metrics.flush_operations.fetch_add(1, Ordering::Relaxed);
+        // bytes_written is () from writer.flush(), so we'll skip this metric update
+        // self.metrics.bytes_written.fetch_add(bytes_written as u64, Ordering::Relaxed);
+        
         if self.config.enable_hnsw {
             let hnsw = self.hnsw_manager.read().await;
             hnsw.flush().await?;
@@ -1277,6 +1279,9 @@ impl UnifiedStorageEngine for RaptorEngine {
         // Compact returns () for now, so we'll use placeholder values
         self.compaction_manager.compact().await?;
         
+        // Update unified metrics
+        self.metrics.compaction_operations.fetch_add(1, Ordering::Relaxed);
+        
         Ok(CompactionResult {
             success: true,
             collections_affected: vec![collection_id.to_string()],
@@ -1293,51 +1298,60 @@ impl UnifiedStorageEngine for RaptorEngine {
     }
     
     async fn collect_engine_metrics(&self) -> Result<HashMap<String, serde_json::Value>> {
-        let metrics = self.metrics.read().await;
         let mut stats = HashMap::new();
         
+        // Collect atomic metrics without locks (unified metrics framework)
         stats.insert("total_vectors".to_string(), 
-            serde_json::json!(metrics.total_vectors));
+            serde_json::json!(self.metrics.total_vectors.load(Ordering::Relaxed)));
+        stats.insert("total_rows".to_string(), 
+            serde_json::json!(self.metrics.total_rows.load(Ordering::Relaxed)));
+        stats.insert("total_files".to_string(), 
+            serde_json::json!(self.metrics.total_files.load(Ordering::Relaxed)));
         stats.insert("insert_operations".to_string(), 
-            serde_json::json!(metrics.insert_operations));
+            serde_json::json!(self.metrics.insert_operations.load(Ordering::Relaxed)));
         stats.insert("search_operations".to_string(), 
-            serde_json::json!(metrics.search_operations));
+            serde_json::json!(self.metrics.search_operations.load(Ordering::Relaxed)));
+        stats.insert("flush_operations".to_string(), 
+            serde_json::json!(self.metrics.flush_operations.load(Ordering::Relaxed)));
+        stats.insert("compaction_operations".to_string(), 
+            serde_json::json!(self.metrics.compaction_operations.load(Ordering::Relaxed)));
+        stats.insert("cache_hits".to_string(), 
+            serde_json::json!(self.metrics.cache_hits.load(Ordering::Relaxed)));
+        stats.insert("cache_misses".to_string(), 
+            serde_json::json!(self.metrics.cache_misses.load(Ordering::Relaxed)));
         stats.insert("cache_hit_ratio".to_string(), 
-            serde_json::json!(metrics.cache_hit_ratio()));
+            serde_json::json!(self.metrics.cache_hit_ratio()));
         stats.insert("compression_ratio".to_string(), 
-            serde_json::json!(metrics.compression_ratio));
+            serde_json::json!(self.metrics.compression_ratio()));
+        stats.insert("bytes_written".to_string(), 
+            serde_json::json!(self.metrics.bytes_written.load(Ordering::Relaxed)));
+        stats.insert("bytes_read".to_string(), 
+            serde_json::json!(self.metrics.bytes_read.load(Ordering::Relaxed)));
+        stats.insert("memory_usage_bytes".to_string(), 
+            serde_json::json!(self.metrics.memory_usage_bytes.load(Ordering::Relaxed)));
+        
+        // Engine identification for unified metrics dashboard
+        stats.insert("engine_name".to_string(), serde_json::json!("RAPTOR"));
+        stats.insert("engine_version".to_string(), serde_json::json!(crate::version::PROXIMADB_VERSION));
         
         Ok(stats)
     }
     
     async fn get_vector_by_id(&self, collection_id: &str, vector_id: &str) -> Result<Option<VectorRecord>> {
-        // Use bloom filter for quick existence check
-        let rowgroup_manager = self.rowgroup_manager.read().await;
+        // Load file metadata to access bloom filters
+        let file_path = format!("{}/{}/raptor.data", self.base_path, collection_id);
+        let metadata = self.reader.load_metadata(&file_path).await?;
         
-        for rowgroup in rowgroup_manager.rowgroups() {
-            // Simplified bloom filter check (would use actual bloom filter)
-            // if let Some(bloom) = rowgroup_manager.bloom_filters.get(&rowgroup.id) {
-            //     if !bloom.check(&vector_id.to_string()) {
-            //         continue;
-            //     }
-            // }
-            
-            // Read the rowgroup and search for the ID
-            let batch = self.reader.read_rowgroup(rowgroup.id).await?;
-            
-            let id_column = batch.column_by_name("id")
-                .ok_or_else(|| anyhow::anyhow!("ID column not found"))?;
-            
-            let string_array = id_column
-                .as_any()
-                .downcast_ref::<StringArray>()
-                .ok_or_else(|| anyhow::anyhow!("ID column is not StringArray"))?;
-            
-            for i in 0..batch.num_rows() {
-                if string_array.value(i) == vector_id {
-                    // Found the vector, reconstruct VectorRecord
-                    return Ok(Some(self.reconstruct_vector_record(&batch, i)?));
-                }
+        // Use bloom filters to find candidate row groups
+        let hnsw_results = vec![vector_id.to_string()];
+        let batches = self.reader.lookup_ids_after_hnsw(hnsw_results, &metadata).await?;
+        
+        // Check if we found the vector
+        if let Some(batch) = batches.first() {
+            // The lookup_ids_after_hnsw already filtered to just our ID
+            // So we can directly reconstruct the vector record
+            if batch.num_rows() > 0 {
+                return Ok(Some(self.reconstruct_vector_record(&batch, 0)?));
             }
         }
         
@@ -1389,7 +1403,7 @@ impl UnifiedStorageEngine for RaptorEngine {
         for res in internal_results {
             results.push(SearchResult {
                 id: res.id,
-                similarity: res.score,
+                similarity: Some(res.score),
                 timestamp: Some(chrono::Utc::now().timestamp() as u32),
                 ..Default::default()
             });
@@ -1450,7 +1464,7 @@ impl RowGroupCache {
         // Remove entries with low access counts
         let threshold = 2;
         self.cache.retain(|k, _| {
-            self.access_counts.get(k) >= &threshold
+            self.access_counts.get(k).unwrap_or(&0) >= &threshold
         });
     }
 }
@@ -1477,32 +1491,67 @@ struct FileMetadata {
     created_at: chrono::DateTime<chrono::Utc>,
 }
 
-struct EngineMetrics {
-    total_vectors: usize,
-    insert_operations: u64,
-    search_operations: u64,
-    cache_hits: u64,
-    cache_misses: u64,
-    compression_ratio: f32,
+// RaptorMetrics - integrated with unified metrics framework
+// Using atomic counters for lock-free metric updates
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+
+struct RaptorMetrics {
+    // Vector and row metrics
+    total_vectors: AtomicUsize,
+    total_rows: AtomicUsize,
+    total_files: AtomicUsize,
+    
+    // Operation counters
+    insert_operations: AtomicU64,
+    search_operations: AtomicU64,
+    flush_operations: AtomicU64,
+    compaction_operations: AtomicU64,
+    
+    // Cache metrics
+    cache_hits: AtomicU64,
+    cache_misses: AtomicU64,
+    
+    // I/O metrics
+    bytes_written: AtomicU64,
+    bytes_read: AtomicU64,
+    memory_usage_bytes: AtomicU64,
 }
 
-impl EngineMetrics {
+impl RaptorMetrics {
     fn new() -> Self {
         Self {
-            total_vectors: 0,
-            insert_operations: 0,
-            search_operations: 0,
-            cache_hits: 0,
-            cache_misses: 0,
-            compression_ratio: 1.0,
+            total_vectors: AtomicUsize::new(0),
+            total_rows: AtomicUsize::new(0),
+            total_files: AtomicUsize::new(0),
+            insert_operations: AtomicU64::new(0),
+            search_operations: AtomicU64::new(0),
+            flush_operations: AtomicU64::new(0),
+            compaction_operations: AtomicU64::new(0),
+            cache_hits: AtomicU64::new(0),
+            cache_misses: AtomicU64::new(0),
+            bytes_written: AtomicU64::new(0),
+            bytes_read: AtomicU64::new(0),
+            memory_usage_bytes: AtomicU64::new(0),
         }
     }
     
     fn cache_hit_ratio(&self) -> f32 {
-        if self.cache_hits + self.cache_misses == 0 {
+        let hits = self.cache_hits.load(Ordering::Relaxed);
+        let misses = self.cache_misses.load(Ordering::Relaxed);
+        if hits + misses == 0 {
             0.0
         } else {
-            self.cache_hits as f32 / (self.cache_hits + self.cache_misses) as f32
+            hits as f32 / (hits + misses) as f32
+        }
+    }
+    
+    fn compression_ratio(&self) -> f32 {
+        let written = self.bytes_written.load(Ordering::Relaxed);
+        let memory = self.memory_usage_bytes.load(Ordering::Relaxed);
+        if memory == 0 {
+            1.0
+        } else {
+            written as f32 / memory as f32
         }
     }
 }
@@ -1642,16 +1691,15 @@ impl UniversallyOptimized for RaptorEngine {
     async fn collect_performance_metrics(&self) -> Result<HashMap<String, serde_json::Value>> {
         let mut metrics = HashMap::new();
         
-        // Basic RAPTOR metrics
-        let engine_metrics = self.metrics.read().await;
+        // Basic RAPTOR metrics (using unified framework)
         metrics.insert("raptor_total_rows".to_string(), serde_json::Value::Number(
-            serde_json::Number::from(engine_metrics.total_rows)
+            serde_json::Number::from(self.metrics.total_rows.load(Ordering::Relaxed))
         ));
         metrics.insert("raptor_total_files".to_string(), serde_json::Value::Number(
-            serde_json::Number::from(engine_metrics.total_files)
+            serde_json::Number::from(self.metrics.total_files.load(Ordering::Relaxed))
         ));
         metrics.insert("raptor_memory_usage_bytes".to_string(), serde_json::Value::Number(
-            serde_json::Number::from(engine_metrics.memory_usage_bytes)
+            serde_json::Number::from(self.metrics.memory_usage_bytes.load(Ordering::Relaxed))
         ));
         
         // Universal optimizer metrics

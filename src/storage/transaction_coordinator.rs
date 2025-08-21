@@ -345,7 +345,7 @@ impl TransactionCoordinator {
             panic!("No filesystem available")
         });
         let write_strategy =
-            WriteStrategyFactory::create_metadata_strategy(fs, temp_directory.as_str())?;
+            WriteStrategyFactory::create_metadata_strategy(fs, temp_directory.as_deref())?;
 
         let coordinator = Self {
             filesystem,
@@ -1065,7 +1065,7 @@ impl TransactionCoordinator {
         let staging_dir = config
             .custom_staging_dir
             .as_ref()
-            .map(|s| s.as_str())
+            .map(|s| s.as_deref())
             .unwrap_or_else(|| config.operation_type.staging_dir_name());
 
         info!("    staging_dir resolved to: '{}'", staging_dir);

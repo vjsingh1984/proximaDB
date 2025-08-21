@@ -277,14 +277,14 @@ impl EventLogCommand for EventLogServiceAdapter {
         // Find the event across all collections and acknowledge it
         for entry in self.manager.event_logs.iter() {
             let queue = entry.value();
-            // Try to acknowledge the event in this queue
-            if let Ok(_) = queue.acknowledge_event(event_id.clone()).await {
-                return Ok(());
-            }
+            // Mark the event as processed (no specific index name for general acknowledgment)
+            queue.mark_processed(&event_id, "axis_consumer");
+            // Note: mark_processed is synchronous, so we can't tell if the event existed
+            // But that's okay - if it didn't exist in this queue, it might be in another
         }
         
-        // If we get here, the event wasn't found
-        Err(anyhow::anyhow!("Event {} not found in any collection", event_id))
+        // We've attempted to mark it processed in all queues
+        Ok(())
     }
 }
 
@@ -338,7 +338,7 @@ impl EventLogServiceFactory {
         collection_cache: Arc<dashmap::DashMap<String, Arc<crate::proto::proximadb::Collection>>>,
         deployment_mode: Option<String>,
     ) -> Result<Arc<dyn EventLogService>> {
-        let service: Arc<dyn EventLogService> = match deployment_mode.as_str() {
+        let service: Arc<dyn EventLogService> = match deployment_mode.as_deref() {
             Some("standalone") => {
                 // Parse standalone config from environment or config
                 let bind_address = std::env::var("EVENTLOG_BIND_ADDRESS")

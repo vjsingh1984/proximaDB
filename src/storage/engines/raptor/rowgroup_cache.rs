@@ -329,10 +329,13 @@ impl RowGroupCacheManager {
         
         // Check metadata filters
         if !context.metadata_filters.is_empty() {
-            for (field, predicate) in &context.metadata_filters {
+            for (field, predicate_value) in &context.metadata_filters {
                 if let Some(stats) = metadata.metadata_stats.get(field) {
                     // Check if predicate can possibly match based on min/max
-                    if !self.predicate_could_match(predicate, stats) {
+                    // Create a HashMap for the single field predicate
+                    let mut single_predicate = HashMap::new();
+                    single_predicate.insert(field.clone(), predicate_value.clone());
+                    if !self.predicate_could_match(&single_predicate, stats) {
                         return true;
                     }
                 }
@@ -722,12 +725,13 @@ impl RowGroupCacheManager {
         let mut current_size = self.current_size.write().await;
         
         for (key, entry) in entries {
+            let size_bytes = entry.metadata.compressed_size as usize;
             let cached_rg = CachedRowGroup {
                 compressed_data: Bytes::from(entry.compressed_data),
                 metadata: entry.metadata,
                 cached_at: std::time::Instant::now(),
                 access_count: entry.access_count,
-                size_bytes: entry.metadata.compressed_size as usize,
+                size_bytes,
             };
             
             *current_size += cached_rg.size_bytes;

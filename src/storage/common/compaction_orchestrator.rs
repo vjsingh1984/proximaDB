@@ -592,7 +592,7 @@ impl FilenameCodec {
         
         pattern.captures(filename)
             .and_then(|caps| caps.get(1))
-            .and_then(|m| m.as_str().parse().ok())
+            .and_then(|m| m.as_deref().parse().ok())
             
     }
     
@@ -605,7 +605,7 @@ impl FilenameCodec {
         pattern.captures(filename)
             .and_then(|caps| caps.get(1))
             .and_then(|m| {
-                DateTime::parse_from_str(&format!("{}+00:00", m.as_str()), "%Y%m%dT%H%M%S%z")
+                DateTime::parse_from_str(&format!("{}+00:00", m.as_deref()), "%Y%m%dT%H%M%S%z")
                     .ok()
                     .map(|dt| dt.timestamp() as u64)
             })

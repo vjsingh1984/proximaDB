@@ -51,13 +51,17 @@ pub struct IndexEvent {
     pub operation: OperationType,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum StorageEngineType {
     SST,
     VIPER,
+    NOVA,
+    RAPTOR,
+    SWIFT,
+    PRISM,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum OperationType {
     Flush,
     Compaction,
@@ -252,9 +256,9 @@ impl EventLogQueue {
     /// Check if file can be compacted
     pub fn can_compact(&self, file_path: &str) -> bool {
         self.file_status
-            .get(self.collection_id)
+            .get(&self.collection_id)
             .map(|s| s.ready_for_compaction)
-             // If not tracked, allow compaction
+            .unwrap_or(true) // If not tracked, allow compaction
     }
     
     /// Clean up after compaction

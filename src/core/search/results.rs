@@ -8,7 +8,7 @@ use crate::compute::quantization::unified::UnifiedQuantizationLevel;
 
 /// Unified search result structure - replaces 13+ duplicates across schema_types and other files
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
-pub struct SearchResult {
+pub struct InternalSearchResult {
     /// Vector/document identifier
     pub id: String,
     /// Alternative identifier field for compatibility with schema_types
@@ -86,7 +86,7 @@ pub struct EngineStats {
     pub deduplication_savings: usize,
 }
 
-impl SearchResult {
+impl InternalSearchResult {
     /// Create a basic search result
     pub fn new(id: String, similarity: f32) -> Self {
         Self {
@@ -215,12 +215,12 @@ impl SearchResult {
 }
 
 /// Collection of search results with metadata
-/// Using Arc<[SearchResult]> for immutable, zero-copy sharing of results
+/// Using Arc<[InternalSearchResult]> for immutable, zero-copy sharing of results
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SearchResultSet {
     /// Individual search results - immutable for performance
     #[serde(with = "arc_slice_serde")]
-    pub results: Arc<[SearchResult]>,
+    pub results: Arc<[InternalSearchResult]>,
     /// Total number of matching documents (before pagination)
     pub total_count: u64,
     /// Query that generated these results
@@ -236,7 +236,7 @@ pub struct SearchResultSet {
 impl SearchResultSet {
     /// Create a SearchResultSet from a Vec<SearchResult>
     pub fn from_vec(
-        results: Vec<SearchResult>,
+        results: Vec<InternalSearchResult>,
         total_count: u64,
         query_id: Option<String>,
         processing_time_us: u64,
@@ -270,39 +270,39 @@ impl SearchResultSet {
 mod arc_slice_serde {
     use serde::{Deserialize, Deserializer, Serialize, Serializer};
     use std::sync::Arc;
-    use super::SearchResult;
+    use super::InternalSearchResult;
 
-    pub fn serialize<S>(results: &Arc<[SearchResult]>, serializer: S) -> Result<S::Ok, S::Error>
+    pub fn serialize<S>(results: &Arc<[InternalSearchResult]>, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: Serializer,
     {
         results.as_ref().serialize(serializer)
     }
 
-    pub fn deserialize<'de, D>(deserializer: D) -> Result<Arc<[SearchResult]>, D::Error>
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<Arc<[InternalSearchResult]>, D::Error>
     where
         D: Deserializer<'de>,
     {
-        let vec = Vec::<SearchResult>::deserialize(deserializer)?;
+        let vec = Vec::<InternalSearchResult>::deserialize(deserializer)?;
         Ok(Arc::from(vec.into_boxed_slice()))
     }
 }
 
 // Manual trait implementations for ordering (HashMap doesn't implement Ord)
-impl Eq for SearchResult {}
+impl Eq for InternalSearchResult {}
 
-impl PartialOrd for SearchResult {
+impl PartialOrd for InternalSearchResult {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
         Some(self.cmp(other))
     }
 }
 
-impl Ord for SearchResult {
+impl Ord for InternalSearchResult {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
         // Order by score in REVERSE order (higher scores first)
         // For distance metrics, lower is better, so this gives us better results first
         other.score.partial_cmp(&self.score)
-            
+            .unwrap_or(std::cmp::Ordering::Equal)
             .then_with(|| self.id.cmp(&other.id)) // Tie-break by ID for consistency
     }
 }

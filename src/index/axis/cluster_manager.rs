@@ -55,15 +55,12 @@ impl ClusterManager {
         }
         
         // Run clustering algorithm
-        match &self.config.algorithm {
-            ClusteringAlgorithm::KMeans(kmeans_config) => {
-                self.run_kmeans(vectors, kmeans_config).await?
-            }
-            _ => {
-                // Fallback to simple k-means
-                self.run_kmeans(vectors, &KMeansConfig::default()).await?
-            }
-        }
+        let kmeans_config = match &self.config.algorithm {
+            ClusteringAlgorithm::KMeans(kmeans_config) => kmeans_config.clone(),
+            _ => KMeansConfig::default(),
+        };
+        
+        self.run_kmeans(vectors, &kmeans_config).await?;
         
         // Update global centroid
         self.update_global_centroid(vectors);
@@ -75,7 +72,7 @@ impl ClusterManager {
             assignments.push(ClusterAssignment {
                 vector_id: i as u32,
                 cluster_id,
-                distance,
+                similarity: -distance, // Convert distance to similarity (negative distance)
             });
         }
         
@@ -142,7 +139,11 @@ impl ClusterManager {
                     .map(|c| Self::euclidean_distance(vector, c))
                     .min_by(|a, b| a.partial_cmp(b).unwrap())
                     ;
-                distances.push(min_dist * min_dist);
+                if let Some(dist) = min_dist {
+                    distances.push(dist * dist);
+                } else {
+                    distances.push(0.0);
+                }
             }
             
             // Choose next centroid with weighted probability

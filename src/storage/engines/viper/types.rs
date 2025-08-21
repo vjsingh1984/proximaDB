@@ -273,19 +273,78 @@ pub enum PartitionStrategy {
 /// Cluster ID type
 pub type ClusterId = String;
 
-/// Engine statistics
-#[derive(Debug, Clone, Default)]
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+
+/// Engine statistics - using atomic counters for lock-free updates
+/// Integrated with unified metrics framework for consistent monitoring
+#[derive(Debug)]
 pub struct EngineStats {
+    pub total_vectors: AtomicU64,
+    pub total_size_bytes: AtomicU64,
+    pub active_collections: AtomicUsize,
+    pub flush_operations: AtomicU64,
+    pub compaction_operations: AtomicU64,
+    pub total_storage_size_bytes: AtomicU64,
+    pub active_clusters: AtomicUsize,
+    pub active_partitions: AtomicUsize,
+    // Non-atomic fields for computed metrics (rarely updated)
+    avg_compression_ratio: std::sync::RwLock<f32>,
+    avg_ml_prediction_accuracy: std::sync::RwLock<f32>,
+}
+
+impl Default for EngineStats {
+    fn default() -> Self {
+        Self {
+            total_vectors: AtomicU64::new(0),
+            total_size_bytes: AtomicU64::new(0),
+            active_collections: AtomicUsize::new(0),
+            flush_operations: AtomicU64::new(0),
+            compaction_operations: AtomicU64::new(0),
+            total_storage_size_bytes: AtomicU64::new(0),
+            active_clusters: AtomicUsize::new(0),
+            active_partitions: AtomicUsize::new(0),
+            avg_compression_ratio: std::sync::RwLock::new(1.0),
+            avg_ml_prediction_accuracy: std::sync::RwLock::new(0.0),
+        }
+    }
+}
+
+impl EngineStats {
+    /// Get compression ratio (requires read lock)
+    pub fn get_compression_ratio(&self) -> f32 {
+        *self.avg_compression_ratio.read().unwrap()
+    }
+    
+    /// Update compression ratio (requires write lock)
+    pub fn update_compression_ratio(&self, ratio: f32) {
+        *self.avg_compression_ratio.write().unwrap() = ratio;
+    }
+    
+    /// Get ML prediction accuracy (requires read lock)
+    pub fn get_ml_accuracy(&self) -> f32 {
+        *self.avg_ml_prediction_accuracy.read().unwrap()
+    }
+    
+    /// Update ML prediction accuracy (requires write lock)  
+    pub fn update_ml_accuracy(&self, accuracy: f32) {
+        *self.avg_ml_prediction_accuracy.write().unwrap() = accuracy;
+    }
+}
+
+/// Snapshot of engine statistics for external consumption
+/// This is a clone-able struct that represents a point-in-time view
+#[derive(Debug, Clone)]
+pub struct EngineStatsSnapshot {
     pub total_vectors: u64,
     pub total_size_bytes: u64,
     pub active_collections: usize,
     pub flush_operations: u64,
     pub compaction_operations: u64,
-    pub avg_compression_ratio: f32,
-    pub avg_ml_prediction_accuracy: f32,
     pub total_storage_size_bytes: u64,
     pub active_clusters: usize,
     pub active_partitions: usize,
+    pub avg_compression_ratio: f32,
+    pub avg_ml_prediction_accuracy: f32,
 }
 
 impl ViperEngineConfig {
@@ -295,7 +354,7 @@ impl ViperEngineConfig {
             enable_ml_clustering: false,  // Disabled by default
             initial_cluster_count: 16,
             enable_quantization: false,    // Disabled by default
-            parquet_compression: match config.storage.as_ref().and_then(|s| s.compression.as_ref()).as_str() {
+            parquet_compression: match config.storage.as_ref().and_then(|s| s.compression.as_ref()).as_deref() {
                 "zstd" => ParquetCompression::Zstd,
                 "snappy" => ParquetCompression::Snappy,
                 "gzip" => ParquetCompression::Gzip,

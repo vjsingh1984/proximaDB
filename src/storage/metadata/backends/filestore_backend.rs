@@ -484,7 +484,7 @@ impl FilestoreMetadataBackend {
         // Parse JSON operation log
         let op_json: serde_json::Value = serde_json::from_slice(&data)?;
         let sequence = op_json["sequence"].as_u64();
-        let op_type_str = op_json["operation_type"].as_str();
+        let op_type_str = op_json["operation_type"].as_deref();
         
         let max_sequence = sequence;
         
@@ -501,7 +501,7 @@ impl FilestoreMetadataBackend {
             }
             "Delete" => {
                 // collection_id is the name, need to get UUID first
-                let collection_id = op_json["collection_id"].as_str();
+                let collection_id = op_json["collection_id"].as_deref();
                 if let Some(uuid) = self.index.get_uuid_by_name(collection_id) {
                     self.index.remove_collection(&uuid);
                 }
@@ -1263,7 +1263,7 @@ impl FilestoreMetadataBackend {
         
         // Scan all entries in primary memtable
         for entry in self.index.list_all() {
-            if entry.config.as_ref().map(|c| c.name.as_str()) == name {
+            if entry.config.as_ref().map(|c| c.name.as_deref()) == name {
                 let elapsed = start.elapsed();
                 warn!("🔧 Fallback scan found '{}' in {:?}, repairing secondary index", name, elapsed);
                 

@@ -397,7 +397,7 @@ impl AzureClient {
         if let Some(storage_class) = options.storage_class {
             request = request.header("x-ms-access-tier", storage_class);
         } else {
-            request = request.header("x-ms-access-tier", self.config.default_blob_tier.as_str());
+            request = request.header("x-ms-access-tier", self.config.default_blob_tier.as_deref());
         }
 
         // Add metadata if specified
@@ -760,7 +760,7 @@ impl AzureCredentialProvider for ServicePrincipalProvider {
             .map_err(|e| FilesystemError::Auth(format!("Failed to parse Azure token: {}", e)))?;
 
         let access_token = token_json["access_token"]
-            .as_str()
+            .as_deref()
             .ok_or_else(|| {
                 FilesystemError::Auth("access_token not found in Azure response".to_string())
             })?

@@ -91,7 +91,7 @@ pub struct MemoryOptimizedStorage {
     pq_codes: Arc<RwLock<HashMap<String, Arc<Mmap>>>>,
     
     /// Metadata: Bloom filters, inverted indices - always resident
-    metadata_cache: Arc<RwLock<HashMap<String, MetadataEntry>>>,
+    metadata_cache: Arc<RwLock<HashMap<String, MetadataItem>>>,
     
     /// SELECTIVELY CACHED (Large, infrequently accessed):
     /// FP32 vectors from cloud L0 files - LRU cache with TTL
@@ -112,7 +112,7 @@ pub struct MemoryOptimizedStorage {
 
 /// Metadata entry for fast filtering
 #[derive(Clone)]
-pub struct MetadataEntry {
+pub struct MetadataItem {
     pub bloom_filter: Vec<u8>,
     pub inverted_index: HashMap<String, Vec<String>>,
     pub statistics: VectorStatistics,

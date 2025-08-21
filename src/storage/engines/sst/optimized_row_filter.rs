@@ -43,7 +43,7 @@ impl SSTRowFilterEvaluator {
         for (index, record) in records.iter().enumerate() {
             // Use record ID or index as cache key
             let formatted_key = format!("idx_{}", index);
-            let cache_key = record.id.as_str();
+            let cache_key = record.id.as_deref();
             let metadata_map = self.get_or_convert_vector_metadata(cache_key, &record.metadata)?;
             
             // Fast filter evaluation using centralized logic
@@ -71,7 +71,7 @@ impl SSTRowFilterEvaluator {
         for (index, record) in records.iter().enumerate() {
             // Use record ID or index as cache key
             let formatted_key = format!("idx_{}", index);
-            let cache_key = record.id.as_str();
+            let cache_key = record.id.as_deref();
             let metadata_map = self.get_or_convert_vector_metadata(cache_key, &record.metadata)?;
             
             if self.evaluate_filter_fast(filter_expr, &metadata_map) {

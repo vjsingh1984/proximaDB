@@ -22,8 +22,11 @@ pub struct RowGroup {
     pub vector_stats: VectorStats,
     pub metadata_stats: HashMap<String, ColumnStats>,
     
-    // Optional offsets for auxiliary structures
+    // Bloom filter for this row group's IDs
+    pub bloom_filter: Option<RowGroupBloomFilter>,
     pub bloom_filter_offset: Option<u64>,
+    
+    // HNSW segment for this row group
     pub hnsw_segment_offset: Option<u64>,
     
     // HNSW locality info
@@ -49,6 +52,7 @@ impl RowGroup {
             row_count: 0,
             vector_stats: VectorStats::default(),
             metadata_stats: HashMap::new(),
+            bloom_filter: None,
             bloom_filter_offset: None,
             hnsw_segment_offset: None,
             local_hnsw: None,
@@ -108,6 +112,7 @@ impl Default for RowGroupMetadata {
             row_count: 0,
             vector_stats: VectorStats::default(),
             metadata_stats: HashMap::new(),
+            bloom_filter: None,
             bloom_filter_offset: None,
             hnsw_segment_offset: None,
             compression_codec: "zstd".to_string(),
@@ -305,16 +310,61 @@ pub enum FastLanesScheme {
 // ====== File Metadata (unified) ======
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+/// CONSOLIDATED RaptorFileMetadata - Single source of truth
+/// This combines all fields from the three duplicate definitions
 pub struct RaptorFileMetadata {
+    // Core file metadata
     pub version: u32,
     pub created_at: i64,
-    pub row_groups: Vec<RowGroupMetadata>,
+    pub created_by: String,
+    pub file_path: String,
+    pub file_size: u64,
+    
+    // Row and vector counts
     pub total_rows: usize,
+    pub total_vectors: usize,
+    pub dimension: usize,
+    
+    // Collection info
+    pub collection_id: String,
+    
+    // Row groups
+    pub row_groups: Vec<RowGroupMetadata>,
+    pub num_rowgroups: usize,
+    pub rowgroup_offsets: Vec<u64>,
+    pub rowgroup_sizes: Vec<u64>,
+    pub rowgroup_vector_counts: Vec<usize>,
+    
+    // Schema
     pub schema: SchemaDescriptor,
-    pub bloom_filter_metadata: Option<BloomFilterMetadata>,
+    
+    // HNSW metadata
     pub hnsw_metadata: Option<HnswGraphMetadata>,
+    pub global_hnsw_offset: u64,
+    pub global_hnsw_size: u64,
+    pub hnsw_entry_points: Vec<String>,
+    pub hnsw_num_layers: u8,
+    pub global_hnsw_entry: Option<i32>,
+    
+    // Bloom filter metadata (for per-rowgroup bloom filters)
+    pub bloom_filter_metadata: Option<BloomFilterMetadata>,
+    
+    // Compression
     pub compression_codec: String,
+    
+    // Metadata storage
     pub custom_metadata: HashMap<String, String>,
+    pub key_value_metadata: Vec<KeyValue>,
+    
+    // Footer info
+    pub footer_offset: u64,
+    pub footer_size: u64,
+    
+    // Access tracking
+    pub last_accessed: i64,
+    
+    // Locality clusters for optimization
+    pub locality_clusters: Vec<LocalityClusterInfo>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -322,6 +372,20 @@ pub struct SchemaDescriptor {
     pub vector_dimension: usize,
     pub metadata_fields: Vec<FieldDescriptor>,
     pub version: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct KeyValue {
+    pub key: String,
+    pub value: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LocalityClusterInfo {
+    pub cluster_id: u32,
+    pub start_offset: u64,
+    pub size: u64,
+    pub vector_count: usize,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -398,6 +462,44 @@ pub enum PredicateOp {
     NotIn,
     Contains,
     StartsWith,
+}
+
+// ====== Bloom Filter Structures (HNSW-Optimized) ======
+
+/// Per-RowGroup bloom filter for fast membership testing
+/// Optimized for HNSW-organized data where IDs are scattered
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RowGroupBloomFilter {
+    /// Bloom filter bits (typically 10 bits per ID for 1% false positive)
+    pub bits: Vec<u8>,
+    
+    /// Number of hash functions (typically 7 for optimal)
+    pub num_hashes: usize,
+    
+    /// Number of IDs in this row group
+    pub num_ids: usize,
+    
+    /// Size in bits
+    pub size_bits: usize,
+    
+    /// Target false positive rate
+    pub false_positive_rate: f64,
+}
+
+/// Columnar ID index within row group for SIMD scanning
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ColumnnarIdIndex {
+    /// IDs stored columnar for SIMD scanning
+    pub ids: Vec<String>,
+    
+    /// Pre-computed hashes for faster comparison (optional)
+    pub id_hashes: Option<Vec<u64>>,
+    
+    /// Offsets to full row data within row group
+    pub row_offsets: Vec<u32>,
+    
+    /// Whether IDs are sorted (enables binary search)
+    pub is_sorted: bool,
 }
 
 // ====== Locality clustering for HNSW organization ======

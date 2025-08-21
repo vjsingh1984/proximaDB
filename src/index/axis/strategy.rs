@@ -104,7 +104,7 @@ impl IndexStrategyBuilder {
         
         // Always add identifier index
         indexes.push(IndexSpecification {
-            // data_type removed -  DataType::Identifier,
+            data_type: DataType::Identifier,
             algorithm: IndexAlgorithm::BTree { max_keys_per_node: 256 },
             name: Some("primary_id".to_string()),
             is_primary: false,
@@ -123,7 +123,7 @@ impl IndexStrategyBuilder {
                 if *cardinality < 1000 {
                     // Low cardinality - use bloom filter
                     indexes.push(IndexSpecification {
-                        // data_type removed -  DataType::Metadata,
+                        data_type: DataType::Metadata,
                         algorithm: IndexAlgorithm::BloomFilter {
                             expected_elements: self.collection_stats.total_vectors,
                             false_positive_rate: 0.01,
@@ -135,7 +135,7 @@ impl IndexStrategyBuilder {
                 } else {
                     // High cardinality - use BTree
                     indexes.push(IndexSpecification {
-                        // data_type removed -  DataType::Metadata,
+                        data_type: DataType::Metadata,
                         algorithm: IndexAlgorithm::BTree { max_keys_per_node: 256 },
                         name: Some(format!("btree_{}", field)),
                         is_primary: false,
@@ -148,7 +148,7 @@ impl IndexStrategyBuilder {
         // Add text index if needed
         if self.collection_stats.has_text_fields && self.query_patterns.text_search_ratio > 0.05 {
             indexes.push(IndexSpecification {
-                // data_type removed -  DataType::FullText,
+                data_type: DataType::FullText,
                 algorithm: IndexAlgorithm::InvertedIndex {
                     analyzer: TextAnalyzer {
                         tokenizer: Tokenizer::Standard,

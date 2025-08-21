@@ -217,7 +217,7 @@ impl CompactionTaskBuilder {
     ) -> Result<Option<CompactionTaskInfo>> {
         debug!(
             "🔍 UNIFIED COMPACTION: Checking compaction for {} collection {} in {}",
-            engine_type.as_str(), collection_id, data_directory
+            engine_type.as_deref(), collection_id, data_directory
         );
         
         // Use unified file discovery with EventLog filtering
@@ -230,7 +230,7 @@ impl CompactionTaskBuilder {
         ).await?;
         
         // Determine thresholds based on strategy
-        let should_compact_l0 = match config.strategy.as_str() {
+        let should_compact_l0 = match config.strategy.as_deref() {
             "count" => file_discovery.should_trigger_compaction(&filtered_files, 0, config.l0_file_threshold),
             "size" => {
                 // Calculate total size at L0
@@ -256,7 +256,7 @@ impl CompactionTaskBuilder {
             
             info!(
                 "✅ {} COMPACTION: Triggering with {} compactable files for collection {} (excluded {} pending files)",
-                engine_type.as_str(),
+                engine_type.as_deref(),
                 compactable_files.len(),
                 collection_id,
                 filtered_files.pending_count
@@ -279,7 +279,7 @@ impl CompactionTaskBuilder {
             let level_file_threshold = (config.l0_file_threshold as f64 * config.level_multiplier.powi(level as i32)) as usize;
             let level_size_threshold_mb = (config.l0_size_threshold_mb as f64 * config.level_multiplier.powi(level as i32)) as usize;
             
-            let should_compact = match config.strategy.as_str() {
+            let should_compact = match config.strategy.as_deref() {
                 "count" => file_discovery.should_trigger_compaction(&filtered_files, level, level_file_threshold),
                 "size" => {
                     let level_total_size_mb = filtered_files.compactable_files.get(&level)
@@ -302,7 +302,7 @@ impl CompactionTaskBuilder {
                 
                 info!(
                     "✅ {} COMPACTION: Level {} triggering with {} files for collection {}",
-                    engine_type.as_str(), level, compactable_files.len(), collection_id
+                    engine_type.as_deref(), level, compactable_files.len(), collection_id
                 );
                 
                 return Ok(Some(CompactionTaskInfo {
@@ -320,7 +320,7 @@ impl CompactionTaskBuilder {
         if filtered_files.pending_count > 0 {
             debug!(
                 "⏸️ {} COMPACTION: Not enough compactable files for collection {} ({} ready, {} pending AXIS)",
-                engine_type.as_str(),
+                engine_type.as_deref(),
                 collection_id,
                 filtered_files.compactable_count,
                 filtered_files.pending_count
@@ -328,7 +328,7 @@ impl CompactionTaskBuilder {
         } else {
             debug!(
                 "📋 {} COMPACTION: No compaction needed for collection {} ({} total files)",
-                engine_type.as_str(),
+                engine_type.as_deref(),
                 collection_id,
                 filtered_files.total_files
             );
@@ -364,7 +364,7 @@ impl CompactionTaskBuilder {
         if all_files.is_empty() && filtered_files.pending_count > 0 {
             info!(
                 "⏸️ {} COMPACTION: All {} files are pending AXIS processing for collection {}",
-                engine_type.as_str(),
+                engine_type.as_deref(),
                 filtered_files.pending_count,
                 collection_id
             );

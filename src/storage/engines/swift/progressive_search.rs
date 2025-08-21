@@ -11,6 +11,7 @@ use tracing::{debug, info};
 use crate::core::VectorRecord;
 use crate::compute::distance_computation::{DistanceMetric, UnifiedDistanceCompute, SimilarityResult};
 use crate::compute::quantization::storage_engine::{StorageQuantizationEngine, StorageQuantizationConfig, StorageQuantizedData};
+use crate::compute::quantization::unified::UnifiedQuantizationLevel;
 use super::{SwiftFile, MetadataFilter, SuperBlock, DataBlock};
 
 /// Helper function to compare JSON values
@@ -295,14 +296,24 @@ async fn phase2_int8_filtering(
     n_candidates: usize,
     threshold: f32,
 ) -> Result<Vec<Candidate>> {
-    // TODO: Use unified quantization module - for now just use simple quantization
-    // This should be refactored to use StorageQuantizationEngine
-    let min_val = query.iter().fold(f32::INFINITY, |a, &b| a.min(b));
-    let max_val = query.iter().fold(f32::NEG_INFINITY, |a, &b| a.max(b));
-    let scale = (max_val - min_val) / 255.0;
-    let int8_query: Vec<i8> = query.iter()
-        .map(|&v| ((v - min_val) / scale - 128.0) as i8)
-        .collect();
+    // Use unified quantization module for INT8 quantization
+    let quantization_config = StorageQuantizationConfig::default();
+    let quantization_engine = StorageQuantizationEngine::new_with_config(quantization_config);
+    
+    // Quantize the query vector to INT8
+    let quantized_query = quantization_engine
+        .quantize_batch_with_level(&[query.to_vec()], UnifiedQuantizationLevel::int8())
+        .await?;
+    
+    let int8_query = if let Some(q) = quantized_query.first() {
+        if let Some(primary) = &q.primary {
+            primary.data.iter().map(|&b| b as i8).collect::<Vec<_>>()
+        } else {
+            return Err(anyhow!("Failed to quantize query vector"));
+        }
+    } else {
+        return Err(anyhow!("Failed to quantize query vector"));
+    };
     let mut candidates = BinaryHeap::new();
     
     // Group candidates by block for efficient access
@@ -364,13 +375,25 @@ async fn phase3_pq_refinement(
         None
     };
     
-    // Compute INT8 query for fallback
-    let min_val = query.iter().fold(f32::INFINITY, |a, &b| a.min(b));
-    let max_val = query.iter().fold(f32::NEG_INFINITY, |a, &b| a.max(b));
-    let scale = (max_val - min_val) / 255.0;
-    let int8_query: Vec<i8> = query.iter()
-        .map(|&v| ((v - min_val) / scale - 128.0) as i8)
-        .collect();
+    // Use unified quantization for INT8 fallback
+    let quantization_config = StorageQuantizationConfig::default();
+    let quantization_engine = StorageQuantizationEngine::new_with_config(quantization_config);
+    
+    let quantized_query = quantization_engine
+        .quantize_batch_with_level(&[query.to_vec()], UnifiedQuantizationLevel::int8())
+        .await?;
+    
+    let int8_query = if let Some(q) = quantized_query.first() {
+        if let Some(primary) = &q.primary {
+            primary.data.iter().map(|&b| b as i8).collect::<Vec<_>>()
+        } else {
+            // Fallback to empty vector if quantization fails
+            vec![]
+        }
+    } else {
+        // Fallback to empty vector if quantization fails
+        vec![]
+    };
     
     let mut candidates = BinaryHeap::new();
     

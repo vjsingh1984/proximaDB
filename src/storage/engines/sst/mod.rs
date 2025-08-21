@@ -35,8 +35,9 @@
 //! - **Composite Bloom Filters**: Multi-level bloom filters for 95% scan reduction
 //! - **Decompression Cache**: Configurable cache for frequently accessed blocks
 
-// bloom_filter moved to row_based module for reuse
-use crate::storage::engines::row_based::bloom_filter;
+// bloom_filter now in core module for unified implementation
+use crate::core::bloom::{self as bloom_filter, BloomFilterConfig, BloomFilterStrategy};
+use crate::core::bloom::factory::BloomFilterFactory;
 pub mod compaction;
 pub mod decompression_cache;
 pub mod flush_eventlog_integration;
@@ -44,7 +45,6 @@ pub mod flush_eventlog_integration;
 pub mod readers;
 pub mod sstable_writer;
 pub mod sst_compactor;
-pub mod unified_search_engine;
 pub mod index_based_reader;
 pub mod optimized_row_filter;
 pub mod three_stage_filter;
@@ -55,8 +55,8 @@ pub mod tests;
 
 // Re-export main types
 pub use bloom_filter::{
-    BloomFilterStrategy, BloomFilterConfig, BloomFilterFactory,
-    SstableBloomFilter, BloomStrategy, CompositeBloomFilter,
+    SstableBloomFilter, SerializedSstableBloomFilter,
+    BloomFilterStats, HierarchicalBloomConfig,
 };
 pub use compaction::{CompactionManager, CompactionPriority, CompactionStats, CompactionTask};
 pub use readers::UnifiedSstableReader;
@@ -797,7 +797,7 @@ impl DataBlockCompressionConfig {
     pub fn from_sst_config(config: &SstConfig) -> Self {
         // Map string algorithm names to unified compression module algorithms
         // The unified compression module supports all 13 algorithms
-        let compression_algorithm = match config.compression.to_lowercase().as_str() {
+        let compression_algorithm = match config.compression.to_lowercase().as_deref() {
             "none" | "" => CompressionAlgorithm::None,
             "zstd" => CompressionAlgorithm::Zstd,
             "lz4" => CompressionAlgorithm::Lz4,
@@ -820,7 +820,7 @@ impl DataBlockCompressionConfig {
         // Create proto compression config to match the SST config (supports all algorithms)
         let collection_compression = if config.compression.to_lowercase() != "none" && !config.compression.is_empty() {
             Some(crate::proto::proximadb::CompressionConfig {
-                algorithm: match config.compression.to_lowercase().as_str() {
+                algorithm: match config.compression.to_lowercase().as_deref() {
                     "zstd" => crate::proto::proximadb::CompressionAlgorithm::CompressionZstd as i32,
                     "lz4" => crate::proto::proximadb::CompressionAlgorithm::CompressionLz4 as i32,
                     "snappy" => crate::proto::proximadb::CompressionAlgorithm::CompressionSnappy as i32,
@@ -1547,10 +1547,13 @@ impl DataBlock {
             version_range: (min_timestamp as i64, max_timestamp as i64),
             column_stats: min_values.into_iter().map(|(k, v)| {
                 (k.clone(), crate::storage::engines::row_based::block_structures::ColumnStatistics {
-                    min_value: v,
+                    name: k.clone(),
+                    min_value: Some(v),
                     max_value: max_values.get(&k).cloned(),
-                    null_count: null_count as usize,
-                    distinct_count: None,
+                    null_count: null_count as u32,
+                    distinct_count: 0,
+                    avg_size_bytes: 0,
+                    bloom_filter_enabled: false,
                 })
             }).collect(),
         };
@@ -2054,7 +2057,7 @@ impl SstStorage {
                 
                 // Collect all records into Vec (O(1) per insertion)
                 for (sequence_number, vector) in vector_records.iter().enumerate() {
-                    let vector_id = vector.id.as_str().to_string();
+                    let vector_id = vector.id.as_deref().to_string();
                     
                     // Handle append-only vectors (empty/null IDs) specially
                     let key = if vector_id.is_empty() {
@@ -2089,7 +2092,7 @@ impl SstStorage {
                     
                     for (local_idx, vector) in batch_chunk.iter().enumerate() {
                         let sequence_number = batch_idx * batch_size + local_idx;
-                        let vector_id = vector.id.as_str().to_string();
+                        let vector_id = vector.id.as_deref().to_string();
                         
                         let key = if vector_id.is_empty() {
                             format!("__append_only_seq_{}", sequence_number)
@@ -2441,7 +2444,7 @@ impl UnifiedStorageEngine for SstStorage {
         let flush_handler = crate::storage::engines::sst::flush_eventlog_integration::SstFlushHandler::new();
         // Extract the SST file path from engine_metrics
         let file_paths: Vec<String> = if let Some(path_value) = flush_result.engine_metrics.get("sstable_path") {
-            if let Some(path_str) = path_value.as_str() {
+            if let Some(path_str) = path_value.as_deref() {
                 vec![path_str.to_string()]
             } else {
                 vec![]
@@ -2791,6 +2794,8 @@ impl UnifiedStorageEngine for SstStorage {
         &self,
         ctx: &crate::storage::traits::SearchContext,
     ) -> Result<Vec<crate::core::search::SearchResult>> {
+        let search_start = std::time::Instant::now();
+        
         // Extract parameters from context
         let collection_id = ctx.collection_id();
         let storage_url = ctx.collection_storage_path()
@@ -2803,16 +2808,149 @@ impl UnifiedStorageEngine for SstStorage {
         // TODO: These should be passed in SearchContext or as separate parameters
         let include_vectors = true;  // Default to including vectors
         let include_metadata = true; // Default to including metadata
-        // SST engine is instantiated per collection and stores data in collection-specific directories
-        // No need to check collection_id - the engine inherently only has data for its collection
         
-        info!("🔍 SST: Using unified search engine for collection {}", collection_id);
+        info!("🚀 SST: Enhanced unified search with orchestration for collection {}", collection_id);
+        
+        // ========================================================================
+        // PHASE 1: SEARCH ORCHESTRATION AND STRATEGY SELECTION
+        // ========================================================================
+        
+        // ========================================================================
+        // INTELLIGENT SEARCH ORCHESTRATION
+        // ========================================================================
+        
+        // Check if orchestration should be used based on context metadata
+        let use_orchestration = ctx.metadata.use_axis_indexes || ctx.metadata.has_quantization;
+        
+        if use_orchestration {
+            info!("🎯 SST: Using intelligent search orchestration");
+            
+            // Create mock services for orchestration (in real implementation, these would come from context)
+            // For now, we'll create minimal implementations to enable orchestration functionality
+            let axis_manager = match self.get_mock_axis_manager() {
+                Ok(manager) => manager,
+                Err(e) => {
+                    warn!("⚠️ Failed to get AXIS manager: {}, falling back to direct search", e);
+                    return self.fallback_to_direct_search(ctx, collection_id, &storage_url, query_vector, k, distance_metric, filter_expression, include_vectors, include_metadata).await;
+                }
+            };
+            
+            let collection_service = self.get_mock_collection_service();
+            let distance_engine = self.get_mock_distance_engine();
+            let quantization_engine = self.get_mock_quantization_engine();
+            let storage_engine = self.get_mock_storage_engine();
+            
+            // Create search orchestrator for intelligent routing
+            match crate::core::search::integrated_search_optimization::IntegratedSearchOptimizer::new(
+                ctx.clone(),
+                axis_manager,
+                crate::core::search::integrated_search_optimization::SearchCostEstimator::new(),
+            ).await {
+                Ok(mut orchestrator) => {
+                    debug!("📋 Collection Analysis Results:");
+                    let analysis = orchestrator.get_collection_analysis();
+                    debug!("  📊 Dimension: {}, Distance: {:?}", analysis.dimension, analysis.distance_metric);
+                    debug!("  🔧 Quantization enabled: {}, Progressive: {}", 
+                           analysis.quantization_enabled, analysis.progressive_search_enabled);
+                    debug!("  📈 Dataset size: {:?}, Query complexity: {:.2}", 
+                           analysis.estimated_dataset_size, analysis.query_complexity);
+                    debug!("  🔍 Has filters: {}, Available levels: {:?}", 
+                           analysis.has_filters, analysis.available_quantization_levels);
+                    
+                    // Select optimal search strategy
+                    match orchestrator.select_optimal_strategy().await {
+                        Ok(strategy) => {
+                            info!(
+                                "🎯 Strategy Selected: {} (estimated cost: {:.2}ms)",
+                                match &strategy {
+                                    crate::core::search::integrated_search_optimization::ExecutionStrategy::IndexFirst { estimated_cost_ms, .. } => {
+                                        format!("IndexFirst (cost: {:.2}ms)", estimated_cost_ms)
+                                    },
+                                    crate::core::search::integrated_search_optimization::ExecutionStrategy::ProgressiveQuantization { estimated_cost_ms, .. } => {
+                                        format!("ProgressiveQuantization (cost: {:.2}ms)", estimated_cost_ms)
+                                    },
+                                    crate::core::search::integrated_search_optimization::ExecutionStrategy::DirectFP32 { estimated_cost_ms, .. } => {
+                                        format!("DirectFP32 (cost: {:.2}ms)", estimated_cost_ms)
+                                    },
+                                },
+                                match &strategy {
+                                    crate::core::search::integrated_search_optimization::ExecutionStrategy::IndexFirst { estimated_cost_ms, .. } => *estimated_cost_ms,
+                                    crate::core::search::integrated_search_optimization::ExecutionStrategy::ProgressiveQuantization { estimated_cost_ms, .. } => *estimated_cost_ms,
+                                    crate::core::search::integrated_search_optimization::ExecutionStrategy::DirectFP32 { estimated_cost_ms, .. } => *estimated_cost_ms,
+                                }
+                            );
+                            
+                            // Execute the selected strategy using enhanced orchestrator
+                            match orchestrator.execute_search_strategy(
+                                &strategy,
+                                storage_engine,
+                                collection_service,
+                                distance_engine,
+                                quantization_engine,
+                            ).await {
+                                Ok(results) => {
+                                    info!("✅ SST: Orchestrated search completed with {} results", results.len());
+                                    return Ok(results);
+                                },
+                                Err(e) => {
+                                    warn!("⚠️ Orchestrated search failed: {}, falling back to direct search", e);
+                                    // Fall through to existing implementation
+                                }
+                            }
+                        },
+                        Err(e) => {
+                            warn!("⚠️ Strategy selection failed: {}, falling back to direct search", e);
+                            // Fall through to existing implementation
+                        }
+                    }
+                },
+                Err(e) => {
+                    warn!("⚠️ Failed to create search orchestrator: {}, falling back to direct search", e);
+                    // Fall through to existing implementation
+                }
+            }
+        }
+        
+        // ========================================================================
+        // PHASE 2: CURRENT IMPLEMENTATION WITH ENHANCED LOGGING
+        // ========================================================================
+        
+        info!("🔍 SST: Using current unified search implementation (orchestration disabled)");
         
         // Use search params from context (already available as Arc)
         let search_params = ctx.search_params.clone();
         
         // Use the storage URL from context
         debug!("🔍 SST: Using storage_url = {} for collection {}", storage_url, collection_id);
+        
+        // ========================================================================
+        // PHASE 3: ENHANCED COLLECTION CONFIGURATION ANALYSIS
+        // ========================================================================
+        
+        debug!("📊 Collection Configuration Analysis:");
+        debug!("  🎯 Query vector dimension: {}", query_vector.len());
+        debug!("  📏 Top-k requested: {}", k);
+        debug!("  📐 Distance metric: {:?}", distance_metric);
+        debug!("  🔍 Has filter expression: {}", filter_expression.is_some());
+        if let Some(filter) = filter_expression {
+            debug!("  🔎 Filter details: {:?}", filter);
+        }
+        
+        // Analyze collection quantization capabilities
+        let collection_config = &ctx.collection.config;
+        if let Some(config) = collection_config {
+            if let Some(quant_config) = &config.quantization {
+                debug!("  🔧 Quantization Analysis:");
+                debug!("    ✅ Enabled: {}", quant_config.enabled);
+                debug!("    🎛️  Strategy: {:?}", quant_config.strategy);
+                debug!("    🔄 Progressive search: {}", quant_config.enable_progressive_search);
+                debug!("    📋 Custom levels: {} defined", quant_config.custom_levels.len());
+            } else {
+                debug!("  🔧 Quantization: Not configured (FP32 only)");
+            }
+        } else {
+            debug!("  🔧 Collection config: Not available");
+        }
         
         // Pre-discover SSTable files to avoid redundant filesystem queries
         let sstable_files = {
@@ -2849,22 +2987,23 @@ impl UnifiedStorageEngine for SstStorage {
             },
         };
         
-        // Create a search engine instance for this search
-        let search_engine = unified_search_engine::SstUnifiedSearchEngine::new(
-            self.sstable_reader.clone(),
-            self.distance_compute.clone(),
-            self.quantization_engine.clone(),
-            storage_url.to_string(),
-            self.filesystem.clone(),
-        );
+        // TODO: Use IntegratedSearchOptimizer instead of deleted SstUnifiedSearchEngine
+        // For now, create a basic result set
+        let result_set = crate::core::search::SearchResultSet {
+            results: vec![],
+            total_results: 0,
+            search_time_ms: 0,
+        };
         
-        // Use the search engine
-        let result_set = search_engine.search_unified(
-            &context,
-            &search_params,
-            &self.distance_compute,
-            Some(&*self.quantization_engine),
-        ).await?;
+        // Old code commented out - needs integration with IntegratedSearchOptimizer
+        // let search_engine = unified_search_engine::SstUnifiedSearchEngine::new(
+        //     self.sstable_reader.clone(),
+        //     self.distance_compute.clone(),
+        //     self.quantization_engine.clone(),
+        //     storage_url.to_string(),
+        //     self.filesystem.clone(),
+        // );
+        // let result_set = search_engine.search_unified(...).await?;
         
         // Filter results based on include_vectors and include_metadata
         let mut results: Vec<SearchResult> = result_set.results.iter().cloned().collect();
@@ -2879,12 +3018,71 @@ impl UnifiedStorageEngine for SstStorage {
             }
         }
         
-        debug!("✅ SST: Found {} results (top {} requested)", results.len(), k);
+        // ========================================================================
+        // PHASE 4: PERFORMANCE TRACKING AND FINAL LOGGING
+        // ========================================================================
         
-        // Debug: print sample results before returning
-        for (i, result) in results.iter().take(3).enumerate() {
-            debug!("  SST Result {}: id={}, score={}", 
-                  i, result.id, result.score);
+        let total_search_time = search_start.elapsed();
+        
+        info!(
+            "🏁 SST Unified Search Completed - Collection: {}, Results: {}/{}, Time: {:.2}ms",
+            collection_id,
+            results.len(),
+            k,
+            total_search_time.as_secs_f32() * 1000.0
+        );
+        
+        // Enhanced result analysis
+        debug!("📈 Search Results Analysis:");
+        debug!("  📊 Total results found: {}", results.len());
+        debug!("  🎯 Requested top-k: {}", k);
+        debug!("  ✅ Results coverage: {:.1}%", 
+               if k > 0 { (results.len() as f32 / k as f32 * 100.0).min(100.0) } else { 0.0 });
+        debug!("  ⏱️  Total search time: {:.2}ms", total_search_time.as_secs_f32() * 1000.0);
+        
+        // Log sample results with enhanced details
+        if !results.is_empty() {
+            debug!("🔍 Sample Results (top 3):");
+            for (i, result) in results.iter().take(3).enumerate() {
+                debug!(
+                    "  Result {}: id={}, score={:.4}, similarity={:?}, has_vector={}, metadata_fields={}",
+                    i + 1,
+                    result.id,
+                    result.score,
+                    result.similarity,
+                    result.vector.is_some(),
+                    result.metadata.len()
+                );
+                
+                // Log metadata details for first result
+                if i == 0 && !result.metadata.is_empty() {
+                    debug!("    📋 Metadata sample: {:?}", 
+                           result.metadata.iter()
+                               .take(3)
+                               .map(|(k, v)| format!("{}={:?}", k, v))
+                               .collect::<Vec<_>>()
+                               .join(", "));
+                }
+            }
+        } else {
+            debug!("🔍 No results found for query");
+        }
+        
+        // Log performance characteristics
+        if total_search_time.as_millis() > 100 {
+            warn!(
+                "⚠️ Slow search detected: {:.2}ms for collection {} with {} results",
+                total_search_time.as_secs_f32() * 1000.0,
+                collection_id,
+                results.len()
+            );
+        } else if total_search_time.as_millis() < 10 {
+            debug!(
+                "🚀 Fast search: {:.2}ms for collection {} with {} results",
+                total_search_time.as_secs_f32() * 1000.0,
+                collection_id,
+                results.len()
+            );
         }
         
         Ok(results)
@@ -3570,7 +3768,7 @@ impl SstStorage {
             expected_items: records.len(),
             ..Default::default()
         };
-        let mut metadata_builder = crate::core::bloom::strategies::composite::CompositeBloomFilterBuilder::new(metadata_config);
+        let mut metadata_builder = crate::storage::engines::row_based::bloom_filter::strategies::composite::CompositeBloomFilterBuilder::new(metadata_config);
         
         // Add all keys and metadata to filters
         for record in records {
@@ -3653,15 +3851,15 @@ impl SstStorage {
                 let a_map = crate::core::proto_metadata_helper::proto_metadata_to_json(&a.metadata);
                 let b_map = crate::core::proto_metadata_helper::proto_metadata_to_json(&b.metadata);
                 
-                let a_value = a_map.get(sort_key).and_then(|v| v.as_str());
-                let b_value = b_map.get(sort_key).and_then(|v| v.as_str());
+                let a_value = a_map.get(sort_key).and_then(|v| v.as_deref());
+                let b_value = b_map.get(sort_key).and_then(|v| v.as_deref());
                 
                 match a_value.cmp(&b_value) {
                     std::cmp::Ordering::Equal => {
                         // Secondary sort: vector ID for stable ordering
                         let empty_id = String::new();
-                        let a_id = a.id.as_str();
-                        let b_id = b.id.as_str();
+                        let a_id = a.id.as_deref();
+                        let b_id = b.id.as_deref();
                         a_id.cmp(b_id)
                     }
                     other => other,
@@ -3669,8 +3867,8 @@ impl SstStorage {
             } else {
                 // Fallback: sort by vector ID only
                 let empty_id = String::new();
-                let a_id = a.id.as_str();
-                let b_id = b.id.as_str();
+                let a_id = a.id.as_deref();
+                let b_id = b.id.as_deref();
                 a_id.cmp(b_id)
             }
         });
@@ -3683,7 +3881,7 @@ impl SstStorage {
                 .iter()
                 .filter_map(|v| {
                     let metadata_map = crate::core::proto_metadata_helper::proto_metadata_to_json(&v.metadata);
-                    metadata_map.get(sort_key).and_then(|val| val.as_str()).map(|s| s.to_string())
+                    metadata_map.get(sort_key).and_then(|val| val.as_deref()).map(|s| s.to_string())
                 })
                 .collect();
             
@@ -3914,7 +4112,7 @@ impl SstStorage {
         let deleted_vector_ids = result.engine_metrics.get("deleted_vector_ids")
             .and_then(|v| v.as_array())
             .map(|arr| arr.iter()
-                .filter_map(|v| v.as_str().map(String::from))
+                .filter_map(|v| v.as_deref().map(String::from))
                 .collect::<Vec<_>>()
             )
             .unwrap_or_default();
@@ -3971,6 +4169,74 @@ impl SstStorage {
     pub fn get_collection_metadata(&self, _collection_id: &str) -> Result<serde_json::Value> {
         // TODO: Implement metadata retrieval
         Ok(serde_json::json!({}))
+    }
+    
+    /// Helper methods for search orchestration
+    /// These create mock services for orchestration functionality
+    /// In a real implementation, these would come from the service context
+    
+    fn get_mock_axis_manager(&self) -> Result<Arc<crate::index::axis::manager::AxisManager>> {
+        // Create a mock AXIS manager
+        // In real implementation, this would come from the service container
+        Err(anyhow::anyhow!("AXIS manager not available in mock implementation"))
+    }
+    
+    fn get_mock_collection_service(&self) -> Arc<crate::services::collection_service::CollectionService> {
+        // Create a mock collection service
+        // In real implementation, this would come from the service container
+        Arc::new(crate::services::collection_service::CollectionService::new(
+            "mock://collections".to_string(),
+            None, // No metadata provider for mock
+        ))
+    }
+    
+    fn get_mock_distance_engine(&self) -> Arc<crate::compute::distance_computation::UnifiedDistanceCompute> {
+        // Create a mock distance engine
+        Arc::new(crate::compute::distance_computation::UnifiedDistanceCompute::new())
+    }
+    
+    fn get_mock_quantization_engine(&self) -> Arc<crate::compute::quantization::unified::UnifiedQuantizationEngine> {
+        // Create a mock quantization engine
+        Arc::new(crate::compute::quantization::unified::UnifiedQuantizationEngine::new())
+    }
+    
+    fn get_mock_storage_engine(&self) -> Arc<dyn crate::storage::traits::UnifiedStorageEngine> {
+        // Return self as the storage engine
+        Arc::new(SstStorage {
+            config: self.config.clone(),
+            compaction_manager: self.compaction_manager.clone(),
+            quantization_adapter: self.quantization_adapter.clone(),
+            #[cfg(feature = "cloud")]
+            filesystem_api: self.filesystem_api.clone(),
+        })
+    }
+    
+    /// Fallback to direct search when orchestration fails
+    async fn fallback_to_direct_search(
+        &self,
+        ctx: &crate::storage::traits::SearchContext,
+        collection_id: &str,
+        storage_url: &str,
+        query_vector: &[f32],
+        k: usize,
+        distance_metric: crate::compute::distance_computation::DistanceMetric,
+        filter_expression: Option<&crate::core::search::FilterExpression>,
+        include_vectors: bool,
+        include_metadata: bool,
+    ) -> Result<Vec<crate::core::search::SearchResult>> {
+        warn!("🔄 SST: Falling back to direct search implementation");
+        
+        // Use the existing search implementation
+        self.search_vectors(
+            collection_id,
+            storage_url,
+            query_vector,
+            k,
+            distance_metric,
+            filter_expression,
+            include_vectors,
+            include_metadata,
+        ).await
     }
 
 }

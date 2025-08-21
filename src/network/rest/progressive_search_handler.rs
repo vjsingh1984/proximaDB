@@ -10,7 +10,7 @@ use std::sync::Arc;
 use tracing::{debug, error, info};
 
 use crate::core::search::{
-    progressive_orchestrator::ProgressiveSearchOrchestrator,
+    integrated_search_optimization::IntegratedSearchOptimizer,
     progressive_quantization::{ProgressiveSearchConfig, SearchScenario},
     SearchParams, FilterExpression,
 };
@@ -118,7 +118,7 @@ pub struct ConfigUsed {
 pub async fn progressive_search_handler(
     Path(collection_id): Path<String>,
     Query(params): Query<ProgressiveSearchRequest>,
-    State(orchestrator): State<Arc<ProgressiveSearchOrchestrator>>,
+    State(orchestrator): State<Arc<IntegratedSearchOptimizer>>,
 ) -> Result<Json<ProgressiveSearchResponse>, StatusCode> {
     let start_time = std::time::Instant::now();
     
@@ -159,7 +159,11 @@ pub async fn progressive_search_handler(
     
     // Create search parameters
     let search_params = SearchParams {
+        query_vectors: None, // Will be set from params.vector
+        vector: Some(params.vector.clone()),
         top_k: Some(params.k),
+        distance_metric: None, // Use collection default
+        filter_expression: None, // TODO: Convert params.filter to FilterExpression
         filters: Default::default(),
         accuracy_threshold: None,
         include_expired: Some(false),
@@ -167,9 +171,14 @@ pub async fn progressive_search_handler(
         enable_two_stage: Some(true),
         enable_clustering_hint: Some(true),
         enable_metadata_filtering_hint: params.filter.is_some().into(),
-        quantization_hint: None,
+        enable_progressive_search: Some(true),
+        requires_ordering: Some(true), // Progressive search needs ordering
+        runtime_hints: None, // Use default hints
+        progressive_scenario: params.scenario.clone(),
+        progressive_recalls: None,
+        optimization_hint: params.scenario.clone(),
         custom_hints: Default::default(),
-        optimization_hint: params.scenario,
+        quantization_hint: None,
     };
     
     // Execute progressive search
@@ -189,14 +198,16 @@ pub async fn progressive_search_handler(
                 .map(|r| SearchResultDto {
                     id: r.id,
                     score: r.score,
-                    similarity: r.similarity,
-                    vector: if params.include_vectors {
+                    similarity: r.similarity.unwrap_or(r.score),
+                    vector: if params.include_vectors.unwrap_or(false) {
                         r.vector
                     } else {
                         None
                     },
-                    metadata: if params.include_metadata {
-                        r.metadata.iter().map(|m| serde_json::to_value(m).unwrap_or_default())
+                    metadata: if params.include_metadata.unwrap_or(false) {
+                        Some(r.metadata.iter()
+                            .map(|(k, v)| (k.clone(), v.clone()))
+                            .collect())
                     } else {
                         None
                     },
@@ -204,7 +215,7 @@ pub async fn progressive_search_handler(
                 .collect();
             
             // Prepare metrics if requested
-            let metrics = if params.include_metrics {
+            let metrics = if params.include_metrics.unwrap_or(false) {
                 Some(StageMetrics {
                     binary_stage: StageInfo {
                         candidates: config.compute_stage_sizes(params.k).binary_candidates,
@@ -266,7 +277,7 @@ pub async fn progressive_search_handler(
 pub async fn explain_progressive_search_handler(
     Path(collection_id): Path<String>,
     Query(params): Query<ExplainRequest>,
-    State(orchestrator): State<Arc<ProgressiveSearchOrchestrator>>,
+    State(orchestrator): State<Arc<IntegratedSearchOptimizer>>,
 ) -> Result<Json<ExplainResponse>, StatusCode> {
     let config = if let Some(scenario_str) = params.scenario.as_ref() {
         match scenario_str.as_str() {
@@ -279,7 +290,7 @@ pub async fn explain_progressive_search_handler(
         ProgressiveSearchConfig::default()
     };
     
-    let k = params.k;
+    let k = params.k.unwrap_or(10);
     let stage_sizes = config.compute_stage_sizes(k);
     
     Ok(Json(ExplainResponse {

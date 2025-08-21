@@ -7,10 +7,17 @@ pub mod unified_interface;
 pub mod typesafe_filter;
 pub mod index_based_filter;
 pub mod progressive_quantization;
-pub mod progressive_orchestrator;
+pub mod engine_benchmarks;
+pub mod query_preprocessing;
+pub mod metadata_filter_pushdown;
+pub mod unified_progressive_pipeline;
+pub mod smart_execution_strategy;
+pub mod integrated_search_optimization;
 
 #[cfg(test)]
 mod early_termination_tests;
+#[cfg(test)]
+mod optimization_tests;
 
 use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
@@ -209,6 +216,8 @@ pub enum ComparisonOperator {
     Between,
     IsNull,
     IsNotNull,
+    /// SQL-style LIKE pattern matching (supports % and _ wildcards)
+    Like,
 }
 
 // Re-export main types
@@ -218,9 +227,11 @@ pub use multi_tier_deduplication::{
 };
 
 // Filter types are already defined above, no need to re-export
-pub use results::{SearchResult, SearchResultSet, SearchDebugInfo, QuantizationInfo, EngineStats};
+pub use results::{InternalSearchResult, SearchResultSet, SearchDebugInfo, QuantizationInfo, EngineStats};
+// Re-export proto SearchResult and SearchVectorRecord for alignment with user expectations
+pub use crate::proto::proximadb::{SearchResult, SearchVectorRecord};
 pub use unified_interface::{
-    UnifiedSearchEngine, UnifiedSearchOrchestrator, UnifiedSearchContext,
+    UnifiedSearchEngine, IntegratedSearchOptimizer, UnifiedSearchContext,
     CollectionConfig, FilterableColumn, ColumnDataType, StorageInfo, OptimizationHint,
 };
 
@@ -298,7 +309,7 @@ pub mod json_comparison {
                 // Fall back to float comparison
                 let f1 = n1.as_f64();
                 let f2 = n2.as_f64();
-                f1.partial_cmp(&f2)
+                f1.partial_cmp(&f2).unwrap_or(Ordering::Equal)
             }
             (Value::String(s1), Value::String(s2)) => s1.cmp(s2),
             (Value::Bool(b1), Value::Bool(b2)) => b1.cmp(b2),
@@ -334,6 +345,52 @@ pub mod json_comparison {
             (Value::Array(_), Value::Object(_)) => Ordering::Less,
             (Value::Object(_), _) => Ordering::Greater,
         }
+    }
+    
+    /// Simple LIKE pattern matching for SQL-style patterns
+    /// Supports % (any chars) and _ (single char) wildcards
+    fn like_pattern_match(text: &str, pattern: &str) -> bool {
+        let mut text_chars = text.chars().peekable();
+        let mut pattern_chars = pattern.chars().peekable();
+        
+        while let Some(&pattern_char) = pattern_chars.peek() {
+            match pattern_char {
+                '%' => {
+                    pattern_chars.next(); // consume '%'
+                    
+                    // If pattern ends with '%', match the rest
+                    if pattern_chars.peek().is_none() {
+                        return true;
+                    }
+                    
+                    // Try to match remaining pattern at each position in text
+                    let remaining_pattern: String = pattern_chars.collect();
+                    while text_chars.peek().is_some() {
+                        let remaining_text: String = text_chars.clone().collect();
+                        if like_pattern_match(&remaining_text, &remaining_pattern) {
+                            return true;
+                        }
+                        text_chars.next();
+                    }
+                    return false;
+                }
+                '_' => {
+                    pattern_chars.next(); // consume '_'
+                    if text_chars.next().is_none() {
+                        return false; // '_' must match exactly one character
+                    }
+                }
+                c => {
+                    pattern_chars.next(); // consume pattern char
+                    if text_chars.next() != Some(c) {
+                        return false;
+                    }
+                }
+            }
+        }
+        
+        // Pattern consumed, text should also be consumed
+        text_chars.peek().is_none()
     }
     
     /// Evaluate a filter expression against metadata
@@ -448,6 +505,15 @@ pub mod json_comparison {
                             false
                         }
                     }
+                    (Some(Value::String(s)), ComparisonOperator::Like) => {
+                        if let Value::String(pattern) = value {
+                            // Simple LIKE implementation: % = any chars, _ = single char
+                            // Convert SQL LIKE pattern to simple pattern matching without regex for performance
+                            like_pattern_match(s, pattern)
+                        } else {
+                            false
+                        }
+                    }
                     (Some(field_val), ComparisonOperator::Between) => {
                         if let Value::Array(bounds) = value {
                             if bounds.len() == 2 {
@@ -474,6 +540,256 @@ pub mod json_comparison {
 
 /// JSON value serialization for index statistics
 pub mod json_value_serde;
+
+/// Protocol Filter Conversion Utilities
+/// 
+/// This module provides conversion functions from protocol-specific filter types
+/// to the unified FilterExpression type for consistent handling across all APIs
+pub mod protocol_conversions {
+    use crate::core::search::{FilterExpression, ComparisonOperator};
+    use serde_json::Value;
+    
+    /// Convert gRPC proto MetadataFilter to unified FilterExpression
+    /// Used by gRPC handlers to convert incoming proto filters
+    pub fn from_proto_metadata_filter(
+        proto_filter: &crate::proto::proximadb::MetadataFilter
+    ) -> Result<FilterExpression, String> {
+        if proto_filter.conditions.is_empty() {
+            return Ok(FilterExpression::And(vec![]));
+        }
+        
+        let conditions: Result<Vec<FilterExpression>, String> = proto_filter.conditions
+            .iter()
+            .map(|condition| {
+                let field = condition.field_name.clone();
+                let value = match &condition.value {
+                    Some(v) => serde_json::to_value(v).map_err(|e| e.to_string())?,
+                    None => return Err("Missing value in filter condition".to_string()),
+                };
+                
+                let operator = match crate::proto::proximadb::FilterOperation::try_from(condition.operation) {
+                    Ok(crate::proto::proximadb::FilterOperation::Equals) => ComparisonOperator::Equals,
+                    Ok(crate::proto::proximadb::FilterOperation::NotEquals) => ComparisonOperator::NotEquals,
+                    Ok(crate::proto::proximadb::FilterOperation::GreaterThan) => ComparisonOperator::GreaterThan,
+                    Ok(crate::proto::proximadb::FilterOperation::GreaterThanOrEqual) => ComparisonOperator::GreaterThanOrEqual,
+                    Ok(crate::proto::proximadb::FilterOperation::LessThan) => ComparisonOperator::LessThan,
+                    Ok(crate::proto::proximadb::FilterOperation::LessThanOrEqual) => ComparisonOperator::LessThanOrEqual,
+                    Ok(crate::proto::proximadb::FilterOperation::In) => ComparisonOperator::In,
+                    Ok(crate::proto::proximadb::FilterOperation::NotIn) => ComparisonOperator::NotIn,
+                    Ok(crate::proto::proximadb::FilterOperation::Contains) => ComparisonOperator::Contains,
+                    Ok(crate::proto::proximadb::FilterOperation::StartsWith) => ComparisonOperator::StartsWith,
+                    Ok(crate::proto::proximadb::FilterOperation::EndsWith) => ComparisonOperator::EndsWith,
+                    _ => return Err(format!("Unknown proto filter operation: {}", condition.operation)),
+                };
+                
+                Ok(FilterExpression::Comparison { field, operator, value })
+            })
+            .collect();
+        
+        match conditions {
+            Ok(conds) => {
+                if conds.len() == 1 {
+                    Ok(conds.into_iter().next().unwrap())
+                } else {
+                    // Use AND logic by default for multiple conditions
+                    Ok(FilterExpression::And(conds))
+                }
+            }
+            Err(e) => Err(e)
+        }
+    }
+    
+    /// Convert REST JSON filter to unified FilterExpression
+    /// Used by REST handlers to convert JSON filter objects
+    pub fn from_rest_json_filter(
+        json_filter: &serde_json::Value
+    ) -> Result<FilterExpression, String> {
+        match json_filter {
+            Value::Object(obj) => {
+                // Handle different REST filter formats
+                if let Some(conditions) = obj.get("conditions") {
+                    // Array of conditions with logic operator
+                    if let Value::Array(cond_array) = conditions {
+                        let logic = obj.get("logic").and_then(|v| v.as_str()).unwrap_or("and");
+                        let expressions: Result<Vec<FilterExpression>, String> = cond_array
+                            .iter()
+                            .map(|c| parse_rest_condition(c))
+                            .collect();
+                        
+                        match expressions {
+                            Ok(exprs) => {
+                                if logic == "or" {
+                                    Ok(FilterExpression::Or(exprs))
+                                } else {
+                                    Ok(FilterExpression::And(exprs))
+                                }
+                            }
+                            Err(e) => Err(e)
+                        }
+                    } else {
+                        Err("conditions must be an array".to_string())
+                    }
+                } else {
+                    // Single condition object
+                    parse_rest_condition(json_filter)
+                }
+            }
+            _ => Err("Filter must be an object".to_string())
+        }
+    }
+    
+    /// Parse a single REST condition into FilterExpression
+    fn parse_rest_condition(condition: &Value) -> Result<FilterExpression, String> {
+        if let Value::Object(obj) = condition {
+            let field = obj.get("field")
+                .and_then(|v| v.as_str())
+                .ok_or("Missing field name")?
+                .to_string();
+            
+            let operator = obj.get("operator")
+                .and_then(|v| v.as_str())
+                .ok_or("Missing operator")?;
+            
+            let value = obj.get("value")
+                .ok_or("Missing value")?
+                .clone();
+            
+            let op = match operator {
+                "eq" | "equals" => ComparisonOperator::Equals,
+                "ne" | "not_equals" => ComparisonOperator::NotEquals,
+                "gt" | "greater_than" => ComparisonOperator::GreaterThan,
+                "gte" | "greater_than_or_equal" => ComparisonOperator::GreaterThanOrEqual,
+                "lt" | "less_than" => ComparisonOperator::LessThan,
+                "lte" | "less_than_or_equal" => ComparisonOperator::LessThanOrEqual,
+                "in" => ComparisonOperator::In,
+                "not_in" => ComparisonOperator::NotIn,
+                "contains" => ComparisonOperator::Contains,
+                "starts_with" => ComparisonOperator::StartsWith,
+                "ends_with" => ComparisonOperator::EndsWith,
+                "between" => ComparisonOperator::Between,
+                "is_null" => ComparisonOperator::IsNull,
+                "is_not_null" => ComparisonOperator::IsNotNull,
+                "like" => ComparisonOperator::Like,
+                _ => return Err(format!("Unknown operator: {}", operator))
+            };
+            
+            Ok(FilterExpression::Comparison { field, operator: op, value })
+        } else {
+            Err("Condition must be an object".to_string())
+        }
+    }
+    
+    /// Convert SQL Condition (from parser) to unified FilterExpression
+    /// Used by SQL engine to convert parsed WHERE conditions
+    pub fn from_sql_condition(
+        condition: &crate::query::sql_engine::parser::Condition
+    ) -> Result<FilterExpression, String> {
+        use crate::query::sql_engine::parser::{Condition, ComparisonOp, Value};
+        
+        match condition {
+            Condition::Comparison { field, operator, value } => {
+                let json_value = sql_value_to_json(value)?;
+                let comp_op = match operator {
+                    ComparisonOp::Eq => ComparisonOperator::Equals,
+                    ComparisonOp::Ne => ComparisonOperator::NotEquals,
+                    ComparisonOp::Lt => ComparisonOperator::LessThan,
+                    ComparisonOp::Le => ComparisonOperator::LessThanOrEqual,
+                    ComparisonOp::Gt => ComparisonOperator::GreaterThan,
+                    ComparisonOp::Ge => ComparisonOperator::GreaterThanOrEqual,
+                    ComparisonOp::Like => ComparisonOperator::Like,
+                    ComparisonOp::In => ComparisonOperator::In,
+                };
+                
+                Ok(FilterExpression::Comparison {
+                    field: field.clone(),
+                    operator: comp_op,
+                    value: json_value,
+                })
+            }
+            Condition::And(left, right) => {
+                let left_expr = from_sql_condition(left)?;
+                let right_expr = from_sql_condition(right)?;
+                Ok(FilterExpression::And(vec![left_expr, right_expr]))
+            }
+            Condition::Or(left, right) => {
+                let left_expr = from_sql_condition(left)?;
+                let right_expr = from_sql_condition(right)?;
+                Ok(FilterExpression::Or(vec![left_expr, right_expr]))
+            }
+            Condition::Not(inner) => {
+                let inner_expr = from_sql_condition(inner)?;
+                Ok(FilterExpression::Not(Box::new(inner_expr)))
+            }
+            Condition::In { field, values } => {
+                let json_values: Result<Vec<serde_json::Value>, String> = values
+                    .iter()
+                    .map(sql_value_to_json)
+                    .collect();
+                
+                Ok(FilterExpression::Comparison {
+                    field: field.clone(),
+                    operator: ComparisonOperator::In,
+                    value: serde_json::Value::Array(json_values?),
+                })
+            }
+            Condition::Between { field, low, high } => {
+                let low_json = sql_value_to_json(low)?;
+                let high_json = sql_value_to_json(high)?;
+                
+                Ok(FilterExpression::Comparison {
+                    field: field.clone(),
+                    operator: ComparisonOperator::Between,
+                    value: serde_json::Value::Array(vec![low_json, high_json]),
+                })
+            }
+        }
+    }
+    
+    /// Convert SQL Value to JSON Value
+    fn sql_value_to_json(value: &crate::query::sql_engine::parser::Value) -> Result<serde_json::Value, String> {
+        use crate::query::sql_engine::parser::Value;
+        
+        match value {
+            Value::String(s) => Ok(serde_json::Value::String(s.clone())),
+            Value::Number(n) => Ok(serde_json::json!(*n)),
+            Value::Bool(b) => Ok(serde_json::Value::Bool(*b)),
+            Value::Null => Ok(serde_json::Value::Null),
+            Value::Vector(v) => Ok(serde_json::json!(v)),
+            Value::List(list) => {
+                let json_list: Result<Vec<serde_json::Value>, String> = list
+                    .iter()
+                    .map(sql_value_to_json)
+                    .collect();
+                Ok(serde_json::Value::Array(json_list?))
+            }
+        }
+    }
+    
+    /// Convert legacy HashMap filters to unified FilterExpression
+    /// Used for backward compatibility with existing filter formats
+    pub fn from_legacy_hashmap_filter(
+        filters: &std::collections::HashMap<String, serde_json::Value>
+    ) -> FilterExpression {
+        if filters.is_empty() {
+            return FilterExpression::And(vec![]);
+        }
+        
+        let conditions: Vec<FilterExpression> = filters
+            .iter()
+            .map(|(key, value)| FilterExpression::Comparison {
+                field: key.clone(),
+                operator: ComparisonOperator::Equals,
+                value: value.clone(),
+            })
+            .collect();
+        
+        if conditions.len() == 1 {
+            conditions.into_iter().next().unwrap()
+        } else {
+            FilterExpression::And(conditions)
+        }
+    }
+}
 
 /// Centralized metadata filter extraction utilities
 pub mod filter_extraction {

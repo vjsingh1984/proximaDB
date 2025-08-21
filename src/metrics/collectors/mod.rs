@@ -9,11 +9,18 @@ pub mod system;
 pub mod storage;
 pub mod query;
 pub mod engine;
+pub mod access_pattern;
+pub mod filesystem;
+
+#[cfg(test)]
+pub mod tests;
 
 pub use system::SystemMetricsCollector;
 pub use storage::StorageMetricsCollector;
 pub use query::QueryMetricsCollector;
 pub use engine::{EngineMetricsCollector, EngineStatistics, EngineComparison, OperationTimer};
+pub use access_pattern::AccessPatternMetricsCollector;
+pub use filesystem::FilesystemMetricsCollector;
 
 /// Trait for all metrics collectors
 #[async_trait::async_trait]

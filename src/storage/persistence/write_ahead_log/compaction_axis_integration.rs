@@ -118,7 +118,7 @@ impl CompactionAxisUpdater {
             collection_id
         );
 
-        let _deleted_set: HashSet<&str> = deleted_vector_ids.iter().map(|s| s.as_str()).collect();
+        let _deleted_set: HashSet<&str> = deleted_vector_ids.iter().map(|s| s.as_deref()).collect();
         let mut removal_errors = Vec::new();
 
         for (index_name, index) in indexes {

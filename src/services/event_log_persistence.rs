@@ -436,7 +436,7 @@ mod tests {
         let recovered = wal.recover_pending_events().await?;
         assert_eq!(recovered.len(), 2);
         
-        let event_ids: Vec<_> = recovered.iter().map(|e| e.event_id.as_str()).collect();
+        let event_ids: Vec<_> = recovered.iter().map(|e| e.event_id.as_deref()).collect();
         assert!(event_ids.contains_hash(&"event_1"));
         assert!(event_ids.contains_hash(&"event_3"));
         

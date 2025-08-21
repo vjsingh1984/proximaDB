@@ -93,13 +93,11 @@ mod tests {
                 distance_compute
             ).await?);
             
-            // Create VectorOperationsService using user config converted to engine config
-            let wal_config = config.storage.wal_config.to_engine_config();
-            let vector_service = Arc::new(VectorOperationsService::new(
-                wal_config,
-                viper_engine,
-                sst_engine
-            ).await?);
+            // Create VectorOperationsService using test utilities helper
+            let vector_service = Arc::new(
+                proximadb::tests::common::unified_test_utils::create_test_vector_operations_service()
+                    .await?
+            );
             let sql_executor = SqlExecutor::new(vector_service.clone());
             
             Ok(Self {

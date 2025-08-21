@@ -78,14 +78,12 @@ impl UnifiedSearchBenchmark {
             filesystem_factory.clone(),
         ));
         
-        // Create VectorOperationsService
-        let direct_service = Arc::new(VectorOperationsService::new(
-            global_memtable,
-            collection_service.clone(),
-            None, // viper_engine
-            None, // sst_engine
-            filesystem_factory,
-        ));
+        // Create VectorOperationsService using test utilities
+        let direct_service = Arc::new(
+            proximadb::tests::common::unified_test_utils::create_test_vector_operations_service()
+                .await
+                .expect("Failed to create VectorOperationsService")
+        );
         
         Ok(Self {
             direct_service,

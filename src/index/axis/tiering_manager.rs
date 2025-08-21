@@ -481,8 +481,12 @@ impl AxisTieringManager {
         // Apply collection-specific overrides if configured
         let mut metrics = workload_metrics;
         if let Some(constraints) = &self.config.collection_constraints {
-            if let Some(override_pattern) = constraints.workload_overrides.get(&WorkloadType::Mixed) {
-                metrics.pattern = override_pattern.clone();
+            // Check for Mixed workload type override
+            for (workload_type, override_pattern) in &constraints.workload_overrides {
+                if workload_type == "Mixed" {
+                    metrics.pattern = override_pattern.clone();
+                    break;
+                }
             }
         }
         

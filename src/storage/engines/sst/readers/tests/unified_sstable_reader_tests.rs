@@ -7,10 +7,10 @@ mod tests {
     use crate::storage::engines::sst::readers::unified_sstable_reader::{
         UnifiedSstableReader, CollectionContext,
     };
-    use crate::storage::engines::row_based::bloom_filter::{
+    use crate::core::bloom::{
         MetadataBloomFilter,
     };
-    use crate::core::config::{BloomFilterConfig, SstConfig};
+    // use crate::core::config::{BloomFilterConfig, SstConfig};
     use crate::core::search::{SearchParams, FilterExpression, ComparisonOperator};
     use crate::compute::distance_computation::DistanceMetric;
 
@@ -196,7 +196,7 @@ mod tests {
         match filter {
             FilterExpression::Comparison { field, value, .. } => {
                 // Convert value to string regardless of type
-                let value_str = if let Some(s) = value.as_str() {
+                let value_str = if let Some(s) = value.as_deref() {
                     s.to_string()
                 } else if let Some(n) = value.as_i64() {
                     n.to_string()

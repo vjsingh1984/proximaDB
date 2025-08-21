@@ -20,10 +20,19 @@ pub struct EngineMetricsCollector {
     accumulated_metrics: Arc<RwLock<EngineMetricsAccumulator>>,
 }
 
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Clone)]
 struct EngineMetricsAccumulator {
     operations: HashMap<String, OperationMetrics>,
     last_reset: Instant,
+}
+
+impl Default for EngineMetricsAccumulator {
+    fn default() -> Self {
+        Self {
+            operations: HashMap::new(),
+            last_reset: Instant::now(),
+        }
+    }
 }
 
 #[derive(Debug, Default, Clone)]
@@ -147,7 +156,7 @@ impl EngineMetricsCollector {
             scores.push((name.clone(), composite_score));
         }
         
-        scores.sort_by(|a, b| b.1.partial_cmp(&a.1));
+        scores.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
         scores.first().map(|(name, _)| name.clone())
     }
     
@@ -227,8 +236,8 @@ impl MetricsCollector for EngineMetricsCollector {
         }
         
         // Add summary metrics
-        values.insert("total_engines_registered", engines.len() as f64);
-        values.insert("metrics_collection_duration_ms", {
+        values.insert("total_engines_registered".to_string(), engines.len() as f64);
+        values.insert("metrics_collection_duration_ms".to_string(), {
             let start = Instant::now();
             // Simulate collection work
             start.elapsed().as_millis() as f64
@@ -330,15 +339,13 @@ impl Drop for OperationTimer {
         
         // Record metrics asynchronously to avoid blocking
         tokio::spawn(async move {
-            if let Err(e) = collector.record_operation(
+            collector.record_operation(
                 &engine_name,
                 &operation,
                 duration_ms,
                 error,
                 bytes_processed,
-            ).await {
-                warn!("Failed to record operation metrics: {}", e);
-            }
+            ).await;
         });
     }
 }

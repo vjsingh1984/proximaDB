@@ -358,7 +358,7 @@ impl ParquetReconstructor {
         let mut arrays: Vec<Arc<dyn Array>> = Vec::new();
         
         for column_name in required_columns {
-            match column_name.as_str() {
+            match column_name.as_deref() {
                 "id" => {
                     fields.push(Field::new("id", DataType::Utf8, false));
                     arrays.push(Arc::new(StringArray::from(vec!["placeholder_id"])));

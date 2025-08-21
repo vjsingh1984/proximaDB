@@ -185,7 +185,7 @@ impl AxisLshIndex {
         dimension: usize,
         preferred_extraction_mode: ExtractionMode,
     ) -> Self {
-        let coll_str = collection_id.as_ref().map(|s| s.as_str());
+        let coll_str = collection_id.as_ref().map(|s| s.as_str()).unwrap_or("<unnamed>");
         info!(
             "Creating AXIS LSH index for collection '{}': {} tables, {} hashes, {} dim, repr={:?}",
             coll_str, config.n_tables, config.n_hashes, dimension, preferred_extraction_mode
@@ -268,7 +268,7 @@ impl AxisLshIndex {
         let collection_id = self.collection_id.as_ref().map(|s| s.as_str());
         
         // Get or create collection for this collection_id
-        let collection = self.vectors.entry(collection_id.to_string())
+        let collection = self.vectors.entry(collection_id.unwrap_or("default").to_string())
             .or_insert_with(|| {
                 Arc::new(RwLock::new(ZeroOverheadCollection::with_capacity(
                     CollectionConfig::fp32(self.dimension),
@@ -344,7 +344,7 @@ impl AxisLshIndex {
         let collection_id = self.collection_id.as_ref().map(|s| s.as_str());
         
         // Get the collection for this collection_id
-        if let Some(collection) = self.vectors.get(&collection_id.to_string()) {
+        if let Some(collection) = self.vectors.get(&collection_id.unwrap_or("default").to_string()) {
             let coll = collection.read().unwrap();
             
             for id in &candidates {
@@ -355,7 +355,7 @@ impl AxisLshIndex {
                     }
                     
                     if let Some(vector_data) = view.as_f32() {
-                        let dist = self.distance_compute.compute(query, vector_data);
+                        let dist = self.distance_compute.calculate_distance(query, vector_data, &self.config.distance_metric).rank_value;
                         results.push((id.clone(), dist));
                     }
                 }
@@ -379,7 +379,7 @@ impl AxisLshIndex {
         let collection_id = self.collection_id.as_ref().map(|s| s.as_str());
         
         // Get the collection and remove the vector
-        if let Some(collection) = self.vectors.get(&collection_id.to_string()) {
+        if let Some(collection) = self.vectors.get(&collection_id.unwrap_or("default").to_string()) {
             let mut coll = collection.write().unwrap();
             
             // Get the vector data before removing it (needed to update hash tables)
@@ -398,7 +398,7 @@ impl AxisLshIndex {
                 for (table_idx, table) in self.hash_tables.iter().enumerate() {
                     let hash_value = self.compute_hash(table_idx, &vector);
                     
-                    let hash_key = PartitionedKey::new(collection_id.to_string(), hash_value);
+                    let hash_key = PartitionedKey::new(collection_id.unwrap_or("default").to_string(), hash_value);
                     if let Some(mut bucket) = table.get_mut(&hash_key) {
                         bucket.remove(id);
                         if bucket.is_empty() {
@@ -414,7 +414,7 @@ impl AxisLshIndex {
                 Err(anyhow!("Vector {} not found in index", id))
             }
         } else {
-            Err(anyhow!("Collection {} not found", collection_id))
+            Err(anyhow!("Collection {} not found", collection_id.unwrap_or("default")))
         }
     }
     
@@ -718,8 +718,8 @@ mod tests {
 // Implement AxisVectorIndex trait for deep AXIS integration
 #[async_trait]
 impl AxisVectorIndex for AxisLshIndex {
-    async fn add(&self, id: Option<String>, vector_data: Vec<f32>) -> Result<()> {
-        AxisLshIndex::add_vector(self, id, vector_data).await
+    async fn add(&self, id: String, vector_data: Vec<f32>) -> Result<()> {
+        AxisLshIndex::add_vector(self, Some(id), vector_data).await
     }
     
     async fn search(

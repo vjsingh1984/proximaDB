@@ -419,7 +419,7 @@ impl MetadataSerializer for ParquetMetadataSerializer {
         
         // Deserialize footer header
         if data.len() < offset + std::mem::size_of::<ParquetFooterHeader>() {
-            return Err(ProximaDBError::InvalidArgument("Invalid Parquet metadata size".into()));
+            return Err(ProximaDBError::InvalidInput("Invalid Parquet metadata size".into()));
         }
         
         let footer = *bytemuck::from_bytes::<ParquetFooterHeader>(
@@ -429,7 +429,7 @@ impl MetadataSerializer for ParquetMetadataSerializer {
         
         // Deserialize row group count
         if data.len() < offset + 4 {
-            return Err(ProximaDBError::InvalidArgument("Invalid Parquet metadata".into()));
+            return Err(ProximaDBError::InvalidInput("Invalid Parquet metadata".into()));
         }
         let rg_count = u32::from_le_bytes([data[offset], data[offset+1], data[offset+2], data[offset+3]]);
         offset += 4;
@@ -439,7 +439,7 @@ impl MetadataSerializer for ParquetMetadataSerializer {
         let total_rg_size = rg_count as usize * rg_header_size;
         
         if data.len() < offset + total_rg_size {
-            return Err(ProximaDBError::InvalidArgument("Invalid Parquet row group headers".into()));
+            return Err(ProximaDBError::InvalidInput("Invalid Parquet row group headers".into()));
         }
         
         let rg_data = &data[offset..offset + total_rg_size];
@@ -450,7 +450,7 @@ impl MetadataSerializer for ParquetMetadataSerializer {
         let mut columns = Vec::new();
         for _ in 0..rg_count {
             if data.len() < offset + 4 {
-                return Err(ProximaDBError::InvalidArgument("Invalid column count".into()));
+                return Err(ProximaDBError::InvalidInput("Invalid column count".into()));
             }
             let col_count = u32::from_le_bytes([data[offset], data[offset+1], data[offset+2], data[offset+3]]);
             offset += 4;
@@ -459,7 +459,7 @@ impl MetadataSerializer for ParquetMetadataSerializer {
             let total_col_size = col_count as usize * col_header_size;
             
             if data.len() < offset + total_col_size {
-                return Err(ProximaDBError::InvalidArgument("Invalid Parquet column headers".into()));
+                return Err(ProximaDBError::InvalidInput("Invalid Parquet column headers".into()));
             }
             
             let col_data = &data[offset..offset + total_col_size];
@@ -470,14 +470,14 @@ impl MetadataSerializer for ParquetMetadataSerializer {
         
         // Deserialize variable data size
         if data.len() < offset + 4 {
-            return Err(ProximaDBError::InvalidArgument("Invalid Parquet variable data size".into()));
+            return Err(ProximaDBError::InvalidInput("Invalid Parquet variable data size".into()));
         }
         let var_data_size = u32::from_le_bytes([data[offset], data[offset+1], data[offset+2], data[offset+3]]);
         offset += 4;
         
         // Deserialize variable data
         if data.len() < offset + var_data_size as usize {
-            return Err(ProximaDBError::InvalidArgument("Invalid Parquet variable data".into()));
+            return Err(ProximaDBError::InvalidInput("Invalid Parquet variable data".into()));
         }
         let variable_data = data[offset..offset + var_data_size as usize].to_vec();
         

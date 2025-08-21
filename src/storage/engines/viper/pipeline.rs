@@ -1155,7 +1155,7 @@ impl VectorRecordProcessor {
 
         // Create minimal RecordBatch (placeholder implementation)
         let id_array = arrow_array::StringArray::from(
-            records.iter().map(|r| r.id.as_str()).collect::<Vec<_>>(),
+            records.iter().map(|r| r.id.as_deref()).collect::<Vec<_>>(),
         );
         let collection_array = arrow_array::StringArray::from(
             vec![collection_id; records.len()]
@@ -1260,7 +1260,7 @@ impl VectorRecordProcessor {
                         return count_cmp;
                     }
                     // Secondary sort by ID for consistency
-                    a.id.as_str().cmp(&b.id.as_str().unwrap_or(""))
+                    a.id.as_deref().cmp(&b.id.as_deref().unwrap_or(""))
                 });
             }
 
@@ -1307,7 +1307,7 @@ impl VectorRecordProcessor {
                 records.sort_by(|a, b| a.timestamp.cmp(&b.timestamp));
             }
             SortingStrategy::ById => {
-                records.sort_by(|a, b| a.id.as_str().cmp(&b.id.as_str().unwrap_or("")));
+                records.sort_by(|a, b| a.id.as_deref().cmp(&b.id.as_deref().unwrap_or("")));
             }
             SortingStrategy::ByMetadata(fields) => {
                 records.sort_by(|a, b| self.compare_by_metadata_fields(a, b, fields));
@@ -1319,7 +1319,7 @@ impl VectorRecordProcessor {
             } => {
                 records.sort_by(|a, b| {
                     if *include_id {
-                        let id_cmp = a.id.as_str().cmp(&b.id.as_str().unwrap_or(""));
+                        let id_cmp = a.id.as_deref().cmp(&b.id.as_deref().unwrap_or(""));
                         if id_cmp != Ordering::Equal {
                             return id_cmp;
                         }
@@ -1386,7 +1386,7 @@ impl VectorRecordProcessor {
                 });
             }
             SortingStrategy::ById => {
-                records.sort_by(|a, b| a.id.as_str().cmp(&b.id.as_str().unwrap_or("")));
+                records.sort_by(|a, b| a.id.as_deref().cmp(&b.id.as_deref().unwrap_or("")));
             }
             SortingStrategy::ByMetadata(fields) => {
                 records.sort_by(|a, b| self.compare_by_metadata_fields(a, b, fields));
@@ -1398,7 +1398,7 @@ impl VectorRecordProcessor {
             } => {
                 records.sort_by(|a, b| {
                     if *include_id {
-                        let id_cmp = a.id.as_str().cmp(&b.id.as_str().unwrap_or(""));
+                        let id_cmp = a.id.as_deref().cmp(&b.id.as_deref().unwrap_or(""));
                         if id_cmp != Ordering::Equal {
                             return id_cmp;
                         }
@@ -1826,7 +1826,7 @@ impl VectorProcessor for VectorRecordProcessor {
             }
 
             SortingStrategy::ById => {
-                records.sort_by(|a, b| a.id.as_str().cmp(&b.id.as_str().unwrap_or("")));
+                records.sort_by(|a, b| a.id.as_deref().cmp(&b.id.as_deref().unwrap_or("")));
                 tracing::debug!("🔢 Sorted {} records by ID", record_count);
             }
 
@@ -1849,7 +1849,7 @@ impl VectorProcessor for VectorRecordProcessor {
 
                     // Stage 1: ID comparison (if enabled)
                     if *include_id {
-                        let id_cmp = a.id.as_str().cmp(&b.id.as_str().unwrap_or(""));
+                        let id_cmp = a.id.as_deref().cmp(&b.id.as_deref().unwrap_or(""));
                         if id_cmp != Ordering::Equal {
                             return id_cmp;
                         }

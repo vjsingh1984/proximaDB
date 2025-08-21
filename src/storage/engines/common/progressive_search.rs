@@ -2,6 +2,24 @@
 //!
 //! This module provides shared progressive search logic that can be used by all storage engines
 //! (SST, VIPER, NOVA, SWIFT, etc.) to implement multi-stage quantization-aware search.
+//!
+//! ## FLEXIBLE QUANTIZATION ARCHITECTURE (2025-08-21):
+//! 
+//! **Two supported paths based on use case:**
+//! 
+//! 1. **HIGH PERFORMANCE PATH** (Write-once, Read-many):
+//!    - Collection config has quantization enabled
+//!    - Write Path: FP32 → [Binary + INT8 + PQ8] → Store ALL quantized versions
+//!    - Read Path: Query → Search pre-stored quantized → Fast response
+//!    - Use case: Static datasets with frequent searches
+//! 
+//! 2. **STORAGE OPTIMIZED PATH** (Continuous writes, Infrequent reads):
+//!    - Collection config has quantization disabled
+//!    - Write Path: FP32 → Store only FP32 (save storage)
+//!    - Read Path: Query → Runtime quantization → Slower but acceptable
+//!    - Use case: Streaming data where storage cost matters more than latency
+//! 
+//! The unified query optimizer and search hints determine which path to use.
 
 use anyhow::{Context, Result};
 use std::sync::Arc;
@@ -10,7 +28,7 @@ use tracing::{debug, info, trace};
 use crate::core::search::SearchResult;
 use crate::proto::proximadb::VectorRecord;
 use crate::storage::traits::{SearchContext, QuantizationType, QuantizationLevel};
-use crate::compute::quantization::unified::UnifiedQuantizationEngine;
+use crate::compute::quantization::unified::{QuantizedVector, UnifiedQuantizationEngine};
 use crate::compute::distance_computation::core::DistanceMetric;
 use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
 
@@ -105,7 +123,7 @@ impl ProgressiveSearchExecutor {
             levels.len(), initial_candidates.len());
         
         // Convert to search candidates
-        let mut candidates = self.prepare_candidates(initial_candidates, levels)?;
+        let mut candidates = self.prepare_candidates(ctx, initial_candidates, levels)?;
         
         // Execute progressive stages
         for (stage_idx, level) in levels.iter().enumerate() {
@@ -140,9 +158,10 @@ impl ProgressiveSearchExecutor {
         self.convert_to_results(candidates, ctx.top_k())
     }
     
-    /// Prepare candidates with quantized representations
+    /// Prepare candidates using PRE-STORED quantized representations (no re-quantization!)
     fn prepare_candidates(
         &self,
+        ctx: &SearchContext,
         records: Vec<VectorRecord>,
         levels: &[QuantizationLevel],
     ) -> Result<Vec<SearchCandidate>> {
@@ -150,11 +169,30 @@ impl ProgressiveSearchExecutor {
         
         for record in records {
             let quantized_vectors = if let Some(quant_data) = &record.quantized_vector {
-                // Parse pre-computed quantized vectors
+                // FAST PATH: Use pre-stored quantized vectors (write-time quantization)
                 self.parse_quantized_data(quant_data, levels)?
             } else {
-                // Quantize on-the-fly if needed
-                self.quantize_vector(&record.vector, levels)?
+                // Check if runtime quantization should be allowed based on:
+                // 1. Collection configuration
+                // 2. Search hints
+                // 3. Unified query optimizer recommendations
+                
+                let should_runtime_quantize = self.should_allow_runtime_quantization(ctx)?;
+                
+                if should_runtime_quantize {
+                    // SLOW PATH: Runtime quantization for storage-optimized collections
+                    debug!("⚠️ Vector {} using runtime quantization (storage-optimized path)", 
+                           record.id.as_ref().unwrap_or(&"unknown".to_string()));
+                    self.quantization_engine.quantize_vector(&record.vector, levels)?
+                } else {
+                    // ERROR: Runtime quantization not allowed for this collection/query
+                    debug!("❌ Vector {} missing pre-quantized data (collection expects pre-quantization)", 
+                           record.id.as_ref().unwrap_or(&"unknown".to_string()));
+                    return Err(anyhow::anyhow!(
+                        "Missing pre-quantized data for vector {}. Collection config expects pre-quantization.",
+                        record.id.as_ref().unwrap_or(&"unknown".to_string())
+                    ));
+                }
             };
             
             candidates.push(SearchCandidate {
@@ -233,47 +271,62 @@ impl ProgressiveSearchExecutor {
         Ok(candidates)
     }
     
-    /// Score candidates using binary quantization
+    /// Score candidates using binary quantization (delegates to unified quantization)
     fn score_binary(
         &self,
         candidates: &mut [SearchCandidate],
         query_vector: &[f32],
         level: &QuantizationLevel,
     ) -> Result<()> {
-        // Quantize query to binary
-        let query_binary = self.quantization_engine.quantize_to_binary(query_vector)?;
+        // Delegate all quantization to UnifiedQuantizationEngine
+        let query_quantized = self.quantization_engine.quantize_to_level(
+            query_vector,
+            &QuantizationType::Binary
+        )?;
         
         for candidate in candidates {
             if let Some(binary_repr) = candidate.quantized_vectors
                 .iter()
                 .find(|qv| qv.level_id == level.level_id) 
             {
-                // Compute Hamming distance
-                let distance = self.compute_hamming_distance(&query_binary, &binary_repr.data);
-                candidate.score = distance as f32;
+                // Delegate distance calculation to unified quantization engine
+                // which internally uses SIMD-optimized distance computation
+                let quantized_vec = QuantizedVector {
+                    data: binary_repr.data.clone(),
+                    quantization_level: level.quantization_level.clone(),
+                    metadata: Default::default(),
+                };
+                let distance = self.quantization_engine.calculate_distance(
+                    &query_quantized,
+                    &quantized_vec,
+                    &self.distance_compute.default_metric()
+                ).await?;
+                candidate.score = distance.raw_value;
             }
         }
         
         Ok(())
     }
     
-    /// Score candidates using scalar quantization (INT8)
+    /// Score candidates using scalar quantization (INT8) - delegates to unified quantization
     fn score_scalar(
         &self,
         candidates: &mut [SearchCandidate],
         query_vector: &[f32],
         level: &QuantizationLevel,
     ) -> Result<()> {
-        // Quantize query to INT8
-        let query_int8 = self.quantization_engine.quantize_to_int8(query_vector)?;
-        
+        // Delegate all quantization and distance calculation to unified modules
         for candidate in candidates {
             if let Some(int8_repr) = candidate.quantized_vectors
                 .iter()
                 .find(|qv| qv.level_id == level.level_id)
             {
-                // Compute INT8 distance
-                let distance = self.compute_int8_distance(&query_int8, &int8_repr.data);
+                // Delegate to unified quantization engine which uses SIMD distance computation
+                let distance = self.quantization_engine.calculate_int8_distance_optimized(
+                    query_vector,
+                    &int8_repr.data,
+                    &self.distance_compute.default_metric()
+                )?;
                 candidate.score = distance;
             }
         }
@@ -281,7 +334,7 @@ impl ProgressiveSearchExecutor {
         Ok(())
     }
     
-    /// Score candidates using product quantization
+    /// Score candidates using product quantization - delegates to unified quantization
     fn score_product(
         &self,
         candidates: &mut [SearchCandidate],
@@ -290,24 +343,20 @@ impl ProgressiveSearchExecutor {
     ) -> Result<()> {
         let num_subvectors = level.num_subvectors as usize;
         
-        // Quantize query to PQ
-        let query_pq = self.quantization_engine.quantize_to_pq(
-            query_vector,
-            num_subvectors,
-            level.bits,
-        )?;
-        
+        // Delegate PQ distance calculation to unified quantization engine
         for candidate in candidates {
             if let Some(pq_repr) = candidate.quantized_vectors
                 .iter()
                 .find(|qv| qv.level_id == level.level_id)
             {
-                // Compute PQ distance using lookup tables
-                let distance = self.compute_pq_distance(
-                    &query_pq,
+                // Unified quantization engine handles PQ lookup tables and SIMD optimization
+                let distance = self.quantization_engine.calculate_pq_distance_optimized(
+                    query_vector,
                     &pq_repr.data,
                     num_subvectors,
-                );
+                    level.bits,
+                    &self.distance_compute.default_metric()
+                )?;
                 candidate.score = distance;
             }
         }
@@ -416,6 +465,45 @@ impl ProgressiveSearchExecutor {
         Ok(results)
     }
     
+    /// Determine if runtime quantization should be allowed based on multiple factors
+    fn should_allow_runtime_quantization(&self, ctx: &SearchContext) -> Result<bool> {
+        // 1. Check collection configuration
+        let collection_config = ctx.get_collection_config();
+        let quantization_enabled = collection_config
+            .and_then(|c| c.quantization_config.as_ref())
+            .map(|qc| qc.enabled)
+            .unwrap_or(false);
+        
+        if quantization_enabled {
+            // Collection expects pre-quantized data for performance
+            // Only allow runtime quantization if explicitly requested
+            
+            // 2. Check search hints
+            if let Some(hints) = ctx.get_search_hints() {
+                if hints.allow_runtime_quantization {
+                    debug!("Runtime quantization allowed by search hints despite collection config");
+                    return Ok(true);
+                }
+            }
+            
+            // 3. Check unified query optimizer recommendation
+            if let Some(optimizer_rec) = ctx.get_optimizer_recommendation() {
+                if optimizer_rec.suggests_runtime_quantization {
+                    debug!("Runtime quantization recommended by query optimizer");
+                    return Ok(true);
+                }
+            }
+            
+            // Collection has quantization enabled but no override - expect pre-quantized
+            Ok(false)
+        } else {
+            // Collection doesn't have quantization enabled
+            // This is the storage-optimized path - runtime quantization expected
+            debug!("Collection configured for storage optimization - runtime quantization allowed");
+            Ok(true)
+        }
+    }
+    
     /// Helper: Parse pre-computed quantized data
     fn parse_quantized_data(
         &self,
@@ -427,12 +515,14 @@ impl ProgressiveSearchExecutor {
         Ok(Vec::new())
     }
     
-    /// Helper: Quantize vector on-the-fly
+    /// Helper: Quantize vector on-the-fly (for storage-optimized path)
     fn quantize_vector(
         &self,
         vector: &[f32],
         levels: &[QuantizationLevel],
     ) -> Result<Vec<QuantizedRepresentation>> {
+        // This is used for the storage-optimized path where we trade latency for storage savings
+        trace!("Runtime quantization for storage-optimized path");
         let mut representations = Vec::new();
         
         for level in levels {
@@ -474,48 +564,11 @@ impl ProgressiveSearchExecutor {
         }
     }
     
-    /// Helper: Compute Hamming distance
-    fn compute_hamming_distance(&self, a: &[u8], b: &[u8]) -> u32 {
-        a.iter()
-            .zip(b.iter())
-            .map(|(x, y)| (x ^ y).count_ones())
-            .sum()
-    }
+    // NOTE: All distance computations are delegated to UnifiedQuantizationEngine
+    // which internally uses UnifiedDistanceCompute with SIMD optimizations.
+    // No manual distance calculations should be done here to maintain
+    // proper separation of concerns and leverage hardware-optimized implementations.
     
-    /// Helper: Compute INT8 distance
-    fn compute_int8_distance(&self, a: &[u8], b: &[u8]) -> f32 {
-        let sum: i32 = a.iter()
-            .zip(b.iter())
-            .map(|(x, y)| {
-                let diff = (*x as i8) as i32 - (*y as i8) as i32;
-                diff * diff
-            })
-            .sum();
-        
-        (sum as f32).sqrt()
-    }
-    
-    /// Helper: Compute PQ distance
-    fn compute_pq_distance(&self, a: &[u8], b: &[u8], num_subvectors: usize) -> f32 {
-        // Simplified PQ distance computation
-        // In production, this would use precomputed lookup tables
-        let bytes_per_subvector = a.len() / num_subvectors;
-        let mut total_distance = 0.0;
-        
-        for i in 0..num_subvectors {
-            let start = i * bytes_per_subvector;
-            let end = start + bytes_per_subvector;
-            
-            let dist: u32 = a[start..end].iter()
-                .zip(b[start..end].iter())
-                .map(|(x, y)| (*x as i32 - *y as i32).abs() as u32)
-                .sum();
-            
-            total_distance += dist as f32;
-        }
-        
-        total_distance
-    }
 }
 
 /// Builder pattern for configuring progressive search

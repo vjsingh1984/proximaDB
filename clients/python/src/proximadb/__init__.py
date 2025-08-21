@@ -116,6 +116,31 @@ from .builders import (
     InsertBuilder,
 )
 
+# Ultra-efficient enum packing (75% storage savings)
+from .enum_packing import (
+    # Enum classes
+    ExtractionMethod,
+    ProcessingStatus,
+    QualityLevel,
+    DataSource,
+    ContentCategory,
+    LanguageCode,
+    
+    # Packing functions
+    pack_processing_enums,
+    unpack_processing_enums,
+    pack_source_attributes,
+    unpack_source_attributes,
+    pack_language_code,
+    unpack_language_code,
+    
+    # Helper functions
+    create_processing_info,
+    create_source_content,
+    create_text_content,
+    storage_efficiency_analysis,
+)
+
 # Convenience factory functions
 def connect(url: str = None, **kwargs) -> ProximaDBClient:
     """Create a ProximaDB client with automatic protocol detection"""

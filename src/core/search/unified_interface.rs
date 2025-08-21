@@ -125,14 +125,14 @@ pub enum OptimizationHint {
 }
 
 /// Unified search orchestrator - replaces VectorOperationsService search logic
-pub struct UnifiedSearchOrchestrator {
+pub struct IntegratedSearchOptimizer {
     engines: Vec<Arc<dyn UnifiedSearchEngine>>,
     distance_compute: Arc<UnifiedDistanceCompute>,
     quantization_engine: Arc<UnifiedQuantizationEngine>,
     collection_service: Arc<CollectionService>,
 }
 
-impl UnifiedSearchOrchestrator {
+impl IntegratedSearchOptimizer {
     /// Create new orchestrator with registered engines
     pub fn new(
         distance_compute: Arc<UnifiedDistanceCompute>,
@@ -193,7 +193,7 @@ impl UnifiedSearchOrchestrator {
                 .and_then(|v| v.as_str())
                 .map(|s| s.to_string()),
             processing_time_us: total_processing_time,
-            algorithm: "UnifiedSearchOrchestrator".to_string(),
+            algorithm: "IntegratedSearchOptimizer".to_string(),
             metadata: HashMap::new(),
         })
     }
@@ -238,7 +238,7 @@ impl UnifiedSearchOrchestrator {
         
         // Build collection config
         let collection_config = collection.config.as_ref().map(|config| CollectionConfig {
-            default_distance_metric: DistanceMetric::try_from(config.distance_metric),
+            default_distance_metric: DistanceMetric::try_from(config.distance_metric).unwrap_or(DistanceMetric::Cosine),
             vector_dimension: config.dimension as usize,
             enable_quantization: config.quantization.is_some(),
             enable_metadata_filtering: !filterable_columns.is_empty(),
@@ -280,7 +280,7 @@ impl UnifiedSearchOrchestrator {
         }
         
         let mut indices: Vec<usize> = (0..selected.len()).collect();
-        indices.sort_by(|&i, &j| costs[i].partial_cmp(&costs[j]));
+        indices.sort_by(|&i, &j| costs[i].partial_cmp(&costs[j]).unwrap_or(std::cmp::Ordering::Equal));
         
         let sorted_selected = indices.into_iter()
             .map(|i| selected[i].clone())
@@ -297,7 +297,7 @@ impl UnifiedSearchOrchestrator {
     ) -> Result<()> {
         // Sort by score (higher = better, so reverse order)
         results.sort_by(|a, b| {
-            b.score.partial_cmp(&a.score)
+            b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal)
         });
         
         // Limit to requested k

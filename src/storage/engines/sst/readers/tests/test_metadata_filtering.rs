@@ -5,7 +5,7 @@
 //! and metadata bloom filters.
 
 use crate::storage::engines::sst::{SstRecord, SstableWriter};
-use crate::core::config::{BloomFilterConfig, SstConfig};
+// use crate::core::config::{BloomFilterConfig, SstConfig};
 use crate::storage::engines::sst::readers::{UnifiedSstableReader, CollectionContext};
 use crate::storage::persistence::filesystem::{FilesystemFactory, FilesystemConfig};
 use crate::core::search::SearchParams;

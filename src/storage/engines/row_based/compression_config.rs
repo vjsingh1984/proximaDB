@@ -264,7 +264,7 @@ pub struct CompressionStats {
 impl RowBasedCompressionConfig {
     /// Create compression config from proto config
     pub fn from_proto_config(proto_config: &ProtoCompressionConfig) -> Self {
-        let algorithm = match proto_config.algorithm.to_lowercase().as_str() {
+        let algorithm = match proto_config.algorithm.to_lowercase().as_deref() {
             "zstd" => CompressionAlgorithm::Zstd,
             "lz4" => CompressionAlgorithm::Lz4,
             "snappy" => CompressionAlgorithm::Snappy,

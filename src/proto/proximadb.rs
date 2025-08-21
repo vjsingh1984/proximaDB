@@ -28,14 +28,276 @@ pub mod metadata_item {
         BoolValue(bool),
     }
 }
+/// OPTIMIZED: Collection-level embedding model registry (store once, reference many times)
+#[derive(serde::Serialize, serde::Deserialize)]
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct EmbeddingModelRegistry {
+    /// model_id -> full specification
+    #[prost(map = "string, message", tag = "1")]
+    pub models: ::std::collections::HashMap<
+        ::prost::alloc::string::String,
+        EmbeddingModelSpec,
+    >,
+}
+/// Full embedding model specification (stored once per collection)
+#[derive(serde::Serialize, serde::Deserialize)]
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct EmbeddingModelSpec {
+    /// Well-known model enum for efficient storage
+    #[prost(enumeration = "EmbeddingModelType", tag = "1")]
+    pub model_type: i32,
+    /// For CUSTOM models only
+    #[prost(string, optional, tag = "2")]
+    pub custom_model: ::core::option::Option<::prost::alloc::string::String>,
+    /// Model version/revision
+    #[prost(string, optional, tag = "3")]
+    pub version: ::core::option::Option<::prost::alloc::string::String>,
+    /// Provider (openai, huggingface, cohere, etc.)
+    #[prost(string, optional, tag = "4")]
+    pub provider: ::core::option::Option<::prost::alloc::string::String>,
+    /// Model characteristics for optimization (stored once)
+    ///
+    /// Vector dimension produced by this model
+    #[prost(int32, tag = "10")]
+    pub dimension: i32,
+    /// Maximum input sequence length
+    #[prost(float, optional, tag = "11")]
+    pub max_sequence_length: ::core::option::Option<f32>,
+    /// "l2", "none", "mean", etc.
+    #[prost(string, optional, tag = "12")]
+    pub normalization: ::core::option::Option<::prost::alloc::string::String>,
+    /// Whether model supports batch processing
+    #[prost(bool, optional, tag = "13")]
+    pub supports_batch: ::core::option::Option<bool>,
+}
+/// Main source content container with ultra-efficient packed enum storage
+#[derive(serde::Serialize, serde::Deserialize)]
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct SourceContent {
+    /// ULTRA-EFFICIENT: Pack 2 enums into single uint32 (massive savings)
+    ///
+    /// Packed: \[category(8), quality(8), reserved(16)\]
+    #[prost(uint32, optional, tag = "5")]
+    pub packed_attributes: ::core::option::Option<u32>,
+    /// Essential metadata (optimized for performance)
+    ///
+    /// MIME type: text/plain, image/jpeg, video/mp4
+    #[prost(string, tag = "10")]
+    pub mime_type: ::prost::alloc::string::String,
+    /// Original size in bytes
+    #[prost(int64, tag = "11")]
+    pub size_bytes: i64,
+    /// Size after compression (if applicable)
+    #[prost(int64, optional, tag = "12")]
+    pub compressed_size: ::core::option::Option<i64>,
+    /// CRC32 for integrity
+    #[prost(uint32, optional, tag = "15")]
+    pub checksum: ::core::option::Option<u32>,
+    /// Processing metadata (lightweight reference-based)
+    #[prost(message, optional, tag = "20")]
+    pub processing: ::core::option::Option<ProcessingInfo>,
+    /// Flexible content storage (oneof for type safety)
+    #[prost(oneof = "source_content::Data", tags = "1, 2, 3, 4")]
+    pub data: ::core::option::Option<source_content::Data>,
+}
+/// Nested message and enum types in `SourceContent`.
+pub mod source_content {
+    /// Flexible content storage (oneof for type safety)
+    #[derive(serde::Serialize, serde::Deserialize)]
+    #[allow(clippy::derive_partial_eq_without_eq)]
+    #[derive(Clone, PartialEq, ::prost::Oneof)]
+    pub enum Data {
+        /// Optimized for text/documents
+        #[prost(message, tag = "1")]
+        Text(super::TextContent),
+        /// Images, audio, video, PDFs
+        #[prost(message, tag = "2")]
+        Binary(super::BinaryContent),
+        /// References to external storage
+        #[prost(message, tag = "3")]
+        External(super::ExternalContent),
+        /// JSON/structured data
+        #[prost(message, tag = "4")]
+        Structured(super::StructuredContent),
+    }
+}
+/// Text content with ultra-efficient packed language storage
+#[derive(serde::Serialize, serde::Deserialize)]
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct TextContent {
+    /// The actual text
+    #[prost(string, tag = "1")]
+    pub content: ::prost::alloc::string::String,
+    /// Packed language (1 byte) + reserved (3 bytes)
+    #[prost(uint32, optional, tag = "2")]
+    pub language_code: ::core::option::Option<u32>,
+    /// For language codes > 255 (ISO 639-1)
+    #[prost(string, optional, tag = "3")]
+    pub custom_language: ::core::option::Option<::prost::alloc::string::String>,
+    /// Chunking information for RAG
+    #[prost(message, optional, tag = "4")]
+    pub chunk: ::core::option::Option<ChunkContext>,
+}
+/// Binary content for multimedia
+#[derive(serde::Serialize, serde::Deserialize)]
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct BinaryContent {
+    /// Raw binary data
+    #[prost(bytes = "vec", tag = "1")]
+    pub data: ::prost::alloc::vec::Vec<u8>,
+    /// Media-specific metadata
+    #[prost(message, optional, tag = "2")]
+    pub media: ::core::option::Option<MediaMetadata>,
+}
+/// External storage references for large files
+#[derive(serde::Serialize, serde::Deserialize)]
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct ExternalContent {
+    /// s3://, gs://, <https://,> file://
+    #[prost(string, tag = "1")]
+    pub uri: ::prost::alloc::string::String,
+    /// s3, gcs, azure, http, filesystem
+    #[prost(string, tag = "2")]
+    pub storage_backend: ::prost::alloc::string::String,
+    /// Access credentials/headers
+    #[prost(map = "string, string", tag = "3")]
+    pub access: ::std::collections::HashMap<
+        ::prost::alloc::string::String,
+        ::prost::alloc::string::String,
+    >,
+    /// Caching directives
+    #[prost(message, optional, tag = "4")]
+    pub cache: ::core::option::Option<CachePolicy>,
+}
+/// Structured data storage (JSON, etc.)
+#[derive(serde::Serialize, serde::Deserialize)]
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct StructuredContent {
+    /// Arbitrary JSON structure
+    #[prost(message, optional, tag = "1")]
+    pub data: ::core::option::Option<::prost_types::Struct>,
+    /// Schema version for evolution
+    #[prost(string, tag = "2")]
+    pub schema_version: ::prost::alloc::string::String,
+}
+/// Chunking context for RAG applications
+#[derive(serde::Serialize, serde::Deserialize)]
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct ChunkContext {
+    /// Parent document ID (mandatory)
+    #[prost(string, tag = "1")]
+    pub document_id: ::prost::alloc::string::String,
+    /// Parent document title
+    #[prost(string, tag = "2")]
+    pub document_title: ::prost::alloc::string::String,
+    /// Position in document (0-based)
+    #[prost(int32, tag = "3")]
+    pub chunk_index: i32,
+    /// Total chunks from parent
+    #[prost(int32, tag = "4")]
+    pub total_chunks: i32,
+    /// Character offset start
+    #[prost(int32, tag = "5")]
+    pub char_start: i32,
+    /// Character offset end
+    #[prost(int32, tag = "6")]
+    pub char_end: i32,
+    /// Token offset start
+    #[prost(int32, tag = "7")]
+    pub token_start: i32,
+    /// Token offset end
+    #[prost(int32, tag = "8")]
+    pub token_end: i32,
+    /// Context before chunk (max 200 chars)
+    #[prost(string, tag = "9")]
+    pub preceding_text: ::prost::alloc::string::String,
+    /// Context after chunk (max 200 chars)
+    #[prost(string, tag = "10")]
+    pub following_text: ::prost::alloc::string::String,
+    /// \["Chapter 1", "Section 2", "Paragraph 3"\]
+    #[prost(string, repeated, tag = "11")]
+    pub section_path: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+}
+/// Media-specific metadata (images, audio, video)
+#[derive(serde::Serialize, serde::Deserialize)]
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct MediaMetadata {
+    /// Image/video width
+    #[prost(int32, tag = "1")]
+    pub width: i32,
+    /// Image/video height
+    #[prost(int32, tag = "2")]
+    pub height: i32,
+    /// Audio/video duration
+    #[prost(int32, tag = "3")]
+    pub duration_ms: i32,
+    /// Audio/video bitrate
+    #[prost(int32, tag = "4")]
+    pub bitrate: i32,
+    /// Codec information
+    #[prost(string, tag = "5")]
+    pub codec: ::prost::alloc::string::String,
+    /// EXIF/metadata tags
+    #[prost(map = "string, string", tag = "6")]
+    pub exif: ::std::collections::HashMap<
+        ::prost::alloc::string::String,
+        ::prost::alloc::string::String,
+    >,
+}
+/// ULTRA-OPTIMIZED: Processing information with packed enum storage (75% savings)
+#[derive(serde::Serialize, serde::Deserialize)]
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct ProcessingInfo {
+    /// MAXIMUM EFFICIENCY: Pack 4 enums into single uint32 (1 byte each)
+    ///
+    /// Reference to EmbeddingModelRegistry
+    #[prost(string, optional, tag = "1")]
+    pub model_id: ::core::option::Option<::prost::alloc::string::String>,
+    /// Packed: \[extraction(8), status(8), quality(8), source(8)\]
+    #[prost(uint32, optional, tag = "2")]
+    pub packed_enums: ::core::option::Option<u32>,
+    /// Lightweight processing metadata (essential only)
+    ///
+    /// Performance monitoring
+    #[prost(int64, optional, tag = "10")]
+    pub processing_time_ms: ::core::option::Option<i64>,
+    /// Processor version
+    #[prost(uint32, optional, tag = "11")]
+    pub processor_version: ::core::option::Option<u32>,
+}
+/// Cache policy for external content
+#[derive(serde::Serialize, serde::Deserialize)]
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct CachePolicy {
+    /// Time to live in cache
+    #[prost(int64, tag = "1")]
+    pub ttl_seconds: i64,
+    /// Prefetch on search
+    #[prost(bool, tag = "2")]
+    pub prefetch: bool,
+    /// hot, warm, cold
+    #[prost(string, tag = "3")]
+    pub tier: ::prost::alloc::string::String,
+}
 /// Input record for insert/update operations - optimized for storage
 #[derive(serde::Serialize, serde::Deserialize)]
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct VectorRecord {
-    /// Auto-generated if null
-    #[prost(string, optional, tag = "1")]
-    pub id: ::core::option::Option<::prost::alloc::string::String>,
+    /// MANDATORY: Unique identifier for correlation (changed from optional)
+    #[prost(string, tag = "1")]
+    pub id: ::prost::alloc::string::String,
     /// REQUIRED for inserts
     #[prost(float, repeated, tag = "2")]
     pub vector: ::prost::alloc::vec::Vec<f32>,
@@ -59,6 +321,11 @@ pub struct VectorRecord {
     /// Pre-quantized vector data (avoids re-quantization)
     #[prost(bytes = "vec", optional, tag = "8")]
     pub quantized_vector: ::core::option::Option<::prost::alloc::vec::Vec<u8>>,
+    /// NEW: Source content that was embedded (separate from metadata)
+    ///
+    /// Original content that generated this vector
+    #[prost(message, optional, tag = "10")]
+    pub source: ::core::option::Option<SourceContent>,
 }
 /// Output record for search results - aligned with core SearchResult
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -90,6 +357,16 @@ pub struct SearchVectorRecord {
     /// When record was created
     #[prost(uint32, optional, tag = "7")]
     pub timestamp: ::core::option::Option<u32>,
+    /// NEW: Source content (if requested)
+    ///
+    /// Original content that generated this vector
+    #[prost(message, optional, tag = "10")]
+    pub source: ::core::option::Option<SourceContent>,
+    /// NEW: Expanded context (for RAG applications)
+    ///
+    /// Surrounding chunks if requested
+    #[prost(message, repeated, tag = "11")]
+    pub expanded_context: ::prost::alloc::vec::Vec<SourceContent>,
 }
 /// Native typed metadata supporting multiple value types
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -202,6 +479,11 @@ pub struct CollectionConfig {
     /// Vector quantization (renamed from quantization_config)
     #[prost(message, optional, tag = "10")]
     pub quantization: ::core::option::Option<QuantizationConfig>,
+    /// OPTIMIZED: Embedding model registry (store once, reference many times)
+    ///
+    /// Collection-level embedding model specifications
+    #[prost(message, optional, tag = "14")]
+    pub embedding_models: ::core::option::Option<EmbeddingModelRegistry>,
     /// ============================================================================
     /// METADATA
     /// ============================================================================
@@ -492,55 +774,268 @@ pub struct StorageConfig {
     /// Compression settings
     #[prost(message, optional, tag = "3")]
     pub compression: ::core::option::Option<CompressionConfig>,
+    /// NEW: Source content storage configuration
+    ///
+    /// Source content storage settings
+    #[prost(message, optional, tag = "4")]
+    pub source_storage: ::core::option::Option<SourceStorageConfig>,
     /// Optimization hints to guide automatic configuration
     ///
     /// Expected access pattern
-    #[prost(enumeration = "AccessPattern", optional, tag = "4")]
+    #[prost(enumeration = "AccessPattern", optional, tag = "5")]
     pub access_pattern: ::core::option::Option<i32>,
     /// Data density characteristics
-    #[prost(enumeration = "DataDensity", optional, tag = "5")]
+    #[prost(enumeration = "DataDensity", optional, tag = "6")]
     pub data_density: ::core::option::Option<i32>,
     /// Whether data is frequently updated
-    #[prost(bool, optional, tag = "6")]
+    #[prost(bool, optional, tag = "7")]
     pub frequent_updates: ::core::option::Option<bool>,
     /// Expected collection size in GB
-    #[prost(int64, optional, tag = "7")]
+    #[prost(int64, optional, tag = "8")]
     pub expected_size_gb: ::core::option::Option<i64>,
     /// Read/write ratio (1.0 = balanced)
-    #[prost(float, optional, tag = "8")]
+    #[prost(float, optional, tag = "9")]
     pub read_write_ratio: ::core::option::Option<f32>,
     /// Quick presets for common use cases
     ///
     /// "maximum_performance", "balanced", "memory_constrained", "cloud_optimized", "real_time", "archive"
-    #[prost(string, optional, tag = "9")]
+    #[prost(string, optional, tag = "10")]
     pub preset: ::core::option::Option<::prost::alloc::string::String>,
     /// Master optimization control
     ///
     /// Master switch (default: true)
-    #[prost(bool, optional, tag = "10")]
+    #[prost(bool, optional, tag = "11")]
     pub enable_all_optimizations: ::core::option::Option<bool>,
     /// Specific configuration overrides (when you need fine control)
     ///
     /// Common to VIPER, NOVA
-    #[prost(message, optional, tag = "11")]
+    #[prost(message, optional, tag = "12")]
     pub parquet_writer: ::core::option::Option<ParquetWriterSettings>,
     /// Cloud storage optimization
-    #[prost(message, optional, tag = "12")]
+    #[prost(message, optional, tag = "13")]
     pub footer_cache: ::core::option::Option<FooterCacheSettings>,
     /// Adaptive writer strategy
-    #[prost(message, optional, tag = "13")]
+    #[prost(message, optional, tag = "14")]
     pub hybrid_writer: ::core::option::Option<HybridWriterSettings>,
     /// Engine-specific settings
     ///
     /// SST-specific
-    #[prost(message, optional, tag = "14")]
+    #[prost(message, optional, tag = "15")]
     pub sst_settings: ::core::option::Option<SstEngineSettings>,
     /// VIPER-specific
-    #[prost(message, optional, tag = "15")]
+    #[prost(message, optional, tag = "16")]
     pub viper_settings: ::core::option::Option<ViperEngineSettings>,
     /// NOVA-specific
-    #[prost(message, optional, tag = "16")]
+    #[prost(message, optional, tag = "17")]
     pub nova_settings: ::core::option::Option<NovaEngineSettings>,
+}
+#[derive(serde::Serialize, serde::Deserialize)]
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct SourceStorageConfig {
+    /// Basic enable/disable
+    ///
+    /// Enable source storage (default: true for new collections)
+    #[prost(bool, tag = "1")]
+    pub enabled: bool,
+    /// Require mandatory IDs (default: true)
+    #[prost(bool, tag = "2")]
+    pub require_id: bool,
+    /// Dynamic storage tiering (answers user's question about unknown sizes)
+    ///
+    /// Automatic tiering policy
+    #[prost(message, optional, tag = "3")]
+    pub tiering: ::core::option::Option<StorageTieringPolicy>,
+    /// Compression settings per content type
+    ///
+    /// Text content compression
+    #[prost(message, optional, tag = "4")]
+    pub text_compression: ::core::option::Option<CompressionPolicy>,
+    /// Binary content compression
+    #[prost(message, optional, tag = "5")]
+    pub binary_compression: ::core::option::Option<CompressionPolicy>,
+    /// External storage configuration
+    ///
+    /// S3/GCS/Azure configuration
+    #[prost(message, optional, tag = "6")]
+    pub external: ::core::option::Option<ExternalStorageConfig>,
+    /// Chunking configuration for RAG applications
+    ///
+    /// Automatic chunking settings
+    #[prost(message, optional, tag = "7")]
+    pub chunking: ::core::option::Option<ChunkingConfig>,
+    /// Performance tuning
+    ///
+    /// Source content caching
+    #[prost(message, optional, tag = "8")]
+    pub cache: ::core::option::Option<CacheConfig>,
+    /// Prefetch source during search
+    #[prost(bool, tag = "9")]
+    pub prefetch_on_search: bool,
+}
+/// Dynamic storage tiering policy (handles unknown sizes at ingestion time)
+#[derive(serde::Serialize, serde::Deserialize)]
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct StorageTieringPolicy {
+    /// Size-based thresholds (can be adjusted by compaction)
+    ///
+    /// < N bytes: store inline (default: 100KB)
+    #[prost(int64, tag = "1")]
+    pub inline_threshold: i64,
+    /// < N bytes: store in blocks (default: 1MB)
+    #[prost(int64, tag = "2")]
+    pub block_threshold: i64,
+    /// < N bytes: store as files (default: 10MB)
+    #[prost(int64, tag = "3")]
+    pub file_threshold: i64,
+    /// Access pattern based promotion/demotion during compaction
+    ///
+    /// Promote/demote based on usage
+    #[prost(message, optional, tag = "4")]
+    pub access_policy: ::core::option::Option<AccessBasedTiering>,
+    /// Compaction behavior
+    ///
+    /// Allow promotion during compaction (default: true)
+    #[prost(bool, tag = "5")]
+    pub enable_promotion: bool,
+    /// Allow demotion during compaction (default: true)
+    #[prost(bool, tag = "6")]
+    pub enable_demotion: bool,
+    /// Override policy per content type
+    ///
+    /// MIME type -> tier settings
+    #[prost(map = "string, message", tag = "7")]
+    pub content_overrides: ::std::collections::HashMap<
+        ::prost::alloc::string::String,
+        TierOverride,
+    >,
+}
+/// Access-based tiering for compaction (promotes hot data, demotes cold data)
+#[derive(serde::Serialize, serde::Deserialize)]
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct AccessBasedTiering {
+    /// Promote after N accesses
+    #[prost(int32, tag = "1")]
+    pub access_threshold_promote: i32,
+    /// Demote after N seconds without access
+    #[prost(int64, tag = "2")]
+    pub age_threshold_demote: i64,
+    /// Keep N% of data in hot tier (default: 0.1)
+    #[prost(float, tag = "3")]
+    pub hot_data_ratio: f32,
+    /// Enable access tracking (default: true)
+    #[prost(bool, tag = "4")]
+    pub track_access_patterns: bool,
+}
+/// Per-content-type tier overrides
+#[derive(serde::Serialize, serde::Deserialize)]
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct TierOverride {
+    /// Force specific tier
+    #[prost(enumeration = "StorageTier", tag = "1")]
+    pub force_tier: i32,
+    /// Never promote this content type
+    #[prost(bool, tag = "2")]
+    pub disable_promotion: bool,
+    /// Never demote this content type
+    #[prost(bool, tag = "3")]
+    pub disable_demotion: bool,
+}
+/// Compression policy per content type
+#[derive(serde::Serialize, serde::Deserialize)]
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct CompressionPolicy {
+    /// zstd, lz4, gzip, snappy, none
+    #[prost(string, tag = "1")]
+    pub algorithm: ::prost::alloc::string::String,
+    /// Compression level (1-22 for zstd)
+    #[prost(int32, tag = "2")]
+    pub level: i32,
+    /// Don't compress below N bytes
+    #[prost(int64, tag = "3")]
+    pub min_size_to_compress: i64,
+    /// Adjust level based on content type
+    #[prost(bool, tag = "4")]
+    pub adaptive_level: bool,
+}
+/// External storage configuration
+#[derive(serde::Serialize, serde::Deserialize)]
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct ExternalStorageConfig {
+    /// s3, gcs, azure, filesystem
+    #[prost(string, tag = "1")]
+    pub backend: ::prost::alloc::string::String,
+    /// Bucket/container name
+    #[prost(string, tag = "2")]
+    pub bucket: ::prost::alloc::string::String,
+    /// Path prefix
+    #[prost(string, tag = "3")]
+    pub prefix: ::prost::alloc::string::String,
+    /// Access credentials
+    #[prost(map = "string, string", tag = "4")]
+    pub credentials: ::std::collections::HashMap<
+        ::prost::alloc::string::String,
+        ::prost::alloc::string::String,
+    >,
+    /// URL expiry in seconds
+    #[prost(int64, tag = "5")]
+    pub signed_url_expiry: i64,
+    /// Enable CDN for retrieval
+    #[prost(bool, tag = "6")]
+    pub enable_cdn: bool,
+}
+/// Automatic chunking configuration
+#[derive(serde::Serialize, serde::Deserialize)]
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct ChunkingConfig {
+    /// Enable automatic chunking
+    #[prost(bool, tag = "1")]
+    pub enabled: bool,
+    /// Chunking strategy
+    #[prost(enumeration = "ChunkingStrategy", tag = "2")]
+    pub strategy: i32,
+    /// Target chunk size in tokens/chars
+    #[prost(int32, tag = "3")]
+    pub chunk_size: i32,
+    /// Overlap between chunks
+    #[prost(int32, tag = "4")]
+    pub overlap: i32,
+    /// Don't break sentences
+    #[prost(bool, tag = "5")]
+    pub preserve_sentences: bool,
+    /// Include surrounding context
+    #[prost(bool, tag = "6")]
+    pub include_context: bool,
+    /// Context window size
+    #[prost(int32, tag = "7")]
+    pub context_window: i32,
+}
+/// Source content caching configuration
+#[derive(serde::Serialize, serde::Deserialize)]
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct CacheConfig {
+    /// Enable source caching
+    #[prost(bool, tag = "1")]
+    pub enabled: bool,
+    /// Cache size in MB
+    #[prost(int64, tag = "2")]
+    pub cache_size_mb: i64,
+    /// Cache TTL
+    #[prost(int64, tag = "3")]
+    pub ttl_seconds: i64,
+    /// Only cache hot tier content
+    #[prost(bool, tag = "4")]
+    pub cache_hot_only: bool,
+    /// Eviction policy
+    #[prost(enumeration = "CacheEvictionPolicy", tag = "5")]
+    pub eviction: i32,
 }
 /// Parquet writer settings - matches TOML configuration
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -1183,6 +1678,36 @@ pub struct FilterCondition {
     #[prost(message, optional, tag = "3")]
     pub value: ::core::option::Option<MetadataValue>,
 }
+/// Source content retrieval options for search and get operations
+#[derive(serde::Serialize, serde::Deserialize)]
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct SourceRetrievalOptions {
+    /// Include surrounding chunks for RAG
+    #[prost(bool, tag = "1")]
+    pub expand_chunks: bool,
+    /// How many chunks before/after to include
+    #[prost(int32, tag = "2")]
+    pub max_chunk_expansion: i32,
+    /// Specific source fields to retrieve
+    #[prost(string, repeated, tag = "3")]
+    pub source_fields: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+    /// Resolve external references to actual content
+    #[prost(bool, tag = "4")]
+    pub resolve_external: bool,
+    /// Maximum source size to retrieve (bytes)
+    #[prost(int64, tag = "5")]
+    pub max_source_size: i64,
+    /// Preferred storage tier: hot, warm, cold
+    #[prost(string, tag = "6")]
+    pub tier_preference: ::prost::alloc::string::String,
+    /// Include full chunking context
+    #[prost(bool, tag = "7")]
+    pub include_chunk_context: bool,
+    /// Include processing metadata
+    #[prost(bool, tag = "8")]
+    pub include_processing_info: bool,
+}
 #[derive(serde::Serialize, serde::Deserialize)]
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -1195,6 +1720,14 @@ pub struct IncludeFields {
     pub score: bool,
     #[prost(bool, tag = "4")]
     pub rank: bool,
+    /// NEW: Source content retrieval options
+    ///
+    /// Include source content
+    #[prost(bool, tag = "10")]
+    pub source: bool,
+    /// Advanced source retrieval options
+    #[prost(message, optional, tag = "11")]
+    pub source_options: ::core::option::Option<SourceRetrievalOptions>,
 }
 /// Quantization parameter types for SearchParams
 ///
@@ -1670,6 +2203,607 @@ impl VectorOperation {
         }
     }
 }
+/// Well-known embedding models with enum for efficient storage
+#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum EmbeddingModelType {
+    EmbeddingModelUnspecified = 0,
+    /// OpenAI models
+    OpenaiTextEmbeddingAda002 = 1,
+    OpenaiTextEmbedding3Small = 2,
+    OpenaiTextEmbedding3Large = 3,
+    /// Sentence Transformers / Hugging Face models
+    SentenceTransformersAllMinilmL6V2 = 10,
+    SentenceTransformersAllMpnetBaseV2 = 11,
+    SentenceTransformersMultiQaMpnetBaseDotV1 = 12,
+    SentenceTransformersAllDistilrobertaV1 = 13,
+    SentenceTransformersParaphraseMultilingualMpnetBaseV2 = 14,
+    /// Google/Universal Sentence Encoder models
+    GoogleUseV4 = 20,
+    GoogleUseMultilingualV3 = 21,
+    GoogleUseLite = 22,
+    /// Cohere models
+    CohereEmbedEnglishV3 = 30,
+    CohereEmbedMultilingualV3 = 31,
+    CohereEmbedEnglishLightV3 = 32,
+    /// Anthropic models
+    AnthropicVoyage2 = 40,
+    AnthropicVoyageCode2 = 41,
+    /// Mistral models
+    MistralEmbed = 50,
+    /// BGE models (Beijing Academy of AI)
+    BgeLargeEnV15 = 60,
+    BgeBaseEnV15 = 61,
+    BgeSmallEnV15 = 62,
+    BgeM3 = 63,
+    /// E5 models
+    E5LargeV2 = 70,
+    E5BaseV2 = 71,
+    E5SmallV2 = 72,
+    /// Instructor models
+    InstructorXl = 80,
+    InstructorLarge = 81,
+    InstructorBase = 82,
+    /// Custom/other models - use CUSTOM_EMBEDDING_MODEL and specify in custom_model field
+    CustomEmbeddingModel = 999,
+}
+impl EmbeddingModelType {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            EmbeddingModelType::EmbeddingModelUnspecified => {
+                "EMBEDDING_MODEL_UNSPECIFIED"
+            }
+            EmbeddingModelType::OpenaiTextEmbeddingAda002 => {
+                "OPENAI_TEXT_EMBEDDING_ADA_002"
+            }
+            EmbeddingModelType::OpenaiTextEmbedding3Small => {
+                "OPENAI_TEXT_EMBEDDING_3_SMALL"
+            }
+            EmbeddingModelType::OpenaiTextEmbedding3Large => {
+                "OPENAI_TEXT_EMBEDDING_3_LARGE"
+            }
+            EmbeddingModelType::SentenceTransformersAllMinilmL6V2 => {
+                "SENTENCE_TRANSFORMERS_ALL_MINILM_L6_V2"
+            }
+            EmbeddingModelType::SentenceTransformersAllMpnetBaseV2 => {
+                "SENTENCE_TRANSFORMERS_ALL_MPNET_BASE_V2"
+            }
+            EmbeddingModelType::SentenceTransformersMultiQaMpnetBaseDotV1 => {
+                "SENTENCE_TRANSFORMERS_MULTI_QA_MPNET_BASE_DOT_V1"
+            }
+            EmbeddingModelType::SentenceTransformersAllDistilrobertaV1 => {
+                "SENTENCE_TRANSFORMERS_ALL_DISTILROBERTA_V1"
+            }
+            EmbeddingModelType::SentenceTransformersParaphraseMultilingualMpnetBaseV2 => {
+                "SENTENCE_TRANSFORMERS_PARAPHRASE_MULTILINGUAL_MPNET_BASE_V2"
+            }
+            EmbeddingModelType::GoogleUseV4 => "GOOGLE_USE_V4",
+            EmbeddingModelType::GoogleUseMultilingualV3 => "GOOGLE_USE_MULTILINGUAL_V3",
+            EmbeddingModelType::GoogleUseLite => "GOOGLE_USE_LITE",
+            EmbeddingModelType::CohereEmbedEnglishV3 => "COHERE_EMBED_ENGLISH_V3",
+            EmbeddingModelType::CohereEmbedMultilingualV3 => {
+                "COHERE_EMBED_MULTILINGUAL_V3"
+            }
+            EmbeddingModelType::CohereEmbedEnglishLightV3 => {
+                "COHERE_EMBED_ENGLISH_LIGHT_V3"
+            }
+            EmbeddingModelType::AnthropicVoyage2 => "ANTHROPIC_VOYAGE_2",
+            EmbeddingModelType::AnthropicVoyageCode2 => "ANTHROPIC_VOYAGE_CODE_2",
+            EmbeddingModelType::MistralEmbed => "MISTRAL_EMBED",
+            EmbeddingModelType::BgeLargeEnV15 => "BGE_LARGE_EN_V1_5",
+            EmbeddingModelType::BgeBaseEnV15 => "BGE_BASE_EN_V1_5",
+            EmbeddingModelType::BgeSmallEnV15 => "BGE_SMALL_EN_V1_5",
+            EmbeddingModelType::BgeM3 => "BGE_M3",
+            EmbeddingModelType::E5LargeV2 => "E5_LARGE_V2",
+            EmbeddingModelType::E5BaseV2 => "E5_BASE_V2",
+            EmbeddingModelType::E5SmallV2 => "E5_SMALL_V2",
+            EmbeddingModelType::InstructorXl => "INSTRUCTOR_XL",
+            EmbeddingModelType::InstructorLarge => "INSTRUCTOR_LARGE",
+            EmbeddingModelType::InstructorBase => "INSTRUCTOR_BASE",
+            EmbeddingModelType::CustomEmbeddingModel => "CUSTOM_EMBEDDING_MODEL",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "EMBEDDING_MODEL_UNSPECIFIED" => Some(Self::EmbeddingModelUnspecified),
+            "OPENAI_TEXT_EMBEDDING_ADA_002" => Some(Self::OpenaiTextEmbeddingAda002),
+            "OPENAI_TEXT_EMBEDDING_3_SMALL" => Some(Self::OpenaiTextEmbedding3Small),
+            "OPENAI_TEXT_EMBEDDING_3_LARGE" => Some(Self::OpenaiTextEmbedding3Large),
+            "SENTENCE_TRANSFORMERS_ALL_MINILM_L6_V2" => {
+                Some(Self::SentenceTransformersAllMinilmL6V2)
+            }
+            "SENTENCE_TRANSFORMERS_ALL_MPNET_BASE_V2" => {
+                Some(Self::SentenceTransformersAllMpnetBaseV2)
+            }
+            "SENTENCE_TRANSFORMERS_MULTI_QA_MPNET_BASE_DOT_V1" => {
+                Some(Self::SentenceTransformersMultiQaMpnetBaseDotV1)
+            }
+            "SENTENCE_TRANSFORMERS_ALL_DISTILROBERTA_V1" => {
+                Some(Self::SentenceTransformersAllDistilrobertaV1)
+            }
+            "SENTENCE_TRANSFORMERS_PARAPHRASE_MULTILINGUAL_MPNET_BASE_V2" => {
+                Some(Self::SentenceTransformersParaphraseMultilingualMpnetBaseV2)
+            }
+            "GOOGLE_USE_V4" => Some(Self::GoogleUseV4),
+            "GOOGLE_USE_MULTILINGUAL_V3" => Some(Self::GoogleUseMultilingualV3),
+            "GOOGLE_USE_LITE" => Some(Self::GoogleUseLite),
+            "COHERE_EMBED_ENGLISH_V3" => Some(Self::CohereEmbedEnglishV3),
+            "COHERE_EMBED_MULTILINGUAL_V3" => Some(Self::CohereEmbedMultilingualV3),
+            "COHERE_EMBED_ENGLISH_LIGHT_V3" => Some(Self::CohereEmbedEnglishLightV3),
+            "ANTHROPIC_VOYAGE_2" => Some(Self::AnthropicVoyage2),
+            "ANTHROPIC_VOYAGE_CODE_2" => Some(Self::AnthropicVoyageCode2),
+            "MISTRAL_EMBED" => Some(Self::MistralEmbed),
+            "BGE_LARGE_EN_V1_5" => Some(Self::BgeLargeEnV15),
+            "BGE_BASE_EN_V1_5" => Some(Self::BgeBaseEnV15),
+            "BGE_SMALL_EN_V1_5" => Some(Self::BgeSmallEnV15),
+            "BGE_M3" => Some(Self::BgeM3),
+            "E5_LARGE_V2" => Some(Self::E5LargeV2),
+            "E5_BASE_V2" => Some(Self::E5BaseV2),
+            "E5_SMALL_V2" => Some(Self::E5SmallV2),
+            "INSTRUCTOR_XL" => Some(Self::InstructorXl),
+            "INSTRUCTOR_LARGE" => Some(Self::InstructorLarge),
+            "INSTRUCTOR_BASE" => Some(Self::InstructorBase),
+            "CUSTOM_EMBEDDING_MODEL" => Some(Self::CustomEmbeddingModel),
+            _ => None,
+        }
+    }
+}
+/// Content categories for efficient classification
+#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum ContentCategory {
+    Unspecified = 0,
+    /// Text documents, PDFs, etc.
+    Document = 1,
+    /// Photos, diagrams, screenshots
+    Image = 2,
+    /// Speech, music, sound effects
+    Audio = 3,
+    /// Video content
+    Video = 4,
+    /// Source code, scripts
+    Code = 5,
+    /// Structured tabular data
+    Table = 6,
+    /// Charts, graphs, visualizations
+    Chart = 7,
+    /// Email content
+    Email = 8,
+    /// Web pages, HTML
+    Webpage = 9,
+    /// Tweets, posts, comments
+    SocialMedia = 10,
+    /// FAQ, documentation
+    KnowledgeBase = 11,
+    /// Papers, research data
+    Scientific = 12,
+    /// Contracts, legal documents
+    Legal = 13,
+    /// Financial reports, statements
+    Financial = 14,
+    /// Medical records, research
+    Medical = 15,
+}
+impl ContentCategory {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            ContentCategory::Unspecified => "CONTENT_CATEGORY_UNSPECIFIED",
+            ContentCategory::Document => "DOCUMENT",
+            ContentCategory::Image => "IMAGE",
+            ContentCategory::Audio => "AUDIO",
+            ContentCategory::Video => "VIDEO",
+            ContentCategory::Code => "CODE",
+            ContentCategory::Table => "TABLE",
+            ContentCategory::Chart => "CHART",
+            ContentCategory::Email => "EMAIL",
+            ContentCategory::Webpage => "WEBPAGE",
+            ContentCategory::SocialMedia => "SOCIAL_MEDIA",
+            ContentCategory::KnowledgeBase => "KNOWLEDGE_BASE",
+            ContentCategory::Scientific => "SCIENTIFIC",
+            ContentCategory::Legal => "LEGAL",
+            ContentCategory::Financial => "FINANCIAL",
+            ContentCategory::Medical => "MEDICAL",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "CONTENT_CATEGORY_UNSPECIFIED" => Some(Self::Unspecified),
+            "DOCUMENT" => Some(Self::Document),
+            "IMAGE" => Some(Self::Image),
+            "AUDIO" => Some(Self::Audio),
+            "VIDEO" => Some(Self::Video),
+            "CODE" => Some(Self::Code),
+            "TABLE" => Some(Self::Table),
+            "CHART" => Some(Self::Chart),
+            "EMAIL" => Some(Self::Email),
+            "WEBPAGE" => Some(Self::Webpage),
+            "SOCIAL_MEDIA" => Some(Self::SocialMedia),
+            "KNOWLEDGE_BASE" => Some(Self::KnowledgeBase),
+            "SCIENTIFIC" => Some(Self::Scientific),
+            "LEGAL" => Some(Self::Legal),
+            "FINANCIAL" => Some(Self::Financial),
+            "MEDICAL" => Some(Self::Medical),
+            _ => None,
+        }
+    }
+}
+/// Quality levels for content and processing
+#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum QualityLevel {
+    QualityUnspecified = 0,
+    /// High-quality, verified content
+    High = 1,
+    /// Standard quality
+    Medium = 2,
+    /// Lower quality, may need review
+    Low = 3,
+    /// Quality not assessed
+    Unknown = 4,
+}
+impl QualityLevel {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            QualityLevel::QualityUnspecified => "QUALITY_UNSPECIFIED",
+            QualityLevel::High => "HIGH",
+            QualityLevel::Medium => "MEDIUM",
+            QualityLevel::Low => "LOW",
+            QualityLevel::Unknown => "UNKNOWN",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "QUALITY_UNSPECIFIED" => Some(Self::QualityUnspecified),
+            "HIGH" => Some(Self::High),
+            "MEDIUM" => Some(Self::Medium),
+            "LOW" => Some(Self::Low),
+            "UNKNOWN" => Some(Self::Unknown),
+            _ => None,
+        }
+    }
+}
+/// Processing status for tracking content lifecycle
+#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum ProcessingStatus {
+    Unspecified = 0,
+    /// Original, unprocessed content
+    Raw = 1,
+    /// Currently being processed
+    Processing = 2,
+    /// Successfully processed
+    Processed = 3,
+    /// Processing failed
+    Failed = 4,
+    /// Needs human review
+    RequiresReview = 5,
+    /// Human-approved content
+    Approved = 6,
+    /// Outdated content
+    Deprecated = 7,
+}
+impl ProcessingStatus {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            ProcessingStatus::Unspecified => "PROCESSING_STATUS_UNSPECIFIED",
+            ProcessingStatus::Raw => "RAW",
+            ProcessingStatus::Processing => "PROCESSING",
+            ProcessingStatus::Processed => "PROCESSED",
+            ProcessingStatus::Failed => "FAILED",
+            ProcessingStatus::RequiresReview => "REQUIRES_REVIEW",
+            ProcessingStatus::Approved => "APPROVED",
+            ProcessingStatus::Deprecated => "DEPRECATED",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "PROCESSING_STATUS_UNSPECIFIED" => Some(Self::Unspecified),
+            "RAW" => Some(Self::Raw),
+            "PROCESSING" => Some(Self::Processing),
+            "PROCESSED" => Some(Self::Processed),
+            "FAILED" => Some(Self::Failed),
+            "REQUIRES_REVIEW" => Some(Self::RequiresReview),
+            "APPROVED" => Some(Self::Approved),
+            "DEPRECATED" => Some(Self::Deprecated),
+            _ => None,
+        }
+    }
+}
+/// Common language codes as enums for efficiency (ISO 639-1 subset)
+#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum LanguageCode {
+    LanguageUnspecified = 0,
+    /// en
+    English = 1,
+    /// es
+    Spanish = 2,
+    /// fr
+    French = 3,
+    /// de
+    German = 4,
+    /// it
+    Italian = 5,
+    /// pt
+    Portuguese = 6,
+    /// ru
+    Russian = 7,
+    /// zh
+    Chinese = 8,
+    /// ja
+    Japanese = 9,
+    /// ko
+    Korean = 10,
+    /// ar
+    Arabic = 11,
+    /// hi
+    Hindi = 12,
+    /// nl
+    Dutch = 13,
+    /// sv
+    Swedish = 14,
+    /// no
+    Norwegian = 15,
+    /// da
+    Danish = 16,
+    /// fi
+    Finnish = 17,
+    /// pl
+    Polish = 18,
+    /// cs
+    Czech = 19,
+    /// hu
+    Hungarian = 20,
+    /// tr
+    Turkish = 21,
+    /// el
+    Greek = 22,
+    /// he
+    Hebrew = 23,
+    /// th
+    Thai = 24,
+    /// vi
+    Vietnamese = 25,
+    /// id
+    Indonesian = 26,
+    /// ms
+    Malay = 27,
+    /// fil
+    Filipino = 28,
+    /// Use custom_language field
+    CustomLanguage = 999,
+}
+impl LanguageCode {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            LanguageCode::LanguageUnspecified => "LANGUAGE_UNSPECIFIED",
+            LanguageCode::English => "ENGLISH",
+            LanguageCode::Spanish => "SPANISH",
+            LanguageCode::French => "FRENCH",
+            LanguageCode::German => "GERMAN",
+            LanguageCode::Italian => "ITALIAN",
+            LanguageCode::Portuguese => "PORTUGUESE",
+            LanguageCode::Russian => "RUSSIAN",
+            LanguageCode::Chinese => "CHINESE",
+            LanguageCode::Japanese => "JAPANESE",
+            LanguageCode::Korean => "KOREAN",
+            LanguageCode::Arabic => "ARABIC",
+            LanguageCode::Hindi => "HINDI",
+            LanguageCode::Dutch => "DUTCH",
+            LanguageCode::Swedish => "SWEDISH",
+            LanguageCode::Norwegian => "NORWEGIAN",
+            LanguageCode::Danish => "DANISH",
+            LanguageCode::Finnish => "FINNISH",
+            LanguageCode::Polish => "POLISH",
+            LanguageCode::Czech => "CZECH",
+            LanguageCode::Hungarian => "HUNGARIAN",
+            LanguageCode::Turkish => "TURKISH",
+            LanguageCode::Greek => "GREEK",
+            LanguageCode::Hebrew => "HEBREW",
+            LanguageCode::Thai => "THAI",
+            LanguageCode::Vietnamese => "VIETNAMESE",
+            LanguageCode::Indonesian => "INDONESIAN",
+            LanguageCode::Malay => "MALAY",
+            LanguageCode::Filipino => "FILIPINO",
+            LanguageCode::CustomLanguage => "CUSTOM_LANGUAGE",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "LANGUAGE_UNSPECIFIED" => Some(Self::LanguageUnspecified),
+            "ENGLISH" => Some(Self::English),
+            "SPANISH" => Some(Self::Spanish),
+            "FRENCH" => Some(Self::French),
+            "GERMAN" => Some(Self::German),
+            "ITALIAN" => Some(Self::Italian),
+            "PORTUGUESE" => Some(Self::Portuguese),
+            "RUSSIAN" => Some(Self::Russian),
+            "CHINESE" => Some(Self::Chinese),
+            "JAPANESE" => Some(Self::Japanese),
+            "KOREAN" => Some(Self::Korean),
+            "ARABIC" => Some(Self::Arabic),
+            "HINDI" => Some(Self::Hindi),
+            "DUTCH" => Some(Self::Dutch),
+            "SWEDISH" => Some(Self::Swedish),
+            "NORWEGIAN" => Some(Self::Norwegian),
+            "DANISH" => Some(Self::Danish),
+            "FINNISH" => Some(Self::Finnish),
+            "POLISH" => Some(Self::Polish),
+            "CZECH" => Some(Self::Czech),
+            "HUNGARIAN" => Some(Self::Hungarian),
+            "TURKISH" => Some(Self::Turkish),
+            "GREEK" => Some(Self::Greek),
+            "HEBREW" => Some(Self::Hebrew),
+            "THAI" => Some(Self::Thai),
+            "VIETNAMESE" => Some(Self::Vietnamese),
+            "INDONESIAN" => Some(Self::Indonesian),
+            "MALAY" => Some(Self::Malay),
+            "FILIPINO" => Some(Self::Filipino),
+            "CUSTOM_LANGUAGE" => Some(Self::CustomLanguage),
+            _ => None,
+        }
+    }
+}
+/// Data source types for provenance tracking
+#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum DataSource {
+    Unspecified = 0,
+    /// Direct user upload
+    UserUpload = 1,
+    /// Via API
+    ApiIngestion = 2,
+    /// Web crawling/scraping
+    WebScraping = 3,
+    /// Bulk file import
+    FileImport = 4,
+    /// Database synchronization
+    DatabaseSync = 5,
+    /// External API integration
+    ThirdPartyApi = 6,
+    /// Batch job processing
+    BatchProcessing = 7,
+    /// Real-time streaming
+    RealTimeStream = 8,
+    /// Data migration
+    Migration = 9,
+    /// Backup restoration
+    BackupRestore = 10,
+}
+impl DataSource {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            DataSource::Unspecified => "DATA_SOURCE_UNSPECIFIED",
+            DataSource::UserUpload => "USER_UPLOAD",
+            DataSource::ApiIngestion => "API_INGESTION",
+            DataSource::WebScraping => "WEB_SCRAPING",
+            DataSource::FileImport => "FILE_IMPORT",
+            DataSource::DatabaseSync => "DATABASE_SYNC",
+            DataSource::ThirdPartyApi => "THIRD_PARTY_API",
+            DataSource::BatchProcessing => "BATCH_PROCESSING",
+            DataSource::RealTimeStream => "REAL_TIME_STREAM",
+            DataSource::Migration => "MIGRATION",
+            DataSource::BackupRestore => "BACKUP_RESTORE",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "DATA_SOURCE_UNSPECIFIED" => Some(Self::Unspecified),
+            "USER_UPLOAD" => Some(Self::UserUpload),
+            "API_INGESTION" => Some(Self::ApiIngestion),
+            "WEB_SCRAPING" => Some(Self::WebScraping),
+            "FILE_IMPORT" => Some(Self::FileImport),
+            "DATABASE_SYNC" => Some(Self::DatabaseSync),
+            "THIRD_PARTY_API" => Some(Self::ThirdPartyApi),
+            "BATCH_PROCESSING" => Some(Self::BatchProcessing),
+            "REAL_TIME_STREAM" => Some(Self::RealTimeStream),
+            "MIGRATION" => Some(Self::Migration),
+            "BACKUP_RESTORE" => Some(Self::BackupRestore),
+            _ => None,
+        }
+    }
+}
+/// Extraction methods for content processing
+#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum ExtractionMethod {
+    ExtractionUnspecified = 0,
+    /// Plain text input
+    DirectText = 1,
+    /// Optical character recognition
+    Ocr = 2,
+    /// Automatic speech recognition
+    Asr = 3,
+    /// PDF text extraction
+    PdfParsing = 4,
+    /// HTML content extraction
+    HtmlParsing = 5,
+    /// Word/Office document parsing
+    DocumentParsing = 6,
+    /// Image content analysis
+    ImageAnalysis = 7,
+    /// Video content analysis
+    VideoAnalysis = 8,
+    /// API-based extraction
+    ApiExtraction = 9,
+    /// Manual data entry
+    ManualEntry = 10,
+}
+impl ExtractionMethod {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            ExtractionMethod::ExtractionUnspecified => "EXTRACTION_UNSPECIFIED",
+            ExtractionMethod::DirectText => "DIRECT_TEXT",
+            ExtractionMethod::Ocr => "OCR",
+            ExtractionMethod::Asr => "ASR",
+            ExtractionMethod::PdfParsing => "PDF_PARSING",
+            ExtractionMethod::HtmlParsing => "HTML_PARSING",
+            ExtractionMethod::DocumentParsing => "DOCUMENT_PARSING",
+            ExtractionMethod::ImageAnalysis => "IMAGE_ANALYSIS",
+            ExtractionMethod::VideoAnalysis => "VIDEO_ANALYSIS",
+            ExtractionMethod::ApiExtraction => "API_EXTRACTION",
+            ExtractionMethod::ManualEntry => "MANUAL_ENTRY",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "EXTRACTION_UNSPECIFIED" => Some(Self::ExtractionUnspecified),
+            "DIRECT_TEXT" => Some(Self::DirectText),
+            "OCR" => Some(Self::Ocr),
+            "ASR" => Some(Self::Asr),
+            "PDF_PARSING" => Some(Self::PdfParsing),
+            "HTML_PARSING" => Some(Self::HtmlParsing),
+            "DOCUMENT_PARSING" => Some(Self::DocumentParsing),
+            "IMAGE_ANALYSIS" => Some(Self::ImageAnalysis),
+            "VIDEO_ANALYSIS" => Some(Self::VideoAnalysis),
+            "API_EXTRACTION" => Some(Self::ApiExtraction),
+            "MANUAL_ENTRY" => Some(Self::ManualEntry),
+            _ => None,
+        }
+    }
+}
 /// Index update behavior modes
 #[derive(serde::Serialize, serde::Deserialize)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
@@ -1932,6 +3066,130 @@ impl DataDensity {
             "DENSITY_DENSE" => Some(Self::DensityDense),
             "DENSITY_SPARSE" => Some(Self::DensitySparse),
             "DENSITY_MIXED" => Some(Self::DensityMixed),
+            _ => None,
+        }
+    }
+}
+#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum StorageTier {
+    Unspecified = 0,
+    /// Memory/inline storage (< 1ms access)
+    Hot = 1,
+    /// SSD blocks (< 10ms access)
+    Warm = 2,
+    /// HDD files (< 100ms access)
+    Cool = 3,
+    /// External/object storage (< 1s access)
+    Cold = 4,
+}
+impl StorageTier {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            StorageTier::Unspecified => "STORAGE_TIER_UNSPECIFIED",
+            StorageTier::Hot => "HOT",
+            StorageTier::Warm => "WARM",
+            StorageTier::Cool => "COOL",
+            StorageTier::Cold => "COLD",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "STORAGE_TIER_UNSPECIFIED" => Some(Self::Unspecified),
+            "HOT" => Some(Self::Hot),
+            "WARM" => Some(Self::Warm),
+            "COOL" => Some(Self::Cool),
+            "COLD" => Some(Self::Cold),
+            _ => None,
+        }
+    }
+}
+#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum ChunkingStrategy {
+    Unspecified = 0,
+    /// Fixed character/token size
+    FixedSize = 1,
+    /// Semantic boundary detection
+    Semantic = 2,
+    /// Sentence-based chunking
+    Sentence = 3,
+    /// Paragraph-based chunking
+    Paragraph = 4,
+    /// Custom chunking logic
+    CustomChunking = 5,
+}
+impl ChunkingStrategy {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            ChunkingStrategy::Unspecified => "CHUNKING_STRATEGY_UNSPECIFIED",
+            ChunkingStrategy::FixedSize => "FIXED_SIZE",
+            ChunkingStrategy::Semantic => "SEMANTIC",
+            ChunkingStrategy::Sentence => "SENTENCE",
+            ChunkingStrategy::Paragraph => "PARAGRAPH",
+            ChunkingStrategy::CustomChunking => "CUSTOM_CHUNKING",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "CHUNKING_STRATEGY_UNSPECIFIED" => Some(Self::Unspecified),
+            "FIXED_SIZE" => Some(Self::FixedSize),
+            "SEMANTIC" => Some(Self::Semantic),
+            "SENTENCE" => Some(Self::Sentence),
+            "PARAGRAPH" => Some(Self::Paragraph),
+            "CUSTOM_CHUNKING" => Some(Self::CustomChunking),
+            _ => None,
+        }
+    }
+}
+#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum CacheEvictionPolicy {
+    CacheEvictionUnspecified = 0,
+    /// Least Recently Used
+    Lru = 1,
+    /// Least Frequently Used
+    Lfu = 2,
+    /// Adaptive Replacement Cache
+    Arc = 3,
+    /// Random eviction
+    Random = 4,
+}
+impl CacheEvictionPolicy {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            CacheEvictionPolicy::CacheEvictionUnspecified => "CACHE_EVICTION_UNSPECIFIED",
+            CacheEvictionPolicy::Lru => "LRU",
+            CacheEvictionPolicy::Lfu => "LFU",
+            CacheEvictionPolicy::Arc => "ARC",
+            CacheEvictionPolicy::Random => "RANDOM",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "CACHE_EVICTION_UNSPECIFIED" => Some(Self::CacheEvictionUnspecified),
+            "LRU" => Some(Self::Lru),
+            "LFU" => Some(Self::Lfu),
+            "ARC" => Some(Self::Arc),
+            "RANDOM" => Some(Self::Random),
             _ => None,
         }
     }

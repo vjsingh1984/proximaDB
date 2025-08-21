@@ -401,10 +401,28 @@ impl SharedServices {
         );
         debug!("✅ SharedServices::new - SST engine created successfully");
         
-        // Create VectorOperationsService with optimized architecture
-        debug!("🔧 SharedServices::new - About to create VectorOperationsService...");
+        // Create WAL manager for two-stage search
+        debug!("🔧 SharedServices::new - Creating WAL manager for two-stage search...");
+        let wal_manager = {
+            use crate::storage::persistence::write_ahead_log::{WriteAheadLogManager, WALBatchFactory};
+            
+            // Create WAL batch strategy 
+            let strategy_type = crate::storage::persistence::write_ahead_log::config::WriteBufferStrategyType::BincodeBatch;
+            let strategy = WALBatchFactory::create_batch_serialization_strategy(
+                strategy_type,
+                &wal_config,
+                filesystem_factory.clone()
+            ).await?;
+            
+            // Create WAL manager directly
+            Arc::new(WriteAheadLogManager::new(strategy, wal_config.clone()).await?)
+        };
+        debug!("✅ SharedServices::new - WAL manager created successfully");
+        
+        // Create VectorOperationsService with optimized architecture and two-stage search
+        debug!("🔧 SharedServices::new - About to create VectorOperationsService with two-stage search...");
         let vector_operations_service = Arc::new(
-            VectorOperationsService::new(sst_engine)
+            VectorOperationsService::new(sst_engine, wal_manager)
         );
         
         info!("✅ SharedServices: VectorOperationsService created successfully - 40-60% performance boost enabled");

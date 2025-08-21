@@ -13,6 +13,8 @@ use std::sync::Arc;
 use std::marker::PhantomData;
 use std::io::Read;
 use std::io::prelude::*;
+
+use crate::storage::engines::common::zero_copy_io_system::traits::CacheTemperature;
 use tracing::{debug, error, info, warn};
 use futures::stream::{Stream, StreamExt};
 use futures::TryStreamExt;
@@ -25,7 +27,7 @@ use crate::core::VectorRecord;
 use crate::core::search::{SearchParams, SearchResult, FilterExpression};
 use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
 use crate::storage::persistence::filesystem::{FilesystemFactory, FileSystem};
-use crate::storage::engines::row_based::bloom_filter::SstableBloomFilter;
+use crate::core::bloom::SstableBloomFilter;
 use crate::storage::engines::row_based::shared_sst_reader::{SharedSstFormatReader, SstMmapStrategy, SstRegion};
 use crate::storage::engines::sst::{SstableHeader, DataBlock, IndexEntry, VectorFormatType};  // OPTIMIZED: Removed SstRecord import
 use crate::core::compression::CompressionAlgorithm;
@@ -1257,7 +1259,7 @@ impl UnifiedSstableReader {
     fn extract_filter<'a>(&self, params: &'a SearchParams) -> Option<(&'a str, &'a serde_json::Value)> {
         match &params.filter_expression {
             Some(FilterExpression::Comparison { field, operator: _, value }) => {
-                Some((field.as_str(), value))
+                Some((field.as_deref(), value))
             }
             _ => None
         }
@@ -1449,7 +1451,7 @@ impl UnifiedSstableReader {
                 selectivity_hint: params.filter_expression.as_ref().map(|_| 0.1),
                 collection_id: self.collection_id.clone(),
                 concurrent_queries: 1,
-                cache_temperature: 0.5,
+                cache_temperature: CacheTemperature::Warm,
             };
             
             // Make bandwidth-optimized decisions for each file
@@ -1507,7 +1509,7 @@ impl UnifiedSstableReader {
                 selectivity_hint: 1.0, // Read everything
                 collection_id: self.collection_id.clone(),
                 concurrent_queries: 1,
-                cache_temperature: 0.0, // Don't pollute cache
+                cache_temperature: CacheTemperature::Cold, // Don't pollute cache
             };
             
             // Make bandwidth-optimized decisions for compaction
@@ -3304,8 +3306,8 @@ impl UnifiedSstableReader {
                             key: e.key.clone(),
                             block_offset: e.offset,
                             block_size: e.size as usize,
-                            min_key: e.metadata_min_values.get("id").and_then(|v| v.as_str()).to_string(),
-                            max_key: e.metadata_max_values.get("id").and_then(|v| v.as_str()).to_string(),
+                            min_key: e.metadata_min_values.get("id").and_then(|v| v.as_deref()).to_string(),
+                            max_key: e.metadata_max_values.get("id").and_then(|v| v.as_deref()).to_string(),
                             vector_count: 1,
                             bloom_filter_offset: None,
                         }).collect(),

@@ -114,7 +114,7 @@ impl OptimizedVectorWriter {
     /// Create optimized Parquet writer properties with configurable compression
     pub fn create_writer_properties(&self) -> Result<WriterProperties> {
         let compression = if self.config.compression_enabled {
-            match self.config.compression_algorithm.as_str() {
+            match self.config.compression_algorithm.as_deref() {
                 "zstd" => Compression::ZSTD(
                     ZstdLevel::try_new(self.config.parquet_compression_level)?
                 ),
@@ -153,7 +153,7 @@ impl OptimizedVectorWriter {
         
         // Build ID array
         let ids: Vec<String> = records.iter()
-            .map(|r| r.id.as_str().to_string())
+            .map(|r| r.id.as_deref().to_string())
             .collect();
         let id_array = Arc::new(arrow_array::StringArray::from(ids));
 

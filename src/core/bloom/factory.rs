@@ -10,10 +10,10 @@
 use anyhow::Result;
 use std::sync::Arc;
 
-use crate::core::bloom::{
+use super::{
     BloomFilterStrategy, BloomFilterConfig, BloomStrategy, SerializedBloomFilter
 };
-use crate::core::bloom::strategies::{
+use super::strategies::{
     BitPackedBloomFilter, ByteAlignedBloomFilter, SimpleBloomFilter, CompositeBloomFilter
 };
 

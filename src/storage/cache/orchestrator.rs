@@ -12,6 +12,7 @@ use crate::storage::cache::{
     IndexNodeCache, MetadataStore,
 };
 use crate::storage::cache::metrics::CacheMetrics;
+use crate::metrics::collectors::AccessPatternMetricsCollector;
 
 /// Event for async cache access tracking
 #[derive(Clone, Debug)]
@@ -33,6 +34,8 @@ pub struct AccessPatternTracker {
     event_sender: mpsc::Sender<CacheAccessEvent>,
     /// Background processor handle
     processor_handle: Option<tokio::task::JoinHandle<()>>,
+    /// Integration with unified metrics framework
+    metrics_collector: Option<Arc<AccessPatternMetricsCollector>>,
 }
 
 #[derive(Clone, Debug)]
@@ -66,10 +69,14 @@ impl AccessPatternTracker {
         let access_history = Arc::new(Mutex::new(VecDeque::with_capacity(max_history)));
         let correlation_matrix = Arc::new(DashMap::new());
         
+        // Create metrics collector for unified framework integration
+        let metrics_collector = Some(Arc::new(AccessPatternMetricsCollector::new()));
+        
         // Clone for the background task
         let history_clone = access_history.clone();
         let matrix_clone = correlation_matrix.clone();
         let max_history_clone = max_history;
+        let metrics_clone = metrics_collector.clone();
         
         // Start background processor
         let processor_handle = tokio::spawn(async move {
@@ -86,7 +93,8 @@ impl AccessPatternTracker {
                                 &history_clone,
                                 &matrix_clone,
                                 &mut batch,
-                                max_history_clone
+                                max_history_clone,
+                                &metrics_clone
                             ).await;
                         }
                     }
@@ -97,7 +105,8 @@ impl AccessPatternTracker {
                                 &history_clone,
                                 &matrix_clone,
                                 &mut batch,
-                                max_history_clone
+                                max_history_clone,
+                                &metrics_clone
                             ).await;
                         }
                     }
@@ -111,6 +120,7 @@ impl AccessPatternTracker {
             max_history,
             event_sender,
             processor_handle: Some(processor_handle),
+            metrics_collector,
         }
     }
 
@@ -172,10 +182,24 @@ impl AccessPatternTracker {
         correlation_matrix: &Arc<DashMap<String, Vec<AccessCorrelation>>>,
         batch: &mut Vec<CacheAccessEvent>,
         max_history: usize,
+        metrics_collector: &Option<Arc<AccessPatternMetricsCollector>>,
     ) {
         let mut history_guard = history.lock().await;
         
         for event in batch.drain(..) {
+            // Record metrics if collector is available
+            if let Some(ref collector) = metrics_collector {
+                // Map cache type to collection ID for metrics
+                let collection_id = format!("cache_{:?}", event.cache_type);
+                collector.record_access(
+                    event.key.clone(),
+                    collection_id,
+                    0, // size_bytes - would need to be passed in event
+                    0.0, // latency_ms - would need to be measured
+                    true, // cache_hit - assume true for now
+                ).await;
+            }
+            
             // Update followed_by for recent accesses
             let history_len = history_guard.len();
             let update_count = history_len.min(3);
@@ -277,6 +301,11 @@ impl AccessPatternTracker {
     pub async fn is_frequently_accessed(&self, key: &str, threshold: usize) -> bool {
         let history = self.access_history.lock().await;
         history.iter().filter(|r| r.key == key).count() >= threshold
+    }
+    
+    /// Get the metrics collector for registration with unified framework
+    pub fn metrics_collector(&self) -> Option<Arc<AccessPatternMetricsCollector>> {
+        self.metrics_collector.clone()
     }
 }
 

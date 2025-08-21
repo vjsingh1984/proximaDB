@@ -257,7 +257,7 @@ impl StorageEngine {
         let vector_ref = &record.vector[..];
         let vector_size = std::mem::size_of_val(vector_ref) + std::mem::size_of::<VectorRecord>();
         let start = std::time::Instant::now();
-        let vector_id = record.id.as_ref().map(|s| s.as_str());
+        let vector_id = record.id.as_ref().map(|s| s.as_deref());
         
         tracing::debug!("🔄 Starting write operation for vector {} in collection {}, vector_dim={}, size_bytes={}", 
                        vector_id, collection_id, vector_ref.len(), vector_size);
@@ -484,7 +484,7 @@ impl StorageEngine {
         for collection in &collections {
             let collection_id = &collection.id;
             let collection_name = collection.config.as_ref()
-                .map(|c| c.name.as_str())
+                .map(|c| c.name.as_deref())
                 ;
             
             // Storage assignment is now part of collection metadata
@@ -797,7 +797,7 @@ impl StorageEngine {
 
         // Use existing write method for each record to ensure consistency
         for (index, record) in records.iter().enumerate() {
-            let record_id = record.id.as_str().to_string();
+            let record_id = record.id.as_deref().to_string();
             tracing::debug!(
                 "📝 Processing record {}/{}: vector_id={}, collection_id={}",
                 index + 1,
@@ -866,10 +866,10 @@ impl StorageEngine {
         // Clear metadata store by deleting all collections
         for _collection in collections {
             // TODO: Use SharedServices for metadata operations
-            // if let Err(e) = self.metadata_store.delete_collection(&collection.id.as_str()).await {
+            // if let Err(e) = self.metadata_store.delete_collection(&collection.id.as_deref()).await {
             //     tracing::warn!(
             //         "Failed to delete collection metadata {}: {}",
-            //         collection.id.as_str(),
+            //         collection.id.as_deref(),
             //         e
             //     );
             // }

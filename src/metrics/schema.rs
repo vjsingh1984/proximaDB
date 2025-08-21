@@ -212,7 +212,7 @@ impl CollectionMetrics {
         }
         
         let mut sorted = latencies.to_vec();
-        sorted.sort_by(|a, b| a.partial_cmp(b));
+        sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
         
         let len = sorted.len();
         // Calculate percentile indices correctly

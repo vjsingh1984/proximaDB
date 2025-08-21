@@ -100,7 +100,7 @@ impl MmappedMetadata {
         serializer: Arc<dyn MetadataSerializer>,
     ) -> Result<Self, ProximaDBError> {
         if mmap.len() < std::mem::size_of::<CacheFileHeader>() {
-            return Err(ProximaDBError::InvalidArgument(
+            return Err(ProximaDBError::InvalidInput(
                 "Cache file too small for header".into()
             ));
         }
@@ -108,7 +108,7 @@ impl MmappedMetadata {
         let header = *from_bytes::<CacheFileHeader>(&mmap[0..std::mem::size_of::<CacheFileHeader>()]);
         
         if !header.is_valid() {
-            return Err(ProximaDBError::InvalidArgument(
+            return Err(ProximaDBError::InvalidInput(
                 "Invalid cache file header".into()
             ));
         }
@@ -139,7 +139,7 @@ impl MmappedMetadata {
             let payload_end = payload_start + self.header.metadata_size as usize;
             
             if payload_end > self.mmap.len() {
-                return Err(ProximaDBError::InvalidArgument(
+                return Err(ProximaDBError::InvalidInput(
                     "Cache file payload extends beyond file size".into()
                 ));
             }

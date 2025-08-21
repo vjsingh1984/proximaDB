@@ -577,13 +577,12 @@ impl NovaUnifiedEngine {
                 cache_size_mb: nova_config.caching_config.cache_size_mb,
                 cache_levels: nova_config.caching_config.cache_levels,
                 prefetch_strategy: nova_config.caching_config.prefetch_strategy,
+                enable_cache_warming: false, // Default to false for now
             },
         };
         
-        // Progressive search optimization
-        config.distance_config.progressive_search.enable_progressive = nova_config.progressive_search_config.enable_progressive;
-        config.distance_config.progressive_search.early_termination.enable_quality_based = nova_config.progressive_search_config.enable_early_termination;
-        config.distance_config.progressive_search.early_termination.confidence_threshold = nova_config.progressive_search_config.confidence_threshold;
+        // Progressive search optimization is now handled by the engine directly
+        // Distance computation configuration is managed through the compute module
         
         config
     }

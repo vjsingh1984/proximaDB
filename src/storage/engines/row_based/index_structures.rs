@@ -8,7 +8,7 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use uuid::Uuid;
 
-use crate::storage::engines::row_based::bloom_filter::{SstableBloomFilter, BloomFilterConfig as SstBloomConfig};
+use crate::core::bloom::{SstableBloomFilter, BloomFilterConfig as SstBloomConfig};
 use super::block_structures::{BlockLocation, RowBasedDataBlock};
 
 /// Row-based ID indexing with multiple strategies
@@ -418,7 +418,7 @@ impl RowBasedIdIndex {
                     crate::core::config::BloomFilterConfig::default(),
                     vec![],
                     vec![],
-                    crate::storage::engines::row_based::bloom_filter::BloomFilterStats::default(),
+                    crate::core::bloom::BloomFilterStats::default(),
                 ))
             } else {
                 None

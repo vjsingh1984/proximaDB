@@ -19,8 +19,7 @@ use crate::core::VectorRecord;
 use crate::storage::memtable::core::MemtableConfig;
 use crate::storage::memtable::implementations::global_partitioned::GlobalPartitionedMemtable;
 use crate::storage::persistence::write_ahead_log::{BatchId, WALOperation, WALStats};
-use crate::core::bloom::{BloomFilterConfig, BloomStrategy, BloomFilterStrategy};
-use crate::storage::engines::sst::CompositeBloomFilter;
+use crate::core::bloom::{BloomFilterConfig, BloomStrategy, BloomFilterStrategy, CompositeBloomFilter};
 
 /// Write Buffer-specific vector batch for tracking deserialized data
 #[derive(Debug, Clone)]
@@ -119,7 +118,7 @@ impl BatchCoordinator {
         // Update vector index
         for (index, vector_record) in batch.vector_records.iter().enumerate() {
             self.vector_index.insert(
-                vector_record.id.as_str().to_string(),
+                vector_record.id.as_deref().to_string(),
                 (collection_id.to_string(), batch_id.clone(), index),
             );
         }
@@ -167,7 +166,7 @@ impl BatchCoordinator {
             let mut cleared_batch_records = Vec::new();
             for batch in collection_batches.values() {
                 if batch.is_flushed {
-                    cleared_batch_records.extend(batch.vector_records.iter().map(|v| v.id.as_str().to_string()));
+                    cleared_batch_records.extend(batch.vector_records.iter().map(|v| v.id.as_deref().to_string()));
                 }
             }
             
@@ -264,7 +263,7 @@ impl WALBehaviorWrapper {
         );
 
         // Single point of deserialization - leverage this for ALL strategies
-        let vector_records = match operation.payload_format.as_str() {
+        let vector_records = match operation.payload_format.as_deref() {
             "avro" => {
                 // Use centralized Avro deserializer
                 // Use the avro serializer for deserialization
@@ -598,7 +597,7 @@ impl WALBehaviorWrapper {
 
     fn get_operation_type(&self, operation: &WALOperation) -> u8 {
         // Map operation types to numeric codes
-        match operation.operation_type.as_str() {
+        match operation.operation_type.as_deref() {
             "upsert_batch" => 1,
             "delete_batch" => 2,
             _ => 0, // Unknown operation
@@ -1074,7 +1073,7 @@ mod tests {
 
         // Verify vector data integrity
         let found_vectors: Vec<_> = all_vectors.iter()
-            .filter(|(_, record)| record.id.as_str() == vector_id)
+            .filter(|(_, record)| record.id.as_deref() == vector_id)
             .collect();
         assert!(!found_vectors.is_empty());
     }

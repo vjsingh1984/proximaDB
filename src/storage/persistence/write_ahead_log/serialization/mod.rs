@@ -44,7 +44,7 @@ impl SerializationFormat {
     
     /// Parse from string
     pub fn from_str(s: &str) -> Result<Self> {
-        match s.to_lowercase().as_str() {
+        match s.to_lowercase().as_deref() {
             "proto" | "protobuf" | "protocol-buffers" => Ok(Self::ProtocolBuffers),
             "bincode" => Ok(Self::Bincode),
             "avro" => Ok(Self::Avro),
@@ -95,9 +95,9 @@ mod tests {
 
     #[test]
     fn test_format_string_representation() {
-        assert_eq!(SerializationFormat::ProtocolBuffers.as_str(), "proto");
-        assert_eq!(SerializationFormat::Bincode.as_str(), "bincode");
-        assert_eq!(SerializationFormat::Avro.as_str(), "avro");
+        assert_eq!(SerializationFormat::ProtocolBuffers.as_deref(), "proto");
+        assert_eq!(SerializationFormat::Bincode.as_deref(), "bincode");
+        assert_eq!(SerializationFormat::Avro.as_deref(), "avro");
     }
 
     #[test]

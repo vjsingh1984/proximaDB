@@ -76,7 +76,7 @@ pub fn proto_to_service(proto_record: &ProtoVectorRecord, collection_id: &str) -
         timestamp: (proto_record.timestamp as i64) * 1_000_000, // Convert seconds to microseconds
         updated_at: Some(proto_record.updated_at.map(|v| (v as i64) * 1_000_000).unwrap_or_else(|| chrono::Utc::now().timestamp_micros())),
         expires_at: proto_record.expires_at.map(|v| (v as i64) * 1_000_000),
-        version: Some(proto_record.version.map(|v| v as i64)),
+        version: proto_record.version.map(|v| v as i64),
         // Note: similarity field removed - only exists on SearchVectorRecord
         }
 }
