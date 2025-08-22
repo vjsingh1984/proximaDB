@@ -671,6 +671,160 @@ graph TB
 └───────────────────────────────────────────────────────────────────┘
 ----
 
+=== Optimized Memory-Efficient HNSW Writer Design
+
+==== Current Implementation Analysis
+
+The current implementation stores in `HnswNode`:
+- `node_id`: 4 bytes
+- `row_location`: 4 bytes (page_id + offset)
+- `quantized_vector`: Variable (96 bytes for PQ8, 768 bytes for INT8, 3KB for FP32)
+- `edges`: Vec<(u32, f32)> - neighbors with distances
+
+**Memory Issue**: Even with quantization, storing vectors in memory during graph building is expensive.
+
+==== Proposed Optimized Design: ID-Only HNSW Graph
+
+[source,text]
+----
+┌─────────────── Optimized HNSW Writer Architecture ──────────────────┐
+│                                                                      │
+│  Core Insight: HNSW graph only needs IDs for connectivity           │
+│  Vectors can be read from disk on-demand during construction        │
+│                                                                      │
+│ ═════════════════════════════════════════════════════════════════   │
+│                                                                      │
+│  1. Minimal In-Memory HNSW Node Structure:                          │
+│  ─────────────────────────────────────────                          │
+│                                                                      │
+│  struct MinimalHnswNode {                                           │
+│      id: String,           // 32 bytes (UUID)                       │
+│      disk_location: u64,   // 8 bytes (file offset)                 │
+│      edges: Vec<u32>,      // 4 bytes per edge (node indices only)  │
+│      // NO VECTOR DATA!                                             │
+│  }                                                                   │
+│                                                                      │
+│  Memory per node:                                                   │
+│  • Small (M=48): 32 + 8 + (48×4) = 232 bytes (vs 3KB+ before!)    │
+│  • Large (M=16): 32 + 8 + (16×4) = 104 bytes (vs 3KB+ before!)    │
+│                                                                      │
+│ ═════════════════════════════════════════════════════════════════   │
+│                                                                      │
+│  2. Two-Phase Graph Construction:                                    │
+│  ──────────────────────────────────────                             │
+│                                                                      │
+│  Phase 1: Write vectors to disk + build ID map                      │
+│  ┌─────────────────────────────────────────────┐                   │
+│  │ For each vector:                            │                   │
+│  │   1. Write to disk → get offset             │                   │
+│  │   2. Store in HashMap:                      │                   │
+│  │      ID → (offset, quantized_sketch)        │                   │
+│  │   3. Optional: Keep binary sketch (24 bytes)│                   │
+│  └─────────────────────────────────────────────┘                   │
+│                                                                      │
+│  Phase 2: Build HNSW using disk reads                               │
+│  ┌─────────────────────────────────────────────┐                   │
+│  │ For each node:                              │                   │
+│  │   1. Get candidate neighbors                │                   │
+│  │   2. Batch load vectors from disk           │                   │
+│  │   3. Compute distances                      │                   │
+│  │   4. Store only edge indices                │                   │
+│  └─────────────────────────────────────────────┘                   │
+│                                                                      │
+│ ═════════════════════════════════════════════════════════════════   │
+│                                                                      │
+│  3. Smart Caching Strategy During Construction:                     │
+│  ──────────────────────────────────────────────                     │
+│                                                                      │
+│  struct HnswConstructionCache {                                     │
+│      // LRU cache of recently accessed vectors                      │
+│      vector_cache: LruCache<String, Vec<f32>>,  // 1000 entries    │
+│      // Binary sketches for fast pre-filtering                      │
+│      sketch_cache: HashMap<String, [u8; 24]>,   // All nodes       │
+│      // Disk reader with buffering                                  │
+│      disk_reader: BufferedReader,                                   │
+│  }                                                                   │
+│                                                                      │
+│ ═════════════════════════════════════════════════════════════════   │
+│                                                                      │
+│  4. Memory Comparison (1M vectors, 768-dim):                        │
+│  ────────────────────────────────────────────                       │
+│                                                                      │
+│  Current Implementation:                                            │
+│  • FP32 vectors: 1M × 3KB = 3GB                                    │
+│  • INT8 vectors: 1M × 768B = 768MB                                 │
+│  • PQ8 vectors: 1M × 96B = 96MB                                    │
+│  • Graph edges: 1M × 16 × 8B = 128MB                               │
+│                                                                      │
+│  Optimized Implementation:                                          │
+│  • ID + location: 1M × 40B = 40MB                                  │
+│  • Graph edges: 1M × 16 × 4B = 64MB                                │
+│  • LRU cache: 1000 × 3KB = 3MB                                     │
+│  • Binary sketches: 1M × 24B = 24MB (optional)                     │
+│  ► Total: 131MB (vs 3.2GB - 96% reduction!)                        │
+│                                                                      │
+│ ═════════════════════════════════════════════════════════════════   │
+│                                                                      │
+│  5. Search Path with ID-Only Graph:                                 │
+│  ──────────────────────────────────                                 │
+│                                                                      │
+│  Search(query_vector, k=10):                                        │
+│    1. Navigate HNSW graph (IDs only)                               │
+│    2. Collect candidate IDs (e.g., 100 IDs)                        │
+│    3. Batch load vectors for candidates                            │
+│    4. Compute exact distances                                      │
+│    5. Apply metadata filters                                       │
+│    6. Return top-k results                                         │
+│                                                                      │
+│  Benefits:                                                          │
+│  • Graph navigation uses only IDs (fast)                           │
+│  • Vectors loaded only for final candidates                        │
+│  • Metadata filtering happens late (after HNSW)                    │
+│  • Memory footprint minimal                                        │
+│                                                                      │
+│ ═════════════════════════════════════════════════════════════════   │
+│                                                                      │
+│  6. Row Group Co-location Strategy:                                │
+│  ───────────────────────────────────                               │
+│                                                                      │
+│  During compaction, reorganize by HNSW connectivity:               │
+│                                                                      │
+│  For each connected component in graph:                            │
+│    1. Group connected nodes together                               │
+│    2. Write to same row group (up to 1000 vectors)                │
+│    3. Create row group bloom filter                                │
+│    4. Result: Graph neighbors are disk neighbors!                  │
+│                                                                      │
+│  Lookup efficiency:                                                 │
+│  • HNSW returns 100 candidate IDs                                  │
+│  • These map to only 1-3 row groups (co-located!)                 │
+│  • Single disk read gets all candidates                            │
+│  • Bloom filter ensures no wasted reads                            │
+│                                                                      │
+│ ═════════════════════════════════════════════════════════════════   │
+│                                                                      │
+│  7. Implementation Recommendations:                                 │
+│  ─────────────────────────────────────                             │
+│                                                                      │
+│  a) Use HashMap<String, DiskLocation> during build                 │
+│  b) Optional: Keep binary sketches for pre-filtering               │
+│  c) Batch disk reads (read 100 vectors at once)                   │
+│  d) Use memory-mapped files for zero-copy access                   │
+│  e) Stream large graphs (process in chunks)                        │
+│  f) Write graph structure separately from vectors                  │
+│                                                                      │
+└──────────────────────────────────────────────────────────────────┘
+----
+
+==== Benefits of ID-Only HNSW Design
+
+1. **Memory Reduction**: 96% less memory during construction (131MB vs 3.2GB for 1M vectors)
+2. **Scalability**: Can handle 100M+ vectors with only ~13GB RAM
+3. **Disk Efficiency**: Co-located neighbors = single disk read
+4. **Flexibility**: Can change vector representation without rebuilding graph
+5. **Cache Friendly**: Only hot vectors stay in memory
+6. **Metadata Filtering**: Applied after HNSW navigation, no graph pollution
+
 === HNSW Integration Strategy
 
 ==== Build-Time HNSW Graph Construction
