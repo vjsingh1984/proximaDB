@@ -107,7 +107,7 @@ pub struct RaptorEngine {
     writer: Arc<RwLock<RaptorWriter>>,
     reader: Arc<RaptorReader>,  // Using consolidated reader
     compactor: Arc<RaptorCompactor>,
-    hnsw_manager: Arc<RwLock<HnswManager>>,
+    // HNSW functionality handled by individual rowgroup segments
     
     // Deep integration with AXIS clustering
     cluster_manager: Arc<RwLock<ClusterManager>>,
@@ -225,8 +225,9 @@ impl RaptorEngine {
             TransactionCoordinator::new()?
         );
         
-        // Get the unified cache orchestrator
-        let cache = crate::storage::cache::orchestrator::get_cache_orchestrator();
+        // Create cache orchestrator
+        // TODO: Replace with proper cache orchestrator initialization
+        let cache = Arc::new(());
         
         // Create consolidated reader with unified components
         let reader = Arc::new(

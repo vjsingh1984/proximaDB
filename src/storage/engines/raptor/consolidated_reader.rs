@@ -951,7 +951,7 @@ impl RaptorReader {
                 );
                 
                 vec![vec![0.0f32; centroids.len()]; centroids.len()]
-            }
+            };
             
             // Create cluster stats from rowgroup metadata
             let mut cluster_stats = Vec::new();

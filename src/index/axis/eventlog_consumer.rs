@@ -27,6 +27,7 @@ use crate::index::axis::eventlog::{
 use crate::index::axis::AxisManager;
 use crate::storage::persistence::filesystem::FilesystemFactory;
 use crate::proto::proximadb::Collection;
+use crate::storage::engines::raptor::consolidated_reader::RaptorReader;
 
 /// AXIS EventLog consumer configuration
 #[derive(Debug, Clone)]
@@ -930,7 +931,7 @@ impl AxisEventLogConsumer {
                                 "raptor".to_string()
                             ));
                             
-                            let reader = RaptorUnifiedReader::new(
+                            let reader = RaptorReader::new(
                                 zero_copy_fs,
                                 transaction_coordinator,
                                 config,
@@ -952,7 +953,7 @@ impl AxisEventLogConsumer {
                                 let num_rows = batch.num_rows();
                                 for row_idx in 0..num_rows {
                                     let record = VectorRecord {
-                                        id: Some(format!("raptor_{}_{}", file_path, row_idx)),
+                                        id: format!("raptor_{}_{}", file_path, row_idx),
                                         vector: vec![0.0; 128], // Placeholder vector
                                         quantized_vector: None,
                                         metadata: Vec::new(),

@@ -3,6 +3,9 @@
 //! This module defines all magic numbers and configuration constants used across
 //! the RAPTOR storage engine to ensure consistency and maintainability.
 
+/// RAPTOR file magic constant for backward compatibility
+pub const RAPTOR_MAGIC: &[u8] = b"RPTR";
+
 /// File format and version constants
 pub mod file_format {
     /// RAPTOR file magic constant (4 bytes)

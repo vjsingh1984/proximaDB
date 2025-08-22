@@ -19,7 +19,7 @@ use crate::storage::persistence::filesystem::{FileSystem, FilesystemFactory};
 use crate::storage::engines::common::fastlanes_encoding::{FastLanesEncoder, FastLanesScheme};
 use crate::core::hardware_capabilities::HardwareCapabilities;
 use crate::core::memory::pool::VectorMemoryPool;
-use crate::proto::proximadb::VectorRecord;
+use crate::proto::proximadb::{VectorRecord, metadata_value};
 
 // Import AXIS clustering for reuse
 use crate::index::axis::clustering::{
@@ -1536,11 +1536,11 @@ impl RaptorWriter {
                     Some(val) => {
                         // Serialize metadata value to bytes
                         match val {
-                            crate::proto::metadata_value::Value::StringValue(s) => s.as_bytes().to_vec(),
-                            crate::proto::metadata_value::Value::IntValue(i) => i.to_le_bytes().to_vec(),
-                            crate::proto::metadata_value::Value::FloatValue(f) => f.to_le_bytes().to_vec(),
-                            crate::proto::metadata_value::Value::BoolValue(b) => vec![if *b { 1 } else { 0 }],
-                            crate::proto::metadata_value::Value::ListValue(list) => {
+                            metadata_value::Value::StringValue(s) => s.as_bytes().to_vec(),
+                            metadata_value::Value::IntValue(i) => i.to_le_bytes().to_vec(),
+                            metadata_value::Value::FloatValue(f) => f.to_le_bytes().to_vec(),
+                            metadata_value::Value::BoolValue(b) => vec![if *b { 1 } else { 0 }],
+                            metadata_value::Value::ListValue(list) => {
                                 // Serialize list as length-prefixed items
                                 let mut bytes = Vec::new();
                                 bytes.extend(&(list.values.len() as u32).to_le_bytes());
@@ -1550,7 +1550,7 @@ impl RaptorWriter {
                                 }
                                 bytes
                             },
-                            crate::proto::metadata_value::Value::MapValue(map) => {
+                            metadata_value::Value::MapValue(map) => {
                                 // Serialize map as length-prefixed key-value pairs
                                 let mut bytes = Vec::new();
                                 bytes.extend(&(map.fields.len() as u32).to_le_bytes());

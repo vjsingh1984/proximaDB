@@ -130,11 +130,11 @@ impl Default for RaptorConfig {
             // - No size threshold - compact immediately
             // - Single level (L0) to avoid graph fragmentation
             // - Supports 100GB+ files through columnar streaming
-            compaction_threshold_files: io::COMPACTION_THRESHOLD_FILES,
-            compaction_min_size_mb: io::COMPACTION_MIN_SIZE_MB,
+            compaction_threshold_files: constants::io::COMPACTION_THRESHOLD_FILES,
+            compaction_min_size_mb: constants::io::COMPACTION_MIN_SIZE_MB,
             enable_clustering_aware_compaction: true,
             compaction_config: Some(CompactionConfig {
-                max_level: io::MAX_LSM_LEVEL,
+                max_level: constants::io::MAX_LSM_LEVEL,
                 l0_trigger_file_count: constants::io::COMPACTION_THRESHOLD_FILES,
                 target_file_size: constants::io::TARGET_FILE_SIZE,
             }),
