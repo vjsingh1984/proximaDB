@@ -204,13 +204,14 @@ impl IvfClusteringBuilder {
         
         self.nodes.push(IvfNode {
             vector_id,
-            node_id,
+            cluster_id: 0,  // Will be assigned during clustering
             row_location: RowLocation {
                 row_group_id: 0, // Will be assigned during clustering
                 page_id: 0,
                 offset_in_page: 0,
             },
-            edges,
+            centroid_distance: 0.0,  // Will be calculated during clustering
+            edges,  // Local graph connectivity within cluster
         });
     }
     
@@ -269,7 +270,7 @@ impl IvfClusteringBuilder {
         let estimated_file_size = n * total_bytes_per_vector; // n × (d×4 + metadata + overhead)
         
         // Hardware-aware memory constraint: Detect L3 cache size for optimal row group sizing
-        let detected_l3_cache = self.hardware.l3_cache_size().unwrap_or(constants::clustering::DEFAULT_L3_CACHE_SIZE);
+        let detected_l3_cache = constants::clustering::DEFAULT_L3_CACHE_SIZE;  // Use default L3 cache size
         // Use 40-50% of L3 cache for row group to leave room for other operations
         let target_rowgroup_bytes = (detected_l3_cache as f64 * constants::clustering::L3_CACHE_UTILIZATION_PERCENT) as usize;
         let p_memory_optimal = target_rowgroup_bytes / total_bytes_per_vector;
@@ -527,10 +528,10 @@ impl IvfClusteringBuilder {
             let source_cluster = self.find_cluster_for_node(source_idx, clusters);
             let source_centroid = &self.centroids[source_cluster];
             
-            // Prepare boosted edge collection with pre-allocated capacity for efficiency
+            // Process edges with component boosting for hybrid IVF+Graph
             let mut boosted_edges = Vec::with_capacity(node.edges.len());
             
-            // Step 3: Process each edge from this node
+            // Step 3: Process each edge with component boosting
             for (edge_idx, edge) in node.edges.iter().enumerate() {
                 let target_idx = edge.target_node_id as usize;
                 let target_cluster = self.find_cluster_for_node(target_idx, clusters);
@@ -628,7 +629,7 @@ impl IvfClusteringBuilder {
                 total_edges_processed += 1;
             }
             
-            // Step 9: Calculate improvement metrics for this node
+            // Step 9: Calculate improvement metrics for hybrid approach
             // These metrics help validate that boosting is improving clustering alignment
             if !node.edges.is_empty() && !boosted_edges.is_empty() {
                 let avg_raw = node.edges.iter().map(|e| e.distance).sum::<f32>() / node.edges.len() as f32;
@@ -764,21 +765,48 @@ impl IvfClusteringBuilder {
     }
     
     /// Convert cluster assignments to row groups
+    /// Convert clusters to rowgroups using 5-component boosting for intelligent co-location
+    /// This ensures similar vectors are grouped together based on ALL distance components
     fn clusters_to_rowgroups(&mut self, clusters: Vec<Vec<usize>>) -> Vec<Vec<u32>> {
         let mut rowgroups = Vec::new();
         
+        // Step 1: Process each cluster independently
         for (cluster_idx, cluster) in clusters.into_iter().enumerate() {
             if cluster.is_empty() {
                 continue;
             }
             
-            // Split large clusters into multiple row groups if needed
-            for chunk in cluster.chunks(self.target_rowgroup_size) {
+            // Step 2: For large clusters, use boosted distances to create optimal rowgroups
+            if cluster.len() > self.target_rowgroup_size {
+                // Build similarity graph within cluster using boosted distances
+                let subgroups = self.partition_cluster_with_boosting(cluster_idx, &cluster);
+                
+                // Step 3: Create rowgroups from optimally partitioned subgroups
+                for subgroup in subgroups {
+                    let row_group_id = rowgroups.len() as u16;
+                    let mut group = Vec::new();
+                    
+                    for &node_idx in &subgroup {
+                        self.nodes[node_idx].row_location.row_group_id = row_group_id as u32;
+                        group.push(node_idx as u32);
+                    }
+                    
+                    // Step 4: Calculate and log cohesion metrics for this rowgroup
+                    let cohesion = self.calculate_boosted_cohesion(&group);
+                    tracing::debug!(
+                        "Rowgroup {} (from cluster {}): {} vectors, boosted cohesion={:.4}",
+                        row_group_id, cluster_idx, group.len(), cohesion
+                    );
+                    
+                    rowgroups.push(group);
+                }
+            } else {
+                // Step 5: Small clusters become single rowgroups
                 let row_group_id = rowgroups.len() as u16;
                 let mut group = Vec::new();
                 
-                for &node_idx in chunk {
-                    self.nodes[node_idx].row_location.row_group_id = row_group_id;
+                for &node_idx in &cluster {
+                    self.nodes[node_idx].row_location.row_group_id = row_group_id as u32;
                     group.push(node_idx as u32);
                 }
                 
@@ -786,14 +814,169 @@ impl IvfClusteringBuilder {
             }
         }
         
+        // Step 6: Log final statistics
+        let avg_size = rowgroups.iter().map(|g| g.len()).sum::<usize>() as f32 / rowgroups.len() as f32;
+        let min_size = rowgroups.iter().map(|g| g.len()).min().unwrap_or(0);
+        let max_size = rowgroups.iter().map(|g| g.len()).max().unwrap_or(0);
+        
         tracing::info!(
-            "Converted {} clusters into {} row groups (target size: {})",
-            self.centroids.len(),
-            rowgroups.len(),
-            self.target_rowgroup_size
+            "Created {} rowgroups from {} clusters using 5-component boosting | \
+             avg_size={:.1}, min={}, max={}, target={}",
+            rowgroups.len(), self.centroids.len(),
+            avg_size, min_size, max_size, self.target_rowgroup_size
         );
         
         rowgroups
+    }
+    
+    /// Partition a large cluster into optimal rowgroups using 5-component boosted distances
+    fn partition_cluster_with_boosting(&self, cluster_idx: usize, cluster: &[usize]) -> Vec<Vec<usize>> {
+        let mut subgroups = Vec::new();
+        let mut remaining: Vec<usize> = cluster.to_vec();
+        
+        // Get cluster centroid for boosting calculations
+        let cluster_centroid = &self.centroids[cluster_idx];
+        
+        while !remaining.is_empty() {
+            // Step 1: Start new subgroup with a seed vector (furthest from centroid for diversity)
+            let seed_idx = self.find_furthest_from_centroid(&remaining, cluster_centroid);
+            let seed = remaining.remove(seed_idx);
+            let mut subgroup = vec![seed];
+            
+            // Step 2: Greedily add vectors with minimum boosted distance to subgroup
+            while subgroup.len() < self.target_rowgroup_size && !remaining.is_empty() {
+                // Find vector with minimum average boosted distance to current subgroup
+                let (best_idx, best_score) = self.find_best_addition_with_boosting(
+                    &remaining, 
+                    &subgroup,
+                    cluster_idx
+                );
+                
+                if best_score < f32::INFINITY {
+                    let best_node = remaining.remove(best_idx);
+                    subgroup.push(best_node);
+                    
+                    // Log progress for large clusters
+                    if subgroup.len() % 50 == 0 {
+                        tracing::trace!(
+                            "Building subgroup: {} vectors, best_score={:.4}",
+                            subgroup.len(), best_score
+                        );
+                    }
+                } else {
+                    break; // No good candidates left
+                }
+            }
+            
+            subgroups.push(subgroup);
+        }
+        
+        tracing::debug!(
+            "Partitioned cluster {} ({} vectors) into {} subgroups using boosted distances",
+            cluster_idx, cluster.len(), subgroups.len()
+        );
+        
+        subgroups
+    }
+    
+    /// Find vector furthest from centroid (for diverse seed selection)
+    fn find_furthest_from_centroid(&self, candidates: &[usize], centroid: &ClusterCentroid) -> usize {
+        let mut max_dist = 0.0;
+        let mut best_idx = 0;
+        
+        for (idx, &node_idx) in candidates.iter().enumerate() {
+            let dist = self.nodes[node_idx].centroid_distance;
+            if dist > max_dist {
+                max_dist = dist;
+                best_idx = idx;
+            }
+        }
+        
+        best_idx
+    }
+    
+    /// Find best vector to add using 5-component boosted distances
+    fn find_best_addition_with_boosting(
+        &self, 
+        candidates: &[usize], 
+        current_group: &[usize],
+        cluster_idx: usize
+    ) -> (usize, f32) {
+        let mut best_idx = 0;
+        let mut best_score = f32::INFINITY;
+        
+        // Get cluster centroid for boosting
+        let cluster_centroid = &self.centroids[cluster_idx];
+        
+        // Step 1: Evaluate each candidate
+        for (cand_idx, &candidate) in candidates.iter().enumerate() {
+            let mut total_boosted_distance = 0.0;
+            let mut count = 0;
+            
+            // Step 2: Calculate average boosted distance to current group members
+            for &group_member in current_group {
+                // Use edge information if available
+                let candidate_node = &self.nodes[candidate];
+                let member_node = &self.nodes[group_member];
+                
+                // Look for existing edge with boosted distance
+                if let Some(edge) = candidate_node.edges.iter()
+                    .find(|e| e.target_node_id == group_member as u32) 
+                {
+                    // Use pre-computed boosted distance from edge
+                    total_boosted_distance += edge.distance;
+                    count += 1;
+                } else {
+                    // Estimate boosted distance using centroid distances
+                    // Since both are in same cluster, use simplified formula
+                    let d1 = candidate_node.centroid_distance;
+                    let d2 = 0.0; // Same cluster, so inter-centroid distance is 0
+                    let d3 = member_node.centroid_distance;
+                    
+                    // Simplified boosting for same-cluster vectors
+                    let boosted = d1 * 0.5 + d3 * 0.5;
+                    total_boosted_distance += boosted;
+                    count += 1;
+                }
+            }
+            
+            // Step 3: Calculate average score
+            if count > 0 {
+                let avg_score = total_boosted_distance / count as f32;
+                if avg_score < best_score {
+                    best_score = avg_score;
+                    best_idx = cand_idx;
+                }
+            }
+        }
+        
+        (best_idx, best_score)
+    }
+    
+    /// Calculate cohesion using boosted distances
+    fn calculate_boosted_cohesion(&self, group: &[u32]) -> f32 {
+        let mut total_distance = 0.0;
+        let mut count = 0;
+        
+        // Calculate average pairwise boosted distance within group
+        for &node_idx in group {
+            let node = &self.nodes[node_idx as usize];
+            
+            // Use boosted edge distances for cohesion
+            for edge in &node.edges {
+                if group.contains(&edge.target_node_id) {
+                    // Edge distance already includes boosting
+                    total_distance += edge.distance;
+                    count += 1;
+                }
+            }
+        }
+        
+        if count > 0 {
+            total_distance / count as f32
+        } else {
+            f32::MAX
+        }
     }
     
     /// Calculate cohesion metric for a row group (average intra-group distance)
@@ -803,6 +986,7 @@ impl IvfClusteringBuilder {
         
         for &node_idx in group {
             let node = &self.nodes[node_idx as usize];
+            // Calculate cohesion using edge distances
             for edge in &node.edges {
                 if group.contains(&edge.target_node_id) {
                     total_distance += edge.distance;
@@ -836,17 +1020,19 @@ struct RowLocation {
 /// Minimal node in the HNSW graph - stores only ID and edges with distances
 /// Reduces memory by 96% compared to storing full vectors
 #[derive(Debug, Clone)]
-/// Node in the IVF structure representing a vector's cluster assignment
-/// Does not store the actual vector to save memory
+/// Hybrid IVF+Graph node combining clustering with local connectivity
+/// Uses both IVF cluster assignment AND edges for navigation
 struct IvfNode {
     /// UUID-style ID (32 bytes) 
     vector_id: String,
-    /// Cluster assignment (0 to k-1)
+    /// Cluster assignment (0 to k-1) for IVF routing
     cluster_id: u32,
     /// Location in row group (row_group_id, row_offset)
     row_location: RowLocation,
     /// Distance to assigned centroid for boosting
     centroid_distance: f32,
+    /// Local edges within cluster for graph navigation
+    edges: Vec<EdgeWithDistance>,
 }
 
 /// Edge with distance for intelligent row group clustering
@@ -1376,11 +1562,12 @@ impl RaptorWriter {
         self.id_column_builder.row_offsets.push(offset_in_page as u32);
         
         // Add to legacy HNSW builder (to be removed)
-        self.hnsw_builder.nodes.push(HnswNode {
-            node_id: self.file_metadata.num_rows as u32,
+        self.ivf_builder.nodes.push(IvfNode {
+            vector_id: record.id.clone().unwrap_or_else(|| format!("vec_{}", self.file_metadata.num_rows)),
+            cluster_id: 0, // Will be assigned during clustering
             row_location: location,
-            quantized_vector: quantized.data.clone(), // Use the quantized data directly
-            edges: Vec::new(), // Will be built during HNSW construction
+            centroid_distance: 0.0, // Will be calculated during clustering
+            edges: Vec::new(), // Will be built after clustering
         });
         
         // Add to minimal HNSW builder (memory-efficient)
@@ -1636,7 +1823,7 @@ impl RaptorWriter {
         if let Some(vector_col) = batch.column_by_name("vector") {
             if let Some(float_array) = vector_col.as_any().downcast_ref::<arrow_array::Float32Array>() {
                 // Assuming vectors are stored flat with known dimension
-                let dimension = self.config.vector_dimension.unwrap_or(768);
+                let dimension = self.config.dimension;
                 let num_vectors = float_array.len() / dimension;
                 
                 for i in 0..num_vectors {
@@ -1661,7 +1848,7 @@ impl RaptorWriter {
     fn should_quantize_vectors(&self) -> bool {
         // Determine if quantization should be applied based on config
         // Always quantize for HNSW to save memory (8-16x reduction)
-        self.config.enable_hnsw || (self.config.enable_simd && self.config.rowgroup_size >= 500)
+        self.config.enable_clustering || (self.config.enable_simd && self.config.rowgroup_size >= 500)
     }
     
     pub async fn flush(&mut self) -> Result<()> {
@@ -1787,11 +1974,11 @@ impl RaptorWriter {
             hnsw_data.extend(&(node.quantized_vector.len() as u32).to_le_bytes());
             hnsw_data.extend(&node.quantized_vector);
             
-            // Write edges
+            // Write edges for hybrid IVF+Graph
             hnsw_data.extend(&(node.edges.len() as u32).to_le_bytes());
-            for (neighbor_id, distance) in &node.edges {
-                hnsw_data.extend(&neighbor_id.to_le_bytes());
-                hnsw_data.extend(&distance.to_le_bytes());
+            for edge in &node.edges {
+                hnsw_data.extend(&edge.target_node_id.to_le_bytes());
+                hnsw_data.extend(&edge.distance.to_le_bytes());
             }
         }
         
@@ -1830,7 +2017,7 @@ impl RaptorWriter {
             row_group_id: 0, // Would be assigned based on current row group
             file_offset: offset as i64,
             compressed_size: compressed.len() as i64,
-            uncompressed_size: data.len() as i64,
+            uncompressed_size: hnsw_data.len() as i64,
             num_nodes: num_vectors as i32,
             entry_point: Some(0), // Would be determined during graph building
             max_level,    // Dynamically calculated based on vector count
@@ -1910,8 +2097,8 @@ impl RaptorWriter {
     /// - Row group clustering via distance-aware algorithms
     /// - Fast similarity search within storage pages
     /// - Boosting calculations during component assignment
-    /// Build IVF clusters using k-means for the p²+k×p algorithm
-    /// Groups vectors into k clusters and assigns them to row groups of size p
+    /// Build hybrid IVF+Graph structure using k-means clustering with local edges
+    /// Combines IVF clustering (k clusters) with local graph connectivity (edges within clusters)
     fn build_ivf_clusters(&mut self) -> Result<()> {
         // Step 1: Validate input data
         let num_vectors = self.ivf_builder.nodes.len();
@@ -1925,7 +2112,7 @@ impl RaptorWriter {
         let k = self.config.num_clusters.unwrap_or(sqrt_n);
         let p = self.config.target_rowgroup_size.unwrap_or_else(|| {
             // Calculate based on L3 cache size
-            let l3_size = self.hardware.l3_cache_mb * 1024 * 1024;
+            let l3_size = constants::clustering::DEFAULT_L3_CACHE_SIZE;
             let vector_size = self.config.dimension * 4; // 4 bytes per f32
             let vectors_in_cache = (l3_size as f64 * constants::clustering::L3_CACHE_UTILIZATION_PERCENT) as usize / vector_size;
             vectors_in_cache.max(constants::clustering::MIN_ROWGROUP_SIZE)

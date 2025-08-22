@@ -47,7 +47,7 @@ pub use common::{
 };
 
 // Export consolidated modules instead of deprecated ones
-pub use config::{RaptorConfig, CompactionConfig, HnswConfig};
+pub use config::{RaptorConfig, CompactionConfig};
 pub use engine::RaptorEngine;
 pub use writer::RaptorWriter;
 pub use consolidated_reader::RaptorReader;      // Use consolidated reader

@@ -173,10 +173,24 @@ pub mod complexity {
     pub const HNSW_M_FACTOR: usize = 16;
     pub const HNSW_EF_FACTOR: usize = 200;
     
-    /// RAPTOR complexity components: k² + k×n + n×boost
-    /// k² factor is implicitly 1 (k×k)
-    /// k×n factor is implicitly 1 (k clusters × n vectors)
-    /// n×boost factor uses BOOSTING_CALCS_PER_VECTOR
+    /// RAPTOR complexity components: k² + p×(k+p) where:
+    /// - k = number of clusters (typically √n)
+    /// - p = rowgroup size (typically √n/5)
+    /// - n = total number of vectors
+    /// 
+    /// Breakdown:
+    /// - k² = cluster centroid comparisons during search
+    /// - p×k = vectors per rowgroup × clusters to check
+    /// - p×p = intra-rowgroup edge computations
+    /// 
+    /// Example for 1M vectors:
+    /// - k = 1000 clusters, p = 200 per rowgroup
+    /// - k² = 1,000,000 centroid comparisons
+    /// - p×(k+p) = 200×1200 = 240,000 edge computations
+    /// - Total: 1,240,000 operations vs 200M for HNSW
+    pub const K_SQUARED_FACTOR: f32 = 1.0;
+    pub const P_K_FACTOR: f32 = 1.0;
+    pub const P_SQUARED_FACTOR: f32 = 1.0;
 }
 
 /// Common vector dimensions for optimization defaults

@@ -787,7 +787,7 @@ impl RaptorReader {
             ivf_metadata: None,
             global_ivf_offset: 0,
             global_ivf_size: 0,
-            ivf_cluster_centroids: Vec::new(),
+            hnsw_entry_points: Vec::new(),
             locality_clusters: Vec::new(),
             compression_codec: "zstd".to_string(),
         })

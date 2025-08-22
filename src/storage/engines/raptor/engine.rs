@@ -17,7 +17,7 @@ use crate::core::search::{SearchResult, FilterExpression, InternalSearchResult};
 use crate::compute::distance_computation::{DistanceMetric, engine::UnifiedDistanceCompute};
 use super::{RaptorConfig, RaptorWriter, consolidated_reader::RaptorReader, RowGroupManager};
 use super::consolidated_compactor::RaptorCompactor;
-use super::hnsw_manager::HnswManager;
+use super::ivf_manager::IvfGraphManager;
 use super::smart_rowgroup_sizing::{SmartRowGroupSizer, CommonConfigurations};
 
 // Deep integration with AXIS clustering
@@ -417,7 +417,7 @@ impl RaptorEngine {
         writer.write_batch(&batch).await?;
         
         // Update HNSW index if enabled
-        if self.config.enable_hnsw {
+        if self.config.enable_clustering {
             let mut hnsw = self.hnsw_manager.write().await;
             hnsw.add_batch(&batch).await?;
         }
@@ -1342,7 +1342,7 @@ impl UnifiedStorageEngine for RaptorEngine {
         // bytes_written is () from writer.flush(), so we'll skip this metric update
         // self.metrics.bytes_written.fetch_add(bytes_written as u64, Ordering::Relaxed);
         
-        if self.config.enable_hnsw {
+        if self.config.enable_clustering {
             let hnsw = self.hnsw_manager.read().await;
             hnsw.flush().await?;
         }
