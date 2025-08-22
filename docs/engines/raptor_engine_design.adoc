@@ -405,6 +405,272 @@ graph TB
 └──────────────────────────────────────────────────────────────────────┘
 ----
 
+==== Memory Requirements During Flush and Compaction
+
+[source,text]
+----
+┌──────────────── RAPTOR Memory Requirements (768-dim vectors) ────────────────┐
+│                                                                               │
+│  Assumptions:                                                                 │
+│  • Vector dimension: 768 (BERT/OpenAI standard)                             │
+│  • ID size: 32 bytes (UUID-style, e.g., "550e8400-e29b-41d4-a716-446655440000")│
+│  • Metadata: ~100 bytes per vector (typical key-value pairs)                │
+│  • Bloom filter: 10 bits per ID (1% false positive rate)                    │
+│  • Bloom filter limit: 128MB hard cap = 107.3 MILLION vectors support!      │
+│  • IMPORTANT: Memory is RELEASED after flush/compact (data now on disk)     │
+│                                                                               │
+│ ═══════════════════════════════════════════════════════════════════════════  │
+│                                                                               │
+│  XSmall Collections (<100 vectors)                                           │
+│  ────────────────────────────────────────                                    │
+│  Per Vector Memory:                                                          │
+│  • Vector data: 768 × 4 = 3,072 bytes                                       │
+│  • ID storage: 32 bytes                                                      │
+│  • Metadata: 100 bytes                                                       │
+│  • HNSW graph (M=64): 64 × 8 = 512 bytes                                    │
+│  • Bloom filter: 10 bits = 1.25 bytes                                       │
+│  Total per vector: 3,717 bytes                                              │
+│                                                                               │
+│  Flush Memory (100 vectors):                                                 │
+│  • Raw data: 100 × 3,717 = 372KB                                           │
+│  • HNSW construction: 100 × 600 × 4 = 240KB (ef=600)                       │
+│  • Working memory: ~500KB                                                    │
+│  ► Total flush memory: ~1.1MB                                               │
+│                                                                               │
+│  Compaction Memory (merging 2 files):                                        │
+│  • Load both files: 2 × 372KB = 744KB                                      │
+│  • Graph merge: ~500KB                                                       │
+│  ► Total compaction memory: ~1.3MB                                          │
+│                                                                               │
+│ ═══════════════════════════════════════════════════════════════════════════  │
+│                                                                               │
+│  Small Collections (100-1,000 vectors)                                       │
+│  ────────────────────────────────────────                                    │
+│  Per Vector Memory:                                                          │
+│  • Vector data: 3,072 bytes                                                 │
+│  • ID storage: 32 bytes                                                      │
+│  • Metadata: 100 bytes                                                       │
+│  • HNSW graph (M=48): 48 × 8 = 384 bytes                                    │
+│  • Bloom filter: 1.25 bytes                                                  │
+│  Total per vector: 3,589 bytes                                              │
+│                                                                               │
+│  Flush Memory (1,000 vectors):                                               │
+│  • Raw data: 1,000 × 3,589 = 3.6MB                                         │
+│  • HNSW construction: 1,000 × 500 × 4 = 2MB (ef=500)                       │
+│  • Working memory: ~2MB                                                      │
+│  ► Total flush memory: ~7.6MB                                               │
+│                                                                               │
+│  Compaction Memory:                                                          │
+│  • Load both files: 2 × 3.6MB = 7.2MB                                      │
+│  • Graph merge: ~3MB                                                         │
+│  ► Total compaction memory: ~10.2MB                                         │
+│                                                                               │
+│ ═══════════════════════════════════════════════════════════════════════════  │
+│                                                                               │
+│  Medium Collections (1K-10K vectors)                                         │
+│  ────────────────────────────────────────                                    │
+│  Per Vector Memory:                                                          │
+│  • Vector data: 3,072 bytes                                                 │
+│  • ID storage: 32 bytes                                                      │
+│  • Metadata: 100 bytes                                                       │
+│  • HNSW graph (M=32): 32 × 8 = 256 bytes                                    │
+│  • Bloom filter: 1.25 bytes                                                  │
+│  Total per vector: 3,461 bytes                                              │
+│                                                                               │
+│  Flush Memory (10,000 vectors):                                              │
+│  • Raw data: 10,000 × 3,461 = 34.6MB                                       │
+│  • HNSW construction: 10,000 × 400 × 4 = 16MB (ef=400)                     │
+│  • Working memory: ~15MB                                                     │
+│  ► Total flush memory: ~65.6MB                                              │
+│                                                                               │
+│  Compaction Memory:                                                          │
+│  • Load both files: 2 × 34.6MB = 69.2MB                                    │
+│  • Graph merge: ~20MB                                                        │
+│  ► Total compaction memory: ~89.2MB                                         │
+│                                                                               │
+│ ═══════════════════════════════════════════════════════════════════════════  │
+│                                                                               │
+│  Large Collections (10K-100K vectors)                                        │
+│  ────────────────────────────────────────                                    │
+│  Per Vector Memory:                                                          │
+│  • Vector data: 3,072 bytes                                                 │
+│  • ID storage: 32 bytes                                                      │
+│  • Metadata: 100 bytes                                                       │
+│  • HNSW graph (M=24): 24 × 8 = 192 bytes                                    │
+│  • Bloom filter: 1.25 bytes                                                  │
+│  Total per vector: 3,397 bytes                                              │
+│                                                                               │
+│  Flush Memory (100,000 vectors):                                             │
+│  • Raw data: 100,000 × 3,397 = 340MB                                       │
+│  • HNSW construction: 100,000 × 300 × 4 = 120MB (ef=300)                   │
+│  • Working memory: ~100MB                                                    │
+│  ► Total flush memory: ~560MB                                               │
+│                                                                               │
+│  Compaction Memory:                                                          │
+│  • Load both files: 2 × 340MB = 680MB                                      │
+│  • Graph merge: ~150MB                                                       │
+│  ► Total compaction memory: ~830MB                                          │
+│                                                                               │
+│ ═══════════════════════════════════════════════════════════════════════════  │
+│                                                                               │
+│  XLarge Collections (100K-107M vectors) - Up to Bloom Filter Limit          │
+│  ────────────────────────────────────────                                    │
+│  Per Vector Memory:                                                          │
+│  • Vector data: 3,072 bytes                                                 │
+│  • ID storage: 32 bytes                                                      │
+│  • Metadata: 100 bytes                                                       │
+│  • HNSW graph (M=16): 16 × 8 = 128 bytes                                    │
+│  • Bloom filter: 1.25 bytes                                                  │
+│  Total per vector: 3,333 bytes                                              │
+│                                                                               │
+│  Flush Memory (1M vectors):                                                  │
+│  • Raw data: 1,000,000 × 3,333 = 3.33GB                                    │
+│  • HNSW construction: 1,000,000 × 200 × 4 = 800MB (ef=200)                 │
+│  • Working memory: ~500MB                                                    │
+│  ► Total flush memory: ~4.63GB                                              │
+│                                                                               │
+│  Compaction Memory (1M vectors):                                             │
+│  • Load both files: 2 × 3.33GB = 6.66GB                                    │
+│  • Graph merge: ~1GB                                                         │
+│  ► Total compaction memory: ~7.66GB                                         │
+│                                                                               │
+│  Maximum Collection (107.3M vectors - Bloom limit):                          │
+│  • Raw data: 107,300,000 × 3,333 = 357.6GB                                 │
+│  • Bloom filter size: 128MB (hard limit)                                    │
+│  • HNSW construction: Streaming mode required                               │
+│  • Flush memory: ~20GB (with streaming)                                     │
+│  • Compaction: Requires streaming merge                                     │
+│  ► Total with streaming: ~40GB RAM                                          │
+│                                                                               │
+│ ═══════════════════════════════════════════════════════════════════════════  │
+│                                                                               │
+│  Memory Optimization Strategies:                                             │
+│  ──────────────────────────────────                                          │
+│  1. Streaming Mode (>1M vectors):                                            │
+│     • Process in chunks of 100K vectors                                      │
+│     • Write intermediate HNSW segments                                       │
+│     • Merge segments during compaction                                       │
+│                                                                               │
+│  2. ID Optimization:                                                         │
+│     • Short IDs (8 bytes): Save 24 bytes/vector                             │
+│     • Sequential IDs: Better compression                                     │
+│     • Hash-based IDs: Fixed 8-byte storage                                  │
+│                                                                               │
+│  3. Quantization Benefits:                                                   │
+│     • INT8: Reduce vector memory by 75%                                     │
+│     • PQ8: Reduce vector memory by 96%                                      │
+│     • Binary: Reduce vector memory by 97%                                   │
+│                                                                               │
+│  4. Bloom Filter Scaling:                                                    │
+│     • 107.3M vectors @ 1% FPR = 128MB bloom                                 │
+│     • 53.6M vectors @ 0.1% FPR = 128MB bloom                                │
+│     • 214.6M vectors @ 5% FPR = 128MB bloom                                 │
+└───────────────────────────────────────────────────────────────────────────┘
+----
+
+==== Memory Requirements for Read Operations (Search & Lookup)
+
+[source,text]
+----
+┌────────────────── RAPTOR Read Memory Requirements ───────────────────┐
+│                                                                       │
+│  KEY INSIGHT: Reads use SELECTIVE LOADING - NOT full dataset!       │
+│  ════════════════════════════════════════════════════════════        │
+│                                                                       │
+│  Search Operation (k=10 similarity search):                          │
+│  ─────────────────────────────────────────                          │
+│                                                                       │
+│  1. Metadata Loading (One-time, cached):                            │
+│     • File metadata: ~1KB                                           │
+│     • Row group headers: N × 200 bytes                              │
+│     • Bloom filters: Per-RG × 180KB (only headers)                  │
+│     ► Total metadata: ~2MB for 1M vectors                           │
+│                                                                       │
+│  2. HNSW Navigation (Selective):                                    │
+│     • Entry points: ~100 bytes                                      │
+│     • Navigate 3-5 row groups: 3 × 1MB = 3MB                       │
+│     • Graph edges only (not full vectors): ~500KB                   │
+│     ► Navigation memory: ~3.5MB                                     │
+│                                                                       │
+│  3. Candidate Loading (Final stage):                                │
+│     • Load k×3 candidates: 30 vectors                               │
+│     • Each vector: 3KB (768d × 4 bytes)                            │
+│     • With metadata: 30 × 3.2KB = 96KB                             │
+│     ► Candidate memory: ~100KB                                      │
+│                                                                       │
+│  TOTAL SEARCH MEMORY: ~5.6MB (vs 3.3GB full dataset!)              │
+│                                                                       │
+│ ═════════════════════════════════════════════════════════════════    │
+│                                                                       │
+│  ID Lookup Operation (get vector by ID):                            │
+│  ──────────────────────────────────────────                         │
+│                                                                       │
+│  1. Bloom Filter Check (Parallel):                                  │
+│     • Load bloom filter headers: N × 32 bytes                       │
+│     • Check each RG bloom (memory-mapped): 0 bytes                  │
+│     • Find matching RG: ~1μs per check                              │
+│     ► Bloom check memory: ~32KB                                     │
+│                                                                       │
+│  2. Row Group Loading (Single RG):                                  │
+│     • Load only matched row group: 1MB                              │
+│     • Decompress ID column only: ~32KB                              │
+│     • Binary search or scan: ~10μs                                 │
+│     ► Row group memory: ~1MB                                        │
+│                                                                       │
+│  3. Vector Reconstruction:                                          │
+│     • Load single vector: 3KB                                       │
+│     • Decompress if needed: +1KB working memory                     │
+│     ► Vector memory: ~4KB                                           │
+│                                                                       │
+│  TOTAL LOOKUP MEMORY: ~1.04MB (vs 3.3GB full dataset!)             │
+│                                                                       │
+│ ═════════════════════════════════════════════════════════════════    │
+│                                                                       │
+│  Memory Efficiency Comparison:                                       │
+│  ────────────────────────────────                                   │
+│                                                                       │
+│  Collection Size    Write Memory    Read Memory    Savings          │
+│  ─────────────────────────────────────────────────────────          │
+│  XSmall (100)       1.1MB           0.5MB          55% less         │
+│  Small (1K)         7.6MB           1.0MB          87% less         │
+│  Medium (10K)       65.6MB          3.0MB          95% less         │
+│  Large (100K)       560MB           5.0MB          99% less         │
+│  XLarge (1M)        4.6GB           5.6MB          99.9% less       │
+│  Maximum (107M)     40GB*           10MB           99.97% less      │
+│                     (*streaming)                                    │
+│                                                                       │
+│ ═════════════════════════════════════════════════════════════════    │
+│                                                                       │
+│  Read Optimization Techniques:                                       │
+│  ─────────────────────────────                                      │
+│                                                                       │
+│  1. Memory-Mapped Files:                                            │
+│     • OS manages paging automatically                               │
+│     • Only accessed pages loaded to RAM                             │
+│     • Shared across processes                                       │
+│                                                                       │
+│  2. Row Group Cache (LRU):                                          │
+│     • Hot row groups stay in memory                                 │
+│     • Cold row groups evicted                                       │
+│     • Configurable cache size (default 4GB)                         │
+│                                                                       │
+│  3. Columnar Projection:                                            │
+│     • Load only needed columns                                      │
+│     • Skip metadata if not needed                                   │
+│     • Skip vectors for metadata-only queries                        │
+│                                                                       │
+│  4. Bloom Filter Efficiency:                                        │
+│     • 180KB bloom per row group                                     │
+│     • Eliminates 99% of unnecessary I/O                             │
+│     • Memory-mapped for zero-copy access                            │
+│                                                                       │
+│  5. HNSW Graph Pruning:                                            │
+│     • Load only traversed edges                                     │
+│     • Skip unvisited graph segments                                 │
+│     • Hierarchical navigation reduces I/O                           │
+└───────────────────────────────────────────────────────────────────┘
+----
+
 === HNSW Integration Strategy
 
 ==== Build-Time HNSW Graph Construction
