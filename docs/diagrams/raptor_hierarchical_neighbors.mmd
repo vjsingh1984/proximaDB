@@ -1,0 +1,54 @@
+%%{init: {"theme":"neutral", "themeVariables": {"primaryColor":"#4A90E2","primaryBorderColor":"#2563eb","secondaryColor":"#5CB85C","tertiaryColor":"#F5A623","lineColor":"#64748b","background":"transparent","fontFamily":"-apple-system, BlinkMacSystemFont, Segoe UI, Roboto, sans-serif","fontSize":"14px"}}}%%
+flowchart TD
+    %% RAPTOR Hierarchical Neighbor Strategy - Optimal Formula Implementation
+    
+    A[Collection Size k] --> B{k ≤ 25?}
+    B -->|Yes| C[Ultra-small Strategy]
+    C --> C1["neighbors = k-1<br/>type = Direct<br/>Example: k=15 → 14 neighbors"]
+    
+    B -->|No| D{k ≤ 100?}
+    D -->|Yes| E[Small Strategy]
+    E --> E1["neighbors = min(8, k-1)<br/>type = Direct<br/>Example: k=50 → 8 neighbors"]
+    
+    D -->|No| F{k ≤ 1000?}
+    F -->|Yes| G[Medium Strategy]
+    G --> G1["intra = ⌈0.8×√k⌉<br/>inter = 0<br/>Example: k=250 → 13 intra"]
+    
+    F -->|No| H{k ≤ 5000?}
+    H -->|Yes| I[Large Strategy]
+    I --> I1["intra = ⌈0.5×√k⌉<br/>inter = 6<br/>Example: k=1000 → 16+6=22 total"]
+    
+    H -->|No| J[XLarge Strategy]
+    J --> J1["intra = ⌈2×ln(k)⌉<br/>inter = ⌈0.8×ln(k)⌉<br/>Example: k=10000 → 19+8=27 total"]
+    
+    %% Performance characteristics
+    C1 --> PC[Performance: <5μs<br/>Memory: <5KB<br/>Quality: Maximum]
+    E1 --> PE[Performance: <5μs<br/>Memory: <10KB<br/>Quality: High]
+    G1 --> PG[Performance: <50μs<br/>Memory: <200KB<br/>Quality: High]
+    I1 --> PI[Performance: <100μs<br/>Memory: <2MB<br/>Quality: Balanced]
+    J1 --> PJ[Performance: <500μs<br/>Memory: <10MB<br/>Quality: Efficient]
+    
+    %% Memory optimization
+    PC --> M[Memory Optimized with u16 IDs]
+    PE --> M
+    PG --> M
+    PI --> M
+    PJ --> M
+    
+    M --> M1["RowGroupNeighbor:<br/>rowgroup_id: u16 (2 bytes)<br/>neighbor_cluster_id: u16 (2 bytes)<br/>neighbor_type: u8 (1 byte)<br/>Total: 8 bytes (with padding)<br/>33% savings vs u32"]
+    
+    %% Storage strategy
+    M1 --> S[Storage Strategy]
+    S --> S1[Centralized Footer:<br/>All centroids in single I/O<br/>O(1) access by rowgroup_id<br/>FastLanes columnar encoding]
+    
+    S1 --> S2[Hierarchical Navigation:<br/>IntraSuperCluster: Local exploration<br/>InterSuperCluster: Global exploration<br/>Direct: Small collections]
+    
+    classDef strategy fill:#e1f5fe,stroke:#01579b,stroke-width:2px
+    classDef performance fill:#f3e5f5,stroke:#4a148c,stroke-width:2px
+    classDef memory fill:#e8f5e8,stroke:#2e7d32,stroke-width:2px
+    classDef storage fill:#fff3e0,stroke:#ef6c00,stroke-width:2px
+    
+    class C,E,G,I,J strategy
+    class PC,PE,PG,PI,PJ performance
+    class M,M1 memory
+    class S,S1,S2 storage

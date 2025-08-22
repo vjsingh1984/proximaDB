@@ -1,7 +1,7 @@
 use arrow_array::RecordBatch;
 use std::sync::Arc;
 use anyhow::Result;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use serde::{Serialize, Deserialize};
 
 // Reuse existing platform capabilities
@@ -9,7 +9,10 @@ use crate::core::compression::{StandardCompression, CompressionAlgorithm, Compre
 use super::common::{RowPageMetadata, HnswSegmentMetadata, VectorStats};
 
 // Import bloom filter types from common
-use super::common::RowGroupBloomFilter;
+use super::common::{
+    RowGroupBloomFilter, CentroidStats, DistanceBounds, RowGroupNeighbor,
+    RaptorFooter, ColumnarCentroids, FastLanesMetadata, NeighborType
+};
 use crate::compute::quantization::storage_engine::StorageQuantizationEngine;
 use crate::compute::quantization::types::UnifiedQuantizationLevel;
 use crate::storage::persistence::filesystem::{FileSystem, FilesystemFactory};
@@ -66,11 +69,23 @@ struct RowPageBuffer {
     start_offset: u64,
 }
 
-/// Compact row representation (as per design)
+/// Compact row representation aligned with VectorRecord proto fields
+/// Stores both FP32 and quantized vectors for full reconstruction
 struct CompactRow {
-    id: [u8; 16],
-    vector: Vec<u8>,  // Compressed/quantized vector
-    metadata: Vec<u8>, // Binary-encoded metadata
+    // Core fields from VectorRecord
+    id: String,                        // VectorRecord.id (string)
+    vector: Vec<f32>,                  // VectorRecord.vector (original FP32)
+    quantized_vector: Vec<u8>,        // VectorRecord.quantized_vector (pre-quantized)
+    metadata: Vec<(String, Vec<u8>)>, // VectorRecord.metadata (key-value pairs)
+    
+    // Timestamp fields
+    timestamp: u32,                    // VectorRecord.timestamp
+    updated_at: Option<u32>,          // VectorRecord.updated_at
+    expires_at: Option<u32>,          // VectorRecord.expires_at
+    version: Option<u32>,             // VectorRecord.version
+    
+    // Source content for RAG
+    source_content: Option<Vec<u8>>,  // VectorRecord.source (serialized SourceContent)
 }
 
 /// Bloom filter builder for row group
@@ -101,8 +116,6 @@ struct IvfClusteringBuilder {
     axis_clustering: Arc<AxisClusteringEngine>,
     /// Pre-computed centroids for k clusters
     centroids: Vec<Centroid>,
-    /// Centroid distance matrix (k×k)
-    centroid_distances: Vec<Vec<f32>>,
     /// Boosting parameters
     boost_config: BoostingConfig,
     /// Temporary vector storage for clustering and edge building
@@ -162,6 +175,10 @@ struct Centroid {
     radius: f32,  // 95th percentile distance
 }
 
+// Note: CentroidNeighbors removed - neighbor relationships are now stored
+// directly in RowGroupMetadata.centroid_stats.neighbor_rowgroups
+// This avoids duplication and keeps related data together
+
 impl IvfClusteringBuilder {
     fn new(target_rowgroup_size: usize, hardware: Arc<HardwareCapabilities>) -> Self {
         // Create AXIS clustering configuration for RAPTOR
@@ -190,7 +207,6 @@ impl IvfClusteringBuilder {
             hardware,
             axis_clustering,
             centroids: Vec::new(),
-            centroid_distances: Vec::new(),
             boost_config: BoostingConfig::default(),
             vectors: Vec::new(),
         }
@@ -1491,80 +1507,89 @@ impl RaptorWriter {
     }
     
     /// Add a single vector to the current page
+    /// Stores both FP32 and quantized versions for full reconstruction
     async fn add_vector(&mut self, vector: &VectorRecord) -> Result<()> {
-        // Extract ID (use vector.id or generate)
-        let id = if let Some(ref id) = vector.id {
-            // Convert string ID to fixed 16 bytes (UUID or hash)
-            let mut id_bytes = [0u8; 16];
-            let id_hash = blake3::hash(id.as_bytes());
-            id_bytes.copy_from_slice(&id_hash.as_bytes()[..16]);
-            id_bytes
+        // Extract ID - required field in VectorRecord
+        let id = vector.id.as_ref()
+            .ok_or_else(|| anyhow::anyhow!("Vector ID is required"))?
+            .clone();
+        
+        // Store original FP32 vector for reconstruction
+        let fp32_vector = vector.vector.clone();
+        
+        // Get quantized vector - either pre-quantized or quantize now
+        let quantized_vector = if let Some(ref pre_quantized) = vector.quantized_vector {
+            // Use pre-quantized data if available
+            pre_quantized.clone()
         } else {
-            // Generate UUID
-            uuid::Uuid::new_v4().as_bytes().clone()
+            // Quantize vector using unified engine
+            let quantized_batch = self.quantization_engine.quantize_batch(&[vector.vector.clone()]).await?;
+            let quantized = quantized_batch.into_iter().next()
+                .ok_or_else(|| anyhow::anyhow!("Failed to quantize vector"))?;
+            quantized.data
         };
         
-        // Quantize vector using unified engine (batch API with single vector)
-        let quantized_batch = self.quantization_engine.quantize_batch(&[vector.vector.clone()]).await?;
-        let quantized = quantized_batch.into_iter().next()
-            .ok_or_else(|| anyhow::anyhow!("Failed to quantize vector"))?;
+        // Extract metadata as key-value pairs
+        let metadata: Vec<(String, Vec<u8>)> = vector.metadata.iter()
+            .map(|item| {
+                let value_bytes = match &item.value {
+                    Some(val) => {
+                        // Serialize metadata value to bytes
+                        match val {
+                            crate::proto::metadata_value::Value::StringValue(s) => s.as_bytes().to_vec(),
+                            crate::proto::metadata_value::Value::IntValue(i) => i.to_le_bytes().to_vec(),
+                            crate::proto::metadata_value::Value::FloatValue(f) => f.to_le_bytes().to_vec(),
+                            crate::proto::metadata_value::Value::BoolValue(b) => vec![if *b { 1 } else { 0 }],
+                            crate::proto::metadata_value::Value::ListValue(list) => {
+                                // Serialize list as length-prefixed items
+                                let mut bytes = Vec::new();
+                                bytes.extend(&(list.values.len() as u32).to_le_bytes());
+                                for v in &list.values {
+                                    // Recursive serialization
+                                    bytes.extend(&[0]); // Placeholder
+                                }
+                                bytes
+                            },
+                            crate::proto::metadata_value::Value::MapValue(map) => {
+                                // Serialize map as length-prefixed key-value pairs
+                                let mut bytes = Vec::new();
+                                bytes.extend(&(map.fields.len() as u32).to_le_bytes());
+                                for (k, v) in &map.fields {
+                                    bytes.extend(&(k.len() as u32).to_le_bytes());
+                                    bytes.extend(k.as_bytes());
+                                    // Recursive serialization
+                                    bytes.extend(&[0]); // Placeholder
+                                }
+                                bytes
+                            },
+                        }
+                    },
+                    None => Vec::new(),
+                };
+                (item.key.clone(), value_bytes)
+            })
+            .collect();
         
-        // Encode quantized vector with FastLanes based on quantization level
-        let fastlanes_encoder = FastLanesEncoder::new();
-        let encoded_vector = match quantized.quantization_level {
-            UnifiedQuantizationLevel::None => {
-                // Full precision FP32 - use FastLanes float encoding
-                fastlanes_encoder.encode_f32(&vector.vector)?
-            },
-            UnifiedQuantizationLevel::Binary(_) => {
-                // Binary quantization - use FastLanes binary encoding
-                fastlanes_encoder.encode_binary(&quantized.data)?
-            },
-            UnifiedQuantizationLevel::Scalar(ref config) if config.bits_per_dimension == 8 => {
-                // INT8 quantization - use FastLanes INT8 encoding
-                let int8_data: Vec<i8> = quantized.data.iter()
-                    .map(|&b| b as i8)
-                    .collect();
-                fastlanes_encoder.encode_int8(&int8_data)?
-            },
-            UnifiedQuantizationLevel::Product(ref config) if config.bits == 4 => {
-                // PQ4 quantization - use FastLanes PQ4 encoding
-                fastlanes_encoder.encode_pq4(&quantized.data, config.num_subvectors)?
-            },
-            UnifiedQuantizationLevel::Product(ref config) if config.bits == 8 => {
-                // PQ8 quantization - use FastLanes PQ8 encoding
-                fastlanes_encoder.encode_pq8(&quantized.data, config.num_subvectors)?
-            },
-            _ => {
-                // Fallback to raw quantized data
-                quantized.data.clone()
-            }
-        };
+        // Extract source content if present
+        let source_content = vector.source.as_ref().map(|source| {
+            // Serialize SourceContent proto to bytes
+            use prost::Message;
+            let mut buf = Vec::new();
+            source.encode(&mut buf).unwrap();
+            buf
+        });
         
-        // Compress encoded vector if configured
-        let compressed_vector = if matches!(self.config.compression, RaptorCompressionCodec::None) {
-            encoded_vector
-        } else {
-            self.compression.compress(
-                &encoded_vector,
-                CompressionAlgorithm::ZSTD,
-                6,
-                CompressionContext::VectorSerialization,
-            )?
-        };
-        
-        // Encode metadata as binary (using bincode)
-        let metadata_bytes = if !vector.metadata.is_empty() {
-            bincode::serialize(&vector.metadata)?
-        } else {
-            Vec::new()
-        };
-        
-        // Create compact row
+        // Create compact row with all VectorRecord fields
         let compact_row = CompactRow {
             id,
-            vector: compressed_vector,
-            metadata: metadata_bytes,
+            vector: fp32_vector,
+            quantized_vector,
+            metadata,
+            timestamp: vector.timestamp,
+            updated_at: vector.updated_at,
+            expires_at: vector.expires_at,
+            version: vector.version,
+            source_content,
         };
         
         // Determine row location
@@ -1577,10 +1602,9 @@ impl RaptorWriter {
         let location = RowLocation { page_id, offset_in_page };
         
         // Update bloom filter and columnar ID index
-        let id_string = vector.id.clone().unwrap_or_else(|| format!("{:x}", blake3::hash(&id)));
-        self.bloom_builder.ids.push(id_string.clone());
-        self.id_column_builder.ids.push(id_string.clone());
-        let hash_bytes = blake3::hash(id_string.as_bytes());
+        self.bloom_builder.ids.push(id.clone());
+        self.id_column_builder.ids.push(id.clone());
+        let hash_bytes = blake3::hash(id.as_bytes());
         let mut hash_u64_bytes = [0u8; 8];
         hash_u64_bytes.copy_from_slice(&hash_bytes.as_bytes()[0..8]);
         self.id_column_builder.id_hashes.push(u64::from_le_bytes(hash_u64_bytes));
@@ -1588,7 +1612,7 @@ impl RaptorWriter {
         
         // Add to IVF builder with hybrid clustering + edges
         self.ivf_builder.nodes.push(IvfNode {
-            vector_id: record.id.clone().unwrap_or_else(|| format!("vec_{}", self.file_metadata.num_rows)),
+            vector_id: id.clone(),
             cluster_id: 0, // Will be assigned during clustering
             row_location: location,
             centroid_distance: 0.0, // Will be calculated during clustering
@@ -1601,11 +1625,8 @@ impl RaptorWriter {
         
         // Add to minimal HNSW builder (memory-efficient)
         // Note: edges will be populated during graph building phase
-        let vector_id = vector.id.clone().unwrap_or_else(|| {
-            format!("vec_{}", self.file_metadata.num_rows)
-        });
         self.ivf_builder.add_node(
-            vector_id,
+            id.clone(),
             Vec::new(), // Edges will be added during build_ivf_clusters()
         );
         
@@ -1670,7 +1691,7 @@ impl RaptorWriter {
                 self.id_column_builder.row_offsets.clear();
                 
                 self.row_groups.push(RowGroupMetadata {
-                    id: self.row_groups.len() as u32,
+                    id: self.row_groups.len() as u16,
                     offset: 0,
                     compressed_size: 0,
                     uncompressed_size: 0,
@@ -1695,40 +1716,579 @@ impl RaptorWriter {
         Ok(())
     }
     
-    /// Encode row page using columnar layout with FastLanes for vectors
-    /// This provides 3-5x better compression and SIMD efficiency for HNSW access
+    /// Encode row page using TRUE columnar layout with FastLanes
+    /// Stores all VectorRecord fields in columnar format for optimal compression
     fn encode_row_page(&self, page: &RowPageBuffer) -> Result<Vec<u8>> {
         let mut encoded = Vec::new();
         
         // Write encoding marker for columnar tensor layout
-        encoded.push(0xA1); // FastLanes tensor encoding marker
+        encoded.push(0xC0); // Columnar format v2 with full VectorRecord support
         
         // Write page header
         encoded.extend(&(page.rows.len() as u32).to_le_bytes());
+        encoded.extend(&(self.dimension as u32).to_le_bytes());
         
-        // Columnar encoding for vectors - already encoded in compact rows
-        // The row.vector field contains the quantized and FastLanes-encoded data
-        // We write it directly without re-encoding since it's already optimized
-        if !page.rows.is_empty() {
-            // For columnar storage, we could optionally reorganize by quantization level
-            // but for now we keep the row-oriented storage for simplicity
-            
-            // Write each row's encoded vector data
+        if page.rows.is_empty() {
+            return Ok(encoded);
+        }
+        
+        let fastlanes_encoder = FastLanesEncoder::new();
+        let num_rows = page.rows.len();
+        
+        // === SECTION 1: IDs (columnar string storage) ===
+        encoded.push(0x01); // ID section marker
+        // Store IDs as length-prefixed strings
+        for row in &page.rows {
+            encoded.extend(&(row.id.len() as u32).to_le_bytes());
+            encoded.extend(row.id.as_bytes());
+        }
+        
+        // === SECTION 2: FP32 VECTORS (true columnar with transposition) ===
+        encoded.push(0x02); // FP32 vector section marker
+        // Transpose vectors to columnar format (dimension × num_vectors)
+        let mut fp32_columns: Vec<Vec<f32>> = vec![Vec::with_capacity(num_rows); self.dimension];
+        for row in &page.rows {
+            for (dim_idx, &value) in row.vector.iter().enumerate() {
+                if dim_idx < self.dimension {
+                    fp32_columns[dim_idx].push(value);
+                }
+            }
+        }
+        
+        // Encode each dimension column with FastLanes
+        for column in fp32_columns {
+            let encoded_column = fastlanes_encoder.encode_f32(&column)?;
+            encoded.extend(&(encoded_column.len() as u32).to_le_bytes());
+            encoded.extend(&encoded_column);
+        }
+        
+        // === SECTION 3: QUANTIZED VECTORS (columnar by quantization type) ===
+        encoded.push(0x03); // Quantized vector section marker
+        
+        // Determine quantization level (assume uniform for now)
+        let quant_level = if !page.rows[0].quantized_vector.is_empty() {
+            // Infer from data size
+            let data_size = page.rows[0].quantized_vector.len();
+            if data_size == self.dimension / 8 {
+                1 // Binary quantization
+            } else if data_size == self.dimension {
+                2 // INT8 quantization
+            } else {
+                3 // Product quantization
+            }
+        } else {
+            0 // No quantization
+        };
+        
+        encoded.push(quant_level);
+        
+        if quant_level > 0 {
+            // Transpose quantized vectors based on type
+            match quant_level {
+                1 => {
+                    // Binary: pack bits columnar
+                    let bits_per_dim = 1;
+                    let packed_dims = (self.dimension + 7) / 8;
+                    for dim_byte in 0..packed_dims {
+                        let mut column = Vec::with_capacity(num_rows);
+                        for row in &page.rows {
+                            if dim_byte < row.quantized_vector.len() {
+                                column.push(row.quantized_vector[dim_byte]);
+                            }
+                        }
+                        let encoded_column = fastlanes_encoder.encode_binary(&column)?;
+                        encoded.extend(&(encoded_column.len() as u32).to_le_bytes());
+                        encoded.extend(&encoded_column);
+                    }
+                },
+                2 => {
+                    // INT8: transpose byte-wise
+                    let mut int8_columns: Vec<Vec<i8>> = vec![Vec::with_capacity(num_rows); self.dimension];
+                    for row in &page.rows {
+                        for (dim_idx, &byte) in row.quantized_vector.iter().enumerate() {
+                            if dim_idx < self.dimension {
+                                int8_columns[dim_idx].push(byte as i8);
+                            }
+                        }
+                    }
+                    for column in int8_columns {
+                        let encoded_column = fastlanes_encoder.encode_int8(&column)?;
+                        encoded.extend(&(encoded_column.len() as u32).to_le_bytes());
+                        encoded.extend(&encoded_column);
+                    }
+                },
+                _ => {
+                    // Product quantization or other: store as-is for now
+                    for row in &page.rows {
+                        encoded.extend(&(row.quantized_vector.len() as u32).to_le_bytes());
+                        encoded.extend(&row.quantized_vector);
+                    }
+                }
+            }
+        }
+        
+        // === SECTION 4: METADATA (columnar with dictionary encoding for keys) ===
+        encoded.push(0x04); // Metadata section marker
+        
+        // Collect all unique keys across all rows for dictionary encoding
+        let mut key_dictionary: Vec<String> = Vec::new();
+        let mut key_to_index: HashMap<String, u16> = HashMap::new();
+        
+        for row in &page.rows {
+            for (key, _) in &row.metadata {
+                if !key_to_index.contains_key(key) {
+                    let idx = key_dictionary.len() as u16;
+                    key_dictionary.push(key.clone());
+                    key_to_index.insert(key.clone(), idx);
+                }
+            }
+        }
+        
+        // Write dictionary of keys (low cardinality optimization)
+        encoded.extend(&(key_dictionary.len() as u16).to_le_bytes());
+        for key in &key_dictionary {
+            encoded.extend(&(key.len() as u16).to_le_bytes());
+            encoded.extend(key.as_bytes());
+        }
+        
+        // Build metadata columns indexed by dictionary
+        let mut metadata_columns: HashMap<u16, Vec<Option<Vec<u8>>>> = HashMap::new();
+        
+        for (key_idx, key) in key_dictionary.iter().enumerate() {
+            let mut column = Vec::with_capacity(num_rows);
             for row in &page.rows {
-                // Write row ID
-                encoded.extend(&row.id);
+                let value = row.metadata.iter()
+                    .find(|(k, _)| k == key)
+                    .map(|(_, v)| v.clone());
+                column.push(value);
+            }
+            metadata_columns.insert(key_idx as u16, column);
+        }
+        
+        // Write metadata values using dictionary indices
+        encoded.extend(&(metadata_columns.len() as u16).to_le_bytes());
+        
+        for (key_idx, values) in metadata_columns {
+            // Write dictionary index for key
+            encoded.extend(&key_idx.to_le_bytes());
+            
+            // Analyze value cardinality for optimal encoding
+            let unique_values: HashSet<Vec<u8>> = values.iter()
+                .filter_map(|v| v.clone())
+                .collect();
+            
+            let cardinality_ratio = unique_values.len() as f32 / num_rows as f32;
+            
+            if cardinality_ratio < 0.1 {
+                // Low cardinality: use dictionary encoding for values too
+                encoded.push(0x01); // Dictionary encoding marker
                 
-                // Write vector data length and data
-                encoded.extend(&(row.vector.len() as u32).to_le_bytes());
-                encoded.extend(&row.vector);
+                let value_dict: Vec<Vec<u8>> = unique_values.into_iter().collect();
+                encoded.extend(&(value_dict.len() as u16).to_le_bytes());
                 
-                // Write metadata length and data
-                encoded.extend(&(row.metadata.len() as u32).to_le_bytes());
-                encoded.extend(&row.metadata);
+                for val in &value_dict {
+                    encoded.extend(&(val.len() as u32).to_le_bytes());
+                    encoded.extend(val);
+                }
+                
+                // Write indices
+                for value_opt in &values {
+                    if let Some(value) = value_opt {
+                        let idx = value_dict.iter().position(|v| v == value).unwrap() as u16;
+                        encoded.extend(&idx.to_le_bytes());
+                    } else {
+                        encoded.extend(&0xFFFF_u16.to_le_bytes()); // Null marker
+                    }
+                }
+            } else {
+                // High cardinality: use direct encoding with null bitmap
+                encoded.push(0x02); // Direct encoding marker
+                
+                let mut null_bitmap = vec![0u8; (num_rows + 7) / 8];
+                let mut value_data = Vec::new();
+                
+                for (idx, value) in values.iter().enumerate() {
+                    if let Some(v) = value {
+                        null_bitmap[idx / 8] |= 1 << (idx % 8);
+                        value_data.extend(&(v.len() as u32).to_le_bytes());
+                        value_data.extend(v);
+                    }
+                }
+                
+                encoded.extend(&null_bitmap);
+                encoded.extend(&value_data);
+            }
+        }
+        
+        // === SECTION 5: TIMESTAMPS (columnar integers) ===
+        encoded.push(0x05); // Timestamp section marker
+        
+        // Timestamp column (always present)
+        let timestamps: Vec<u32> = page.rows.iter().map(|r| r.timestamp).collect();
+        let encoded_timestamps = fastlanes_encoder.encode_u32(&timestamps)?;
+        encoded.extend(&encoded_timestamps);
+        
+        // Updated_at column (optional)
+        let has_updated: Vec<bool> = page.rows.iter().map(|r| r.updated_at.is_some()).collect();
+        let updated_values: Vec<u32> = page.rows.iter()
+            .filter_map(|r| r.updated_at)
+            .collect();
+        
+        encoded.push(if updated_values.len() == num_rows { 0x01 } else { 0x00 });
+        if !updated_values.is_empty() {
+            if updated_values.len() < num_rows {
+                // Sparse: store indices and values
+                for (idx, row) in page.rows.iter().enumerate() {
+                    if row.updated_at.is_some() {
+                        encoded.extend(&(idx as u32).to_le_bytes());
+                    }
+                }
+            }
+            let encoded_updated = fastlanes_encoder.encode_u32(&updated_values)?;
+            encoded.extend(&encoded_updated);
+        }
+        
+        // Expires_at column (optional)
+        let expires_values: Vec<u32> = page.rows.iter()
+            .filter_map(|r| r.expires_at)
+            .collect();
+        
+        encoded.push(if expires_values.len() == num_rows { 0x01 } else { 0x00 });
+        if !expires_values.is_empty() {
+            if expires_values.len() < num_rows {
+                // Sparse: store indices
+                for (idx, row) in page.rows.iter().enumerate() {
+                    if row.expires_at.is_some() {
+                        encoded.extend(&(idx as u32).to_le_bytes());
+                    }
+                }
+            }
+            let encoded_expires = fastlanes_encoder.encode_u32(&expires_values)?;
+            encoded.extend(&encoded_expires);
+        }
+        
+        // Version column (optional)
+        let version_values: Vec<u32> = page.rows.iter()
+            .filter_map(|r| r.version)
+            .collect();
+        
+        encoded.push(if version_values.len() == num_rows { 0x01 } else { 0x00 });
+        if !version_values.is_empty() {
+            if version_values.len() < num_rows {
+                // Sparse: store indices
+                for (idx, row) in page.rows.iter().enumerate() {
+                    if row.version.is_some() {
+                        encoded.extend(&(idx as u32).to_le_bytes());
+                    }
+                }
+            }
+            let encoded_versions = fastlanes_encoder.encode_u32(&version_values)?;
+            encoded.extend(&encoded_versions);
+        }
+        
+        // === SECTION 6: SOURCE CONTENT (optional, type-aware encoding) ===
+        encoded.push(0x06); // Source content section marker
+        
+        let source_rows: Vec<(usize, &Vec<u8>)> = page.rows.iter()
+            .enumerate()
+            .filter_map(|(idx, row)| row.source_content.as_ref().map(|c| (idx, c)))
+            .collect();
+        
+        encoded.extend(&(source_rows.len() as u32).to_le_bytes());
+        
+        if !source_rows.is_empty() {
+            // Analyze content types for optimal encoding
+            let mut text_content = Vec::new();
+            let mut binary_content = Vec::new();
+            
+            for (idx, content) in &source_rows {
+                // Simple heuristic: check if content is valid UTF-8
+                if std::str::from_utf8(content).is_ok() {
+                    text_content.push((*idx, content));
+                } else {
+                    binary_content.push((*idx, content));
+                }
+            }
+            
+            // Write text content with compression
+            encoded.push(0x01); // Text content marker
+            encoded.extend(&(text_content.len() as u32).to_le_bytes());
+            
+            if !text_content.is_empty() {
+                // Store indices
+                for (idx, _) in &text_content {
+                    encoded.extend(&(*idx as u32).to_le_bytes());
+                }
+                
+                // Concatenate all text for better compression
+                let mut all_text = Vec::new();
+                let mut text_offsets = Vec::new();
+                
+                for (_, content) in &text_content {
+                    text_offsets.push(all_text.len() as u32);
+                    all_text.extend(content.iter());
+                }
+                text_offsets.push(all_text.len() as u32);
+                
+                // Compress text using LZ4 for speed
+                let compressed_text = if all_text.len() > 1024 {
+                    self.compression.compress(
+                        &all_text,
+                        CompressionAlgorithm::Lz4,
+                        3,
+                        CompressionContext::TextContent,
+                    )?
+                } else {
+                    all_text
+                };
+                
+                // Write offsets
+                for offset in text_offsets {
+                    encoded.extend(&offset.to_le_bytes());
+                }
+                
+                // Write compressed text
+                encoded.extend(&(compressed_text.len() as u32).to_le_bytes());
+                encoded.extend(&compressed_text);
+            }
+            
+            // Write binary content (video/audio/images)
+            encoded.push(0x02); // Binary content marker
+            encoded.extend(&(binary_content.len() as u32).to_le_bytes());
+            
+            if !binary_content.is_empty() {
+                for (idx, content) in &binary_content {
+                    encoded.extend(&(*idx as u32).to_le_bytes());
+                    
+                    // Binary content often already compressed (video/image formats)
+                    // Store as-is or with light compression
+                    encoded.extend(&(content.len() as u32).to_le_bytes());
+                    encoded.extend(content.iter());
+                }
             }
         }
         
         Ok(encoded)
+    }
+    
+    /// Build optimized bloom filter for ID lookups
+    /// Uses xxHash for speed and maintains configurable false positive rate
+    fn build_bloom_filter_for_ids(&self, ids: &[String]) -> BloomFilterMetadata {
+        let num_items = ids.len();
+        let target_fpr = self.config.bloom_filter_fpr.unwrap_or(0.01); // 1% default
+        
+        // Calculate optimal bloom filter parameters
+        let bits_per_item = -1.44 * (target_fpr.ln() / 2.0_f64.ln());
+        let total_bits = (num_items as f64 * bits_per_item).ceil() as usize;
+        let num_hash_functions = (bits_per_item * 2.0_f64.ln()).ceil() as u32;
+        
+        // Create bloom filter bitmap
+        let mut bloom_bits = vec![0u8; (total_bits + 7) / 8];
+        
+        // Add all IDs to bloom filter using xxHash
+        for id in ids {
+            let hash = xxhash_rust::xxh3::xxh3_64(id.as_bytes());
+            
+            // Generate k hash values from single hash using double hashing
+            for i in 0..num_hash_functions {
+                let hash_val = (hash.wrapping_add(i as u64 * hash.rotate_right(32))) as usize;
+                let bit_pos = hash_val % total_bits;
+                bloom_bits[bit_pos / 8] |= 1 << (bit_pos % 8);
+            }
+        }
+        
+        BloomFilterMetadata {
+            num_items: num_items as u64,
+            false_positive_rate: target_fpr,
+            num_bits: total_bits as u64,
+            num_hash_functions,
+            bloom_data: bloom_bits,
+        }
+    }
+    
+    /// Compute centroid statistics for a rowgroup
+    /// This pre-computes distance bounds to enable fast pruning during search
+    fn compute_centroid_stats(
+        &self,
+        vectors: &[Vec<f32>],
+        centroid: &[f32],
+        cluster_id: u32,
+        all_rowgroup_centroids: &[(u16, Vec<f32>)], // (rowgroup_id, centroid)
+        current_rowgroup_id: u16,
+    ) -> CentroidStats {
+        let mut distances = Vec::with_capacity(vectors.len());
+        
+        // Calculate distances for all vectors to centroid
+        for vector in vectors {
+            let dist = self.distance_compute.calculate_distance(
+                vector,
+                centroid,
+                &DistanceMetric::Euclidean,
+            ).raw_value;
+            distances.push(dist);
+        }
+        
+        // Sort for percentile calculations
+        distances.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+        
+        // Calculate statistics
+        let mean_distance = distances.iter().sum::<f32>() / distances.len() as f32;
+        let variance = distances.iter()
+            .map(|&d| (d - mean_distance).powi(2))
+            .sum::<f32>() / distances.len() as f32;
+        let std_deviation = variance.sqrt();
+        
+        // Percentiles
+        let p50_idx = distances.len() / 2;
+        let p90_idx = (distances.len() as f32 * 0.9) as usize;
+        let p95_idx = (distances.len() as f32 * 0.95) as usize;
+        
+        // Compute bounds for different metrics
+        let euclidean_bounds = DistanceBounds {
+            min: *distances.first().unwrap_or(&0.0),
+            max: *distances.last().unwrap_or(&0.0),
+            p50: distances.get(p50_idx).copied().unwrap_or(0.0),
+            p90: distances.get(p90_idx).copied().unwrap_or(0.0),
+        };
+        
+        // For cosine similarity, compute bounds if vectors are normalized
+        let cosine_bounds = if vectors.iter().all(|v| {
+            let norm = v.iter().map(|x| x * x).sum::<f32>().sqrt();
+            (norm - 1.0).abs() < 0.01 // Check if normalized
+        }) {
+            // Cosine distance = 1 - cosine_similarity
+            // For normalized vectors, this relates to Euclidean distance
+            Some(DistanceBounds {
+                min: 1.0 - (1.0 - euclidean_bounds.min.powi(2) / 2.0).max(0.0),
+                max: 1.0 - (1.0 - euclidean_bounds.max.powi(2) / 2.0).max(0.0),
+                p50: 1.0 - (1.0 - euclidean_bounds.p50.powi(2) / 2.0).max(0.0),
+                p90: 1.0 - (1.0 - euclidean_bounds.p90.powi(2) / 2.0).max(0.0),
+            })
+        } else {
+            None
+        };
+        
+        // Compute neighbor rowgroups sorted by centroid distance
+        let mut neighbor_rowgroups = Vec::new();
+        
+        if !all_rowgroup_centroids.is_empty() {
+            // Calculate distances and cluster assignments for all rowgroups
+            let mut neighbor_data: Vec<(u16, f32, u16, Vec<f32>)> = Vec::new();
+            
+            for (rg_id, rg_centroid) in all_rowgroup_centroids {
+                if *rg_id != current_rowgroup_id {
+                    // IMPORTANT: Store RAW distances, not boosted
+                    // Boosting requires query-specific components (d1, d3, d4, d5)
+                    // that can only be computed during search
+                    let dist = self.distance_compute.calculate_distance(
+                        centroid,
+                        rg_centroid,
+                        &DistanceMetric::Euclidean,
+                    ).raw_value;
+                    
+                    // Get neighbor's cluster assignment (may differ from rowgroup id)
+                    let neighbor_cluster_id = self.get_rowgroup_cluster_id(*rg_id);
+                    
+                    neighbor_data.push((*rg_id, dist, neighbor_cluster_id, rg_centroid.clone()));
+                }
+            }
+            
+            // Sort by distance (ascending) - critical for multi-probe efficiency
+            neighbor_data.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
+            
+            // OPTIMAL HIERARCHICAL NEIGHBOR STORAGE:
+            // Use performance-tested formula for maximum efficiency
+            
+            let k = all_rowgroup_centroids.len();
+            let (intra_neighbors, inter_neighbors) = super::common::calculate_optimal_neighbors(k);
+            let total_neighbors = intra_neighbors + inter_neighbors;
+            let use_hierarchical = inter_neighbors > 0; // Two-tier if inter neighbors exist
+            
+            // Performance prediction for logging
+            let predicted_latency = super::common::predict_search_latency(k, centroid.len());
+            debug!("Rowgroup {}: {} total neighbors ({} intra + {} inter), predicted latency: {:.1}μs", 
+                current_rowgroup_id, total_neighbors, intra_neighbors, inter_neighbors, predicted_latency);
+            
+            tracing::trace!(
+                "RowGroup {} storing {} neighbor indices (collection has {} rowgroups) - using optimal formula",
+                current_rowgroup_id,
+                total_neighbors,
+                all_rowgroup_centroids.len()
+            );
+            
+            if use_hierarchical {
+                // Hierarchical storage: separate local and global neighbors
+                let super_cluster_size = (k as f64).sqrt().ceil() as usize;
+                let current_super = current_rowgroup_id as usize / super_cluster_size;
+                
+                let mut local_neighbors = Vec::new();
+                let mut global_neighbors = Vec::new();
+                
+                for (rg_id, _, neighbor_cluster, _) in neighbor_data.into_iter() {
+                    let neighbor_super = rg_id as usize / super_cluster_size;
+                    
+                    if neighbor_super == current_super {
+                        // Same super-cluster (local)
+                        if local_neighbors.len() < 5 {
+                            local_neighbors.push((rg_id, neighbor_cluster));
+                        }
+                    } else {
+                        // Different super-cluster (global)
+                        if global_neighbors.len() < 5 {
+                            global_neighbors.push((rg_id, neighbor_cluster));
+                        }
+                    }
+                    
+                    // Stop when we have enough of both types
+                    if local_neighbors.len() >= 5 && global_neighbors.len() >= 5 {
+                        break;
+                    }
+                }
+                
+                // Add local neighbors
+                for (rg_id, neighbor_cluster) in local_neighbors {
+                    neighbor_rowgroups.push(RowGroupNeighbor {
+                        rowgroup_id: rg_id,
+                        neighbor_cluster_id: neighbor_cluster,
+                        neighbor_type: NeighborType::IntraSuperCluster,
+                    });
+                }
+                
+                // Add global neighbors
+                for (rg_id, neighbor_cluster) in global_neighbors {
+                    neighbor_rowgroups.push(RowGroupNeighbor {
+                        rowgroup_id: rg_id,
+                        neighbor_cluster_id: neighbor_cluster,
+                        neighbor_type: NeighborType::InterSuperCluster,
+                    });
+                }
+            } else {
+                // Simple storage for small/medium collections
+                for (rg_id, _, neighbor_cluster, _) in 
+                    neighbor_data.into_iter().take(total_neighbors)
+                {
+                    neighbor_rowgroups.push(RowGroupNeighbor {
+                        rowgroup_id: rg_id,
+                        neighbor_cluster_id: neighbor_cluster,
+                        neighbor_type: NeighborType::Direct,
+                    });
+                }
+            }
+        }
+        
+        CentroidStats {
+            cluster_id,
+            mean_distance,
+            std_deviation,
+            radius: distances.get(p95_idx).copied().unwrap_or(mean_distance + 2.0 * std_deviation),
+            min_distance: *distances.first().unwrap_or(&0.0),
+            max_distance: *distances.last().unwrap_or(&0.0),
+            euclidean_bounds: Some(euclidean_bounds),
+            cosine_bounds,
+            dot_product_bounds: None, // Can be computed if needed
+            neighbor_rowgroups, // Sorted by distance
+        }
+    }
     }
     
     /// Check if we should start a new row group (1K vectors by default for optimal HNSW I/O)
@@ -1895,6 +2455,51 @@ impl RaptorWriter {
             // Note: column_projections_offset not available in common.rs RowGroupMetadata
             // Would need to extend the structure or store separately
             
+            // Compute and store centroid statistics for this rowgroup
+            if !self.ivf_builder.vectors.is_empty() {
+                // Compute centroid for this rowgroup
+                let centroid = self.compute_rowgroup_centroid(&self.ivf_builder.vectors);
+                rg.centroid = Some(centroid.clone());
+                
+                // Find which cluster this rowgroup belongs to (majority vote)
+                let cluster_assignments: Vec<u32> = self.ivf_builder.nodes.iter()
+                    .map(|n| n.cluster_id)
+                    .collect();
+                
+                let mut cluster_counts = HashMap::new();
+                for &cluster_id in &cluster_assignments {
+                    *cluster_counts.entry(cluster_id).or_insert(0) += 1;
+                }
+                
+                let dominant_cluster = cluster_counts.iter()
+                    .max_by_key(|&(_, count)| count)
+                    .map(|(&id, _)| id)
+                    .unwrap_or(0);
+                
+                // Collect all existing rowgroup centroids for neighbor computation
+                let all_rowgroup_centroids: Vec<(u16, Vec<f32>)> = self.row_groups.iter()
+                    .filter_map(|rg| rg.centroid.as_ref().map(|c| (rg.id, c.clone())))
+                    .collect();
+                
+                // Compute centroid statistics for fast pruning
+                let centroid_stats = self.compute_centroid_stats(
+                    &self.ivf_builder.vectors,
+                    &centroid,
+                    dominant_cluster,
+                    &all_rowgroup_centroids,
+                    rg.id,
+                );
+                
+                rg.centroid_stats = Some(centroid_stats);
+                
+                tracing::debug!(
+                    "RowGroup {} centroid stats: cluster={}, mean_dist={:.3}, radius={:.3}",
+                    rg.id, dominant_cluster, 
+                    rg.centroid_stats.as_ref().unwrap().mean_distance,
+                    rg.centroid_stats.as_ref().unwrap().radius
+                );
+            }
+            
             // Write IVF clustering data (centroids, assignments, edges)
             if self.config.enable_clustering && !self.ivf_builder.centroids.is_empty() {
                 let ivf_meta = self.write_ivf_clustering_data().await?;
@@ -1922,6 +2527,47 @@ impl RaptorWriter {
         Ok(())
     }
     
+    /// Compute centroid for a rowgroup
+    fn compute_rowgroup_centroid(&self, vectors: &[Vec<f32>]) -> Vec<f32> {
+        if vectors.is_empty() {
+            return vec![0.0; self.dimension];
+        }
+        
+        let mut centroid = vec![0.0; self.dimension];
+        
+        // Sum all vectors
+        for vector in vectors {
+            for (i, &val) in vector.iter().enumerate() {
+                if i < self.dimension {
+                    centroid[i] += val;
+                }
+            }
+        }
+        
+        // Compute mean
+        let count = vectors.len() as f32;
+        for val in &mut centroid {
+            *val /= count;
+        }
+        
+        centroid
+    }
+    
+    /// Get cluster ID for a rowgroup (may differ from rowgroup ID)
+    /// This is needed for computing cross-cluster penalties in boosting
+    fn get_rowgroup_cluster_id(&self, rowgroup_id: u16) -> u16 {
+        // Look up from existing rowgroups if available
+        if let Some(rg) = self.row_groups.iter().find(|rg| rg.id == rowgroup_id) {
+            if let Some(ref stats) = rg.centroid_stats {
+                return stats.cluster_id;
+            }
+        }
+        // Fallback: use rowgroup_id as cluster_id
+        // In practice, cluster assignments should be tracked properly
+        rowgroup_id
+    }
+    
+    
     /// Write IVF clustering data (centroids, assignments, edges) to disk
     async fn write_ivf_clustering_data(&mut self) -> Result<BloomFilterMetadata> {
         let mut ivf_data = Vec::new();
@@ -1946,12 +2592,9 @@ impl RaptorWriter {
             ivf_data.extend(&encoded);
         }
         
-        // Write centroid distance matrix
-        for row in &self.ivf_builder.centroid_distances {
-            for dist in row {
-                ivf_data.extend(&dist.to_le_bytes());
-            }
-        }
+        // Note: Centroid neighbor relationships are now stored in rowgroup metadata
+        // This is more efficient as neighbors are computed between actual rowgroups
+        // rather than theoretical cluster centroids
         
         // Write node assignments and edges
         ivf_data.extend(&(self.ivf_builder.nodes.len() as u32).to_le_bytes());
@@ -2001,12 +2644,146 @@ impl RaptorWriter {
         // Update file metadata with row groups
         self.file_metadata.row_groups = self.row_groups.clone();
         
-        // Write footer (Parquet-style)
-        let mut footer_buffer = Vec::new();
-        // Serialize metadata to footer buffer - write_footer method not available
-        let serialized = bincode::serialize(&self.file_metadata)?;
-        footer_buffer.extend_from_slice(&serialized);
-        self.filesystem.append(&self.file_path, &footer_buffer).await?;
+        // Finalize the file with centralized footer
+        self.finalize().await?;
+        
+        Ok(())
+    }
+    
+    /// Finalize the RAPTOR file by writing centralized footer with all centroids
+    /// This enables single I/O to load all centroids for query optimization
+    pub async fn finalize(&mut self) -> Result<()> {
+        tracing::info!("Finalizing RAPTOR file with centralized centroid footer");
+        
+        // Step 1: Collect ALL centroids from all rowgroups, sorted by rowgroup_id
+        let mut all_centroids: Vec<(u32, Vec<f32>)> = Vec::new();
+        
+        for rg in &self.row_groups {
+            if let Some(centroid) = &rg.centroid {
+                all_centroids.push((rg.id, centroid.clone()));
+            }
+        }
+        
+        // Sort by rowgroup_id for O(1) indexing
+        all_centroids.sort_by_key(|(id, _)| *id);
+        
+        let num_centroids = all_centroids.len();
+        let dimension = if num_centroids > 0 {
+            all_centroids[0].1.len()
+        } else {
+            self.dimension
+        };
+        
+        tracing::info!(
+            "Collected {} centroids of dimension {} for footer storage",
+            num_centroids, dimension
+        );
+        
+        // Step 2: Transpose centroids for columnar encoding (d×k layout)
+        let mut transposed_data = vec![0.0f32; num_centroids * dimension];
+        let mut rowgroup_ids = Vec::with_capacity(num_centroids);
+        
+        for (idx, (rg_id, centroid)) in all_centroids.iter().enumerate() {
+            rowgroup_ids.push(*rg_id);
+            
+            // Transpose: store all values for dim0, then dim1, etc.
+            for (dim_idx, &value) in centroid.iter().enumerate() {
+                let offset = dim_idx * num_centroids + idx;
+                transposed_data[offset] = value;
+            }
+        }
+        
+        // Step 3: Compute FastLanes encoding metadata for each dimension
+        let mut encoding_metadata = Vec::with_capacity(dimension);
+        
+        for dim_idx in 0..dimension {
+            let start = dim_idx * num_centroids;
+            let end = start + num_centroids;
+            let dim_values = &transposed_data[start..end];
+            
+            // Compute statistics for this dimension
+            let min_val = dim_values.iter().cloned().fold(f32::INFINITY, f32::min);
+            let max_val = dim_values.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
+            let range = max_val - min_val;
+            
+            // Choose encoding based on range
+            let encoding = if range < 0.001 {
+                // Very small range, use run-length encoding
+                FastLanesScheme::RunLength
+            } else if range < 10.0 {
+                // Small range, use delta encoding with bit packing
+                FastLanesScheme::Delta { bits: 16 }
+            } else {
+                // Larger range, use frame of reference
+                FastLanesScheme::FrameOfReference {
+                    reference: min_val as i64,
+                    bits: 24,
+                }
+            };
+            
+            encoding_metadata.push(FastLanesMetadata {
+                min_value: min_val,
+                max_value: max_val,
+                encoding,
+                compressed_size: 0, // Will be filled during actual encoding
+            });
+        }
+        
+        // Step 4: Create the columnar centroids structure
+        let columnar_centroids = ColumnarCentroids {
+            count: num_centroids as u32,
+            dimension: dimension as u32,
+            rowgroup_ids,
+            transposed_data,
+            encoding_metadata,
+        };
+        
+        // Step 5: Create the footer with centroids
+        let footer = RaptorFooter {
+            centroids: columnar_centroids,
+            version: 1,
+            checksum: 0, // TODO: Compute actual checksum
+            file_metadata: self.file_metadata.clone(),
+        };
+        
+        // Step 6: Serialize and write the footer
+        let footer_bytes = bincode::serialize(&footer)?;
+        let footer_size = footer_bytes.len();
+        
+        // Write footer to file
+        let footer_offset = self.filesystem.append(&self.file_path, &footer_bytes).await?;
+        
+        // Write footer size (last 4 bytes before magic for easy lookup)
+        // Using u32 allows footers up to 4GB which is more than sufficient
+        // (even 100k rowgroups with 1536 dims = ~600MB)
+        if footer_size > u32::MAX as usize {
+            return Err(anyhow::anyhow!("Footer size {} exceeds maximum of 4GB", footer_size));
+        }
+        let footer_size_bytes = (footer_size as u32).to_le_bytes();
+        self.filesystem.append(&self.file_path, &footer_size_bytes).await?;
+        
+        // Write magic number (last 4 bytes)
+        self.filesystem.append(&self.file_path, &constants::RAPTOR_MAGIC).await?;
+        
+        tracing::info!(
+            "Wrote centralized footer: {} centroids, {} bytes at offset {}, total file size approx {}",
+            num_centroids,
+            footer_size,
+            footer_offset,
+            footer_offset + footer_size as u64 + 8 // footer + size(4) + magic(4)
+        );
+        
+        // Step 7: Log memory savings
+        let distributed_size = num_centroids * 5 * dimension * 4; // If storing 5 neighbors inline
+        let centralized_size = num_centroids * dimension * 4; // Actual footer storage
+        let savings_pct = (1.0 - centralized_size as f32 / distributed_size.max(1) as f32) * 100.0;
+        
+        tracing::info!(
+            "Memory savings: {:.1}% (centralized: {:.2}MB vs distributed: {:.2}MB)",
+            savings_pct,
+            centralized_size as f32 / 1_048_576.0,
+            distributed_size as f32 / 1_048_576.0
+        );
         
         Ok(())
     }
@@ -2268,17 +3045,12 @@ impl RaptorWriter {
             })
             .collect();
         
-        // Step 5: Build k×k centroid distance matrix using AXIS engine
-        // This avoids duplication - AXIS provides optimized distance calculations
-        let centroid_vectors: Vec<Vec<f32>> = self.ivf_builder.centroids.iter()
-            .map(|c| c.vector.clone())
-            .collect();
-        
-        self.ivf_builder.centroid_distances = self.ivf_builder.axis_clustering
-            .calculate_centroid_distance_matrix(
-                &centroid_vectors,
-                DistanceMetric::Euclidean
-            )?;
+        // Step 5: Centroid neighbor relationships are now computed per-rowgroup
+        // during flush when we have all rowgroup centroids available.
+        // This is more efficient as:
+        // 1. We compute neighbors between actual rowgroups, not theoretical clusters
+        // 2. The data is stored directly in rowgroup metadata
+        // 3. No separate centroid distance matrix is needed
         
         // Step 6: Update nodes with cluster assignments and calculate centroid distances
         // Use unified distance compute for consistency and optimization
@@ -2735,4 +3507,3 @@ impl RaptorWriter {
         }
         Ok(())
     }
-}

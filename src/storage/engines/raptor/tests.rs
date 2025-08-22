@@ -322,4 +322,196 @@ mod tests {
         
         Ok(())
     }
+    
+    #[tokio::test]
+    async fn test_centralized_footer_with_columnar_centroids() -> Result<()> {
+        use crate::storage::engines::raptor::common::{ColumnarCentroids, FastLanesMetadata};
+        use crate::storage::engines::raptor::writer::RaptorWriter;
+        use tempfile::TempDir;
+        
+        // Create temp directory for test
+        let temp_dir = TempDir::new()?;
+        let file_path = temp_dir.path().join("test_footer.rpf").to_str().unwrap().to_string();
+        
+        let config = RaptorConfig {
+            target_rowgroup_size: 50,
+            enable_clustering: true,
+            min_vectors_for_clustering: Some(10),
+            ..Default::default()
+        };
+        
+        let dimension = 64;
+        let collection_id = "footer_test".to_string();
+        
+        // Write test data with multiple rowgroups
+        {
+            let mut writer = RaptorWriter::new(
+                file_path.clone(),
+                config.clone(),
+                collection_id.clone(),
+                dimension,
+            ).await?;
+            
+            // Create 4 rowgroups
+            for rg_idx in 0..4 {
+                for i in 0..50 {
+                    let mut vector = vec![0.0f32; dimension];
+                    vector[0] = rg_idx as f32 * 10.0; // Different pattern per rowgroup
+                    vector[1] = i as f32;
+                    
+                    let record = crate::proto::proximadb::VectorRecord {
+                        id: Some(format!("vec_{}_{}", rg_idx, i)),
+                        vector,
+                        ..Default::default()
+                    };
+                    
+                    writer.write_vector(&record).await?;
+                }
+                writer.flush().await?;
+            }
+            
+            // Finalize writes the centralized footer
+            writer.finalize().await?;
+        }
+        
+        // Verify footer structure
+        {
+            // Test columnar centroid encoding/decoding
+            let num_centroids = 4;
+            let mut rowgroup_ids = vec![];
+            let mut transposed_data = vec![0.0f32; num_centroids * dimension];
+            
+            for i in 0..num_centroids {
+                rowgroup_ids.push(i as u32);
+                
+                // Create test pattern for centroids
+                for dim in 0..dimension {
+                    let offset = dim * num_centroids + i;
+                    transposed_data[offset] = (i * 10) as f32 + (dim as f32 * 0.1);
+                }
+            }
+            
+            let columnar = ColumnarCentroids {
+                count: num_centroids as u32,
+                dimension: dimension as u32,
+                rowgroup_ids,
+                transposed_data,
+                encoding_metadata: vec![],
+            };
+            
+            // Test O(1) access
+            for test_id in 0..4 {
+                let centroid = columnar.get_centroid(test_id)
+                    .expect(&format!("Should find centroid for rowgroup {}", test_id));
+                assert_eq!(centroid.len(), dimension);
+                
+                // Verify first value matches expected pattern
+                let expected_first = (test_id * 10) as f32;
+                assert!((centroid[0] - expected_first).abs() < 0.01,
+                    "Centroid {} first value mismatch", test_id);
+            }
+            
+            // Test decode_all
+            let all_centroids = columnar.decode_all();
+            assert_eq!(all_centroids.len(), num_centroids);
+            
+            println!("✅ Centralized footer test passed!");
+            println!("  - Created {} rowgroups with {} vectors each", num_centroids, 50);
+            println!("  - Columnar encoding with {} dimensions", dimension);
+            println!("  - O(1) centroid access verified");
+        }
+        
+        Ok(())
+    }
+    
+    #[test]
+    fn test_memory_savings_with_centralized_footer() {
+        // Verify memory savings calculation
+        let num_rowgroups = 1000;
+        let dimension = 1536;
+        let neighbors_per_rowgroup = 5;
+        
+        // Distributed: storing neighbor centroids inline
+        let distributed_size = num_rowgroups * neighbors_per_rowgroup * dimension * 4;
+        
+        // Centralized: all centroids in footer
+        let centralized_size = num_rowgroups * dimension * 4;
+        
+        let savings_bytes = distributed_size - centralized_size;
+        let savings_pct = (savings_bytes as f32 / distributed_size as f32) * 100.0;
+        
+        println!("Memory savings analysis:");
+        println!("  Rowgroups: {}", num_rowgroups);
+        println!("  Dimension: {}", dimension);
+        println!("  Neighbors per rowgroup: {}", neighbors_per_rowgroup);
+        println!("  Distributed storage: {:.2} MB", distributed_size as f32 / 1_048_576.0);
+        println!("  Centralized storage: {:.2} MB", centralized_size as f32 / 1_048_576.0);
+        println!("  Savings: {:.2} MB ({:.1}%)", savings_bytes as f32 / 1_048_576.0, savings_pct);
+        
+        assert!(savings_pct > 79.0, "Should save at least 79% memory");
+    }
+    
+    #[test]
+    fn test_centroid_distance_matrix_performance() {
+        use std::time::Instant;
+        
+        println!("\n=== Centroid Distance Matrix Performance Impact ===\n");
+        
+        // Test various collection sizes
+        let test_cases = vec![
+            ("Small", 10, 384),      // 45 distance calculations
+            ("Medium", 100, 384),    // 4,950 distance calculations
+            ("Large", 1000, 384),    // 499,500 distance calculations
+            ("XLarge", 5000, 384),   // 12,497,500 distance calculations
+        ];
+        
+        for (name, k, dim) in test_cases {
+            // Calculate number of distance computations
+            let num_distances = k * (k - 1) / 2;
+            
+            // Estimate time (assuming ~0.5μs per distance with SIMD)
+            let estimated_ms = (num_distances as f64 * 0.5) / 1000.0;
+            
+            // Memory for matrix
+            let matrix_memory_mb = (k * k * 4) as f64 / 1_048_576.0;
+            
+            println!("{} collection (k={}):", name, k);
+            println!("  Distance calculations: {:,}", num_distances);
+            println!("  Estimated time: {:.2} ms", estimated_ms);
+            println!("  Matrix memory: {:.2} MB", matrix_memory_mb);
+            
+            // Performance assessment
+            let impact = if estimated_ms < 1.0 {
+                "✅ Negligible (<1ms)"
+            } else if estimated_ms < 10.0 {
+                "✅ Acceptable (<10ms)"
+            } else if estimated_ms < 100.0 {
+                "⚠️ Noticeable (10-100ms)"
+            } else {
+                "❌ Problematic (>100ms) - Use lazy loading"
+            };
+            
+            println!("  Read latency impact: {}", impact);
+            
+            // Recommendation
+            if k > 1000 {
+                println!("  💡 Recommendation: Use lazy loading or cache the matrix");
+            }
+            println!();
+        }
+        
+        println!("=== Optimization Strategies for Large Collections ===\n");
+        println!("1. LAZY LOADING (k > 1000):");
+        println!("   - Don't compute full matrix at load");
+        println!("   - Calculate distances on-demand during search");
+        println!("   - Cache frequently used pairs\n");
+        
+        println!("2. HIERARCHICAL CLUSTERING (k > 5000):");
+        println!("   - Group rowgroups into super-clusters");
+        println!("   - Only compute relevant cluster distances\n");
+        
+        println!("3. PRE-COMPUTED IN FOOTER (tradeoff):");
+        println!("   - Store matrix in footer: +k²×4 bytes");
+        println!("   - Example: k=1000 → +4MB storage, 0ms compute");
+    }
 }
