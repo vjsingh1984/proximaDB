@@ -1064,7 +1064,8 @@ impl InterCentroidMatrix {
     /// Automatically detects and uses best SIMD instructions available
     pub fn get_distances_batch_optimized(&self, pairs: &[(usize, usize)]) -> Vec<f32> {
         use crate::compute::quantization::storage_engine::StorageQuantizationEngine;
-        use crate::compute::quantization::types::{QuantizedVector, UnifiedQuantizationLevel};
+        use crate::compute::QuantizedVector;
+        use crate::compute::quantization::types::UnifiedQuantizationLevel;
         use crate::core::hardware_capabilities::HardwareCapabilities;
         
         let hw = HardwareCapabilities::global();

@@ -90,6 +90,35 @@ Example: P=1024 → 523,776 distances × 1 byte (INT8) = 512KB/rowgroup
 
 The P² matrix stores pre-computed distances between all vectors within a rowgroup, replacing the need for local HNSW segments.
 
+[source,mermaid]
+----
+graph LR
+    subgraph "Traditional HNSW Approach"
+        V1[Vector 1] --> E1[Edges]
+        V2[Vector 2] --> E2[Edges]
+        V3[Vector 3] --> E3[Edges]
+        E1 -.-> V2
+        E2 -.-> V3
+        E1 -.-> V3
+        style E1 fill:#ffcccc
+        style E2 fill:#ffcccc
+        style E3 fill:#ffcccc
+    end
+    
+    subgraph "RAPTOR P² Matrix Approach"
+        M[P² Matrix<br/>Upper Triangle] --> D1[d₁₂]
+        M --> D2[d₁₃]
+        M --> D3[d₂₃]
+        D1 --> Q[Quantized<br/>INT8]
+        D2 --> Q
+        D3 --> Q
+        Q --> F[FastLanes<br/>Compressed]
+        style M fill:#ccffcc
+        style Q fill:#ccffcc
+        style F fill:#ccffcc
+    end
+----
+
 [source]
 ----
 P² Matrix Storage Strategy:
@@ -378,7 +407,7 @@ pub struct SmartSparseP×K {
 
 == Complete RAPTOR Architecture
 
-[mermaid]
+[source,mermaid]
 ----
 graph TB
     subgraph "RAPTOR File Structure"
@@ -451,6 +480,34 @@ Action: Add C4 to search list (Phase 2 expansion)
 ----
 
 === Complete Search Flow
+
+[source,mermaid]
+----
+sequenceDiagram
+    participant Q as Query
+    participant K2 as K² Matrix
+    participant PK as P×K Matrix
+    participant P2 as P² Matrix
+    participant R as Results
+    
+    Q->>K2: Phase 1: Calculate distances to centroids
+    K2->>K2: Detect boundaries (ratio > 0.8)
+    K2->>Q: Selected clusters [C23, C67, C45]
+    
+    Q->>PK: Phase 2: Check spillover
+    PK->>PK: Find boundary vectors
+    PK->>PK: Detect spillover >15%
+    PK->>Q: Additional clusters [C12, C34]
+    
+    Q->>P2: Search within selected rowgroups
+    P2->>P2: Use upper-triangle distances
+    P2->>P2: Apply SIMD acceleration
+    P2->>R: Candidate vectors
+    
+    R->>R: Self-correction if confidence < 0.8
+    R->>R: Apply boosting
+    R->>Q: Final top-k results
+----
 
 [source]
 ----

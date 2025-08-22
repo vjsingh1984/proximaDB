@@ -23,6 +23,7 @@ use crate::storage::engines::common::fastlanes_encoding::{FastLanesEncoder, Fast
 use crate::core::hardware_capabilities::HardwareCapabilities;
 use crate::core::memory::pool::VectorMemoryPool;
 use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
+use crate::compute::distance_computation::DistanceMetric;
 use crate::proto::proximadb::{VectorRecord, metadata_value};
 
 // Import AXIS clustering for reuse
@@ -30,7 +31,6 @@ use crate::index::axis::clustering::{
     AxisClusteringEngine, ReusableClusteringEngine, 
     ClusteringConfig as AxisClusteringConfig, ClusteringAlgorithm, KMeansConfig, KMeansInit
 };
-use crate::compute::distance_computation::{DistanceMetric, engine::UnifiedDistanceCompute};
 
 use super::{RaptorConfig, common::*};
 use super::constants;

@@ -2,6 +2,50 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use super::constants;
 
+/// Accuracy level for search operations
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub enum AccuracyLevel {
+    /// 99.5% recall target - maximum accuracy
+    Maximum,
+    /// 98% recall target - balanced accuracy/performance
+    Balanced,
+    /// 94% recall target - optimized for speed
+    Fast,
+}
+
+/// P×K storage strategy based on K/D relationship
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub enum PxKStrategy {
+    /// Full dense storage (k < √d)
+    DenseFull,
+    /// Full storage with compression (√d ≤ k < d/4)
+    DenseCompressed,
+    /// Sparse storage with coverage ratio
+    SparseCoverage { 
+        coverage: f32,
+        compression: CompressionStrategy,
+    },
+    /// Learned index for very large K
+    LearnedIndex,
+}
+
+/// Compression strategy for P×K storage
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub enum CompressionStrategy {
+    /// No compression - f32 (4 bytes)
+    Uncompressed,
+    /// Half precision - f16 (2 bytes)
+    Float16,
+    /// 8-bit quantization (1 byte)
+    Quantized8,
+    /// 4-bit quantization (0.5 bytes)
+    Quantized4,
+    /// Delta encoding for sorted distances
+    DeltaEncoded,
+    /// Bit packing based on range
+    BitPacked,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RaptorConfig {
     // Storage settings

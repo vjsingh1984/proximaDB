@@ -3,14 +3,22 @@
 //! Implements the refined formula with minimum 10% coverage floor
 //! and intelligent compression strategies based on K/D relationship
 
-use super::common::{VectorCentroidMatrix, RowGroupMetadata};
+use super::common::RowGroupMetadata;
 use super::config::{PxKStrategy, CompressionStrategy};
 use crate::core::compression::StandardCompression;
 use crate::compute::quantization::storage_engine::StorageQuantizationEngine;
-use crate::compute::distance::UnifiedDistanceCompute;
+use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
 use anyhow::Result;
-use half::f16;
 use std::collections::HashSet;
+use serde::{Deserialize, Serialize};
+
+/// Vector to centroid distance matrix
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VectorCentroidMatrix {
+    pub distances: Vec<Vec<f32>>,
+    pub num_vectors: usize,
+    pub num_clusters: usize,
+}
 
 /// Selection reason for sparse storage
 #[derive(Debug, Clone)]
@@ -142,6 +150,20 @@ impl SparseCoverageStorage {
             num_clusters,
             quantization_engine: StorageQuantizationEngine::new(),
         }
+    }
+    
+    /// Helper to quantize to u16
+    fn quantize_to_u16(&self, distances: &[f32]) -> (Vec<u16>, f32, f32) {
+        let min = distances.iter().cloned().fold(f32::INFINITY, f32::min);
+        let max = distances.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
+        let range = max - min;
+        
+        let quantized: Vec<u16> = distances.iter().map(|&d| {
+            let normalized = (d - min) / range;
+            (normalized * 65535.0) as u16
+        }).collect();
+        
+        (quantized, min, max)
     }
     
     /// Select vectors intelligently based on coverage
@@ -371,11 +393,15 @@ impl SparseCoverageStorage {
                 bincode::serialize(distances).unwrap()
             }
             CompressionStrategy::Float16 => {
-                let f16_distances: Vec<f16> = distances
-                    .iter()
-                    .map(|&d| f16::from_f32(d))
-                    .collect();
-                bincode::serialize(&f16_distances).unwrap()
+                // Use quantization engine to convert to 16-bit representation
+                let (quantized, min, max) = self.quantize_to_u16(distances);
+                let mut result = Vec::new();
+                result.extend_from_slice(&min.to_le_bytes());
+                result.extend_from_slice(&max.to_le_bytes());
+                for val in quantized {
+                    result.extend_from_slice(&val.to_le_bytes());
+                }
+                result
             }
             CompressionStrategy::Quantized8 => {
                 let (quantized, min, max) = self.quantization_engine
@@ -478,8 +504,21 @@ impl PxKStorageImpl for SparseCoverageStorage {
                 bincode::deserialize(compressed).ok()
             }
             CompressionStrategy::Float16 => {
-                let f16_distances: Vec<f16> = bincode::deserialize(compressed).ok()?;
-                Some(f16_distances.iter().map(|&d| d.to_f32()).collect())
+                // Decompress from 16-bit quantized format
+                if compressed.len() < 8 {
+                    return None;
+                }
+                let min = f32::from_le_bytes([compressed[0], compressed[1], compressed[2], compressed[3]]);
+                let max = f32::from_le_bytes([compressed[4], compressed[5], compressed[6], compressed[7]]);
+                let range = max - min;
+                
+                let mut distances = Vec::new();
+                for chunk in compressed[8..].chunks_exact(2) {
+                    let val = u16::from_le_bytes([chunk[0], chunk[1]]);
+                    let normalized = val as f32 / 65535.0;
+                    distances.push(min + normalized * range);
+                }
+                Some(distances)
             }
             // ... other decompression strategies ...
             _ => None, // Simplified for now
