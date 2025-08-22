@@ -1881,6 +1881,11 @@ impl RaptorWriter {
     }
     
     pub async fn flush(&mut self) -> Result<()> {
+        // Build IVF clusters before flushing (if we have enough vectors)
+        if self.ivf_builder.nodes.len() >= self.config.min_vectors_for_clustering.unwrap_or(1000) {
+            self.build_ivf_clusters()?;
+        }
+        
         // Flush any pending row page
         self.flush_row_page().await?;
         
@@ -1890,7 +1895,14 @@ impl RaptorWriter {
             // Note: column_projections_offset not available in common.rs RowGroupMetadata
             // Would need to extend the structure or store separately
             
-            // Write HNSW segment
+            // Write IVF clustering data (centroids, assignments, edges)
+            if self.config.enable_clustering && !self.ivf_builder.centroids.is_empty() {
+                let ivf_meta = self.write_ivf_clustering_data().await?;
+                // Store IVF offset in metadata (would need to extend structure)
+                tracing::info!("Wrote IVF clustering data at offset {}", ivf_meta.offset);
+            }
+            
+            // Write HNSW segment (deprecated - using IVF+Graph instead)
             if self.config.enable_hnsw {
                 let hnsw_meta = self.write_hnsw_segment().await?;
                 rg.hnsw_segment_offset = Some(hnsw_meta.file_offset);
@@ -1904,7 +1916,82 @@ impl RaptorWriter {
             // This enables SIMD scanning after bloom filter check
         }
         
+        // Clear vectors after flush to save memory
+        self.ivf_builder.vectors.clear();
+        
         Ok(())
+    }
+    
+    /// Write IVF clustering data (centroids, assignments, edges) to disk
+    async fn write_ivf_clustering_data(&mut self) -> Result<BloomFilterMetadata> {
+        let mut ivf_data = Vec::new();
+        
+        // Write header
+        ivf_data.extend(b"IVF1"); // Magic number
+        ivf_data.extend(&(self.ivf_builder.centroids.len() as u32).to_le_bytes());
+        ivf_data.extend(&(self.config.dimension as u32).to_le_bytes());
+        
+        // Write centroids
+        for centroid in &self.ivf_builder.centroids {
+            // Write centroid ID and stats
+            ivf_data.extend(&centroid.cluster_id.to_le_bytes());
+            ivf_data.extend(&centroid.num_vectors.to_le_bytes());
+            ivf_data.extend(&centroid.mean_distance.to_le_bytes());
+            ivf_data.extend(&centroid.std_deviation.to_le_bytes());
+            
+            // Write centroid vector using FastLanes
+            let encoder = FastLanesEncoder::new();
+            let encoded = encoder.encode_f32(&centroid.vector)?;
+            ivf_data.extend(&(encoded.len() as u32).to_le_bytes());
+            ivf_data.extend(&encoded);
+        }
+        
+        // Write centroid distance matrix
+        for row in &self.ivf_builder.centroid_distances {
+            for dist in row {
+                ivf_data.extend(&dist.to_le_bytes());
+            }
+        }
+        
+        // Write node assignments and edges
+        ivf_data.extend(&(self.ivf_builder.nodes.len() as u32).to_le_bytes());
+        for node in &self.ivf_builder.nodes {
+            // Write node data
+            ivf_data.extend(&(node.vector_id.len() as u32).to_le_bytes());
+            ivf_data.extend(node.vector_id.as_bytes());
+            ivf_data.extend(&node.cluster_id.to_le_bytes());
+            ivf_data.extend(&node.centroid_distance.to_le_bytes());
+            
+            // Write edges
+            ivf_data.extend(&(node.edges.len() as u32).to_le_bytes());
+            for edge in &node.edges {
+                ivf_data.extend(&edge.target_node_id.to_le_bytes());
+                ivf_data.extend(&edge.distance.to_le_bytes());
+            }
+        }
+        
+        // Compress IVF data
+        let compressed = self.compression.compress(
+            &ivf_data,
+            CompressionAlgorithm::Zstd,
+            6,
+            CompressionContext::Index,
+        )?;
+        
+        // Get current file offset
+        let offset = self.filesystem.metadata(&self.file_path).await
+            .map(|m| m.size)
+            .unwrap_or(0);
+        
+        // Write to file
+        self.filesystem.append(&self.file_path, &compressed).await?;
+        
+        Ok(BloomFilterMetadata {
+            offset: offset as i64,
+            size: compressed.len() as i64,
+            num_entries: self.ivf_builder.nodes.len(),
+            false_positive_rate: 0.01,
+        })
     }
     
     pub async fn close(mut self) -> Result<()> {
