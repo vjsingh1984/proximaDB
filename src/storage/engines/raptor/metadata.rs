@@ -8,18 +8,16 @@ use super::common::{RaptorFileMetadata, SchemaDescriptor, KeyValue};
 // Import more types from common
 use super::common::{RowPageMetadata, HnswSegmentMetadata, BloomFilterMetadata, FieldDescriptor};
 
-// Keep only the types not defined in common.rs
+// REMOVED: CompressionCodec - duplicate of config.rs::CompressionCodec
+// REMOVED: HnswSegmentMetadata - duplicate of common.rs::HnswSegmentMetadata  
+// REMOVED: BloomFilterMetadata - duplicate of common.rs::BloomFilterMetadata
 
-/// Compression codec enum
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum CompressionCodec {
-    None,
-    Lz4,
-    Zstd { level: i32 },
-    Snappy,
-}
+// Re-export from common and config for backward compatibility
+pub use super::config::CompressionCodec;
+pub use super::common::{HnswSegmentMetadata, BloomFilterMetadata};
 
-/// B-tree index metadata (Artus-style)
+/// B-tree index metadata (Artus-style) - UNIQUE to metadata.rs
+/// Note: This is obsolete with Matrix Trinity approach but kept for compatibility
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BTreeIndexMetadata {
     pub root_offset: i64,
@@ -27,28 +25,6 @@ pub struct BTreeIndexMetadata {
     pub num_keys: i64,
     pub first_key: Vec<u8>,
     pub last_key: Vec<u8>,
-}
-
-/// HNSW segment metadata
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct HnswSegmentMetadata {
-    pub file_offset: i64,
-    pub size_bytes: i64,
-    pub num_nodes: i32,
-    pub entry_point: i32,
-    pub max_level: i32,
-    pub ef_construction: i32,
-    pub m: i32,
-}
-
-/// Bloom filter metadata
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct BloomFilterMetadata {
-    pub file_offset: i64,
-    pub size_bytes: i64,
-    pub num_bits: i64,
-    pub num_hashes: i32,
-    pub false_positive_rate: f64,
 }
 
 impl Default for RaptorFileMetadata {

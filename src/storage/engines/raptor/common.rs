@@ -3,8 +3,10 @@
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use crate::core::compression::CompressionAlgorithm;
 use arrow_array::RecordBatch;
 use crate::proto::proximadb::VectorRecord;
+use anyhow::Result;
 
 // ====== Core RowGroup Structure (unified from rowgroup.rs and compaction.rs) ======
 
@@ -26,11 +28,6 @@ pub struct RowGroup {
     pub bloom_filter: Option<RowGroupBloomFilter>,
     pub bloom_filter_offset: Option<u64>,
     
-    // HNSW segment for this row group
-    pub hnsw_segment_offset: Option<u64>,
-    
-    // HNSW locality info
-    pub local_hnsw: Option<LocalHnswSegment>,
     
     // Compression and temporal info
     pub compression_codec: String,
@@ -54,8 +51,6 @@ impl RowGroup {
             metadata_stats: HashMap::new(),
             bloom_filter: None,
             bloom_filter_offset: None,
-            hnsw_segment_offset: None,
-            local_hnsw: None,
             compression_codec: "zstd".to_string(),
             min_timestamp: None,
             max_timestamp: None,
@@ -75,7 +70,6 @@ impl RowGroup {
             vector_stats: self.vector_stats.clone(),
             metadata_stats: self.metadata_stats.clone(),
             bloom_filter_offset: self.bloom_filter_offset,
-            hnsw_segment_offset: self.hnsw_segment_offset,
             compression_codec: self.compression_codec.clone(),
             min_timestamp: self.min_timestamp,
             max_timestamp: self.max_timestamp,
@@ -85,23 +79,47 @@ impl RowGroup {
     }
 }
 
+/// Column page metadata for selective field access
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ColumnPageMetadata {
+    pub column_type: ColumnType,
+    pub offset: u64,              // File offset for this column
+    pub compressed_size: u64,     // Compressed size in bytes
+    pub uncompressed_size: u64,   // Original size
+    pub compression: CompressionAlgorithm,
+    pub encoding: FastLanesScheme,
+    pub null_count: u32,
+    pub min_value: Option<Vec<u8>>,  // For pruning
+    pub max_value: Option<Vec<u8>>,  // For pruning
+}
+
+/// Column types in RAPTOR files
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
+pub enum ColumnType {
+    VectorsFp32,
+    VectorsQuantized,
+    Ids,
+    Metadata(String), // Key name
+    SourceContent,
+    P2Matrix,
+    PxKMatrix,
+    BloomFilter,
+}
+
 /// Compact metadata representation for serialization
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RowGroupMetadata {
-    pub id: u16,                    // Optimized: supports 67M vectors per file
-    pub offset: u64,
-    pub compressed_size: u64,
-    pub uncompressed_size: u64,
+    pub id: u16,                    // Supports 67M vectors per file
     pub row_count: usize,
+    
+    // Column pages with individual compression
+    pub column_pages: HashMap<ColumnType, ColumnPageMetadata>,
+    
+    // Statistics
     pub vector_stats: VectorStats,
     pub metadata_stats: HashMap<String, ColumnStats>,
-    pub bloom_filter_offset: Option<u64>,
-    pub hnsw_segment_offset: Option<u64>,    // DEPRECATED: Replaced by p2_matrix_offset
-    pub p2_matrix_offset: Option<u64>,       // P² matrix stored inline (replaces HNSW)
-    pub p2_matrix_size: Option<u64>,         // Compressed size of P² matrix
-    pub pxk_matrix_offset: Option<u64>,      // P×K matrix stored inline after vectors
-    pub pxk_matrix_size: Option<u64>,        // Compressed size of P×K matrix
-    pub compression_codec: String,
+    
+    // Timestamps
     pub min_timestamp: Option<i64>,
     pub max_timestamp: Option<i64>,
     
@@ -187,15 +205,10 @@ impl Default for RowGroupMetadata {
     fn default() -> Self {
         Self {
             id: 0,
-            offset: 0,
-            compressed_size: 0,
-            uncompressed_size: 0,
             row_count: 0,
+            column_pages: HashMap::new(),
             vector_stats: VectorStats::default(),
             metadata_stats: HashMap::new(),
-            bloom_filter_offset: None,
-            hnsw_segment_offset: None,
-            compression_codec: "zstd".to_string(),
             min_timestamp: None,
             max_timestamp: None,
             centroid: None,
@@ -323,55 +336,6 @@ pub enum MetadataValue {
     Map(HashMap<String, MetadataValue>),
 }
 
-// ====== HNSW Structures (unified from compaction.rs and hnsw_manager.rs) ======
-
-/// Local HNSW segment for a row group
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct LocalHnswSegment {
-    pub num_nodes: usize,
-    pub entry_point: u32,
-    pub edges: Vec<HnswEdge>,
-}
-
-impl LocalHnswSegment {
-    pub fn new() -> Self {
-        Self {
-            num_nodes: 0,
-            entry_point: 0,
-            edges: Vec::new(),
-        }
-    }
-}
-
-/// HNSW graph structure (unified)
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct HnswGraph {
-    pub entry_points: Vec<u32>,
-    pub edges: Vec<HnswEdge>,
-    pub levels: HashMap<u32, usize>,  // node_id -> level
-    pub metadata: HnswGraphMetadata,
-}
-
-/// Edge in HNSW graph
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct HnswEdge {
-    pub from: u32,
-    pub to: u32,
-    pub distance: f32,
-    pub level: usize,
-}
-
-/// HNSW graph metadata
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct HnswGraphMetadata {
-    pub num_nodes: usize,
-    pub num_edges: usize,
-    pub max_level: usize,
-    pub m: usize,  // Max connections per node
-    pub ef_construction: usize,
-    pub ef_search: usize,
-    pub distance_metric: String,
-}
 
 // ====== FastLanes Encoding Schemes (shared) ======
 
@@ -413,13 +377,6 @@ pub struct RaptorFileMetadata {
     // Schema
     pub schema: SchemaDescriptor,
     
-    // HNSW metadata
-    pub hnsw_metadata: Option<HnswGraphMetadata>,
-    pub global_hnsw_offset: u64,
-    pub global_hnsw_size: u64,
-    pub hnsw_entry_points: Vec<String>,
-    pub hnsw_num_layers: u8,
-    pub global_hnsw_entry: Option<i32>,
     
     // Bloom filter metadata (for per-rowgroup bloom filters)
     pub bloom_filter_metadata: Option<BloomFilterMetadata>,
@@ -437,7 +394,6 @@ pub struct RaptorFileMetadata {
     pub key_value_metadata: Vec<KeyValue>,
     
     // Additional metadata fields
-    pub created_by: String,
     pub footer_offset: u64,
     pub footer_size: u64,
     pub last_accessed: i64,
@@ -552,10 +508,10 @@ pub enum PredicateOp {
     StartsWith,
 }
 
-// ====== Bloom Filter Structures (HNSW-Optimized) ======
+// ====== Bloom Filter Structures ======
 
 /// Per-RowGroup bloom filter for fast membership testing
-/// Optimized for HNSW-organized data where IDs are scattered
+/// Optimized for scattered ID access patterns
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RowGroupBloomFilter {
     /// Bloom filter bits (typically 10 bits per ID for 1% false positive)
@@ -821,7 +777,7 @@ pub struct ColumnnarIdIndex {
     pub is_sorted: bool,
 }
 
-// ====== Locality clustering for HNSW organization ======
+// ====== Locality clustering for spatial organization ======
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LocalityCluster {
@@ -868,6 +824,13 @@ pub struct RaptorFooter {
     /// Essential for d₁, d₄, d₅ components in 5-component boosting formula
     /// Stored as offsets - actual matrices loaded on-demand during search
     pub vector_centroid_matrices: Vec<VectorCentroidMatrixRef>,
+    
+    
+    /// PERFECTED: 1-to-1 Centroid-to-Rowgroup mapping for perfect parallelism  
+    /// K centroids = K rowgroups (centroid_id == rowgroup_id)
+    /// Overflow creates new centroids for balanced distribution
+    /// This enables perfect search parallelism across vector space subdivisions
+    pub total_centroids: u32, // K centroids = K rowgroups
     
     /// Version for backward compatibility
     pub version: u32,
@@ -1267,6 +1230,71 @@ impl InterCentroidCompressionMetadata {
     }
 }
 
+/// P×K Vector-to-centroid distance matrix for a specific rowgroup
+/// Contains distances from all P vectors in rowgroup to all K centroids
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VectorCentroidMatrix {
+    /// Rowgroup this matrix belongs to
+    pub rowgroup_id: u16,
+    
+    /// Number of vectors in this rowgroup (P)
+    pub num_vectors: u32,
+    
+    /// Number of centroids (K, same across all rowgroups)
+    pub num_centroids: u32,
+    
+    /// Storage strategy used for this matrix
+    pub storage_strategy: VectorCentroidStorageStrategy,
+    
+    /// Compressed matrix data
+    pub compressed_data: Vec<u8>,
+    
+    /// Compression metadata
+    pub compression_metadata: VectorCentroidCompressionMetadata,
+    
+    /// Hierarchical data (when using hierarchical strategy)
+    pub hierarchical_data: Option<HierarchicalData>,
+    
+    /// Sparse data (when using sparse strategy)
+    pub sparse_data: Option<SparseData>,
+}
+
+/// Storage strategy for P×K matrices based on sparsity and size
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub enum VectorCentroidStorageStrategy {
+    /// Store full P×K matrix (dense, small rowgroups)
+    Full,
+    
+    /// Store mean + sparse deltas (medium sparsity)
+    Hierarchical,
+    
+    /// Store only top-k entries per vector (high sparsity)
+    Sparse,
+}
+
+/// Hierarchical storage data for mean + sparse deltas
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HierarchicalData {
+    /// Mean distance per centroid (K values)
+    pub mean_distances: Vec<f32>,
+    
+    /// Sparse deltas from mean (only significant deviations)
+    pub sparse_deltas: Vec<DeltaEntry>,
+}
+
+/// Delta entry for hierarchical storage
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DeltaEntry {
+    /// Vector index within rowgroup
+    pub vector_index: u32,
+    
+    /// Centroid index
+    pub centroid_index: u32,
+    
+    /// Delta from mean distance
+    pub delta_value: f32,
+}
+
 impl VectorCentroidMatrix {
     /// Get distance from vector to centroid
     pub fn get_distance(&self, vector_idx: usize, centroid_idx: usize) -> Result<f32> {
@@ -1462,10 +1490,72 @@ pub struct FastLanesMetadata {
     pub compressed_size: u32,
 }
 
+/// FastLanes encoding schemes (placeholder - uses unified implementation)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum FastLanesScheme {
+    /// Direct storage without encoding
+    None,
+    
+    /// Delta encoding with bit-packing
+    DeltaBitPacked { bits_per_value: u8 },
+    
+    /// Dictionary encoding
+    Dictionary { num_entries: u16 },
+    
+    /// Frame of Reference encoding
+    FrameOfReference { base_value: i64, bits_per_delta: u8 },
+    
+    /// Run-length encoding
+    RunLength,
+    
+    /// Zigzag encoding for signed integers
+    Zigzag { bits_per_value: u8 },
+}
+
+/// Sparse entry in P×K matrix for boundary vectors only
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SparseEntry {
+    /// Vector index within rowgroup
+    pub vector_idx: u32,
+    
+    /// Centroid index  
+    pub centroid_idx: u32,
+    
+    /// Quantized distance (INT8)
+    pub quantized_distance: u8,
+}
+
+/// Sparse storage for P×K matrix with boundary detection
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SparseData {
+    /// Number of top-k centroids stored per boundary vector
+    pub top_k: u32,
+    
+    /// Sparse entries (only boundary vectors)
+    pub entries: Vec<SparseEntry>,
+    
+    /// BloomFilter for fast boundary vector lookup (2KB, 1% false positive)
+    pub boundary_bloom_filter: Option<Vec<u8>>,
+    
+    /// Actual sparsity ratio achieved (0.1 to 1.0)
+    pub sparsity_ratio: f32,
+}
+
 // ====== P² Matrix for Intra-Rowgroup Navigation ======
 
 /// P² Matrix: Pre-computed distances between all vectors in a rowgroup
-/// Replaces local HNSW segments with exact distance computation
+/// Rowgroup range for a centroid (ensures spatial locality)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RowGroupRange {
+    /// Starting rowgroup ID for this centroid (inclusive)
+    pub start_rowgroup: u16,
+    /// Ending rowgroup ID for this centroid (inclusive)
+    pub end_rowgroup: u16,
+    /// Number of vectors in this centroid across all its rowgroups
+    pub total_vectors: u32,
+}
+
+/// Pre-computed P×(P-1)/2 distances for exact intra-rowgroup search
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct P2Matrix {
     /// Number of vectors in this rowgroup
@@ -1562,4 +1652,73 @@ pub enum CorrectionStrategy {
 pub struct BoostingStrategy {
     pub spillover_strength: f32,  // Default: 2.0
     pub ranking_strength: f32,    // Default: 0.1
+}
+
+// ====== Enhanced Vector ID BloomFilter for Existing RowGroups ======
+
+/// Enhanced helper functions for existing RowGroupBloomFilter system
+/// Uses the existing per-rowgroup bloom_filter field instead of duplicate global registry
+impl RowGroupBloomFilter {
+    /// Fast batch lookup across multiple rowgroups using existing BloomFilters
+    /// Returns list of rowgroup IDs that might contain each vector ID
+    /// 
+    /// This leverages the existing bloom_filter field in each RowGroup instead of a global registry
+    pub fn find_candidate_rowgroups_in_footer(
+        footer: &RaptorFooter,
+        vector_ids: &[String]
+    ) -> Vec<Vec<u16>> {
+        let mut results = Vec::with_capacity(vector_ids.len());
+        
+        for vector_id in vector_ids {
+            let mut candidates = Vec::new();
+            
+            // Check each rowgroup's existing BloomFilter
+            for rowgroup in &footer.file_metadata.row_groups {
+                if let Some(ref bloom_filter) = rowgroup.bloom_filter {
+                    if bloom_filter.contains(vector_id) {
+                        candidates.push(rowgroup.id);
+                    }
+                }
+            }
+            
+            candidates.sort_unstable();
+            results.push(candidates);
+        }
+        
+        results
+    }
+    
+    /// Enhanced hardware-optimized batch processing using existing RowGroup BloomFilters
+    /// Automatically detects and uses best SIMD instructions available
+    pub fn find_candidates_batch_optimized(
+        footer: &RaptorFooter,
+        vector_ids: &[String]
+    ) -> Vec<Vec<u16>> {
+        use crate::core::hardware_capabilities::HardwareCapabilities;
+        
+        let hw = HardwareCapabilities::global();
+        let batch_size = if hw.has_avx512 { 16 } else if hw.has_avx2 { 8 } else { 4 };
+        
+        let mut results = Vec::with_capacity(vector_ids.len());
+        
+        // Process in hardware-optimized batches
+        for chunk in vector_ids.chunks(batch_size) {
+            for id in chunk {
+                let mut candidates = Vec::new();
+                
+                for rowgroup in &footer.file_metadata.row_groups {
+                    if let Some(ref bloom_filter) = rowgroup.bloom_filter {
+                        if bloom_filter.contains(id) {
+                            candidates.push(rowgroup.id);
+                        }
+                    }
+                }
+                
+                candidates.sort_unstable();
+                results.push(candidates);
+            }
+        }
+        
+        results
+    }
 }

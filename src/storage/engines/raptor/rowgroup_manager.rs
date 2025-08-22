@@ -70,13 +70,9 @@ pub struct FastLanesEncodedData {
     pub compression_ratio: f32,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum FastLanesScheme {
-    BitPacked { bits: u8 },
-    Delta { base: f32, bits: u8 },
-    Dictionary { dict_size: usize },
-    RLE,
-}
+// REMOVED: FastLanesScheme - duplicate of common.rs::FastLanesScheme
+// Use the common.rs version instead
+use super::common::FastLanesScheme;
 
 /// Quantized columnar data
 #[derive(Debug, Clone)]

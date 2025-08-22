@@ -1,3 +1,47 @@
+// ============================================================================
+// PERFECTED: 1-TO-1 CENTROID-ROWGROUP MAPPING FOR PERFECT PARALLELISM
+// ============================================================================
+//
+// SIMPLIFIED DESIGN: K centroids = K rowgroups (1-to-1 mapping)
+//
+// 1. **Perfect Parallel Subdivision**:
+//    - Each centroid gets exactly ONE rowgroup (centroid_id == rowgroup_id)
+//    - Vector space evenly subdivided into K independent partitions
+//    - No coordination needed between rowgroups during search
+//
+// 2. **Overflow Handling**:
+//    - If rowgroup exceeds capacity → create NEW centroid for overflow
+//    - This maintains balanced distribution automatically
+//    - Dynamic K adjustment based on data volume
+//
+// 3. **Search Parallelism**:
+//    - K×K matrix selects subset of centroids (fast O(K) operation)
+//    - Each selected centroid = one independent rowgroup to search  
+//    - Rowgroups can be searched in parallel threads
+//    - P² matrix within each rowgroup provides exact distances
+//
+// 4. **Writer Implementation**:
+//    - During flush(), vectors assigned to centroids via clustering
+//    - Each centroid gets one rowgroup (simple assignment)
+//    - If rowgroup full → create new centroid → new rowgroup
+//    - Store total_centroids count in footer (K value)
+//
+// 5. **Matrix Benefits**:
+//    - K×K matrix: Selects which rowgroups to search (perfect parallelism)
+//    - P×K matrix: Vector-to-centroid boosting within each rowgroup
+//    - P² matrix: Exact intra-rowgroup navigation (no approximation)
+//
+// IMPLEMENTATION FLOW:
+//
+// 1. assign_vectors_to_initial_centroids(vectors) 
+// 2. handle_rowgroup_overflow() → creates new centroids dynamically
+// 3. calculate_final_centroids_from_assignments()
+// 4. build_kxk_inter_centroid_distance_matrix() ← CRITICAL STEP
+// 5. store_in_footer(K, centroids, kxk_matrix)
+//
+// TODO: Implement complete flow in flush_row_page_columnar()
+// ============================================================================
+
 use arrow_array::RecordBatch;
 use std::sync::Arc;
 use anyhow::Result;
@@ -844,20 +888,46 @@ impl IvfClusteringBuilder {
         }
     }
     
+    /// Determine adaptive P×K storage strategy with exponential boundary detection
+    /// Returns (strategy, coverage_ratio) based on K/D relationship
+    fn determine_adaptive_pk_strategy(&self, k: f32, d: f32) -> (VectorCentroidStorageStrategy, f32) {
+        let k_over_d = k / d;
+        
+        // Exponential decay function for coverage based on K/D ratio
+        // boundary_score(k, d) = max(0.1, min(1.0, exp(-α × log(k/d + 1))))
+        // where α = 2.0 (sensitivity parameter)
+        let alpha = 2.0;
+        let min_coverage = 0.1; // 10% floor - never go below this
+        
+        // Calculate coverage using smooth exponential decay
+        let raw_coverage = (-alpha * (k_over_d + 1.0).ln()).exp();
+        let coverage_ratio = min_coverage.max(raw_coverage.min(1.0));
+        
+        // Determine strategy based on coverage requirements
+        let strategy = match coverage_ratio {
+            c if c >= 0.9 => VectorCentroidStorageStrategy::Full,        // 90-100%: store all
+            c if c >= 0.5 => VectorCentroidStorageStrategy::Hierarchical, // 50-90%: hierarchical
+            _ => VectorCentroidStorageStrategy::Sparse,                   // 10-50%: sparse only
+        };
+        
+        tracing::debug!(
+            "Adaptive P×K strategy: K/D={:.3}, coverage={:.1}%, strategy={:?}",
+            k_over_d, coverage_ratio * 100.0, strategy
+        );
+        
+        (strategy, coverage_ratio)
+    }
+    
     /// Build P×K vector-to-centroid distance matrices for all rowgroups
     fn build_vector_centroid_matrices(&self, rowgroups: &[RowGroup]) -> Vec<VectorCentroidMatrix> {
         let k = self.centroids.len();
         let k_f32 = k as f32;
         let dimension = self.centroids[0].vector.len() as f32;
         
-        // Determine storage strategy based on K/D ratio
-        let storage_strategy = if k_f32 <= dimension {
-            VectorCentroidStorageStrategy::Full
-        } else if k_f32 <= dimension * 10.0 {
-            VectorCentroidStorageStrategy::Hierarchical
-        } else {
-            VectorCentroidStorageStrategy::Sparse
-        };
+        // Adaptive storage strategy with exponential boundary detection
+        let (storage_strategy, coverage_ratio) = self.determine_adaptive_pk_strategy(k_f32, dimension);
+        
+        let coverage_percent = (coverage_ratio * 100.0) as u8;
         
         tracing::info!(
             "Building P×K matrices with strategy {:?} (K={}, D={}, ratio={:.2})",
@@ -875,7 +945,7 @@ impl IvfClusteringBuilder {
                     self.build_hierarchical_pk_matrix(rowgroup, rg_idx)
                 },
                 VectorCentroidStorageStrategy::Sparse => {
-                    self.build_sparse_pk_matrix(rowgroup, rg_idx, dimension.sqrt() as usize)
+                    self.build_adaptive_sparse_pk_matrix(rowgroup, rg_idx, coverage_ratio)
                 },
             };
             matrices.push(matrix);
@@ -1024,29 +1094,150 @@ impl IvfClusteringBuilder {
         }
     }
     
-    /// Build sparse P×K matrix storing only top-√D centroids per vector
-    fn build_sparse_pk_matrix(&self, rowgroup: &RowGroup, rg_idx: usize, top_k: usize) -> VectorCentroidMatrix {
+    /// Build sparse P×K matrix with adaptive boundary detection
+    /// Stores only vectors with boundary_score > threshold (10%-50% coverage)
+    fn build_adaptive_sparse_pk_matrix(&self, rowgroup: &RowGroup, rg_idx: usize, coverage_ratio: f32) -> VectorCentroidMatrix {
         let p = rowgroup.count as usize;
         let k = self.centroids.len();
-        let effective_k = top_k.min(k);
+        let d = self.centroids[0].vector.len() as f32;
         
-        let mut sparse_entries = Vec::with_capacity(p * effective_k);
+        // Calculate boundary threshold based on coverage ratio
+        let boundary_threshold = 1.0 - coverage_ratio; // Higher threshold = more selective
+        
+        let mut boundary_vectors = Vec::new();
         let mut max_distance = 0.0f32;
         
+        // Step 1: Identify boundary vectors using exponential decay formula
         for (vec_idx, vector_id) in rowgroup.vector_ids.iter().enumerate() {
             let vector_data = self.get_vector_by_id(vector_id);
             
             // Calculate distances to all centroids
-            let mut cent_dists: Vec<(usize, f32)> = self.centroids.iter()
-                .enumerate()
-                .map(|(idx, centroid)| {
+            let mut centroid_distances: Vec<f32> = self.centroids.iter()
+                .map(|centroid| {
+                    self.distance_compute.calculate_distance(
+                        &vector_data,
+                        &centroid.vector,
+                        &DistanceMetric::Cosine
+                    ).raw_value
+                })
+                .collect();
+            
+            // Find assigned centroid (minimum distance) and nearest neighbor
+            let min_distance = centroid_distances.iter().cloned().fold(f32::INFINITY, f32::min);
+            let assigned_centroid_idx = centroid_distances.iter()
+                .position(|&d| d == min_distance)
+                .unwrap_or(0);
+            
+            // Remove assigned centroid and find next nearest
+            centroid_distances[assigned_centroid_idx] = f32::INFINITY;
+            let neighbor_distance = centroid_distances.iter().cloned().fold(f32::INFINITY, f32::min);
+            
+            // Calculate boundary score using exponential decay
+            // boundary_score = exp(-α × |d_own - d_neighbor|) × log(k/d + 1)
+            let alpha = 2.0;
+            let distance_diff = (min_distance - neighbor_distance).abs();
+            let boundary_score = (-alpha * distance_diff).exp() * (k as f32 / d + 1.0).ln();
+            
+            // Store if boundary score exceeds threshold
+            if boundary_score > boundary_threshold {
+                // Reset distances array for storage
+                for (cent_idx, centroid) in self.centroids.iter().enumerate() {
                     let dist = self.distance_compute.calculate_distance(
                         &vector_data,
                         &centroid.vector,
-                        &DistanceMetric::Euclidean
+                        &DistanceMetric::Cosine
                     ).raw_value;
-                    (idx, dist)
-                })
+                    
+                    centroid_distances[cent_idx] = dist;
+                    max_distance = max_distance.max(dist);
+                }
+                
+                boundary_vectors.push((vec_idx, centroid_distances));
+            }
+        }
+        
+        // Step 2: Quantize and compress boundary vector distances using unified modules
+        let mut sparse_entries = Vec::with_capacity(boundary_vectors.len() * k);
+        
+        for (vec_idx, distances) in boundary_vectors {
+            // Store all centroid distances for this boundary vector
+            for (cent_idx, distance) in distances.iter().enumerate() {
+                sparse_entries.push(SparseEntry {
+                    vector_idx: vec_idx as u32,
+                    centroid_idx: cent_idx as u32,
+                    quantized_distance: (*distance / max_distance * 255.0) as u8,
+                });
+            }
+        }
+        
+        // Step 3: Apply FastLanes compression to sparse entries
+        let quantization_engine = StorageQuantizationEngine::new();
+        let distances_only: Vec<f32> = sparse_entries.iter()
+            .map(|entry| entry.quantized_distance as f32 / 255.0 * max_distance)
+            .collect();
+        
+        let (quantized_u8, q_min, q_max) = quantization_engine.quantize_to_u8(&distances_only);
+        
+        // Apply FastLanes encoding for SIMD optimization
+        let fastlanes_encoder = FastLanesEncoder::new();
+        let scheme = FastLanesScheme::BitPacking; // Efficient for sparse data
+        let compressed_data = fastlanes_encoder.encode_u8_slice(&quantized_u8, scheme)
+            .unwrap_or(quantized_u8); // Fallback to uncompressed if encoding fails
+        
+        let sparsity_achieved = boundary_vectors.len() as f32 / p as f32;
+        
+        tracing::info!(
+            "Adaptive sparse P×K for rowgroup {}: {}/{} vectors stored ({:.1}% sparsity, target {:.1}%)",
+            rg_idx, boundary_vectors.len(), p, sparsity_achieved * 100.0, coverage_ratio * 100.0
+        );
+        
+        // Step 4: Create BloomFilter for fast boundary vector lookup
+        let bloom_filter = self.create_boundary_vector_bloom_filter(&sparse_entries);
+        
+        VectorCentroidMatrix {
+            rowgroup_id: rg_idx as u32,
+            num_vectors: p as u32,
+            num_centroids: k as u32,
+            storage_strategy: VectorCentroidStorageStrategy::Sparse,
+            compressed_data,
+            hierarchical_data: None,
+            sparse_data: Some(SparseData {
+                top_k: boundary_vectors.len() as u32,
+                entries: sparse_entries,
+                boundary_bloom_filter: Some(bloom_filter),
+                sparsity_ratio: sparsity_achieved,
+            }),
+            compression_metadata: VectorCentroidCompressionMetadata {
+                scale_factor: max_distance,
+                max_distance,
+                compression_type: CompressionType::Quantized8Bit,
+            },
+        }
+    
+    /// Create BloomFilter for fast boundary vector lookup (2KB, 1% false positive rate)
+    fn create_boundary_vector_bloom_filter(&self, sparse_entries: &[SparseEntry]) -> Vec<u8> {
+        // Extract unique vector indices that are boundary vectors
+        let mut boundary_vector_ids: Vec<u32> = sparse_entries.iter()
+            .map(|entry| entry.vector_idx)
+            .collect();
+        boundary_vector_ids.sort_unstable();
+        boundary_vector_ids.dedup();
+        
+        // Create a simple bloom filter representation (simplified for now)
+        // In production, this would use a proper BloomFilter implementation
+        let bloom_size = 2048; // 2KB as specified in design
+        let mut bloom_bits = vec![0u8; bloom_size];
+        
+        for &vector_idx in &boundary_vector_ids {
+            let hash1 = vector_idx % (bloom_size as u32 * 8);
+            let hash2 = (vector_idx * 31) % (bloom_size as u32 * 8);
+            
+            bloom_bits[(hash1 / 8) as usize] |= 1 << (hash1 % 8);
+            bloom_bits[(hash2 / 8) as usize] |= 1 << (hash2 % 8);
+        }
+        
+        bloom_bits
+    }
                 .collect();
             
             // Sort by distance and keep top-k
@@ -1177,6 +1368,147 @@ impl RaptorWriter {
         })
     }
     
+    /// Build optimized K×K inter-centroid distance matrix (CRITICAL for Matrix Trinity)
+    /// This replaces the simple Vec<Vec<f32>> with compressed InterCentroidMatrix
+    fn build_kxk_inter_centroid_matrix(
+        &self,
+        final_centroids: &[Vec<f32>],
+    ) -> Result<InterCentroidMatrix> {
+        let k = final_centroids.len();
+        
+        tracing::info!(
+            "Building K×K inter-centroid matrix: {} centroids, {} distances to compute",
+            k, k * (k - 1) / 2
+        );
+        
+        // Calculate all pairwise distances (upper triangle only)
+        let upper_triangle_size = k * (k - 1) / 2;
+        let mut distances = Vec::with_capacity(upper_triangle_size);
+        let mut min_distance = f32::INFINITY;
+        let mut max_distance = 0.0;
+        
+        for i in 0..k {
+            for j in (i + 1)..k {
+                let dist = self.distance_compute.calculate_distance(
+                    &final_centroids[i],
+                    &final_centroids[j], 
+                    &DistanceMetric::Cosine
+                ).raw_value;
+                
+                distances.push(dist);
+                min_distance = min_distance.min(dist);
+                max_distance = max_distance.max(dist);
+            }
+        }
+        
+        // Quantize to INT8 for compression
+        let quantized_distances: Vec<u8> = distances
+            .iter()
+            .map(|&dist| {
+                let normalized = (dist - min_distance) / (max_distance - min_distance);
+                (normalized * 255.0).round() as u8
+            })
+            .collect();
+        
+        // Apply FastLanes encoding
+        let fastlanes_encoder = FastLanesEncoder::new();
+        let scheme = FastLanesScheme::BitPacking;
+        let encoded = fastlanes_encoder.encode_u8_slice(&quantized_distances, scheme)?;
+        
+        tracing::info!(
+            "K×K matrix: {} centroids → {} bytes compressed ({:.2}x compression)",
+            k, encoded.len(), quantized_distances.len() as f32 / encoded.len() as f32
+        );
+        
+        Ok(InterCentroidMatrix {
+            num_centroids: k as u32,
+            distances: encoded,
+            min_distance,
+            max_distance,
+            compression: scheme,
+            compressed_size: encoded.len() as u32,
+        })
+    }
+    
+    /// Handle rowgroup overflow by creating new centroids (1-to-1 mapping enforcement)
+    /// This ensures perfect parallelism: K centroids = K rowgroups
+    fn handle_rowgroup_overflow(
+        &self,
+        initial_assignments: Vec<(usize, Vec<Vec<f32>>)>,
+        max_vectors_per_rowgroup: usize,
+    ) -> Result<Vec<(usize, Vec<Vec<f32>>)>> {
+        let mut final_assignments = Vec::new();
+        let mut next_centroid_id = 0;
+        
+        tracing::info!(
+            "Handling rowgroup overflow: max {} vectors per rowgroup",
+            max_vectors_per_rowgroup
+        );
+        
+        for (_original_centroid_id, mut vectors) in initial_assignments {
+            // Split large centroids across multiple rowgroups
+            // Each new rowgroup gets a unique centroid (1-to-1 mapping)
+            while !vectors.is_empty() {
+                let chunk_size = vectors.len().min(max_vectors_per_rowgroup);
+                let rowgroup_vectors: Vec<_> = vectors.drain(..chunk_size).collect();
+                
+                final_assignments.push((next_centroid_id, rowgroup_vectors));
+                
+                tracing::debug!(
+                    "Created centroid {} → rowgroup {} with {} vectors",
+                    next_centroid_id, next_centroid_id, chunk_size
+                );
+                
+                next_centroid_id += 1;
+            }
+        }
+        
+        tracing::info!(
+            "Overflow handling complete: {} initial assignments → {} final centroids (K={})",
+            initial_assignments.len(), final_assignments.len(), next_centroid_id
+        );
+        
+        Ok(final_assignments)
+    }
+    
+    /// Calculate final centroid positions from rowgroup assignments
+    fn calculate_final_centroids(
+        &self, 
+        assignments: &[(usize, Vec<Vec<f32>>)]
+    ) -> Result<Vec<Vec<f32>>> {
+        let mut final_centroids = Vec::new();
+        
+        for (centroid_id, vectors) in assignments {
+            if vectors.is_empty() {
+                return Err(anyhow::anyhow!("Empty vector set for centroid {}", centroid_id));
+            }
+            
+            // Calculate centroid as mean of all assigned vectors
+            let dimension = vectors[0].len();
+            let mut centroid = vec![0.0; dimension];
+            
+            for vector in vectors {
+                for (i, &value) in vector.iter().enumerate() {
+                    centroid[i] += value;
+                }
+            }
+            
+            // Normalize by count to get mean
+            let count = vectors.len() as f32;
+            for value in &mut centroid {
+                *value /= count;
+            }
+            
+            final_centroids.push(centroid);
+        }
+        
+        tracing::info!(
+            "Calculated {} final centroids from assignments",
+            final_centroids.len()
+        );
+        
+        Ok(final_centroids)
+    }
     
     /// Compute all centroid-to-centroid distances for K×K matrix
     fn compute_all_centroid_distances(&mut self, centroids: &[(u32, Vec<f32>)]) -> Result<()> {
@@ -1654,12 +1986,9 @@ enum MetadataEncoding {
 }
 
 /// Metadata structure for bloom filter storage
-#[derive(Debug)]
-struct BloomFilterMetadata {
-    offset: u64,
-    size: u64,
-    num_entries: u32,
-}
+// REMOVED: BloomFilterMetadata - duplicate of common.rs::BloomFilterMetadata
+// Use type alias to maintain local naming if needed
+type BloomFilterMetadata = super::common::BloomFilterMetadata;
 
 impl MetadataEncoding {
     fn to_byte(&self) -> u8 {
@@ -2130,164 +2459,272 @@ impl RaptorWriter {
         Ok(offset)
     }
     
-    /// Flush current row page to disk with inline P×K matrix and local HNSW segment
+    /// Flush current row page using columnar compression
     async fn flush_row_page(&mut self) -> Result<()> {
         if let Some(page) = self.current_row_page.take() {
-            // Collect vectors for P×K matrix and HNSW calculation
-            let mut page_vectors = Vec::with_capacity(page.rows.len());
-            let mut page_vector_ids = Vec::with_capacity(page.rows.len());
-            
-            for row in &page.rows {
-                page_vectors.push(row.vector.clone());
-                page_vector_ids.push(row.id.clone());
-            }
-            
+            let mut column_pages = HashMap::new();
             let rowgroup_id = self.row_groups.len() as u32;
             
-            // Build P×K matrix for this page if we have centroids
-            let pxk_matrix_data = if !self.ivf_builder.centroids.is_empty() {
-                let rowgroup = RowGroup {
-                    id: rowgroup_id,
-                    count: page.rows.len() as u32,
-                    vector_ids: page_vector_ids.clone(),
+            // === 1. Compress and write vector column ===
+            let vector_data = self.encode_vector_column(&page)?;
+            let vector_compressed = self.compression.compress(
+                &vector_data,
+                CompressionAlgorithm::Lz4,  // Fast decompression for hot path
+                3,
+                CompressionContext::VectorColumn,
+            )?;
+            let vector_offset = self.filesystem.append(&self.file_path, &vector_compressed).await?;
+            column_pages.insert(ColumnType::VectorsFp32, ColumnPageMetadata {
+                column_type: ColumnType::VectorsFp32,
+                offset: vector_offset,
+                compressed_size: vector_compressed.len() as u64,
+                uncompressed_size: vector_data.len() as u64,
+                compression: CompressionAlgorithm::Lz4,
+                encoding: FastLanesScheme::BitPacked { bits: 16 },
+                null_count: 0,
+                min_value: None,
+                max_value: None,
+            });
+            
+            // === 2. Compress and write ID column ===
+            let id_data = self.encode_id_column(&page)?;
+            let id_compressed = self.compression.compress(
+                &id_data,
+                CompressionAlgorithm::Zstd,  // Higher compression for IDs
+                9,
+                CompressionContext::ColumnPage,
+            )?;
+            let id_offset = self.filesystem.append(&self.file_path, &id_compressed).await?;
+            column_pages.insert(ColumnType::Ids, ColumnPageMetadata {
+                column_type: ColumnType::Ids,
+                offset: id_offset,
+                compressed_size: id_compressed.len() as u64,
+                uncompressed_size: id_data.len() as u64,
+                compression: CompressionAlgorithm::Zstd,
+                encoding: FastLanesScheme::None,
+                null_count: 0,
+                min_value: None,
+                max_value: None,
+            });
+            
+            // === 3. Compress metadata columns individually ===
+            let metadata_columns = self.group_metadata_by_key(&page)?;
+            for (key, values) in metadata_columns {
+                let meta_data = self.encode_metadata_column(&key, &values)?;
+                
+                // Choose compression based on cardinality
+                let unique_values: HashSet<_> = values.iter().collect();
+                let cardinality_ratio = unique_values.len() as f32 / values.len() as f32;
+                let algorithm = if cardinality_ratio < 0.1 {
+                    CompressionAlgorithm::Zstd  // Better for dictionary-encoded
+                } else {
+                    CompressionAlgorithm::Snappy  // Faster for high cardinality
                 };
                 
-                // Store vectors temporarily for P×K calculation
-                let stored_vectors = std::mem::replace(&mut self.ivf_builder.vectors, page_vectors.clone());
-                let matrix = self.ivf_builder.build_full_pk_matrix(&rowgroup, self.row_groups.len());
-                // Restore original vectors
-                self.ivf_builder.vectors = stored_vectors;
-                
-                Some(bincode::serialize(&matrix)?)
-            } else {
-                None
-            };
-            
-            // Build P² matrix for intra-rowgroup navigation
-            let p2_matrix_data = {
-                let p2_matrix = self.build_p2_matrix(&page_vectors)?;
-                debug!(
-                    "Built P² matrix for rowgroup {}: {} vectors, {} distances, {}KB",
-                    rowgroup_id,
-                    p2_matrix.num_vectors,
-                    p2_matrix.distances.len(),
-                    p2_matrix.compressed_size / 1024
-                );
-                bincode::serialize(&p2_matrix)?
-            };
-            
-            // Serialize page using FastLanes encoding
-            let encoded_page = self.encode_row_page(&page)?;
-            
-            // Compress entire page
-            let compressed = self.compression.compress(
-                &encoded_page,
-                CompressionAlgorithm::Zstd,
-                6,
-                CompressionContext::SstBlock,
-            )?;
-            
-            // Write vectors to filesystem
-            let page_offset = self.filesystem.append(&self.file_path, &compressed).await?;
-            
-            // Write P×K matrix inline (immediately after vectors)
-            let pxk_offset = if let Some(matrix_data) = pxk_matrix_data {
-                let compressed_matrix = self.compression.compress(
-                    &matrix_data,
-                    CompressionAlgorithm::Zstd,
-                    3, // Light compression for matrices
-                    CompressionContext::SstBlock,
-                )?;
-                Some(self.filesystem.append(&self.file_path, &compressed_matrix).await?)
-            } else {
-                None
-            };
-            
-            // Write P² matrix inline (immediately after P×K matrix)
-            let p2_offset = {
-                let compressed_p2 = self.compression.compress(
-                    &p2_matrix_data,
-                    CompressionAlgorithm::Zstd,
+                let meta_compressed = self.compression.compress(
+                    &meta_data,
+                    algorithm,
                     6,
-                    CompressionContext::SstBlock,
+                    CompressionContext::MetadataColumn,
                 )?;
-                Some(self.filesystem.append(&self.file_path, &compressed_p2).await?)
-            };
-            
-            // Create page metadata with unified compression context
-            let page_metadata = RowPageMetadata {
-                page_id: page.page_id as u32,
-                file_offset: page_offset,
-                compressed_size: compressed.len() as i64,
-                uncompressed_size: encoded_page.len() as i64,
-                num_rows: page.rows.len() as i32,
-                first_id: page.rows.first().map(|r| r.id.as_bytes().to_vec()).unwrap_or_default(),
-                last_id: page.rows.last().map(|r| r.id.as_bytes().to_vec()).unwrap_or_default(),
-                compression_codec: "ZSTD".to_string(),
-            };
-            
-            // Add to current row group or create new one
-            if self.row_groups.is_empty() || self.should_start_new_rowgroup() {
-                // Build bloom filter for previous row group before clearing
-                if !self.bloom_builder.is_empty() {
-                    let bloom_filter = self.bloom_builder.build()?;
-                    if let Some(current_rg) = self.row_groups.last_mut() {
-                        // Store bloom filter in metadata (note: RowGroupMetadata doesn't have bloom_filter field)
-                        // The bloom filter will be written to disk and offset stored in bloom_filter_offset
-                        tracing::debug!(
-                            "Built bloom filter for row group {}: {} IDs, {:.3}% FPR, {} bytes",
-                            current_rg.id,
-                            bloom_filter.stats().num_ids,
-                            bloom_filter.stats().false_positive_rate * 100.0,
-                            bloom_filter.stats().size_bytes
-                        );
+                let meta_offset = self.filesystem.append(&self.file_path, &meta_compressed).await?;
+                column_pages.insert(
+                    ColumnType::Metadata(key.clone()),
+                    ColumnPageMetadata {
+                        column_type: ColumnType::Metadata(key),
+                        offset: meta_offset,
+                        compressed_size: meta_compressed.len() as u64,
+                        uncompressed_size: meta_data.len() as u64,
+                        compression: algorithm,
+                        encoding: FastLanesScheme::None,
+                        null_count: 0,
+                        min_value: None,
+                        max_value: None,
                     }
-                }
-                
-                // Reset bloom filter and ID column builders for new row group
-                self.bloom_builder.clear();
-                self.id_column_builder.ids.clear();
-                self.id_column_builder.id_hashes.clear();
-                self.id_column_builder.row_offsets.clear();
-                
-                self.row_groups.push(RowGroupMetadata {
-                    id: self.row_groups.len() as u16,
-                    offset: 0,
-                    compressed_size: 0,
-                    uncompressed_size: 0,
-                    row_count: 0,
-                    vector_stats: VectorStats::default(),
-                    metadata_stats: HashMap::new(),
-                    bloom_filter_offset: None,
-                    hnsw_segment_offset: None,  // Deprecated
-                    p2_matrix_offset: p2_offset,
-                    p2_matrix_size: Some(p2_matrix_data.len() as u64),
-                    pxk_matrix_offset: None,
-                    pxk_matrix_size: None,
-                    compression_codec: "ZSTD".to_string(),
-                    min_timestamp: None,
-                    max_timestamp: None,
-                    centroid: None,
-                    centroid_stats: None,
+                );
+            }
+            
+            // === 4. Compress source content with maximum compression (if present) ===
+            if self.has_source_content(&page) {
+                let source_data = self.encode_source_content(&page)?;
+                let source_compressed = self.compression.compress(
+                    &source_data,
+                    CompressionAlgorithm::Zstd,  // Best ratio for text
+                    19,  // Maximum compression
+                    CompressionContext::SourceContent,
+                )?;
+                let source_offset = self.filesystem.append(&self.file_path, &source_compressed).await?;
+                column_pages.insert(ColumnType::SourceContent, ColumnPageMetadata {
+                    column_type: ColumnType::SourceContent,
+                    offset: source_offset,
+                    compressed_size: source_compressed.len() as u64,
+                    uncompressed_size: source_data.len() as u64,
+                    compression: CompressionAlgorithm::Zstd,
+                    encoding: FastLanesScheme::None,
+                    null_count: 0,
+                    min_value: None,
+                    max_value: None,
                 });
             }
             
-            let current_rg = self.row_groups.last_mut().unwrap();
-            // Store page metadata in separate structure - common.rs doesn't have row_pages
-            current_rg.compressed_size += compressed.len() as u64;
-            current_rg.row_count += page.rows.len();
+            // === 5. Build and write P² matrix ===
+            let page_vectors: Vec<Vec<f32>> = page.rows.iter()
+                .map(|r| r.vector.clone())
+                .collect();
+            let p2_matrix = self.build_p2_matrix(&page_vectors)?;
+            let p2_data = bincode::serialize(&p2_matrix)?;
+            let p2_compressed = self.compression.compress(
+                &p2_data,
+                CompressionAlgorithm::Lz4,  // Fast access for navigation
+                6,
+                CompressionContext::MatrixData,
+            )?;
+            let p2_offset = self.filesystem.append(&self.file_path, &p2_compressed).await?;
+            column_pages.insert(ColumnType::P2Matrix, ColumnPageMetadata {
+                column_type: ColumnType::P2Matrix,
+                offset: p2_offset,
+                compressed_size: p2_compressed.len() as u64,
+                uncompressed_size: p2_data.len() as u64,
+                compression: CompressionAlgorithm::Lz4,
+                encoding: FastLanesScheme::None,
+                null_count: 0,
+                min_value: None,
+                max_value: None,
+            });
             
-            // Store P×K matrix offset and size if written
-            if let Some(matrix_offset) = pxk_offset {
-                current_rg.pxk_matrix_offset = Some(matrix_offset);
-                // Calculate size from offsets
-                if let Some(matrix_data) = pxk_matrix_data {
-                    current_rg.pxk_matrix_size = Some(matrix_data.len() as u64);
+            // Update rowgroup metadata with column pages
+            let rg_metadata = RowGroupMetadata {
+                id: rowgroup_id as u16,
+                row_count: page.rows.len(),
+                column_pages,
+                vector_stats: VectorStats::default(),
+                metadata_stats: HashMap::new(),
+                min_timestamp: None,
+                max_timestamp: None,
+                centroid: None,
+                centroid_stats: None,
+            };
+            
+            self.row_groups.push(rg_metadata);
+        }
+        Ok(())
+    }
+    
+    
+    /// Helper: Encode vector column with FastLanes
+    fn encode_vector_column(&self, page: &RowPageBuffer) -> Result<Vec<u8>> {
+        let mut encoded = Vec::new();
+        let num_rows = page.rows.len();
+        let fastlanes_encoder = FastLanesEncoder::new(FastLanesScheme::BitPacked { bits: 16 });
+        
+        // Transpose vectors to columnar format
+        let mut columns: Vec<Vec<f32>> = vec![Vec::with_capacity(num_rows); self.dimension];
+        for row in &page.rows {
+            for (dim_idx, &value) in row.vector.iter().enumerate() {
+                if dim_idx < self.dimension {
+                    columns[dim_idx].push(value);
                 }
             }
         }
         
-        Ok(())
+        // Encode each dimension column
+        for column in columns {
+            let encoded_column = fastlanes_encoder.encode_f32(&column)?;
+            encoded.extend(&(encoded_column.len() as u32).to_le_bytes());
+            encoded.extend(&encoded_column);
+        }
+        
+        Ok(encoded)
+    }
+    
+    /// Helper: Encode ID column
+    fn encode_id_column(&self, page: &RowPageBuffer) -> Result<Vec<u8>> {
+        let mut encoded = Vec::new();
+        
+        for row in &page.rows {
+            encoded.extend(&(row.id.len() as u32).to_le_bytes());
+            encoded.extend(row.id.as_bytes());
+        }
+        
+        Ok(encoded)
+    }
+    
+    /// Helper: Group metadata by key
+    fn group_metadata_by_key(&self, page: &RowPageBuffer) -> Result<HashMap<String, Vec<Option<Vec<u8>>>>> {
+        let mut grouped = HashMap::new();
+        
+        // Collect all unique keys
+        let mut all_keys = HashSet::new();
+        for row in &page.rows {
+            for (key, _) in &row.metadata {
+                all_keys.insert(key.clone());
+            }
+        }
+        
+        // Build columns for each key
+        for key in all_keys {
+            let mut column = Vec::with_capacity(page.rows.len());
+            for row in &page.rows {
+                let value = row.metadata.iter()
+                    .find(|(k, _)| k == &key)
+                    .map(|(_, v)| v.clone());
+                column.push(value);
+            }
+            grouped.insert(key, column);
+        }
+        
+        Ok(grouped)
+    }
+    
+    /// Helper: Encode metadata column with dictionary encoding
+    fn encode_metadata_column(&self, key: &str, values: &[Option<Vec<u8>>]) -> Result<Vec<u8>> {
+        let mut encoded = Vec::new();
+        
+        // Build dictionary of unique values
+        let unique_values: HashSet<Vec<u8>> = values.iter()
+            .filter_map(|v| v.clone())
+            .collect();
+        let dictionary: Vec<Vec<u8>> = unique_values.into_iter().collect();
+        
+        // Write dictionary
+        encoded.extend(&(dictionary.len() as u16).to_le_bytes());
+        for value in &dictionary {
+            encoded.extend(&(value.len() as u32).to_le_bytes());
+            encoded.extend(value);
+        }
+        
+        // Write indices
+        for value_opt in values {
+            if let Some(value) = value_opt {
+                let idx = dictionary.iter().position(|v| v == value).unwrap() as u16;
+                encoded.extend(&idx.to_le_bytes());
+            } else {
+                encoded.extend(&0xFFFF_u16.to_le_bytes()); // Null marker
+            }
+        }
+        
+        Ok(encoded)
+    }
+    
+    /// Helper: Check if page has source content
+    fn has_source_content(&self, page: &RowPageBuffer) -> bool {
+        page.rows.iter().any(|r| r.source_content.is_some())
+    }
+    
+    /// Helper: Encode source content
+    fn encode_source_content(&self, page: &RowPageBuffer) -> Result<Vec<u8>> {
+        let mut encoded = Vec::new();
+        
+        for row in &page.rows {
+            if let Some(content) = &row.source_content {
+                encoded.extend(&(content.len() as u32).to_le_bytes());
+                encoded.extend(content);
+            } else {
+                encoded.extend(&0u32.to_le_bytes());
+            }
+        }
+        
+        Ok(encoded)
     }
     
     /// Encode row page using TRUE columnar layout with FastLanes

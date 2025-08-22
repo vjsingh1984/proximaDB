@@ -34,6 +34,9 @@ pub mod artus_bloom;
 #[cfg(test)]
 mod tests;
 
+#[cfg(test)]
+mod p2_matrix_tests;
+
 // Re-export commonly used types from common module
 pub use common::{
     RowGroup, RowGroupMetadata, VectorStats, ColumnStats, 
@@ -48,6 +51,7 @@ pub use common::{
     SpilloverInfo, ConfidenceAssessment, ConfidenceSignals,
     CorrectionStrategy, BoostingStrategy,  // Added boundary/correction types
     P2Matrix,  // Added P² matrix for intra-rowgroup navigation
+    ColumnPageMetadata, ColumnType,  // Added columnar page types
 };
 
 // Export consolidated modules instead of deprecated ones

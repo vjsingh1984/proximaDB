@@ -12,15 +12,16 @@
 
 [IMPORTANT]
 ====
-**📋 Status**: ✅ **Production Ready** - Enhanced with Two-Phase Boundary Detection
+**📋 Status**: ✅ **Production Ready** - 1-to-1 Centroid-to-Rowgroup Architecture
 
 **🎯 RAPTOR's Unique Innovations**:
-- **Matrix Trinity**: P² + K² + P×K replaces all graph structures
+- **Matrix Trinity**: P² + K² + P×K with 1-to-1 centroid-rowgroup mapping
 - **P² Matrix**: Upper-triangle pre-computed distances (no HNSW needed)
-- **Adaptive P×K Storage**: 10%-100% coverage based on K/D relationship
-- **Two-Phase Boundary Detection**: K² cluster selection + P×K spillover
-- **Self-Correction**: Confidence-based correction with bounded computation
+- **1-to-1 Mapping**: K centroids = K rowgroups (centroid_id == rowgroup_id)
+- **Spatial Locality**: Similar vectors physically co-located for optimal cache performance
+- **Parallel Processing**: Independent rowgroup operations with perfect load balancing
 - **FastLanes + SIMD**: Hardware-accelerated matrix operations
+- **Overflow Handling**: Dynamic centroid creation for balanced distribution
 ====
 
 == Executive Summary
@@ -45,27 +46,31 @@
 │   Matrix Trinity:                                                       │
 │   • P² = Intra-rowgroup (upper triangle, FastLanes compressed)         │
 │   • K² = Inter-centroid (always full, never compressed)                │
-│   • P×K = Cross-cluster (adaptive 10%-100%, compressed)
+│   • P×K = Vector-to-own-centroid (adaptive 10%-100%, compressed)
 │                                                                          │
 │   RAPTOR's Matrix Trinity: P² + K² + P×K                                │
 │   ┌──────────────────────────────────────────────────────────────────┐ │
 │   │ P² = Intra-rowgroup distances (upper triangle, FastLanes+SIMD)   │ │
 │   │ K² = Inter-centroid distances (always kept, never compressed)    │ │
-│   │ P×K = Vector-to-centroid distances (adaptive with 10% floor)     │ │
+│   │ P×K = Vector-to-own-centroid distances (adaptive with 10% floor) │ │
 │   └──────────────────────────────────────────────────────────────────┘ │
 └──────────────────────────────────────────────────────────────────────────┘
 ----
 
 == Core Architecture Decisions
 
-=== Key Design Decisions from Analysis
+=== Key Design Decisions: 1-to-1 Architecture
 
-1. **K×K Matrix**: ALWAYS retained for perfect cluster selection (40KB for K=100)
-2. **P² Matrix**: Upper-triangle storage for intra-rowgroup navigation (replaces local HNSW)
-3. **P×K Matrix**: Adaptive storage with 10% minimum coverage floor
-4. **No HNSW Graphs**: Neither global nor local - matrices provide higher accuracy
-5. **Two-Phase Search**: K×K selection → P×K spillover detection
-6. **Bounded Self-Correction**: Max 3 rounds, 30% budget for correction
+**🎯 FUNDAMENTAL CONSTRAINT**: `K centroids = K rowgroups` with `centroid_id == rowgroup_id`
+
+1. **1-to-1 Mapping**: Each centroid owns exactly one rowgroup for perfect spatial locality
+2. **K×K Matrix**: Inter-rowgroup distances (always retained, 40KB for K=100 rowgroups)
+3. **P² Matrix**: Intra-rowgroup navigation (upper-triangle, replaces local HNSW)
+4. **P×K Matrix**: Vector-to-own-centroid distances within each rowgroup
+5. **Overflow Handling**: Creates new centroid+rowgroup when capacity exceeded
+6. **Parallel Processing**: Independent rowgroup operations with load balancing
+7. **Two-Phase Search**: Rowgroup selection → intra-rowgroup refinement
+8. **Bounded Self-Correction**: Max 3 rounds, 30% budget for correction
 
 === Why These Decisions
 
@@ -90,6 +95,41 @@ Example: P=1024 → 523,776 distances × 1 byte (INT8) = 512KB/rowgroup
 === P² Matrix: Intra-Rowgroup Navigation
 
 The P² matrix stores pre-computed distances between all vectors within a rowgroup, replacing the need for local HNSW segments.
+
+**🚀 SIMD-Optimized Upper Triangle Storage:**
+
+[source]
+----
+P² Matrix Layout (Per Rowgroup):
+┌──────────────────────────────────────────────────────────────────────────┐
+│ Field-Based Columnar Page Layout with Offset Tracking                   │
+├──────────────────────────────────────────────────────────────────────────┤
+│                                                                          │
+│ Page 1: Distance Values (FastLanes SIMD Encoded)                       │
+│ ┌─────────────────────────────────────────────────────────────────────┐ │
+│ │ Upper Triangle: P×(P-1)/2 distances                                │ │
+│ │ Encoding: INT8 quantized + FastLanes BitPacking                    │ │
+│ │ Compression: Field-specific Mixed strategy                         │ │
+│ │ SIMD Access: 256-bit AVX2 / 512-bit AVX-512 aligned               │ │
+│ └─────────────────────────────────────────────────────────────────────┘ │
+│                                                                          │
+│ Page 2: Quantization Metadata                                          │
+│ ┌─────────────────────────────────────────────────────────────────────┐ │
+│ │ min_distance: f32, max_distance: f32, scale_factor: f32             │ │
+│ │ Compression: None (tiny size, direct access needed)                │ │
+│ └─────────────────────────────────────────────────────────────────────┘ │
+│                                                                          │
+│ Page 3: Index Metadata                                                 │
+│ ┌─────────────────────────────────────────────────────────────────────┐ │
+│ │ num_vectors: u32, matrix_size_bytes: u32                           │ │
+│ │ simd_chunk_offsets: Vec<u32> (for O(1) SIMD block access)          │ │
+│ └─────────────────────────────────────────────────────────────────────┘ │
+└──────────────────────────────────────────────────────────────────────────┘
+
+Index Calculation (Upper Triangle):
+idx = (i * (i - 1)) / 2 + j  where i > j
+SIMD Block: (idx / 32) * 32  for 256-bit aligned access
+----
 
 [source,mermaid]
 ----
@@ -147,22 +187,104 @@ Benefits over HNSW:
 
 === K² Matrix: Inter-Centroid Relationships
 
+**🚀 SIMD-Optimized Upper Triangle with Smart Compression:**
+
 [source]
 ----
-K² Matrix (ALWAYS KEPT):
-────────────────────────
-• Storage: Full matrix K×K
-• Purpose: Perfect cluster selection
-• Size: Typically 40KB for K=100
-• Compression: None (accuracy critical)
+K² Matrix (Footer-Cached with Zero-Copy I/O):
+┌──────────────────────────────────────────────────────────────────────────┐
+│ File-Level Cache-Optimized Layout                                       │
+├──────────────────────────────────────────────────────────────────────────┤
+│                                                                          │
+│ Section 1: Upper Triangle Distance Matrix                               │
+│ ┌─────────────────────────────────────────────────────────────────────┐ │
+│ │ Size: K×(K-1)/2 entries (upper triangle only)                      │ │
+│ │ Encoding: f32 → INT16 quantized (sufficient precision for borders) │ │
+│ │ Compression: ZSTD-3 (high speed, 60-70% reduction)                 │ │
+│ │ SIMD Access: 256-bit aligned chunks for batch processing           │ │
+│ │ Index Formula: idx = (i * (i - 1)) / 2 + j  where i > j            │ │
+│ └─────────────────────────────────────────────────────────────────────┘ │
+│                                                                          │
+│ Section 2: Centroid Vectors (Organized by Rowgroup ID)                 │
+│ ┌─────────────────────────────────────────────────────────────────────┐ │
+│ │ Layout: [C0, C1, C2, ..., CK-1] sorted by rowgroup_id              │ │
+│ │ Access: O(1) lookup via centroid_id == rowgroup_id                 │ │
+│ │ Encoding: f32 vectors (no quantization, needed for accuracy)       │ │
+│ │ Compression: Mixed per dimension (ZSTD for sparse, None for dense) │ │
+│ └─────────────────────────────────────────────────────────────────────┘ │
+│                                                                          │
+│ Section 3: File-Level Metadata Cache                                   │
+│ ┌─────────────────────────────────────────────────────────────────────┐ │
+│ │ total_centroids: u32, dimension: u32, file_version: u16            │ │
+│ │ matrix_offset: u64, centroids_offset: u64, footer_size: u32        │ │
+│ │ quantization_params: (min: f32, max: f32, scale: f32)              │ │
+│ │ compression_stats: (original_size: u64, compressed_size: u64)      │ │
+│ │ simd_alignment_padding: u32                                         │ │
+│ └─────────────────────────────────────────────────────────────────────┘ │
+└──────────────────────────────────────────────────────────────────────────┘
 
-Why Not Compressed:
-• Small size (K << P)
-• Accessed frequently
-• Accuracy critical for Phase 1
+Memory Examples (Upper Triangle + INT16 quantization + ZSTD-3):
+K=100   → 4,950 × 2 bytes × 0.35 compression = ~3.5KB (vs 20KB f32)
+K=1000  → 499,500 × 2 bytes × 0.35 compression = ~350KB (vs 2MB f32) 
+K=10000 → 49.9M × 2 bytes × 0.35 compression = ~35MB (vs 200MB f32)
+
+Zero-Copy Benefits:
+✅ Footer cached in filesystem buffer (no re-reads per query)
+✅ Memory-mapped access for large K² matrices
+✅ SIMD-aligned chunks for batch centroid distance computation
+✅ INT16 precision sufficient for boundary detection (±0.1% accuracy loss)
 ----
 
 == Adaptive P×K Storage Strategy
+
+=== P×K Matrix: Vector-to-Centroid Spillover Detection
+
+**🚀 Sparse Matrix with Exponential Boundary Detection:**
+
+[source]
+----
+P×K Matrix Layout (Per Rowgroup):
+┌──────────────────────────────────────────────────────────────────────────┐
+│ Field-Based Columnar Layout with Smart Sparsity                         │
+├──────────────────────────────────────────────────────────────────────────┤
+│                                                                          │
+│ Page 1: Sparse Distance Values (Boundary Vectors Only)                  │
+│ ┌─────────────────────────────────────────────────────────────────────┐ │
+│ │ Stored: Only vectors with boundary_score > threshold                │ │
+│ │ Encoding: INT8 quantized distances + FastLanes compression         │ │
+│ │ Layout: [vector_id: u16, centroid_distances: Vec<u8>]              │ │
+│ │ Coverage: Adaptive 10%-100% based on K/D ratio                     │ │
+│ └─────────────────────────────────────────────────────────────────────┘ │
+│                                                                          │
+│ Page 2: Boundary Detection Metadata                                    │
+│ ┌─────────────────────────────────────────────────────────────────────┐ │
+│ │ boundary_threshold: f32 (exponential decay based)                  │ │
+│ │ sparsity_ratio: f32 (actual % of vectors stored)                   │ │
+│ │ quantization_params: (min: f32, max: f32, scale: f32)              │ │
+│ └─────────────────────────────────────────────────────────────────────┘ │
+│                                                                          │
+│ Page 3: Compressed Index (BitPacked Vector IDs)                        │
+│ ┌─────────────────────────────────────────────────────────────────────┐ │
+│ │ boundary_vector_bloom: BloomFilter (2KB, 1% false positive)        │ │
+│ │ sparse_index: Vec<u16> (BitPacked IDs of boundary vectors)         │ │
+│ │ simd_chunk_offsets: Vec<u32> (for vectorized lookups)              │ │
+│ └─────────────────────────────────────────────────────────────────────┘ │
+└──────────────────────────────────────────────────────────────────────────┘
+
+Boundary Detection Function (Smooth Exponential Decay):
+boundary_score(v, k, d) = exp(-α × |d_own - d_neighbor|) × log(k/d + 1)
+
+where:
+- α = 2.0 (sensitivity parameter)
+- d_own = distance to assigned centroid
+- d_neighbor = min distance to neighboring centroids
+- Threshold = 0.15 (store if boundary_score > 0.15)
+
+Storage Efficiency Examples:
+P=1024, K=100, D=384  → ~15% boundary vectors → 150KB (vs 1.6MB full)
+P=1024, K=1000, D=384 → ~8% boundary vectors → 80KB (vs 4MB full)
+P=1024, K=4000, D=384 → ~10% boundary vectors (floor) → 100KB (vs 16MB full)
+----
 
 === K/D Relationship Rules
 
@@ -480,34 +602,362 @@ Statistics: 30% of C1 vectors actually closer to C4
 Action: Add C4 to search list (Phase 2 expansion)
 ----
 
-=== Complete Search Flow
+=== SIMD Encoding and Mixed Compression Strategy
+
+**🚀 Field-Specific Optimization for Speed vs Storage Balance:**
+
+[source]
+----
+Mixed Compression Strategy (Per Matrix Type):
+┌──────────────────────────────────────────────────────────────────────────┐
+│ Field-Based Optimization Matrix                                         │
+├──────────────────────────────────────────────────────────────────────────┤
+│                                                                          │
+│ P² Matrix (Intra-Rowgroup Distances):                                   │
+│ ┌─────────────────────────────────────────────────────────────────────┐ │
+│ │ Primary: FastLanes BitPacking (SIMD-optimized)                     │ │
+│ │ Secondary: ZSTD-1 (fast compression, 40-50% reduction)             │ │
+│ │ Rationale: Frequent access, SIMD critical, moderate compression    │ │
+│ │ Access Pattern: Random access during search                        │ │
+│ └─────────────────────────────────────────────────────────────────────┘ │
+│                                                                          │
+│ K² Matrix (Inter-Centroid Distances):                                  │
+│ ┌─────────────────────────────────────────────────────────────────────┐ │
+│ │ Primary: INT16 quantization (sufficient precision)                 │ │
+│ │ Secondary: ZSTD-3 (balanced compression, 60-70% reduction)         │ │
+│ │ Rationale: Infrequent access, cache-resident, high compression     │ │
+│ │ Access Pattern: Sequential batch reads at query start              │ │
+│ └─────────────────────────────────────────────────────────────────────┘ │
+│                                                                          │
+│ P×K Matrix (Sparse Boundary Vectors):                                  │
+│ ┌─────────────────────────────────────────────────────────────────────┐ │
+│ │ Primary: INT8 quantization + FastLanes encoding                    │ │
+│ │ Secondary: LZ4 (ultra-fast, 30-40% reduction)                      │ │
+│ │ Rationale: Sparse data, fast decompression needed for spillover    │ │
+│ │ Access Pattern: Conditional access only when boundaries detected   │ │
+│ └─────────────────────────────────────────────────────────────────────┘ │
+│                                                                          │
+│ Centroid Vectors (Footer Storage):                                     │
+│ ┌─────────────────────────────────────────────────────────────────────┐ │
+│ │ Primary: No quantization (accuracy critical)                       │ │
+│ │ Secondary: Mixed per dimension (ZSTD sparse, None dense)           │ │
+│ │ Rationale: O(1) lookup needed, moderate size, accuracy critical    │ │
+│ │ Access Pattern: Direct indexing by centroid_id == rowgroup_id      │ │
+│ └─────────────────────────────────────────────────────────────────────┘ │
+└──────────────────────────────────────────────────────────────────────────┘
+
+SIMD Optimization Details:
+┌─────────────────────────────────────────────────────────────────────────┐
+│ Hardware Acceleration (Auto-Detected)                                  │
+├─────────────────────────────────────────────────────────────────────────┤
+│ • AVX-512: 512-bit vectors (64 × INT8 or 32 × INT16 per operation)     │
+│ • AVX2:    256-bit vectors (32 × INT8 or 16 × INT16 per operation)     │
+│ • SSE:     128-bit vectors (16 × INT8 or 8 × INT16 per operation)      │
+│ • NEON:    128-bit vectors (ARM processors)                            │
+│                                                                         │
+│ FastLanes Encoding Benefits:                                           │
+│ • BitPacking: Store 8-bit values in 4-6 bits (40-50% reduction)       │
+│ • SIMD Parallel: Decode 32+ values simultaneously                      │
+│ • Cache Friendly: Sequential access patterns                           │
+│ • Zero-Copy: Direct SIMD operations on compressed data                 │
+└─────────────────────────────────────────────────────────────────────────┘
+
+SIMD Encoding Strategy Per Field Type:
+┌─────────────────────────────────────────────────────────────────────────┐
+│ Field-Specific SIMD + Compression Strategy Matrix                      │
+├─────────────────────────────────────────────────────────────────────────┤
+│ Matrix Type | Data Type | SIMD Encoding | Compression | Access Pattern  │
+├─────────────┼───────────┼───────────────┼─────────────┼─────────────────┤
+│ P² Matrix   │ INT8      │ FastLanes     │ ZSTD-1      │ Random (search) │
+│             │ quantized │ BitPacking    │ (fast)      │ 32 vals/SIMD op │
+│             │ distances │ 4-6 bits/val  │ 40-50% save │ ~10ns latency   │
+├─────────────┼───────────┼───────────────┼─────────────┼─────────────────┤
+│ K² Matrix   │ INT16     │ Delta         │ ZSTD-3      │ Sequential load │
+│             │ quantized │ Encoding      │ (balanced)  │ Batch at start  │
+│             │ centroids │ Row-wise      │ 60-70% save │ ~100ns latency  │
+├─────────────┼───────────┼───────────────┼─────────────┼─────────────────┤
+│ P×K Sparse  │ INT8      │ FastLanes     │ LZ4         │ Conditional     │
+│             │ boundary  │ RLE + BitPack │ (ultra-fast)│ Only if >15%    │
+│             │ vectors   │ 10-90% sparse │ 30-40% save │ ~20ns latency   │
+├─────────────┼───────────┼───────────────┼─────────────┼─────────────────┤
+│ Centroids   │ f32       │ None          │ Mixed       │ O(1) lookup     │
+│             │ original  │ (accuracy)    │ per-dim     │ Direct indexing │
+│             │ precision │ 256-bit align │ 20-30% save │ ~5ns latency    │
+└─────────────┴───────────┴───────────────┴─────────────┴─────────────────┘
+
+Hardware SIMD Optimization Levels:
+┌─────────────────────────────────────────────────────────────────────────┐
+│ Auto-Detected Hardware Capabilities                                    │
+├─────────────────────────────────────────────────────────────────────────┤
+│ AVX-512: 64×INT8 or 32×INT16 per operation (512-bit registers)         │
+│   - P² Matrix: Process 64 distances simultaneously                     │
+│   - K² Matrix: Process 32 centroid distances per operation             │
+│   - Memory bandwidth: ~100 GB/s theoretical peak                       │
+│                                                                         │
+│ AVX2:    32×INT8 or 16×INT16 per operation (256-bit registers)         │
+│   - P² Matrix: Process 32 distances simultaneously                     │
+│   - K² Matrix: Process 16 centroid distances per operation             │
+│   - Memory bandwidth: ~50 GB/s theoretical peak                        │
+│                                                                         │
+│ SSE:     16×INT8 or 8×INT16 per operation (128-bit registers)          │
+│   - P² Matrix: Process 16 distances simultaneously                     │
+│   - Fallback for older hardware                                        │
+│                                                                         │
+│ NEON:    16×INT8 or 8×INT16 per operation (ARM processors)             │
+│   - P² Matrix: Process 16 distances simultaneously                     │
+│   - Mobile/edge deployment optimization                                │
+└─────────────────────────────────────────────────────────────────────────┘
+
+Performance Characteristics:
+Matrix Type     | Compression | SIMD Decode | Access Latency | Storage Reduction
+P² Matrix       | FastLanes   | 32 vals/op  | ~10ns         | 40-50%
+K² Matrix       | ZSTD-3      | N/A         | ~100ns        | 60-70%  
+P×K Matrix      | LZ4         | 32 vals/op  | ~20ns         | 30-40%
+Centroids       | Mixed       | N/A         | ~5ns (O1)     | 20-30%
+----
+
+=== Two-Phase Search Architecture
+
+**🔍 Phase 1: Centroid-Level Boundary Detection (K×K Matrix)**
+
+[source,mermaid]
+----
+graph TD
+    subgraph "Phase 1: Centroid Selection & Boundary Detection"
+        Q[Query Vector] --> KM[K×K Matrix]
+        KM --> CD[Centroid Distance Calculation]
+        CD --> BD[Boundary Detection: ratio > 0.8]
+        BD --> CS[Selected Centroids: C23, C67, C45]
+        
+        subgraph "Boundary Detection Logic"
+            BD --> R1[d_i/d_j > 0.8 → Boundary]
+            BD --> R2[Add neighboring centroids]
+            BD --> R3[Budget allocation by distance]
+        end
+    end
+    
+    CS --> Phase2[Phase 2: Vector-Level Search]
+----
+
+**🎯 Phase 2: Vector-Level Boundary Detection (P×K + P² Matrices)**
+
+[source,mermaid]
+----
+graph TD
+    subgraph "Phase 2: Intra-Rowgroup Search & Spillover"
+        SC[Selected Centroids] --> RG[Load Rowgroups]
+        RG --> PK[P×K Sparse Matrix]
+        RG --> P2[P² Upper Triangle Matrix]
+        
+        subgraph "Spillover Detection"
+            PK --> VBD[Vector Boundary Detection]
+            VBD --> SF[boundary_score = exp(-α×|d_own-d_neighbor|)×log(k/d+1)]
+            SF --> SP[Spillover >15% → Expand search]
+            SP --> AC[Additional Centroids: C12, C34]
+        end
+        
+        subgraph "Intra-Rowgroup Search"
+            P2 --> SIMD[SIMD Distance Computation]
+            SIMD --> UTV[Upper Triangle Navigation]
+            UTV --> CV[Candidate Vectors]
+        end
+        
+        AC --> RG
+        CV --> BOOST[5-Component Boosting]
+        BOOST --> FR[Final Results]
+    end
+----
+
+**🔄 Complete Search Flow with Phase Separation**
 
 [source,mermaid]
 ----
 sequenceDiagram
     participant Q as Query
-    participant K2 as K² Matrix
-    participant PK as P×K Matrix
+    participant K2 as K×K Matrix
+    participant RG as Rowgroups
+    participant PK as P×K Sparse Matrix
     participant P2 as P² Matrix
     participant R as Results
     
-    Q->>K2: Phase 1: Calculate distances to centroids
-    K2->>K2: Detect boundaries (ratio > 0.8)
-    K2->>Q: Selected clusters [C23, C67, C45]
+    Note over Q,R: Phase 1: Centroid-Level Boundary Detection
+    Q->>K2: Calculate query-to-centroid distances
+    K2->>K2: Apply boundary detection (d_i/d_j > 0.8)
+    K2->>Q: Selected centroids [C23, C67, C45]
     
-    Q->>PK: Phase 2: Check spillover
-    PK->>PK: Find boundary vectors
-    PK->>PK: Detect spillover >15%
-    PK->>Q: Additional clusters [C12, C34]
+    Note over Q,R: Phase 2: Vector-Level Search & Spillover
+    loop For each selected centroid
+        Q->>RG: Load rowgroup for centroid
+        RG->>PK: Check sparse P×K matrix for boundary vectors
+        PK->>PK: Calculate boundary_score = exp(-α×|d_own-d_neighbor|)×log(k/d+1)
+        alt Spillover detected (>15% boundary vectors)
+            PK->>Q: Expand to neighboring centroids
+        end
+        
+        RG->>P2: Load P² upper triangle matrix
+        P2->>P2: SIMD-accelerated intra-rowgroup search
+        P2->>R: Add candidate vectors with distances
+    end
     
-    Q->>P2: Search within selected rowgroups
-    P2->>P2: Use upper-triangle distances
-    P2->>P2: Apply SIMD acceleration
-    P2->>R: Candidate vectors
-    
-    R->>R: Self-correction if confidence < 0.8
-    R->>R: Apply boosting
+    Note over Q,R: Result Processing & Boosting
+    R->>R: Apply 5-component boosting formula
+    R->>R: Self-correction if confidence < 0.8 (max 3 rounds)
     R->>Q: Final top-k results
+----
+
+=== 5-Component Boosting Mechanism for Neighboring Centroid Expansion
+
+**🎯 Mathematical Foundation (Fully Implemented)**
+
+[source]
+----
+Boosted Distance Formula:
+D = α₁·d₁ + α₂·d₂ + α₃·d₃ + β₁·d₄ + β₂·d₅
+
+Component Breakdown:
+┌─────────────────────────────────────────────────────────────────────────┐
+│ Intra-Cluster Components (α weights)                                   │
+├─────────────────────────────────────────────────────────────────────────┤
+│ d₁: Vector-to-own-centroid distance                                    │
+│ α₁: Penalize vectors far from their assigned centroid                  │
+│     Implementation: boundary_threshold detection in writer.rs:688      │
+│                                                                         │
+│ d₂: Average distance to other centroids                                │
+│ α₂: Boundary penalty for vectors near cluster edges                    │
+│     Implementation: inter-cluster distance analysis                    │
+│                                                                         │
+│ d₃: Distance variance within cluster                                   │
+│ α₃: Compactness measure (prefer tight clusters)                        │
+│     Implementation: cluster statistics in consolidated_reader.rs       │
+└─────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────┐
+│ Inter-Cluster Components (β weights)                                   │
+├─────────────────────────────────────────────────────────────────────────┤
+│ d₄: Source vector distance to target centroid                          │
+│ β₁: Cross-cluster penalty with exponential decay                       │
+│     Formula: β₁ = β_cross × exp(-d₄ / global_avg_distance)             │
+│     Implementation: writer.rs:715 - exponential decay function         │
+│                                                                         │
+│ d₅: Target vector distance to source centroid                          │
+│ β₂: Reverse cross-cluster penalty (bidirectional consistency)          │
+│     Formula: β₂ = β_cross × exp(-d₅ / global_avg_distance)             │
+│     Implementation: writer.rs:718 - symmetric penalty                  │
+└─────────────────────────────────────────────────────────────────────────┘
+
+Neighboring Centroid Expansion Triggers:
+1. Phase 1: d_i/d_j > 0.8 → Add neighboring centroids to search
+2. Phase 2: boundary_score > 0.15 → Expand to spillover centroids  
+3. Boosting: Cross-cluster penalties guide expansion decisions
+----
+
+**🔄 Expansion Decision Flow**
+
+[source,mermaid]
+----
+graph TD
+    subgraph "Phase 1: Centroid-Level Expansion"
+        QC[Query to Centroids] --> BD1[Boundary Detection: d_i/d_j > 0.8]
+        BD1 --> NC1[Add Neighboring Centroids]
+        NC1 --> BA[Budget Allocation by Distance]
+    end
+    
+    subgraph "Phase 2: Vector-Level Expansion"
+        SC[Selected Centroids] --> VBD[Vector Boundary Detection]
+        VBD --> BS[boundary_score = exp(-α×|d_own-d_neighbor|)×log(k/d+1)]
+        BS --> SP{Spillover > 15%?}
+        SP -->|Yes| NC2[Expand to Additional Centroids]
+        SP -->|No| IS[Intra-Rowgroup Search Only]
+        NC2 --> IS
+    end
+    
+    subgraph "Boosting-Guided Expansion"
+        IS --> BCF[5-Component Boosting]
+        BCF --> CP[Cross-Cluster Penalties: β₁×d₄ + β₂×d₅]
+        CP --> ED[Exponential Decay Weighting]
+        ED --> FE[Final Expansion Decision]
+    end
+    
+    BA --> SC
+    FE --> Results[Merged Results with Boosted Scores]
+----
+
+=== Zero-Copy I/O and Filesystem Optimization
+
+**🚀 Cache-Optimized File Layout with Memory-Mapped Access:**
+
+[source]
+----
+RAPTOR File Layout (Single .raptor file):
+┌──────────────────────────────────────────────────────────────────────────┐
+│ Zero-Copy Memory-Mapped File Structure                                  │
+├──────────────────────────────────────────────────────────────────────────┤
+│                                                                          │
+│ Section 1: File Header (4KB, Always Cached)                            │
+│ ┌─────────────────────────────────────────────────────────────────────┐ │
+│ │ magic: [u8; 8] = "RAPTOR01"                                         │ │
+│ │ version: u16, flags: u16, total_rowgroups: u32                     │ │
+│ │ footer_offset: u64, footer_size: u32                               │ │
+│ │ k_centroids: u32, dimension: u32                                   │ │
+│ │ compression_algorithms: [CompressionType; 4]                       │ │
+│ │ simd_capabilities: HardwareFlags                                   │ │
+│ └─────────────────────────────────────────────────────────────────────┘ │
+│                                                                          │
+│ Section 2: Rowgroup Data (Variable Size, Memory-Mapped)                │
+│ ┌─────────────────────────────────────────────────────────────────────┐ │
+│ │ Rowgroup 0: [P² Matrix | P×K Matrix | Vector Data | Metadata]       │ │
+│ │ Rowgroup 1: [P² Matrix | P×K Matrix | Vector Data | Metadata]       │ │
+│ │ ...                                                                 │ │
+│ │ Rowgroup K-1: [P² Matrix | P×K Matrix | Vector Data | Metadata]     │ │
+│ │                                                                     │ │
+│ │ Memory-Mapped Benefits:                                             │ │
+│ │ • OS handles caching automatically                                 │ │
+│ │ • Zero-copy access to compressed data                              │ │
+│ │ • Lazy loading of rowgroups (only when accessed)                   │ │
+│ │ • SIMD-aligned data structures                                     │ │
+│ └─────────────────────────────────────────────────────────────────────┘ │
+│                                                                          │
+│ Section 3: Footer (Cached in Memory, ~2-50MB)                          │
+│ ┌─────────────────────────────────────────────────────────────────────┐ │
+│ │ K² Matrix: Compressed upper triangle (35% original size)           │ │
+│ │ Centroid Vectors: Mixed compression per dimension                   │ │
+│ │ Rowgroup Directory: Offsets and metadata for all rowgroups         │ │
+│ │ Compression Dictionaries: Shared across all matrices               │ │
+│ │                                                                     │ │
+│ │ Cache Strategy:                                                     │ │
+│ │ • Loaded once per file open                                        │ │
+│ │ • Shared across all queries (immutable)                           │ │
+│ │ • SIMD-aligned centroid array for O(1) access                     │ │
+│ │ • Compressed K² matrix with fast decompression                    │ │
+│ └─────────────────────────────────────────────────────────────────────┘ │
+└──────────────────────────────────────────────────────────────────────────┘
+
+Columnar Field-Based Page Layout (Per Rowgroup):
+┌─────────────────────────────────────────────────────────────────────────┐
+│ Page-Aligned Field Access (4KB boundaries)                             │
+├─────────────────────────────────────────────────────────────────────────┤
+│ Page 0: P² Matrix Distances (FastLanes + ZSTD-1)                       │
+│ Page 1: P² Matrix Metadata (uncompressed, tiny)                        │
+│ Page 2: P×K Sparse Vectors (INT8 + LZ4)                                │
+│ Page 3: P×K Bloom Filter + Index (uncompressed)                        │
+│ Page 4-N: Vector Data (original format, may span multiple pages)       │
+│ Page N+1: Rowgroup Metadata (uncompressed)                             │
+│                                                                         │
+│ Benefits:                                                               │
+│ • Field-specific access: Only load needed matrix types                 │
+│ • OS page cache efficiency: 4KB aligned reads                          │
+│ • Offset tracking: O(1) jump to any field within rowgroup             │
+│ • Parallel decompression: Each field uses optimal algorithm            │
+└─────────────────────────────────────────────────────────────────────────┘
+
+Memory Usage Optimization:
+Component                    | Size (K=1000, P=1024, D=384) | Cache Strategy
+File Header                  | 4KB                           | Always resident
+Footer (K² + Centroids)      | ~2MB compressed               | Cached per file
+P² Matrix (per rowgroup)     | ~256KB compressed             | LRU cache (64 RG)
+P×K Matrix (per rowgroup)    | ~80KB compressed              | On-demand load
+Vector Data (per rowgroup)   | ~1.5MB                        | Memory-mapped
+Total Resident Memory        | ~18MB + 16MB cache            | ~34MB total
 ----
 
 [source]

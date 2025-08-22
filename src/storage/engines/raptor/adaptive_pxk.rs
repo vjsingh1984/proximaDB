@@ -12,13 +12,9 @@ use anyhow::Result;
 use std::collections::HashSet;
 use serde::{Deserialize, Serialize};
 
-/// Vector to centroid distance matrix
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct VectorCentroidMatrix {
-    pub distances: Vec<Vec<f32>>,
-    pub num_vectors: usize,
-    pub num_clusters: usize,
-}
+// REMOVED: VectorCentroidMatrix - duplicate of common.rs::VectorCentroidMatrix
+// Use the common.rs version instead
+pub use super::common::VectorCentroidMatrix;
 
 /// Selection reason for sparse storage
 #[derive(Debug, Clone)]
