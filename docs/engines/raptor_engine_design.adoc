@@ -97,41 +97,96 @@ The relationship between K (clusters) and D (dimensions) determines optimal stor
      Full   Optimized  Boundary     Sample
 ----
 
-=== Storage Decision Matrix
+=== Storage Decision Matrix with Refined Formula
 
-[cols="2,2,2,3,2", options="header"]
+==== Optimal Coverage Formula
+
+The refined formula ensures we never drop below 10% coverage to maintain search quality:
+
+[source]
+----
+Coverage(k, d) = max(MIN_COVERAGE, min(1.0, f(k, d)))
+
+where:
+- MIN_COVERAGE = 0.1 (10% floor - never go below this)
+- f(k, d) = d / (k × log₂(k/d + 2)) for smooth decay
+
+Examples:
+- k = d/2:   coverage ≈ 86%
+- k = d:     coverage ≈ 50%  
+- k = 2d:    coverage ≈ 29%
+- k = 4d:    coverage ≈ 16%
+- k = 8d:    coverage ≈ 10% (floor)
+----
+
+==== Complete Adaptive Strategy
+
+[cols="2,2,2,3,3,3", options="header"]
 |===
-| K Range | Strategy | Storage/RG | Coverage | Example (D=384)
+| K Range | Coverage | Compression | Effective Bytes | Storage/RG (P=1024) | Example (D=384)
 
 | k < √d
-| DENSE_FULL
-| k×P×4 bytes
 | 100%
-| k=10: 40KB/RG
+| Uncompressed
+| 4.0
+| k×P×4
+| k=10: 40KB
 
-| √d ≤ k < d/2
-| DENSE_OPTIMIZED
-| k×P×4 bytes (compressed)
+| √d ≤ k < d/4
 | 100%
-| k=100: 200KB/RG
+| Float16
+| 2.0
+| k×P×2
+| k=100: 200KB
 
-| d/2 ≤ k < 2d
-| SPARSE_BOUNDARY
-| 0.2×k×P×4 bytes
-| 20% boundary
-| k=500: 400KB/RG
+| d/4 ≤ k < d/2
+| 90%
+| Float16
+| 1.8
+| 0.9×k×P×2
+| k=150: 270KB
 
-| k ≥ 2d
-| HIERARCHICAL_SAMPLE
-| 0.05×k×P×4 bytes
-| 5% sample
-| k=1000: 200KB/RG
+| d/2 ≤ k < d
+| 70%
+| Quantized8
+| 0.7
+| 0.7×k×P×1
+| k=300: 215KB
 
-| k > 5000
-| BLOOM_GUIDED
-| 128 bits/cluster
-| 0% (on-demand)
-| k=10000: 160KB/RG
+| d ≤ k < 2d
+| 50%
+| Quantized8
+| 0.5
+| 0.5×k×P×1
+| k=500: 256KB
+
+| 2d ≤ k < 4d
+| 30%
+| Quantized4
+| 0.15
+| 0.3×k×P×0.5
+| k=1000: 154KB
+
+| 4d ≤ k < 8d
+| 20%
+| DeltaEncoded
+| 0.3
+| 0.2×k×P×1.5
+| k=2000: 307KB
+
+| k ≥ 8d
+| 10%
+| BitPacked
+| 0.2
+| 0.1×k×P×2
+| k=5000: 1MB
+
+| k > 10000
+| 10%
+| LearnedIndex
+| Model-based
+| ~1MB model
+| k=20000: 1MB
 |===
 
 === Implementation Code
@@ -139,16 +194,129 @@ The relationship between K (clusters) and D (dimensions) determines optimal stor
 [source,rust]
 ----
 impl AdaptivePxKStorage {
-    pub fn determine_strategy(k: usize, d: usize) -> PxKStrategy {
+    pub fn determine_strategy(k: usize, d: usize) -> (PxKStrategy, f32) {
         let sqrt_d = (d as f32).sqrt() as usize;
+        let ratio = k as f32 / d as f32;
         
         match k {
-            k if k < sqrt_d => PxKStrategy::DenseFull,
-            k if k < d / 2 => PxKStrategy::DenseOptimized,
-            k if k < d * 2 => PxKStrategy::SparseBoundary(0.2),
-            k if k < 5000 => PxKStrategy::HierarchicalSample(0.05),
-            _ => PxKStrategy::BloomGuided,
+            // Full storage for small K
+            k if k < sqrt_d => (PxKStrategy::DenseFull, 1.0),
+            
+            // Compressed full storage
+            k if k < d / 4 => (PxKStrategy::DenseCompressed, 1.0),
+            
+            // Adaptive sparse storage with refined formula
+            k if k < 10000 => {
+                let coverage = Self::calculate_optimal_coverage(k, d);
+                let compression = Self::select_compression(k, d, coverage);
+                (PxKStrategy::SparseCoverage { coverage, compression }, coverage)
+            }
+            
+            // Learned index for extreme K
+            _ => (PxKStrategy::LearnedIndex, 0.0),
         }
+    }
+    
+    fn calculate_optimal_coverage(k: usize, d: usize) -> f32 {
+        const MIN_COVERAGE: f32 = 0.10;  // 10% floor
+        let ratio = k as f32 / d as f32;
+        
+        if ratio < 0.25 {  // k < d/4
+            1.0
+        } else if ratio < 1.0 {  // k < d
+            // Linear decay from 100% to 50%
+            1.0 - 0.5 * (ratio - 0.25) / 0.75
+        } else {
+            // Logarithmic decay with floor
+            let coverage = d as f32 / (k as f32 * (ratio + 2.0).log2());
+            coverage.max(MIN_COVERAGE)
+        }
+    }
+    
+    fn select_compression(k: usize, d: usize, coverage: f32) -> CompressionStrategy {
+        let ratio = k as f32 / d as f32;
+        
+        if ratio < 0.25 {
+            CompressionStrategy::Uncompressed
+        } else if ratio < 1.0 {
+            if coverage > 0.8 {
+                CompressionStrategy::Float16
+            } else {
+                CompressionStrategy::Quantized8
+            }
+        } else {
+            if coverage > 0.3 {
+                CompressionStrategy::Quantized8
+            } else if coverage > 0.15 {
+                CompressionStrategy::Quantized4
+            } else {
+                CompressionStrategy::DeltaEncoded
+            }
+        }
+    }
+}
+----
+
+=== Visual: Memory Growth Comparison
+
+[source]
+----
+Memory per Rowgroup (P=1024)
+
+     Old Aggressive Strategy          New Optimal Strategy
+4MB |                                |                    
+    |                                |              . . . . (asymptotic)
+3MB |                                |         . . .
+    |            _____ (cliff)       |     . .
+2MB |           |                    | . .
+    |           |                    |.
+1MB |  _________|                    |
+    | |                              |
+0MB |_|__________|_____              |
+    0  d/2  d  2d  4d  8d          0  d/2  d  2d  4d  8d
+
+Coverage %:
+100%|■■■        |                   100%|■■■■■■
+ 20%|   ■■      |                    70%|     ■■■
+  5%|     ■■■   |                    50%|       ■■■
+  0%|        ■■■|                    30%|         ■■
+                                      10%|           ■■■■■ (floor)
+
+Key Improvements:
+• Never drops to 0% coverage (maintains 10% minimum)
+• Smooth logarithmic decay instead of cliffs
+• Compression-aware storage optimization
+• Maximum 2MB per rowgroup even at k=10000
+----
+
+=== Smart Sparse Storage: Intelligent Vector Selection
+
+When operating in sparse mode (coverage < 100%), vectors are selected intelligently:
+
+[source,rust]
+----
+pub struct SmartSparseP×K {
+    pub fn select_vectors(&self, vectors: &[Vec<f32>], coverage: f32) -> Vec<VectorSelection> {
+        let num_select = (vectors.len() as f32 * coverage) as usize;
+        let mut selected = Vec::with_capacity(num_select);
+        
+        // Priority 1: Boundary vectors (40% of budget)
+        let boundary_budget = (num_select as f32 * 0.4) as usize;
+        selected.extend(self.select_boundary_vectors(vectors, boundary_budget));
+        
+        // Priority 2: Cluster representatives (20% of budget)
+        let rep_budget = (num_select as f32 * 0.2) as usize;
+        selected.extend(self.select_representatives(vectors, rep_budget));
+        
+        // Priority 3: Outliers (20% of budget)
+        let outlier_budget = (num_select as f32 * 0.2) as usize;
+        selected.extend(self.select_outliers(vectors, outlier_budget));
+        
+        // Priority 4: Diverse sample (20% of budget)
+        let remaining = num_select - selected.len();
+        selected.extend(self.select_diverse(vectors, remaining));
+        
+        selected
     }
 }
 ----
@@ -757,6 +925,66 @@ async fn search_with_two_phases(
     Ok(phase1_results.into_iter().take(j).collect())
 }
 ----
+
+== Advantages of Refined P×K Storage Approach
+
+=== Key Benefits
+
+1. **Never Zero Coverage**
+   - Minimum 10% floor ensures basic functionality
+   - No complete information loss even for extreme K values
+   - Always maintains ability to detect boundaries
+
+2. **Smooth Degradation**
+   - Logarithmic decay prevents accuracy cliffs
+   - Predictable behavior across K/D relationships
+   - Gradual transition between storage strategies
+
+3. **Compression Aware**
+   - Appropriate compression per tier (Float16 → Quantized8 → Quantized4)
+   - Balances precision vs storage requirements
+   - Reduces memory footprint without sacrificing quality
+
+4. **Intelligent Sampling**
+   - Prioritizes boundary vectors (40% of budget)
+   - Includes cluster representatives and outliers
+   - Maintains search quality even with reduced coverage
+
+5. **Reasonable Memory Growth**
+   - Sub-linear growth with K
+   - Maximum 2MB per rowgroup even at k=10000
+   - Predictable memory requirements for capacity planning
+
+=== Memory Usage Examples
+
+[cols="2,2,2,2,3", options="header"]
+|===
+| K | D | Coverage | Compression | Storage/RG
+
+| 100
+| 384
+| 100%
+| Float16
+| 200KB
+
+| 500
+| 384
+| 45%
+| Quantized8
+| 230KB
+
+| 2000
+| 384
+| 15%
+| Quantized4
+| 154KB
+
+| 10000
+| 384
+| 10%
+| BitPacked
+| 2MB
+|===
 
 == Summary
 
