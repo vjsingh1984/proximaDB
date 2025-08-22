@@ -1,0 +1,188 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="700" viewBox="0 0 1200 700">
+  <title>Phase 2: Vector-Level Spillover (P×K Matrix)</title>
+  
+  <!-- Background -->
+  <rect width="1200" height="700" fill="#f8f9fa"/>
+  
+  <!-- Title -->
+  <text x="600" y="30" text-anchor="middle" font-size="20" font-weight="bold" fill="#333">
+    Phase 2: Vector-Level Spillover Detection (P×K Matrix)
+  </text>
+  
+  <!-- Main cluster C1 -->
+  <g id="cluster-c1">
+    <circle cx="300" cy="250" r="100" fill="#ffebee" stroke="#ff6b6b" stroke-width="3" stroke-dasharray="10,5" opacity="0.5"/>
+    <circle cx="300" cy="250" r="12" fill="#d32f2f" stroke="#fff" stroke-width="2"/>
+    <text x="300" y="255" text-anchor="middle" fill="white" font-size="14" font-weight="bold">C1</text>
+    <text x="300" y="150" text-anchor="middle" fill="#333" font-size="14" font-weight="bold">Cluster 1</text>
+    
+    <!-- Vectors in C1 -->
+    <g id="c1-vectors">
+      <!-- V1 - spillover vector -->
+      <circle cx="280" cy="220" r="5" fill="#ff5722" stroke="#d84315" stroke-width="2"/>
+      <text x="280" y="205" text-anchor="middle" font-size="11" font-weight="bold" fill="#d84315">V1</text>
+      
+      <!-- V2 - spillover vector -->
+      <circle cx="320" cy="240" r="5" fill="#ff5722" stroke="#d84315" stroke-width="2"/>
+      <text x="320" y="225" text-anchor="middle" font-size="11" font-weight="bold" fill="#d84315">V2</text>
+      
+      <!-- V3 - spillover vector -->
+      <circle cx="290" cy="280" r="5" fill="#ff5722" stroke="#d84315" stroke-width="2"/>
+      <text x="290" y="295" text-anchor="middle" font-size="11" font-weight="bold" fill="#d84315">V3</text>
+      
+      <!-- Regular vectors -->
+      <circle cx="310" cy="260" r="4" fill="#ff6b6b"/>
+      <circle cx="270" cy="250" r="4" fill="#ff6b6b"/>
+      <circle cx="295" cy="235" r="4" fill="#ff6b6b"/>
+      <circle cx="315" cy="275" r="4" fill="#ff6b6b"/>
+    </g>
+  </g>
+  
+  <!-- Other clusters -->
+  <g id="other-clusters">
+    <!-- C2 -->
+    <g transform="translate(500, 200)">
+      <circle r="80" fill="#e0f2f1" stroke="#4ecdc4" stroke-width="2" opacity="0.3"/>
+      <circle r="10" fill="#00897b" stroke="#fff" stroke-width="2"/>
+      <text y="5" text-anchor="middle" fill="white" font-size="12" font-weight="bold">C2</text>
+      <text y="-95" text-anchor="middle" fill="#333" font-size="13">Cluster 2</text>
+    </g>
+    
+    <!-- C3 -->
+    <g transform="translate(650, 320)">
+      <circle r="80" fill="#e1f5fe" stroke="#45b7d1" stroke-width="2" opacity="0.3"/>
+      <circle r="10" fill="#0277bd" stroke="#fff" stroke-width="2"/>
+      <text y="5" text-anchor="middle" fill="white" font-size="12" font-weight="bold">C3</text>
+      <text y="-95" text-anchor="middle" fill="#333" font-size="13">Cluster 3</text>
+    </g>
+    
+    <!-- C4 - The actual closest cluster -->
+    <g transform="translate(450, 400)">
+      <circle r="90" fill="#fff3e0" stroke="#ffd93d" stroke-width="3" opacity="0.4"/>
+      <circle r="12" fill="#f57c00" stroke="#fff" stroke-width="2"/>
+      <text y="5" text-anchor="middle" fill="white" font-size="14" font-weight="bold">C4</text>
+      <text y="-105" text-anchor="middle" fill="#333" font-size="14" font-weight="bold">Cluster 4</text>
+      <text y="120" text-anchor="middle" fill="#f57c00" font-size="12" font-weight="bold">
+        (Discovered via spillover!)
+      </text>
+    </g>
+  </g>
+  
+  <!-- Distance lines from spillover vectors to C4 -->
+  <g id="spillover-lines" stroke="#ff5722" stroke-width="2" stroke-dasharray="3,2" opacity="0.7">
+    <line x1="280" y1="220" x2="450" y2="400"/>
+    <line x1="320" y1="240" x2="450" y2="400"/>
+    <line x1="290" y1="280" x2="450" y2="400"/>
+  </g>
+  
+  <!-- Distance labels -->
+  <g id="distance-labels" fill="#ff5722" font-size="11" font-weight="bold">
+    <text x="365" y="305">4.7</text>
+    <text x="385" y="320">4.6</text>
+    <text x="370" y="340">4.9</text>
+  </g>
+  
+  <!-- P×K Matrix Analysis Box -->
+  <g id="pxk-analysis">
+    <rect x="750" y="100" width="420" height="280" fill="white" stroke="#666" stroke-width="2" rx="10"/>
+    <text x="960" y="130" text-anchor="middle" font-size="16" font-weight="bold" fill="#333">
+      P×K Matrix Analysis for C1 Vectors
+    </text>
+    
+    <!-- Vector distance tables -->
+    <g font-size="12" font-family="monospace">
+      <!-- Headers -->
+      <text x="770" y="160" font-weight="bold" fill="#666">Vector | C1    C2    C3    C4*</text>
+      <line x1="770" y1="165" x2="1150" y2="165" stroke="#ddd" stroke-width="1"/>
+      
+      <!-- V1 -->
+      <text x="770" y="185" fill="#333">
+        <tspan font-weight="bold" fill="#ff5722">V1 ∈ C1</tspan>: 4.8   5.1   5.3   
+        <tspan fill="#f57c00" font-weight="bold">4.7</tspan>
+      </text>
+      
+      <!-- V2 -->
+      <text x="770" y="210" fill="#333">
+        <tspan font-weight="bold" fill="#ff5722">V2 ∈ C1</tspan>: 4.9   5.2   5.4   
+        <tspan fill="#f57c00" font-weight="bold">4.6</tspan>
+      </text>
+      
+      <!-- V3 -->
+      <text x="770" y="235" fill="#333">
+        <tspan font-weight="bold" fill="#ff5722">V3 ∈ C1</tspan>: 5.1   5.3   5.5   
+        <tspan fill="#f57c00" font-weight="bold">4.9</tspan>
+      </text>
+      
+      <!-- Other vectors -->
+      <text x="770" y="260" fill="#999">V4 ∈ C1: 4.5   5.0   5.2   5.4</text>
+      <text x="770" y="285" fill="#999">V5 ∈ C1: 4.6   5.1   5.3   5.5</text>
+    </g>
+    
+    <!-- Statistics box -->
+    <rect x="770" y="310" width="380" height="50" fill="#fff3e0" stroke="#ff9800" stroke-width="2" rx="5"/>
+    <text x="960" y="335" text-anchor="middle" font-size="13" font-weight="bold" fill="#ff9800">
+      Statistics: 30% of C1 vectors closer to C4!
+    </text>
+    <text x="960" y="353" text-anchor="middle" font-size="12" fill="#666">
+      (Spillover threshold: 15% → Expansion triggered)
+    </text>
+  </g>
+  
+  <!-- Action Box -->
+  <g id="action-box">
+    <rect x="750" y="400" width="420" height="80" fill="#e3f2fd" stroke="#1976d2" stroke-width="2" rx="10"/>
+    <text x="960" y="425" text-anchor="middle" font-size="14" font-weight="bold" fill="#1976d2">
+      Phase 2 Action
+    </text>
+    <text x="960" y="450" text-anchor="middle" font-size="13" fill="#333">
+      Add C4 to search list (spillover detected)
+    </text>
+    <text x="960" y="470" text-anchor="middle" font-size="12" fill="#666">
+      Final search scope: C1, C2, C3 + C4
+    </text>
+  </g>
+  
+  <!-- Visual flow indicator -->
+  <g id="flow-indicator">
+    <path d="M 300 360 Q 375 380 450 400" stroke="#ff5722" stroke-width="3" fill="none" marker-end="url(#arrowhead-orange)"/>
+    <text x="375" y="375" text-anchor="middle" font-size="12" font-weight="bold" fill="#ff5722">
+      30% spillover
+    </text>
+  </g>
+  
+  <!-- Legend -->
+  <g id="legend" transform="translate(50, 500)">
+    <rect width="300" height="150" fill="white" stroke="#ddd" stroke-width="1" rx="5"/>
+    <text x="150" y="25" text-anchor="middle" font-size="14" font-weight="bold" fill="#333">
+      Legend
+    </text>
+    
+    <g transform="translate(20, 45)">
+      <circle cx="10" cy="0" r="5" fill="#ff5722" stroke="#d84315" stroke-width="2"/>
+      <text x="25" y="4" font-size="12" fill="#333">Spillover vectors (closer to C4)</text>
+    </g>
+    
+    <g transform="translate(20, 70)">
+      <circle cx="10" cy="0" r="4" fill="#ff6b6b"/>
+      <text x="25" y="4" font-size="12" fill="#333">Regular C1 vectors</text>
+    </g>
+    
+    <g transform="translate(20, 95)">
+      <line x1="0" y1="0" x2="20" y2="0" stroke="#ff5722" stroke-width="2" stroke-dasharray="3,2"/>
+      <text x="25" y="4" font-size="12" fill="#333">Actual closest distance</text>
+    </g>
+    
+    <g transform="translate(20, 120)">
+      <rect x="0" y="-8" width="20" height="16" fill="#fff3e0" stroke="#ff9800" stroke-width="1"/>
+      <text x="25" y="4" font-size="12" fill="#333">Spillover threshold exceeded</text>
+    </g>
+  </g>
+  
+  <!-- Arrow markers -->
+  <defs>
+    <marker id="arrowhead-orange" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto">
+      <polygon points="0 0, 10 3, 0 6" fill="#ff5722"/>
+    </marker>
+  </defs>
+</svg>
