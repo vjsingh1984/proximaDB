@@ -622,7 +622,7 @@ pub struct SearchResult {
     pub distance: f32,
     pub vector: Option<Vec<f32>>,
     pub metadata: Option<HashMap<String, MetadataValue>>,
-    pub rowgroup_id: u32,
+    pub rowgroup_id: u16,
     pub ranking_score: f32,  // For boosting
 }
 
@@ -1331,6 +1331,17 @@ impl InterCentroidMatrix {
     }
 }
 
+/// Compression type for matrix quantization
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub enum CompressionType {
+    /// 8-bit quantization (1 byte per value)
+    Quantized8Bit,
+    /// 16-bit quantization (2 bytes per value)
+    Quantized16Bit,
+    /// 32-bit full precision (4 bytes per value)
+    FullPrecision,
+}
+
 /// Compression metadata for inter-centroid matrix reconstruction
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct InterCentroidCompressionMetadata {
@@ -1342,6 +1353,9 @@ pub struct InterCentroidCompressionMetadata {
     
     /// Quantization scale factor (16-bit → f32 reconstruction)
     pub scale_factor: f32,
+    
+    /// Compression type used for quantization
+    pub compression_type: CompressionType,
     
     /// FastLanes encoding scheme per row (may vary based on distance distribution)
     pub row_encodings: Vec<FastLanesScheme>,
@@ -1356,6 +1370,7 @@ impl Default for InterCentroidCompressionMetadata {
             min_distance: 0.0,
             max_distance: 1.0,
             scale_factor: 1.0 / 65535.0,
+            compression_type: CompressionType::Quantized16Bit,
             row_encodings: Vec::new(),
             row_compressed_sizes: Vec::new(),
         }
@@ -1430,7 +1445,7 @@ pub struct DeltaEntry {
     pub vector_index: u32,
     
     /// Centroid index
-    pub centroid_index: u32,
+    pub centroid_index: u16,
     
     /// Delta from mean distance
     pub delta_value: f32,

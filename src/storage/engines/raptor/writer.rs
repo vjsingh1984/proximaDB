@@ -1047,9 +1047,9 @@ impl IvfClusteringBuilder {
                 let deviation_pct = (delta.abs() / mean_distances[cent_idx].max(0.001)) * 100.0;
                 
                 if deviation_pct > 5.0 {
-                    sparse_deltas.push(HierarchicalDelta {
+                    sparse_deltas.push(DeltaEntry {
                         vector_index: vec_idx as u32,
-                        centroid_index: cent_idx as u32,
+                        centroid_index: cent_idx as u16,
                         delta_value: delta,
                     });
                 }

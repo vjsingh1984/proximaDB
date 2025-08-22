@@ -33,6 +33,7 @@ use super::common::{
     InterCentroidMatrix, VectorCentroidMatrix, VectorCentroidStorageStrategy,
     calculate_optimal_neighbors, calculate_super_clusters, predict_search_latency,
     ColumnType, ColumnPageMetadata,  // For selective column reading
+    SearchResult,  // Add SearchResult import
 };
 use super::config::RaptorConfig;
 use super::constants;
@@ -269,7 +270,7 @@ pub struct RaptorReader {
     
     /// Cached P×K vector-to-centroid matrices by rowgroup ID
     /// Loaded on-demand based on access patterns
-    cached_pxk_matrices: HashMap<u32, Arc<VectorCentroidMatrix>>,
+    cached_pxk_matrices: HashMap<u16, Arc<VectorCentroidMatrix>>,
     
     /// Cached bloom filters by row group ID for fast ID membership testing
     /// Loaded on-demand and cached to avoid repeated decompression
@@ -1557,7 +1558,7 @@ impl RaptorReader {
     
     /// Load P×K vector-to-centroid matrix for a specific rowgroup
     /// Cached on-demand based on access patterns
-    async fn load_pxk_matrix(&mut self, rowgroup_id: u32) -> Result<Arc<VectorCentroidMatrix>> {
+    async fn load_pxk_matrix(&mut self, rowgroup_id: u16) -> Result<Arc<VectorCentroidMatrix>> {
         // Check cache first
         if let Some(cached) = self.cached_pxk_matrices.get(&rowgroup_id) {
             return Ok(cached.clone());
@@ -1641,7 +1642,7 @@ impl RaptorReader {
     /// Get vector-to-centroid distance from P×K matrix
     pub async fn get_vector_centroid_distance(
         &mut self,
-        rowgroup_id: u32,
+        rowgroup_id: u16,
         vector_idx: usize,
         centroid_idx: usize,
     ) -> Result<f32> {
@@ -2826,10 +2827,12 @@ impl RaptorReader {
                 for (idx, vector) in vectors.iter().enumerate() {
                     let distance = distance_compute.calculate(query, vector)?;
                     all_results.push(SearchResult {
-                        id: ids[idx].clone(),
+                        vector_id: ids[idx].clone(),
                         distance,
-                        metadata: HashMap::new(), // Not loaded
-                        source: None, // Not loaded
+                        vector: Some(vector.clone()),
+                        metadata: None, // Not loaded in fullscan mode
+                        rowgroup_id: rowgroup_id as u16,
+                        ranking_score: distance, // Initial score is distance
                     });
                 }
             }

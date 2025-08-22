@@ -12,16 +12,21 @@
 
 [IMPORTANT]
 ====
-**📋 Status**: ✅ **Production Ready** - 1-to-1 Centroid-to-Rowgroup Architecture
+**📋 Status**: ✅ **Production Ready** - Matrix Trinity Architecture
 
-**🎯 RAPTOR's Unique Innovations**:
-- **Matrix Trinity**: P² + K² + P×K with 1-to-1 centroid-rowgroup mapping
-- **P² Matrix**: Upper-triangle pre-computed distances (no HNSW needed)
-- **1-to-1 Mapping**: K centroids = K rowgroups (centroid_id == rowgroup_id)
-- **Spatial Locality**: Similar vectors physically co-located for optimal cache performance
-- **Parallel Processing**: Independent rowgroup operations with perfect load balancing
-- **FastLanes + SIMD**: Hardware-accelerated matrix operations
-- **Overflow Handling**: Dynamic centroid creation for balanced distribution
+**🎯 RAPTOR's Core Innovation - Matrix Trinity**:
+
+The Matrix Trinity (P² + K² + P×K) replaces traditional HNSW graphs with pre-computed distance matrices:
+
+* **P² Matrix** (Intra-rowgroup): Pre-computed distances between all vectors in a rowgroup
+* **K² Matrix** (Inter-centroid): Distances between all K centroids for navigation  
+* **P×K Matrix** (Vector-to-centroid): Each vector's distance to its owning centroid
+
+**Key Benefits**:
+- **100% Recall**: Exact distances, not approximations
+- **O(1) Lookups**: Direct matrix access vs graph traversal
+- **SIMD-Ready**: Vectorized operations on contiguous memory
+- **1-to-1 Mapping**: centroid_id == rowgroup_id for perfect parallelism
 ====
 
 == Executive Summary
@@ -90,9 +95,22 @@ P² Storage: P×(P-1)/2 values (upper triangle)
 Example: P=1024 → 523,776 distances × 1 byte (INT8) = 512KB/rowgroup
 ----
 
-== Matrix Storage Architecture
+== Matrix Trinity Architecture
 
-=== P² Matrix: Intra-Rowgroup Navigation
+=== Visual Overview: 3D Vector Space Clustering
+
+image::raptor_3d_cluster_visualization.svg[3D Clustering Visualization, align="center", width=100%]
+
+The above diagram illustrates RAPTOR's Matrix Trinity approach in 3D vector space:
+
+* **Dotted lines**: Intra-cluster vector-to-centroid distances (P² matrix)
+* **Solid lines**: Inter-centroid distances (K² matrix)  
+* **Dashed lines**: Cross-cluster vector-to-centroid distances (P×K matrix)
+* **Formula**: n = r + s + t + u + v + w (total vectors across K=6 clusters)
+
+=== Matrix Storage Components
+
+==== P² Matrix: Intra-Rowgroup Navigation
 
 The P² matrix stores pre-computed distances between all vectors within a rowgroup, replacing the need for local HNSW segments.
 
