@@ -551,19 +551,35 @@ impl IvfClusteringBuilder {
                 
                 // Step 4: Calculate the 5 fundamental distance components
                 // d₁: Source vector distance to its own centroid (intra-cluster cohesion)
-                let d1 = self.calculate_euclidean_distance(&vectors[source_idx], &source_centroid.vector);
+                let d1 = self.distance_compute.calculate_distance(
+                    &vectors[source_idx], 
+                    &source_centroid.vector,
+                    &DistanceMetric::Euclidean
+                ).raw_value;
                 
                 // d₂: Inter-centroid distance (cluster separation, pre-computed from AXIS)
                 let d2 = self.centroid_distances[source_cluster][target_cluster];
                 
                 // d₃: Target vector distance to its own centroid (target cluster cohesion)
-                let d3 = self.calculate_euclidean_distance(&vectors[target_idx], &target_centroid.vector);
+                let d3 = self.distance_compute.calculate_distance(
+                    &vectors[target_idx],
+                    &target_centroid.vector,
+                    &DistanceMetric::Euclidean
+                ).raw_value;
                 
                 // d₄: Source vector distance to target centroid (cross-cluster penalty)
-                let d4 = self.calculate_euclidean_distance(&vectors[source_idx], &target_centroid.vector);
+                let d4 = self.distance_compute.calculate_distance(
+                    &vectors[source_idx],
+                    &target_centroid.vector,
+                    &DistanceMetric::Euclidean
+                ).raw_value;
                 
                 // d₅: Target vector distance to source centroid (reverse cross-cluster penalty)
-                let d5 = self.calculate_euclidean_distance(&vectors[target_idx], &source_centroid.vector);
+                let d5 = self.distance_compute.calculate_distance(
+                    &vectors[target_idx],
+                    &source_centroid.vector,
+                    &DistanceMetric::Euclidean
+                ).raw_value;
                 
                 // Step 5: Calculate adaptive boosting factors based on statistical thresholds
                 // α₁: Boundary detection for source vector (higher penalty for outliers)
@@ -721,7 +737,11 @@ impl IvfClusteringBuilder {
             let mut distances = Vec::new();
             
             for vec in vectors {
-                let dist = self.calculate_euclidean_distance(vec, &centroid.vector);
+                let dist = self.distance_compute.calculate_distance(
+                    vec,
+                    &centroid.vector,
+                    &DistanceMetric::Euclidean
+                ).raw_value;
                 distances.push(dist);
             }
             
@@ -750,7 +770,11 @@ impl IvfClusteringBuilder {
         let mut nearest = 0;
         
         for (idx, centroid) in centroids.iter().enumerate() {
-            let dist = self.calculate_euclidean_distance(vec, centroid);
+            let dist = self.distance_compute.calculate_distance(
+                vec,
+                centroid,
+                &DistanceMetric::Euclidean
+            ).raw_value;
             if dist < min_dist {
                 min_dist = dist;
                 nearest = idx;
@@ -948,15 +972,6 @@ impl IvfClusteringBuilder {
         }
         
         (best_idx, best_score)
-    }
-    
-    /// Helper method to calculate euclidean distance using unified compute
-    fn calculate_euclidean_distance(&self, v1: &[f32], v2: &[f32]) -> f32 {
-        self.distance_compute.calculate_distance(
-            v1,
-            v2,
-            &DistanceMetric::Euclidean
-        ).raw_value
     }
     
     /// Calculate cohesion using boosted distances
@@ -2296,10 +2311,11 @@ impl RaptorWriter {
                 let mut distances: Vec<(usize, f32)> = cluster_nodes.iter()
                     .filter(|&&idx| idx != node_idx)
                     .map(|&other_idx| {
-                        let dist = self.calculate_euclidean_distance(
+                        let dist = self.distance_compute.calculate_distance(
                             node_vector,
-                            &self.ivf_builder.vectors[other_idx]
-                        );
+                            &self.ivf_builder.vectors[other_idx],
+                            &DistanceMetric::Euclidean
+                        ).raw_value;
                         (other_idx, dist)
                     })
                     .collect();
