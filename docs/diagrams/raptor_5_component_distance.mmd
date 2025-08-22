@@ -1,0 +1,49 @@
+%%{init: {"theme":"neutral", "themeVariables": {"primaryColor":"#4A90E2","primaryBorderColor":"#2563eb","secondaryColor":"#5CB85C","tertiaryColor":"#F5A623","lineColor":"#64748b","background":"transparent","fontFamily":"-apple-system, BlinkMacSystemFont, Segoe UI, Roboto, sans-serif","fontSize":"14px"}}}%%
+flowchart TD
+    %% RAPTOR 5-Component Boosted Distance Calculation
+    
+    Q[Query Vector q] --> D1[Inter-Centroid Distance<br/>d1 = distance(c1, c2)<br/>Raw centroid-to-centroid]
+    
+    Q --> D2[Query-to-Target Distance<br/>d2 = distance(q, target_centroid)<br/>Query positioning]
+    
+    Q --> D3[Query-to-Source Distance<br/>d3 = distance(q, source_centroid)<br/>Source relevance]
+    
+    Q --> D4[Intra-Cluster Penalty<br/>d4 = cluster_penalty(source)<br/>Same cluster bias]
+    
+    Q --> D5[Cross-Cluster Penalty<br/>d5 = cluster_penalty(target)<br/>Different cluster cost]
+    
+    %% Boosted distance formula
+    D1 --> B[Boosted Distance Formula<br/>D = α₁×d1 + α₂×d2 + α₃×d3 + β₁×d4 + β₂×d5]
+    D2 --> B
+    D3 --> B
+    D4 --> B
+    D5 --> B
+    
+    B --> R[Final Distance Score<br/>Lower = Better Match]
+    
+    %% Component explanations
+    D1 --> E1[Raw Distance Component<br/>• Stored in hierarchical neighbors<br/>• Computed once during indexing<br/>• No query-specific bias]
+    
+    D2 --> E2[Query Relevance Component<br/>• Computed at query time<br/>• Target cluster attractiveness<br/>• Dynamic based on query vector]
+    
+    D3 --> E3[Source Context Component<br/>• Query-to-current-cluster distance<br/>• Helps navigate from current position<br/>• Exploration vs exploitation balance]
+    
+    D4 --> E4[Intra-Cluster Component<br/>• Penalty for staying in same cluster<br/>• Encourages exploration<br/>• Lower penalty for good matches]
+    
+    D5 --> E5[Cross-Cluster Component<br/>• Cost of jumping between clusters<br/>• Higher penalty for distant clusters<br/>• Balances local vs global search]
+    
+    %% Coefficient explanation
+    B --> C[Coefficient Strategy<br/>α₁ = 1.0 (base distance)<br/>α₂ = 0.8 (query relevance)<br/>α₃ = 0.6 (source context)<br/>β₁ = 0.2 (intra penalty)<br/>β₂ = 0.4 (cross penalty)]
+    
+    %% Performance characteristics
+    R --> P[Performance Benefits<br/>• Multi-probe accuracy<br/>• Balanced exploration<br/>• Avoids local minima<br/>• Query-adaptive navigation]
+    
+    classDef distance fill:#e3f2fd,stroke:#1976d2,stroke-width:2px
+    classDef component fill:#f3e5f5,stroke:#7b1fa2,stroke-width:2px
+    classDef formula fill:#e8f5e8,stroke:#388e3c,stroke-width:2px
+    classDef benefit fill:#fff3e0,stroke:#f57c00,stroke-width:2px
+    
+    class D1,D2,D3,D4,D5 distance
+    class E1,E2,E3,E4,E5 component
+    class B,C formula
+    class P benefit
