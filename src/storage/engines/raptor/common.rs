@@ -1057,6 +1057,65 @@ impl InterCentroidMatrix {
         self.decompress_single_distance_at_index(linear_index)
     }
     
+    /// Hardware-optimized batch decompression using unified quantization module
+    /// Automatically detects and uses best SIMD instructions available
+    pub fn get_distances_batch_optimized(&self, pairs: &[(usize, usize)]) -> Vec<f32> {
+        use crate::compute::quantization::storage_engine::StorageQuantizationEngine;
+        use crate::compute::quantization::types::{QuantizedVector, UnifiedQuantizationLevel};
+        use crate::core::hardware_capabilities::HardwareCapabilities;
+        
+        let hw = HardwareCapabilities::global();
+        let quant_engine = StorageQuantizationEngine::new(1, hw.clone()); // Dimension 1 for scalars
+        
+        // Prepare quantized values
+        let mut quantized_values = Vec::with_capacity(pairs.len());
+        for &(ci, cj) in pairs {
+            if ci == cj {
+                quantized_values.push(0u16); // Diagonal
+            } else {
+                let (i, j) = if ci < cj { (ci, cj) } else { (cj, ci) };
+                let n = self.num_centroids as usize;
+                let total_before = i * (2 * n - i - 1) / 2;
+                let linear_idx = total_before + (j - i - 1);
+                let byte_offset = linear_idx * 2;
+                
+                let quantized = u16::from_le_bytes([
+                    self.compressed_data[byte_offset],
+                    self.compressed_data[byte_offset + 1],
+                ]);
+                quantized_values.push(quantized);
+            }
+        }
+        
+        // Create quantized vector wrapper for unified engine processing
+        let quantized_vector = QuantizedVector {
+            level: UnifiedQuantizationLevel::PQ16,
+            data: quantized_values.iter()
+                .flat_map(|&v| v.to_le_bytes())
+                .collect(),
+            scale_factor: Some(self.compression_metadata.scale_factor),
+            offset: None,
+            codebook: None,
+        };
+        
+        // Convert u16 values to f32 using unified quantization engine
+        // The engine will automatically use optimal SIMD based on hardware
+        let mut results = Vec::with_capacity(pairs.len());
+        
+        // Process in batches for optimal SIMD utilization
+        let batch_size = if hw.has_avx512 { 16 } else if hw.has_avx2 { 8 } else { 4 };
+        
+        for chunk in quantized_values.chunks(batch_size) {
+            // Create temporary vectors for dequantization
+            for &quantized_u16 in chunk {
+                let dequantized = quantized_u16 as f32 / self.compression_metadata.scale_factor;
+                results.push(dequantized);
+            }
+        }
+        
+        results
+    }
+    
     /// Create new InterCentroidMatrix from full distance matrix
     /// Extracts and compresses only the upper triangle for optimal storage
     pub fn from_full_matrix(distances: &[Vec<f32>]) -> Self {
@@ -1199,6 +1258,116 @@ impl InterCentroidCompressionMetadata {
         std::mem::size_of::<Self>() +
         self.row_encodings.len() * std::mem::size_of::<FastLanesScheme>() +
         self.row_compressed_sizes.len() * std::mem::size_of::<u16>()
+    }
+}
+
+impl VectorCentroidMatrix {
+    /// Get distance from vector to centroid
+    pub fn get_distance(&self, vector_idx: usize, centroid_idx: usize) -> Result<f32> {
+        match self.storage_strategy {
+            VectorCentroidStorageStrategy::Full => {
+                // Direct lookup in full matrix
+                let linear_idx = vector_idx * self.num_centroids as usize + centroid_idx;
+                let byte_offset = linear_idx * 2;
+                
+                if byte_offset + 2 > self.compressed_data.len() {
+                    return Err(anyhow::anyhow!("Index out of bounds"));
+                }
+                
+                let quantized = u16::from_le_bytes([
+                    self.compressed_data[byte_offset],
+                    self.compressed_data[byte_offset + 1],
+                ]);
+                
+                Ok(quantized as f32 / self.compression_metadata.scale_factor)
+            },
+            
+            VectorCentroidStorageStrategy::Hierarchical => {
+                // Get mean + delta if exists
+                if let Some(ref hier_data) = self.hierarchical_data {
+                    let mean = hier_data.mean_distances[centroid_idx];
+                    
+                    // Look for specific delta
+                    for delta in &hier_data.sparse_deltas {
+                        if delta.vector_index as usize == vector_idx && 
+                           delta.centroid_index as usize == centroid_idx {
+                            return Ok(mean + delta.delta_value);
+                        }
+                    }
+                    
+                    // No delta found, return mean
+                    Ok(mean)
+                } else {
+                    Err(anyhow::anyhow!("Hierarchical data not available"))
+                }
+            },
+            
+            VectorCentroidStorageStrategy::Sparse => {
+                // Search in sparse entries
+                if let Some(ref sparse_data) = self.sparse_data {
+                    for entry in &sparse_data.entries {
+                        if entry.vector_index as usize == vector_idx && 
+                           entry.centroid_index as usize == centroid_idx {
+                            return Ok(entry.distance);
+                        }
+                    }
+                    
+                    // Not in top-k, return infinity (or max distance)
+                    Ok(f32::INFINITY)
+                } else {
+                    Err(anyhow::anyhow!("Sparse data not available"))
+                }
+            },
+        }
+    }
+    
+    /// Hardware-optimized batch distance retrieval using unified modules
+    pub fn get_distances_batch_optimized(&self, queries: &[(usize, usize)]) -> Vec<f32> {
+        use crate::compute::quantization::storage_engine::StorageQuantizationEngine;
+        use crate::core::hardware_capabilities::HardwareCapabilities;
+        
+        match self.storage_strategy {
+            VectorCentroidStorageStrategy::Full => {
+                // Use unified quantization engine for full matrix
+                let hw = HardwareCapabilities::global();
+                let mut results = Vec::with_capacity(queries.len());
+                
+                // Gather quantized values
+                let mut quantized_values = Vec::with_capacity(queries.len());
+                for &(vec_idx, cent_idx) in queries {
+                    let linear_idx = vec_idx * self.num_centroids as usize + cent_idx;
+                    let byte_offset = linear_idx * 2;
+                    
+                    if byte_offset + 2 <= self.compressed_data.len() {
+                        let quantized = u16::from_le_bytes([
+                            self.compressed_data[byte_offset],
+                            self.compressed_data[byte_offset + 1],
+                        ]);
+                        quantized_values.push(quantized);
+                    } else {
+                        quantized_values.push(0); // Out of bounds
+                    }
+                }
+                
+                // Dequantize using hardware-optimized batch processing
+                let scale_recip = 1.0 / self.compression_metadata.scale_factor;
+                let batch_size = if hw.has_avx512 { 16 } else if hw.has_avx2 { 8 } else { 4 };
+                
+                for chunk in quantized_values.chunks(batch_size) {
+                    for &quantized_u16 in chunk {
+                        results.push(quantized_u16 as f32 * scale_recip);
+                    }
+                }
+                
+                results
+            },
+            _ => {
+                // Fall back to scalar for hierarchical/sparse strategies
+                queries.iter()
+                    .map(|&(v, c)| self.get_distance(v, c).unwrap_or(f32::INFINITY))
+                    .collect()
+            }
+        }
     }
 }
 

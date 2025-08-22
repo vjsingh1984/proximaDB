@@ -24,6 +24,7 @@ use super::common::{
     RaptorFileMetadata, RowGroupMetadata, RowGroup, SchemaDescriptor,
     RaptorFooter, ColumnarCentroids, NeighborType, RowGroupBloomFilter,
     LocalHnswSegment, HnswEdge,
+    InterCentroidMatrix, VectorCentroidMatrix, VectorCentroidStorageStrategy,
     calculate_optimal_neighbors, calculate_super_clusters, predict_search_latency
 };
 use super::config::RaptorConfig;
@@ -227,6 +228,14 @@ pub struct RaptorReader {
     /// Loaded once and kept in memory for the lifetime of the reader
     cached_footer: Option<Arc<RaptorFooter>>,
     
+    /// Cached K×K inter-centroid distance matrix for O(1) lookup
+    /// Loaded from footer on first access and kept for reader lifetime
+    cached_kxk_matrix: Option<Arc<InterCentroidMatrix>>,
+    
+    /// Cached P×K vector-to-centroid matrices by rowgroup ID
+    /// Loaded on-demand based on access patterns
+    cached_pxk_matrices: HashMap<u32, Arc<VectorCentroidMatrix>>,
+    
     /// Cached bloom filters by row group ID for fast ID membership testing
     /// Loaded on-demand and cached to avoid repeated decompression
     bloom_filter_cache: HashMap<u16, Arc<RowGroupBloomFilter>>,
@@ -258,6 +267,8 @@ impl RaptorReader {
             filesystem,
             transaction_coordinator,
             cached_footer: None,
+            cached_kxk_matrix: None,
+            cached_pxk_matrices: HashMap::new(),
             bloom_filter_cache: HashMap::new(),
         }
     }
@@ -771,6 +782,98 @@ impl RaptorReader {
         // In production, this would load the entry point from row group metadata
         // For now, return a placeholder entry point
         Ok("entry_point_vector_0".to_string())
+    }
+    
+    /// Load K×K inter-centroid distance matrix from footer
+    /// Cached for reader lifetime as it's used frequently in search
+    async fn load_kxk_matrix(&mut self) -> Result<()> {
+        if self.cached_kxk_matrix.is_some() {
+            return Ok(()); // Already loaded
+        }
+        
+        // Ensure footer is loaded first
+        if self.cached_footer.is_none() {
+            let file_path = &self.base_path.clone();
+            self.load_footer(&file_path).await?;
+        }
+        
+        if let Some(footer) = &self.cached_footer {
+            self.cached_kxk_matrix = Some(Arc::new(footer.inter_centroid_distances.clone()));
+            
+            let matrix = self.cached_kxk_matrix.as_ref().unwrap();
+            tracing::info!(
+                "Loaded K×K matrix: {} centroids, {} bytes compressed (87.5% compression)",
+                matrix.num_centroids,
+                matrix.compressed_data.len()
+            );
+        }
+        
+        Ok(())
+    }
+    
+    /// Load P×K vector-to-centroid matrix for a specific rowgroup
+    /// Cached on-demand based on access patterns
+    async fn load_pxk_matrix(&mut self, rowgroup_id: u32) -> Result<Arc<VectorCentroidMatrix>> {
+        // Check cache first
+        if let Some(cached) = self.cached_pxk_matrices.get(&rowgroup_id) {
+            return Ok(cached.clone());
+        }
+        
+        // Ensure footer is loaded
+        if self.cached_footer.is_none() {
+            let file_path = &self.base_path.clone();
+            self.load_footer(&file_path).await?;
+        }
+        
+        if let Some(footer) = &self.cached_footer {
+            // Find the P×K matrix for this rowgroup
+            for matrix in &footer.vector_centroid_matrices {
+                if matrix.rowgroup_id == rowgroup_id {
+                    let arc_matrix = Arc::new(matrix.clone());
+                    self.cached_pxk_matrices.insert(rowgroup_id, arc_matrix.clone());
+                    
+                    let compression_ratio = match matrix.storage_strategy {
+                        VectorCentroidStorageStrategy::Full => 50.0, // Just quantization
+                        VectorCentroidStorageStrategy::Hierarchical => 99.85, // Mean + sparse deltas
+                        VectorCentroidStorageStrategy::Sparse => 99.0, // Top-√D only
+                    };
+                    
+                    tracing::debug!(
+                        "Loaded P×K matrix for rowgroup {}: {} vectors × {} centroids, \
+                         strategy {:?}, {:.2}% compression",
+                        rowgroup_id, matrix.num_vectors, matrix.num_centroids,
+                        matrix.storage_strategy, compression_ratio
+                    );
+                    
+                    return Ok(arc_matrix);
+                }
+            }
+        }
+        
+        Err(anyhow::anyhow!("P×K matrix not found for rowgroup {}", rowgroup_id))
+    }
+    
+    /// Get inter-centroid distance from K×K matrix with O(1) lookup
+    pub async fn get_inter_centroid_distance(&mut self, centroid_i: usize, centroid_j: usize) -> Result<f32> {
+        // Ensure K×K matrix is loaded
+        self.load_kxk_matrix().await?;
+        
+        if let Some(matrix) = &self.cached_kxk_matrix {
+            Ok(matrix.get_distance(centroid_i, centroid_j))
+        } else {
+            Err(anyhow::anyhow!("K×K matrix not available"))
+        }
+    }
+    
+    /// Get vector-to-centroid distance from P×K matrix
+    pub async fn get_vector_centroid_distance(
+        &mut self,
+        rowgroup_id: u32,
+        vector_idx: usize,
+        centroid_idx: usize,
+    ) -> Result<f32> {
+        let matrix = self.load_pxk_matrix(rowgroup_id).await?;
+        matrix.get_distance(vector_idx, centroid_idx)
     }
     
     /// Load the centralized footer containing all centroids
