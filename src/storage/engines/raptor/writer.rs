@@ -1119,6 +1119,87 @@ impl IvfClusteringBuilder {
 }
 
 impl RaptorWriter {
+    /// Build local HNSW segment for a single rowgroup (edges within cluster only)
+    fn build_local_hnsw_segment(
+        &self,
+        vectors: &[Vec<f32>],
+        vector_ids: &[String],
+        rowgroup_id: u32,
+    ) -> Result<LocalHnswSegment> {
+        let num_vectors = vectors.len();
+        let m = self.config.edges_per_node.unwrap_or(16); // Default M=16 for HNSW
+        let ef_construction = m * 2; // Standard HNSW heuristic
+        
+        // Build local edges using nearest neighbor search within this rowgroup only
+        let mut edges = Vec::new();
+        
+        for (i, source_vec) in vectors.iter().enumerate() {
+            // Find M nearest neighbors within this rowgroup
+            let mut neighbors: Vec<(usize, f32)> = Vec::new();
+            
+            for (j, target_vec) in vectors.iter().enumerate() {
+                if i == j {
+                    continue;
+                }
+                
+                let distance = self.distance_compute.calculate_distance(
+                    source_vec,
+                    target_vec,
+                    &DistanceMetric::Euclidean
+                ).raw_value;
+                
+                neighbors.push((j, distance));
+            }
+            
+            // Sort by distance and keep top M
+            neighbors.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
+            neighbors.truncate(m);
+            
+            // Create edges for this node
+            for (target_idx, distance) in neighbors {
+                edges.push(HnswEdge {
+                    from: i as u32,
+                    to: target_idx as u32,
+                    distance,
+                });
+            }
+        }
+        
+        // Find entry point (vector closest to rowgroup centroid)
+        let entry_point = if let Some(rg) = self.row_groups.get(rowgroup_id as usize) {
+            if let Some(ref centroid) = rg.centroid {
+                let mut min_dist = f32::MAX;
+                let mut entry_idx = 0;
+                
+                for (i, vec) in vectors.iter().enumerate() {
+                    let dist = self.distance_compute.calculate_distance(
+                        vec,
+                        centroid,
+                        &DistanceMetric::Euclidean
+                    ).raw_value;
+                    
+                    if dist < min_dist {
+                        min_dist = dist;
+                        entry_idx = i;
+                    }
+                }
+                entry_idx as u32
+            } else {
+                0 // Default to first vector
+            }
+        } else {
+            0
+        };
+        
+        Ok(LocalHnswSegment {
+            rowgroup_id,
+            num_nodes: num_vectors,
+            edges,
+            entry_point,
+            m_parameter: m,
+        })
+    }
+    
     /// Compute all centroid-to-centroid distances for K×K matrix
     fn compute_all_centroid_distances(&mut self, centroids: &[(u32, Vec<f32>)]) -> Result<()> {
         let k = centroids.len();
@@ -2071,10 +2152,10 @@ impl RaptorWriter {
         Ok(offset)
     }
     
-    /// Flush current row page to disk with inline P×K matrix
+    /// Flush current row page to disk with inline P×K matrix and local HNSW segment
     async fn flush_row_page(&mut self) -> Result<()> {
         if let Some(page) = self.current_row_page.take() {
-            // Collect vectors for P×K matrix calculation
+            // Collect vectors for P×K matrix and HNSW calculation
             let mut page_vectors = Vec::with_capacity(page.rows.len());
             let mut page_vector_ids = Vec::with_capacity(page.rows.len());
             
@@ -2083,10 +2164,12 @@ impl RaptorWriter {
                 page_vector_ids.push(row.id.clone());
             }
             
+            let rowgroup_id = self.row_groups.len() as u32;
+            
             // Build P×K matrix for this page if we have centroids
             let pxk_matrix_data = if !self.ivf_builder.centroids.is_empty() {
                 let rowgroup = RowGroup {
-                    id: self.row_groups.len() as u32,
+                    id: rowgroup_id,
                     count: page.rows.len() as u32,
                     vector_ids: page_vector_ids.clone(),
                 };
@@ -2098,6 +2181,18 @@ impl RaptorWriter {
                 self.ivf_builder.vectors = stored_vectors;
                 
                 Some(bincode::serialize(&matrix)?)
+            } else {
+                None
+            };
+            
+            // Build local HNSW segment for this rowgroup (edges within cluster only)
+            let hnsw_segment_data = if self.config.enable_local_hnsw {
+                let local_segment = self.build_local_hnsw_segment(
+                    &page_vectors,
+                    &page_vector_ids,
+                    rowgroup_id
+                )?;
+                Some(bincode::serialize(&local_segment)?)
             } else {
                 None
             };
@@ -2125,6 +2220,19 @@ impl RaptorWriter {
                     CompressionContext::SstBlock,
                 )?;
                 Some(self.filesystem.append(&self.file_path, &compressed_matrix).await?)
+            } else {
+                None
+            };
+            
+            // Write HNSW segment inline (immediately after P×K matrix)
+            let hnsw_offset = if let Some(segment_data) = hnsw_segment_data {
+                let compressed_segment = self.compression.compress(
+                    &segment_data,
+                    CompressionAlgorithm::Zstd,
+                    6,
+                    CompressionContext::SstBlock,
+                )?;
+                Some(self.filesystem.append(&self.file_path, &compressed_segment).await?)
             } else {
                 None
             };
