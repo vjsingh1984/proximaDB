@@ -19,9 +19,10 @@ use super::common::{
 use crate::compute::quantization::storage_engine::StorageQuantizationEngine;
 use crate::compute::quantization::types::UnifiedQuantizationLevel;
 use crate::storage::persistence::filesystem::{FileSystem, FilesystemFactory};
-use crate::storage::engines::common::fastlanes_encoding::FastLanesEncoder;
+use crate::storage::engines::common::fastlanes_encoding::{FastLanesEncoder, FastLanesScheme};
 use crate::core::hardware_capabilities::HardwareCapabilities;
 use crate::core::memory::pool::VectorMemoryPool;
+use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
 use crate::proto::proximadb::{VectorRecord, metadata_value};
 
 // Import AXIS clustering for reuse
@@ -97,6 +98,46 @@ struct BloomFilterBuilder {
     target_false_positive_rate: f64,
 }
 
+impl BloomFilterBuilder {
+    fn new(target_false_positive_rate: f64) -> Self {
+        Self {
+            ids: Vec::new(),
+            target_false_positive_rate,
+        }
+    }
+    
+    /// Add VectorRecord ID to the bloom filter
+    fn add_id(&mut self, id: String) {
+        if !self.ids.contains(&id) { // Avoid duplicates
+            self.ids.push(id);
+        }
+    }
+    
+    /// Build the bloom filter from accumulated IDs
+    fn build(self) -> anyhow::Result<RowGroupBloomFilter> {
+        if self.ids.is_empty() {
+            return Ok(RowGroupBloomFilter::new(100, self.target_false_positive_rate));
+        }
+        
+        RowGroupBloomFilter::from_ids(&self.ids, self.target_false_positive_rate)
+    }
+    
+    /// Get the number of IDs collected
+    fn len(&self) -> usize {
+        self.ids.len()
+    }
+    
+    /// Check if builder is empty
+    fn is_empty(&self) -> bool {
+        self.ids.is_empty()
+    }
+    
+    /// Clear all collected IDs
+    fn clear(&mut self) {
+        self.ids.clear();
+    }
+}
+
 /// Columnar ID index builder
 struct IdColumnBuilder {
     ids: Vec<String>,
@@ -124,6 +165,10 @@ struct IvfClusteringBuilder {
     /// Temporary vector storage for clustering and edge building
     /// Cleared after flush to save memory
     vectors: Vec<Vec<f32>>,
+    /// Distance computation engine
+    distance_compute: Arc<UnifiedDistanceCompute>,
+    /// Pre-computed centroid-to-centroid distances for component boosting
+    centroid_distances: Vec<Vec<f32>>,
 }
 
 // Removed ClusteringConfig - now using AXIS clustering infrastructure
@@ -189,7 +234,7 @@ impl IvfClusteringBuilder {
             algorithm: ClusteringAlgorithm::KMeans(KMeansConfig {
                 k: constants::clustering::DEFAULT_CLUSTER_COUNT,
                 max_iterations: constants::clustering::KMEANS_MAX_ITERATIONS,
-                tolerance: constants::clustering::KMEANS_TOLERANCE,
+                tolerance: constants::clustering::KMEANS_TOLERANCE as f32,
                 n_init: constants::clustering::KMEANS_INIT_ATTEMPTS,
                 init_method: KMeansInit::KMeansPlusPlus,
             }),
@@ -212,6 +257,8 @@ impl IvfClusteringBuilder {
             centroids: Vec::new(),
             boost_config: BoostingConfig::default(),
             vectors: Vec::new(),
+            distance_compute: Arc::new(UnifiedDistanceCompute::new()),
+            centroid_distances: Vec::new(),
         }
     }
     
@@ -748,6 +795,342 @@ impl IvfClusteringBuilder {
         } else {
             1.0
         }
+    }
+    
+    /// Build K×K inter-centroid distance matrix (upper triangle storage)
+    fn build_inter_centroid_matrix(&self) -> InterCentroidMatrix {
+        let k = self.centroids.len();
+        let upper_triangle_size = k * (k - 1) / 2;
+        
+        // Calculate scale factor for quantization
+        let mut max_distance = 0.0f32;
+        for i in 0..k {
+            for j in (i + 1)..k {
+                let dist = self.centroid_distances[i][j];
+                max_distance = max_distance.max(dist);
+            }
+        }
+        
+        let scale_factor = if max_distance > 0.0 {
+            65535.0 / max_distance
+        } else {
+            1.0
+        };
+        
+        // Build compressed upper triangle storage
+        let mut compressed_data = Vec::with_capacity(upper_triangle_size * 2);
+        let mut lookup_table = vec![0u32; k];
+        let mut current_offset = 0u32;
+        
+        for i in 0..k {
+            lookup_table[i] = current_offset;
+            for j in (i + 1)..k {
+                let dist = self.centroid_distances[i][j];
+                let quantized = (dist * scale_factor) as u16;
+                compressed_data.extend_from_slice(&quantized.to_le_bytes());
+                current_offset += 2;
+            }
+        }
+        
+        InterCentroidMatrix {
+            num_centroids: k as u32,
+            compressed_data,
+            compression_metadata: InterCentroidCompressionMetadata {
+                scale_factor,
+                max_distance,
+                compression_type: CompressionType::Quantized16Bit,
+            },
+            lookup_table,
+        }
+    }
+    
+    /// Build P×K vector-to-centroid distance matrices for all rowgroups
+    fn build_vector_centroid_matrices(&self, rowgroups: &[RowGroup]) -> Vec<VectorCentroidMatrix> {
+        let k = self.centroids.len();
+        let k_f32 = k as f32;
+        let dimension = self.centroids[0].vector.len() as f32;
+        
+        // Determine storage strategy based on K/D ratio
+        let storage_strategy = if k_f32 <= dimension {
+            VectorCentroidStorageStrategy::Full
+        } else if k_f32 <= dimension * 10.0 {
+            VectorCentroidStorageStrategy::Hierarchical
+        } else {
+            VectorCentroidStorageStrategy::Sparse
+        };
+        
+        tracing::info!(
+            "Building P×K matrices with strategy {:?} (K={}, D={}, ratio={:.2})",
+            storage_strategy, k, dimension, k_f32 / dimension
+        );
+        
+        let mut matrices = Vec::with_capacity(rowgroups.len());
+        
+        for (rg_idx, rowgroup) in rowgroups.iter().enumerate() {
+            let matrix = match storage_strategy {
+                VectorCentroidStorageStrategy::Full => {
+                    self.build_full_pk_matrix(rowgroup, rg_idx)
+                },
+                VectorCentroidStorageStrategy::Hierarchical => {
+                    self.build_hierarchical_pk_matrix(rowgroup, rg_idx)
+                },
+                VectorCentroidStorageStrategy::Sparse => {
+                    self.build_sparse_pk_matrix(rowgroup, rg_idx, dimension.sqrt() as usize)
+                },
+            };
+            matrices.push(matrix);
+        }
+        
+        matrices
+    }
+    
+    /// Build full P×K matrix with quantization
+    fn build_full_pk_matrix(&self, rowgroup: &RowGroup, rg_idx: usize) -> VectorCentroidMatrix {
+        let p = rowgroup.count as usize;
+        let k = self.centroids.len();
+        
+        // Calculate all distances and find max for quantization
+        let mut distances = vec![vec![0.0f32; k]; p];
+        let mut max_distance = 0.0f32;
+        
+        for (vec_idx, vector_id) in rowgroup.vector_ids.iter().enumerate() {
+            // Find the actual vector data
+            let vector_data = self.get_vector_by_id(vector_id);
+            
+            for (cent_idx, centroid) in self.centroids.iter().enumerate() {
+                let dist = self.distance_compute.calculate_distance(
+                    &vector_data,
+                    &centroid.vector,
+                    &DistanceMetric::Euclidean
+                ).raw_value;
+                distances[vec_idx][cent_idx] = dist;
+                max_distance = max_distance.max(dist);
+            }
+        }
+        
+        let scale_factor = if max_distance > 0.0 {
+            65535.0 / max_distance
+        } else {
+            1.0
+        };
+        
+        // Quantize to 16-bit
+        let mut compressed_data = Vec::with_capacity(p * k * 2);
+        for vec_dists in &distances {
+            for &dist in vec_dists {
+                let quantized = (dist * scale_factor) as u16;
+                compressed_data.extend_from_slice(&quantized.to_le_bytes());
+            }
+        }
+        
+        VectorCentroidMatrix {
+            rowgroup_id: rg_idx as u32,
+            num_vectors: p as u32,
+            num_centroids: k as u32,
+            storage_strategy: VectorCentroidStorageStrategy::Full,
+            compressed_data,
+            hierarchical_data: None,
+            sparse_data: None,
+            compression_metadata: VectorCentroidCompressionMetadata {
+                scale_factor,
+                max_distance,
+                compression_type: CompressionType::Quantized16Bit,
+            },
+        }
+    }
+    
+    /// Build hierarchical P×K matrix with mean + sparse deltas
+    fn build_hierarchical_pk_matrix(&self, rowgroup: &RowGroup, rg_idx: usize) -> VectorCentroidMatrix {
+        let p = rowgroup.count as usize;
+        let k = self.centroids.len();
+        
+        // Calculate all distances
+        let mut distances = vec![vec![0.0f32; k]; p];
+        let mut max_distance = 0.0f32;
+        
+        for (vec_idx, vector_id) in rowgroup.vector_ids.iter().enumerate() {
+            let vector_data = self.get_vector_by_id(vector_id);
+            
+            for (cent_idx, centroid) in self.centroids.iter().enumerate() {
+                let dist = self.distance_compute.calculate_distance(
+                    &vector_data,
+                    &centroid.vector,
+                    &DistanceMetric::Euclidean
+                ).raw_value;
+                distances[vec_idx][cent_idx] = dist;
+                max_distance = max_distance.max(dist);
+            }
+        }
+        
+        // Calculate mean distances per centroid
+        let mut mean_distances = vec![0.0f32; k];
+        for cent_idx in 0..k {
+            let sum: f32 = distances.iter().map(|v| v[cent_idx]).sum();
+            mean_distances[cent_idx] = sum / p as f32;
+        }
+        
+        // Calculate deltas and store only significant ones (>5% deviation)
+        let mut sparse_deltas = Vec::new();
+        for (vec_idx, vec_dists) in distances.iter().enumerate() {
+            for (cent_idx, &dist) in vec_dists.iter().enumerate() {
+                let delta = dist - mean_distances[cent_idx];
+                let deviation_pct = (delta.abs() / mean_distances[cent_idx].max(0.001)) * 100.0;
+                
+                if deviation_pct > 5.0 {
+                    sparse_deltas.push(HierarchicalDelta {
+                        vector_index: vec_idx as u32,
+                        centroid_index: cent_idx as u32,
+                        delta_value: delta,
+                    });
+                }
+            }
+        }
+        
+        // Quantize mean distances
+        let scale_factor = if max_distance > 0.0 {
+            65535.0 / max_distance
+        } else {
+            1.0
+        };
+        
+        let mut compressed_data = Vec::with_capacity(k * 2);
+        for &mean_dist in &mean_distances {
+            let quantized = (mean_dist * scale_factor) as u16;
+            compressed_data.extend_from_slice(&quantized.to_le_bytes());
+        }
+        
+        tracing::debug!(
+            "Hierarchical P×K for rowgroup {}: {} vectors, {} centroids, {} sparse deltas ({:.2}% sparse)",
+            rg_idx, p, k, sparse_deltas.len(),
+            (1.0 - sparse_deltas.len() as f32 / (p * k) as f32) * 100.0
+        );
+        
+        VectorCentroidMatrix {
+            rowgroup_id: rg_idx as u32,
+            num_vectors: p as u32,
+            num_centroids: k as u32,
+            storage_strategy: VectorCentroidStorageStrategy::Hierarchical,
+            compressed_data,
+            hierarchical_data: Some(HierarchicalData {
+                mean_distances,
+                sparse_deltas,
+            }),
+            sparse_data: None,
+            compression_metadata: VectorCentroidCompressionMetadata {
+                scale_factor,
+                max_distance,
+                compression_type: CompressionType::Quantized16Bit,
+            },
+        }
+    }
+    
+    /// Build sparse P×K matrix storing only top-√D centroids per vector
+    fn build_sparse_pk_matrix(&self, rowgroup: &RowGroup, rg_idx: usize, top_k: usize) -> VectorCentroidMatrix {
+        let p = rowgroup.count as usize;
+        let k = self.centroids.len();
+        let effective_k = top_k.min(k);
+        
+        let mut sparse_entries = Vec::with_capacity(p * effective_k);
+        let mut max_distance = 0.0f32;
+        
+        for (vec_idx, vector_id) in rowgroup.vector_ids.iter().enumerate() {
+            let vector_data = self.get_vector_by_id(vector_id);
+            
+            // Calculate distances to all centroids
+            let mut cent_dists: Vec<(usize, f32)> = self.centroids.iter()
+                .enumerate()
+                .map(|(idx, centroid)| {
+                    let dist = self.distance_compute.calculate_distance(
+                        &vector_data,
+                        &centroid.vector,
+                        &DistanceMetric::Euclidean
+                    ).raw_value;
+                    (idx, dist)
+                })
+                .collect();
+            
+            // Sort by distance and keep top-k
+            cent_dists.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
+            
+            for &(cent_idx, dist) in cent_dists.iter().take(effective_k) {
+                sparse_entries.push(SparseEntry {
+                    vector_index: vec_idx as u32,
+                    centroid_index: cent_idx as u32,
+                    distance: dist,
+                });
+                max_distance = max_distance.max(dist);
+            }
+        }
+        
+        // Quantize sparse entries
+        let scale_factor = if max_distance > 0.0 {
+            65535.0 / max_distance
+        } else {
+            1.0
+        };
+        
+        let mut compressed_data = Vec::with_capacity(sparse_entries.len() * 8);
+        for entry in &sparse_entries {
+            compressed_data.extend_from_slice(&entry.vector_index.to_le_bytes());
+            compressed_data.extend_from_slice(&entry.centroid_index.to_le_bytes());
+            let quantized = (entry.distance * scale_factor) as u16;
+            compressed_data.extend_from_slice(&quantized.to_le_bytes());
+        }
+        
+        tracing::debug!(
+            "Sparse P×K for rowgroup {}: {} vectors, {} centroids, top-{} stored ({:.2}% compression)",
+            rg_idx, p, k, effective_k,
+            (1.0 - (sparse_entries.len() as f32 / (p * k) as f32)) * 100.0
+        );
+        
+        VectorCentroidMatrix {
+            rowgroup_id: rg_idx as u32,
+            num_vectors: p as u32,
+            num_centroids: k as u32,
+            storage_strategy: VectorCentroidStorageStrategy::Sparse,
+            compressed_data,
+            hierarchical_data: None,
+            sparse_data: Some(SparseData {
+                top_k: effective_k as u32,
+                entries: sparse_entries,
+            }),
+            compression_metadata: VectorCentroidCompressionMetadata {
+                scale_factor,
+                max_distance,
+                compression_type: CompressionType::Quantized16Bit,
+            },
+        }
+    }
+    
+    /// Helper to get vector data by ID
+    fn get_vector_by_id(&self, vector_id: &str) -> Vec<f32> {
+        // This would normally look up from the actual vector storage
+        // For now, return a placeholder that matches dimension
+        vec![0.0; self.centroids[0].vector.len()]
+    }
+}
+
+impl RaptorWriter {
+    /// Compute all centroid-to-centroid distances for K×K matrix
+    fn compute_all_centroid_distances(&mut self, centroids: &[(u32, Vec<f32>)]) -> Result<()> {
+        let k = centroids.len();
+        self.ivf_builder.centroid_distances = vec![vec![0.0; k]; k];
+        
+        for i in 0..k {
+            for j in (i + 1)..k {
+                let dist = self.distance_compute.calculate_distance(
+                    &centroids[i].1,
+                    &centroids[j].1,
+                    &DistanceMetric::Euclidean
+                ).raw_value;
+                
+                // Store symmetrically
+                self.ivf_builder.centroid_distances[i][j] = dist;
+                self.ivf_builder.centroid_distances[j][i] = dist;
+            }
+        }
+        
+        Ok(())
     }
     
     /// Helper: Calculate centroid statistics for boosting
@@ -1476,10 +1859,7 @@ impl RaptorWriter {
             current_rowgroup: None,
             row_groups: Vec::new(),
             file_metadata,
-            bloom_builder: BloomFilterBuilder { 
-                ids: Vec::new(),
-                target_false_positive_rate: 0.01,
-            },
+            bloom_builder: BloomFilterBuilder::new(0.01),
             id_column_builder: IdColumnBuilder {
                 ids: Vec::new(),
                 id_hashes: Vec::new(),
@@ -1605,7 +1985,7 @@ impl RaptorWriter {
         let location = RowLocation { page_id, offset_in_page };
         
         // Update bloom filter and columnar ID index
-        self.bloom_builder.ids.push(id.clone());
+        self.bloom_builder.add_id(id.clone());
         self.id_column_builder.ids.push(id.clone());
         let hash_bytes = blake3::hash(id.as_bytes());
         let mut hash_u64_bytes = [0u8; 8];
@@ -1656,6 +2036,33 @@ impl RaptorWriter {
         Ok(batch.clone())
     }
     
+    /// Write bloom filter to disk and return its offset
+    async fn write_bloom_filter(&mut self, bloom_filter: &RowGroupBloomFilter) -> Result<u64> {
+        // Serialize bloom filter to bytes
+        let bloom_data = bincode::serialize(bloom_filter)
+            .map_err(|e| anyhow::anyhow!("Failed to serialize bloom filter: {}", e))?;
+        
+        // Compress bloom filter for storage efficiency
+        let compressed = self.compression.compress(
+            &bloom_data,
+            CompressionAlgorithm::Zstd,
+            6,
+            CompressionContext::SstBlock,
+        )?;
+        
+        // Write to filesystem and return offset
+        let offset = self.filesystem.append(&self.file_path, &compressed).await?;
+        
+        tracing::debug!(
+            "Wrote bloom filter: {} bytes compressed from {} bytes original ({:.1}% compression)",
+            compressed.len(),
+            bloom_data.len(),
+            (1.0 - compressed.len() as f64 / bloom_data.len() as f64) * 100.0
+        );
+        
+        Ok(offset)
+    }
+    
     /// Flush current row page to disk
     async fn flush_row_page(&mut self) -> Result<()> {
         if let Some(page) = self.current_row_page.take() {
@@ -1687,8 +2094,24 @@ impl RaptorWriter {
             
             // Add to current row group or create new one
             if self.row_groups.is_empty() || self.should_start_new_rowgroup() {
+                // Build bloom filter for previous row group before clearing
+                if !self.bloom_builder.is_empty() {
+                    let bloom_filter = self.bloom_builder.build()?;
+                    if let Some(current_rg) = self.row_groups.last_mut() {
+                        // Store bloom filter in metadata (note: RowGroupMetadata doesn't have bloom_filter field)
+                        // The bloom filter will be written to disk and offset stored in bloom_filter_offset
+                        tracing::debug!(
+                            "Built bloom filter for row group {}: {} IDs, {:.3}% FPR, {} bytes",
+                            current_rg.id,
+                            bloom_filter.stats().num_ids,
+                            bloom_filter.stats().false_positive_rate * 100.0,
+                            bloom_filter.stats().size_bytes
+                        );
+                    }
+                }
+                
                 // Reset bloom filter and ID column builders for new row group
-                self.bloom_builder.ids.clear();
+                self.bloom_builder.clear();
                 self.id_column_builder.ids.clear();
                 self.id_column_builder.id_hashes.clear();
                 self.id_column_builder.row_offsets.clear();
@@ -1736,7 +2159,7 @@ impl RaptorWriter {
             return Ok(encoded);
         }
         
-        let fastlanes_encoder = FastLanesEncoder::new();
+        let fastlanes_encoder = FastLanesEncoder::new(FastLanesScheme::BitPacked { bits: 16 });
         let num_rows = page.rows.len();
         
         // === SECTION 1: IDs (columnar string storage) ===
@@ -2036,7 +2459,7 @@ impl RaptorWriter {
                 
                 // Compress text using LZ4 for speed
                 let compressed_text = if all_text.len() > 1024 {
-                    self.compression.compress(
+                    crate::core::compression::compress(
                         &all_text,
                         CompressionAlgorithm::Lz4,
                         3,
@@ -2452,6 +2875,25 @@ impl RaptorWriter {
         // Flush any pending row page
         self.flush_row_page().await?;
         
+        // Build bloom filter for the final row group
+        if !self.bloom_builder.is_empty() {
+            let bloom_filter = self.bloom_builder.build()?;
+            if let Some(current_rg) = self.row_groups.last_mut() {
+                // Write bloom filter to disk and store offset
+                let bloom_offset = self.write_bloom_filter(&bloom_filter).await?;
+                current_rg.bloom_filter_offset = Some(bloom_offset);
+                
+                tracing::info!(
+                    "Wrote final bloom filter for row group {}: {} IDs, {:.3}% FPR, {} bytes at offset {}",
+                    current_rg.id,
+                    bloom_filter.stats().num_ids,
+                    bloom_filter.stats().false_positive_rate * 100.0,
+                    bloom_filter.stats().size_bytes,
+                    bloom_offset
+                );
+            }
+        }
+        
         // Write column projections for the current row group
         if let Some(rg) = self.row_groups.last_mut() {
             let projections_offset = self.write_column_projections().await?;
@@ -2655,7 +3097,7 @@ impl RaptorWriter {
     /// Finalize the RAPTOR file by writing centralized footer with all centroids
     /// This enables single I/O to load all centroids for query optimization
     pub async fn finalize(&mut self) -> Result<()> {
-        tracing::info!("Finalizing RAPTOR file with centralized centroid footer");
+        tracing::info!("Finalizing RAPTOR file with P² + K² + P×K architecture");
         
         // Step 1: Collect ALL centroids from all rowgroups, sorted by rowgroup_id
         let mut all_centroids: Vec<(u32, Vec<f32>)> = Vec::new();
@@ -2677,9 +3119,35 @@ impl RaptorWriter {
         };
         
         tracing::info!(
-            "Collected {} centroids of dimension {} for footer storage",
+            "Collected {} centroids of dimension {} for P² + K² + P×K storage",
             num_centroids, dimension
         );
+        
+        // Build K×K inter-centroid distance matrix (upper triangle storage)
+        let inter_centroid_matrix = if num_centroids > 0 {
+            // Ensure centroid distances are computed
+            if self.ivf_builder.centroid_distances.is_empty() {
+                self.compute_all_centroid_distances(&all_centroids)?;
+            }
+            Some(self.ivf_builder.build_inter_centroid_matrix())
+        } else {
+            None
+        };
+        
+        // Build P×K vector-to-centroid distance matrices for rowgroups
+        let vector_centroid_matrices = if !self.row_groups.is_empty() && num_centroids > 0 {
+            // Create simplified rowgroup structures for matrix building
+            let simplified_rowgroups: Vec<RowGroup> = self.row_groups.iter()
+                .map(|rg| RowGroup {
+                    id: rg.id as u32,
+                    count: rg.row_count as u32,
+                    vector_ids: vec![], // Will be populated from bloom builder
+                })
+                .collect();
+            Some(self.ivf_builder.build_vector_centroid_matrices(&simplified_rowgroups))
+        } else {
+            None
+        };
         
         // Step 2: Transpose centroids for columnar encoding (d×k layout)
         let mut transposed_data = vec![0.0f32; num_centroids * dimension];
@@ -2737,9 +3205,23 @@ impl RaptorWriter {
             encoding_metadata,
         };
         
-        // Step 5: Create the footer with centroids
+        // Step 5: Create the footer with centroids and matrices
         let footer = RaptorFooter {
             centroids: columnar_centroids,
+            inter_centroid_distances: inter_centroid_matrix.unwrap_or_else(|| {
+                // Create empty matrix if no centroids
+                InterCentroidMatrix {
+                    num_centroids: 0,
+                    compressed_data: Vec::new(),
+                    compression_metadata: InterCentroidCompressionMetadata {
+                        scale_factor: 1.0,
+                        max_distance: 0.0,
+                        compression_type: CompressionType::Quantized16Bit,
+                    },
+                    lookup_table: Vec::new(),
+                }
+            }),
+            vector_centroid_matrices: vector_centroid_matrices.unwrap_or_default(),
             version: 1,
             checksum: 0, // TODO: Compute actual checksum
             file_metadata: self.file_metadata.clone(),
@@ -3062,7 +3544,7 @@ impl RaptorWriter {
         // Step 6: Update nodes with cluster assignments and calculate centroid distances
         // Use unified distance compute for consistency and optimization
         for (idx, &cluster_id) in assignments.iter().enumerate() {
-            self.ivf_builder.nodes[idx].cluster_id = cluster_id;
+            self.ivf_builder.nodes[idx].cluster_id = cluster_id as u32;
             
             // Calculate distance to assigned centroid (d2 component) using unified distance
             let centroid = &self.ivf_builder.centroids[cluster_id as usize];
@@ -3073,8 +3555,7 @@ impl RaptorWriter {
             );
             self.ivf_builder.nodes[idx].centroid_distance = dist_result.raw_value;
             
-            // Update centroid statistics
-            self.ivf_builder.centroids[cluster_id as usize].num_vectors += 1;
+            // Update centroid statistics (member count tracked via member_ids.len())
         }
         
         // Step 7: Calculate mean and std deviation for each centroid
@@ -3119,7 +3600,7 @@ impl RaptorWriter {
             })
             .collect();
         
-        self.apply_component_boosting(&clusters, &self.ivf_builder.vectors);
+        self.ivf_builder.apply_component_boosting(&clusters, &self.ivf_builder.vectors);
         
         // Step 10: Create inverted lists for each cluster
         let mut inverted_lists: Vec<Vec<String>> = vec![Vec::new(); k];

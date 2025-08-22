@@ -304,7 +304,7 @@ impl RaptorCompactor {
         let mut current_offset = 0u64;
         
         for (idx, chunk) in vectors.chunks(group_size).enumerate() {
-            let mut row_group = RowGroup::new(idx as u32);
+            let mut row_group = RowGroup::new(idx as u16);
             row_group.row_count = chunk.len();
             row_group.offset = current_offset;
             row_group.vectors = Some(chunk.to_vec());

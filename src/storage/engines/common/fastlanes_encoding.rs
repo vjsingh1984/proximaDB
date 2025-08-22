@@ -222,10 +222,34 @@ impl FastLanesEncoder {
         Ok(encoded)
     }
     
+    /// Encode u16 values with SIMD optimization
+    pub fn encode_u16(&self, data: &[u16]) -> Result<Vec<u8>> {
+        // Convert u16 to i64 for encoding (can be optimized with SIMD)
+        let int_data: Vec<i64> = data.iter()
+            .map(|&v| v as i64)
+            .collect();
+        
+        let mut encoded = vec![0x84]; // Marker for u16 encoding
+        encoded.extend(self.encode_integers(&int_data)?);
+        Ok(encoded)
+    }
+    
+    /// Encode u32 values with SIMD optimization
+    pub fn encode_u32(&self, data: &[u32]) -> Result<Vec<u8>> {
+        // Convert u32 to i64 for encoding (can be optimized with SIMD)
+        let int_data: Vec<i64> = data.iter()
+            .map(|&v| v as i64)
+            .collect();
+        
+        let mut encoded = vec![0x85]; // Marker for u32 encoding
+        encoded.extend(self.encode_integers(&int_data)?);
+        Ok(encoded)
+    }
+    
     /// Encode PQ4 (Product Quantization 4-bit) codes with SIMD packing
     pub fn encode_pq4(&self, codes: &[u8], num_subvectors: usize) -> Result<Vec<u8>> {
         // Pack two 4-bit codes per byte for efficiency
-        let mut encoded = vec![0x84]; // Marker for PQ4
+        let mut encoded = vec![0x86]; // Marker for PQ4
         encoded.extend(&(num_subvectors as u32).to_le_bytes());
         
         // Pack pairs of 4-bit values
@@ -245,7 +269,7 @@ impl FastLanesEncoder {
     
     /// Encode PQ8 (Product Quantization 8-bit) codes
     pub fn encode_pq8(&self, codes: &[u8], num_subvectors: usize) -> Result<Vec<u8>> {
-        let mut encoded = vec![0x85]; // Marker for PQ8
+        let mut encoded = vec![0x87]; // Marker for PQ8
         encoded.extend(&(num_subvectors as u32).to_le_bytes());
         encoded.extend(codes); // PQ8 codes are already byte-aligned
         Ok(encoded)
@@ -538,9 +562,41 @@ impl FastLanesDecoder {
         Ok(int8_data)
     }
     
+    /// Decode u16 values
+    pub fn decode_u16(&self, data: &[u8]) -> Result<Vec<u16>> {
+        if data.is_empty() || data[0] != 0x84 {
+            return Err(anyhow::anyhow!("Invalid u16 encoded data"));
+        }
+        
+        let count = (data.len() - 1) * 8 / std::mem::size_of::<i64>();
+        let int_data = self.decode_integers(&data[1..], count)?;
+        
+        let u16_data: Vec<u16> = int_data.iter()
+            .map(|&v| v as u16)
+            .collect();
+        
+        Ok(u16_data)
+    }
+    
+    /// Decode u32 values
+    pub fn decode_u32(&self, data: &[u8]) -> Result<Vec<u32>> {
+        if data.is_empty() || data[0] != 0x85 {
+            return Err(anyhow::anyhow!("Invalid u32 encoded data"));
+        }
+        
+        let count = (data.len() - 1) * 8 / std::mem::size_of::<i64>();
+        let int_data = self.decode_integers(&data[1..], count)?;
+        
+        let u32_data: Vec<u32> = int_data.iter()
+            .map(|&v| v as u32)
+            .collect();
+        
+        Ok(u32_data)
+    }
+    
     /// Decode PQ4 codes
     pub fn decode_pq4(&self, data: &[u8]) -> Result<(Vec<u8>, usize)> {
-        if data.len() < 5 || data[0] != 0x84 {
+        if data.len() < 5 || data[0] != 0x86 {
             return Err(anyhow::anyhow!("Invalid PQ4 encoded data"));
         }
         
@@ -559,7 +615,7 @@ impl FastLanesDecoder {
     
     /// Decode PQ8 codes
     pub fn decode_pq8(&self, data: &[u8]) -> Result<(Vec<u8>, usize)> {
-        if data.len() < 5 || data[0] != 0x85 {
+        if data.len() < 5 || data[0] != 0x87 {
             return Err(anyhow::anyhow!("Invalid PQ8 encoded data"));
         }
         

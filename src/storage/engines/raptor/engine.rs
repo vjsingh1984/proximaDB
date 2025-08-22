@@ -1343,9 +1343,9 @@ impl UnifiedStorageEngine for RaptorEngine {
         // bytes_written is () from writer.flush(), so we'll skip this metric update
         // self.metrics.bytes_written.fetch_add(bytes_written as u64, Ordering::Relaxed);
         
+        // HNSW is integrated within RAPTOR row groups, no separate flush needed
         if self.config.enable_clustering {
-            let hnsw = self.hnsw_manager.read().await;
-            hnsw.flush().await?;
+            // Clustering flush is handled by writer.flush()
         }
         
         Ok(FlushResult {
@@ -1463,7 +1463,7 @@ impl UnifiedStorageEngine for RaptorEngine {
         
         // For now, use a simple approach - read all row groups and search for the ID
         // TODO: Implement efficient bloom filter lookup
-        let rowgroup_indices: Vec<u32> = (0..metadata.row_groups.len() as u32).collect();
+        let rowgroup_indices: Vec<u16> = (0..metadata.row_groups.len() as u16).collect();
         let batches = self.reader.read_rowgroups(&file_path, &rowgroup_indices).await?;
         
         // Search through all batches for the vector ID
