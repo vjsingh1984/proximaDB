@@ -149,7 +149,46 @@ sequenceDiagram
 
 === Physical File Layout
 
-image::raptor_storage_architecture.svg[RAPTOR Storage Architecture, align="center", width=100%]
+[source,mermaid]
+----
+graph TB
+    subgraph "RAPTOR File Structure (.rptr)"
+        Header["<b>Header (512 bytes)</b><br/>Magic: RPTR<br/>Version, Collection ID<br/>Dimension, K Clusters<br/>Footer Offset"]
+        
+        subgraph "RowGroups[0..K-1]"
+            RGM["<b>RowGroupMetadata</b><br/>ID (u16) = rowgroup_id = centroid_id<br/>Row Count, Timestamps<br/>Centroid Vector, Stats<br/>Column Pages Map"]
+            
+            subgraph "Column Pages"
+                VID["<b>VectorID Column</b><br/>Type: String/UUID<br/>Dictionary Encoded<br/>ZSTD Compressed"]
+                VEC["<b>Vectors (Transposed)</b><br/>FP32[dim][vectors]<br/>FastLanes Encoded<br/>Mixed Compression"]
+                META["<b>Metadata Columns</b><br/>Key-Value Pairs<br/>RLE/Dictionary<br/>Per-column Compression"]
+                TS["<b>Timestamp Column</b><br/>Int64, Delta Encoded<br/>ZSTD Compressed"]
+            end
+            
+            BF["<b>Bloom Filter</b><br/>180KB per 1024 vectors<br/>0.1% FPR<br/>10 bits/key, 7 hashes"]
+            P2["<b>P² Matrix</b><br/>Upper Triangle<br/>INT8 Quantized<br/>FastLanes Compressed<br/>512KB per rowgroup"]
+            PK["<b>P×K Matrix</b><br/>Adaptive (10-100%)<br/>Sparse Storage<br/>Only Boundary Vectors"]
+        end
+        
+        subgraph "Footer"
+            K2["<b>K² Matrix</b><br/>Full Matrix (Never Compressed)<br/>K×K×4 bytes<br/>40KB for K=100"]
+            CB["<b>Centroids Block</b><br/>K Centroid Vectors<br/>FP32[K][dimension]<br/>1-to-1 with RowGroups"]
+            FM["<b>File Metadata</b><br/>RowGroup Offsets Array<br/>Schema Descriptor<br/>Statistics & Checksums"]
+        end
+        
+        Header --> RGM
+        RGM --> VID
+        RGM --> VEC
+        RGM --> META
+        RGM --> TS
+        RGM --> BF
+        RGM --> P2
+        RGM --> PK
+        PK --> K2
+        K2 --> CB
+        CB --> FM
+    end
+----
 
 The above diagram shows the complete physical storage layout of a RAPTOR file (.rptr) with:
 
@@ -275,6 +314,33 @@ with exponential decay: score × exp(-λ×rank)
 5. **Bloom filter parameters**: 10 bits/key, 0.1% FPR
 
 === Memory Footprint and Distribution
+
+[source,mermaid]
+----
+graph LR
+    subgraph "Overall File Distribution (1.6GB total)"
+        VD[Vector Data<br/>1,470MB<br/>91.9%]
+        RGM[RowGroup Metadata<br/>50MB<br/>3.1%]
+        P2M[P² Matrices<br/>50MB<br/>3.1%]
+        BF[Bloom Filters<br/>18MB<br/>1.1%]
+        PKM[P×K Matrices<br/>10MB<br/>0.6%]
+        IDS[ID Storage<br/>10MB<br/>0.6%]
+        K2F[K² + Footer<br/>2MB<br/>0.1%]
+        HDR[Header<br/>0.5MB<br/>0.03%]
+    end
+    
+    subgraph "Per RowGroup (16MB)"
+        VS[Vector Storage<br/>14.7MB<br/>91.9%]
+        P2[P² Matrix<br/>512KB<br/>3.1%]
+        MC[Metadata Cols<br/>300KB<br/>1.8%]
+        BLM[Bloom Filter<br/>180KB<br/>1.1%]
+        PK[P×K Matrix<br/>100KB<br/>0.6%]
+        ID[ID Column<br/>100KB<br/>0.6%]
+        SC[Source Content<br/>50KB<br/>0.3%]
+        CM[Column Meta<br/>50KB<br/>0.3%]
+        RH[RG Header<br/>10KB<br/>0.06%]
+    end
+----
 
 image::raptor_memory_distribution.svg[RAPTOR Memory Distribution, align="center", width=100%]
 
