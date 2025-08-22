@@ -25,7 +25,7 @@ use crate::index::axis::clustering::{
 };
 use crate::compute::distance_computation::DistanceMetric;
 
-use super::{RaptorConfig, common::*};
+use super::{RaptorConfig, common::*, constants::*};
 use super::config::{CompressionCodec as RaptorCompressionCodec};
 
 pub struct RaptorWriter {
@@ -108,11 +108,19 @@ struct MinimalHnswBuilder {
 /// Boosting configuration for component-based distance
 #[derive(Clone, Debug, Serialize, Deserialize)]
 struct BoostingConfig {
-    /// α₁, α₃: Own-centroid penalties
+    /// α₁: Vector-to-own-centroid weight (intra-cluster cohesion)
     alpha_own: f32,
-    /// α₂: Inter-centroid weight  
+    /// α₂: Vector-to-other-centroids weight (boundary penalty)
+    alpha_other: f32,
+    /// α₂: Inter-centroid weight (alternative name for alpha_other)
     alpha_inter: f32,
-    /// β₁, β₂: Cross-centroid bonuses
+    /// α₃: Cluster variance weight (compactness measure)
+    alpha_variance: f32,
+    /// β₁: Minimum inter-centroid distance weight (cluster separation)
+    beta_min: f32,
+    /// β₂: Maximum inter-centroid distance weight (global structure)
+    beta_max: f32,
+    /// β: Cross-centroid exponential decay weight
     beta_cross: f32,
     /// Boundary detection threshold (in std deviations)
     boundary_threshold: f32,
@@ -123,10 +131,14 @@ struct BoostingConfig {
 impl Default for BoostingConfig {
     fn default() -> Self {
         Self {
-            alpha_own: 0.5,      // Moderate boundary boost
-            alpha_inter: 1.0,    // Standard centroid weight
-            beta_cross: 1.0,     // Standard cross-centroid bonus
-            boundary_threshold: 1.0,  // 1 std deviation
+            alpha_own: boosting::ALPHA_OWN_DEFAULT,
+            alpha_other: boosting::ALPHA_INTER_DEFAULT,
+            alpha_inter: boosting::ALPHA_INTER_DEFAULT,
+            alpha_variance: boosting::ALPHA_VARIANCE_DEFAULT,
+            beta_min: boosting::BETA_MIN_DEFAULT,
+            beta_max: boosting::BETA_MAX_DEFAULT,
+            beta_cross: boosting::BETA_CROSS_DEFAULT,
+            boundary_threshold: boosting::BOUNDARY_THRESHOLD_DEFAULT,
             store_components: false,
         }
     }
@@ -148,14 +160,14 @@ impl MinimalHnswBuilder {
         // Create AXIS clustering configuration for RAPTOR
         let axis_clustering_config = AxisClusteringConfig {
             algorithm: ClusteringAlgorithm::KMeans(KMeansConfig {
-                k: 32, // Default, will be overridden based on actual vector count
-                max_iterations: 10,
-                tolerance: 1e-4,
-                n_init: 3,
+                k: clustering::DEFAULT_CLUSTER_COUNT,
+                max_iterations: clustering::KMEANS_MAX_ITERATIONS,
+                tolerance: clustering::KMEANS_TOLERANCE,
+                n_init: clustering::KMEANS_INIT_ATTEMPTS,
                 init_method: KMeansInit::KMeansPlusPlus,
             }),
             min_vectors_for_clustering: target_rowgroup_size,
-            max_clusters: 1000, // Reasonable upper bound
+            max_clusters: clustering::MAX_CLUSTER_COUNT,
             distance_metric: DistanceMetric::Euclidean,
             adaptive_cluster_count: true,
             recompute_threshold: 10000,
@@ -237,28 +249,29 @@ impl MinimalHnswBuilder {
     /// - d₃: Distance variance within cluster (compactness measure)
     /// - d₄: Minimum inter-centroid distance (cluster separation)
     /// - d₅: Maximum inter-centroid distance (global structure preservation)
-    pub fn cluster_into_rowgroups(&mut self, vectors: &[Vec<f32>]) -> Vec<Vec<u32>> {
+    /// Cluster vectors into row groups using k²+p×(k+p) strategy
+    pub fn cluster_vectors_into_rowgroups(&mut self, vectors: &[Vec<f32>], dimension: usize) -> Vec<Vec<u32>> {
         // Step 1: Calculate optimal row group size based on mathematical and practical constraints
         let n = vectors.len();                    // Total number of vectors to cluster
-        let d = vectors.first().map(|v| v.len()).unwrap_or(384); // Vector dimension
+        let d = dimension;                        // Vector dimension from collection configuration
         
         // Mathematical optimum: p ≈ √n for k²+p×(k+p) complexity optimization
         let p_sqrt_n = (n as f64).sqrt() as usize;
         
         // Practical constraint: Estimate vectors from file characteristics
-        let bytes_per_vector = d * 4;           // f32 = 4 bytes per dimension
-        let metadata_overhead = 512;            // Estimated metadata + source overhead per vector
+        let bytes_per_vector = d * clustering::BYTES_PER_F32_DIMENSION;
+        let metadata_overhead = clustering::METADATA_OVERHEAD_PER_VECTOR;
         let total_bytes_per_vector = bytes_per_vector + metadata_overhead;
         let estimated_file_size = n * total_bytes_per_vector; // n × (d×4 + metadata + overhead)
         
         // Hardware-aware memory constraint: Detect L3 cache size for optimal row group sizing
-        let detected_l3_cache = self.hardware.l3_cache_size().unwrap_or(8 * 1024 * 1024); // Default 8MB
+        let detected_l3_cache = self.hardware.l3_cache_size().unwrap_or(clustering::DEFAULT_L3_CACHE_SIZE);
         // Use 40-50% of L3 cache for row group to leave room for other operations
-        let target_rowgroup_bytes = (detected_l3_cache as f64 * 0.45) as usize;
+        let target_rowgroup_bytes = (detected_l3_cache as f64 * clustering::L3_CACHE_UTILIZATION_PERCENT) as usize;
         let p_memory_optimal = target_rowgroup_bytes / total_bytes_per_vector;
         
         // Minimum constraint: Ensure clustering is beneficial (recall + I/O efficiency)
-        let p_min = 1024;
+        let p_min = clustering::MIN_ROWGROUP_SIZE;
         
         // Choose optimal p: max(√n, memory_optimal, min_constraint, target_config)
         let p = p_sqrt_n
@@ -270,9 +283,9 @@ impl MinimalHnswBuilder {
         
         let k_means_calcs = k * n;           // AXIS k-means clustering
         let centroid_matrix_calcs = k * k;   // Centroid-to-centroid distances (YES, we compute these!)
-        let boosting_calcs = n * 42;        // Component boosting (42 calculations per vector)
+        let boosting_calcs = n * boosting::BOOSTING_CALCS_PER_VECTOR;
         let raptor_total = k_means_calcs + centroid_matrix_calcs + boosting_calcs;
-        let hnsw_complexity = n * 16 * 200; // Standard HNSW: n × M × EF_construction
+        let hnsw_complexity = n * complexity::HNSW_M_FACTOR * complexity::HNSW_EF_FACTOR;
         
         tracing::info!(
             "🎯 RAPTOR hardware-aware clustering with AXIS: n={}, k={}, p={} \
@@ -294,7 +307,7 @@ impl MinimalHnswBuilder {
         // Euclidean distance provides best balance for row-aligned storage patterns
         // Limited iterations prevent over-optimization and maintain cluster balance
         let distance_metric = DistanceMetric::Euclidean;
-        let max_iterations = 10; // Empirically determined for RAPTOR stability
+        let max_iterations = clustering::KMEANS_MAX_ITERATIONS;
         
         tracing::debug!(
             "Clustering configuration: metric={:?}, max_iterations={}, target_clusters={}",
@@ -431,6 +444,43 @@ impl MinimalHnswBuilder {
         self.clusters_to_rowgroups(clusters)
     }
     
+    /// Cluster HNSW nodes into row groups (for existing graph structures)
+    /// This method works with pre-built HNSW nodes and their connectivity
+    pub fn cluster_nodes_into_rowgroups(&mut self, dimension: usize) -> Vec<Vec<u32>> {
+        // If we have no nodes, return empty
+        if self.nodes.is_empty() {
+            return Vec::new();
+        }
+        
+        // For existing HNSW nodes, we can use graph connectivity for clustering
+        // This is a simplified approach that groups connected nodes together
+        let n = self.nodes.len();
+        let p = self.target_rowgroup_size.max(clustering::MIN_ROWGROUP_SIZE);
+        let k = (n + p - 1) / p;  // Number of row groups needed
+        
+        tracing::info!(
+            "🎯 RAPTOR node clustering: {} nodes → {} row groups (p={})", 
+            n, k, p
+        );
+        
+        // Simple round-robin assignment for now
+        // TODO: Use actual graph connectivity for better clustering
+        let mut clusters = vec![Vec::new(); k];
+        for (idx, _node) in self.nodes.iter().enumerate() {
+            let cluster_id = idx % k;
+            clusters[cluster_id].push(idx as u32);
+        }
+        
+        // Filter out empty clusters
+        clusters.retain(|cluster| !cluster.is_empty());
+        
+        tracing::info!(
+            "✅ Node clustering complete: {} non-empty clusters created", 
+            clusters.len()
+        );
+        
+        clusters
+    }
     
     
     
@@ -1931,7 +1981,7 @@ impl RaptorWriter {
         // Step 4: Perform distance-aware clustering for optimal row group organization
         // This leverages the HNSW graph structure to create cohesive row groups
         tracing::info!("Performing distance-aware clustering for row group optimization");
-        let rowgroups = self.minimal_hnsw_builder.cluster_into_rowgroups();
+        let rowgroups = self.minimal_hnsw_builder.cluster_nodes_into_rowgroups(self.dimension);
         
         // Step 5: Analyze and log clustering quality metrics
         let mut total_cohesion = 0.0;

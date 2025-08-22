@@ -553,7 +553,7 @@ graph TB
     end
     
     subgraph "Compaction Process"
-        CompactTrigger[2+ Files Detected] --> CheckReady[Check EventLog:<br/>can_compact()]
+        CompactTrigger[2+ Files Detected] --> CheckReady["Check EventLog<br/>can_compact()"]
         CheckReady --> CanCompact{All Events<br/>Complete?}
         CanCompact -->|Yes| LoadGraphs[Load HNSW Segments]
         CanCompact -->|No| Wait[Wait for AXIS]

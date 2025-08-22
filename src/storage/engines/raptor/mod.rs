@@ -18,6 +18,7 @@ pub const RAPTOR_MAGIC: [u8; 4] = *b"RPTR";
 // Common types module - MUST be first to avoid circular dependencies
 pub mod common;
 pub mod config;
+pub mod constants;
 
 // Core modules
 pub mod consolidated_reader;

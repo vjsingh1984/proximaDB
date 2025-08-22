@@ -20,12 +20,23 @@ use crate::storage::engines::common::zero_copy_io_system::{
 use crate::storage::persistence::filesystem::zero_copy_filesystem::ZeroCopyFilesystem;
 use crate::storage::transaction_coordinator::TransactionCoordinator;
 
-use super::common::{RaptorFileMetadata, RowGroupMetadata, RowGroup};
+use super::common::{RaptorFileMetadata, RowGroupMetadata, RowGroup, SchemaDescriptor};
 use super::config::RaptorConfig;
 
 // Additional imports for component boosting
 use std::collections::HashSet;
-use ordered_float::OrderedFloat;
+
+/// Wrapper for f32 to make it orderable for priority queues
+#[derive(Debug, Clone, Copy, PartialEq, PartialOrd)]
+struct OrdFloat(f32);
+
+impl Eq for OrdFloat {}
+
+impl Ord for OrdFloat {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.0.partial_cmp(&other.0).unwrap_or(std::cmp::Ordering::Equal)
+    }
+}
 
 /// Supporting structures for component boosting in search navigation
 
@@ -361,8 +372,10 @@ impl RaptorReader {
         // DIRECT metadata cache check
         self.cache.track_access_async(&cache_key, CacheType::Metadata)?;
         if let Some(ref metadata_store) = self.cache.metadata_store {
-            if let Ok(Some(cached)) = metadata_store.get_serialized::<RaptorFileMetadata>(&cache_key).await {
-                return Ok(cached);
+            if let Ok(cached) = metadata_store.get_serialized::<RaptorFileMetadata>(&cache_key).await {
+                if let Some(metadata) = cached {
+                    return Ok(metadata);
+                }
             }
         }
         
@@ -438,7 +451,7 @@ impl RaptorReader {
             metric
         ).await?;
         
-        candidates.push(std::cmp::Reverse((OrderedFloat(entry_distance), entry_point.clone())));
+        candidates.push(std::cmp::Reverse((OrdFloat(entry_distance), entry_point.clone())));
         visited.insert(entry_point.clone());
         
         // Step 4: Main search loop with cluster-aware navigation
@@ -446,7 +459,7 @@ impl RaptorReader {
         let mut nodes_explored = 0;
         let max_nodes = ef * 3; // Prevent infinite loops
         
-        while let Some(std::cmp::Reverse((OrderedFloat(current_dist), current_id))) = candidates.pop() {
+        while let Some(std::cmp::Reverse((OrdFloat(current_dist), current_id))) = candidates.pop() {
             nodes_explored += 1;
             
             // Early termination if we've explored enough nodes
@@ -457,7 +470,7 @@ impl RaptorReader {
             
             // If this distance is worse than our worst best candidate, we can stop
             if best_candidates.len() >= ef {
-                if let Some(&OrderedFloat(worst_best)) = best_candidates.peek() {
+                if let Some(&OrdFloat(worst_best)) = best_candidates.peek() {
                     if current_dist > worst_best {
                         break;
                     }
@@ -497,10 +510,10 @@ impl RaptorReader {
                 }
                 
                 // Add to candidates for further exploration
-                candidates.push(std::cmp::Reverse((OrderedFloat(boosted_distance), edge.target_id.clone())));
+                candidates.push(std::cmp::Reverse((OrdFloat(boosted_distance), edge.target_id.clone())));
                 
                 // Update best candidates
-                best_candidates.push(OrderedFloat(boosted_distance));
+                best_candidates.push(OrdFloat(boosted_distance));
                 if best_candidates.len() > ef {
                     best_candidates.pop(); // Remove worst
                 }
@@ -520,7 +533,7 @@ impl RaptorReader {
         let final_candidates: Vec<String> = best_candidates
             .into_sorted_vec()
             .into_iter()
-            .map(|OrderedFloat(_dist)| {
+            .map(|OrdFloat(_dist)| {
                 // Note: In production, we'd track (distance, id) pairs
                 // For now, returning placeholder IDs
                 format!("vector_{}", rand::random::<u32>())
