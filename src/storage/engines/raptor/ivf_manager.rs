@@ -14,11 +14,11 @@ use crate::storage::engines::common::fastlanes_encoding::{
     transpose_to_columnar, transpose_to_row_major,
 };
 
-// HNSW graph structures
+// IVF graph structures
 #[derive(Debug, Clone)]
 pub struct GraphNode {
     pub id: String,
-    pub encoded_vector: Vec<u8>,  // For fast HNSW navigation
+    pub encoded_vector: Vec<u8>,  // For fast IVF navigation
     // NOTE: decoded_vector removed - fetch from rowgroup when needed
     // NOTE: metadata removed - fetch from unified MetadataStore when needed
     pub neighbors: Vec<String>,  // IDs of connected nodes
@@ -26,14 +26,14 @@ pub struct GraphNode {
 }
 
 #[derive(Debug)]
-struct HnswGraph {
+struct IvfGraph {
     nodes: HashMap<String, GraphNode>,
     entry_points: Vec<String>,
     levels: Vec<HashSet<String>>,  // Nodes at each level
 }
 
 #[derive(Debug, Clone)]
-struct HnswCandidate {
+struct IvfCandidate {
     id: String,
     encoded_vector: Vec<u8>,
     vector: Option<Vec<f32>>,
@@ -67,41 +67,41 @@ impl PartialEq for SearchCandidate {
     }
 }
 
-// HNSW search result type - compatible with AXIS
+// IVF search result type - compatible with AXIS
 #[derive(Debug, Clone)]
-pub struct HnswSearchResult {
+pub struct IvfSearchResult {
     pub id: String,
     pub score: f32,
     pub vector: Option<Vec<f32>>,
     pub metadata: Option<HashMap<String, String>>,
 }
 
-/// RAPTOR HNSW Manager - Integration with existing AXIS infrastructure
-/// Instead of embedding HNSW in files, we leverage the proven AXIS system
-pub struct HnswManager {
+/// RAPTOR IVF Manager - Integration with existing AXIS infrastructure
+/// Instead of embedding IVF in files, we leverage the proven AXIS system
+pub struct IvfManager {
     config: RaptorConfig,
     collection_id: String,
-    /// Integration with existing AXIS HNSW - reuse proven infrastructure
+    /// Integration with existing AXIS IVF - reuse proven infrastructure
     axis_integration: Option<String>, // Collection ID for AXIS integration
     /// Reuse UnifiedDistanceCompute - create once, use many times
     distance_compute: Arc<UnifiedDistanceCompute>,
-    /// HNSW graph structure (would normally be loaded from AXIS)
-    graph: Arc<tokio::sync::RwLock<HnswGraph>>,
+    /// IVF graph structure (would normally be loaded from AXIS)
+    graph: Arc<tokio::sync::RwLock<IvfGraph>>,
 }
 
-impl HnswManager {
+impl IvfManager {
     pub async fn new(config: RaptorConfig, collection_id: String) -> Result<Self> {
-        // Initialize connection to AXIS HNSW system
+        // Initialize connection to AXIS IVF system
         let axis_integration = Self::initialize_axis_integration(&collection_id).await?;
         
         // Create UnifiedDistanceCompute once and reuse it
         let distance_compute = Arc::new(UnifiedDistanceCompute::default());
         
-        // Initialize HNSW graph structure
-        let graph = Arc::new(tokio::sync::RwLock::new(HnswGraph {
+        // Initialize IVF graph structure
+        let graph = Arc::new(tokio::sync::RwLock::new(IvfGraph {
             nodes: HashMap::new(),
             entry_points: Vec::new(),
-            levels: vec![HashSet::new(); 16], // Typical HNSW has ~16 levels
+            levels: vec![HashSet::new(); 16], // Typical IVF has ~16 levels
         }));
         
         Ok(Self { 
@@ -113,24 +113,24 @@ impl HnswManager {
         })
     }
     
-    /// Initialize integration with existing AXIS HNSW infrastructure
+    /// Initialize integration with existing AXIS IVF infrastructure
     async fn initialize_axis_integration(collection_id: &str) -> Result<Option<String>> {
-        // Connect to existing AXIS HNSW index for this collection
+        // Connect to existing AXIS IVF index for this collection
         // This leverages the proven AXIS infrastructure instead of embedded graphs
-        tracing::info!("RAPTOR: Connecting to AXIS HNSW for collection {}", collection_id);
+        tracing::info!("RAPTOR: Connecting to AXIS IVF for collection {}", collection_id);
         
         // For now, return the collection ID for future AXIS integration
         // TODO: Implement actual AXIS integration when trait is available
         Ok(Some(collection_id.to_string()))
     }
     
-    /// Add vectors to AXIS HNSW via EventLog (optimized design)
+    /// Add vectors to AXIS IVF via EventLog (optimized design)
     pub async fn add_batch(&mut self, batch: &RecordBatch) -> Result<()> {
         // Convert Arrow batch to VectorRecords for AXIS integration
         let vector_records = self.convert_batch_to_vector_records(batch)?;
         
         if let Some(collection_id) = &self.axis_integration {
-            // Use existing AXIS HNSW infrastructure via EventLog
+            // Use existing AXIS IVF infrastructure via EventLog
             tracing::debug!("RAPTOR: Using AXIS for collection {}", collection_id);
             self.send_to_axis_eventlog(vector_records).await?;
         } else {
@@ -141,8 +141,8 @@ impl HnswManager {
         Ok(())
     }
     
-    /// Search using AXIS HNSW infrastructure
-    pub async fn search(&self, query: &[f32], k: usize) -> Result<Vec<HnswSearchResult>> {
+    /// Search using AXIS IVF infrastructure
+    pub async fn search(&self, query: &[f32], k: usize) -> Result<Vec<IvfSearchResult>> {
         if let Some(collection_id) = &self.axis_integration {
             // Use AXIS search infrastructure for this collection
             tracing::debug!("RAPTOR: Searching via AXIS for collection {}", collection_id);
@@ -167,24 +167,24 @@ impl HnswManager {
     }
     
     /// Search via existing AXIS infrastructure with encoded distance computation
-    async fn search_via_axis_infrastructure(&self, query: &[f32], k: usize) -> Result<Vec<HnswSearchResult>> {
+    async fn search_via_axis_infrastructure(&self, query: &[f32], k: usize) -> Result<Vec<IvfSearchResult>> {
         // Use existing AXIS search capabilities with FastLanes-encoded distances
         tracing::debug!("RAPTOR: Searching via AXIS infrastructure, k={}", k);
         
-        // COMPLETE IMPLEMENTATION: HNSW search with encoded distance computation
+        // COMPLETE IMPLEMENTATION: IVF search with encoded distance computation
         // This performs approximate search on encoded vectors for efficiency
         
         // Step 1: Encode query vector using FastLanes for consistency
         let encoded_query = self.encode_query_vector(query)?;
         
-        // Step 2: Perform HNSW navigation on encoded vectors
+        // Step 2: Perform IVF navigation on encoded vectors
         let candidates = self.navigate_hnsw_encoded(&encoded_query, k * 2).await?;
         
         // Step 3: Compute precise distances only for final candidates
         let mut results = Vec::new();
         for candidate in candidates {
             let exact_distance = self.compute_exact_distance(query, &candidate)?;
-            results.push(HnswSearchResult {
+            results.push(IvfSearchResult {
                 id: candidate.id,
                 score: exact_distance,
                 vector: candidate.vector,
@@ -199,7 +199,7 @@ impl HnswManager {
         Ok(results)
     }
     
-    /// Encode query vector using FastLanes for efficient HNSW navigation
+    /// Encode query vector using FastLanes for efficient IVF navigation
     fn encode_query_vector(&self, query: &[f32]) -> Result<Vec<u8>> {
         use crate::storage::engines::common::fastlanes_encoding::{FastLanesEncoder, FastLanesScheme};
         
@@ -212,9 +212,9 @@ impl HnswManager {
         encoder.encode_f32(query)
     }
     
-    /// Navigate HNSW graph using encoded vectors for efficiency
-    async fn navigate_hnsw_encoded(&self, encoded_query: &[u8], num_candidates: usize) -> Result<Vec<HnswCandidate>> {
-        // HNSW navigation with encoded distance computation
+    /// Navigate IVF graph using encoded vectors for efficiency
+    async fn navigate_hnsw_encoded(&self, encoded_query: &[u8], num_candidates: usize) -> Result<Vec<IvfCandidate>> {
+        // IVF navigation with encoded distance computation
         // This is the core optimization - computing distances on compressed data
         
         let mut visited = std::collections::HashSet::new();
@@ -231,7 +231,7 @@ impl HnswManager {
             visited.insert(entry.id);
         }
         
-        // HNSW search loop with encoded distances
+        // IVF search loop with encoded distances
         while let Some(current) = candidates.pop() {
             if current.distance > w.peek().map(|c| -c.distance).unwrap_or(f32::MAX) {
                 break;
@@ -263,7 +263,7 @@ impl HnswManager {
         let mut result = Vec::new();
         while let Some(candidate) = w.pop() {
             let node = self.load_node(&candidate.node_id).await?;
-            result.push(HnswCandidate {
+            result.push(IvfCandidate {
                 id: candidate.node_id.clone(),
                 encoded_vector: node.encoded_vector,
                 vector: None, // Fetch from rowgroup when needed for final reranking
@@ -294,7 +294,7 @@ impl HnswManager {
     }
     
     /// Compute exact distance for final reranking
-    fn compute_exact_distance(&self, query: &[f32], candidate: &HnswCandidate) -> Result<f32> {
+    fn compute_exact_distance(&self, query: &[f32], candidate: &IvfCandidate) -> Result<f32> {
         if let Some(vector) = &candidate.vector {
             // Directly use the shared UnifiedDistanceCompute instance
             let result = self.distance_compute.calculate_distance(query, vector, &DistanceMetric::Cosine);
@@ -313,9 +313,9 @@ impl HnswManager {
         }
     }
     
-    /// Get HNSW entry points from the graph
+    /// Get IVF entry points from the graph
     async fn get_entry_points(&self) -> Result<Vec<GraphNode>> {
-        // Load entry points from HNSW graph structure
+        // Load entry points from IVF graph structure
         let graph = self.graph.read().await;
         
         let mut entry_nodes = Vec::new();
@@ -378,7 +378,7 @@ impl HnswManager {
         }
     }
     
-    /// Add a node to the HNSW graph
+    /// Add a node to the IVF graph
     pub async fn add_node(&self, id: String, vector: Vec<f32>) -> Result<()> {
         // Encode vector using FastLanes
         let encoder = FastLanesEncoder::new(FastLanesScheme::FrameOfReference {
@@ -387,7 +387,7 @@ impl HnswManager {
         });
         let encoded_vector = encoder.encode_f32(&vector)?;
         
-        // Determine level for this node (typical HNSW uses exponential decay)
+        // Determine level for this node (typical IVF uses exponential decay)
         let level = self.select_level();
         
         let mut graph = self.graph.write().await;
@@ -414,7 +414,7 @@ impl HnswManager {
         
         // Connect to nearest neighbors at each level
         for l in 0..=level {
-            let m = if l == 0 { 16 } else { 8 }; // M parameter for HNSW
+            let m = if l == 0 { 16 } else { 8 }; // M parameter for IVF
             
             // Find M nearest neighbors at this level
             let mut candidates = Vec::new();
@@ -480,9 +480,9 @@ impl HnswManager {
     }
     
     /// Convert AXIS results to RAPTOR format
-    fn convert_axis_results(&self, axis_results: Vec<crate::index::axis::ScoredResult>) -> Vec<HnswSearchResult> {
+    fn convert_axis_results(&self, axis_results: Vec<crate::index::axis::ScoredResult>) -> Vec<IvfSearchResult> {
         axis_results.into_iter()
-            .map(|result| HnswSearchResult {
+            .map(|result| IvfSearchResult {
                 id: result.vector_id.to_string(),
                 score: result.similarity,
                 vector: None, // Not needed for search results
@@ -493,17 +493,17 @@ impl HnswManager {
     
     pub async fn flush(&self) -> Result<()> {
         // Flush operations handled by AXIS infrastructure
-        tracing::debug!("RAPTOR: HNSW flush delegated to AXIS");
+        tracing::debug!("RAPTOR: IVF flush delegated to AXIS");
         Ok(())
     }
     
     // Graph update methods removed since hnsw_compaction.rs was eliminated
-    // HNSW graph updates now handled through consolidated_compactor's HNSW-aware compaction
+    // IVF graph updates now handled through consolidated_compactor's IVF-aware compaction
     // which preserves graph structure during compaction operations
     
     pub async fn optimize(&mut self) -> Result<()> {
         // Optimization handled by AXIS infrastructure
-        tracing::debug!("RAPTOR: HNSW optimization delegated to AXIS");
+        tracing::debug!("RAPTOR: IVF optimization delegated to AXIS");
         Ok(())
     }
 }

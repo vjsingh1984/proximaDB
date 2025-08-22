@@ -35,15 +35,20 @@ image::../logos/raptor-engine-logo.svg[RAPTOR Engine Logo, 120, 120, align="cent
 
 == Executive Summary
 
-RAPTOR (Row-Aligned Predicated Tensor Optimized Repository) implements the mathematically optimal **k²+p×(k+p) clustering strategy** with multi-constraint parameter selection, AXIS clustering integration, and comprehensive hardware-aware optimization across Intel/AMD x86_64 and ARM64 platforms.
+RAPTOR (Row-Aligned Predicated Tensor Optimized Repository) is an **enhanced IVF (Inverted File) index** that implements the mathematically optimal **k²+p×(k+p) clustering strategy** with component boosting. Unlike HNSW (graph-based), RAPTOR uses inverted file structures similar to IVF-ADC but with unique optimizations for row-aligned storage and multi-component distance calculations.
 
-=== Core Innovation: Mathematical Optimality
+=== Core Innovation: Enhanced IVF with Component Boosting
 
-RAPTOR's key breakthrough is the **k²+p×(k+p) complexity formula** where:
-- **k²**: Centroid-to-centroid distance computations for navigation
-- **k×n**: Standard k-means clustering operations 
-- **n×boost**: Component boosting for improved row group assignment
-- **Optimal Parameters**: k=p≈√n provides mathematical optimum with O(√n) scaling
+RAPTOR is fundamentally an **IVF (Inverted File) variant**, not HNSW. It resembles:
+- **IVF-ADC** (Asymmetric Distance Computation) - but with 5-component boosting
+- **IVF-PQ** (Product Quantization) - but with row-aligned storage
+- **IMI** (Inverted Multi-Index) - but with dynamic cluster sizing
+
+The **k²+p×(k+p) complexity formula** describes:
+- **k²**: Inter-cluster routing (centroid distance matrix)
+- **k×p**: Cluster search operations
+- **p**: Row group size (vectors per cluster partition)
+- **Optimal**: k=p≈√n provides O(√n) scaling
 
 === Multi-Constraint Parameter Selection
 
@@ -69,20 +74,20 @@ RAPTOR's key breakthrough is the **k²+p×(k+p) complexity formula** where:
 └────────────────────────────────────────────────────────────────────────┘
 ----
 
-=== Performance Summary: k²+p×(k+p) vs Standard HNSW
+=== Performance Summary: RAPTOR IVF vs Standard Algorithms
 
-[cols="2,2,2,2", options="header"]
+[cols="2,2,2,2,2", options="header"]
 |===
-| Metric | Standard HNSW | RAPTOR k²+p×(k+p) | Improvement
-| **Build Time** | 61,500s | 134s | **459x faster**
-| **Memory Usage** | 3.2GB | 7.1MB | **451x less**
-| **Distance Calculations** | 2.46T | 43.1B | **57x fewer**
-| **L3 Cache Utilization** | <5% | 45% | **9x better**
-| **Parallelization** | 4-8 cores | 32+ cores | **8x more cores**
-| **I/O Efficiency** | Random | Sequential | **GP3 optimized**
-| **Complexity** | O(n×M×ef) | O(k²+p×(k+p)) | **O(√n) scaling**
-| **Hardware Support** | x86_64 only | Multi-platform | **Universal**
-| **Parameter Selection** | Manual tuning | Automated optimal | **Zero-config**
+| Metric | Standard IVF | IVF-ADC | HNSW | RAPTOR IVF
+| **Build Time** | O(n×k) | O(n×k) | O(n×M×ef) | O(k²+k×p)
+| **Search Time** | O(k+n/k) | O(k+n/k×d) | O(log n) | O(k²+p)
+| **Memory Usage** | n×d×4 | n×(d/8) | n×M×8 | n×0.04 (96% less)
+| **Distance Calc** | k centroids | k+asymmetric | M×ef nodes | k²+p×boost
+| **I/O Pattern** | Random | Random | Random | Sequential
+| **Cache Efficiency** | Poor | Poor | Poor | 45% L3 util
+| **Complexity** | O(k+n/k) | O(k+n/k) | O(M×ef) | O(√n)
+| **Boosting** | None | None | None | 5-component
+| **Row Alignment** | No | No | No | Yes
 |===
 
 [IMPORTANT]

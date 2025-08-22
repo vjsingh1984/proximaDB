@@ -25,7 +25,7 @@ pub mod consolidated_reader;
 pub mod consolidated_compactor;
 pub mod engine;
 pub mod writer;
-pub mod hnsw_manager;
+pub mod ivf_manager;
 pub mod rowgroup_manager;
 pub mod smart_rowgroup_sizing;
 pub mod artus_bloom;
@@ -52,6 +52,6 @@ pub use engine::RaptorEngine;
 pub use writer::RaptorWriter;
 pub use consolidated_reader::RaptorReader;      // Use consolidated reader
 pub use consolidated_compactor::RaptorCompactor; // Use consolidated compactor
-pub use hnsw_manager::HnswManager;
+pub use ivf_manager::IvfManager;
 pub use rowgroup_manager::{RowGroupManager, HybridRowGroup, ColumnarBlock, TransposedVectors};
 pub use smart_rowgroup_sizing::{SmartRowGroupSizer, OptimalRowGroupSize, CloudIOProfile, CommonConfigurations};

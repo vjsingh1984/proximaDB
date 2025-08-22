@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use super::constants::*;
+use super::constants;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RaptorConfig {
@@ -20,11 +20,11 @@ pub struct RaptorConfig {
     pub cache_size_mb: usize,
     pub cache_eviction_policy: EvictionPolicy,
     
-    // Index settings
-    pub enable_hnsw: bool,
-    pub hnsw_m: usize,
-    pub hnsw_ef_construction: usize,
-    pub hnsw_ef_search: usize,
+    // IVF clustering settings for RAPTOR's p²+k×p algorithm
+    pub enable_clustering: bool,
+    pub num_clusters: Option<usize>,  // k value, defaults to √n if not specified
+    pub target_rowgroup_size: Option<usize>,  // p value, auto-calculated if not specified
+    pub use_component_boosting: bool,  // Enable distance component boosting
     
     // Metadata settings
     pub enable_complex_types: bool,
@@ -33,15 +33,14 @@ pub struct RaptorConfig {
     pub enable_statistics: bool,
     
     // Vector settings
-    pub vector_dimension: Option<usize>,  // Deprecated - use dimension
     pub dimension: usize,  // Required dimension from collection config
     
     // Compaction settings
     pub compaction_threshold_files: usize,
     pub compaction_min_size_mb: usize,
-    pub enable_hnsw_aware_compaction: bool,
+    pub enable_clustering_aware_compaction: bool,
     pub compaction_config: Option<CompactionConfig>,
-    pub hnsw_config: Option<HnswConfig>,
+    pub clustering_config: Option<ClusteringConfig>,
     
     // Performance settings
     pub max_parallel_reads: usize,
@@ -74,11 +73,12 @@ pub struct CompactionConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct HnswConfig {
-    pub num_entry_points: usize,
-    pub max_connections: usize,
-    pub ef_construction: usize,
-    pub ef_search: usize,
+pub struct ClusteringConfig {
+    pub num_clusters: usize,  // k value in p²+k×p
+    pub rowgroup_size: usize,  // p value in p²+k×p
+    pub boosting_alpha_own: f32,  // α₁ weight for own centroid
+    pub boosting_alpha_inter: f32,  // α₂ weight for inter-centroid
+    pub boosting_alpha_variance: f32,  // α₃ weight for variance
 }
 
 impl Default for RaptorConfig {
@@ -92,42 +92,38 @@ impl Default for RaptorConfig {
             // - Memory: ~4MB per rowgroup @ 1024-dim (fits in L3 cache)
             // - HNSW local graph: ~16K edges (1000 nodes * 16 connections)
             // - Sweet spot: minimizes wasted I/O while maintaining locality
-            rowgroup_size: clustering::DEFAULT_ROWGROUP_SIZE,
+            rowgroup_size: constants::clustering::DEFAULT_ROWGROUP_SIZE,
             
             // Compression optimized for vector data:
             // - Zstd level 3 gives 2-3x compression with fast decompression
             // - Applied per-column for selective decompression
             // - Graph edges use dictionary encoding
-            compression: CompressionCodec::Zstd(compression::DEFAULT_ZSTD_LEVEL),
+            compression: CompressionCodec::Zstd(constants::compression::DEFAULT_ZSTD_LEVEL),
             compression_level: compression::DEFAULT_ZSTD_LEVEL as u32,
             use_fastlanes_encoding: true,  // Enable FastLanes for SIMD-optimized encoding
             
             enable_simd: true,
-            simd_lanes: memory::DEFAULT_SIMD_LANES,
+            simd_lanes: constants::memory::DEFAULT_SIMD_LANES,
             
             enable_range_reads: true,
-            prefetch_size_mb: memory::DEFAULT_PREFETCH_SIZE_MB,
-            cache_size_mb: memory::DEFAULT_CACHE_SIZE_MB,
+            prefetch_size_mb: constants::memory::DEFAULT_PREFETCH_SIZE_MB,
+            cache_size_mb: constants::memory::DEFAULT_CACHE_SIZE_MB,
             cache_eviction_policy: EvictionPolicy::Cost,
             
-            // HNSW configuration for hybrid global+local graphs:
-            // - M=16: Balanced connectivity (16 connections per node)
-            // - ef_construction=200: High quality graph building
-            // - ef_search=100: Fast approximate search
-            // These work with both global graph and local rowgroup subgraphs
-            enable_hnsw: true,
-            hnsw_m: hnsw::DEFAULT_M,
-            hnsw_ef_construction: hnsw::DEFAULT_EF_CONSTRUCTION,
-            hnsw_ef_search: hnsw::DEFAULT_EF_SEARCH,
+            // IVF clustering for RAPTOR's p²+k×p algorithm
+            // Automatically calculates optimal k and p values based on dataset size
+            enable_clustering: true,
+            num_clusters: None,  // Auto-calculate as √n
+            target_rowgroup_size: None,  // Auto-calculate based on L3 cache
+            use_component_boosting: true,  // Enable advanced distance components
             
             enable_complex_types: true,
             enable_bloom_filters: true,
-            bloom_fpp: compression::DEFAULT_BLOOM_FPP,
+            bloom_fpp: constants::compression::DEFAULT_BLOOM_FPP,
             enable_statistics: true,
             
             // Vector settings
-            vector_dimension: None,  // Deprecated
-            dimension: dimensions::DEFAULT,  // Default to common embedding dimension, will be overridden by collection config
+            dimension: constants::dimensions::DEFAULT,  // Default to common embedding dimension, will be overridden by collection config
             
             // Aggressive compaction for HNSW graph consistency:
             // - Trigger at 2 files to maintain single navigable graph
@@ -136,21 +132,22 @@ impl Default for RaptorConfig {
             // - Supports 100GB+ files through columnar streaming
             compaction_threshold_files: io::COMPACTION_THRESHOLD_FILES,
             compaction_min_size_mb: io::COMPACTION_MIN_SIZE_MB,
-            enable_hnsw_aware_compaction: true,
+            enable_clustering_aware_compaction: true,
             compaction_config: Some(CompactionConfig {
                 max_level: io::MAX_LSM_LEVEL,
-                l0_trigger_file_count: io::COMPACTION_THRESHOLD_FILES,
-                target_file_size: io::TARGET_FILE_SIZE,
+                l0_trigger_file_count: constants::io::COMPACTION_THRESHOLD_FILES,
+                target_file_size: constants::io::TARGET_FILE_SIZE,
             }),
-            hnsw_config: Some(HnswConfig {
-                num_entry_points: hnsw::DEFAULT_ENTRY_POINTS,
-                max_connections: hnsw::MAX_CONNECTIONS,
-                ef_construction: hnsw::DEFAULT_EF_CONSTRUCTION,
-                ef_search: hnsw::DEFAULT_EF_SEARCH,
+            clustering_config: Some(ClusteringConfig {
+                num_clusters: constants::clustering::DEFAULT_CLUSTER_COUNT,
+                rowgroup_size: constants::clustering::DEFAULT_ROWGROUP_SIZE,
+                boosting_alpha_own: constants::boosting::ALPHA_OWN_DEFAULT,
+                boosting_alpha_inter: constants::boosting::ALPHA_INTER_DEFAULT,
+                boosting_alpha_variance: constants::boosting::ALPHA_VARIANCE_DEFAULT,
             }),
             
-            max_parallel_reads: memory::DEFAULT_MAX_PARALLEL_READS,
-            buffer_pool_size_mb: memory::DEFAULT_BUFFER_POOL_SIZE_MB,
+            max_parallel_reads: constants::memory::DEFAULT_MAX_PARALLEL_READS,
+            buffer_pool_size_mb: constants::memory::DEFAULT_BUFFER_POOL_SIZE_MB,
             enable_prefetching: true,
         }
     }

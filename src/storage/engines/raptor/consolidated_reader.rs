@@ -306,7 +306,7 @@ impl RaptorReader {
         let metric = distance_metric.unwrap_or(DistanceMetric::Cosine);
         
         // Step 1: HNSW navigation (would integrate with HnswManager)
-        let candidate_ids = self.hnsw_search_candidates(query, top_k * 2, &metric).await?;
+        let candidate_ids = self.ivf_search_candidates(query, top_k * 2, &metric).await?;
         
         // Step 2: Load candidate vectors - DIRECT cache access, no wrapper
         let mut candidates = Vec::new();
@@ -413,7 +413,7 @@ impl RaptorReader {
     /// The boosting formula used during search matches the writer's formula:
     /// D = α₁·d₁ + α₂·d₂ + α₃·d₃ + β₁·d₄ + β₂·d₅
     /// This ensures consistent behavior between storage organization and search navigation.
-    async fn hnsw_search_candidates(
+    async fn ivf_search_candidates(
         &self,
         query: &[f32],
         ef: usize,
@@ -784,10 +784,10 @@ impl RaptorReader {
             rowgroup_sizes: Vec::new(),
             rowgroup_vector_counts: Vec::new(),
             schema: SchemaDescriptor::default(),
-            hnsw_metadata: None,
-            global_hnsw_offset: 0,
-            global_hnsw_size: 0,
-            hnsw_entry_points: Vec::new(),
+            ivf_metadata: None,
+            global_ivf_offset: 0,
+            global_ivf_size: 0,
+            ivf_cluster_centroids: Vec::new(),
             locality_clusters: Vec::new(),
             compression_codec: "zstd".to_string(),
         })

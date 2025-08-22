@@ -16,14 +16,14 @@ use crate::storage::transaction_coordinator::TransactionCoordinator;
 use crate::proto::proximadb::VectorRecord;
 use super::common::{RaptorFileMetadata, RowGroup, RowGroupMetadata, SchemaDescriptor};
 use super::config::RaptorConfig;
-use super::hnsw_manager::HnswManager;
+use super::ivf_manager::IvfManager;
 use super::consolidated_reader::RaptorReader;
 
 /// Unified compactor handling both standard and HNSW-aware compaction
 pub struct RaptorCompactor {
     config: RaptorConfig,
     reader: Arc<RaptorReader>,
-    hnsw_manager: Option<Arc<HnswManager>>,
+    ivf_manager: Option<Arc<IvfManager>>,
     
     // DIRECT references to unified modules
     distance_compute: Arc<UnifiedDistanceCompute>,
@@ -48,7 +48,7 @@ impl RaptorCompactor {
         Self {
             config,
             reader,
-            hnsw_manager: None,
+            ivf_manager: None,
             distance_compute: Arc::new(UnifiedDistanceCompute::default()),
             fastlanes_encoder: FastLanesEncoder::new(fastlanes_scheme),
             filesystem,
@@ -57,8 +57,8 @@ impl RaptorCompactor {
     }
     
     /// Enable HNSW-aware compaction
-    pub fn with_hnsw_manager(mut self, hnsw_manager: Arc<HnswManager>) -> Self {
-        self.hnsw_manager = Some(hnsw_manager);
+    pub fn with_ivf_manager(mut self, ivf_manager: Arc<IvfManager>) -> Self {
+        self.ivf_manager = Some(ivf_manager);
         self
     }
     
@@ -71,9 +71,9 @@ impl RaptorCompactor {
     ) -> Result<()> {
         info!("Starting compaction of {} files", input_files.len());
         
-        if self.hnsw_manager.is_some() {
+        if self.ivf_manager.is_some() {
             // HNSW-aware compaction path
-            self.compact_with_hnsw_preservation(input_files, output_file, collection_id).await
+            self.compact_with_ivf_preservation(input_files, output_file, collection_id).await
         } else {
             // Standard K-way merge compaction
             self.compact_standard(input_files, output_file, collection_id).await
@@ -123,7 +123,7 @@ impl RaptorCompactor {
     }
     
     /// HNSW-aware compaction preserving graph structure (from hnsw_compaction.rs)
-    async fn compact_with_hnsw_preservation(
+    async fn compact_with_ivf_preservation(
         &self,
         input_files: Vec<String>,
         output_file: &str,
@@ -131,7 +131,7 @@ impl RaptorCompactor {
     ) -> Result<()> {
         debug!("Performing HNSW-aware compaction with graph preservation");
         
-        let hnsw_manager = self.hnsw_manager.as_ref()
+        let ivf_manager = self.ivf_manager.as_ref()
             .context("HNSW manager required for graph-aware compaction")?;
         
         // Calculate total vectors for smart HNSW parameter selection
@@ -152,7 +152,7 @@ impl RaptorCompactor {
             input_files.len(), total_vectors, dimension, bytes_per_vector);
         
         // Step 1: Load HNSW graph structure
-        let graph = hnsw_manager.load_graph(collection_id).await?;
+        let graph = ivf_manager.load_graph(collection_id).await?;
         
         // Step 2: Read vectors and maintain graph relationships
         let mut vectors_by_id: HashMap<String, VectorRecord> = HashMap::new();
@@ -221,7 +221,7 @@ impl RaptorCompactor {
         self.write_compacted_file(output_file, row_groups).await?;
         
         // Step 6: Update HNSW index with new file location
-        hnsw_manager.update_file_location(collection_id, output_file).await?;
+        ivf_manager.update_file_location(collection_id, output_file).await?;
         
         // Step 7: Clean up input files
         for file_path in input_files {
