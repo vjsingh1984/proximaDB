@@ -895,7 +895,7 @@ graph TD
     
     subgraph "Boosting-Guided Expansion"
         IS --> BCF[5-Component Boosting]
-        BCF --> CP[Cross-Cluster Penalties: β₁×d₄ + β₂×d₅]
+        BCF --> CP["Cross-Cluster Penalties"]
         CP --> ED[Exponential Decay Weighting]
         ED --> FE[Final Expansion Decision]
     end
