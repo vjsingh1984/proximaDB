@@ -347,7 +347,7 @@ impl RaptorCompactor {
             
             // Clustering info
             cluster_centroids: Vec::new(),
-            cluster_assignments: Vec::new(),
+            cluster_assignments: HashMap::new(),
         };
         
         // Write each row group
