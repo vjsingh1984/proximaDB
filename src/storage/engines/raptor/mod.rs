@@ -1,8 +1,8 @@
 //! RAPTOR Storage Engine - Row-Aligned Predicated Tensor Optimized Repository
 //! 
 //! Architecture:
-//! - RAPTOR builds HNSW graphs during flush/compact for locality optimization
-//! - Graphs are stored as connected segments in RAPTOR format for cache efficiency
+//! - RAPTOR uses Matrix Trinity (P² + K² + P×K) for navigation instead of HNSW
+//! - Matrices are stored for O(1) centroid lookup and fast intra-rowgroup search
 //! - Smart parameter selection based on vector count and dimension for optimal recall
 //! - AXIS can still override or enhance indexes via EventLog events
 //! - Collections without index configs skip AXIS processing entirely
@@ -41,7 +41,6 @@ mod p2_matrix_tests;
 pub use common::{
     RowGroup, RowGroupMetadata, VectorStats, ColumnStats, 
     MetadataColumn, MetadataValue, MetadataDataType,
-    HnswGraph, HnswEdge, LocalHnswSegment, HnswGraphMetadata,
     RaptorFileMetadata, SchemaDescriptor, FieldDescriptor,
     SearchResult, Predicate, PredicateOp,
     FastLanesScheme, VectorEncoding, ColumnEncoding,
@@ -50,7 +49,7 @@ pub use common::{
     RowGroupBloomFilter, ColumnnarIdIndex,  // Added bloom filter types
     SpilloverInfo, ConfidenceAssessment, ConfidenceSignals,
     CorrectionStrategy, BoostingStrategy,  // Added boundary/correction types
-    P2Matrix,  // Added P² matrix for intra-rowgroup navigation
+    P2Matrix, K2Matrix, VectorCentroidMatrix,  // Matrix Trinity architecture
     ColumnPageMetadata, ColumnType,  // Added columnar page types
 };
 
@@ -61,6 +60,8 @@ pub use writer::RaptorWriter;
 pub use consolidated_reader::RaptorReader;      // Use consolidated reader
 pub use consolidated_compactor::RaptorCompactor; // Use consolidated compactor
 pub use ivf_manager::IvfManager;
-pub use rowgroup_manager::{RowGroupManager, HybridRowGroup, ColumnarBlock, TransposedVectors};
+pub use rowgroup_manager::RowGroupManager;
+pub use common::{ColumnarBlock, TransposedVectors, FastLanesEncodedData, 
+                 QuantizedColumnarData, QuantizationParams, MetadataColumns};
 pub use smart_rowgroup_sizing::{SmartRowGroupSizer, OptimalRowGroupSize, CloudIOProfile, CommonConfigurations};
 pub use adaptive_pxk::{AdaptivePxKStorage, VectorSelection, SelectionReason, BoundaryInfo};

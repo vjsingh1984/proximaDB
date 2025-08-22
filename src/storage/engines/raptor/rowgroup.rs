@@ -11,11 +11,13 @@ use super::common::{
     MetadataValue, VectorEncoding
 };
 
-/// RowGroup manager handles operations on row groups
+/// Simple RowGroup manager for backward compatibility
+/// This is being deprecated in favor of the advanced manager in rowgroup_manager.rs
+/// TODO: Merge functionality and remove this file
+#[deprecated(note = "Use rowgroup_manager.rs::RowGroupManager instead")]
 pub struct RowGroupManager {
     rowgroups: Vec<RowGroup>,
-    index: HashMap<u32, usize>, // id -> index mapping
-}
+    index: HashMap<u16, usize>, // id -> index mapping (fixed to u16)
 
 impl RowGroupManager {
     pub fn new() -> Self {
@@ -32,15 +34,15 @@ impl RowGroupManager {
         self.index.insert(id, idx);
     }
     
-    pub fn get(&self, id: u32) -> Option<&RowGroup> {
+    pub fn get(&self, id: u16) -> Option<&RowGroup> {
         self.index.get(&id).and_then(|idx| self.rowgroups.get(*idx))
     }
     
-    pub fn get_mut(&mut self, id: u32) -> Option<&mut RowGroup> {
+    pub fn get_mut(&mut self, id: u16) -> Option<&mut RowGroup> {
         self.index.get(&id).and_then(|idx| self.rowgroups.get_mut(*idx))
     }
     
-    pub fn filter_by_predicate(&self, predicate: &Predicate) -> Vec<u32> {
+    pub fn filter_by_predicate(&self, predicate: &Predicate) -> Vec<u16> {
         let mut matching = Vec::new();
         
         for rg in &self.rowgroups {
@@ -84,7 +86,7 @@ impl RowGroupManager {
         matching
     }
     
-    pub fn get_overlapping_by_distance(&self, centroid: &[f32], radius: f32) -> Vec<u32> {
+    pub fn get_overlapping_by_distance(&self, centroid: &[f32], radius: f32) -> Vec<u16> {
         let mut overlapping = Vec::new();
         
         for rg in &self.rowgroups {

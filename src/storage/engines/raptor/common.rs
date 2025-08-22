@@ -12,41 +12,72 @@ use anyhow::Result;
 
 /// Primary RowGroup structure used throughout RAPTOR
 #[derive(Debug, Clone, Serialize, Deserialize)]
+/// Unified RowGroup structure consolidating all variants
+/// 
+/// This structure replaces:
+/// - RowGroup (common.rs) - original definition
+/// - RowGroupMetadata (common.rs) - compact representation
+/// - HybridRowGroup (rowgroup_manager.rs) - columnar variant
+/// - RowGroupManager duplicates (rowgroup.rs, rowgroup_manager.rs)
+/// 
+/// Design decisions:
+/// - Use u16 for id/centroid_id (supports 65,536 rowgroups = 67M+ vectors)
+/// - String for vector_id (supports UUIDs and custom IDs)
+/// - Removed GraphNode structures (obsolete with Matrix Trinity)
 pub struct RowGroup {
-    // Core identifiers (optimized to u16 for 67M vectors per file)
-    pub id: u16,
-    pub offset: u64,
-    pub compressed_size: u64,
-    pub uncompressed_size: u64,
-    pub row_count: usize,
+    // Core identifiers (u16 for 67M vectors per file)
+    pub id: u16,                      // Rowgroup ID == Centroid ID (1:1 mapping)
+    pub offset: u64,                  // File offset for this rowgroup
+    pub compressed_size: u64,         // Compressed size in bytes
+    pub uncompressed_size: u64,       // Original size
+    pub row_count: usize,            // Number of vectors
+    pub max_vectors: usize,           // Maximum capacity (from smart sizing)
+    
+    // Column pages with individual compression (from RowGroupMetadata)
+    pub column_pages: HashMap<ColumnType, ColumnPageMetadata>,
     
     // Statistics
     pub vector_stats: VectorStats,
     pub metadata_stats: HashMap<String, ColumnStats>,
     
-    // Bloom filter for this row group's IDs
+    // Bloom filter for this row group's vector IDs
     pub bloom_filter: Option<RowGroupBloomFilter>,
     pub bloom_filter_offset: Option<u64>,
-    
     
     // Compression and temporal info
     pub compression_codec: String,
     pub min_timestamp: Option<i64>,
     pub max_timestamp: Option<i64>,
     
-    // Cached data (for compaction use)
-    pub vectors: Option<Vec<VectorRecord>>,
-    pub centroid: Option<Vec<f32>>,
+    // Centroid and clustering info (from HybridRowGroup)
+    pub centroid: Option<Vec<f32>>,              // Centroid vector
+    pub centroid_stats: Option<CentroidStats>,   // Statistics for search
+    
+    // Columnar storage (from HybridRowGroup)
+    pub columnar_data: Option<ColumnarBlock>,    // For active/cached rowgroups
+    
+    // Matrix storage (Matrix Trinity architecture)
+    pub p2_matrix: Option<P2Matrix>,             // Intra-rowgroup distances
+    pub pxk_matrix: Option<VectorCentroidMatrix>, // Vector-to-centroid distances
+    
+    // Cached data (for compaction/search)
+    pub vectors: Option<Vec<VectorRecord>>,      // Raw vectors when loaded
 }
 
 impl RowGroup {
     pub fn new(id: u16) -> Self {
+        Self::with_capacity(id, 1024) // Default capacity
+    }
+    
+    pub fn with_capacity(id: u16, max_vectors: usize) -> Self {
         Self {
             id,
             offset: 0,
             compressed_size: 0,
             uncompressed_size: 0,
             row_count: 0,
+            max_vectors,
+            column_pages: HashMap::new(),
             vector_stats: VectorStats::default(),
             metadata_stats: HashMap::new(),
             bloom_filter: None,
@@ -54,29 +85,138 @@ impl RowGroup {
             compression_codec: "zstd".to_string(),
             min_timestamp: None,
             max_timestamp: None,
-            vectors: None,
             centroid: None,
+            centroid_stats: None,
+            columnar_data: None,
+            p2_matrix: None,
+            pxk_matrix: None,
+            vectors: None,
         }
     }
     
-    /// Convert to compact representation for storage
-    pub fn to_storage(&self) -> RowGroupMetadata {
+    /// Check if rowgroup has capacity for more vectors
+    pub fn has_capacity(&self) -> bool {
+        self.row_count < self.max_vectors
+    }
+    
+    /// Get available capacity
+    pub fn available_capacity(&self) -> usize {
+        self.max_vectors.saturating_sub(self.row_count)
+    }
+    
+    /// Convert to compact metadata for serialization (backward compatibility)
+    pub fn to_metadata(&self) -> RowGroupMetadata {
         RowGroupMetadata {
             id: self.id,
-            offset: self.offset,
-            compressed_size: self.compressed_size,
-            uncompressed_size: self.uncompressed_size,
             row_count: self.row_count,
+            column_pages: self.column_pages.clone(),
             vector_stats: self.vector_stats.clone(),
             metadata_stats: self.metadata_stats.clone(),
-            bloom_filter_offset: self.bloom_filter_offset,
-            compression_codec: self.compression_codec.clone(),
             min_timestamp: self.min_timestamp,
             max_timestamp: self.max_timestamp,
             centroid: self.centroid.clone(),
-            centroid_stats: None, // Will be computed during flush/compaction
+            centroid_stats: self.centroid_stats.clone(),
         }
     }
+    
+    /// Create from metadata (for deserialization)
+    pub fn from_metadata(metadata: RowGroupMetadata) -> Self {
+        Self {
+            id: metadata.id,
+            offset: 0, // Will be set during file reading
+            compressed_size: 0, // Will be calculated
+            uncompressed_size: 0, // Will be calculated
+            row_count: metadata.row_count,
+            max_vectors: metadata.row_count, // Already full
+            column_pages: metadata.column_pages,
+            vector_stats: metadata.vector_stats,
+            metadata_stats: metadata.metadata_stats,
+            bloom_filter: None, // Will be loaded on demand
+            bloom_filter_offset: None,
+            compression_codec: "zstd".to_string(),
+            min_timestamp: metadata.min_timestamp,
+            max_timestamp: metadata.max_timestamp,
+            centroid: metadata.centroid,
+            centroid_stats: metadata.centroid_stats,
+            columnar_data: None,
+            p2_matrix: None,
+            pxk_matrix: None,
+            vectors: None,
+        }
+    }
+}
+
+/// Columnar storage block within a rowgroup (dimension-major format)
+/// Migrated from HybridRowGroup for unified architecture
+#[derive(Debug, Clone)]
+pub struct ColumnarBlock {
+    /// Vector IDs (for mapping back to original)
+    pub vector_ids: Vec<String>,
+    /// Transposed vectors - each dimension is a separate array for SIMD
+    pub transposed_vectors: Option<TransposedVectors>,
+    /// FastLanes encoded data for compression
+    pub fastlanes_data: Option<FastLanesEncodedData>,
+    /// Quantized vectors if quantization is enabled
+    pub quantized_data: Option<QuantizedColumnarData>,
+    /// Metadata for each vector
+    pub metadata_columns: MetadataColumns,
+}
+
+/// Dimension-major vector storage for SIMD operations
+#[derive(Debug, Clone)]
+pub struct TransposedVectors {
+    /// Each Vec<f32> represents one dimension across all vectors
+    /// dimensions[d] = [v0[d], v1[d], v2[d], ...] for dimension d
+    pub dimensions: Vec<Vec<f32>>,
+    /// Vector dimension
+    pub dimension: usize,
+    /// Number of vectors
+    pub vector_count: usize,
+}
+
+/// FastLanes encoded columnar data
+#[derive(Debug, Clone)]
+pub struct FastLanesEncodedData {
+    /// Encoded dimensions using FastLanes compression
+    pub encoded_dimensions: Vec<Vec<u8>>,
+    /// Encoding scheme used for each dimension
+    pub encoding_schemes: Vec<FastLanesScheme>,
+    /// Compression ratio achieved
+    pub compression_ratio: f32,
+}
+
+/// Quantized columnar data
+#[derive(Debug, Clone)]
+pub struct QuantizedColumnarData {
+    /// Binary quantized vectors (1 bit per dimension)
+    pub binary: Option<Vec<Vec<u8>>>,
+    /// INT8 quantized vectors (8 bits per dimension)
+    pub int8: Option<Vec<Vec<i8>>>,
+    /// PQ4 quantized vectors (4 bits per dimension)
+    pub pq4: Option<Vec<Vec<u8>>>,
+    /// PQ8 quantized vectors (8 bits per dimension)
+    pub pq8: Option<Vec<Vec<u8>>>,
+    /// Quantization parameters
+    pub quantization_params: QuantizationParams,
+}
+
+/// Quantization parameters for columnar data
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct QuantizationParams {
+    pub scale: f32,
+    pub offset: f32,
+    pub codebook: Option<Vec<Vec<f32>>>, // For PQ quantization
+}
+
+/// Metadata stored in columnar format
+#[derive(Debug, Clone)]
+pub struct MetadataColumns {
+    /// String metadata columns
+    pub string_columns: HashMap<String, Vec<Option<String>>>,
+    /// Numeric metadata columns
+    pub numeric_columns: HashMap<String, Vec<Option<f64>>>,
+    /// Boolean metadata columns
+    pub boolean_columns: HashMap<String, Vec<Option<bool>>>,
 }
 
 /// Column page metadata for selective field access
@@ -107,9 +247,10 @@ pub enum ColumnType {
 }
 
 /// Compact metadata representation for serialization
+/// This is a lightweight version of RowGroup for storage in footer
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RowGroupMetadata {
-    pub id: u16,                    // Supports 67M vectors per file
+    pub id: u16,                    // Rowgroup ID == Centroid ID
     pub row_count: usize,
     
     // Column pages with individual compression
@@ -123,8 +264,8 @@ pub struct RowGroupMetadata {
     pub min_timestamp: Option<i64>,
     pub max_timestamp: Option<i64>,
     
-    // Enhanced centroid information for fast pruning
-    pub centroid: Option<Vec<f32>>,              // Centroid vector (recomputed during compaction)
+    // Centroid information for fast pruning
+    pub centroid: Option<Vec<f32>>,              // Centroid vector
     pub centroid_stats: Option<CentroidStats>,   // Statistics for search optimization
 }
 
@@ -1720,5 +1861,51 @@ impl RowGroupBloomFilter {
         }
         
         results
+    }
+}
+
+/// K² matrix for inter-centroid navigation
+/// Stores pairwise distances between centroids (upper triangle only)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct K2Matrix {
+    /// Number of centroids
+    pub num_centroids: u32,
+    
+    /// Upper triangle distances (K×(K-1)/2 values)
+    /// Stored as linear array, indexed by: idx = i×(2n-i-1)/2 + j - i - 1
+    pub distances: Vec<u8>,  // Quantized INT8 or INT16
+    
+    /// Quantization parameters for distance reconstruction
+    pub min_distance: f32,
+    pub max_distance: f32,
+    
+    /// Compression strategy used
+    pub compression: FastLanesScheme,
+    
+    /// Size after compression
+    pub compressed_size: u32,
+}
+
+impl K2Matrix {
+    /// Get distance between centroids i and j (handles upper triangle indexing)
+    pub fn get_distance(&self, i: usize, j: usize) -> f32 {
+        if i == j {
+            return 0.0;
+        }
+        
+        // Ensure i < j for upper triangle
+        let (i, j) = if i < j { (i, j) } else { (j, i) };
+        
+        let n = self.num_centroids as usize;
+        let idx = i * (2 * n - i - 1) / 2 + j - i - 1;
+        
+        if idx < self.distances.len() {
+            // Dequantize from u8 to f32
+            let quantized = self.distances[idx];
+            let range = self.max_distance - self.min_distance;
+            self.min_distance + (quantized as f32 / 255.0) * range
+        } else {
+            self.max_distance // Fallback
+        }
     }
 }

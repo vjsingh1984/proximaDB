@@ -6,133 +6,45 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use uuid::Uuid;
+
 
 use crate::core::VectorRecord;
 use crate::compute::quantization::storage_engine::StorageQuantizationEngine;
 use crate::storage::engines::common::fastlanes_encoding::FastLanesEncoder;
 use super::smart_rowgroup_sizing::{SmartRowGroupSizer, OptimalRowGroupSize};
 use super::config::RaptorConfig;
-use super::common::RowGroupMetadata;
+use super::common::{
+    RowGroup, RowGroupMetadata, ColumnarBlock, TransposedVectors,
+    FastLanesEncodedData, QuantizedColumnarData, QuantizationParams,
+    MetadataColumns, FastLanesScheme
+};
 
-/// Hybrid Row Group containing columnar data for SIMD optimization
-#[derive(Debug, Clone)]
-pub struct HybridRowGroup {
-    /// Row group identifier
-    pub id: Uuid,
-    /// Number of vectors in this row group
-    pub vector_count: usize,
-    /// Maximum vectors this row group can hold (from smart sizing)
-    pub max_vectors: usize,
-    /// Columnar storage within the row group
-    pub columnar_data: ColumnarBlock,
-    /// HNSW graph for this row group (local graph)
-    pub local_hnsw: Option<LocalHnswGraph>,
-    /// Row group metadata
-    pub metadata: RowGroupMetadata,
-}
+// RowGroup removed - consolidated into common::RowGroup
+// The unified RowGroup now includes columnar_data field
 
-/// Columnar storage block within a row group (dimension-major format)
-#[derive(Debug, Clone)]
-pub struct ColumnarBlock {
-    /// Vector IDs (for mapping back to original)
-    pub vector_ids: Vec<String>,
-    /// Transposed vectors - each dimension is a separate array for SIMD
-    pub transposed_vectors: TransposedVectors,
-    /// FastLanes encoded data for compression
-    pub fastlanes_data: Option<FastLanesEncodedData>,
-    /// Quantized vectors if quantization is enabled
-    pub quantized_data: Option<QuantizedColumnarData>,
-    /// Metadata for each vector
-    pub metadata_columns: MetadataColumns,
-}
+// ColumnarBlock moved to common.rs - using unified structure
 
-/// Dimension-major vector storage for SIMD operations
-#[derive(Debug, Clone)]
-pub struct TransposedVectors {
-    /// Each Vec<f32> represents one dimension across all vectors
-    /// dimensions[d] = [v0[d], v1[d], v2[d], ...] for dimension d
-    pub dimensions: Vec<Vec<f32>>,
-    /// Vector dimension
-    pub dimension: usize,
-    /// Number of vectors
-    pub vector_count: usize,
-}
+// TransposedVectors moved to common.rs
 
-/// FastLanes encoded columnar data
-#[derive(Debug, Clone)]
-pub struct FastLanesEncodedData {
-    /// Encoded dimensions using FastLanes compression
-    pub encoded_dimensions: Vec<Vec<u8>>,
-    /// Encoding scheme used for each dimension
-    pub encoding_schemes: Vec<FastLanesScheme>,
-    /// Compression ratio achieved
-    pub compression_ratio: f32,
-}
+// FastLanesEncodedData moved to common.rs
 
-// REMOVED: FastLanesScheme - duplicate of common.rs::FastLanesScheme
-// Use the common.rs version instead
-use super::common::FastLanesScheme;
+// FastLanesScheme imported from common.rs
 
-/// Quantized columnar data
-#[derive(Debug, Clone)]
-pub struct QuantizedColumnarData {
-    /// Binary quantized vectors (1 bit per dimension)
-    pub binary: Option<Vec<Vec<u8>>>,
-    /// INT8 quantized vectors (8 bits per dimension)
-    pub int8: Option<Vec<Vec<i8>>>,
-    /// PQ4 quantized vectors (4 bits per dimension)
-    pub pq4: Option<Vec<Vec<u8>>>,
-    /// PQ8 quantized vectors (8 bits per dimension)
-    pub pq8: Option<Vec<Vec<u8>>>,
-    /// Quantization parameters
-    pub quantization_params: QuantizationParams,
-}
+// QuantizedColumnarData and QuantizationParams moved to common.rs
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct QuantizationParams {
-    pub scale: f32,
-    pub offset: f32,
-    pub codebook: Option<Vec<Vec<f32>>>, // For PQ quantization
-}
+// MetadataColumns moved to common.rs
 
-/// Metadata stored in columnar format
-#[derive(Debug, Clone)]
-pub struct MetadataColumns {
-    /// String metadata columns
-    pub string_columns: HashMap<String, Vec<Option<String>>>,
-    /// Numeric metadata columns
-    pub numeric_columns: HashMap<String, Vec<Option<f64>>>,
-    /// Boolean metadata columns
-    pub boolean_columns: HashMap<String, Vec<Option<bool>>>,
-}
+// GraphNode and LocalHnswGraph removed - obsolete with Matrix Trinity architecture
+// We now use P² + K² + P×K matrices instead of graph-based navigation
 
-/// Local HNSW graph for a single row group
-#[derive(Debug, Clone)]
-pub struct LocalHnswGraph {
-    /// Graph nodes (vector IDs within this row group)
-    pub nodes: Vec<GraphNode>,
-    /// Entry point for search
-    pub entry_point: Option<usize>,
-    /// Graph parameters
-    pub m: usize, // Max connections per node
-    pub ml: f32,  // Level factor
-}
-
-#[derive(Debug, Clone)]
-pub struct GraphNode {
-    pub local_id: usize,        // Index within this row group
-    pub global_id: String,      // Original vector ID
-    pub level: usize,           // HNSW level
-    pub connections: Vec<Vec<usize>>, // Connections per level
-}
-
-/// Row Group Manager for RAPTOR engine
+/// Row Group Manager for RAPTOR engine (unified implementation)
 pub struct RowGroupManager {
-    /// Active row groups
-    row_groups: HashMap<Uuid, HybridRowGroup>,
+    /// Active row groups (using u16 IDs for 67M+ vectors)
+    row_groups: HashMap<u16, RowGroup>,
     /// Current row group being written to
-    current_row_group: Option<Uuid>,
+    current_row_group: Option<u16>,
+    /// Next rowgroup ID counter
+    next_id: u16,
     /// Smart sizing configuration
     smart_sizer: SmartRowGroupSizer,
     /// Optimal row group size calculated from smart sizer
@@ -166,6 +78,7 @@ impl RowGroupManager {
         Ok(Self {
             row_groups: HashMap::new(),
             current_row_group: None,
+            next_id: 0,
             smart_sizer,
             optimal_size,
             quantization_engine,
@@ -175,7 +88,7 @@ impl RowGroupManager {
     }
     
     /// Add vectors to the current row group (creates new if needed)
-    pub async fn add_vectors(&mut self, vectors: Vec<VectorRecord>) -> Result<Vec<Uuid>> {
+    pub async fn add_vectors(&mut self, vectors: Vec<VectorRecord>) -> Result<Vec<u16>> {
         let mut row_group_ids = Vec::new();
         let mut remaining_vectors = vectors;
         
@@ -186,7 +99,7 @@ impl RowGroupManager {
                 .ok_or_else(|| anyhow::anyhow!("Row group not found"))?;
             
             // Calculate how many vectors can fit
-            let available_space = row_group.max_vectors - row_group.vector_count;
+            let available_space = row_group.max_vectors - row_group.row_count;
             let vectors_to_add = remaining_vectors.len().min(available_space);
             
             if vectors_to_add == 0 {
@@ -204,7 +117,7 @@ impl RowGroupManager {
             
             // Check if row group is now full
             let row_group = self.row_groups.get(&row_group_id).unwrap();
-            if row_group.vector_count >= row_group.max_vectors {
+            if row_group.row_count >= row_group.max_vectors {
                 self.complete_current_row_group().await?;
             }
         }
@@ -213,7 +126,7 @@ impl RowGroupManager {
     }
     
     /// Get or create the current row group for writing
-    async fn get_or_create_current_row_group(&mut self) -> Result<Uuid> {
+    async fn get_or_create_current_row_group(&mut self) -> Result<u16> {
         match self.current_row_group {
             Some(id) => Ok(id),
             None => {
@@ -224,33 +137,33 @@ impl RowGroupManager {
         }
     }
     
+    fn next_rowgroup_id(&mut self) -> u16 {
+        let id = self.next_id;
+        self.next_id += 1;
+        id
+    }
+    
     /// Create a new row group with optimal sizing
-    async fn create_new_row_group(&mut self) -> Result<Uuid> {
-        let id = Uuid::new_v4();
+    async fn create_new_row_group(&mut self) -> Result<u16> {
+        let id = self.next_rowgroup_id();
         let max_vectors = self.optimal_size.vectors_per_rowgroup;
         
-        let row_group = HybridRowGroup {
-            id,
-            vector_count: 0,
-            max_vectors,
-            columnar_data: ColumnarBlock {
-                vector_ids: Vec::with_capacity(max_vectors),
-                transposed_vectors: TransposedVectors {
+        let mut row_group = RowGroup::with_capacity(id, max_vectors);
+        row_group.columnar_data = Some(ColumnarBlock {
+            vector_ids: Vec::with_capacity(max_vectors),
+            transposed_vectors: Some(TransposedVectors {
                     dimensions: Vec::new(),
                     dimension: 0,
                     vector_count: 0,
-                },
-                fastlanes_data: None,
-                quantized_data: None,
-                metadata_columns: MetadataColumns {
+            }),
+            fastlanes_data: None,
+            quantized_data: None,
+            metadata_columns: MetadataColumns {
                     string_columns: HashMap::new(),
                     numeric_columns: HashMap::new(),
                     boolean_columns: HashMap::new(),
-                },
             },
-            local_hnsw: None,
-            metadata: RowGroupMetadata::default(),
-        };
+        });
         
         self.row_groups.insert(id, row_group);
         
@@ -265,7 +178,7 @@ impl RowGroupManager {
     }
     
     /// Add vectors to a specific row group
-    async fn add_vectors_to_row_group(&mut self, row_group_id: Uuid, vectors: Vec<VectorRecord>) -> Result<()> {
+    async fn add_vectors_to_row_group(&mut self, row_group_id: u16, vectors: Vec<VectorRecord>) -> Result<()> {
         // Check if row group exists first
         if !self.row_groups.contains_key(&row_group_id) {
             return Err(anyhow::anyhow!("Row group not found"));
@@ -279,18 +192,37 @@ impl RowGroupManager {
         // Now get mutable reference and update
         let row_group = self.row_groups.get_mut(&row_group_id).unwrap();
         
+        // Ensure columnar_data exists
+        if columnar_data.is_none() {
+            row_group.columnar_data = Some(ColumnarBlock {
+                vector_ids: Vec::new(),
+                transposed_vectors: None,
+                fastlanes_data: None,
+                quantized_data: None,
+                metadata_columns: MetadataColumns {
+                    string_columns: HashMap::new(),
+                    numeric_columns: HashMap::new(),
+                    boolean_columns: HashMap::new(),
+                },
+            });
+        }
+        
+        let columnar_data = columnar_data.as_mut().unwrap();
+        
         // Initialize transposed vectors if first batch
-        if row_group.columnar_data.transposed_vectors.dimensions.is_empty() && !vectors.is_empty() {
+        if columnar_data.transposed_vectors.is_none() && !vectors.is_empty() {
             let dimension = vectors[0].vector.len();
-            row_group.columnar_data.transposed_vectors.dimension = dimension;
-            row_group.columnar_data.transposed_vectors.dimensions = 
-                vec![Vec::with_capacity(row_group.max_vectors); dimension];
+            columnar_data.transposed_vectors = Some(TransposedVectors {
+                dimensions: vec![Vec::with_capacity(row_group.max_vectors); dimension],
+                dimension,
+                vector_count: 0,
+            });
         }
         
         // Add vectors in transposed (columnar) format
         for vector in vectors {
             // Add vector ID
-            row_group.columnar_data.vector_ids.push(
+            columnar_data.vector_ids.push(
                 if vector.id.is_empty() {
                     format!("vec_{}", row_group.vector_count)
                 } else {
@@ -300,8 +232,8 @@ impl RowGroupManager {
             
             // Add vector data (transpose: vector[d] -> dimensions[d].push(value))
             for (dim_idx, value) in vector.vector.iter().enumerate() {
-                if dim_idx < row_group.columnar_data.transposed_vectors.dimensions.len() {
-                    row_group.columnar_data.transposed_vectors.dimensions[dim_idx].push(*value);
+                if dim_idx < columnar_data.transposed_vectors.dimensions.len() {
+                    columnar_data.transposed_vectors.dimensions[dim_idx].push(*value);
                 }
             }
             
@@ -320,26 +252,26 @@ impl RowGroupManager {
                 for (key, value) in metadata_map {
                     match value {
                         serde_json::Value::String(s) => {
-                            row_group.columnar_data.metadata_columns.string_columns
+                            columnar_data.metadata_columns.string_columns
                                 .entry(key)
                                 .or_insert_with(Vec::new)
                                 .push(Some(s));
                         }
                         serde_json::Value::Number(n) => {
-                            row_group.columnar_data.metadata_columns.numeric_columns
+                            columnar_data.metadata_columns.numeric_columns
                                 .entry(key)
                                 .or_insert_with(Vec::new)
                                 .push(n.as_f64());
                         }
                         serde_json::Value::Bool(b) => {
-                            row_group.columnar_data.metadata_columns.boolean_columns
+                            columnar_data.metadata_columns.boolean_columns
                                 .entry(key)
                                 .or_insert_with(Vec::new)
                                 .push(Some(b));
                         }
                         _ => {
                             // For null or other types, add null to string columns
-                            row_group.columnar_data.metadata_columns.string_columns
+                            columnar_data.metadata_columns.string_columns
                                 .entry(key)
                                 .or_insert_with(Vec::new)
                                 .push(None);
@@ -350,24 +282,24 @@ impl RowGroupManager {
                 // Add null values for all known columns
                 // Collect all known column names from existing columns
                 let mut all_keys = std::collections::HashSet::new();
-                all_keys.extend(row_group.columnar_data.metadata_columns.string_columns.keys().cloned());
-                all_keys.extend(row_group.columnar_data.metadata_columns.numeric_columns.keys().cloned());
-                all_keys.extend(row_group.columnar_data.metadata_columns.boolean_columns.keys().cloned());
+                all_keys.extend(columnar_data.metadata_columns.string_columns.keys().cloned());
+                all_keys.extend(columnar_data.metadata_columns.numeric_columns.keys().cloned());
+                all_keys.extend(columnar_data.metadata_columns.boolean_columns.keys().cloned());
                 
                 for key in all_keys {
                     // Check which type the column is and add null value
-                    if row_group.columnar_data.metadata_columns.string_columns.contains_key(&key) {
-                        row_group.columnar_data.metadata_columns.string_columns
+                    if columnar_data.metadata_columns.string_columns.contains_key(&key) {
+                        columnar_data.metadata_columns.string_columns
                             .get_mut(&key)
                             .unwrap()
                             .push(None);
-                    } else if row_group.columnar_data.metadata_columns.numeric_columns.contains_key(&key) {
-                        row_group.columnar_data.metadata_columns.numeric_columns
+                    } else if columnar_data.metadata_columns.numeric_columns.contains_key(&key) {
+                        columnar_data.metadata_columns.numeric_columns
                             .get_mut(&key)
                             .unwrap()
                             .push(None);
-                    } else if row_group.columnar_data.metadata_columns.boolean_columns.contains_key(&key) {
-                        row_group.columnar_data.metadata_columns.boolean_columns
+                    } else if columnar_data.metadata_columns.boolean_columns.contains_key(&key) {
+                        columnar_data.metadata_columns.boolean_columns
                             .get_mut(&key)
                             .unwrap()
                             .push(None);
@@ -376,7 +308,7 @@ impl RowGroupManager {
             }
             
             row_group.vector_count += 1;
-            row_group.columnar_data.transposed_vectors.vector_count += 1;
+            columnar_data.transposed_vectors.vector_count += 1;
         }
         
         Ok(())
@@ -460,7 +392,7 @@ impl RowGroupManager {
     }
     
     /// Apply FastLanes compression to a row group
-    async fn apply_fastlanes_compression(&mut self, row_group_id: Uuid) -> Result<()> {
+    async fn apply_fastlanes_compression(&mut self, row_group_id: u16) -> Result<()> {
         let row_group = self.row_groups.get_mut(&row_group_id)
             .ok_or_else(|| anyhow::anyhow!("Row group not found"))?;
         
@@ -468,7 +400,7 @@ impl RowGroupManager {
         let mut encoding_schemes = Vec::new();
         
         // Compress each dimension separately using FastLanes
-        for dimension_data in &row_group.columnar_data.transposed_vectors.dimensions {
+        for dimension_data in &columnar_data.transposed_vectors.dimensions {
             if !dimension_data.is_empty() {
                 let encoded = self.fastlanes_encoder.encode_f32(dimension_data)?;
                 encoded_dimensions.push(encoded);
@@ -477,12 +409,12 @@ impl RowGroupManager {
         }
         
         // Calculate compression ratio
-        let original_size = row_group.columnar_data.transposed_vectors.dimensions.len() * 
+        let original_size = columnar_data.transposed_vectors.dimensions.len() * 
                            row_group.vector_count * 4; // 4 bytes per f32
         let compressed_size: usize = encoded_dimensions.iter().map(|d| d.len()).sum();
         let compression_ratio = original_size as f32 / compressed_size.max(1) as f32;
         
-        row_group.columnar_data.fastlanes_data = Some(FastLanesEncodedData {
+        columnar_data.fastlanes_data = Some(FastLanesEncodedData {
             encoded_dimensions,
             encoding_schemes,
             compression_ratio,
@@ -495,7 +427,7 @@ impl RowGroupManager {
     }
     
     /// Apply quantization to a row group
-    async fn apply_quantization(&mut self, row_group_id: Uuid) -> Result<()> {
+    async fn apply_quantization(&mut self, row_group_id: u16) -> Result<()> {
         if let Some(ref quantization_engine) = self.quantization_engine {
             let row_group = self.row_groups.get_mut(&row_group_id)
                 .ok_or_else(|| anyhow::anyhow!("Row group not found"))?;
@@ -503,8 +435,8 @@ impl RowGroupManager {
             // Reconstruct vectors for quantization (transpose back)
             let mut vectors = Vec::new();
             for i in 0..row_group.vector_count {
-                let mut vector = Vec::with_capacity(row_group.columnar_data.transposed_vectors.dimension);
-                for dim_data in &row_group.columnar_data.transposed_vectors.dimensions {
+                let mut vector = Vec::with_capacity(columnar_data.transposed_vectors.dimension);
+                for dim_data in &columnar_data.transposed_vectors.dimensions {
                     if i < dim_data.len() {
                         vector.push(dim_data[i]);
                     }
@@ -518,7 +450,7 @@ impl RowGroupManager {
             // Store quantized data in columnar format
             // Note: quantized is Vec<StorageQuantizedData>, need to extract data appropriately
             // For now, create empty structure as the exact mapping needs clarification
-            row_group.columnar_data.quantized_data = Some(QuantizedColumnarData {
+            columnar_data.quantized_data = Some(QuantizedColumnarData {
                 binary: Some(Vec::new()), // Would extract from quantized[*].filter
                 int8: Some(Vec::new()),   // Would extract from quantized[*].fast
                 pq4: Some(Vec::new()),    // Would extract from quantized[*].primary if PQ4
@@ -537,7 +469,7 @@ impl RowGroupManager {
     }
     
     /// Build local HNSW graph for a row group
-    async fn build_local_hnsw(&mut self, row_group_id: Uuid) -> Result<()> {
+    async fn build_local_hnsw(&mut self, row_group_id: u16) -> Result<()> {
         // Placeholder for HNSW construction
         // This would integrate with the existing HNSW implementation
         tracing::debug!("Building local HNSW for row group {}", row_group_id);
@@ -545,12 +477,12 @@ impl RowGroupManager {
     }
     
     /// Get row group by ID
-    pub fn get_row_group(&self, id: &Uuid) -> Option<&HybridRowGroup> {
+    pub fn get_row_group(&self, id: &u16) -> Option<&RowGroup> {
         self.row_groups.get(id)
     }
     
     /// Get all row group IDs
-    pub fn get_row_group_ids(&self) -> Vec<Uuid> {
+    pub fn get_row_group_ids(&self) -> Vec<u16> {
         self.row_groups.keys().cloned().collect()
     }
     

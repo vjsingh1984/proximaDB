@@ -63,6 +63,26 @@ pub struct SimilarityResult {
     pub vector: Vec<f32>,
 }
 
+/// Partial rowgroup structure for selective column reading
+pub struct PartialRowGroup {
+    pub vectors: Option<Vec<Vec<f32>>>,
+    pub ids: Option<Vec<String>>,
+    pub metadata: HashMap<String, Vec<Option<Vec<u8>>>>,
+    pub source_content: Option<Vec<Option<Vec<u8>>>>,
+}
+
+/// Intra-rowgroup matrix wrapper for P² matrix navigation
+pub struct IntraRowgroupMatrix {
+    pub p2_matrix: P2Matrix,
+    pub vectors: Vec<Vec<f32>>,
+}
+
+impl IntraRowgroupMatrix {
+    pub fn new(p2_matrix: P2Matrix, vectors: Vec<Vec<f32>>) -> Self {
+        Self { p2_matrix, vectors }
+    }
+}
+
 /// Scan strategy for different read patterns
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum ScanStrategy {
@@ -2717,14 +2737,6 @@ impl RaptorReader {
     /// Get metadata for a file without reading the actual data
     pub async fn get_metadata(&mut self, file_path: &str) -> Result<RaptorFileMetadata> {
         self.read_metadata(file_path).await
-    }
-    
-    /// Partial rowgroup structure for selective column reading
-    pub struct PartialRowGroup {
-        pub vectors: Option<Vec<Vec<f32>>>,
-        pub ids: Option<Vec<String>>,
-        pub metadata: HashMap<String, Vec<Option<Vec<u8>>>>,
-        pub source_content: Option<Vec<Option<Vec<u8>>>>,
     }
     
     /// Read only specific columns from a rowgroup (v2 columnar format)

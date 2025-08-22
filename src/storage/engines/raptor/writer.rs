@@ -1213,6 +1213,7 @@ impl IvfClusteringBuilder {
                 compression_type: CompressionType::Quantized8Bit,
             },
         }
+    }
     
     /// Create BloomFilter for fast boundary vector lookup (2KB, 1% false positive rate)
     fn create_boundary_vector_bloom_filter(&self, sparse_entries: &[SparseEntry]) -> Vec<u8> {
@@ -1237,60 +1238,6 @@ impl IvfClusteringBuilder {
         }
         
         bloom_bits
-    }
-                .collect();
-            
-            // Sort by distance and keep top-k
-            cent_dists.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
-            
-            for &(cent_idx, dist) in cent_dists.iter().take(effective_k) {
-                sparse_entries.push(SparseEntry {
-                    vector_index: vec_idx as u32,
-                    centroid_index: cent_idx as u32,
-                    distance: dist,
-                });
-                max_distance = max_distance.max(dist);
-            }
-        }
-        
-        // Quantize sparse entries
-        let scale_factor = if max_distance > 0.0 {
-            65535.0 / max_distance
-        } else {
-            1.0
-        };
-        
-        let mut compressed_data = Vec::with_capacity(sparse_entries.len() * 8);
-        for entry in &sparse_entries {
-            compressed_data.extend_from_slice(&entry.vector_index.to_le_bytes());
-            compressed_data.extend_from_slice(&entry.centroid_index.to_le_bytes());
-            let quantized = (entry.distance * scale_factor) as u16;
-            compressed_data.extend_from_slice(&quantized.to_le_bytes());
-        }
-        
-        tracing::debug!(
-            "Sparse P×K for rowgroup {}: {} vectors, {} centroids, top-{} stored ({:.2}% compression)",
-            rg_idx, p, k, effective_k,
-            (1.0 - (sparse_entries.len() as f32 / (p * k) as f32)) * 100.0
-        );
-        
-        VectorCentroidMatrix {
-            rowgroup_id: rg_idx as u32,
-            num_vectors: p as u32,
-            num_centroids: k as u32,
-            storage_strategy: VectorCentroidStorageStrategy::Sparse,
-            compressed_data,
-            hierarchical_data: None,
-            sparse_data: Some(SparseData {
-                top_k: effective_k as u32,
-                entries: sparse_entries,
-            }),
-            compression_metadata: VectorCentroidCompressionMetadata {
-                scale_factor,
-                max_distance,
-                compression_type: CompressionType::Quantized16Bit,
-            },
-        }
     }
     
     /// Helper to get vector data by ID from stored vectors
