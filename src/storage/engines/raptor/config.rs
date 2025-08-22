@@ -7,6 +7,7 @@ pub struct RaptorConfig {
     pub rowgroup_size: usize,
     pub compression: CompressionCodec,
     pub compression_level: u32,
+    pub use_fastlanes_encoding: bool,  // Enable FastLanes SIMD encoding
     
     // SIMD settings
     pub enable_simd: bool,
@@ -31,7 +32,8 @@ pub struct RaptorConfig {
     pub enable_statistics: bool,
     
     // Vector settings
-    pub vector_dimension: Option<usize>,
+    pub vector_dimension: Option<usize>,  // Deprecated - use dimension
+    pub dimension: usize,  // Required dimension from collection config
     
     // Compaction settings
     pub compaction_threshold_files: usize,
@@ -97,6 +99,7 @@ impl Default for RaptorConfig {
             // - Graph edges use dictionary encoding
             compression: CompressionCodec::Zstd(3),
             compression_level: 3,
+            use_fastlanes_encoding: true,  // Enable FastLanes for SIMD-optimized encoding
             
             enable_simd: true,
             simd_lanes: 16,
@@ -122,7 +125,8 @@ impl Default for RaptorConfig {
             enable_statistics: true,
             
             // Vector settings
-            vector_dimension: None, // Will be determined from data
+            vector_dimension: None,  // Deprecated
+            dimension: 768,  // Default to common embedding dimension, will be overridden // Will be determined from data
             
             // Aggressive compaction for HNSW graph consistency:
             // - Trigger at 2 files to maintain single navigable graph

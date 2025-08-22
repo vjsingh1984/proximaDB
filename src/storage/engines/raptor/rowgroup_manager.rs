@@ -295,9 +295,11 @@ impl RowGroupManager {
         for vector in vectors {
             // Add vector ID
             row_group.columnar_data.vector_ids.push(
-                vector.id.as_ref()
-                    .map(|id| id.clone())
-                    .unwrap_or_else(|| format!("vec_{}", row_group.vector_count))
+                if vector.id.is_empty() {
+                    format!("vec_{}", row_group.vector_count)
+                } else {
+                    vector.id.clone()
+                }
             );
             
             // Add vector data (transpose: vector[d] -> dimensions[d].push(value))

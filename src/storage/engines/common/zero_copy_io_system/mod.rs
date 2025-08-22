@@ -45,7 +45,8 @@ pub use config::{
 // Common traits and types
 pub use traits::{
     MetadataSerializer, EngineMetadata, QueryContext, DataRange, FileAccessRequest,
-    RequestPriority, QueryType, CollectionContext, AccessFrequency, MetadataAnalysisResult
+    RequestPriority, QueryType, CollectionContext, AccessFrequency, MetadataAnalysisResult,
+    CacheTemperature
 };
 
 use std::sync::Arc;

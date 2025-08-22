@@ -442,6 +442,7 @@ impl ProximaDb for ProximaDbGrpcService {
                         index_configs: vec![],
                         quantization: None,
                         primary_index: None,
+                        embedding_models: None,  // Default to None for embedding models
                         auto_index_selection: None,
                     })
                 } else {

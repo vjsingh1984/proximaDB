@@ -23,7 +23,7 @@ use tracing::{debug, info, warn};
 
 use crate::compute::distance_computation::DistanceMetric;
 use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
-use crate::core::search::{SearchResult, SearchDebugInfo};
+use crate::core::search::{InternalSearchResult, SearchDebugInfo};
 use crate::proto::proximadb::SearchVectorRecord;
 use crate::services::vector_operations_service::VectorOperationsService;
 
@@ -109,7 +109,7 @@ pub struct SearchResultStream {
 #[derive(Debug, Clone)]
 pub struct SearchResultBatch {
     /// Results in this batch
-    pub results: Vec<SearchResult>,
+    pub results: Vec<InternalSearchResult>,
     
     /// Whether this is the final batch
     pub is_final: bool,
@@ -252,33 +252,20 @@ impl StreamingSearchService {
         let mut deduped_wal_results = Vec::new();
         
         if !wal_results.is_empty() {
-            // Process each SearchResult (which contains multiple records)
+            // Process each InternalSearchResult
             for search_result in wal_results {
-                let mut filtered_records = Vec::new();
-                
-                // Deduplicate individual records within the SearchResult
-                for record in search_result.results {
-                    let should_include = if let Some(ref mut seen) = seen_ids {
-                        if record.id.is_empty() {
-                            true // Include empty IDs
-                        } else {
-                            seen.insert(record.id.clone()) // Deduplicate by ID
-                        }
+                let should_include = if let Some(ref mut seen) = seen_ids {
+                    if search_result.id.is_empty() {
+                        true // Include empty IDs
                     } else {
-                        true // No deduplication
-                    };
-                    
-                    if should_include {
-                        filtered_records.push(record);
+                        seen.insert(search_result.id.clone()) // Deduplicate by ID
                     }
-                }
+                } else {
+                    true // No deduplication
+                };
                 
-                if !filtered_records.is_empty() {
-                    deduped_wal_results.push(SearchResult {
-                        results: filtered_records,
-                        total_found: search_result.total_found,
-                        collection_id: search_result.collection_id,
-                    });
+                if should_include {
+                    deduped_wal_results.push(search_result);
                 }
             }
             
@@ -353,15 +340,8 @@ impl StreamingSearchService {
                 batch_id += 1;
                 total_results += deduped_storage_records.len();
                 
-                // Wrap records in SearchResult
-                let storage_search_result = SearchResult {
-                    results: deduped_storage_records,
-                    total_found: total_results as i64,
-                    collection_id: Some(collection_id.to_string()),
-                };
-                
                 let batch = SearchResultBatch {
-                    results: vec![storage_search_result],
+                    results: deduped_storage_records,
                     is_final: false,
                     batch_id,
                     timestamp: chrono::Utc::now().timestamp_millis(),
@@ -411,7 +391,7 @@ impl StreamingSearchService {
         query_vector: &[f32],
         k: usize,
         distance_metric: DistanceMetric,
-    ) -> Result<Vec<SearchResult>> {
+    ) -> Result<Vec<InternalSearchResult>> {
         debug!("🔍 STREAMING_WAL: Searching unflushed vectors");
         
         // Get direct access to WAL memtable
@@ -433,26 +413,28 @@ impl StreamingSearchService {
                         &distance_metric,
                     );
                     
-                    // Convert metadata from proto to Vec<MetadataItem>
-                    let metadata = record.metadata.iter()
-                        .map(|(k, v)| crate::proto::proximadb::MetadataItem {
-                            key: k.clone(),
-                            value: serde_json::to_string(v).unwrap_or_default(),
-                        })
-                        .collect();
-                    
-                    let search_record = crate::proto::proximadb::SearchVectorRecord {
-                        id: record.id.clone().unwrap_or_default(),
-                        vector: record.vector.clone(),
-                        metadata,
+                    // Create InternalSearchResult directly with all VectorRecord information
+                    let search_result = InternalSearchResult {
+                        id: record.id.clone(),
+                        vector_id: Some(record.id.clone()),
                         score: similarity.normalized_score,
                         similarity: Some(similarity.rank_value),
+                        vector: Some(record.vector.clone()),
+                        metadata: record.metadata.clone(),  // Already in serde_json::Value format
+                        debug_info: None,
                         version: record.version,
                         timestamp: Some(record.timestamp),
+                        updated_at: record.updated_at,
+                        expires_at: record.expires_at,
+                        source: record.source.clone(),  // Preserve source from VectorRecord
+                        expanded_context: Vec::new(),   // No expanded context from WAL
+                        semantic_similarity: Some(similarity),
+                        quantization_info: None,
+                        engine_stats: None,
+                        index_path: None,
                     };
                     
-                    // Need to collect SearchVectorRecords and wrap in SearchResult
-                    results.push(search_record);
+                    results.push(search_result);
                 }
             }
             
@@ -460,15 +442,8 @@ impl StreamingSearchService {
             results.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
             results.truncate(k);
             
-            // Wrap SearchVectorRecords in a SearchResult
-            let search_result = SearchResult {
-                results,
-                total_found: results.len() as i64,
-                collection_id: Some(collection_id.to_string()),
-            };
-            
-            debug!("✅ STREAMING_WAL: Found {} results", search_result.results.len());
-            Ok(vec![search_result])
+            debug!("✅ STREAMING_WAL: Found {} results", results.len());
+            Ok(results)
         } else {
             debug!("❌ STREAMING_WAL: No WAL behavior available");
             Ok(Vec::new())
@@ -517,7 +492,7 @@ impl SearchResultStream {
     }
     
     /// Collect all results (consumes the stream)
-    pub async fn collect_all(mut self) -> Result<Vec<SearchResult>> {
+    pub async fn collect_all(mut self) -> Result<Vec<InternalSearchResult>> {
         let mut all_results = Vec::new();
         
         while let Some(batch) = self.receiver.recv().await {
@@ -531,7 +506,7 @@ impl SearchResultStream {
     }
     
     /// Take first N results (consumes the stream)
-    pub async fn take(mut self, n: usize) -> Result<Vec<SearchResult>> {
+    pub async fn take(mut self, n: usize) -> Result<Vec<InternalSearchResult>> {
         let mut results = Vec::with_capacity(n);
         
         while results.len() < n {

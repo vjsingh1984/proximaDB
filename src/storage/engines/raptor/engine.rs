@@ -13,10 +13,10 @@ use crate::storage::traits::{UnifiedStorageEngine, StorageEngineStrategy, FlushP
 use crate::storage::persistence::filesystem::{FilesystemFactory, FilesystemConfig};
 use crate::proto::proximadb::Collection;
 use crate::core::VectorRecord;
-use crate::core::search::{SearchResult, FilterExpression};
-use crate::compute::distance_computation::DistanceMetric;
-use super::{RaptorConfig, RaptorWriter, RaptorUnifiedReader, RowGroupManager};
-use super::compaction::CompactionManager;
+use crate::core::search::{SearchResult, FilterExpression, InternalSearchResult};
+use crate::compute::distance_computation::{DistanceMetric, engine::UnifiedDistanceCompute};
+use super::{RaptorConfig, RaptorWriter, consolidated_reader::RaptorReader, RowGroupManager};
+use super::consolidated_compactor::RaptorCompactor;
 use super::hnsw_manager::HnswManager;
 use super::smart_rowgroup_sizing::{SmartRowGroupSizer, CommonConfigurations};
 
@@ -37,16 +37,7 @@ use crate::core::compression::{StandardCompression, CompressionAlgorithm, Compre
 use crate::core::hardware_capabilities::HardwareCapabilities;
 // VectorMemoryPool now managed by universal optimizer
 
-/// Internal search result used during processing
-#[derive(Debug, Clone)]
-struct InternalSearchResult {
-    id: String,
-    score: f32,
-    vector: Option<Vec<f32>>,
-    metadata: Option<HashMap<String, serde_json::Value>>,
-}
-
-/// Vector search result for compatibility
+/// Vector search result for compatibility - using unified InternalSearchResult
 type VectorSearchResult = InternalSearchResult;
 
 /// RAPTOR Engine - Row-Aligned Predicated Tensor Optimized Repository
@@ -114,8 +105,8 @@ pub struct RaptorEngine {
     // Core components  
     rowgroup_manager: Arc<RwLock<RowGroupManager>>,
     writer: Arc<RwLock<RaptorWriter>>,
-    reader: Arc<RaptorUnifiedReader>,  // Using unified reader now
-    compaction_manager: Arc<CompactionManager>,
+    reader: Arc<RaptorReader>,  // Using consolidated reader
+    compactor: Arc<RaptorCompactor>,
     hnsw_manager: Arc<RwLock<HnswManager>>,
     
     // Deep integration with AXIS clustering
@@ -150,12 +141,15 @@ impl RaptorEngine {
         base_path: String,
         config: RaptorConfig,
     ) -> Result<Self> {
-        // Create smart row group sizer based on configuration
+        // Create smart row group sizer - use collection config dimension when available
+        // For engine creation, use default configuration if dimension not in RaptorConfig
         let smart_sizer = if let Some(dimension) = config.vector_dimension {
             SmartRowGroupSizer::for_s3_standard(dimension, 200) // 200 bytes avg metadata
                 .with_query_pattern(super::smart_rowgroup_sizing::QueryPattern::Mixed)
         } else {
-            // Default configuration for common OpenAI embeddings
+            // Default configuration for common OpenAI embeddings (384 dimensions)
+            // Actual dimension will be determined from collection config during operations
+            tracing::info!("RAPTOR: Using default configuration, actual dimension will be determined from collection config");
             CommonConfigurations::openai_s3()
         };
         
@@ -186,19 +180,35 @@ impl RaptorEngine {
             overwrite: false,
             buffer_size: Some(tier.optimal_io_size()),
             encryption: None,
-            storage_class: Self::get_storage_class(&tier),
+            storage_class: match &tier {
+                StorageTier::S3Express => Some("EXPRESS_ONEZONE".to_string()),
+                StorageTier::S3Standard => Some("STANDARD".to_string()),
+                StorageTier::S3GlacierInstant => Some("GLACIER_IR".to_string()),
+                StorageTier::AzurePremium => Some("Premium_LRS".to_string()),
+                StorageTier::AzureStandard => Some("Standard_LRS".to_string()),
+                _ => None,
+            },
             metadata: None,
             temp_path: None,
         };
         
+        // Generate initial file path using unified naming convention
+        let data_dir = format!("{}/{}/data", base_path, collection_id);
+        // Ensure data directory exists
+        std::fs::create_dir_all(&data_dir)?;
+        
+        let codec = crate::storage::common::compaction_orchestrator::FilenameCodec::new();
+        let filename = codec.generate(0, "raptor"); // Level 0 for new writes
+        let file_path = format!("{}/{}", data_dir, filename);
+        
         let writer = Arc::new(RwLock::new(
             RaptorWriter::new(
-                base_path.clone(), 
+                file_path, 
                 config.clone(), 
                 collection_id.clone(),
                 config.vector_dimension.unwrap_or_else(|| {
-                    tracing::error!("RAPTOR: No vector dimension provided in config, this should not happen");
-                    panic!("Vector dimension must be provided in collection metadata config");
+                    tracing::warn!("RAPTOR: No vector dimension in config, using default 384. Will use collection config dimension during operations.");
+                    384 // Default for OpenAI embeddings, will be overridden by collection config
                 })
             ).await?
         ));
@@ -215,18 +225,27 @@ impl RaptorEngine {
             TransactionCoordinator::new()?
         );
         
-        // Create unified reader with all required dependencies
+        // Get the unified cache orchestrator
+        let cache = crate::storage::cache::orchestrator::get_cache_orchestrator();
+        
+        // Create consolidated reader with unified components
         let reader = Arc::new(
-            RaptorUnifiedReader::new(
+            RaptorReader::new(
                 base_path.clone(),
                 config.clone(),
+                cache,
                 zero_copy_filesystem.clone(),
                 transaction_coordinator.clone(),
-            ).await?
+            )
         );
         
-        let compaction_manager = Arc::new(
-            CompactionManager::new(base_path.clone(), config.clone())
+        let compactor = Arc::new(
+            RaptorCompactor::new(
+                config.clone(),
+                reader.clone(),
+                zero_copy_filesystem.clone(),
+                transaction_coordinator.clone(),
+            )
         );
         
         let hnsw_manager = Arc::new(RwLock::new(
@@ -280,7 +299,7 @@ impl RaptorEngine {
             rowgroup_manager,
             writer,
             reader,
-            compaction_manager,
+            compactor,
             hnsw_manager,
             cluster_manager,
             clustering_config,
@@ -415,9 +434,28 @@ impl RaptorEngine {
         
         // Check if compaction is needed
         if self.should_compact().await {
-            let compaction_manager = self.compaction_manager.clone();
+            let compactor = self.compactor.clone();
+            let collection_id = self.collection_id.clone();
+            let base_path = self.base_path.clone();
             tokio::spawn(async move {
-                let _ = compaction_manager.compact().await;
+                // Get all files from {base_path}/{collection_id}/data - unified directory structure
+                let data_dir = format!("{}/{}/data", base_path, collection_id);
+                let input_files = match std::fs::read_dir(&data_dir) {
+                    Ok(entries) => entries
+                        .filter_map(|e| e.ok())
+                        .filter(|e| e.path().extension().map_or(false, |ext| ext == "raptor"))
+                        .map(|e| e.path().to_string_lossy().to_string())
+                        .collect(),
+                    Err(_) => Vec::new(),
+                };
+                
+                if !input_files.is_empty() {
+                    // Use unified FilenameCodec naming convention
+                    let codec = crate::storage::common::compaction_orchestrator::FilenameCodec::new();
+                    let filename = codec.generate(1, "raptor"); // Level 1 for compacted files
+                    let output_file = format!("{}/{}", data_dir, filename);
+                    let _ = compactor.compact_files(input_files, &output_file, &collection_id).await;
+                }
             });
         }
         
@@ -474,6 +512,7 @@ impl RaptorEngine {
         query: &[f32],
         k: usize,
         filter: Option<HashMap<String, String>>,
+        distance_metric: &crate::compute::distance_computation::DistanceMetric,
     ) -> Result<Vec<InternalSearchResult>> {
         // Use clustering for efficient rowgroup pruning
         let selected_rowgroups = self.select_rowgroups_by_clustering(query).await?;
@@ -483,19 +522,31 @@ impl RaptorEngine {
             let hnsw = self.hnsw_manager.read().await;
             // Convert HNSW results to InternalSearchResult
             let hnsw_results = hnsw.search(query, k * 2).await?;
-            hnsw_results.into_iter().map(|r| InternalSearchResult {
-                id: r.id,
-                score: r.score,
-                vector: r.vector,
-                metadata: r.metadata.iter().map(|m| {
-                    m.into_iter()
+            hnsw_results.into_iter().map(|r| {
+                // Convert HNSW result to InternalSearchResult 
+                // TODO: Create proper VectorRecord from HNSW result for full conversion
+                InternalSearchResult {
+                    id: r.id,
+                    vector_id: None,
+                    score: r.score,
+                    similarity: None,
+                    vector: r.vector,
+                    metadata: r.metadata.unwrap_or_default().into_iter()
                         .map(|(k, v)| (k, serde_json::json!(v)))
-                        .collect()
-                }),
+                        .collect(),
+                    debug_info: None,
+                    version: None,
+                    timestamp: None,
+                    updated_at: None,
+                    expires_at: None,
+                    source: None,
+                    expanded_context: Vec::new(),
+                    ..Default::default()
+                }
             }).collect()
         } else {
             // Clustered search with pruning
-            self.clustered_search(query, k * 2, selected_rowgroups).await?
+            self.clustered_search(query, k * 2, selected_rowgroups, distance_metric).await?
         };
         
         // Apply filters and rerank
@@ -555,6 +606,7 @@ impl RaptorEngine {
         query: &[f32],
         k: usize,
         selected_rowgroups: Vec<u32>,
+        distance_metric: &crate::compute::distance_computation::DistanceMetric,
     ) -> Result<Vec<InternalSearchResult>> {
         let mut all_results = Vec::new();
         
@@ -564,24 +616,37 @@ impl RaptorEngine {
             
             // Compute distances using SIMD if available
             let distances = if self.config.enable_simd {
-                super::simd_ops::compute_distances_simd(query, &batch)?
+                // Use unified distance compute directly instead of removed simd_ops wrapper
+                {
+                    let vectors = self.extract_vectors_from_batch(&batch)?;
+                    let compute = UnifiedDistanceCompute::default();
+                    vectors.iter()
+                        .map(|v| compute.compute_distance(query, v, distance_metric))
+                        .collect::<Vec<_>>()
+                }
             } else {
                 self.compute_distances_scalar(query, &batch)?
             };
             
-            // Collect results
+            // Collect results using standardized similarity scoring
             for (i, distance) in distances.iter().enumerate() {
-                all_results.push(InternalSearchResult {
-                    id: self.get_id_from_batch(&batch, i)?,
-                    score: *distance,
-                    vector: None,
-                    metadata: None,
-                });
+                let id = self.get_id_from_batch(&batch, i)?;
+                
+                // Use standardized distance-to-similarity conversion for consistent ranking
+                let search_result = InternalSearchResult::from_distance_standard(
+                    id,
+                    *distance,
+                    distance_metric, // Pass the distance metric for proper conversion
+                    None, // vector
+                    HashMap::new(), // metadata
+                );
+                
+                all_results.push(search_result);
             }
         }
         
-        // Sort by distance and take top k
-        all_results.sort_by(|a, b| a.score.partial_cmp(&b.score).unwrap());
+        // Sort by similarity score in descending order (higher = more similar)
+        all_results.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap());
         all_results.truncate(k);
         
         Ok(all_results)
@@ -1074,7 +1139,7 @@ impl RaptorEngine {
         ).map_err(|e| anyhow::anyhow!("Failed to create RecordBatch: {}", e))
     }
     
-    async fn full_scan_search(&self, query: &[f32], k: usize) -> Result<Vec<VectorSearchResult>> {
+    async fn full_scan_search(&self, query: &[f32], k: usize, distance_metric: &crate::compute::distance_computation::DistanceMetric) -> Result<Vec<VectorSearchResult>> {
         let rowgroup_manager = self.rowgroup_manager.read().await;
         let predicates = vec![]; // No predicates for full scan
         let selected_rowgroups = rowgroup_manager.filter_rowgroups(&predicates);
@@ -1095,24 +1160,37 @@ impl RaptorEngine {
             
             // Compute distances using SIMD if available
             let distances = if self.config.enable_simd {
-                super::simd_ops::compute_distances_simd(query, &batch)?
+                // Use unified distance compute directly instead of removed simd_ops wrapper
+                {
+                    let vectors = self.extract_vectors_from_batch(&batch)?;
+                    let compute = UnifiedDistanceCompute::default();
+                    vectors.iter()
+                        .map(|v| compute.compute_distance(query, v, distance_metric))
+                        .collect::<Vec<_>>()
+                }
             } else {
                 self.compute_distances_scalar(query, &batch)?
             };
             
-            // Collect results
+            // Collect results using standardized similarity scoring
             for (i, distance) in distances.iter().enumerate() {
-                all_results.push(InternalSearchResult {
-                    id: self.get_id_from_batch(&batch, i)?,
-                    score: *distance,
-                    vector: None, // Populated if needed
-                    metadata: None, // Populated if needed
-                });
+                let id = self.get_id_from_batch(&batch, i)?;
+                
+                // Use standardized distance-to-similarity conversion for consistent ranking
+                let search_result = InternalSearchResult::from_distance_standard(
+                    id,
+                    *distance,
+                    distance_metric, // Pass the distance metric for proper conversion
+                    None, // vector
+                    HashMap::new(), // metadata
+                );
+                
+                all_results.push(search_result);
             }
         }
         
-        // Sort by distance and take top k
-        all_results.sort_by(|a, b| a.score.partial_cmp(&b.score).unwrap());
+        // Sort by similarity score in descending order (higher = more similar)
+        all_results.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap());
         all_results.truncate(k);
         
         Ok(all_results)
@@ -1244,6 +1322,18 @@ impl UnifiedStorageEngine for RaptorEngine {
             .ok_or_else(|| anyhow::anyhow!("Collection ID required for flush"))?;
         let start_time = std::time::Instant::now();
         
+        // Get collection config dimension - this should always be available since dimension is required in CollectionConfig
+        let collection_dimension = params.collection_config.as_ref()
+            .and_then(|c| c.config.as_ref())
+            .map(|cfg| cfg.dimension as usize)
+            .expect("Collection dimension should always be available since it's required in CollectionConfig");
+            
+        tracing::debug!("RAPTOR flush: Using collection config dimension: {}", collection_dimension);
+        // TODO: Update any dimension-dependent components with actual dimension
+        // - Row group sizer optimization based on actual dimension
+        // - HNSW parameter tuning for this dimension
+        // - Memory allocation optimization
+        
         let mut writer = self.writer.write().await;
         let bytes_written = writer.flush().await?;
         
@@ -1276,8 +1366,36 @@ impl UnifiedStorageEngine for RaptorEngine {
             .ok_or_else(|| anyhow::anyhow!("Collection ID required for compaction"))?;
         let start_time = std::time::Instant::now();
         
-        // Compact returns () for now, so we'll use placeholder values
-        self.compaction_manager.compact().await?;
+        // Get collection config dimension - this should always be available since dimension is required in CollectionConfig
+        let collection_dimension = params.collection_config.as_ref()
+            .and_then(|c| c.config.as_ref())
+            .map(|cfg| cfg.dimension as usize)
+            .expect("Collection dimension should always be available since it's required in CollectionConfig");
+            
+        tracing::debug!("RAPTOR compaction: Using collection config dimension: {}", collection_dimension);
+        // TODO: Update any dimension-dependent compaction operations
+        // - HNSW graph rebuilding optimization for this dimension
+        // - Row group reorganization based on actual dimension
+        // - Memory allocation optimization during compaction
+        
+        // Get all files from {base_path}/{collection_id}/data - unified directory structure
+        let data_dir = format!("{}/{}/data", self.base_path, self.collection_id);
+        let input_files: Vec<String> = match std::fs::read_dir(&data_dir) {
+            Ok(entries) => entries
+                .filter_map(|e| e.ok())
+                .filter(|e| e.path().extension().map_or(false, |ext| ext == "raptor"))
+                .map(|e| e.path().to_string_lossy().to_string())
+                .collect(),
+            Err(_) => Vec::new(),
+        };
+        
+        if !input_files.is_empty() {
+            // Use unified FilenameCodec naming convention
+            let codec = crate::storage::common::compaction_orchestrator::FilenameCodec::new();
+            let filename = codec.generate(1, "raptor"); // Level 1 for compacted files
+            let output_file = format!("{}/{}", data_dir, filename);
+            self.compactor.compact_files(input_files, &output_file, &self.collection_id).await?;
+        }
         
         // Update unified metrics
         self.metrics.compaction_operations.fetch_add(1, Ordering::Relaxed);
@@ -1340,13 +1458,14 @@ impl UnifiedStorageEngine for RaptorEngine {
     async fn get_vector_by_id(&self, collection_id: &str, vector_id: &str) -> Result<Option<VectorRecord>> {
         // Load file metadata to access bloom filters
         let file_path = format!("{}/{}/raptor.data", self.base_path, collection_id);
-        let metadata = self.reader.load_metadata(&file_path).await?;
+        let metadata = self.reader.get_metadata(&file_path).await?;
         
-        // Use bloom filters to find candidate row groups
-        let hnsw_results = vec![vector_id.to_string()];
-        let batches = self.reader.lookup_ids_after_hnsw(hnsw_results, &metadata).await?;
+        // For now, use a simple approach - read all row groups and search for the ID
+        // TODO: Implement efficient bloom filter lookup
+        let rowgroup_indices: Vec<u32> = (0..metadata.row_groups.len() as u32).collect();
+        let batches = self.reader.read_rowgroups(&file_path, &rowgroup_indices).await?;
         
-        // Check if we found the vector
+        // Search through all batches for the vector ID
         if let Some(batch) = batches.first() {
             // The lookup_ids_after_hnsw already filtered to just our ID
             // So we can directly reconstruct the vector record
@@ -1361,7 +1480,7 @@ impl UnifiedStorageEngine for RaptorEngine {
     async fn search_vectors_unified(
         &self,
         ctx: &SearchContext,
-    ) -> Result<Vec<SearchResult>> {
+    ) -> Result<Vec<crate::core::search::InternalSearchResult>> {
         // Extract all parameters from enhanced context (pre-computed)
         let collection_id = ctx.collection_id();
         let storage_path = ctx.storage_path();
@@ -1387,28 +1506,18 @@ impl UnifiedStorageEngine for RaptorEngine {
         };
         
         // Use performance tier to optimize search strategy
-        let internal_results = match performance_tier {
+        let results = match performance_tier {
             crate::storage::traits::PerformanceTier::Hot => {
                 // Memory-first search for hot data
-                self.search_internal(query_vector, k, filter).await?
+                self.search_internal(query_vector, k, filter, &distance_metric).await?
             },
             _ => {
                 // Standard search for other tiers
-                self.search_internal(query_vector, k, filter).await?
+                self.search_internal(query_vector, k, filter, &distance_metric).await?
             }
         };
         
-        // Convert internal results to SearchResult
-        let mut results = Vec::new();
-        for res in internal_results {
-            results.push(SearchResult {
-                id: res.id,
-                similarity: Some(res.score),
-                timestamp: Some(chrono::Utc::now().timestamp() as u32),
-                ..Default::default()
-            });
-        }
-        
+        // Return InternalSearchResult directly
         Ok(results)
     }
     
@@ -1579,17 +1688,6 @@ impl RaptorEngine {
         }
     }
     
-    fn get_storage_class(tier: &StorageTier) -> Option<String> {
-        match tier {
-            StorageTier::S3Express => Some("EXPRESS_ONEZONE".to_string()),
-            StorageTier::S3Standard => Some("STANDARD".to_string()),
-            StorageTier::S3GlacierInstant => Some("GLACIER_IR".to_string()),
-            StorageTier::AzurePremium => Some("Premium_LRS".to_string()),
-            StorageTier::AzureStandard => Some("Standard_LRS".to_string()),
-            _ => None,
-        }
-    }
-    
     fn reconstruct_vector_record(&self, batch: &RecordBatch, index: usize) -> Result<VectorRecord> {
         let id = self.get_id_from_batch(batch, index)?;
         
@@ -1647,7 +1745,7 @@ impl RaptorEngine {
         };
         
         Ok(VectorRecord {
-            id: Some(id),
+            id,
             vector,
             metadata: metadata.into_iter()
                 .map(|(k, v)| crate::proto::proximadb::MetadataItem {

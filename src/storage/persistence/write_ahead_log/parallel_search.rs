@@ -11,7 +11,7 @@ use rayon::prelude::*;
 use tracing::{debug, trace};
 use parking_lot::RwLock;
 
-use crate::core::search::{SearchResult, FilterExpression};
+use crate::core::search::{InternalSearchResult, FilterExpression};
 use crate::compute::distance_computation::DistanceMetric;
 use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
 use crate::storage::memtable::specialized::wal_behavior::WALVectorBatch;
@@ -54,7 +54,7 @@ impl ParallelWALSearch {
         metadata_filters: Option<&FilterExpression>,
         include_vectors: bool,
         include_metadata: bool,
-    ) -> Result<Vec<SearchResult>> {
+    ) -> Result<Vec<InternalSearchResult>> {
         let start = std::time::Instant::now();
         
         if batches.is_empty() {
@@ -399,6 +399,7 @@ impl ParallelWALSearch {
 }
 
 /// Intermediate search candidate
+#[derive(Clone)]
 struct SearchCandidate {
     record: VectorRecord,
     score: f32,
@@ -407,38 +408,20 @@ struct SearchCandidate {
 }
 
 impl SearchCandidate {
-    /// Convert to SearchResult
-    fn to_search_result(self) -> SearchResult {
-        SearchResult {
-            id: self.record.id.clone().unwrap_or_default(),
-            vector_id: self.record.id.clone(),
-            score: self.score,
-            similarity: self.score, // Can be normalized differently
-            vector: if self.include_vectors {
-                Some(self.record.vector.clone())
-            } else {
-                None
-            },
-            metadata: if self.include_metadata {
-                let mut map = std::collections::HashMap::new();
-                for entry in &self.record.metadata {
-                    if let Ok(value) = serde_json::from_str(&entry.value) {
-                        map.insert(entry.key.clone(), value);
-                    }
-                }
-                map
-            } else {
-                std::collections::HashMap::new()
-            },
-            rank: None,
-            debug_info: None,
-            semantic_similarity: None,
-            quantization_info: None,
-            engine_stats: None,
-            index_path: None,
-            timestamp: Some(self.record.timestamp),
-            version: self.record.version,
+    /// Convert to InternalSearchResult - preserves all source information
+    fn to_search_result(self) -> InternalSearchResult {
+        // Use the new from_vector_record method to preserve all fields including source
+        let mut result = InternalSearchResult::from_vector_record(&self.record, self.score);
+        
+        // Override vector and metadata based on include flags
+        if !self.include_vectors {
+            result.vector = None;
         }
+        if !self.include_metadata {
+            result.metadata = std::collections::HashMap::new();
+        }
+        
+        result
     }
 }
 

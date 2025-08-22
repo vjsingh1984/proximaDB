@@ -2793,7 +2793,7 @@ impl UnifiedStorageEngine for SstStorage {
     async fn search_vectors_unified(
         &self,
         ctx: &crate::storage::traits::SearchContext,
-    ) -> Result<Vec<crate::core::search::SearchResult>> {
+    ) -> Result<Vec<crate::core::search::InternalSearchResult>> {
         let search_start = std::time::Instant::now();
         
         // Extract parameters from context

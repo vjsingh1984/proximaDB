@@ -112,7 +112,6 @@ impl Default for RowGroupMetadata {
             row_count: 0,
             vector_stats: VectorStats::default(),
             metadata_stats: HashMap::new(),
-            bloom_filter: None,
             bloom_filter_offset: None,
             hnsw_segment_offset: None,
             compression_codec: "zstd".to_string(),
@@ -372,6 +371,16 @@ pub struct SchemaDescriptor {
     pub vector_dimension: usize,
     pub metadata_fields: Vec<FieldDescriptor>,
     pub version: u32,
+}
+
+impl Default for SchemaDescriptor {
+    fn default() -> Self {
+        Self {
+            vector_dimension: 384, // Default OpenAI embedding dimension
+            metadata_fields: Vec::new(),
+            version: 1,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

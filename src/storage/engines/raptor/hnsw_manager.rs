@@ -227,7 +227,7 @@ impl HnswManager {
         for entry in entry_points {
             let dist = self.compute_encoded_distance(encoded_query, &entry.encoded_vector)?;
             candidates.push(SearchCandidate { distance: dist, node_id: entry.id.clone() });
-            w.push(SearchCandidate { distance: -dist, node_id: entry.id });
+            w.push(SearchCandidate { distance: -dist, node_id: entry.id.clone() });
             visited.insert(entry.id);
         }
         
@@ -463,7 +463,7 @@ impl HnswManager {
             // TODO: Implement actual Arrow to VectorRecord conversion
             // This should extract id, vector, metadata from Arrow columns
             let record = VectorRecord {
-                id: Some(format!("raptor_vec_{}", row)),
+                id: format!("raptor_vec_{}", row),
                 vector: vec![0.0; 768], // Placeholder
                 metadata: vec![],
                 timestamp: chrono::Utc::now().timestamp() as u32,
@@ -471,6 +471,7 @@ impl HnswManager {
                 expires_at: None,
                 version: Some(1),
                 quantized_vector: None,
+                source: None,
             };
             records.push(record);
         }
@@ -496,28 +497,9 @@ impl HnswManager {
         Ok(())
     }
     
-    /// Update the HNSW manager from a compacted graph builder
-    pub async fn update_from_builder(&self, builder: super::hnsw_compaction::HnswGraphBuilder) -> Result<()> {
-        let mut graph = self.graph.write().await;
-        
-        // Clear existing graph
-        graph.nodes.clear();
-        // Note: edges are stored within nodes as neighbors, not separately
-        graph.levels.clear();
-        graph.entry_points.clear();
-        
-        // Import nodes from builder
-        // Note: HnswGraphBuilder would need to expose its data through getters
-        // For now, we'll rebuild the graph from serialized data
-        let serialized = builder.serialize_to_disk()?;
-        let rebuilt = super::hnsw_compaction::HnswGraphBuilder::deserialize_from_disk(&serialized)?;
-        
-        // Update graph metadata
-        // Log update (HnswGraphBuilder should provide public getters for metadata)
-        tracing::info!("RAPTOR: Updated HNSW graph from compaction");
-        
-        Ok(())
-    }
+    // Graph update methods removed since hnsw_compaction.rs was eliminated
+    // HNSW graph updates now handled through consolidated_compactor's HNSW-aware compaction
+    // which preserves graph structure during compaction operations
     
     pub async fn optimize(&mut self) -> Result<()> {
         // Optimization handled by AXIS infrastructure

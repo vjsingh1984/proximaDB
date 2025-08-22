@@ -128,6 +128,7 @@ impl CollectionConfigJson {
             description: self.description.clone(),
             tags: self.tags.clone().unwrap_or_default(),
             owner: self.owner.clone(),
+            embedding_models: None,  // Default to None for embedding models
         };
         config
     }
@@ -924,6 +925,8 @@ pub async fn vector_search(
                 similarity: r.similarity,
                 version: r.version,
                 timestamp: r.timestamp,
+                source: r.source,
+                expanded_context: r.expanded_context,
             })
             .collect()
     } else {
@@ -1752,7 +1755,7 @@ pub async fn delete_vectors(
     let tombstone_vectors: Vec<VectorRecord> = vector_ids
         .into_iter()
         .map(|id| VectorRecord {
-            id: Some(id),
+            id: id.clone(),
             vector: vec![], // Empty vector for tombstone
             metadata: vec![],
             timestamp: (current_time / 1000) as u32,
@@ -1760,7 +1763,7 @@ pub async fn delete_vectors(
             expires_at: Some((current_time / 1000) as u32), // Mark for deletion (convert ms to seconds)
             version: Some(1),
             quantized_vector: None,
-        
+            source: None,  // No source for tombstone
         })
         .collect();
     

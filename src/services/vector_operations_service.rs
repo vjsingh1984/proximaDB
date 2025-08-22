@@ -31,7 +31,7 @@
 
 use anyhow::Result;
 use std::sync::Arc;
-use tracing::{debug, info, warn};
+use tracing::{debug, info};
 
 use crate::storage::traits::CollectionMetadataProvider;
 
@@ -92,13 +92,13 @@ impl VectorOperationsService {
         custom_recalls: Option<crate::core::search::ProgressiveRecalls>,
     ) -> Result<Vec<crate::core::search::SearchResult>> {
         use crate::core::search::progressive_quantization::{
-            ProgressiveSearchConfig, SearchScenario, ObservedRecalls
+            ProgressiveSearchConfig, SearchScenario
         };
         
         info!("🔄 Starting progressive quantization-aware search for collection {}", collection_id);
         
         // Get collection configuration
-        let collection = self.get_or_load_collection(collection_id).await?;
+        let _collection = self.get_or_load_collection(collection_id).await?;
         
         // Configure progressive search based on scenario
         let mut config = if let Some(scenario_str) = scenario {
@@ -241,7 +241,20 @@ impl VectorOperationsService {
         debug!("📋 Unified execution plan created with {} steps", execution_plan.execution_steps.len());
         
         // Execute the unified plan with search parameters
-        self.execute_unified_plan(collection_id, execution_plan, query_vector, top_k, filter).await
+        let internal_results = self.execute_unified_plan(collection_id, execution_plan, query_vector, top_k, filter).await?;
+        
+        // Convert InternalSearchResult to proto SearchResult at API boundary
+        let search_vector_records: Vec<crate::proto::proximadb::SearchVectorRecord> = internal_results
+            .iter()
+            .map(|result| result.to_search_vector_record(true, true, true)) // Include vector, metadata, and source
+            .collect();
+            
+        // Wrap in proto SearchResult
+        Ok(vec![crate::core::search::SearchResult {
+            results: search_vector_records,
+            total_found: internal_results.len() as i64,
+            collection_id: Some(collection_id.to_string()),
+        }])
     }
     
     /// Execute unified plan - NEW capability for combined operations
@@ -252,9 +265,9 @@ impl VectorOperationsService {
         query_vector: Vec<f32>,
         top_k: usize,
         filter: Option<FilterExpression>,
-    ) -> Result<Vec<crate::core::search::SearchResult>> {
-        let mut results: Vec<crate::core::search::SearchResult> = Vec::new();
-        let mut intermediate_results: Option<Vec<crate::core::search::SearchResult>> = None;
+    ) -> Result<Vec<crate::core::search::InternalSearchResult>> {
+        let mut results: Vec<crate::core::search::InternalSearchResult> = Vec::new();
+        let mut intermediate_results: Option<Vec<crate::core::search::InternalSearchResult>> = None;
         
         for step in plan.execution_steps {
             match step {
@@ -415,11 +428,11 @@ impl VectorOperationsService {
         collection_id: &str,
         search_method: crate::query::unified_query_optimizer::SearchExecutionMethod,
         early_termination: crate::storage::engines::columnar::common::EarlyTerminationConfig,
-        input_vectors: Option<&Vec<crate::core::search::SearchResult>>,
+        input_vectors: Option<&Vec<crate::core::search::InternalSearchResult>>,
         query_vector: Vec<f32>,
         top_k: usize,
         filter: Option<FilterExpression>,
-    ) -> Result<Vec<crate::core::search::SearchResult>> {
+    ) -> Result<Vec<crate::core::search::InternalSearchResult>> {
         info!("🎯 Executing TWO-STAGE optimized filter+search for collection {}", collection_id);
         info!("   Stage 1: WAL/memtable search for recent unflushed vectors");
         info!("   Stage 2: Storage engine search for flushed/compacted vectors");
@@ -492,9 +505,10 @@ impl VectorOperationsService {
         all_results.extend(wal_results);
         all_results.extend(storage_results);
         
-        // Sort by score (ascending for distance, descending for similarity)
+        // Sort by similarity score in descending order (higher = more similar)
+        // All engines now return standardized similarity scores via InternalSearchResult::from_distance_standard
         all_results.sort_by(|a, b| {
-            a.score.partial_cmp(&b.score).unwrap_or(std::cmp::Ordering::Equal)
+            b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal)
         });
         
         // Take top-k
@@ -588,29 +602,150 @@ impl VectorOperationsService {
     // Additional service methods
     pub async fn handle_vector_batch_proto_vec(
         &self,
-        _collection_id: &str,
-        _vectors: Vec<VectorRecord>,
+        collection_id: &str,
+        vectors: Vec<VectorRecord>,
     ) -> Result<Vec<u8>> {
-        // TODO: Implement vector batch handling
+        // Validate vectors before insertion
+        self.validate_vectors_for_insert(collection_id, &vectors).await?;
+        
+        // Convert to Arc for zero-copy sharing
+        let vectors_arc = Arc::new(vectors);
+        
+        // Write vectors to WAL
+        let start = std::time::Instant::now();
+        let batch_result = self.wal_manager.write_vector_batch_native_arc(
+            collection_id,
+            vectors_arc.clone(),
+        ).await?;
+        
+        let duration_micros = start.elapsed().as_micros() as i64;
+        
+        // Collect vector IDs for response
+        let vector_ids: Vec<String> = vectors_arc.iter()
+            .map(|v| v.id.clone())
+            .collect();
+        
+        debug!("✅ Wrote {} vectors to WAL for collection {} in {}μs", 
+               vector_ids.len(), collection_id, duration_micros);
+        
         let response = serde_json::json!({
             "success": true,
-            "vector_ids": Vec::<String>::new(),
-            "message": "Batch processing not implemented"
+            "vector_ids": vector_ids,
+            "message": format!("Successfully wrote {} vectors", vector_ids.len()),
+            "duration_micros": duration_micros,
+            "batch_ids": batch_result,
         });
+        
         Ok(serde_json::to_vec(&response)?)
     }
     
     pub async fn insert_vectors_direct(
         &self,
-        _collection_id: &str,
+        collection_id: &str,
         vectors: Arc<Vec<VectorRecord>>,
     ) -> Result<crate::storage::engines::InsertResult> {
-        // TODO: Implement direct vector insertion
+        // Validate vectors before insertion
+        self.validate_vectors_for_insert(collection_id, &vectors).await?;
+        
+        // Write vectors to WAL
+        let start = std::time::Instant::now();
+        let batch_result = self.wal_manager.write_vector_batch_native_arc(
+            collection_id,
+            vectors.clone(),
+        ).await?;
+        
+        let duration_micros = start.elapsed().as_micros() as i64;
+        let bytes_written = vectors.iter()
+            .map(|v| v.vector.len() * 4 + v.id.len() + 32) // Approximate size
+            .sum::<usize>() as i64;
+        
+        debug!("✅ Direct insert: wrote {} vectors to WAL for collection {} in {}μs", 
+               vectors.len(), collection_id, duration_micros);
+        
         Ok(crate::storage::engines::InsertResult {
             entries_written: vectors.len() as i64,
-            duration_micros: 0,
-            bytes_written: 0,
+            duration_micros,
+            bytes_written,
         })
+    }
+    
+    /// Validate vectors for insertion based on collection requirements
+    /// OPTIMIZED: Purely in-memory validation with inline operations
+    #[inline(always)]
+    async fn validate_vectors_for_insert(
+        &self,
+        collection_id: &str,
+        vectors: &[VectorRecord],
+    ) -> Result<()> {
+        // Get collection configuration - this is cached after first load
+        let collection = self.get_or_load_collection(collection_id).await?;
+        
+        // Fast path: extract config once
+        let config = match &collection.config {
+            Some(c) => c,
+            None => return Ok(()), // No config, no validation needed
+        };
+        
+        // INLINE: Check if IDs are required (pure computation, no I/O)
+        let has_indexes = !config.index_configs.is_empty();
+        // TODO: Add RAPTOR engine check when it's added to proto StorageEngine enum
+        let requires_id = has_indexes; // For now, only require IDs when indexes are configured
+        
+        let expected_dimension = config.dimension as usize;
+        
+        // Fast path: no validation needed
+        if !requires_id && expected_dimension == 0 {
+            return Ok(());
+        }
+        
+        // Pre-allocate HashSet with capacity hint for better performance
+        // Use &str references to avoid cloning strings
+        let mut seen_ids = if requires_id {
+            Some(std::collections::HashSet::<&str>::with_capacity(vectors.len()))
+        } else {
+            None
+        };
+        
+        // Single pass validation loop - check everything at once
+        for (i, vector) in vectors.iter().enumerate() {
+            // INLINE: Dimension check (simple integer comparison)
+            if expected_dimension > 0 && vector.vector.len() != expected_dimension {
+                return Err(anyhow::anyhow!(
+                    "Vector at index {} has dimension {} but collection '{}' expects dimension {}",
+                    i, vector.vector.len(), collection_id, expected_dimension
+                ));
+            }
+            
+            // INLINE: ID validation (only if required)
+            if let Some(ref mut seen) = seen_ids {
+                // Check ID exists and is not empty (single byte check)
+                if vector.id.is_empty() {
+                    return Err(anyhow::anyhow!(
+                        "Vector at index {} has empty ID. Collection '{}' requires valid IDs (has indexing or uses RAPTOR engine)",
+                        i, collection_id
+                    ));
+                }
+                
+                // Check ID length (simple length comparison)
+                if vector.id.len() > 256 {
+                    return Err(anyhow::anyhow!(
+                        "Vector ID '{}' exceeds maximum length of 256 characters",
+                        vector.id
+                    ));
+                }
+                
+                // Check for duplicate IDs (HashSet O(1) operation)
+                // Use string slice reference to avoid any allocation
+                if !seen.insert(vector.id.as_str()) {
+                    return Err(anyhow::anyhow!(
+                        "Duplicate ID '{}' found in batch. All IDs must be unique",
+                        vector.id
+                    ));
+                }
+            }
+        }
+        
+        Ok(())
     }
     
     pub async fn get_vector(

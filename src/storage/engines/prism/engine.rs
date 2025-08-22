@@ -868,7 +868,7 @@ impl UnifiedStorageEngine for PrismEngine {
     async fn search_vectors_unified(
         &self,
         ctx: &crate::storage::traits::SearchContext,
-    ) -> Result<Vec<crate::core::search::SearchResult>> {
+    ) -> Result<Vec<crate::core::search::InternalSearchResult>> {
         // Extract all parameters from context (pre-computed)
         let collection_id = ctx.collection_id();
         let storage_path = ctx.storage_path();

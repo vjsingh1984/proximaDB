@@ -269,6 +269,32 @@ impl AxisEventLogConsumer {
         let event_id = event.event_id.clone();
         let start_time = std::time::Instant::now();
         
+        // Check if collection has ANY indexes configured
+        let has_indexes = collection.config.as_ref()
+            .map(|c| !c.index_configs.is_empty())
+            .unwrap_or(false);
+        
+        if !has_indexes {
+            // No indexes configured - mark event as completed without processing
+            // This is CRITICAL for performance:
+            // 1. Flush creates event in EventLog
+            // 2. We immediately mark it complete (no work needed)
+            // 3. Compaction checks can_compact() which returns true
+            // 4. Compaction proceeds without delay
+            // 
+            // Without this, compaction would wait forever for non-existent index processing
+            info!(
+                "[AXIS Consumer] No indexes configured for collection {}, marking flush event {} as completed",
+                event.collection_id, event_id
+            );
+            
+            // Update metrics for skipped event
+            self.metrics.events_skipped.fetch_add(1, Ordering::Relaxed);
+            
+            // Returning Ok() marks event as complete in EventLog
+            return Ok(());
+        }
+        
         // Determine extraction mode based on index types
         let extraction_mode = self.determine_extraction_mode(&collection);
         let extraction_mode_str = match extraction_mode {
@@ -383,10 +409,29 @@ impl AxisEventLogConsumer {
     async fn process_compaction_event(
         &self,
         event: IndexEvent,
-        _collection: Arc<Collection>,
+        collection: Arc<Collection>,
     ) -> Result<()> {
         let event_id = event.event_id.clone();
         let start_time = std::time::Instant::now();
+        
+        // Check if collection has ANY indexes configured
+        let has_indexes = collection.config.as_ref()
+            .map(|c| !c.index_configs.is_empty())
+            .unwrap_or(false);
+        
+        if !has_indexes {
+            // No indexes configured - mark event as completed without processing
+            info!(
+                "[AXIS Consumer] No indexes configured for collection {}, marking compaction event {} as completed",
+                event.collection_id, event_id
+            );
+            
+            // Update metrics for skipped event
+            self.metrics.events_skipped.fetch_add(1, Ordering::Relaxed);
+            
+            // The compaction is done on storage side, we just have nothing to update
+            return Ok(());
+        }
         
         debug!(
             "[AXIS Consumer] Processing compaction event {} for collection {}:\n  Output Files: {:?}\n  Vector Count: {}\n  Storage Engine: {:?}",
@@ -833,7 +878,7 @@ impl AxisEventLogConsumer {
                         
                         // RAPTOR's compaction reads all vectors to rebuild HNSW graph
                         // We can use the same approach for AXIS indexing
-                        use crate::storage::engines::raptor::unified_reader::RaptorUnifiedReader;
+                        use crate::storage::engines::raptor::consolidated_reader::RaptorReader;
                         
                         let mut all_records = Vec::new();
                         for (idx, file_path) in files.iter().enumerate() {

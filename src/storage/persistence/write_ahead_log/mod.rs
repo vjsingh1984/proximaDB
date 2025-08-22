@@ -1439,9 +1439,9 @@ impl WriteAheadLogManager {
         metadata_filters: Option<&crate::core::search::FilterExpression>,
         include_vectors: bool,
         include_metadata: bool,
-    ) -> Result<Vec<crate::core::search::SearchResult>> {
+    ) -> Result<Vec<crate::core::search::InternalSearchResult>> {
         use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
-        use crate::core::search::SearchResult;
+        use crate::core::search::InternalSearchResult;
         
         tracing::debug!(
             "🔍 WAL: Enhanced search for collection {} with top_k={}, metric={:?}, filters={}",
@@ -1496,31 +1496,28 @@ impl WriteAheadLogManager {
                     &distance_metric,
                 );
                 
-                // Create search result
-                let search_result = SearchResult {
-                    id: vector_record.id.clone().unwrap_or_default(),
-                    vector_id: vector_record.id.clone(),
-                    score: similarity_result.raw_value, // Add score field
-                    similarity: similarity_result.normalized_score,
-                    // rank removed -  None, // Will be set after sorting
-                    vector: if include_vectors { 
+                // Create search result using standardized similarity scoring
+                let search_result = crate::core::search::InternalSearchResult::from_distance_standard(
+                    vector_record.id.clone().unwrap_or_default(),
+                    similarity_result.raw_value, // Raw distance value
+                    &distance_metric, // Distance metric for conversion
+                    if include_vectors { 
                         Some(vector_record.vector.clone()) 
                     } else { 
                         None 
                     },
-                    metadata: if include_metadata {
+                    if include_metadata {
                         self.convert_proto_metadata_to_hashmap(&vector_record.metadata)
                     } else {
                         std::collections::HashMap::new()
                     },
-                    debug_info: None,
-                    semantic_similarity: None,
-                    quantization_info: None,
-                    engine_stats: None,
-                    index_path: None,
-                    timestamp: Some(vector_record.timestamp),
-                    version: vector_record.version,
-                };
+                );
+                
+                // Set additional fields that aren't in the standard constructor
+                let mut search_result = search_result;
+                search_result.vector_id = vector_record.id.clone();
+                search_result.timestamp = Some(vector_record.timestamp);
+                search_result.version = vector_record.version;
                 
                 all_results.push(search_result);
             }
@@ -1532,10 +1529,8 @@ impl WriteAheadLogManager {
         });
         all_results.truncate(top_k);
         
-        // Set ranks
-        for (i, result) in all_results.iter_mut().enumerate() {
-            result.rank = Some((i + 1) as u16);
-        }
+        // Ranks are not part of InternalSearchResult
+        // They can be computed by the caller if needed
         
         tracing::info!(
             "✅ WAL search completed: {} results from {} batches with bloom filter optimization",

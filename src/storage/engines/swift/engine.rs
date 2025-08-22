@@ -489,7 +489,7 @@ impl UnifiedStorageEngine for SwiftEngine {
     async fn search_vectors_unified(
         &self,
         ctx: &crate::storage::traits::SearchContext,
-    ) -> Result<Vec<crate::core::search::SearchResult>> {
+    ) -> Result<Vec<crate::core::search::InternalSearchResult>> {
         let search_start = std::time::Instant::now();
         
         // Extract all parameters from context (pre-computed)
