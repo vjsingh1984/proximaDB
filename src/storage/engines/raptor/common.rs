@@ -1719,6 +1719,7 @@ pub struct P2Matrix {
 
 impl P2Matrix {
     /// Get distance between vectors i and j (handles upper triangle indexing)
+    /// Delegates dequantization to StorageQuantizationEngine for consistency
     pub fn get_distance(&self, i: usize, j: usize) -> f32 {
         if i == j {
             return 0.0;
@@ -1731,10 +1732,13 @@ impl P2Matrix {
         let n = self.num_vectors as usize;
         let idx = i * (2 * n - i - 1) / 2 + j - i - 1;
         
-        // Dequantize from INT8
-        let quantized = self.distances[idx];
-        let normalized = quantized as f32 / 255.0;
-        self.min_distance + normalized * (self.max_distance - self.min_distance)
+        // Delegate to unified quantization module for dequantization
+        let quantization_engine = crate::compute::quantization::storage_engine::StorageQuantizationEngine::new();
+        quantization_engine.dequantize_u8(
+            self.distances[idx],
+            self.min_distance,
+            self.max_distance
+        )
     }
     
     /// Get all distances for a specific vector
@@ -1888,6 +1892,7 @@ pub struct K2Matrix {
 
 impl K2Matrix {
     /// Get distance between centroids i and j (handles upper triangle indexing)
+    /// Delegates dequantization to StorageQuantizationEngine for consistency
     pub fn get_distance(&self, i: usize, j: usize) -> f32 {
         if i == j {
             return 0.0;
@@ -1900,10 +1905,13 @@ impl K2Matrix {
         let idx = i * (2 * n - i - 1) / 2 + j - i - 1;
         
         if idx < self.distances.len() {
-            // Dequantize from u8 to f32
-            let quantized = self.distances[idx];
-            let range = self.max_distance - self.min_distance;
-            self.min_distance + (quantized as f32 / 255.0) * range
+            // Delegate to unified quantization module for dequantization
+            let quantization_engine = crate::compute::quantization::storage_engine::StorageQuantizationEngine::new();
+            quantization_engine.dequantize_u8(
+                self.distances[idx],
+                self.min_distance,
+                self.max_distance
+            )
         } else {
             self.max_distance // Fallback
         }
