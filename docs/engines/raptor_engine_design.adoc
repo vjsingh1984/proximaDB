@@ -342,8 +342,6 @@ graph LR
     end
 ----
 
-image::raptor_memory_distribution.svg[RAPTOR Memory Distribution, align="center", width=100%]
-
 The memory distribution charts above show:
 
 **Overall File Distribution** (Left):
