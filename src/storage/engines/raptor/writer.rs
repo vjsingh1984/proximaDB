@@ -23,7 +23,7 @@ use crate::index::axis::clustering::{
     AxisClusteringEngine, ReusableClusteringEngine, 
     ClusteringConfig as AxisClusteringConfig, ClusteringAlgorithm, KMeansConfig, KMeansInit
 };
-use crate::compute::distance_computation::DistanceMetric;
+use crate::compute::distance_computation::{DistanceMetric, engine::UnifiedDistanceCompute};
 
 use super::{RaptorConfig, common::*};
 use super::constants;
@@ -44,6 +44,7 @@ pub struct RaptorWriter {
     quantization_engine: Arc<StorageQuantizationEngine>,
     memory_pool: Arc<VectorMemoryPool>,
     hardware: Arc<HardwareCapabilities>,
+    distance_compute: Arc<UnifiedDistanceCompute>,
     
     // Current state
     current_row_page: Option<RowPageBuffer>,
@@ -550,19 +551,19 @@ impl IvfClusteringBuilder {
                 
                 // Step 4: Calculate the 5 fundamental distance components
                 // d₁: Source vector distance to its own centroid (intra-cluster cohesion)
-                let d1 = self.euclidean_distance(&vectors[source_idx], &source_centroid.vector);
+                let d1 = self.calculate_euclidean_distance(&vectors[source_idx], &source_centroid.vector);
                 
                 // d₂: Inter-centroid distance (cluster separation, pre-computed from AXIS)
                 let d2 = self.centroid_distances[source_cluster][target_cluster];
                 
                 // d₃: Target vector distance to its own centroid (target cluster cohesion)
-                let d3 = self.euclidean_distance(&vectors[target_idx], &target_centroid.vector);
+                let d3 = self.calculate_euclidean_distance(&vectors[target_idx], &target_centroid.vector);
                 
                 // d₄: Source vector distance to target centroid (cross-cluster penalty)
-                let d4 = self.euclidean_distance(&vectors[source_idx], &target_centroid.vector);
+                let d4 = self.calculate_euclidean_distance(&vectors[source_idx], &target_centroid.vector);
                 
                 // d₅: Target vector distance to source centroid (reverse cross-cluster penalty)
-                let d5 = self.euclidean_distance(&vectors[target_idx], &source_centroid.vector);
+                let d5 = self.calculate_euclidean_distance(&vectors[target_idx], &source_centroid.vector);
                 
                 // Step 5: Calculate adaptive boosting factors based on statistical thresholds
                 // α₁: Boundary detection for source vector (higher penalty for outliers)
@@ -720,7 +721,7 @@ impl IvfClusteringBuilder {
             let mut distances = Vec::new();
             
             for vec in vectors {
-                let dist = self.euclidean_distance(vec, &centroid.vector);
+                let dist = self.calculate_euclidean_distance(vec, &centroid.vector);
                 distances.push(dist);
             }
             
@@ -749,7 +750,7 @@ impl IvfClusteringBuilder {
         let mut nearest = 0;
         
         for (idx, centroid) in centroids.iter().enumerate() {
-            let dist = self.euclidean_distance(vec, centroid);
+            let dist = self.calculate_euclidean_distance(vec, centroid);
             if dist < min_dist {
                 min_dist = dist;
                 nearest = idx;
@@ -760,14 +761,6 @@ impl IvfClusteringBuilder {
     }
     
     /// Helper: Simple Euclidean distance calculation
-    fn euclidean_distance(&self, a: &[f32], b: &[f32]) -> f32 {
-        a.iter()
-            .zip(b.iter())
-            .map(|(x, y)| (x - y).powi(2))
-            .sum::<f32>()
-            .sqrt()
-    }
-    
     /// Convert cluster assignments to row groups
     /// Convert clusters to rowgroups using 5-component boosting for intelligent co-location
     /// This ensures similar vectors are grouped together based on ALL distance components
@@ -955,6 +948,15 @@ impl IvfClusteringBuilder {
         }
         
         (best_idx, best_score)
+    }
+    
+    /// Helper method to calculate euclidean distance using unified compute
+    fn calculate_euclidean_distance(&self, v1: &[f32], v2: &[f32]) -> f32 {
+        self.distance_compute.calculate_distance(
+            v1,
+            v2,
+            &DistanceMetric::Euclidean
+        ).raw_value
     }
     
     /// Calculate cohesion using boosted distances
@@ -1376,6 +1378,9 @@ impl RaptorWriter {
             hardware.clone(),
         ));
         
+        // Initialize unified distance compute
+        let distance_compute = Arc::new(UnifiedDistanceCompute::new(hardware.clone()));
+        
         // Initialize memory pool
         let memory_pool = Arc::new(VectorMemoryPool::new(
             100 * 1024 * 1024, // 100MB pool
@@ -1432,6 +1437,7 @@ impl RaptorWriter {
             quantization_engine,
             memory_pool,
             hardware,
+            distance_compute,
             current_row_page: None,
             current_rowgroup: None,
             row_groups: Vec::new(),
@@ -2160,32 +2166,31 @@ impl RaptorWriter {
             })
             .collect();
         
-        // Step 5: Build k×k centroid distance matrix for d1 component
-        let k = self.ivf_builder.centroids.len();
-        self.ivf_builder.centroid_distances = vec![vec![0.0; k]; k];
-        for i in 0..k {
-            for j in 0..k {
-                if i != j {
-                    let dist = self.euclidean_distance(
-                        &self.ivf_builder.centroids[i].vector,
-                        &self.ivf_builder.centroids[j].vector
-                    );
-                    self.ivf_builder.centroid_distances[i][j] = dist;
-                }
-            }
-        }
+        // Step 5: Build k×k centroid distance matrix using AXIS engine
+        // This avoids duplication - AXIS provides optimized distance calculations
+        let centroid_vectors: Vec<Vec<f32>> = self.ivf_builder.centroids.iter()
+            .map(|c| c.vector.clone())
+            .collect();
+        
+        self.ivf_builder.centroid_distances = self.ivf_builder.axis_clustering
+            .calculate_centroid_distance_matrix(
+                &centroid_vectors,
+                DistanceMetric::Euclidean
+            )?;
         
         // Step 6: Update nodes with cluster assignments and calculate centroid distances
+        // Use unified distance compute for consistency and optimization
         for (idx, &cluster_id) in clustering_result.assignments.iter().enumerate() {
             self.ivf_builder.nodes[idx].cluster_id = cluster_id;
             
-            // Calculate distance to assigned centroid (d2 component)
+            // Calculate distance to assigned centroid (d2 component) using unified distance
             let centroid = &self.ivf_builder.centroids[cluster_id as usize];
-            let dist = self.euclidean_distance(
+            let dist_result = self.distance_compute.calculate_distance(
                 &self.ivf_builder.vectors[idx],
-                &centroid.vector
+                &centroid.vector,
+                &DistanceMetric::Euclidean
             );
-            self.ivf_builder.nodes[idx].centroid_distance = dist;
+            self.ivf_builder.nodes[idx].centroid_distance = dist_result.raw_value;
             
             // Update centroid statistics
             self.ivf_builder.centroids[cluster_id as usize].num_vectors += 1;
@@ -2291,7 +2296,7 @@ impl RaptorWriter {
                 let mut distances: Vec<(usize, f32)> = cluster_nodes.iter()
                     .filter(|&&idx| idx != node_idx)
                     .map(|&other_idx| {
-                        let dist = self.euclidean_distance(
+                        let dist = self.calculate_euclidean_distance(
                             node_vector,
                             &self.ivf_builder.vectors[other_idx]
                         );
