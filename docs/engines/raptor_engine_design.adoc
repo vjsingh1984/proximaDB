@@ -5,7 +5,7 @@
 :source-highlighter: rouge
 
 [.text-center]
-**RAPTOR: Hybrid IVF+Graph Storage Engine with Adaptive P×K**
+**RAPTOR: Matrix-Based IVF Storage Engine with P² + K² + P×K**
 
 [.text-center]
 **Row-Aligned Predicated Tensor Optimized Repository**
@@ -15,11 +15,12 @@
 **📋 Status**: ✅ **Production Ready** - Enhanced with Two-Phase Boundary Detection
 
 **🎯 RAPTOR's Unique Innovations**:
-- **World's First**: Hybrid IVF+Graph combining clustering with local edges
-- **Adaptive P×K Storage**: Automatically adjusts based on K/D relationship
-- **Two-Phase Boundary Detection**: K×K cluster selection + P×K spillover detection
+- **Matrix Trinity**: P² + K² + P×K replaces all graph structures
+- **P² Matrix**: Upper-triangle pre-computed distances (no HNSW needed)
+- **Adaptive P×K Storage**: 10%-100% coverage based on K/D relationship
+- **Two-Phase Boundary Detection**: K² cluster selection + P×K spillover
 - **Self-Correction**: Confidence-based correction with bounded computation
-- **Component Boosting**: 5-component distance formula with strategic application
+- **FastLanes + SIMD**: Hardware-accelerated matrix operations
 ====
 
 == Executive Summary
@@ -744,9 +745,11 @@ Total used: 50/50 vectors (100%)
 │  │ ┌───────────────────────────────────────┐      │    │
 │  │ │ Vectors (1024 × D × 4 bytes)          │      │    │
 │  │ ├───────────────────────────────────────┤      │    │
-│  │ │ Local HNSW edges (compressed)         │      │    │
+│  │ │ P² Matrix: P×(P-1)/2 distances        │      │    │
+│  │ │ (Upper triangle, INT8 quantized)      │      │    │
 │  │ ├───────────────────────────────────────┤      │    │
 │  │ │ P×K data (adaptive storage)           │      │    │
+│  │ │ (10%-100% coverage based on K/D)      │      │    │
 │  │ ├───────────────────────────────────────┤      │    │
 │  │ │ Bloom filter (180KB)                  │      │    │
 │  │ └───────────────────────────────────────┘      │    │
@@ -1192,7 +1195,7 @@ RAPTOR achieves industry-leading accuracy through its Matrix Trinity approach:
 * **Latency**: 15ms / 6ms / 2ms (P50 for respective modes)
 * **Memory Overhead**: 19-25% of vector storage
 * **Scalability**: Up to 67M vectors with u16 rowgroup IDs
-* **Unique Innovation**: World's first true hybrid IVF+Graph with component boosting
+* **Unique Innovation**: Matrix Trinity (P² + K² + P×K) replacing all graph structures
 
 === Configuration Examples
 

@@ -96,7 +96,9 @@ pub struct RowGroupMetadata {
     pub vector_stats: VectorStats,
     pub metadata_stats: HashMap<String, ColumnStats>,
     pub bloom_filter_offset: Option<u64>,
-    pub hnsw_segment_offset: Option<u64>,
+    pub hnsw_segment_offset: Option<u64>,    // DEPRECATED: Replaced by p2_matrix_offset
+    pub p2_matrix_offset: Option<u64>,       // P² matrix stored inline (replaces HNSW)
+    pub p2_matrix_size: Option<u64>,         // Compressed size of P² matrix
     pub pxk_matrix_offset: Option<u64>,      // P×K matrix stored inline after vectors
     pub pxk_matrix_size: Option<u64>,        // Compressed size of P×K matrix
     pub compression_codec: String,
@@ -1458,6 +1460,65 @@ pub struct FastLanesMetadata {
     
     /// Compressed size in bytes
     pub compressed_size: u32,
+}
+
+// ====== P² Matrix for Intra-Rowgroup Navigation ======
+
+/// P² Matrix: Pre-computed distances between all vectors in a rowgroup
+/// Replaces local HNSW segments with exact distance computation
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct P2Matrix {
+    /// Number of vectors in this rowgroup
+    pub num_vectors: u32,
+    
+    /// Upper triangle distances (P×(P-1)/2 values)
+    /// Stored as linear array, indexed by: idx = i×(2n-i-1)/2 + j - i - 1
+    pub distances: Vec<u8>,  // Quantized INT8 or Binary
+    
+    /// Quantization parameters for distance reconstruction
+    pub min_distance: f32,
+    pub max_distance: f32,
+    
+    /// Compression strategy used
+    pub compression: FastLanesScheme,
+    
+    /// Size after compression
+    pub compressed_size: u32,
+}
+
+impl P2Matrix {
+    /// Get distance between vectors i and j (handles upper triangle indexing)
+    pub fn get_distance(&self, i: usize, j: usize) -> f32 {
+        if i == j {
+            return 0.0;
+        }
+        
+        // Ensure i < j for upper triangle
+        let (i, j) = if i < j { (i, j) } else { (j, i) };
+        
+        // Calculate index in linear array
+        let n = self.num_vectors as usize;
+        let idx = i * (2 * n - i - 1) / 2 + j - i - 1;
+        
+        // Dequantize from INT8
+        let quantized = self.distances[idx];
+        let normalized = quantized as f32 / 255.0;
+        self.min_distance + normalized * (self.max_distance - self.min_distance)
+    }
+    
+    /// Get all distances for a specific vector
+    pub fn get_vector_distances(&self, vector_idx: usize) -> Vec<f32> {
+        let n = self.num_vectors as usize;
+        let mut distances = vec![0.0; n];
+        
+        for j in 0..n {
+            if j != vector_idx {
+                distances[j] = self.get_distance(vector_idx, j);
+            }
+        }
+        
+        distances
+    }
 }
 
 // ====== Boundary Detection and Self-Correction Structures ======

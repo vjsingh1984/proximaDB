@@ -47,6 +47,7 @@ pub use common::{
     RowGroupBloomFilter, ColumnnarIdIndex,  // Added bloom filter types
     SpilloverInfo, ConfidenceAssessment, ConfidenceSignals,
     CorrectionStrategy, BoostingStrategy,  // Added boundary/correction types
+    P2Matrix,  // Added P² matrix for intra-rowgroup navigation
 };
 
 // Export consolidated modules instead of deprecated ones

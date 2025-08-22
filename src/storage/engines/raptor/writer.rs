@@ -1119,86 +1119,64 @@ impl IvfClusteringBuilder {
 }
 
 impl RaptorWriter {
-    /// Build local HNSW segment for a single rowgroup (edges within cluster only)
-    fn build_local_hnsw_segment(
+    /// Build P² matrix for intra-rowgroup navigation (replaces local HNSW)
+    fn build_p2_matrix(
         &self,
         vectors: &[Vec<f32>],
-        vector_ids: &[String],
-        rowgroup_id: u32,
-    ) -> Result<LocalHnswSegment> {
-        let num_vectors = vectors.len();
-        let m = self.config.edges_per_node.unwrap_or(16); // Default M=16 for HNSW
-        let ef_construction = m * 2; // Standard HNSW heuristic
+    ) -> Result<P2Matrix> {
+        let n = vectors.len();
+        let upper_triangle_size = n * (n - 1) / 2;
+        let mut distances = Vec::with_capacity(upper_triangle_size);
         
-        // Build local edges using nearest neighbor search within this rowgroup only
-        let mut edges = Vec::new();
+        // Use UnifiedDistanceCompute with SIMD acceleration
+        let distance_compute = UnifiedDistanceCompute::new();
         
-        for (i, source_vec) in vectors.iter().enumerate() {
-            // Find M nearest neighbors within this rowgroup
-            let mut neighbors: Vec<(usize, f32)> = Vec::new();
-            
-            for (j, target_vec) in vectors.iter().enumerate() {
-                if i == j {
-                    continue;
-                }
-                
-                let distance = self.distance_compute.calculate_distance(
-                    source_vec,
-                    target_vec,
-                    &DistanceMetric::Euclidean
-                ).raw_value;
-                
-                neighbors.push((j, distance));
-            }
-            
-            // Sort by distance and keep top M
-            neighbors.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
-            neighbors.truncate(m);
-            
-            // Create edges for this node
-            for (target_idx, distance) in neighbors {
-                edges.push(HnswEdge {
-                    from: i as u32,
-                    to: target_idx as u32,
-                    distance,
-                });
+        // Find min/max for quantization
+        let mut min_distance = f32::INFINITY;
+        let mut max_distance = f32::NEG_INFINITY;
+        
+        // Compute upper triangle only
+        for i in 0..n {
+            for j in (i + 1)..n {
+                let dist = distance_compute.cosine(&vectors[i], &vectors[j]);
+                distances.push(dist);
+                min_distance = min_distance.min(dist);
+                max_distance = max_distance.max(dist);
             }
         }
         
-        // Find entry point (vector closest to rowgroup centroid)
-        let entry_point = if let Some(rg) = self.row_groups.get(rowgroup_id as usize) {
-            if let Some(ref centroid) = rg.centroid {
-                let mut min_dist = f32::MAX;
-                let mut entry_idx = 0;
-                
-                for (i, vec) in vectors.iter().enumerate() {
-                    let dist = self.distance_compute.calculate_distance(
-                        vec,
-                        centroid,
-                        &DistanceMetric::Euclidean
-                    ).raw_value;
-                    
-                    if dist < min_dist {
-                        min_dist = dist;
-                        entry_idx = i;
-                    }
-                }
-                entry_idx as u32
-            } else {
-                0 // Default to first vector
-            }
+        // Quantize to INT8 using StorageQuantizationEngine
+        let quant_engine = StorageQuantizationEngine::new();
+        let (quantized, q_min, q_max) = quant_engine.quantize_to_u8(&distances);
+        
+        // Apply FastLanes encoding using unified encoder
+        let fastlanes_encoder = FastLanesEncoder::new();
+        
+        // Determine best encoding scheme based on data characteristics
+        let scheme = if max_distance - min_distance < 0.1 {
+            // Small range - use delta encoding
+            FastLanesScheme::Delta
+        } else if distances.len() > 10000 {
+            // Large dataset - use bit packing
+            FastLanesScheme::BitPacking
         } else {
-            0
+            // Default to frame-of-reference
+            FastLanesScheme::FrameOfReference
         };
         
-        Ok(LocalHnswSegment {
-            rowgroup_id,
-            num_nodes: num_vectors,
-            edges,
-            entry_point,
-            m_parameter: m,
+        // Encode with FastLanes
+        let encoded = fastlanes_encoder.encode_u8_slice(&quantized, scheme)?;
+        
+        Ok(P2Matrix {
+            num_vectors: n as u32,
+            distances: encoded,
+            min_distance: q_min,
+            max_distance: q_max,
+            compression: scheme,
+            compressed_size: encoded.len() as u32,
         })
     }
+    
     
     /// Compute all centroid-to-centroid distances for K×K matrix
     fn compute_all_centroid_distances(&mut self, centroids: &[(u32, Vec<f32>)]) -> Result<()> {
@@ -2185,16 +2163,17 @@ impl RaptorWriter {
                 None
             };
             
-            // Build local HNSW segment for this rowgroup (edges within cluster only)
-            let hnsw_segment_data = if self.config.enable_local_hnsw {
-                let local_segment = self.build_local_hnsw_segment(
-                    &page_vectors,
-                    &page_vector_ids,
-                    rowgroup_id
-                )?;
-                Some(bincode::serialize(&local_segment)?)
-            } else {
-                None
+            // Build P² matrix for intra-rowgroup navigation
+            let p2_matrix_data = {
+                let p2_matrix = self.build_p2_matrix(&page_vectors)?;
+                debug!(
+                    "Built P² matrix for rowgroup {}: {} vectors, {} distances, {}KB",
+                    rowgroup_id,
+                    p2_matrix.num_vectors,
+                    p2_matrix.distances.len(),
+                    p2_matrix.compressed_size / 1024
+                );
+                bincode::serialize(&p2_matrix)?
             };
             
             // Serialize page using FastLanes encoding
@@ -2224,17 +2203,15 @@ impl RaptorWriter {
                 None
             };
             
-            // Write HNSW segment inline (immediately after P×K matrix)
-            let hnsw_offset = if let Some(segment_data) = hnsw_segment_data {
-                let compressed_segment = self.compression.compress(
-                    &segment_data,
+            // Write P² matrix inline (immediately after P×K matrix)
+            let p2_offset = {
+                let compressed_p2 = self.compression.compress(
+                    &p2_matrix_data,
                     CompressionAlgorithm::Zstd,
                     6,
                     CompressionContext::SstBlock,
                 )?;
-                Some(self.filesystem.append(&self.file_path, &compressed_segment).await?)
-            } else {
-                None
+                Some(self.filesystem.append(&self.file_path, &compressed_p2).await?)
             };
             
             // Create page metadata with unified compression context
@@ -2282,7 +2259,9 @@ impl RaptorWriter {
                     vector_stats: VectorStats::default(),
                     metadata_stats: HashMap::new(),
                     bloom_filter_offset: None,
-                    hnsw_segment_offset: None,
+                    hnsw_segment_offset: None,  // Deprecated
+                    p2_matrix_offset: p2_offset,
+                    p2_matrix_size: Some(p2_matrix_data.len() as u64),
                     pxk_matrix_offset: None,
                     pxk_matrix_size: None,
                     compression_codec: "ZSTD".to_string(),
