@@ -899,6 +899,10 @@ impl AxisEventLogConsumer {
                             ).await?);
                             let cache_dir = "/tmp/raptor_cache".to_string();
                             
+                            // Create cache orchestrator for RAPTOR
+                            use crate::storage::cache::CrossCacheOrchestrator;
+                            let cache = Arc::new(CrossCacheOrchestrator::new());
+                            
                             // Create ZeroCopyFilesystem for RAPTOR
                             use crate::storage::persistence::filesystem::zero_copy_filesystem::ZeroCopyFilesystem;
                             use crate::storage::persistence::filesystem::local::{LocalFileSystem, LocalConfig};
@@ -932,10 +936,11 @@ impl AxisEventLogConsumer {
                             ));
                             
                             let reader = RaptorReader::new(
+                                cache_dir,
+                                config,
+                                cache,
                                 zero_copy_fs,
                                 transaction_coordinator,
-                                config,
-                                cache_dir,
                             );
                             
                             // Read all vectors from rowgroups (RAPTOR needs all vectors for HNSW graph)

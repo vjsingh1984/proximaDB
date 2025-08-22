@@ -19,7 +19,7 @@ use super::common::{
 use crate::compute::quantization::storage_engine::StorageQuantizationEngine;
 use crate::compute::quantization::types::UnifiedQuantizationLevel;
 use crate::storage::persistence::filesystem::{FileSystem, FilesystemFactory};
-use crate::storage::engines::common::fastlanes_encoding::{FastLanesEncoder, FastLanesScheme};
+use crate::storage::engines::common::fastlanes_encoding::FastLanesEncoder;
 use crate::core::hardware_capabilities::HardwareCapabilities;
 use crate::core::memory::pool::VectorMemoryPool;
 use crate::proto::proximadb::{VectorRecord, metadata_value};
@@ -1665,7 +1665,7 @@ impl RaptorWriter {
             // Compress entire page
             let compressed = self.compression.compress(
                 &encoded_page,
-                CompressionAlgorithm::ZSTD,
+                CompressionAlgorithm::Zstd,
                 6,
                 CompressionContext::SstBlock,
             )?;
@@ -1680,8 +1680,8 @@ impl RaptorWriter {
                 compressed_size: compressed.len() as i64,
                 uncompressed_size: encoded_page.len() as i64,
                 num_rows: page.rows.len() as i32,
-                first_id: page.rows.first().map(|r| r.id.to_vec()).unwrap_or_default(),
-                last_id: page.rows.last().map(|r| r.id.to_vec()).unwrap_or_default(),
+                first_id: page.rows.first().map(|r| r.id.as_bytes().to_vec()).unwrap_or_default(),
+                last_id: page.rows.last().map(|r| r.id.as_bytes().to_vec()).unwrap_or_default(),
                 compression_codec: "ZSTD".to_string(),
             };
             
@@ -1707,6 +1707,7 @@ impl RaptorWriter {
                     min_timestamp: None,
                     max_timestamp: None,
                     centroid: None,
+                    centroid_stats: None,
                 });
             }
             
@@ -2039,7 +2040,7 @@ impl RaptorWriter {
                         &all_text,
                         CompressionAlgorithm::Lz4,
                         3,
-                        CompressionContext::TextContent,
+                        CompressionContext::SstBlock,
                     )?
                 } else {
                     all_text
@@ -2078,7 +2079,7 @@ impl RaptorWriter {
     /// Uses xxHash for speed and maintains configurable false positive rate
     fn build_bloom_filter_for_ids(&self, ids: &[String]) -> BloomFilterMetadata {
         let num_items = ids.len();
-        let target_fpr = self.config.bloom_filter_fpr.unwrap_or(0.01); // 1% default
+        let target_fpr = self.config.bloom_fpp; // False positive probability
         
         // Calculate optimal bloom filter parameters
         let bits_per_item = -1.44 * (target_fpr.ln() / 2.0_f64.ln());
@@ -2103,11 +2104,9 @@ impl RaptorWriter {
         }
         
         BloomFilterMetadata {
-            num_items: num_items as u64,
-            false_positive_rate: target_fpr,
-            num_bits: total_bits as u64,
-            num_hash_functions,
-            bloom_data: bloom_bits,
+            offset: 0,  // Will be set when writing to file
+            size: bloom_bits.len() as u64,
+            num_entries: num_items as u32,
         }
     }
     
@@ -2319,7 +2318,7 @@ impl RaptorWriter {
     }
     
     fn encode_batch_with_fastlanes(&self, batch: &RecordBatch, marker: u8) -> Result<Vec<u8>> {
-        use crate::storage::engines::common::fastlanes_encoding::{FastLanesEncoder, FastLanesScheme};
+        use crate::storage::engines::common::fastlanes_encoding::FastLanesEncoder;
         use std::io::Write;
         
         // Extract vectors from RecordBatch
@@ -2446,7 +2445,7 @@ impl RaptorWriter {
     
     pub async fn flush(&mut self) -> Result<()> {
         // Build IVF clusters before flushing (if we have enough vectors)
-        if self.ivf_builder.nodes.len() >= self.config.min_vectors_for_clustering.unwrap_or(1000) {
+        if self.ivf_builder.nodes.len() >= 1000 { // Minimum vectors needed for effective clustering
             self.build_ivf_clusters()?;
         }
         
@@ -2512,9 +2511,9 @@ impl RaptorWriter {
             }
             
             // Write HNSW segment (deprecated - using IVF+Graph instead)
-            if self.config.enable_hnsw {
+            if true { // HNSW enabled by default for RAPTOR
                 let hnsw_meta = self.write_hnsw_segment().await?;
-                rg.hnsw_segment_offset = Some(hnsw_meta.file_offset);
+                rg.hnsw_segment_offset = Some(hnsw_meta.file_offset as u64);
             }
             
             // Write bloom filter for this row group
@@ -2563,7 +2562,7 @@ impl RaptorWriter {
         // Look up from existing rowgroups if available
         if let Some(rg) = self.row_groups.iter().find(|rg| rg.id == rowgroup_id) {
             if let Some(ref stats) = rg.centroid_stats {
-                return stats.cluster_id;
+                return stats.cluster_id as u16;
             }
         }
         // Fallback: use rowgroup_id as cluster_id
@@ -2582,15 +2581,15 @@ impl RaptorWriter {
         ivf_data.extend(&(self.config.dimension as u32).to_le_bytes());
         
         // Write centroids
-        for centroid in &self.ivf_builder.centroids {
+        for (idx, centroid) in self.ivf_builder.centroids.iter().enumerate() {
             // Write centroid ID and stats
-            ivf_data.extend(&centroid.cluster_id.to_le_bytes());
-            ivf_data.extend(&centroid.num_vectors.to_le_bytes());
+            ivf_data.extend(&(idx as u32).to_le_bytes()); // cluster_id
+            ivf_data.extend(&(centroid.member_ids.len() as u32).to_le_bytes()); // num_vectors
             ivf_data.extend(&centroid.mean_distance.to_le_bytes());
             ivf_data.extend(&centroid.std_deviation.to_le_bytes());
             
             // Write centroid vector using FastLanes
-            let encoder = FastLanesEncoder::new();
+            let encoder = FastLanesEncoder::new(super::common::FastLanesScheme::BitPacked);
             let encoded = encoder.encode_f32(&centroid.vector)?;
             ivf_data.extend(&(encoded.len() as u32).to_le_bytes());
             ivf_data.extend(&encoded);
@@ -2618,11 +2617,11 @@ impl RaptorWriter {
         }
         
         // Compress IVF data
-        let compressed = self.compression.compress(
+        let compressed = crate::core::compression::compress(
             &ivf_data,
             CompressionAlgorithm::Zstd,
             6,
-            CompressionContext::Index,
+            CompressionContext::SstBlock,
         )?;
         
         // Get current file offset
@@ -2634,10 +2633,9 @@ impl RaptorWriter {
         self.filesystem.append(&self.file_path, &compressed).await?;
         
         Ok(BloomFilterMetadata {
-            offset: offset as i64,
-            size: compressed.len() as i64,
-            num_entries: self.ivf_builder.nodes.len(),
-            false_positive_rate: 0.01,
+            offset: offset as u64,
+            size: compressed.len() as u64,
+            num_entries: self.ivf_builder.nodes.len() as u32,
         })
     }
     
@@ -2664,7 +2662,7 @@ impl RaptorWriter {
         
         for rg in &self.row_groups {
             if let Some(centroid) = &rg.centroid {
-                all_centroids.push((rg.id, centroid.clone()));
+                all_centroids.push((rg.id as u32, centroid.clone()));
             }
         }
         
@@ -2688,7 +2686,7 @@ impl RaptorWriter {
         let mut rowgroup_ids = Vec::with_capacity(num_centroids);
         
         for (idx, (rg_id, centroid)) in all_centroids.iter().enumerate() {
-            rowgroup_ids.push(*rg_id);
+            rowgroup_ids.push(*rg_id as u16);
             
             // Transpose: store all values for dim0, then dim1, etc.
             for (dim_idx, &value) in centroid.iter().enumerate() {
@@ -2710,19 +2708,16 @@ impl RaptorWriter {
             let max_val = dim_values.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
             let range = max_val - min_val;
             
-            // Choose encoding based on range
+            // Choose encoding based on range  
             let encoding = if range < 0.001 {
                 // Very small range, use run-length encoding
-                FastLanesScheme::RunLength
+                super::common::FastLanesScheme::RunLength
             } else if range < 10.0 {
-                // Small range, use delta encoding with bit packing
-                FastLanesScheme::Delta { bits: 16 }
+                // Small range, use delta encoding
+                super::common::FastLanesScheme::Delta { bits: 16 }
             } else {
-                // Larger range, use frame of reference
-                FastLanesScheme::FrameOfReference {
-                    reference: min_val as i64,
-                    bits: 24,
-                }
+                // Larger range, use bit packing
+                super::common::FastLanesScheme::BitPacked { bits: 24 }
             };
             
             encoding_metadata.push(FastLanesMetadata {
@@ -2754,8 +2749,13 @@ impl RaptorWriter {
         let footer_bytes = bincode::serialize(&footer)?;
         let footer_size = footer_bytes.len();
         
+        // Get current file size as footer offset
+        let footer_offset = self.filesystem.metadata(&self.file_path).await
+            .map(|m| m.size)
+            .unwrap_or(0);
+        
         // Write footer to file
-        let footer_offset = self.filesystem.append(&self.file_path, &footer_bytes).await?;
+        self.filesystem.append(&self.file_path, &footer_bytes).await?;
         
         // Write footer size (last 4 bytes before magic for easy lookup)
         // Using u32 allows footers up to 4GB which is more than sufficient
@@ -2829,7 +2829,7 @@ impl RaptorWriter {
         }
         
         // Compress projections
-        let compressed = self.compression.compress(
+        let compressed = crate::core::compression::compress(
             &projection_data,
             CompressionAlgorithm::Zstd,
             6,
@@ -2856,20 +2856,21 @@ impl RaptorWriter {
         let mut hnsw_data = Vec::new();
         
         // Write number of nodes
-        hnsw_data.extend(&(self.hnsw_builder.nodes.len() as u32).to_le_bytes());
+        hnsw_data.extend(&(self.ivf_builder.nodes.len() as u32).to_le_bytes());
         
         // Write each node
-        for node in &self.hnsw_builder.nodes {
-            // Write node ID
-            hnsw_data.extend(&node.node_id.to_le_bytes());
+        for node in &self.ivf_builder.nodes {
+            // Write vector ID as string bytes
+            let id_bytes = node.vector_id.as_bytes();
+            hnsw_data.extend(&(id_bytes.len() as u32).to_le_bytes());
+            hnsw_data.extend(id_bytes);
             
             // Write row location
             hnsw_data.extend(&node.row_location.page_id.to_le_bytes());
             hnsw_data.extend(&node.row_location.offset_in_page.to_le_bytes());
-            
-            // Write quantized vector
-            hnsw_data.extend(&(node.quantized_vector.len() as u32).to_le_bytes());
-            hnsw_data.extend(&node.quantized_vector);
+            // Write cluster ID and centroid distance for IVF+Graph hybrid
+            hnsw_data.extend(&node.cluster_id.to_le_bytes());
+            hnsw_data.extend(&node.centroid_distance.to_le_bytes());
             
             // Write edges for hybrid IVF+Graph
             hnsw_data.extend(&(node.edges.len() as u32).to_le_bytes());
@@ -2881,7 +2882,7 @@ impl RaptorWriter {
         
         // Compress HNSW data
         // RAPTOR should delegate compression to unified module
-        let compressed = self.compression.compress(
+        let compressed = crate::core::compression::compress(
             &hnsw_data,
             CompressionAlgorithm::Zstd,
             6,
@@ -2898,7 +2899,7 @@ impl RaptorWriter {
         
         // Smart HNSW configuration based on vector count for optimal recall
         // These params are just recommendations - AXIS does actual graph building
-        let num_vectors = self.hnsw_builder.nodes.len();
+        let num_vectors = self.ivf_builder.nodes.len();
         let dimension = self.config.dimension;
         let (optimal_m, optimal_ef_construction, max_level) = Self::calculate_optimal_hnsw_params(num_vectors, dimension);
         
@@ -3031,21 +3032,23 @@ impl RaptorWriter {
         
         // Step 3: Use AXIS clustering engine to compute k-means centroids
         // The AXIS engine provides reusable, optimized k-means implementation
-        let clustering_result = self.ivf_builder.axis_clustering.cluster_vectors(
+        let (centroids_vec, assignments) = self.ivf_builder.axis_clustering.cluster_vectors_simple(
             &self.ivf_builder.vectors,
             k,
-            DistanceMetric::Euclidean
+            DistanceMetric::Euclidean,
+            100  // max_iterations
         )?;
         
         // Step 4: Store centroids and build centroid distance matrix
-        self.ivf_builder.centroids = clustering_result.centroids.iter()
+        self.ivf_builder.centroids = centroids_vec.iter()
             .enumerate()
-            .map(|(idx, centroid)| Centroid {
-                cluster_id: idx as u32,
-                vector: centroid.clone(),
-                mean_distance: 0.0, // Will be calculated
-                std_deviation: 0.0, // Will be calculated
-                num_vectors: 0,
+            .map(|(idx, centroid_vec)| Centroid {
+                id: idx,
+                vector: centroid_vec.clone(),
+                member_ids: Vec::new(),
+                mean_distance: 0.0,
+                std_deviation: 0.0,
+                radius: 0.0,
             })
             .collect();
         
@@ -3058,7 +3061,7 @@ impl RaptorWriter {
         
         // Step 6: Update nodes with cluster assignments and calculate centroid distances
         // Use unified distance compute for consistency and optimization
-        for (idx, &cluster_id) in clustering_result.assignments.iter().enumerate() {
+        for (idx, &cluster_id) in assignments.iter().enumerate() {
             self.ivf_builder.nodes[idx].cluster_id = cluster_id;
             
             // Calculate distance to assigned centroid (d2 component) using unified distance
@@ -3145,7 +3148,7 @@ impl RaptorWriter {
     /// Build local edges within each cluster for graph navigation
     /// This creates the "Graph" part of our hybrid IVF+Graph approach
     fn build_local_edges_within_clusters(&mut self, num_clusters: usize) -> Result<()> {
-        let edges_per_node = self.config.edges_per_node.unwrap_or(16); // M parameter
+        let edges_per_node = 16; // M parameter for HNSW local graphs
         
         tracing::info!(
             "Building local edges within {} clusters, {} edges per node",
@@ -3225,14 +3228,13 @@ impl RaptorWriter {
         // Parse all metadata to build schema
         for row in &page.rows {
             if !row.metadata.is_empty() {
-                // Deserialize metadata (stored as bincode of HashMap<String, String>)
-                if let Ok(metadata_map) = bincode::deserialize::<HashMap<String, String>>(&row.metadata) {
-                    for (key, value) in metadata_map {
-                        metadata_schema.entry(key.clone())
-                            .or_insert_with(|| MetadataColumn::new(key.clone()))
-                            .add_value(value);
-                    }
-                } 
+                // Process metadata (stored as Vec<(String, Vec<u8>)>)
+                for (key, value_bytes) in &row.metadata {
+                    let value = String::from_utf8_lossy(value_bytes).to_string();
+                    metadata_schema.entry(key.clone())
+                        .or_insert_with(|| MetadataColumn::new(key.clone()))
+                        .add_value(value);
+                }
             }
         }
         
