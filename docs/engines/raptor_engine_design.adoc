@@ -316,130 +316,47 @@ sequenceDiagram
 
 [source,mermaid]
 ----
-graph TB
-    subgraph "RAPTOR 5-Component Boosting: 30 Vectors in 5 Clusters"
-        %% Define cluster centroids with clear positioning
-        C1["C1: Centroid 1<br/>4 vectors"]
-        C2["C2: Centroid 2<br/>8 vectors"]
-        C3["C3: Centroid 3<br/>6 vectors"]
-        C4["C4: Centroid 4<br/>7 vectors"]
-        C5["C5: Centroid 5<br/>5 vectors"]
+graph TD
+    subgraph cluster["30 Vectors in 5 Clusters"]
+        C1[C1: 4 vectors]
+        C2[C2: 8 vectors]
+        C3[C3: 6 vectors]
+        C4[C4: 7 vectors]
+        C5[C5: 5 vectors]
         
-        %% Cluster 1 vectors (4 vectors)
-        V1_1["v1.1"]
-        V1_2["v1.2"]
-        V1_3["v1.3"]
-        V1_4["v1.4"]
-        
-        %% Cluster 2 vectors (8 vectors)
-        V2_1["v2.1"]
-        V2_2["v2.2"]
-        V2_3["v2.3"]
-        V2_4["v2.4"]
-        V2_5["v2.5"]
-        V2_6["v2.6"]
-        V2_7["v2.7"]
-        V2_8["v2.8"]
-        
-        %% Cluster 3 vectors (6 vectors)
-        V3_1["v3.1"]
-        V3_2["v3.2"]
-        V3_3["v3.3"]
-        V3_4["v3.4"]
-        V3_5["v3.5"]
-        V3_6["v3.6"]
-        
-        %% Cluster 4 vectors (7 vectors)
-        V4_1["v4.1"]
-        V4_2["v4.2"]
-        V4_3["v4.3"]
-        V4_4["v4.4"]
-        V4_5["v4.5"]
-        V4_6["v4.6"]
-        V4_7["v4.7"]
-        
-        %% Cluster 5 vectors (5 vectors)
-        V5_1["v5.1"]
-        V5_2["v5.2"]
-        V5_3["v5.3"]
-        V5_4["v5.4"]
-        V5_5["v5.5"]
-        
-        %% Cluster 1 relationships
-        C1 -.->|d2: own centroid| V1_1
-        C1 -.->|d2| V1_2
-        C1 -.->|d2| V1_3
-        C1 -.->|d2| V1_4
-        
-        %% Cluster 2 relationships
-        C2 -.->|d2| V2_1
-        C2 -.->|d2| V2_2
-        C2 -.->|d2| V2_3
-        C2 -.->|d2| V2_4
-        C2 -.->|d2| V2_5
-        C2 -.->|d2| V2_6
-        C2 -.->|d2| V2_7
-        C2 -.->|d2| V2_8
-        
-        %% Cluster 3 relationships
-        C3 -.->|d2| V3_1
-        C3 -.->|d2| V3_2
-        C3 -.->|d2| V3_3
-        C3 -.->|d2| V3_4
-        C3 -.->|d2| V3_5
-        C3 -.->|d2| V3_6
-        
-        %% Cluster 4 relationships
-        C4 -.->|d2| V4_1
-        C4 -.->|d2| V4_2
-        C4 -.->|d2| V4_3
-        C4 -.->|d2| V4_4
-        C4 -.->|d2| V4_5
-        C4 -.->|d2| V4_6
-        C4 -.->|d2| V4_7
-        
-        %% Cluster 5 relationships
-        C5 -.->|d2| V5_1
-        C5 -.->|d2| V5_2
-        C5 -.->|d2| V5_3
-        C5 -.->|d2| V5_4
-        C5 -.->|d2| V5_5
-        
-        %% Inter-centroid distances (d1 component)
-        C1 ===|d1: inter-centroid|=== C2
-        C2 ===|d1|=== C3
-        C3 ===|d1|=== C4
-        C4 ===|d1|=== C5
-        C1 ===|d1|=== C3
-        C2 ===|d1|=== C4
-        C3 ===|d1|=== C5
-        
-        %% Example cross-cluster distances (d4, d5 components)
-        V1_1 -.-|d4: cross-cluster|.-> C2
-        V2_1 -.-|d5: reverse cross|.-> C1
-        V3_6 -.-|d4: boundary|.-> C4
-        V4_7 -.-|d5: boundary|.-> C3
+        C1 ---|d1: inter-centroid| C2
+        C2 ---|d1| C3
+        C3 ---|d1| C4
+        C4 ---|d1| C5
     end
     
-    style C1 fill:#ff9999,stroke:#333,stroke-width:3px
-    style C2 fill:#99ccff,stroke:#333,stroke-width:3px
-    style C3 fill:#99ff99,stroke:#333,stroke-width:3px
-    style C4 fill:#ffcc99,stroke:#333,stroke-width:3px
-    style C5 fill:#ff99ff,stroke:#333,stroke-width:3px
+    style C1 fill:#ff9999
+    style C2 fill:#99ccff
+    style C3 fill:#99ff99
+    style C4 fill:#ffcc99
+    style C5 fill:#ff99ff
+----
+
+[source,mermaid]
+----
+graph LR
+    subgraph Example["Example: v1.1 from Cluster 1 and v2.1 from Cluster 2"]
+        v1[v1.1<br/>in C1]
+        v2[v2.1<br/>in C2]
+        c1[C1<br/>centroid]
+        c2[C2<br/>centroid]
+        
+        v1 -->|d2| c1
+        v2 -->|d3| c2
+        c1 <-->|d1| c2
+        v1 -.->|d4| c2
+        v2 -.->|d5| c1
+    end
     
-    style V1_1 fill:#ffcccc
-    style V1_2 fill:#ffcccc
-    style V1_3 fill:#ffcccc
-    style V1_4 fill:#ffcccc
-    
-    style V2_1 fill:#cce6ff
-    style V2_2 fill:#cce6ff
-    style V2_3 fill:#cce6ff
-    style V2_4 fill:#cce6ff
-    style V2_5 fill:#cce6ff
-    style V2_6 fill:#cce6ff
-    style V2_7 fill:#cce6ff
-    style V2_8 fill:#cce6ff
+    style v1 fill:#ffcccc
+    style v2 fill:#cce6ff
+    style c1 fill:#ff9999
+    style c2 fill:#99ccff
 ----
 
 === Detailed 5-Component Distance Calculation Example

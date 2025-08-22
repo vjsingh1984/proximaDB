@@ -104,6 +104,9 @@ struct IvfClusteringBuilder {
     centroid_distances: Vec<Vec<f32>>,
     /// Boosting parameters
     boost_config: BoostingConfig,
+    /// Temporary vector storage for clustering and edge building
+    /// Cleared after flush to save memory
+    vectors: Vec<Vec<f32>>,
 }
 
 // Removed ClusteringConfig - now using AXIS clustering infrastructure
@@ -188,6 +191,7 @@ impl IvfClusteringBuilder {
             centroids: Vec::new(),
             centroid_distances: Vec::new(),
             boost_config: BoostingConfig::default(),
+            vectors: Vec::new(),
         }
     }
     
@@ -880,7 +884,7 @@ impl IvfClusteringBuilder {
     }
     
     /// Find vector furthest from centroid (for diverse seed selection)
-    fn find_furthest_from_centroid(&self, candidates: &[usize], centroid: &ClusterCentroid) -> usize {
+    fn find_furthest_from_centroid(&self, candidates: &[usize], centroid: &Centroid) -> usize {
         let mut max_dist = 0.0;
         let mut best_idx = 0;
         
@@ -1561,7 +1565,7 @@ impl RaptorWriter {
         self.id_column_builder.id_hashes.push(u64::from_le_bytes(hash_u64_bytes));
         self.id_column_builder.row_offsets.push(offset_in_page as u32);
         
-        // Add to legacy HNSW builder (to be removed)
+        // Add to IVF builder with hybrid clustering + edges
         self.ivf_builder.nodes.push(IvfNode {
             vector_id: record.id.clone().unwrap_or_else(|| format!("vec_{}", self.file_metadata.num_rows)),
             cluster_id: 0, // Will be assigned during clustering
@@ -1569,6 +1573,10 @@ impl RaptorWriter {
             centroid_distance: 0.0, // Will be calculated during clustering
             edges: Vec::new(), // Will be built after clustering
         });
+        
+        // Store vector for clustering and edge building
+        // This is essential for k-means and 5-component boosting
+        self.ivf_builder.vectors.push(vector.vector.clone());
         
         // Add to minimal HNSW builder (memory-efficient)
         // Note: edges will be populated during graph building phase
@@ -2107,11 +2115,19 @@ impl RaptorWriter {
             return Ok(());
         }
         
-        // Step 2: Calculate optimal k and p values
+        // Ensure we have vectors for clustering
+        if self.ivf_builder.vectors.is_empty() {
+            return Err(anyhow::anyhow!(
+                "Cannot build IVF clusters: vectors not stored. \
+                 Vectors must be added via add_vector() before clustering."
+            ));
+        }
+        
+        // Step 2: Calculate optimal k and p values using complexity formula k² + p×(k+p)
         let sqrt_n = (num_vectors as f64).sqrt() as usize;
         let k = self.config.num_clusters.unwrap_or(sqrt_n);
         let p = self.config.target_rowgroup_size.unwrap_or_else(|| {
-            // Calculate based on L3 cache size
+            // Calculate based on L3 cache size for optimal memory locality
             let l3_size = constants::clustering::DEFAULT_L3_CACHE_SIZE;
             let vector_size = self.config.dimension * 4; // 4 bytes per f32
             let vectors_in_cache = (l3_size as f64 * constants::clustering::L3_CACHE_UTILIZATION_PERCENT) as usize / vector_size;
@@ -2120,35 +2136,106 @@ impl RaptorWriter {
         
         tracing::info!(
             "Building IVF clusters: n={}, k={} clusters, p={} rowgroup size. \
-             Complexity: O(k²+k×p) = O({})",
-            num_vectors, k, p, k*k + k*p
+             Complexity: O(k²+p×(k+p)) = O({})",
+            num_vectors, k, p, k*k + p*(k+p)
         );
         
-        // Step 3: Use AXIS clustering to compute k-means centroids
-        // This would normally use actual vectors, but since we don't store them,
-        // we simulate cluster assignments based on row group locality
+        // Step 3: Use AXIS clustering engine to compute k-means centroids
+        // The AXIS engine provides reusable, optimized k-means implementation
+        let clustering_result = self.ivf_builder.axis_clustering.cluster_vectors(
+            &self.ivf_builder.vectors,
+            k,
+            DistanceMetric::Euclidean
+        )?;
         
-        // Group nodes by their current row groups as initial clustering
-        let mut nodes_by_cluster: HashMap<u32, Vec<usize>> = HashMap::new();
-        for (idx, node) in self.ivf_builder.nodes.iter().enumerate() {
-            // Use row group ID as initial cluster assignment
-            let cluster_id = (node.row_location.row_group_id % k as u32);
-            nodes_by_cluster
-                .entry(cluster_id)
-                .or_insert_with(Vec::new)
-                .push(idx);
-        }
+        // Step 4: Store centroids and build centroid distance matrix
+        self.ivf_builder.centroids = clustering_result.centroids.iter()
+            .enumerate()
+            .map(|(idx, centroid)| Centroid {
+                cluster_id: idx as u32,
+                vector: centroid.clone(),
+                mean_distance: 0.0, // Will be calculated
+                std_deviation: 0.0, // Will be calculated
+                num_vectors: 0,
+            })
+            .collect();
         
-        // Update nodes with their cluster assignments
-        for (cluster_id, node_indices) in nodes_by_cluster.iter() {
-            for &idx in node_indices {
-                self.ivf_builder.nodes[idx].cluster_id = *cluster_id;
-                // Simulate centroid distance for boosting
-                self.ivf_builder.nodes[idx].centroid_distance = 0.1 * (*cluster_id as f32 + 1.0);
+        // Step 5: Build k×k centroid distance matrix for d1 component
+        let k = self.ivf_builder.centroids.len();
+        self.ivf_builder.centroid_distances = vec![vec![0.0; k]; k];
+        for i in 0..k {
+            for j in 0..k {
+                if i != j {
+                    let dist = self.euclidean_distance(
+                        &self.ivf_builder.centroids[i].vector,
+                        &self.ivf_builder.centroids[j].vector
+                    );
+                    self.ivf_builder.centroid_distances[i][j] = dist;
+                }
             }
         }
         
-        // Step 4: Create inverted lists for each cluster
+        // Step 6: Update nodes with cluster assignments and calculate centroid distances
+        for (idx, &cluster_id) in clustering_result.assignments.iter().enumerate() {
+            self.ivf_builder.nodes[idx].cluster_id = cluster_id;
+            
+            // Calculate distance to assigned centroid (d2 component)
+            let centroid = &self.ivf_builder.centroids[cluster_id as usize];
+            let dist = self.euclidean_distance(
+                &self.ivf_builder.vectors[idx],
+                &centroid.vector
+            );
+            self.ivf_builder.nodes[idx].centroid_distance = dist;
+            
+            // Update centroid statistics
+            self.ivf_builder.centroids[cluster_id as usize].num_vectors += 1;
+        }
+        
+        // Step 7: Calculate mean and std deviation for each centroid
+        for cluster_id in 0..k {
+            let centroid = &mut self.ivf_builder.centroids[cluster_id];
+            let cluster_nodes: Vec<_> = self.ivf_builder.nodes.iter()
+                .enumerate()
+                .filter(|(_, n)| n.cluster_id == cluster_id as u32)
+                .map(|(idx, _)| idx)
+                .collect();
+            
+            if !cluster_nodes.is_empty() {
+                // Calculate mean distance
+                let sum: f32 = cluster_nodes.iter()
+                    .map(|&idx| self.ivf_builder.nodes[idx].centroid_distance)
+                    .sum();
+                centroid.mean_distance = sum / cluster_nodes.len() as f32;
+                
+                // Calculate standard deviation
+                let variance: f32 = cluster_nodes.iter()
+                    .map(|&idx| {
+                        let diff = self.ivf_builder.nodes[idx].centroid_distance - centroid.mean_distance;
+                        diff * diff
+                    })
+                    .sum::<f32>() / cluster_nodes.len() as f32;
+                centroid.std_deviation = variance.sqrt();
+            }
+        }
+        
+        // Step 8: Build local edges within each cluster for hybrid IVF+Graph
+        // This is what makes RAPTOR unique - combining clustering with local connectivity
+        self.build_local_edges_within_clusters(k)?;
+        
+        // Step 9: Apply 5-component boosting to edges
+        let clusters: Vec<Vec<usize>> = (0..k)
+            .map(|cluster_id| {
+                self.ivf_builder.nodes.iter()
+                    .enumerate()
+                    .filter(|(_, n)| n.cluster_id == cluster_id as u32)
+                    .map(|(idx, _)| idx)
+                    .collect()
+            })
+            .collect();
+        
+        self.apply_component_boosting(&clusters, &self.ivf_builder.vectors);
+        
+        // Step 10: Create inverted lists for each cluster
         let mut inverted_lists: Vec<Vec<String>> = vec![Vec::new(); k];
         for node in &self.ivf_builder.nodes {
             inverted_lists[node.cluster_id as usize].push(node.vector_id.clone());
@@ -2164,8 +2251,81 @@ impl RaptorWriter {
         }
         
         tracing::info!(
-            "Built IVF structure with {} clusters. Average cluster size: {} vectors",
+            "Built hybrid IVF+Graph structure with {} clusters and local edges. \
+             Average cluster size: {} vectors",
             k, num_vectors / k
+        );
+        
+        Ok(())
+    }
+    
+    /// Build local edges within each cluster for graph navigation
+    /// This creates the "Graph" part of our hybrid IVF+Graph approach
+    fn build_local_edges_within_clusters(&mut self, num_clusters: usize) -> Result<()> {
+        let edges_per_node = self.config.edges_per_node.unwrap_or(16); // M parameter
+        
+        tracing::info!(
+            "Building local edges within {} clusters, {} edges per node",
+            num_clusters, edges_per_node
+        );
+        
+        // Process each cluster independently
+        for cluster_id in 0..num_clusters {
+            // Get all nodes in this cluster
+            let cluster_nodes: Vec<usize> = self.ivf_builder.nodes.iter()
+                .enumerate()
+                .filter(|(_, n)| n.cluster_id == cluster_id as u32)
+                .map(|(idx, _)| idx)
+                .collect();
+            
+            if cluster_nodes.len() <= 1 {
+                continue; // No edges needed for single-node clusters
+            }
+            
+            // Build edges for each node in the cluster
+            for &node_idx in &cluster_nodes {
+                let mut edges = Vec::new();
+                let node_vector = &self.ivf_builder.vectors[node_idx];
+                
+                // Calculate distances to all other nodes in the cluster
+                let mut distances: Vec<(usize, f32)> = cluster_nodes.iter()
+                    .filter(|&&idx| idx != node_idx)
+                    .map(|&other_idx| {
+                        let dist = self.euclidean_distance(
+                            node_vector,
+                            &self.ivf_builder.vectors[other_idx]
+                        );
+                        (other_idx, dist)
+                    })
+                    .collect();
+                
+                // Sort by distance and take top M edges
+                distances.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
+                distances.truncate(edges_per_node);
+                
+                // Create edge structures
+                for (target_idx, distance) in distances {
+                    edges.push(EdgeWithDistance {
+                        target_node_id: target_idx as u32,
+                        target_vector_id: self.ivf_builder.nodes[target_idx].vector_id.clone(),
+                        distance,
+                    });
+                }
+                
+                // Store edges in the node
+                self.ivf_builder.nodes[node_idx].edges = edges;
+            }
+        }
+        
+        // Calculate edge statistics
+        let total_edges: usize = self.ivf_builder.nodes.iter()
+            .map(|n| n.edges.len())
+            .sum();
+        let avg_edges = total_edges as f32 / self.ivf_builder.nodes.len() as f32;
+        
+        tracing::info!(
+            "Built {} total edges, average {:.1} edges per node",
+            total_edges, avg_edges
         );
         
         Ok(())
