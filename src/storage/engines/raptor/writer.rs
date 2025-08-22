@@ -2,7 +2,10 @@ use arrow_array::RecordBatch;
 use std::sync::Arc;
 use anyhow::Result;
 use std::collections::{HashMap, HashSet};
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
 use serde::{Serialize, Deserialize};
+use tracing::debug;
 
 // Reuse existing platform capabilities
 use crate::core::compression::{StandardCompression, CompressionAlgorithm, CompressionContext};
@@ -2085,9 +2088,11 @@ impl RaptorWriter {
         // Create bloom filter bitmap
         let mut bloom_bits = vec![0u8; (total_bits + 7) / 8];
         
-        // Add all IDs to bloom filter using xxHash
+        // Add all IDs to bloom filter using DefaultHasher
         for id in ids {
-            let hash = xxhash_rust::xxh3::xxh3_64(id.as_bytes());
+            let mut hasher = DefaultHasher::new();
+            id.hash(&mut hasher);
+            let hash = hasher.finish();
             
             // Generate k hash values from single hash using double hashing
             for i in 0..num_hash_functions {
@@ -2288,7 +2293,6 @@ impl RaptorWriter {
             dot_product_bounds: None, // Can be computed if needed
             neighbor_rowgroups, // Sorted by distance
         }
-    }
     }
     
     /// Check if we should start a new row group (1K vectors by default for optimal HNSW I/O)
@@ -3507,3 +3511,4 @@ impl RaptorWriter {
         }
         Ok(())
     }
+}

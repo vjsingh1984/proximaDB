@@ -373,15 +373,15 @@ flowchart LR
         end
         
         subgraph "5 Distance Components"
-            D1[d1 = distance(c1, c2)<br/>Inter-centroid<br/>Weight: 1.0]
-            D2[d2 = distance(v1.1, c1)<br/>v1.1 to own centroid<br/>Weight: 0.5]
-            D3[d3 = distance(v2.1, c2)<br/>v2.1 to own centroid<br/>Weight: 0.5]
-            D4[d4 = distance(v1.1, c2)<br/>v1.1 to c2 cross<br/>Weight: 0.3]
-            D5[d5 = distance(v2.1, c1)<br/>v2.1 to c1 cross<br/>Weight: 0.3]
+            D1[d1 = distance c1 c2<br/>Inter-centroid<br/>Weight: 1.0]
+            D2[d2 = distance v1.1 c1<br/>v1.1 to own centroid<br/>Weight: 0.5]
+            D3[d3 = distance v2.1 c2<br/>v2.1 to own centroid<br/>Weight: 0.5]
+            D4[d4 = distance v1.1 c2<br/>v1.1 to c2 cross<br/>Weight: 0.3]
+            D5[d5 = distance v2.1 c1<br/>v2.1 to c1 cross<br/>Weight: 0.3]
         end
         
         subgraph "Boosted Distance Formula"
-            Formula["D(v1.1, v2.1) = <br/>1.0×d1 + 0.5×d2 + 0.5×d3 +<br/>0.3×d4 + 0.3×d5"]
+            Formula["D(v1.1, v2.1) = 1.0×d1 + 0.5×d2 + 0.5×d3 + 0.3×d4 + 0.3×d5"]
         end
         
         V11 --> D2

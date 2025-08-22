@@ -99,7 +99,7 @@ impl Default for RaptorConfig {
             // - Applied per-column for selective decompression
             // - Graph edges use dictionary encoding
             compression: CompressionCodec::Zstd(constants::compression::DEFAULT_ZSTD_LEVEL),
-            compression_level: compression::DEFAULT_ZSTD_LEVEL as u32,
+            compression_level: constants::compression::DEFAULT_ZSTD_LEVEL as u32,
             use_fastlanes_encoding: true,  // Enable FastLanes for SIMD-optimized encoding
             
             enable_simd: true,

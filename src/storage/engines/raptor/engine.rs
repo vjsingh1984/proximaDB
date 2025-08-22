@@ -17,7 +17,7 @@ use crate::core::search::{SearchResult, FilterExpression, InternalSearchResult};
 use crate::compute::distance_computation::{DistanceMetric, engine::UnifiedDistanceCompute};
 use super::{RaptorConfig, RaptorWriter, consolidated_reader::RaptorReader, RowGroupManager};
 use super::consolidated_compactor::RaptorCompactor;
-use super::ivf_manager::IvfGraphManager;
+use super::ivf_manager::IvfManager;
 use super::smart_rowgroup_sizing::{SmartRowGroupSizer, CommonConfigurations};
 
 // Deep integration with AXIS clustering
