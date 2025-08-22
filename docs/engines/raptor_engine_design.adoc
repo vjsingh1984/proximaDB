@@ -59,14 +59,19 @@ The Matrix Trinity approach visualized in 3D space:
 ----
 graph LR
     subgraph "HNSW Approach"
+        direction LR
         V1[Vector 1] --> E1[Edges]
         V2[Vector 2] --> E2[Edges]
+        V3[Vector 3] --> E3[Edges]
         E1 -.-> V2
+        E2 -.-> V3
+        E1 -.-> V3
     end
     
     subgraph "P² Matrix Approach"
-        M["P² Matrix<br/>Upper Triangle"] --> Q["Quantized INT8"]
-        Q --> F["FastLanes Compressed"]
+        direction LR
+        M["P² Matrix<br/>Upper Triangle"] --> Q["Quantized<br/>INT8"]
+        Q --> F["FastLanes<br/>Compressed"]
     end
 ----
 
@@ -168,20 +173,22 @@ Vectors are stored transposed as columns for optimal compression and SIMD operat
 ----
 graph LR
     subgraph "Traditional Row Storage"
+        direction TB
         V1["Vector 1: [d1,d2,d3...]"]
         V2["Vector 2: [d1,d2,d3...]"]
         V3["Vector 3: [d1,d2,d3...]"]
     end
     
     subgraph "RAPTOR Columnar Storage"
+        direction TB
         D1["Dim 1: [v1,v2,v3...]"]
         D2["Dim 2: [v1,v2,v3...]"]
         D3["Dim 3: [v1,v2,v3...]"]
     end
     
-    V1 -.-> D1
-    V2 -.-> D2
-    V3 -.-> D3
+    V1 -.->|Transform| D1
+    V2 -.->|Transform| D2
+    V3 -.->|Transform| D3
 ----
 
 This transposed layout enables:
@@ -232,6 +239,7 @@ Bloom         Compressed bitmap   Space efficiency
 ----
 graph LR
     subgraph "5-Component Score Calculation"
+        direction LR
         D1["d₁: Primary<br/>Distance"] --> W1["α₁ weight"]
         D2["d₂: Centroid<br/>Distance"] --> W2["α₂ weight"]
         D3["d₃: Locality<br/>Score"] --> W3["α₃ weight"]
