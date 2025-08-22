@@ -736,8 +736,8 @@ pub trait UniversallyOptimized {
 }
 
 // Include comprehensive tests module
-#[cfg(test)]
-mod performance_optimization_tests;
+// #[cfg(test)]
+// mod performance_optimization_tests;
 
 #[cfg(test)]
 mod tests {

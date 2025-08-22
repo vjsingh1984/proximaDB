@@ -184,6 +184,42 @@ pub struct AxisClusteringEngine {
     stats: Arc<RwLock<ClusteringStats>>,
 }
 
+/// Reusable clustering interface for storage engines
+/// 
+/// This trait provides a simplified interface for storage engines like RAPTOR
+/// to perform clustering without the full AXIS overhead. Designed specifically
+/// for p²+k×p clustering algorithms used in row group assignment.
+pub trait ReusableClusteringEngine {
+    /// Perform k-means clustering with k-means++ initialization
+    /// Returns centroids and cluster assignments
+    fn cluster_vectors_simple(
+        &self,
+        vectors: &[Vec<f32>],
+        k: usize,
+        distance_metric: DistanceMetric,
+        max_iterations: usize,
+    ) -> Result<(Vec<Vec<f32>>, Vec<usize>)>;
+    
+    /// Calculate centroid-to-centroid distance matrix for p²+k×p algorithm
+    /// Returns k×k matrix where entry (i,j) is distance between centroids i and j
+    fn calculate_centroid_distance_matrix(
+        &self,
+        centroids: &[Vec<f32>],
+        distance_metric: DistanceMetric,
+    ) -> Result<Vec<Vec<f32>>>;
+    
+    /// Assign vectors to clusters with component boosting
+    /// Returns cluster assignments with boosted distances for RAPTOR
+    fn assign_vectors_with_component_boosting(
+        &self,
+        vectors: &[Vec<f32>],
+        centroids: &[Vec<f32>],
+        centroid_distances: &[Vec<f32>],
+        distance_metric: DistanceMetric,
+        boosting_weights: &[f32], // [α₁, α₂, α₃, β₁, β₂] for 5-component formula
+    ) -> Result<Vec<(usize, f32)>>; // (cluster_id, boosted_distance)
+}
+
 /// Clustering statistics
 #[derive(Debug, Default)]
 pub struct ClusteringStats {
@@ -666,6 +702,285 @@ impl AxisClusteringEngine {
         );
         
         is_vector_data && supports_clustering_algo
+    }
+}
+
+/// Implementation of ReusableClusteringEngine for AxisClusteringEngine
+/// Provides simplified clustering interface for storage engines like RAPTOR
+impl ReusableClusteringEngine for AxisClusteringEngine {
+    /// Perform k-means clustering with k-means++ initialization
+    /// Returns centroids and cluster assignments
+    fn cluster_vectors_simple(
+        &self,
+        vectors: &[Vec<f32>],
+        k: usize,
+        distance_metric: DistanceMetric,
+        max_iterations: usize,
+    ) -> Result<(Vec<Vec<f32>>, Vec<usize>)> {
+        tracing::debug!("🎯 ReusableClusteringEngine: k-means clustering {} vectors into {} clusters", 
+                       vectors.len(), k);
+        
+        if vectors.is_empty() {
+            return Err(anyhow::anyhow!("Cannot cluster empty vector set"));
+        }
+        
+        if k > vectors.len() {
+            return Err(anyhow::anyhow!("k={} cannot be larger than number of vectors={}", k, vectors.len()));
+        }
+        
+        // Initialize centroids using k-means++
+        let mut centroids = self.kmeans_plusplus_init_simple(vectors, k, &distance_metric)?;
+        
+        // Run K-Means iterations
+        let mut cluster_assignments = vec![0usize; vectors.len()];
+        
+        for iteration in 0..max_iterations {
+            let mut changed = false;
+            
+            // Assignment step
+            for (idx, vector) in vectors.iter().enumerate() {
+                let mut best_cluster = 0;
+                let mut best_distance = f32::MAX;
+                
+                for (cluster_idx, centroid) in centroids.iter().enumerate() {
+                    let similarity = self.distance_compute.calculate_distance(
+                        vector,
+                        centroid,
+                        &distance_metric,
+                    );
+                    
+                    if similarity.raw_value < best_distance {
+                        best_distance = similarity.raw_value;
+                        best_cluster = cluster_idx;
+                    }
+                }
+                
+                if cluster_assignments[idx] != best_cluster {
+                    changed = true;
+                    cluster_assignments[idx] = best_cluster;
+                }
+            }
+            
+            // Update step - recalculate centroids
+            let mut cluster_sizes = vec![0usize; k];
+            centroids.iter_mut().for_each(|c| c.fill(0.0));
+            
+            for (idx, vector) in vectors.iter().enumerate() {
+                let cluster = cluster_assignments[idx];
+                cluster_sizes[cluster] += 1;
+                
+                for (i, val) in vector.iter().enumerate() {
+                    centroids[cluster][i] += val;
+                }
+            }
+            
+            // Average centroids
+            for (cluster_idx, size) in cluster_sizes.iter().enumerate() {
+                if *size > 0 {
+                    for val in centroids[cluster_idx].iter_mut() {
+                        *val /= *size as f32;
+                    }
+                }
+            }
+            
+            // Check convergence
+            if !changed {
+                tracing::debug!("K-Means converged at iteration {}", iteration);
+                break;
+            }
+        }
+        
+        tracing::debug!("✅ ReusableClusteringEngine: clustering complete with {} centroids", centroids.len());
+        Ok((centroids, cluster_assignments))
+    }
+    
+    /// Calculate centroid-to-centroid distance matrix for p²+k×p algorithm
+    /// Returns k×k matrix where entry (i,j) is distance between centroids i and j
+    fn calculate_centroid_distance_matrix(
+        &self,
+        centroids: &[Vec<f32>],
+        distance_metric: DistanceMetric,
+    ) -> Result<Vec<Vec<f32>>> {
+        let k = centroids.len();
+        let mut distance_matrix = vec![vec![0.0; k]; k];
+        
+        tracing::debug!("🎯 ReusableClusteringEngine: building {}×{} centroid distance matrix", k, k);
+        
+        for i in 0..k {
+            for j in 0..k {
+                if i == j {
+                    distance_matrix[i][j] = 0.0; // Distance to self is 0
+                } else {
+                    let similarity = self.distance_compute.calculate_distance(
+                        &centroids[i],
+                        &centroids[j],
+                        &distance_metric,
+                    );
+                    distance_matrix[i][j] = similarity.raw_value;
+                }
+            }
+        }
+        
+        tracing::debug!("✅ ReusableClusteringEngine: centroid distance matrix complete");
+        Ok(distance_matrix)
+    }
+    
+    /// Assign vectors to clusters with component boosting
+    /// Returns cluster assignments with boosted distances for RAPTOR
+    fn assign_vectors_with_component_boosting(
+        &self,
+        vectors: &[Vec<f32>],
+        centroids: &[Vec<f32>],
+        centroid_distances: &[Vec<f32>],
+        distance_metric: DistanceMetric,
+        boosting_weights: &[f32], // [α₁, α₂, α₃, β₁, β₂] for 5-component formula
+    ) -> Result<Vec<(usize, f32)>> {
+        tracing::debug!("🎯 ReusableClusteringEngine: assigning {} vectors with component boosting", 
+                       vectors.len());
+        
+        if boosting_weights.len() != 5 {
+            return Err(anyhow::anyhow!("Expected 5 boosting weights [α₁, α₂, α₃, β₁, β₂], got {}", 
+                                     boosting_weights.len()));
+        }
+        
+        let mut assignments = Vec::with_capacity(vectors.len());
+        
+        for vector in vectors {
+            let mut best_cluster = 0;
+            let mut best_boosted_distance = f32::MAX;
+            
+            for (cluster_idx, centroid) in centroids.iter().enumerate() {
+                // Component 1: Direct vector-to-centroid distance (α₁)
+                let d1 = self.distance_compute.calculate_distance(
+                    vector,
+                    centroid,
+                    &distance_metric,
+                ).raw_value;
+                
+                // Component 2: Average distance to other centroids (α₂) - boundary penalty
+                let mut other_centroid_distances = 0.0;
+                let mut count = 0;
+                for (other_idx, other_centroid) in centroids.iter().enumerate() {
+                    if other_idx != cluster_idx {
+                        let d_other = self.distance_compute.calculate_distance(
+                            vector,
+                            other_centroid,
+                            &distance_metric,
+                        ).raw_value;
+                        other_centroid_distances += d_other;
+                        count += 1;
+                    }
+                }
+                let d2 = if count > 0 { other_centroid_distances / count as f32 } else { 0.0 };
+                
+                // Component 3: Distance variance (α₃) - cluster compactness
+                let mut variance = 0.0;
+                for other_centroid in centroids {
+                    let d_var = self.distance_compute.calculate_distance(
+                        vector,
+                        other_centroid,
+                        &distance_metric,
+                    ).raw_value;
+                    variance += (d_var - d1).powi(2);
+                }
+                let d3 = if centroids.len() > 1 { 
+                    (variance / (centroids.len() - 1) as f32).sqrt() 
+                } else { 
+                    0.0 
+                };
+                
+                // Component 4: Minimum inter-centroid distance (β₁) - cluster separation
+                let mut min_inter_centroid = f32::MAX;
+                for (other_idx, _) in centroids.iter().enumerate() {
+                    if other_idx != cluster_idx {
+                        min_inter_centroid = min_inter_centroid.min(centroid_distances[cluster_idx][other_idx]);
+                    }
+                }
+                let d4 = if min_inter_centroid < f32::MAX { min_inter_centroid } else { 0.0 };
+                
+                // Component 5: Maximum inter-centroid distance (β₂) - global structure  
+                let mut max_inter_centroid = 0.0;
+                for (other_idx, _) in centroids.iter().enumerate() {
+                    if other_idx != cluster_idx {
+                        max_inter_centroid = max_inter_centroid.max(centroid_distances[cluster_idx][other_idx]);
+                    }
+                }
+                let d5 = max_inter_centroid;
+                
+                // Apply 5-component boosting formula: D = α₁·d1 + α₂·d2 + α₃·d3 + β₁·d4 + β₂·d5
+                let boosted_distance = boosting_weights[0] * d1 
+                                     + boosting_weights[1] * d2 
+                                     + boosting_weights[2] * d3 
+                                     + boosting_weights[3] * d4 
+                                     + boosting_weights[4] * d5;
+                
+                if boosted_distance < best_boosted_distance {
+                    best_boosted_distance = boosted_distance;
+                    best_cluster = cluster_idx;
+                }
+            }
+            
+            assignments.push((best_cluster, best_boosted_distance));
+        }
+        
+        tracing::debug!("✅ ReusableClusteringEngine: component boosting assignment complete");
+        Ok(assignments)
+    }
+}
+
+/// Helper methods for simplified clustering
+impl AxisClusteringEngine {
+    /// Simplified K-Means++ initialization without full AXIS overhead
+    fn kmeans_plusplus_init_simple(
+        &self,
+        vectors: &[Vec<f32>],
+        k: usize,
+        distance_metric: &DistanceMetric,
+    ) -> Result<Vec<Vec<f32>>> {
+        use rand::Rng;
+        let mut rng = rand::thread_rng();
+        let mut centroids = Vec::with_capacity(k);
+        
+        // Choose first centroid randomly
+        let first_idx = rng.gen_range(0..vectors.len());
+        centroids.push(vectors[first_idx].clone());
+        
+        // Choose remaining centroids
+        for _ in 1..k {
+            let mut distances = vec![f32::MAX; vectors.len()];
+            
+            // Calculate minimum distance to existing centroids
+            for (idx, vector) in vectors.iter().enumerate() {
+                for centroid in &centroids {
+                    let similarity = self.distance_compute.calculate_distance(
+                        vector,
+                        centroid,
+                        distance_metric,
+                    );
+                    distances[idx] = distances[idx].min(similarity.raw_value);
+                }
+            }
+            
+            // Choose next centroid with probability proportional to squared distance
+            let total_dist: f32 = distances.iter().map(|d| d * d).sum();
+            if total_dist == 0.0 {
+                // All remaining vectors are identical to existing centroids
+                break;
+            }
+            
+            let mut cumsum = 0.0;
+            let target = rng.gen::<f32>() * total_dist;
+            
+            for (idx, dist) in distances.iter().enumerate() {
+                cumsum += dist * dist;
+                if cumsum >= target {
+                    centroids.push(vectors[idx].clone());
+                    break;
+                }
+            }
+        }
+        
+        Ok(centroids)
     }
 }
 

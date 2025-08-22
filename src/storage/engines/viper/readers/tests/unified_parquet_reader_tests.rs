@@ -538,7 +538,7 @@ use tracing::{debug, error, info};
         // Also print the actual vectors to verify they were correctly written
         debug!("Test vectors created:");
         for vec in test_vectors_debug.iter() {
-            debug!("  {} -> {:?}", vec.id.as_ref()), vec.vector);
+            debug!("  {} -> {:?}", vec.id.as_ref(), vec.vector);
         }
         
         assert_eq!(results[0].id, "vec_0", "First result should be exact match");

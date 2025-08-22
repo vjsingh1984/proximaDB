@@ -3,7 +3,7 @@
 #[cfg(test)]
 mod tests {
     use super::super::decompression_cache::*;
-    use proximadb::core::serialization::CompressionAlgorithm};
+    use proximadb::core::serialization::CompressionAlgorithm;
     use std::sync::Arc;
     use tokio::time::{sleep, Duration};
 
