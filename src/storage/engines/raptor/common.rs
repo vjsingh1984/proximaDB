@@ -524,6 +524,7 @@ pub struct SearchResult {
     pub vector: Option<Vec<f32>>,
     pub metadata: Option<HashMap<String, MetadataValue>>,
     pub rowgroup_id: u32,
+    pub ranking_score: f32,  // For boosting
 }
 
 // ====== Predicates for filtering ======
@@ -1456,4 +1457,47 @@ pub struct FastLanesMetadata {
     
     /// Compressed size in bytes
     pub compressed_size: u32,
+}
+
+// ====== Boundary Detection and Self-Correction Structures ======
+
+/// Spillover information between clusters
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SpilloverInfo {
+    pub from_cluster: u32,
+    pub to_cluster: u32,
+    pub spillover_ratio: f32,
+    pub vector_count: usize,
+}
+
+/// Confidence assessment for search results
+#[derive(Debug, Clone)]
+pub struct ConfidenceAssessment {
+    pub overall: f32,
+    pub signals: ConfidenceSignals,
+    pub needs_correction: bool,
+}
+
+/// Individual confidence signals
+#[derive(Debug, Clone)]
+pub struct ConfidenceSignals {
+    pub distance_uniformity: f32,
+    pub cluster_diversity: f32,
+    pub result_continuity: f32,
+    pub boundary_clarity: f32,
+}
+
+/// Correction strategy for self-correction
+#[derive(Debug, Clone)]
+pub enum CorrectionStrategy {
+    GapFilling,
+    Diversification,
+    BoundaryExploration,
+}
+
+/// Boosting strategy configuration
+#[derive(Debug, Clone)]
+pub struct BoostingStrategy {
+    pub spillover_strength: f32,  // Default: 2.0
+    pub ranking_strength: f32,    // Default: 0.1
 }

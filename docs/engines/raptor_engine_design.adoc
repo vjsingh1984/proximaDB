@@ -27,26 +27,30 @@
 [source]
 ----
 ┌──────────────────────────────────────────────────────────────────────────┐
-│                   RAPTOR: Complete Architecture                          │
+│                RAPTOR: Matrix-Based High-Accuracy Design                 │
 ├──────────────────────────────────────────────────────────────────────────┤
 │                                                                          │
-│   Standard IVF              Standard HNSW           RAPTOR Hybrid       │
-│   ┌─────────┐              ┌─────────┐            ┌─────────┐         │
-│   │ Clusters│              │  Graph  │            │Clusters │         │
-│   │    ●    │              │   ╱│╲   │            │  ●─●─●  │         │
-│   │  ●   ●  │              │  ╱ │ ╲  │            │ ●─●─●─● │         │
-│   │ ●  ●  ● │              │ ●──●──● │            │  ●─●─●  │         │
-│   │  ●   ●  │              │  ╲ │ ╱  │            │ Cluster │         │
-│   │    ●    │              │   ╲│╱   │            │ + Edges │         │
-│   └─────────┘              └─────────┘            └─────────┘         │
-│   No edges                  No clusters            Both!               │
-│   O(k + n/k)               O(log n)                O(P² + K² + P×K)    │
+│   Key Innovation: Replace HNSW with Matrix Trinity                      │
+│   ──────────────────────────────────────────────────                    │
 │                                                                          │
-│   RAPTOR's Mathematical Foundation: P² + K² + P×K                       │
+│   Traditional Approach           RAPTOR Approach                        │
+│   ┌─────────────────┐           ┌─────────────────┐                   │
+│   │ IVF + HNSW      │           │ IVF + Matrices  │                   │
+│   │ • Approximate   │           │ • Exact         │                   │
+│   │ • Graph edges   │           │ • Pre-computed  │                   │
+│   │ • Complex       │           │ • SIMD-ready    │                   │
+│   └─────────────────┘           └─────────────────┘                   │
+│                                                                          │
+│   Matrix Trinity:                                                       │
+│   • P² = Intra-rowgroup (upper triangle, FastLanes compressed)         │
+│   • K² = Inter-centroid (always full, never compressed)                │
+│   • P×K = Cross-cluster (adaptive 10%-100%, compressed)
+│                                                                          │
+│   RAPTOR's Matrix Trinity: P² + K² + P×K                                │
 │   ┌──────────────────────────────────────────────────────────────────┐ │
-│   │ P² = Intra-rowgroup (vectors within cluster)                     │ │
-│   │ K² = Inter-centroid (cluster relationships) - ALWAYS KEPT        │ │
-│   │ P×K = Cross-rowgroup (vector to centroids) - ADAPTIVE            │ │
+│   │ P² = Intra-rowgroup distances (upper triangle, FastLanes+SIMD)   │ │
+│   │ K² = Inter-centroid distances (always kept, never compressed)    │ │
+│   │ P×K = Vector-to-centroid distances (adaptive with 10% floor)     │ │
 │   └──────────────────────────────────────────────────────────────────┘ │
 └──────────────────────────────────────────────────────────────────────────┘
 ----
@@ -56,9 +60,9 @@
 === Key Design Decisions from Analysis
 
 1. **K×K Matrix**: ALWAYS retained for perfect cluster selection (40KB for K=100)
-2. **No Global HNSW**: Removed to maintain accuracy (K×K is superior)
-3. **Local HNSW**: Per-rowgroup graphs with no cross-cluster edges
-4. **Adaptive P×K**: Storage strategy based on K/D relationship
+2. **P² Matrix**: Upper-triangle storage for intra-rowgroup navigation (replaces local HNSW)
+3. **P×K Matrix**: Adaptive storage with 10% minimum coverage floor
+4. **No HNSW Graphs**: Neither global nor local - matrices provide higher accuracy
 5. **Two-Phase Search**: K×K selection → P×K spillover detection
 6. **Bounded Self-Correction**: Max 3 rounds, 30% budget for correction
 
@@ -66,15 +70,66 @@
 
 [source]
 ----
-Decision: Keep K×K, Remove Global HNSW
-────────────────────────────────────────
-K×K Matrix:                    Global HNSW:
+Decision: Use Matrix Trinity (P² + K² + P×K) Instead of HNSW
+──────────────────────────────────────────────────────────
+Matrix Approach:                HNSW Approach:
 ✅ 100% accurate               ❌ 85-95% accurate
-✅ O(K) = 0.1ms for K=100     ✅ O(log K) = 0.05ms
-✅ Perfect boundaries          ❌ Misses boundaries
-✅ 40KB storage               ✅ 25KB storage
+✅ Pre-computed distances      ❌ Lazy evaluation needed
+✅ SIMD optimizable           ✅ SIMD possible but complex
+✅ Upper-triangle storage      ❌ Edge list overhead
+✅ FastLanes compression       ❌ No compression
+✅ Quantization ready          ❌ Float32 only
 
-Verdict: 4.5% accuracy gain worth 0.05ms latency
+P² Storage: P×(P-1)/2 values (upper triangle)
+Example: P=1024 → 523,776 distances × 1 byte (INT8) = 512KB/rowgroup
+----
+
+== Matrix Storage Architecture
+
+=== P² Matrix: Intra-Rowgroup Navigation
+
+The P² matrix stores pre-computed distances between all vectors within a rowgroup, replacing the need for local HNSW segments.
+
+[source]
+----
+P² Matrix Storage Strategy:
+───────────────────────────
+• Storage: Upper triangle only (P×(P-1)/2 values)
+• Indexing: Linear array with formula: idx = i×(2P-i-1)/2 + j - i - 1
+• Compression: FastLanes + Quantization
+• Access: O(1) lookup with SIMD acceleration
+
+Example for P=1024:
+─────────────────────
+Full matrix: 1024×1024 = 1,048,576 values
+Upper triangle: 523,776 values
+With INT8: 512KB per rowgroup
+With Binary: 64KB per rowgroup
+
+Benefits over HNSW:
+─────────────────────
+✓ 100% accurate distances (no approximation)
+✓ Pre-computed (no lazy evaluation)
+✓ SIMD vectorizable
+✓ Compressible with quantization
+✓ Cache-friendly linear access
+----
+
+=== K² Matrix: Inter-Centroid Relationships
+
+[source]
+----
+K² Matrix (ALWAYS KEPT):
+────────────────────────
+• Storage: Full matrix K×K
+• Purpose: Perfect cluster selection
+• Size: Typically 40KB for K=100
+• Compression: None (accuracy critical)
+
+Why Not Compressed:
+• Small size (K << P)
+• Accessed frequently
+• Accuracy critical for Phase 1
 ----
 
 == Adaptive P×K Storage Strategy
@@ -319,6 +374,40 @@ pub struct SmartSparseP×K {
         selected
     }
 }
+----
+
+== Complete RAPTOR Architecture
+
+[mermaid]
+----
+graph TB
+    subgraph "RAPTOR File Structure"
+        F[RAPTOR File] --> H[Header]
+        F --> RG1[RowGroup 1]
+        F --> RG2[RowGroup 2]
+        F --> RGN[RowGroup N]
+        F --> FT[Footer]
+        
+        subgraph "RowGroup Contents"
+            RG1 --> V1[Vectors<br/>Compressed]
+            RG1 --> P2[P² Matrix<br/>Upper Triangle]
+            RG1 --> PK[P×K Matrix<br/>Adaptive Storage]
+            RG1 --> BF[Bloom Filter<br/>ID Lookup]
+            RG1 --> MD[Metadata<br/>Columnar]
+        end
+        
+        subgraph "Footer Contents"
+            FT --> K2[K² Matrix<br/>Full, Uncompressed]
+            FT --> CM[Cluster Metadata]
+            FT --> ST[Statistics]
+        end
+    end
+    
+    subgraph "Matrix Storage Details"
+        P2 --> |FastLanes| FL[Compressed<br/>INT8/Binary]
+        PK --> |Adaptive| AS[10%-100%<br/>Coverage]
+        K2 --> |Always Full| AF[100% Accurate]
+    end
 ----
 
 == Two-Phase Boundary Detection
@@ -955,47 +1044,90 @@ async fn search_with_two_phases(
    - Maximum 2MB per rowgroup even at k=10000
    - Predictable memory requirements for capacity planning
 
-=== Memory Usage Examples
+=== Complete Memory Profile (P=1024, D=384)
 
-[cols="2,2,2,2,3", options="header"]
+[cols="2,3,3,3,3", options="header"]
 |===
-| K | D | Coverage | Compression | Storage/RG
+| Component | Formula | Storage Type | Size | Compression
 
-| 100
-| 384
-| 100%
-| Float16
+| **P² Matrix**
+| P×(P-1)/2
+| Upper triangle
+| 512KB
+| INT8 quantized
+
+| **K² Matrix**
+| K×K×4
+| Full matrix
+| 40KB (K=100)
+| None (accuracy)
+
+| **P×K Matrix (K=100)**
+| P×K×coverage×2
+| 100% coverage
 | 200KB
+| Float16
 
-| 500
-| 384
-| 45%
-| Quantized8
+| **P×K Matrix (K=500)**
+| P×K×0.45×1
+| 45% coverage
 | 230KB
+| Quantized8
 
-| 2000
-| 384
-| 15%
-| Quantized4
+| **P×K Matrix (K=2000)**
+| P×K×0.15×0.5
+| 15% coverage  
 | 154KB
+| Quantized4
 
-| 10000
-| 384
-| 10%
-| BitPacked
+| **P×K Matrix (K=10000)**
+| P×K×0.10×2
+| 10% floor
 | 2MB
+| BitPacked
+
+| **Bloom Filter**
+| P×14 bits
+| Bit array
+| 14KB
+| None
+
+| **Vectors**
+| P×D×4
+| Columnar
+| 1.5MB
+| ZSTD
+
+| **Total (K=100)**
+| Sum of above
+| Mixed
+| ~2.2MB/RG
+| Mixed
+
+| **Total (K=1000)**
+| Sum of above
+| Mixed
+| ~2.4MB/RG
+| Mixed
+
+| **Total (K=10000)**
+| Sum of above
+| Mixed
+| ~4.0MB/RG
+| Mixed
 |===
 
 == Summary
 
-RAPTOR achieves industry-leading performance through:
+RAPTOR achieves industry-leading accuracy through its Matrix Trinity approach:
 
-1. **Hybrid IVF+Graph Architecture**: Combines global clustering with local edges
-2. **Perfect Cluster Selection**: K×K matrix always retained (no accuracy loss)
-3. **Adaptive P×K Storage**: Automatically adjusts based on K/D relationship
-4. **Two-Phase Boundary Detection**: Catches spillover vectors
-5. **Bounded Self-Correction**: Improves recall without runaway computation
-6. **Strategic Boosting**: Applied only where it improves accuracy
+1. **Matrix-Based Architecture**: P² + K² + P×K replaces HNSW graphs entirely
+2. **P² Matrix**: Upper-triangle storage with FastLanes compression for intra-rowgroup navigation
+3. **K² Matrix**: Always retained uncompressed for perfect cluster selection
+4. **P×K Matrix**: Adaptive storage with 10% minimum coverage floor
+5. **Two-Phase Boundary Detection**: K×K cluster selection → P×K spillover detection
+6. **Bounded Self-Correction**: Max 3 rounds with confidence-based triggers
+7. **Strategic Boosting**: Applied at spillover (2.0×) and ranking (0.1×) phases
 
 === Key Metrics
 
@@ -1009,24 +1141,42 @@ RAPTOR achieves industry-leading performance through:
 
 [source,rust]
 ----
-// Automatic configuration
-let engine = RaptorEngine::new(k=100, d=384, total_vectors=1_000_000);
-// Automatically selects: DENSE_OPTIMIZED P×K, BALANCED accuracy
+// Automatic configuration based on K/D relationship
+let config = RaptorConfig::auto_configure(k=500, d=384);
+// Automatically selects:
+// - P×K: 45% coverage with Quantized8 compression
+// - P²: Upper triangle with INT8 quantization
+// - K²: Full matrix, uncompressed
 
-// Search with different modes
-let results_max = engine.search(query, j=10, AccuracyLevel::Maximum).await?;
-let results_bal = engine.search(query, j=10, AccuracyLevel::Balanced).await?;
-let results_fast = engine.search(query, j=10, AccuracyLevel::Fast).await?;
+// Quality presets
+let high_quality = RaptorConfig::high_quality();
+// - Min coverage: 20% (never below)
+// - Quality factor: 1.5× coverage
+// - Accuracy: MAXIMUM mode
 
-// Custom configuration
+let balanced = RaptorConfig::balanced();  // Default settings
+
+let memory_optimized = RaptorConfig::memory_optimized();
+// - Min coverage: 10% floor
+// - Quality factor: 0.8× coverage
+// - Accuracy: FAST mode
+
+// Search with different accuracy levels
+let results = engine.search(
+    query, 
+    top_k=10, 
+    AccuracyLevel::Maximum  // 99.5% recall target
+).await?;
+
+// Custom P×K strategy
 let config = RaptorConfig {
-    pxk_strategy: PxKStrategy::SparseBoundary(0.2),
-    boundary_threshold: 0.75,  // More aggressive
-    spillover_threshold: 0.10,  // More sensitive
-    max_correction_rounds: 4,   // More thorough
+    min_pxk_coverage: 0.15,     // 15% minimum
+    pxk_quality_factor: 1.2,    // 20% more coverage
+    boundary_threshold: 0.75,    // More aggressive boundaries
+    spillover_threshold: 0.10,   // More sensitive spillover
+    max_correction_rounds: 4,    // More correction rounds
     ..Default::default()
 };
-let custom_engine = RaptorEngine::with_config(config);
 ----
 
 ---

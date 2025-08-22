@@ -21,6 +21,7 @@ pub mod config;
 pub mod constants;
 
 // Core modules
+pub mod adaptive_pxk;
 pub mod consolidated_reader;
 pub mod consolidated_compactor;
 pub mod engine;
@@ -44,10 +45,12 @@ pub use common::{
     IoStrategy, CachePolicy, ReadPattern,
     LocalityCluster, BloomFilterMetadata,
     RowGroupBloomFilter, ColumnnarIdIndex,  // Added bloom filter types
+    SpilloverInfo, ConfidenceAssessment, ConfidenceSignals,
+    CorrectionStrategy, BoostingStrategy,  // Added boundary/correction types
 };
 
 // Export consolidated modules instead of deprecated ones
-pub use config::{RaptorConfig, CompactionConfig};
+pub use config::{RaptorConfig, CompactionConfig, AccuracyLevel, PxKStrategy, CompressionStrategy};
 pub use engine::RaptorEngine;
 pub use writer::RaptorWriter;
 pub use consolidated_reader::RaptorReader;      // Use consolidated reader
@@ -55,3 +58,4 @@ pub use consolidated_compactor::RaptorCompactor; // Use consolidated compactor
 pub use ivf_manager::IvfManager;
 pub use rowgroup_manager::{RowGroupManager, HybridRowGroup, ColumnarBlock, TransposedVectors};
 pub use smart_rowgroup_sizing::{SmartRowGroupSizer, OptimalRowGroupSize, CloudIOProfile, CommonConfigurations};
+pub use adaptive_pxk::{AdaptivePxKStorage, VectorSelection, SelectionReason, BoundaryInfo};

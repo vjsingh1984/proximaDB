@@ -1679,6 +1679,8 @@ impl ValidationReport {
         }
     }
 }
+
+impl RaptorReader {
     /// Efficiently navigates through super-clusters to find best rowgroups
     pub async fn hierarchical_search(
         &self,
