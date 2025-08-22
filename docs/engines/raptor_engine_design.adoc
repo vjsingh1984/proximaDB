@@ -290,7 +290,11 @@ P×K Matrix Layout (Per Rowgroup):
 └──────────────────────────────────────────────────────────────────────────┘
 
 Boundary Detection Function (Smooth Exponential Decay):
+
+[source]
+----
 boundary_score(v, k, d) = exp(-α × |d_own - d_neighbor|) × log(k/d + 1)
+----
 
 where:
 - α = 2.0 (sensitivity parameter)
@@ -764,14 +768,14 @@ graph TD
 graph TD
     subgraph "Phase 2: Intra-Rowgroup Search & Spillover"
         SC[Selected Centroids] --> RG[Load Rowgroups]
-        RG --> PK[P×K Sparse Matrix]
-        RG --> P2[P² Upper Triangle Matrix]
+        RG --> PK["P×K Sparse Matrix"]
+        RG --> P2["P² Upper Triangle Matrix"]
         
         subgraph "Spillover Detection"
             PK --> VBD[Vector Boundary Detection]
-            VBD --> SF[boundary_score = exp(-α×|d_own-d_neighbor|)×log(k/d+1)]
-            SF --> SP[Spillover >15% → Expand search]
-            SP --> AC[Additional Centroids: C12, C34]
+            VBD --> SF["Boundary Score Calculation"]
+            SF --> SP["Spillover >15% → Expand search"]
+            SP --> AC["Additional Centroids: C12, C34"]
         end
         
         subgraph "Intra-Rowgroup Search"
@@ -807,7 +811,7 @@ sequenceDiagram
     loop For each selected centroid
         Q->>RG: Load rowgroup for centroid
         RG->>PK: Check sparse P×K matrix for boundary vectors
-        PK->>PK: Calculate boundary_score = exp(-α×|d_own-d_neighbor|)×log(k/d+1)
+        PK->>PK: Calculate boundary score using exponential decay
         alt Spillover detected (>15% boundary vectors)
             PK->>Q: Expand to neighboring centroids
         end
@@ -882,8 +886,8 @@ graph TD
     
     subgraph "Phase 2: Vector-Level Expansion"
         SC[Selected Centroids] --> VBD[Vector Boundary Detection]
-        VBD --> BS[boundary_score = exp(-α×|d_own-d_neighbor|)×log(k/d+1)]
-        BS --> SP{Spillover > 15%?}
+        VBD --> BS["Calculate Boundary Score"]
+        BS --> SP{"Spillover > 15%?"}
         SP -->|Yes| NC2[Expand to Additional Centroids]
         SP -->|No| IS[Intra-Rowgroup Search Only]
         NC2 --> IS
