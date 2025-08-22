@@ -266,26 +266,22 @@ with exponential decay: score × exp(-λ×rank)
 4. **Matrix updates**: Only during compaction
 5. **Bloom filter parameters**: 10 bits/key, 0.1% FPR
 
-=== Memory Footprint
+=== Memory Footprint and Distribution
 
-[source,mermaid]
-----
-pie title "Memory Distribution for 1M Vectors"
-    "P² Matrices" : 50
-    "P×K Matrices" : 55
-    "Bloom Filters" : 18
-    "K² Matrix" : 0.04
-    "Metadata" : 5
-----
+image::raptor_memory_distribution.svg[RAPTOR Memory Distribution, align="center", width=100%]
 
-For 1M vectors (K=100 rowgroups, P=1024 vectors/rowgroup):
-```
-K² Matrix:        40KB (100×100×4 bytes)
-P² Matrices:      50MB (100 rowgroups × 512KB)
-P×K Matrices:     10-100MB (adaptive coverage)
-Bloom Filters:    18MB (100 × 180KB)
-Total Index:      ~80-170MB (8-17% of vector data)
-```
+The memory distribution charts above show:
+
+**Overall File Distribution** (Left):
+* Vector data dominates at 91.9% (1.47GB for 1M vectors)
+* Total index overhead is only 8-10%
+* K² matrix is minimal (40KB) but critical for navigation
+
+**Per-RowGroup Distribution** (Right):
+* Each rowgroup ~16MB for 1024 vectors
+* P² matrix uses INT8 quantization (512KB)
+* Bloom filter enables O(1) ID lookups (180KB)
+* P×K matrix stored sparsely (100KB)
 
 === Search Flow
 
