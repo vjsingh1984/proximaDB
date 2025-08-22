@@ -139,12 +139,18 @@ impl Default for CpuFeatures {
             neon_support: false,
             core_count: num_cpus::get_physical(),
             thread_count: num_cpus::get(),
-            cache_sizes: CacheSizes {
-                l1_data: 32 * 1024,
-                l1_instruction: 32 * 1024,
-                l2: 256 * 1024,
-                l3: 8 * 1024 * 1024,
-            },
+            cache_sizes: CacheSizes::default(),
+        }
+    }
+}
+
+impl Default for CacheSizes {
+    fn default() -> Self {
+        Self {
+            l1_data: 32 * 1024,      // 32KB default
+            l1_instruction: 32 * 1024, // 32KB default
+            l2: 256 * 1024,          // 256KB default
+            l3: 8 * 1024 * 1024,     // 8MB default
         }
     }
 }
@@ -285,7 +291,7 @@ impl HardwareCapabilities {
         // Detect SIMD capabilities first
         let simd = SimdCapabilities::detect();
         
-        // Use centralized CpuFeatures with SIMD detection results
+        // Use centralized CpuFeatures with SIMD detection results and actual cache detection
         let features = CpuFeatures {
             avx512_support: simd.has_avx512,
             avx2_support: simd.has_avx2,
@@ -293,12 +299,7 @@ impl HardwareCapabilities {
             neon_support: simd.has_neon,
             core_count: physical_cores,
             thread_count: logical_cores,
-            cache_sizes: CacheSizes {
-                l1_data: 32 * 1024,
-                l1_instruction: 32 * 1024,
-                l2: 256 * 1024,
-                l3: 8 * 1024 * 1024,
-            },
+            cache_sizes: Self::detect_cache_sizes(),
         };
         
         // Get CPU info (platform-specific)
@@ -344,6 +345,394 @@ impl HardwareCapabilities {
                 ("Unknown".to_string(), "Unknown CPU".to_string())
             }
         }
+    }
+    
+    /// Detect actual CPU cache sizes using platform-specific methods
+    fn detect_cache_sizes() -> CacheSizes {
+        #[cfg(target_os = "macos")]
+        {
+            // macOS works for both x86_64 and ARM (Apple Silicon)
+            Self::detect_macos_cache_sizes()
+        }
+        #[cfg(all(target_os = "linux", target_arch = "aarch64"))]
+        {
+            // ARM64 Linux uses /sys filesystem like x86_64 Linux
+            Self::detect_linux_cache_sizes()
+        }
+        #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+        {
+            // x86_64 Linux can use both /sys and CPUID, prefer /sys for consistency
+            Self::detect_linux_cache_sizes()
+        }
+        #[cfg(all(target_arch = "aarch64", target_os = "android"))]
+        {
+            // Android ARM64 systems
+            Self::detect_android_cache_sizes()
+        }
+        #[cfg(all(target_arch = "x86_64", not(any(target_os = "macos", target_os = "linux"))))]
+        {
+            // Windows x86_64 or other x86_64 platforms
+            Self::detect_x86_cache_sizes()
+        }
+        #[cfg(all(target_arch = "aarch64", not(any(target_os = "macos", target_os = "linux", target_os = "android"))))]
+        {
+            // Other ARM64 platforms (e.g., Windows ARM64)
+            Self::detect_arm_cache_sizes()
+        }
+        #[cfg(not(any(
+            target_os = "macos", 
+            target_os = "linux", 
+            target_os = "android",
+            target_arch = "x86_64", 
+            target_arch = "aarch64"
+        )))]
+        {
+            CacheSizes::default()
+        }
+    }
+    
+    #[cfg(target_arch = "x86_64")]
+    fn detect_x86_cache_sizes() -> CacheSizes {
+        use raw_cpuid::CpuId;
+        let cpuid = CpuId::new();
+        
+        // Try to get cache info from CPUID
+        if let Some(cache_info) = cpuid.get_cache_info() {
+            let mut l1_data = 32 * 1024;
+            let mut l1_instruction = 32 * 1024;
+            let mut l2 = 256 * 1024;
+            let mut l3 = 8 * 1024 * 1024;
+            
+            for cache in cache_info {
+                match cache.level {
+                    1 => {
+                        if cache.cache_type == raw_cpuid::CacheType::Data {
+                            l1_data = cache.size as usize;
+                        } else if cache.cache_type == raw_cpuid::CacheType::Instruction {
+                            l1_instruction = cache.size as usize;
+                        }
+                    },
+                    2 => l2 = cache.size as usize,
+                    3 => l3 = cache.size as usize,
+                    _ => {}
+                }
+            }
+            
+            CacheSizes { l1_data, l1_instruction, l2, l3 }
+        } else {
+            tracing::warn!("Could not detect x86 cache sizes, using defaults");
+            CacheSizes::default()
+        }
+    }
+    
+    #[cfg(target_os = "macos")]
+    fn detect_macos_cache_sizes() -> CacheSizes {
+        use std::process::Command;
+        
+        // Use sysctl to get cache information on macOS
+        let mut cache_sizes = CacheSizes::default();
+        
+        // L1 data cache
+        if let Ok(output) = Command::new("sysctl").args(&["-n", "hw.l1dcachesize"]).output() {
+            if let Ok(size_str) = String::from_utf8(output.stdout) {
+                if let Ok(size) = size_str.trim().parse::<usize>() {
+                    cache_sizes.l1_data = size;
+                }
+            }
+        }
+        
+        // L1 instruction cache
+        if let Ok(output) = Command::new("sysctl").args(&["-n", "hw.l1icachesize"]).output() {
+            if let Ok(size_str) = String::from_utf8(output.stdout) {
+                if let Ok(size) = size_str.trim().parse::<usize>() {
+                    cache_sizes.l1_instruction = size;
+                }
+            }
+        }
+        
+        // L2 cache
+        if let Ok(output) = Command::new("sysctl").args(&["-n", "hw.l2cachesize"]).output() {
+            if let Ok(size_str) = String::from_utf8(output.stdout) {
+                if let Ok(size) = size_str.trim().parse::<usize>() {
+                    cache_sizes.l2 = size;
+                }
+            }
+        }
+        
+        // L3 cache
+        if let Ok(output) = Command::new("sysctl").args(&["-n", "hw.l3cachesize"]).output() {
+            if let Ok(size_str) = String::from_utf8(output.stdout) {
+                if let Ok(size) = size_str.trim().parse::<usize>() {
+                    cache_sizes.l3 = size;
+                }
+            }
+        }
+        
+        tracing::info!("Detected macOS cache sizes: L1D={}KB, L1I={}KB, L2={}KB, L3={}MB", 
+                      cache_sizes.l1_data / 1024, 
+                      cache_sizes.l1_instruction / 1024,
+                      cache_sizes.l2 / 1024, 
+                      cache_sizes.l3 / 1024 / 1024);
+        
+        cache_sizes
+    }
+    
+    #[cfg(target_os = "linux")]
+    fn detect_linux_cache_sizes() -> CacheSizes {
+        use std::fs;
+        
+        let mut cache_sizes = CacheSizes::default();
+        
+        // Try to read from /sys/devices/system/cpu/cpu0/cache/
+        let base_path = "/sys/devices/system/cpu/cpu0/cache";
+        
+        // L1 data cache (index0)
+        if let Ok(size_str) = fs::read_to_string(format!("{}/index0/size", base_path)) {
+            if let Some(size) = Self::parse_linux_cache_size(&size_str) {
+                cache_sizes.l1_data = size;
+            }
+        }
+        
+        // L1 instruction cache (index1)
+        if let Ok(size_str) = fs::read_to_string(format!("{}/index1/size", base_path)) {
+            if let Some(size) = Self::parse_linux_cache_size(&size_str) {
+                cache_sizes.l1_instruction = size;
+            }
+        }
+        
+        // L2 cache (index2)
+        if let Ok(size_str) = fs::read_to_string(format!("{}/index2/size", base_path)) {
+            if let Some(size) = Self::parse_linux_cache_size(&size_str) {
+                cache_sizes.l2 = size;
+            }
+        }
+        
+        // L3 cache (index3)
+        if let Ok(size_str) = fs::read_to_string(format!("{}/index3/size", base_path)) {
+            if let Some(size) = Self::parse_linux_cache_size(&size_str) {
+                cache_sizes.l3 = size;
+            }
+        }
+        
+        tracing::info!("Detected Linux cache sizes: L1D={}KB, L1I={}KB, L2={}KB, L3={}MB", 
+                      cache_sizes.l1_data / 1024, 
+                      cache_sizes.l1_instruction / 1024,
+                      cache_sizes.l2 / 1024, 
+                      cache_sizes.l3 / 1024 / 1024);
+        
+        cache_sizes
+    }
+    
+    #[cfg(target_os = "linux")]
+    fn parse_linux_cache_size(size_str: &str) -> Option<usize> {
+        let trimmed = size_str.trim();
+        if trimmed.ends_with('K') {
+            trimmed[..trimmed.len()-1].parse::<usize>().ok().map(|n| n * 1024)
+        } else if trimmed.ends_with('M') {
+            trimmed[..trimmed.len()-1].parse::<usize>().ok().map(|n| n * 1024 * 1024)
+        } else {
+            trimmed.parse::<usize>().ok()
+        }
+    }
+    
+    #[cfg(all(target_arch = "aarch64", target_os = "android"))]
+    fn detect_android_cache_sizes() -> CacheSizes {
+        use std::fs;
+        
+        // Android uses Linux-style /sys filesystem but may have different paths
+        let mut cache_sizes = CacheSizes::default();
+        
+        // Try standard Linux paths first
+        cache_sizes = Self::detect_linux_cache_sizes();
+        
+        // If that fails, try Android-specific detection via /proc/cpuinfo
+        if cache_sizes.l3 == CacheSizes::default().l3 {
+            if let Ok(cpuinfo) = fs::read_to_string("/proc/cpuinfo") {
+                // Parse ARM cache info from cpuinfo (varies by SoC vendor)
+                for line in cpuinfo.lines() {
+                    if line.starts_with("cache size") || line.contains("L3") {
+                        // Parse cache info - format varies significantly between ARM vendors
+                        // This is a basic implementation that may need vendor-specific logic
+                        if let Some(size_part) = line.split(':').nth(1) {
+                            if let Some(size) = Self::parse_arm_cache_size(size_part.trim()) {
+                                cache_sizes.l3 = size;
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        
+        tracing::info!("Detected Android ARM64 cache sizes: L1D={}KB, L1I={}KB, L2={}KB, L3={}MB", 
+                      cache_sizes.l1_data / 1024, 
+                      cache_sizes.l1_instruction / 1024,
+                      cache_sizes.l2 / 1024, 
+                      cache_sizes.l3 / 1024 / 1024);
+        
+        cache_sizes
+    }
+    
+    #[cfg(target_arch = "aarch64")]
+    fn detect_arm_cache_sizes() -> CacheSizes {
+        use std::fs;
+        
+        // Generic ARM64 detection for non-Linux platforms (e.g., Windows ARM64)
+        let mut cache_sizes = CacheSizes::default();
+        
+        // Try to read ARM system registers via platform-specific methods
+        #[cfg(target_os = "windows")]
+        {
+            // Windows ARM64 would need WinAPI calls to get cache info
+            // For now, use enhanced defaults based on common ARM architectures
+            cache_sizes = Self::get_arm_defaults();
+        }
+        
+        #[cfg(not(target_os = "windows"))]
+        {
+            // For other ARM64 platforms, try Linux-style detection first
+            if let Ok(cpuinfo) = fs::read_to_string("/proc/cpuinfo") {
+                cache_sizes = Self::parse_arm_cpuinfo(&cpuinfo);
+            } else {
+                cache_sizes = Self::get_arm_defaults();
+            }
+        }
+        
+        tracing::info!("Detected ARM64 cache sizes: L1D={}KB, L1I={}KB, L2={}KB, L3={}MB", 
+                      cache_sizes.l1_data / 1024, 
+                      cache_sizes.l1_instruction / 1024,
+                      cache_sizes.l2 / 1024, 
+                      cache_sizes.l3 / 1024 / 1024);
+        
+        cache_sizes
+    }
+    
+    #[cfg(target_arch = "aarch64")]
+    fn get_arm_defaults() -> CacheSizes {
+        // Enhanced defaults for ARM64 based on common architectures
+        // Apple M1/M2: L1=128KB, L2=4MB, L3=8-24MB (shared)
+        // Snapdragon 8 Gen 2: L1=64KB, L2=512KB, L3=8MB
+        // AWS Graviton3: L1=64KB, L2=1MB, L3=32MB
+        CacheSizes {
+            l1_data: 64 * 1024,           // 64KB typical for ARM64
+            l1_instruction: 64 * 1024,    // 64KB typical for ARM64
+            l2: 1024 * 1024,              // 1MB conservative estimate
+            l3: 12 * 1024 * 1024,         // 12MB average (8-32MB range)
+        }
+    }
+    
+    #[cfg(target_arch = "aarch64")]
+    fn parse_arm_cpuinfo(cpuinfo: &str) -> CacheSizes {
+        let mut cache_sizes = Self::get_arm_defaults();
+        
+        // ARM /proc/cpuinfo has different format than x86
+        // Look for ARM-specific cache information
+        for line in cpuinfo.lines() {
+            let line_lower = line.to_lowercase();
+            
+            // Check for ARM cache size indicators
+            if line_lower.contains("cache") && line_lower.contains("size") {
+                if let Some(size) = Self::parse_arm_cache_size(&line) {
+                    // ARM cpuinfo often doesn't specify cache level clearly
+                    // Use heuristics based on size ranges
+                    if size <= 128 * 1024 {
+                        // Likely L1 cache
+                        if line_lower.contains("instruction") || line_lower.contains("icache") {
+                            cache_sizes.l1_instruction = size;
+                        } else {
+                            cache_sizes.l1_data = size;
+                        }
+                    } else if size <= 4 * 1024 * 1024 {
+                        // Likely L2 cache
+                        cache_sizes.l2 = size;
+                    } else {
+                        // Likely L3 cache
+                        cache_sizes.l3 = size;
+                    }
+                }
+            }
+            
+            // Check for specific ARM vendor cache info
+            if line_lower.contains("apple") && line_lower.contains("cache") {
+                // Apple Silicon specific parsing
+                cache_sizes = Self::parse_apple_silicon_cache(&line, cache_sizes);
+            } else if line_lower.contains("qualcomm") || line_lower.contains("snapdragon") {
+                // Qualcomm Snapdragon specific parsing
+                cache_sizes = Self::parse_qualcomm_cache(&line, cache_sizes);
+            }
+        }
+        
+        cache_sizes
+    }
+    
+    #[cfg(target_arch = "aarch64")]
+    fn parse_arm_cache_size(line: &str) -> Option<usize> {
+        // ARM cache size parsing - more flexible than Linux KB/MB parsing
+        let line_lower = line.to_lowercase();
+        
+        // Look for size patterns: "32KB", "1MB", "8192 KB", etc.
+        for word in line.split_whitespace() {
+            let word_clean = word.trim_matches(|c: char| !c.is_alphanumeric());
+            
+            if word_clean.ends_with("kb") {
+                if let Ok(size) = word_clean[..word_clean.len()-2].parse::<usize>() {
+                    return Some(size * 1024);
+                }
+            } else if word_clean.ends_with("mb") {
+                if let Ok(size) = word_clean[..word_clean.len()-2].parse::<usize>() {
+                    return Some(size * 1024 * 1024);
+                }
+            } else if word_clean.ends_with("k") {
+                if let Ok(size) = word_clean[..word_clean.len()-1].parse::<usize>() {
+                    return Some(size * 1024);
+                }
+            }
+        }
+        
+        None
+    }
+    
+    #[cfg(target_arch = "aarch64")]
+    fn parse_apple_silicon_cache(line: &str, mut cache_sizes: CacheSizes) -> CacheSizes {
+        // Apple Silicon has known cache configurations
+        // M1: L1=128KB, L2=4MB, L3=8MB (efficiency cores share L3)
+        // M1 Pro/Max: L1=128KB, L2=4MB, L3=24MB
+        // M2: L1=128KB, L2=4MB, L3=16MB
+        if line.to_lowercase().contains("m1") {
+            cache_sizes.l1_data = 128 * 1024;
+            cache_sizes.l1_instruction = 128 * 1024;
+            cache_sizes.l2 = 4 * 1024 * 1024;
+            if line.to_lowercase().contains("pro") || line.to_lowercase().contains("max") {
+                cache_sizes.l3 = 24 * 1024 * 1024;
+            } else {
+                cache_sizes.l3 = 8 * 1024 * 1024;
+            }
+        } else if line.to_lowercase().contains("m2") {
+            cache_sizes.l1_data = 128 * 1024;
+            cache_sizes.l1_instruction = 128 * 1024;
+            cache_sizes.l2 = 4 * 1024 * 1024;
+            cache_sizes.l3 = 16 * 1024 * 1024;
+        }
+        cache_sizes
+    }
+    
+    #[cfg(target_arch = "aarch64")]
+    fn parse_qualcomm_cache(line: &str, mut cache_sizes: CacheSizes) -> CacheSizes {
+        // Qualcomm Snapdragon typical configurations
+        // Snapdragon 8 Gen 2: L1=64KB, L2=512KB, L3=8MB
+        // Snapdragon 8+ Gen 1: L1=32KB, L2=256KB, L3=6MB
+        if line.to_lowercase().contains("8 gen 2") {
+            cache_sizes.l1_data = 64 * 1024;
+            cache_sizes.l1_instruction = 64 * 1024;
+            cache_sizes.l2 = 512 * 1024;
+            cache_sizes.l3 = 8 * 1024 * 1024;
+        } else if line.to_lowercase().contains("8+ gen 1") || line.to_lowercase().contains("8 gen 1") {
+            cache_sizes.l1_data = 32 * 1024;
+            cache_sizes.l1_instruction = 32 * 1024;
+            cache_sizes.l2 = 256 * 1024;
+            cache_sizes.l3 = 6 * 1024 * 1024;
+        }
+        cache_sizes
     }
     
     /// Detect GPU capabilities
@@ -596,6 +985,13 @@ impl HardwareQuery {
         try_get_hardware_capabilities()
             .map(|caps| caps.memory.recommended_cache_size)
             .unwrap_or(1024 * 1024 * 1024) // 1GB default
+    }
+    
+    /// Get L3 cache size for optimal row group sizing
+    /// Used by RAPTOR engine for hardware-aware parameter selection
+    pub fn l3_cache_size(&self) -> Option<usize> {
+        // Return actual L3 cache size from hardware detection
+        Some(self.cpu.features.cache_sizes.l3)
     }
 }
 

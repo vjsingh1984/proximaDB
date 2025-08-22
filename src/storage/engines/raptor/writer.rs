@@ -198,13 +198,24 @@ impl MinimalHnswBuilder {
         });
     }
     
-    /// Advanced p²+k×p clustering with component boosting using AXIS clustering infrastructure
+    /// Advanced k²+p×(k+p) clustering with hardware-aware parameter selection and component boosting
     /// 
-    /// This method implements the core RAPTOR clustering algorithm that:
-    /// 1. Reduces computational complexity from O(n²) to O(n×(p+k)) where p=rowgroup_size, k=num_clusters
-    /// 2. Uses AXIS clustering for proven k-means++ initialization and stable convergence
-    /// 3. Applies 5-component boosting formula for optimal row group assignment
-    /// 4. Achieves 59x reduction in calculations for n=30, p=5, k=6 vs traditional HNSW
+    /// This method implements sophisticated row group size optimization using multiple constraints:
+    /// 1. Mathematical Optimum: p ≈ √n for k²+p×(k+p) complexity optimization (O(√n) scaling)
+    /// 2. File Size Estimation: Based on n×(d×4 + metadata + source overhead) analysis
+    /// 3. Hardware Detection: Uses actual L3 cache size, targets 45% for row group efficiency
+    /// 4. Memory Constraint: Adapts to detected L3 cache (8MB-32MB typical) for optimal performance
+    /// 5. Minimum Threshold: p ≥ 1024 to justify clustering overhead and ensure high recall
+    /// 6. Configuration Override: Respects user-specified target_rowgroup_size when larger
+    /// 
+    /// Final p selection: p = max(√n, hardware_memory_optimal, 1024, config_target)
+    /// 
+    /// Key benefits:
+    /// - Hardware-adaptive: Automatically adjusts to CPU cache architecture
+    /// - Scales optimally with dataset size (√n principle)
+    /// - Adapts to vector dimensions and estimated file characteristics  
+    /// - Balances recall (large row groups) vs cache efficiency
+    /// - Uses AXIS clustering for proven k-means++ initialization
     /// 
     /// Mathematical foundation:
     /// - Standard HNSW: O(n × M × EF) = 30 × 16 × 200 = 96,000 calculations
@@ -227,9 +238,34 @@ impl MinimalHnswBuilder {
     /// - d₄: Minimum inter-centroid distance (cluster separation)
     /// - d₅: Maximum inter-centroid distance (global structure preservation)
     pub fn cluster_into_rowgroups(&mut self, vectors: &[Vec<f32>]) -> Vec<Vec<u32>> {
-        // Step 1: Initialize clustering parameters based on target row group size
+        // Step 1: Calculate optimal row group size based on mathematical and practical constraints
         let n = vectors.len();                    // Total number of vectors to cluster
-        let p = self.target_rowgroup_size;        // Target vectors per row group (typically 10K)
+        let d = vectors.first().map(|v| v.len()).unwrap_or(384); // Vector dimension
+        
+        // Mathematical optimum: p ≈ √n for k²+p×(k+p) complexity optimization
+        let p_sqrt_n = (n as f64).sqrt() as usize;
+        
+        // Practical constraint: Estimate vectors from file characteristics
+        let bytes_per_vector = d * 4;           // f32 = 4 bytes per dimension
+        let metadata_overhead = 512;            // Estimated metadata + source overhead per vector
+        let total_bytes_per_vector = bytes_per_vector + metadata_overhead;
+        let estimated_file_size = n * total_bytes_per_vector; // n × (d×4 + metadata + overhead)
+        
+        // Hardware-aware memory constraint: Detect L3 cache size for optimal row group sizing
+        let detected_l3_cache = self.hardware.l3_cache_size().unwrap_or(8 * 1024 * 1024); // Default 8MB
+        // Use 40-50% of L3 cache for row group to leave room for other operations
+        let target_rowgroup_bytes = (detected_l3_cache as f64 * 0.45) as usize;
+        let p_memory_optimal = target_rowgroup_bytes / total_bytes_per_vector;
+        
+        // Minimum constraint: Ensure clustering is beneficial (recall + I/O efficiency)
+        let p_min = 1024;
+        
+        // Choose optimal p: max(√n, memory_optimal, min_constraint, target_config)
+        let p = p_sqrt_n
+            .max(p_memory_optimal)
+            .max(p_min)
+            .max(self.target_rowgroup_size);
+        
         let k = (n + p - 1) / p;                 // Number of clusters needed: k = ceil(n/p)
         
         let k_means_calcs = k * n;           // AXIS k-means clustering
@@ -239,9 +275,17 @@ impl MinimalHnswBuilder {
         let hnsw_complexity = n * 16 * 200; // Standard HNSW: n × M × EF_construction
         
         tracing::info!(
-            "🎯 Starting RAPTOR clustering with AXIS: n={}, k={}, p={} \
-             (RAPTOR: {}+{}+{} = {} vs HNSW: {} = {:.1}x reduction)",
-            n, k, p, k_means_calcs, centroid_matrix_calcs, boosting_calcs, 
+            "🎯 RAPTOR hardware-aware clustering with AXIS: n={}, k={}, p={} \
+             | Constraints: √n={}, memory_opt={}, min={}, config={} \
+             | Hardware: L3_cache={:.1}MB, target_rowgroup={:.1}MB ({:.0}% L3) \
+             | File: d={}, {:.1}KB/vec, est_size={:.1}MB \
+             | Recall: {} vectors/exhaustive search per row group \
+             | Complexity: RAPTOR={}+{}+{}={} vs HNSW={} ({:.1}x reduction)",
+            n, k, p, p_sqrt_n, p_memory_optimal, p_min, self.target_rowgroup_size,
+            detected_l3_cache as f64 / 1_000_000.0, target_rowgroup_bytes as f64 / 1_000_000.0, 
+            (target_rowgroup_bytes as f64 / detected_l3_cache as f64) * 100.0,
+            d, total_bytes_per_vector as f64 / 1024.0, estimated_file_size as f64 / 1_000_000.0,
+            p, k_means_calcs, centroid_matrix_calcs, boosting_calcs, 
             raptor_total, hnsw_complexity, 
             hnsw_complexity as f32 / raptor_total.max(1) as f32
         );
