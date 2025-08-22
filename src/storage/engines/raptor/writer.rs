@@ -1102,11 +1102,19 @@ impl IvfClusteringBuilder {
         }
     }
     
-    /// Helper to get vector data by ID
+    /// Helper to get vector data by ID from stored vectors
     fn get_vector_by_id(&self, vector_id: &str) -> Vec<f32> {
-        // This would normally look up from the actual vector storage
-        // For now, return a placeholder that matches dimension
-        vec![0.0; self.centroids[0].vector.len()]
+        // Look up vector by ID from the node mapping
+        if let Some(&node_idx) = self.id_to_node.get(vector_id) {
+            if (node_idx as usize) < self.vectors.len() {
+                return self.vectors[node_idx as usize].clone();
+            }
+        }
+        
+        // Fallback: return zero vector if not found
+        // This shouldn't happen in normal operation
+        tracing::warn!("Vector {} not found in storage, returning zero vector", vector_id);
+        vec![0.0; self.centroids.get(0).map(|c| c.vector.len()).unwrap_or(self.dimension)]
     }
 }
 
@@ -2063,9 +2071,37 @@ impl RaptorWriter {
         Ok(offset)
     }
     
-    /// Flush current row page to disk
+    /// Flush current row page to disk with inline P×K matrix
     async fn flush_row_page(&mut self) -> Result<()> {
         if let Some(page) = self.current_row_page.take() {
+            // Collect vectors for P×K matrix calculation
+            let mut page_vectors = Vec::with_capacity(page.rows.len());
+            let mut page_vector_ids = Vec::with_capacity(page.rows.len());
+            
+            for row in &page.rows {
+                page_vectors.push(row.vector.clone());
+                page_vector_ids.push(row.id.clone());
+            }
+            
+            // Build P×K matrix for this page if we have centroids
+            let pxk_matrix_data = if !self.ivf_builder.centroids.is_empty() {
+                let rowgroup = RowGroup {
+                    id: self.row_groups.len() as u32,
+                    count: page.rows.len() as u32,
+                    vector_ids: page_vector_ids.clone(),
+                };
+                
+                // Store vectors temporarily for P×K calculation
+                let stored_vectors = std::mem::replace(&mut self.ivf_builder.vectors, page_vectors.clone());
+                let matrix = self.ivf_builder.build_full_pk_matrix(&rowgroup, self.row_groups.len());
+                // Restore original vectors
+                self.ivf_builder.vectors = stored_vectors;
+                
+                Some(bincode::serialize(&matrix)?)
+            } else {
+                None
+            };
+            
             // Serialize page using FastLanes encoding
             let encoded_page = self.encode_row_page(&page)?;
             
@@ -2077,13 +2113,26 @@ impl RaptorWriter {
                 CompressionContext::SstBlock,
             )?;
             
-            // Write to filesystem using zero-copy API
-            let offset = self.filesystem.append(&self.file_path, &compressed).await?;
+            // Write vectors to filesystem
+            let page_offset = self.filesystem.append(&self.file_path, &compressed).await?;
+            
+            // Write P×K matrix inline (immediately after vectors)
+            let pxk_offset = if let Some(matrix_data) = pxk_matrix_data {
+                let compressed_matrix = self.compression.compress(
+                    &matrix_data,
+                    CompressionAlgorithm::Zstd,
+                    3, // Light compression for matrices
+                    CompressionContext::SstBlock,
+                )?;
+                Some(self.filesystem.append(&self.file_path, &compressed_matrix).await?)
+            } else {
+                None
+            };
             
             // Create page metadata with unified compression context
             let page_metadata = RowPageMetadata {
                 page_id: page.page_id as u32,
-                file_offset: 0, // Will be set later when we know the actual offset
+                file_offset: page_offset,
                 compressed_size: compressed.len() as i64,
                 uncompressed_size: encoded_page.len() as i64,
                 num_rows: page.rows.len() as i32,
@@ -2126,6 +2175,8 @@ impl RaptorWriter {
                     metadata_stats: HashMap::new(),
                     bloom_filter_offset: None,
                     hnsw_segment_offset: None,
+                    pxk_matrix_offset: None,
+                    pxk_matrix_size: None,
                     compression_codec: "ZSTD".to_string(),
                     min_timestamp: None,
                     max_timestamp: None,
@@ -2138,6 +2189,15 @@ impl RaptorWriter {
             // Store page metadata in separate structure - common.rs doesn't have row_pages
             current_rg.compressed_size += compressed.len() as u64;
             current_rg.row_count += page.rows.len();
+            
+            // Store P×K matrix offset and size if written
+            if let Some(matrix_offset) = pxk_offset {
+                current_rg.pxk_matrix_offset = Some(matrix_offset);
+                // Calculate size from offsets
+                if let Some(matrix_data) = pxk_matrix_data {
+                    current_rg.pxk_matrix_size = Some(matrix_data.len() as u64);
+                }
+            }
         }
         
         Ok(())

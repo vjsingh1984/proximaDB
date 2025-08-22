@@ -819,32 +819,61 @@ impl RaptorReader {
             return Ok(cached.clone());
         }
         
-        // Ensure footer is loaded
+        // Load rowgroup metadata to find P×K matrix location
+        let metadata = self.read_metadata(&self.base_path).await?;
+        let rg_metadata = metadata.row_groups.iter()
+            .find(|rg| rg.id as u32 == rowgroup_id)
+            .ok_or_else(|| anyhow::anyhow!("Rowgroup {} not found", rowgroup_id))?;
+        
+        // Check if P×K matrix is stored inline (new format)
+        if let (Some(offset), Some(size)) = (rg_metadata.pxk_matrix_offset, rg_metadata.pxk_matrix_size) {
+            // Read inline P×K matrix
+            let matrix_data = FileSystem::read_range(
+                self.filesystem.as_ref(),
+                &self.base_path,
+                offset,
+                size as usize
+            ).await?;
+            
+            // Decompress
+            let decompressed = crate::core::compression::decompress(
+                &matrix_data,
+                CompressionAlgorithm::Zstd,
+                CompressionContext::SstBlock
+            )?;
+            
+            // Deserialize matrix
+            let matrix: VectorCentroidMatrix = bincode::deserialize(&decompressed)?;
+            let arc_matrix = Arc::new(matrix.clone());
+            self.cached_pxk_matrices.insert(rowgroup_id, arc_matrix.clone());
+            
+            let compression_ratio = match matrix.storage_strategy {
+                VectorCentroidStorageStrategy::Full => 50.0,
+                VectorCentroidStorageStrategy::Hierarchical => 99.85,
+                VectorCentroidStorageStrategy::Sparse => 99.0,
+            };
+            
+            tracing::debug!(
+                "Loaded inline P×K matrix for rowgroup {} from offset {}: \
+                 {} vectors × {} centroids, strategy {:?}, {:.2}% compression",
+                rowgroup_id, offset, matrix.num_vectors, matrix.num_centroids,
+                matrix.storage_strategy, compression_ratio
+            );
+            
+            return Ok(arc_matrix);
+        }
+        
+        // Fallback: Check footer for P×K matrix (old format for compatibility)
         if self.cached_footer.is_none() {
             let file_path = &self.base_path.clone();
             self.load_footer(&file_path).await?;
         }
         
         if let Some(footer) = &self.cached_footer {
-            // Find the P×K matrix for this rowgroup
             for matrix in &footer.vector_centroid_matrices {
                 if matrix.rowgroup_id == rowgroup_id {
                     let arc_matrix = Arc::new(matrix.clone());
                     self.cached_pxk_matrices.insert(rowgroup_id, arc_matrix.clone());
-                    
-                    let compression_ratio = match matrix.storage_strategy {
-                        VectorCentroidStorageStrategy::Full => 50.0, // Just quantization
-                        VectorCentroidStorageStrategy::Hierarchical => 99.85, // Mean + sparse deltas
-                        VectorCentroidStorageStrategy::Sparse => 99.0, // Top-√D only
-                    };
-                    
-                    tracing::debug!(
-                        "Loaded P×K matrix for rowgroup {}: {} vectors × {} centroids, \
-                         strategy {:?}, {:.2}% compression",
-                        rowgroup_id, matrix.num_vectors, matrix.num_centroids,
-                        matrix.storage_strategy, compression_ratio
-                    );
-                    
                     return Ok(arc_matrix);
                 }
             }

@@ -97,6 +97,8 @@ pub struct RowGroupMetadata {
     pub metadata_stats: HashMap<String, ColumnStats>,
     pub bloom_filter_offset: Option<u64>,
     pub hnsw_segment_offset: Option<u64>,
+    pub pxk_matrix_offset: Option<u64>,      // P×K matrix stored inline after vectors
+    pub pxk_matrix_size: Option<u64>,        // Compressed size of P×K matrix
     pub compression_codec: String,
     pub min_timestamp: Option<i64>,
     pub max_timestamp: Option<i64>,
