@@ -1257,7 +1257,7 @@ impl RaptorReader {
         let _boundary_result = super::common::BoundaryDetectionResult {
             primary_centroids: primary_centroids.iter()
                 .map(|c| c.centroid_id as u16).collect(),
-            boundary_expansions,
+            boundary_expansions: boundary_expansions.clone(),
             expanded_centroids: final_centroids.iter()
                 .map(|c| c.centroid_id as u16).collect(),
             boundary_ratio_threshold: boundary_config.boundary_ratio_threshold,
@@ -1407,8 +1407,10 @@ impl RaptorReader {
         // Load configuration
         let spillover_config = super::common::SpilloverDetectionConfig::default();
         
-        let footer = self.cached_footer.as_ref()
-            .ok_or_else(|| anyhow::anyhow!("Footer not loaded"))?;
+        // Get the number of centroids from footer
+        let num_centroids = self.cached_footer.as_ref()
+            .ok_or_else(|| anyhow::anyhow!("Footer not loaded"))?
+            .centroids.count as usize;
         
         let mut spillover_map = std::collections::HashMap::new();
         let mut spillover_percentages = std::collections::HashMap::new();
@@ -1449,7 +1451,7 @@ impl RaptorReader {
                 let assigned_distance = pxk_matrix.get_distance(vector_idx, centroid_id as usize)?;
                 
                 // Check distances to other centroids (sample top candidates)
-                for other_centroid_id in 0..std::cmp::min(footer.centroids.count as usize, 20) {
+                for other_centroid_id in 0..std::cmp::min(num_centroids, 20) {
                     if other_centroid_id == centroid_id as usize {
                         continue;
                     }
@@ -1637,7 +1639,7 @@ impl RaptorReader {
         // Phase 3: P² Matrix - Search within selected rowgroups
         let mut all_candidates = Vec::new();
         
-        for selection in final_centroids {
+        for selection in &final_centroids {
             let rowgroup_candidates = self.search_rowgroup_with_matrices(
                 query,
                 selection.centroid_id,
@@ -1770,14 +1772,26 @@ impl RaptorReader {
                     let matrix_data = self.filesystem.read_range(
                         &self.base_path,
                         matrix_ref.file_offset,
-                        matrix_ref.compressed_size
+                        matrix_ref.compressed_size as u64
                     ).await?;
                     
+                    // Parse compression algorithm from string
+                    let compression_algo = match matrix_ref.compression_algorithm.as_str() {
+                        "zstd" => crate::core::compression::CompressionAlgorithm::Zstd,
+                        "lz4" => crate::core::compression::CompressionAlgorithm::Lz4,
+                        "snappy" => crate::core::compression::CompressionAlgorithm::Snappy,
+                        _ => crate::core::compression::CompressionAlgorithm::None,
+                    };
+                    
                     // Decompress if needed
-                    let decompressed = crate::core::compression::decompress(
-                        &matrix_data,
-                        matrix_ref.compression
-                    )?;
+                    let decompressed = if compression_algo != crate::core::compression::CompressionAlgorithm::None {
+                        crate::core::compression::decompress(
+                            &matrix_data,
+                            compression_algo
+                        )?
+                    } else {
+                        matrix_data
+                    };
                     
                     // Deserialize to VectorCentroidMatrix
                     let matrix: VectorCentroidMatrix = bincode::deserialize(&decompressed)?;
@@ -1817,17 +1831,15 @@ impl RaptorReader {
     /// Load the centralized footer containing all centroids using zero-copy memory-mapped I/O
     /// This is loaded once and cached for the lifetime of the reader
     async fn load_footer(&mut self, file_path: &str) -> Result<()> {
-        // Check if footer is already cached in memory-mapped file cache
-        if let Some(cached_mmap) = self.check_footer_cache(file_path).await? {
-            self.cached_footer = Some(cached_mmap);
+        // TODO: Implement footer caching
+        // Check if footer is already cached
+        if self.cached_footer.is_some() {
             return Ok(());
         }
         
         // Try memory-mapped file access for zero-copy I/O
         match self.load_footer_with_mmap(file_path).await {
             Ok(footer) => {
-                // Cache the memory-mapped footer for subsequent queries
-                self.cache_footer_mmap(file_path, footer.clone()).await?;
                 self.cached_footer = Some(footer);
                 Ok(())
             },
@@ -1948,8 +1960,9 @@ impl RaptorReader {
             .ok_or_else(|| anyhow::anyhow!("Row group {} not found", rowgroup_id))?;
         
         // Check if bloom filter exists for this row group
-        let bloom_offset = rowgroup_metadata.bloom_filter_offset
+        let bloom_metadata = rowgroup_metadata.column_pages.get(&ColumnType::BloomFilter)
             .ok_or_else(|| anyhow::anyhow!("No bloom filter for row group {}", rowgroup_id))?;
+        let bloom_offset = bloom_metadata.offset;
         
         tracing::debug!(
             "Loading bloom filter for row group {} at offset {} (independent of row data)",
@@ -2145,11 +2158,11 @@ impl RaptorReader {
         
         for &rg_id in &candidate_rowgroups {
             if let Some(centroid) = self.get_centroid(rg_id) {
-                let distance = self.distance_compute.compute_distance(
+                let distance = self.distance_compute.calculate_distance(
                     &target_vector, 
                     &centroid,
-                    crate::compute::distance_computation::DistanceMetric::Cosine
-                )?;
+                    &crate::compute::distance_computation::DistanceMetric::Cosine
+                ).raw_value;
                 cluster_distances.push((rg_id, distance));
             }
         }
@@ -2225,10 +2238,11 @@ impl RaptorReader {
         let rowgroup_metadata = metadata.row_groups.get(rg_id as usize)
             .ok_or_else(|| anyhow::anyhow!("Row group {} not found", rg_id))?;
         
-        let p2_offset = rowgroup_metadata.p2_matrix_offset
+        // Get P² matrix from column pages
+        let p2_metadata = rowgroup_metadata.column_pages.get(&ColumnType::P2Matrix)
             .ok_or_else(|| anyhow::anyhow!("No P² matrix for row group {}", rg_id))?;
-        let p2_size = rowgroup_metadata.p2_matrix_size
-            .ok_or_else(|| anyhow::anyhow!("No P² matrix size for row group {}", rg_id))?;
+        let p2_offset = p2_metadata.offset;
+        let p2_size = p2_metadata.compressed_size;
         
         // Read compressed P² matrix data
         let compressed_data = self.read_p2_matrix_bytes(file_path, p2_offset, p2_size).await?;
@@ -2248,8 +2262,8 @@ impl RaptorReader {
     
     /// Load vectors from a rowgroup for P² matrix navigation
     async fn load_rowgroup_vectors(&self, file_path: &str, rg_id: u16) -> Result<Vec<Vec<f32>>> {
-        // Read the row group's Parquet data
-        let batch = self.read_parquet_rowgroup(file_path, rg_id).await?;
+        // Read the row group data
+        let batch = self.read_rowgroup(rg_id).await?;
         
         // Extract vectors from the batch
         self.extract_vectors_from_batch(&batch)
