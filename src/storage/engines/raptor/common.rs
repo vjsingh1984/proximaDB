@@ -113,6 +113,8 @@ impl RowGroup {
         RowGroupMetadata {
             id: self.id,
             row_count: self.row_count,
+            offset: self.offset,
+            compressed_size: self.compressed_size,
             column_pages: self.column_pages.clone(),
             vector_stats: self.vector_stats.clone(),
             metadata_stats: self.metadata_stats.clone(),
@@ -120,6 +122,7 @@ impl RowGroup {
             max_timestamp: self.max_timestamp,
             centroid: self.centroid.clone(),
             centroid_stats: self.centroid_stats.clone(),
+            bloom_filter_offset: self.bloom_filter_offset,
         }
     }
     
@@ -291,6 +294,9 @@ pub struct RowGroupMetadata {
     // Centroid information for fast pruning
     pub centroid: Option<Vec<f32>>,              // Centroid vector
     pub centroid_stats: Option<CentroidStats>,   // Statistics for search optimization
+    
+    // Bloom filter location (stored separately from main data)
+    pub bloom_filter_offset: Option<u64>,        // File offset of bloom filter for this rowgroup
 }
 
 /// Centroid statistics for rowgroup-level pruning
@@ -392,6 +398,8 @@ impl Default for RowGroupMetadata {
         Self {
             id: 0,
             row_count: 0,
+            offset: 0,
+            compressed_size: 0,
             column_pages: HashMap::new(),
             vector_stats: VectorStats::default(),
             metadata_stats: HashMap::new(),
@@ -399,6 +407,7 @@ impl Default for RowGroupMetadata {
             max_timestamp: None,
             centroid: None,
             centroid_stats: None,
+            bloom_filter_offset: None,
         }
     }
 }
@@ -1487,6 +1496,13 @@ pub struct DeltaEntry {
     pub delta_value: f32,
 }
 
+/// Helper function to dequantize INT8 distance back to f32
+fn dequantize_distance(quantized: u8) -> f32 {
+    // Simple linear dequantization from [0, 255] to [0.0, 2.0] range
+    // This assumes cosine similarity distance in range [0, 2]
+    (quantized as f32) * 2.0 / 255.0
+}
+
 impl VectorCentroidMatrix {
     /// Get distance from vector to centroid
     pub fn get_distance(&self, vector_idx: usize, centroid_idx: usize) -> Result<f32> {
@@ -1505,7 +1521,10 @@ impl VectorCentroidMatrix {
                     self.compressed_data[byte_offset + 1],
                 ]);
                 
-                Ok(quantized as f32 / self.compression_metadata.scale_factor)
+                let range = self.compression_metadata.global_max_distance - 
+                           self.compression_metadata.global_min_distance;
+                let scale_factor = if range > 0.0 { 65535.0 / range } else { 1.0 };
+                Ok(quantized as f32 / scale_factor + self.compression_metadata.global_min_distance)
             },
             
             VectorCentroidStorageStrategy::Hierarchical => {
@@ -1532,9 +1551,9 @@ impl VectorCentroidMatrix {
                 // Search in sparse entries
                 if let Some(ref sparse_data) = self.sparse_data {
                     for entry in &sparse_data.entries {
-                        if entry.vector_index as usize == vector_idx && 
-                           entry.centroid_index as usize == centroid_idx {
-                            return Ok(entry.distance);
+                        if entry.vector_idx as usize == vector_idx && 
+                           entry.centroid_idx as usize == centroid_idx {
+                            return Ok(dequantize_distance(entry.quantized_distance));
                         }
                     }
                     
@@ -1576,12 +1595,15 @@ impl VectorCentroidMatrix {
                 }
                 
                 // Dequantize using hardware-optimized batch processing
-                let scale_recip = 1.0 / self.compression_metadata.scale_factor;
+                let range = self.compression_metadata.global_max_distance - 
+                           self.compression_metadata.global_min_distance;
+                let scale_factor = if range > 0.0 { 65535.0 / range } else { 1.0 };
+                let scale_recip = 1.0 / scale_factor;
                 let batch_size = if hw.has_avx512 { 16 } else if hw.has_avx2 { 8 } else { 4 };
                 
                 for chunk in quantized_values.chunks(batch_size) {
                     for &quantized_u16 in chunk {
-                        results.push(quantized_u16 as f32 * scale_recip);
+                        results.push(quantized_u16 as f32 * scale_recip + self.compression_metadata.global_min_distance);
                     }
                 }
                 

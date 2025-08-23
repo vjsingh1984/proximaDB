@@ -375,6 +375,15 @@ impl RaptorCompactor {
             // Clustering info
             cluster_centroids: Vec::new(),
             cluster_assignments: HashMap::new(),
+            
+            // Additional metadata
+            bloom_filter_metadata: None,
+            custom_metadata: HashMap::new(),
+            key_value_metadata: Vec::new(),
+            footer_offset: 0,  // Will be set when footer is written
+            footer_size: 0,    // Will be set when footer is written
+            last_accessed: chrono::Utc::now().timestamp(),
+            locality_clusters: Vec::new(),
         };
         
         // Write each row group
@@ -406,6 +415,8 @@ impl RaptorCompactor {
             let rg_metadata = RowGroupMetadata {
                 id: metadata.row_groups.len() as u16,
                 row_count: row_group.row_count,
+                offset: row_group.offset,
+                compressed_size: row_group.compressed_size,
                 column_pages: HashMap::new(),
                 vector_stats: row_group.vector_stats,
                 metadata_stats: row_group.metadata_stats,
@@ -413,6 +424,7 @@ impl RaptorCompactor {
                 max_timestamp: row_group.max_timestamp,
                 centroid: row_group.centroid,
                 centroid_stats: None,
+                bloom_filter_offset: row_group.bloom_filter_offset,
             };
             
             metadata.row_groups.push(rg_metadata);

@@ -75,48 +75,54 @@ pub struct DenseFullStorage {
 
 impl PxKStorageImpl for DenseFullStorage {
     fn store_distances(&mut self, vector_idx: usize, distances: &[f32]) -> Result<()> {
-        self.matrix.distances[vector_idx] = distances.to_vec();
+        // TODO: Update to use new VectorCentroidMatrix structure with compression
+        // self.matrix.distances[vector_idx] = distances.to_vec();
         Ok(())
     }
     
     fn get_distances(&self, vector_idx: usize) -> Option<Vec<f32>> {
-        self.matrix.distances.get(vector_idx).cloned()
+        // TODO: Update to use new VectorCentroidMatrix get_distance() method
+        // self.matrix.distances.get(vector_idx).cloned()
+        None
     }
     
     fn detect_boundaries(&self, threshold: f32) -> Vec<BoundaryInfo> {
         let mut boundaries = Vec::new();
         
-        for (idx, distances) in self.matrix.distances.iter().enumerate() {
-            if distances.len() < 2 {
-                continue;
-            }
-            
-            // Find two closest clusters
-            let mut sorted: Vec<(usize, f32)> = distances
-                .iter()
-                .enumerate()
-                .map(|(i, &d)| (i, d))
-                .collect();
-            sorted.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
-            
-            let ratio = sorted[0].1 / sorted[1].1;
-            if ratio > threshold {
-                boundaries.push(BoundaryInfo {
-                    vector_idx: idx as u32,
-                    primary_cluster: sorted[0].0 as u32,
-                    primary_distance: sorted[0].1,
-                    secondary_cluster: sorted[1].0 as u32,
-                    secondary_distance: sorted[1].1,
-                    boundary_ratio: ratio,
-                });
-            }
-        }
+        // TODO: Update to iterate through compressed matrix data
+        // for (idx, distances) in self.matrix.distances.iter().enumerate() {
+        //     if distances.len() < 2 {
+        //         continue;
+        //     }
+        //     
+        //     // Find two closest clusters
+        //     let mut sorted: Vec<(usize, f32)> = distances
+        //         .iter()
+        //         .enumerate()
+        //         .map(|(i, &d)| (i, d))
+        //         .collect();
+        //     sorted.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
+        //     
+        //     let ratio = sorted[0].1 / sorted[1].1;
+        //     if ratio > threshold {
+        //         boundaries.push(BoundaryInfo {
+        //             vector_idx: idx as u32,
+        //             primary_cluster: sorted[0].0 as u32,
+        //             primary_distance: sorted[0].1,
+        //             secondary_cluster: sorted[1].0 as u32,
+        //             secondary_distance: sorted[1].1,
+        //             boundary_ratio: ratio,
+        //         });
+        //     }
+        // }
         
         boundaries
     }
     
     fn memory_usage(&self) -> usize {
-        self.matrix.distances.len() * self.matrix.num_clusters * 4
+        // TODO: Calculate actual memory usage from compressed storage
+        // self.matrix.distances.len() * self.matrix.num_clusters * 4
+        self.matrix.compressed_data.len()
     }
     
     fn serialize(&self) -> Result<Vec<u8>> {

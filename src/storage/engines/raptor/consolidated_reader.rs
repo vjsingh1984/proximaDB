@@ -1787,7 +1787,8 @@ impl RaptorReader {
                     let decompressed = if compression_algo != crate::core::compression::CompressionAlgorithm::None {
                         crate::core::compression::decompress(
                             &matrix_data,
-                            compression_algo
+                            compression_algo,
+                            crate::core::compression::CompressionContext::SstBlock
                         )?
                     } else {
                         matrix_data
@@ -3015,10 +3016,10 @@ impl RaptorReader {
     fn decompress_column(&self, compressed: &[u8], algorithm: CompressionAlgorithm) -> Result<Vec<u8>> {
         use crate::core::compression::StandardCompression;
         
-        StandardCompression::decompress(
+        crate::core::compression::decompress(
             compressed,
             algorithm,
-            CompressionContext::ColumnPage,
+            crate::core::compression::CompressionContext::SstBlock,
         )
     }
     

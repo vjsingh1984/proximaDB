@@ -314,7 +314,7 @@ impl IvfClusteringBuilder {
     
     /// Add a node with its edges including distance information
     fn add_node(&mut self, vector_id: String, edges: Vec<EdgeWithDistance>) {
-        let node_id = self.nodes.len() as u32;
+        let node_id = self.ivf_builder.nodes.len() as u32;
         self.id_to_node.insert(vector_id.clone(), node_id);
         
         self.nodes.push(IvfNode {
@@ -513,8 +513,8 @@ impl IvfClusteringBuilder {
             clusters[*cluster_id].push(vector_idx);
             
             // Track vector membership in centroid metadata (if node exists)
-            if vector_idx < self.nodes.len() {
-                self.centroids[*cluster_id].member_ids.push(self.nodes[vector_idx].vector_id.clone());
+            if vector_idx < self.ivf_builder.nodes.len() {
+                self.centroids[*cluster_id].member_ids.push(self.ivf_builder.nodes[vector_idx].vector_id.clone());
             }
             
             if vector_idx % 5000 == 0 && vector_idx > 0 {
@@ -574,7 +574,7 @@ impl IvfClusteringBuilder {
         
         // For existing HNSW nodes, we can use graph connectivity for clustering
         // This is a simplified approach that groups connected nodes together
-        let n = self.nodes.len();
+        let n = self.ivf_builder.nodes.len();
         let p = self.target_rowgroup_size.max(constants::clustering::MIN_ROWGROUP_SIZE);
         let k = (n + p - 1) / p;  // Number of row groups needed
         
@@ -629,7 +629,7 @@ impl IvfClusteringBuilder {
         
         tracing::debug!(
             "Applying component boosting to {} nodes with global_avg_distance={:.4}",
-            self.nodes.len(), global_avg_distance
+            self.ivf_builder.nodes.len(), global_avg_distance
         );
         
         let mut total_edges_processed = 0;
@@ -784,7 +784,7 @@ impl IvfClusteringBuilder {
             if node_idx % 2000 == 0 && node_idx > 0 {
                 tracing::debug!(
                     "Processed {} / {} nodes for component boosting",
-                    node_idx, self.nodes.len()
+                    node_idx, self.ivf_builder.nodes.len()
                 );
             }
         }
@@ -796,7 +796,7 @@ impl IvfClusteringBuilder {
         tracing::info!(
             "✅ Component boosting completed: {} nodes, {} edges processed. \
              Edge distribution: {:.1}% intra-cluster, {:.1}% inter-cluster (optimal: >70% intra)",
-            self.nodes.len(), total_edges_processed, 
+            self.ivf_builder.nodes.len(), total_edges_processed, 
             intra_cluster_ratio * 100.0, inter_cluster_ratio * 100.0
         );
         
@@ -1623,7 +1623,7 @@ impl RaptorWriter {
                     let mut group = Vec::new();
                     
                     for &node_idx in &subgroup {
-                        self.nodes[node_idx].row_location.row_group_id = row_group_id as u32;
+                        self.ivf_builder.nodes[node_idx].row_location.row_group_id = row_group_id as u32;
                         group.push(node_idx as u32);
                     }
                     
@@ -1642,7 +1642,7 @@ impl RaptorWriter {
                 let mut group = Vec::new();
                 
                 for &node_idx in &cluster {
-                    self.nodes[node_idx].row_location.row_group_id = row_group_id as u32;
+                    self.ivf_builder.nodes[node_idx].row_location.row_group_id = row_group_id as u32;
                     group.push(node_idx as u32);
                 }
                 
@@ -1721,7 +1721,7 @@ impl RaptorWriter {
         let mut best_idx = 0;
         
         for (idx, &node_idx) in candidates.iter().enumerate() {
-            let dist = self.nodes[node_idx].centroid_distance;
+            let dist = self.ivf_builder.nodes[node_idx].centroid_distance;
             if dist > max_dist {
                 max_dist = dist;
                 best_idx = idx;
@@ -1752,8 +1752,8 @@ impl RaptorWriter {
             // Step 2: Calculate average boosted distance to current group members
             for &group_member in current_group {
                 // Use edge information if available
-                let candidate_node = &self.nodes[candidate];
-                let member_node = &self.nodes[group_member];
+                let candidate_node = &self.ivf_builder.nodes[candidate];
+                let member_node = &self.ivf_builder.nodes[group_member];
                 
                 // Look for existing edge with boosted distance
                 if let Some(edge) = candidate_node.edges.iter()
@@ -1796,7 +1796,7 @@ impl RaptorWriter {
         
         // Calculate average pairwise boosted distance within group
         for &node_idx in group {
-            let node = &self.nodes[node_idx as usize];
+            let node = &self.ivf_builder.nodes[node_idx as usize];
             
             // Use boosted edge distances for cohesion
             for edge in &node.edges {
@@ -1821,7 +1821,7 @@ impl RaptorWriter {
         let mut count = 0;
         
         for &node_idx in group {
-            let node = &self.nodes[node_idx as usize];
+            let node = &self.ivf_builder.nodes[node_idx as usize];
             // Calculate cohesion using edge distances
             for edge in &node.edges {
                 if group.contains(&edge.target_node_id) {
@@ -2240,6 +2240,9 @@ impl RaptorWriter {
             // P² and P×K matrices stored per rowgroup
             bloom_filter_metadata: None,
             compression_codec: format!("{:?}", config.compression),
+            compression_ratio: 0.0,  // Will be calculated during flush
+            cluster_centroids: Vec::new(),  // Will be populated during clustering
+            cluster_assignments: HashMap::new(),  // Will be populated during clustering
             custom_metadata: HashMap::new(),
             key_value_metadata: Vec::new(),
             footer_offset: 0,
@@ -2607,6 +2610,8 @@ impl RaptorWriter {
             let rg_metadata = RowGroupMetadata {
                 id: rowgroup_id as u16,
                 row_count: page.rows.len(),
+                offset: 0,  // Will be set when writing to file
+                compressed_size: 0,  // Will be updated after compression
                 column_pages,
                 vector_stats: VectorStats::default(),
                 metadata_stats: HashMap::new(),
@@ -2614,6 +2619,7 @@ impl RaptorWriter {
                 max_timestamp: None,
                 centroid: None,
                 centroid_stats: None,
+                bloom_filter_offset: None,  // Will be set when bloom filter is written
             };
             
             self.row_groups.push(rg_metadata);
@@ -3552,7 +3558,7 @@ impl RaptorWriter {
     
     pub async fn flush(&mut self) -> Result<()> {
         // Build IVF clusters before flushing (if we have enough vectors)
-        if self.nodes.len() >= 1000 { // Minimum vectors needed for effective clustering
+        if self.ivf_builder.nodes.len() >= 1000 { // Minimum vectors needed for effective clustering
             self.build_ivf_clusters()?;
         }
         
@@ -3724,8 +3730,8 @@ impl RaptorWriter {
         // rather than theoretical cluster centroids
         
         // Write node assignments and edges
-        ivf_data.extend(&(self.nodes.len() as u32).to_le_bytes());
-        for node in &self.nodes {
+        ivf_data.extend(&(self.ivf_builder.nodes.len() as u32).to_le_bytes());
+        for node in &self.ivf_builder.nodes {
             // Write node data
             ivf_data.extend(&(node.vector_id.len() as u32).to_le_bytes());
             ivf_data.extend(node.vector_id.as_bytes());
@@ -3759,7 +3765,10 @@ impl RaptorWriter {
         Ok(BloomFilterMetadata {
             offset: offset as u64,
             size: compressed.len() as u64,
-            num_entries: self.nodes.len() as u32,
+            num_entries: self.ivf_builder.nodes.len() as u32,
+            num_bits: bloom_filter.num_bits(),
+            num_hashes: bloom_filter.num_hashes(),
+            false_positive_rate: 0.01,  // Default 1% false positive rate
         })
     }
     
@@ -3821,9 +3830,27 @@ impl RaptorWriter {
             // Create simplified rowgroup structures for matrix building
             let simplified_rowgroups: Vec<RowGroup> = self.row_groups.iter()
                 .map(|rg| RowGroup {
-                    id: rg.id as u32,
-                    count: rg.row_count as u32,
-                    vector_ids: vec![], // Will be populated from bloom builder
+                    id: rg.id,
+                    offset: rg.offset,
+                    compressed_size: rg.compressed_size,
+                    uncompressed_size: 0,  // Not calculated yet
+                    row_count: rg.row_count,
+                    vector_count: rg.row_count,  // Same as row_count
+                    max_vectors: 1024,  // Default capacity
+                    column_pages: rg.column_pages.clone(),
+                    vector_stats: rg.vector_stats.clone(),
+                    metadata_stats: rg.metadata_stats.clone(),
+                    bloom_filter: None,  // Will be loaded separately
+                    bloom_filter_offset: rg.bloom_filter_offset,
+                    compression_codec: "zstd".to_string(),
+                    min_timestamp: rg.min_timestamp,
+                    max_timestamp: rg.max_timestamp,
+                    centroid: rg.centroid.clone(),
+                    centroid_stats: rg.centroid_stats.clone(),
+                    columnar_data: None,
+                    p2_matrix: None,
+                    pxk_matrix: None,
+                    vectors: None,
                 })
                 .collect();
             Some(self.ivf_builder.build_vector_centroid_matrices(&simplified_rowgroups))
@@ -3896,9 +3923,12 @@ impl RaptorWriter {
                     num_centroids: 0,
                     compressed_data: Vec::new(),
                     compression_metadata: InterCentroidCompressionMetadata {
+                        min_distance: 0.0,
+                        max_distance: 1.0,
                         scale_factor: 1.0,
-                        max_distance: 0.0,
                         compression_type: CompressionType::Quantized16Bit,
+                        row_encodings: Vec::new(),
+                        row_compressed_sizes: Vec::new(),
                     },
                     lookup_table: Vec::new(),
                 }
@@ -4059,7 +4089,7 @@ impl RaptorWriter {
     /// Combines IVF clustering (k clusters) with local graph connectivity (edges within clusters)
     fn build_ivf_clusters(&mut self) -> Result<()> {
         // Step 1: Validate input data
-        let num_vectors = self.nodes.len();
+        let num_vectors = self.ivf_builder.nodes.len();
         if num_vectors == 0 {
             tracing::debug!("No vectors to build IVF clusters, skipping");
             return Ok(());
@@ -4122,7 +4152,7 @@ impl RaptorWriter {
         // Step 6: Update nodes with cluster assignments and calculate centroid distances
         // Use unified distance compute for consistency and optimization
         for (idx, &cluster_id) in assignments.iter().enumerate() {
-            self.nodes[idx].cluster_id = cluster_id as u32;
+            self.ivf_builder.nodes[idx].cluster_id = cluster_id as u32;
             
             // Calculate distance to assigned centroid (d2 component) using unified distance
             let centroid = &self.ivf_builder.centroids[cluster_id as usize];
@@ -4131,7 +4161,7 @@ impl RaptorWriter {
                 &centroid.vector,
                 &DistanceMetric::Euclidean
             );
-            self.nodes[idx].centroid_distance = dist_result.raw_value;
+            self.ivf_builder.nodes[idx].centroid_distance = dist_result.raw_value;
             
             // Update centroid statistics (member count tracked via member_ids.len())
         }
@@ -4139,7 +4169,7 @@ impl RaptorWriter {
         // Step 7: Calculate mean and std deviation for each centroid
         for cluster_id in 0..k {
             let centroid = &mut self.ivf_builder.centroids[cluster_id];
-            let cluster_nodes: Vec<_> = self.nodes.iter()
+            let cluster_nodes: Vec<_> = self.ivf_builder.nodes.iter()
                 .enumerate()
                 .filter(|(_, n)| n.cluster_id == cluster_id as u32)
                 .map(|(idx, _)| idx)
@@ -4148,14 +4178,14 @@ impl RaptorWriter {
             if !cluster_nodes.is_empty() {
                 // Calculate mean distance
                 let sum: f32 = cluster_nodes.iter()
-                    .map(|&idx| self.nodes[idx].centroid_distance)
+                    .map(|&idx| self.ivf_builder.nodes[idx].centroid_distance)
                     .sum();
                 centroid.mean_distance = sum / cluster_nodes.len() as f32;
                 
                 // Calculate standard deviation
                 let variance: f32 = cluster_nodes.iter()
                     .map(|&idx| {
-                        let diff = self.nodes[idx].centroid_distance - centroid.mean_distance;
+                        let diff = self.ivf_builder.nodes[idx].centroid_distance - centroid.mean_distance;
                         diff * diff
                     })
                     .sum::<f32>() / cluster_nodes.len() as f32;
@@ -4170,7 +4200,7 @@ impl RaptorWriter {
         // Step 9: Apply 5-component boosting to edges
         let clusters: Vec<Vec<usize>> = (0..k)
             .map(|cluster_id| {
-                self.nodes.iter()
+                self.ivf_builder.nodes.iter()
                     .enumerate()
                     .filter(|(_, n)| n.cluster_id == cluster_id as u32)
                     .map(|(idx, _)| idx)
@@ -4182,7 +4212,7 @@ impl RaptorWriter {
         
         // Step 10: Create inverted lists for each cluster
         let mut inverted_lists: Vec<Vec<String>> = vec![Vec::new(); k];
-        for node in &self.nodes {
+        for node in &self.ivf_builder.nodes {
             inverted_lists[node.cluster_id as usize].push(node.vector_id.clone());
         }
         
@@ -4217,7 +4247,7 @@ impl RaptorWriter {
         // Process each cluster independently
         for cluster_id in 0..num_clusters {
             // Get all nodes in this cluster
-            let cluster_nodes: Vec<usize> = self.nodes.iter()
+            let cluster_nodes: Vec<usize> = self.ivf_builder.nodes.iter()
                 .enumerate()
                 .filter(|(_, n)| n.cluster_id == cluster_id as u32)
                 .map(|(idx, _)| idx)
@@ -4253,21 +4283,21 @@ impl RaptorWriter {
                 for (target_idx, distance) in distances {
                     edges.push(EdgeWithDistance {
                         target_node_id: target_idx as u32,
-                        target_vector_id: self.nodes[target_idx].vector_id.clone(),
+                        target_vector_id: self.ivf_builder.nodes[target_idx].vector_id.clone(),
                         distance,
                     });
                 }
                 
                 // Store edges in the node
-                self.nodes[node_idx].edges = edges;
+                self.ivf_builder.nodes[node_idx].edges = edges;
             }
         }
         
         // Calculate edge statistics
-        let total_edges: usize = self.nodes.iter()
+        let total_edges: usize = self.ivf_builder.nodes.iter()
             .map(|n| n.edges.len())
             .sum();
-        let avg_edges = total_edges as f32 / self.nodes.len() as f32;
+        let avg_edges = total_edges as f32 / self.ivf_builder.nodes.len() as f32;
         
         tracing::info!(
             "Built {} total edges, average {:.1} edges per node",
@@ -4551,6 +4581,9 @@ impl RaptorWriter {
             offset,
             size: compressed.len() as u64,
             num_entries: self.bloom_builder.ids.len() as u32,
+            num_bits: (self.bloom_builder.ids.len() * 10) as usize,  // 10 bits per ID
+            num_hashes: 7,  // Optimal for 1% false positive rate
+            false_positive_rate: self.bloom_builder.target_false_positive_rate,
         })
     }
     
