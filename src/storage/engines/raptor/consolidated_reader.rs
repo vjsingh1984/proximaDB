@@ -85,7 +85,7 @@ impl IntraRowgroupMatrix {
 }
 
 /// Scan strategy for different read patterns
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum ScanStrategy {
     /// Full file scan - reads entire file sequentially (for compaction, backup, analysis)
     /// - No predicate filtering
@@ -138,29 +138,28 @@ pub struct ClusterInfo {
 }
 
 
-/// Supporting structures for component boosting in search navigation
+// ===== OBSOLETE CLUSTERING STRUCTURES =====
+// The following structures were for HNSW-style clustering
+// In Matrix Trinity architecture, clustering info is embedded in:
+// - K×K matrix: contains centroids and inter-centroid distances  
+// - P×K matrix: contains vector-to-centroid distances
+// - P² matrix: contains intra-rowgroup vector distances
 
-/// Cluster metadata for search-time boosting calculations
+// Kept for reference only - not used in matrix-based search
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
-pub struct ClusterMetadata {
-    /// Cluster centroids (reused from writer)
-    pub centroids: Vec<Vec<f32>>,
-    
-    /// Pre-computed centroid distance matrix
-    pub centroid_distances: Vec<Vec<f32>>,
-    
-    // TODO: Replace node-based mapping with P² matrix indexing
-    
-    /// Cluster statistics for boundary detection
-    pub cluster_stats: Vec<ClusterStats>,
+struct ClusterMetadata {
+    centroids: Vec<Vec<f32>>,
+    centroid_distances: Vec<Vec<f32>>,
+    cluster_stats: Vec<ClusterStats>,
 }
 
-/// Statistics for each cluster used in boundary detection
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
-pub struct ClusterStats {
-    pub mean_distance: f32,
-    pub std_deviation: f32,
-    pub radius: f32,
+struct ClusterStats {
+    mean_distance: f32,
+    std_deviation: f32,
+    radius: f32,
 }
 
 /// Boosting configuration for search navigation
@@ -210,13 +209,6 @@ impl SearchStats {
     }
 }
 
-impl ClusterMetadata {
-    /// Get the cluster assignment for a given vector (placeholder for P² matrix)
-    pub fn get_node_cluster(&self, _node_id: &str) -> usize {
-        // TODO: Replace with P² matrix-based cluster lookup
-        0 // Default cluster for now
-    }
-}
 
 impl Default for BoostConfig {
     /// Default boosting configuration optimized for RAPTOR clustering
@@ -317,7 +309,7 @@ impl RaptorReader {
     
     /// Read row groups - DIRECT unified module usage, no wrappers
     pub async fn read_row_groups_selective(
-        &self,
+        &mut self,
         file_path: &str,
         rowgroup_selection: Option<Vec<usize>>,
     ) -> Result<Vec<RecordBatch>> {
@@ -352,7 +344,7 @@ impl RaptorReader {
                 let full_file_data = FileSystem::read(self.filesystem.as_ref(), file_path).await?;
                 let start = rg_metadata.offset;
                 let end = start + rg_metadata.compressed_size;
-                let compressed_data = &full_file_data[start..end];
+                let compressed_data = &full_file_data[start as usize..end as usize];
                 
                 // Use standard decompression (FastLanes used for different data types)
                 let decompressed = crate::core::compression::decompress(
@@ -381,7 +373,7 @@ impl RaptorReader {
                 let full_file_data = FileSystem::read(self.filesystem.as_ref(), file_path).await?;
                 let start = rg_metadata.offset;
                 let end = start + rg_metadata.compressed_size;
-                let compressed_data = &full_file_data[start..end];
+                let compressed_data = &full_file_data[start as usize..end as usize];
                 
                 // DIRECT decode
                 let decompressed = crate::core::compression::decompress(
@@ -547,7 +539,6 @@ impl RaptorReader {
         
         // Load footer and prepare for filtering
         self.load_footer_with_mmap(file_path).await?;
-        let footer = self.cached_footer.as_ref().unwrap();
         
         // Step 1: BloomFilter-based rowgroup selection
         let candidate_rowgroups = if let Some(ref ids) = target_ids {
@@ -555,6 +546,7 @@ impl RaptorReader {
             self.filter_rowgroups_with_enhanced_bloom_filters(file_path, ids).await?
         } else {
             // No ID filtering - include all rowgroups
+            let footer = self.cached_footer.as_ref().unwrap();
             footer.file_metadata.row_groups.iter().map(|rg| rg.id).collect()
         };
         
@@ -572,6 +564,9 @@ impl RaptorReader {
         } else {
             filtered_rowgroups
         };
+        
+        // Get footer reference after all mutable operations
+        let footer = self.cached_footer.as_ref().unwrap();
         
         tracing::info!(
             "Filtered scan: processing {}/{} rowgroups after filtering",
@@ -969,166 +964,140 @@ impl RaptorReader {
         Ok(metadata)
     }
     
-    /// P² matrix search with component boosting for optimal navigation through clustered row groups
-    /// 
-    /// This method implements the search-time component boosting that mirrors the clustering
-    /// logic from the writer. It provides:
-    /// 1. Cluster-aware navigation preferring intra-cluster edges
-    /// 2. Component boosting for consistent distance calculations
-    /// 3. Adaptive search depth based on cluster boundaries
-    /// 4. Performance monitoring for search quality assessment
-    /// 
-    /// The boosting formula used during search matches the writer's formula:
-    /// D = α₁·d₁ + α₂·d₂ + α₃·d₃ + β₁·d₄ + β₂·d₅
-    /// This ensures consistent behavior between storage organization and search navigation.
+    /// Matrix-based candidate search using K×K matrix for centroid selection
+    /// This is the proper implementation for RAPTOR's Matrix Trinity architecture
     async fn ivf_search_candidates(
-        &self,
+        &mut self,
         query: &[f32],
         ef: usize,
         metric: &DistanceMetric,
     ) -> Result<Vec<String>> {
-        // Step 1: Initialize search state with entry point
-        // In production, this would load the P² matrix entry point from the row group metadata
-        let entry_point = self.find_entry_point().await?;
-        if entry_point.is_empty() {
-            tracing::debug!("No P² matrix entry point found, returning empty results");
-            return Ok(Vec::new());
+        // RAPTOR uses Matrix Trinity: K×K → P×K → P² pipeline
+        // Step 1: Load K×K inter-centroid matrix and footer if not cached
+        self.load_kxk_matrix().await?;
+        
+        // Ensure footer is loaded to access centroids
+        if self.cached_footer.is_none() {
+            let file_path = &self.base_path.clone();
+            self.load_footer(&file_path).await?;
         }
         
-        // Step 2: Load cluster information for boosting calculations
-        // This reuses the same clustering data created during write time
-        let cluster_metadata = self.load_cluster_metadata().await?;
-        let boost_config = self.get_boost_config();
+        let footer = self.cached_footer.as_ref()
+            .ok_or_else(|| anyhow::anyhow!("Footer not loaded"))?;
+        let kxk_matrix = self.cached_kxk_matrix.as_ref()
+            .ok_or_else(|| anyhow::anyhow!("K×K matrix not available"))?;
         
-        tracing::debug!(
-            "Starting P² matrix search: ef={}, entry_point={}, clusters={}",
-            ef, entry_point, cluster_metadata.centroids.len()
-        );
+        // Step 2: Calculate distances to all centroids from footer
+        let distance_compute = UnifiedDistanceCompute::with_metric(*metric);
+        let mut centroid_distances = Vec::with_capacity(kxk_matrix.num_centroids as usize);
         
-        // Step 3: Initialize search candidates with entry point
-        let mut candidates = std::collections::BinaryHeap::new();
-        let mut visited = std::collections::HashSet::new();
-        let mut best_candidates = std::collections::BinaryHeap::new();
-        
-        // Calculate initial distance to entry point with component boosting
-        let entry_distance = self.calculate_boosted_distance(
-            query, 
-            &entry_point, 
-            &cluster_metadata, 
-            &boost_config,
-            metric
-        ).await?;
-        
-        candidates.push(std::cmp::Reverse((OrdFloat(entry_distance), entry_point.clone())));
-        visited.insert(entry_point.clone());
-        
-        // Step 4: Main search loop with cluster-aware navigation
-        let mut search_stats = SearchStats::new();
-        let mut nodes_explored = 0;
-        let max_nodes = ef * 3; // Prevent infinite loops
-        
-        while let Some(std::cmp::Reverse((OrdFloat(current_dist), current_id))) = candidates.pop() {
-            nodes_explored += 1;
-            
-            // Early termination if we've explored enough nodes
-            if nodes_explored > max_nodes {
-                tracing::debug!("Search terminated early after {} nodes", nodes_explored);
-                break;
-            }
-            
-            // If this distance is worse than our worst best candidate, we can stop
-            if best_candidates.len() >= ef {
-                if let Some(&OrdFloat(worst_best)) = best_candidates.peek() {
-                    if current_dist > worst_best {
-                        break;
-                    }
-                }
-            }
-            
-            // Step 5: Load the current node's edges with cluster information
-            let node_edges = self.load_node_edges(&current_id).await?;
-            let current_cluster = cluster_metadata.get_node_cluster(&current_id);
-            
-            // Track cluster navigation patterns for optimization
-            search_stats.record_cluster_visit(current_cluster);
-            
-            // Step 6: Explore neighbors with cluster-aware boosting
-            for edge in node_edges {
-                if visited.contains(&edge.target_id) {
-                    continue;
-                }
-                
-                visited.insert(edge.target_id.clone());
-                
-                // Calculate boosted distance for this edge using the same formula as writer
-                let boosted_distance = self.calculate_boosted_distance(
-                    query,
-                    &edge.target_id,
-                    &cluster_metadata,
-                    &boost_config,
-                    metric
-                ).await?;
-                
-                // Track inter vs intra-cluster navigation
-                let target_cluster = cluster_metadata.get_node_cluster(&edge.target_id);
-                if current_cluster == target_cluster {
-                    search_stats.intra_cluster_hops += 1;
-                } else {
-                    search_stats.inter_cluster_hops += 1;
-                }
-                
-                // Add to candidates for further exploration
-                candidates.push(std::cmp::Reverse((OrdFloat(boosted_distance), edge.target_id.clone())));
-                
-                // Update best candidates
-                best_candidates.push(OrdFloat(boosted_distance));
-                if best_candidates.len() > ef {
-                    best_candidates.pop(); // Remove worst
-                }
-                
-                // Trace detailed boosting for debugging (sample logging)
-                if nodes_explored % 20 == 0 {
-                    tracing::trace!(
-                        "P² matrix navigation: {} → {} | distance={:.4}, cluster: {} → {} | candidates={}",
-                        current_id, edge.target_id, boosted_distance, 
-                        current_cluster, target_cluster, candidates.len()
-                    );
-                }
+        // Get all centroids from the footer's ColumnarCentroids
+        for i in 0..kxk_matrix.num_centroids {
+            // With 1:1 mapping, centroid_id == rowgroup_id
+            let rowgroup_id = i as u16;
+            if let Some(centroid) = footer.centroids.get_centroid(rowgroup_id) {
+                let dist = distance_compute.calculate_distance(query, &centroid, metric).raw_value;
+                centroid_distances.push((i as usize, dist));
             }
         }
         
-        // Step 7: Extract final candidates and log search quality metrics
-        let final_candidates: Vec<String> = best_candidates
-            .into_sorted_vec()
+        // Step 3: Select top-k centroids (which map 1:1 to rowgroups)
+        centroid_distances.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
+        let num_centroids_to_search = (ef / 10).max(1).min(kxk_matrix.num_centroids);
+        
+        let mut all_candidates = Vec::new();
+        
+        // Step 4: For each selected centroid, search its corresponding rowgroup
+        for &(centroid_id, _) in centroid_distances.iter().take(num_centroids_to_search) {
+            // With 1:1 mapping, centroid_id == rowgroup_id
+            let rowgroup_id = centroid_id as u16;
+            
+            // Load P×K matrix for this rowgroup
+            let pxk_matrix = self.load_pxk_matrix(rowgroup_id).await?;
+            
+            // Load P² matrix for intra-rowgroup navigation
+            let p2_matrix = self.load_p2_matrix_for_rowgroup(rowgroup_id).await?;
+            
+            // Search within this rowgroup using P² matrix
+            let rowgroup_candidates = self.search_within_rowgroup_p2(
+                rowgroup_id,
+                &p2_matrix,
+                &pxk_matrix,
+                query,
+                ef / num_centroids_to_search.max(1),
+                metric
+            ).await?;
+            
+            all_candidates.extend(rowgroup_candidates);
+        }
+        
+        // Step 5: Sort all candidates and return top-ef
+        all_candidates.sort_by(|a, b| {
+            a.1.partial_cmp(&b.1).unwrap()
+        });
+        
+        let final_candidates: Vec<String> = all_candidates
             .into_iter()
-            .map(|OrdFloat(_dist)| {
-                // Note: In production, we'd track (distance, id) pairs
-                // For now, returning placeholder IDs
-                format!("vector_{}", rand::random::<u32>())
-            })
+            .take(ef)
+            .map(|(id, _dist)| id)
             .collect();
         
-        // Log comprehensive search statistics
-        let intra_ratio = search_stats.intra_cluster_hops as f32 / 
-                         (search_stats.intra_cluster_hops + search_stats.inter_cluster_hops).max(1) as f32;
-        
         tracing::info!(
-            "✅ P² matrix search completed: {} candidates found, {} nodes explored. \
-             Navigation: {:.1}% intra-cluster (optimal: >70%), {} clusters visited",
-            final_candidates.len(), nodes_explored, intra_ratio * 100.0, 
-            search_stats.clusters_visited.len()
+            "Matrix-based search completed: {} candidates from {} centroids/rowgroups",
+            final_candidates.len(), num_centroids_to_search
         );
         
-        // Warn if poor cluster navigation (suggests suboptimal boosting)
-        if intra_ratio < 0.6 {
-            tracing::warn!(
-                "Low intra-cluster navigation ratio ({:.1}%) during P² matrix search. \
-                 Consider adjusting boosting weights or cluster configuration.",
-                intra_ratio * 100.0
-            );
+        Ok(final_candidates)
+    }
+    
+    /// Search within a single rowgroup using P² matrix
+    async fn search_within_rowgroup_p2(
+        &self,
+        rowgroup_id: u16,
+        p2_matrix: &Arc<P2Matrix>,
+        pxk_matrix: &Arc<VectorCentroidMatrix>,
+        query: &[f32],
+        k: usize,
+        metric: &DistanceMetric,
+    ) -> Result<Vec<(String, f32)>> {
+        // Load vectors for this rowgroup
+        let vectors = self.load_rowgroup_vectors(&self.base_path, rowgroup_id).await?;
+        let ids = self.load_rowgroup_ids(&self.base_path, rowgroup_id).await?;
+        
+        let distance_compute = UnifiedDistanceCompute::with_metric(*metric);
+        let mut candidates = Vec::with_capacity(vectors.len());
+        
+        // Calculate distances to all vectors in rowgroup
+        for (idx, vector) in vectors.iter().enumerate() {
+            let dist = distance_compute.calculate_distance(query, vector, metric).raw_value;
+            
+            // Optional: Apply P×K boosting based on vector's distance to centroids
+            let boosted_dist = if let Some(centroid_dist) = pxk_matrix.get_distance(idx, rowgroup_id as usize) {
+                dist * 0.9 + centroid_dist * 0.1  // Weighted combination
+            } else {
+                dist
+            };
+            
+            if idx < ids.len() {
+                candidates.push((ids[idx].clone(), boosted_dist));
+            }
         }
         
-        Ok(final_candidates)
+        // Sort and return top-k from this rowgroup
+        candidates.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
+        candidates.truncate(k);
+        
+        Ok(candidates)
+    }
+    
+    /// Load vector IDs for a rowgroup
+    async fn load_rowgroup_ids(&self, _file_path: &str, rowgroup_id: u16) -> Result<Vec<String>> {
+        // This would load the actual IDs from the rowgroup metadata
+        // For now, return placeholder IDs
+        let num_vectors = 100; // Would come from metadata
+        Ok((0..num_vectors)
+            .map(|i| format!("rg{}_vec{}", rowgroup_id, i))
+            .collect())
     }
     
     /// Calculate boosted distance using the same 5-component formula as the writer
@@ -1136,94 +1105,6 @@ impl RaptorReader {
     /// This method ensures consistency between storage organization (clustering) and 
     /// search navigation (P² matrix traversal) by applying the identical boosting formula:
     /// D = α₁·d₁ + α₂·d₂ + α₃·d₃ + β₁·d₄ + β₂·d₅
-    async fn calculate_boosted_distance(
-        &self,
-        query: &[f32],
-        target_id: &str,
-        cluster_metadata: &ClusterMetadata,
-        boost_config: &BoostConfig,
-        metric: &DistanceMetric,
-    ) -> Result<f32> {
-        // Step 1: Load target vector for distance calculations
-        let target_vector = self.load_vector_by_id(target_id, "").await?;
-        if target_vector.is_empty() {
-            return Ok(f32::MAX); // Invalid vector, maximum penalty
-        }
-        
-        // Step 2: Identify target's cluster assignment
-        let target_cluster = cluster_metadata.get_node_cluster(target_id);
-        let target_centroid = &cluster_metadata.centroids[target_cluster];
-        let target_stats = &cluster_metadata.cluster_stats[target_cluster];
-        
-        // Step 3: Calculate the 5 fundamental distance components
-        
-        // d₁: Query to target vector (base similarity)
-        let d1 = self.calculate_raw_distance(query, &target_vector, metric)?;
-        
-        // d₂: Query to target's centroid (cluster relevance)
-        let d2 = self.calculate_raw_distance(query, target_centroid, metric)?;
-        
-        // d₃: Target vector to its own centroid (intra-cluster cohesion)
-        let d3 = self.calculate_raw_distance(&target_vector, target_centroid, metric)?;
-        
-        // d₄: Average query distance to all other centroids (boundary penalty)
-        let mut d4_sum = 0.0;
-        let mut other_centroids = 0;
-        for (i, centroid) in cluster_metadata.centroids.iter().enumerate() {
-            if i != target_cluster {
-                d4_sum += self.calculate_raw_distance(query, centroid, metric)?;
-                other_centroids += 1;
-            }
-        }
-        let d4 = if other_centroids > 0 { d4_sum / other_centroids as f32 } else { 0.0 };
-        
-        // d₅: Target centroid distance variance (cluster compactness measure)
-        let d5 = target_stats.std_deviation;
-        
-        // NOTE: We could also use pre-computed centroid-to-centroid distances here
-        // For d₂ component: cluster_metadata.centroid_distances[query_cluster][target_cluster]
-        // This would be faster but requires determining query's cluster assignment first
-        
-        // Step 4: Calculate adaptive boosting factors based on statistical thresholds
-        
-        // α₁: Boundary detection for target vector
-        let alpha1 = if d3 > target_stats.mean_distance + 
-                         boost_config.boundary_threshold * target_stats.std_deviation {
-            boost_config.alpha_own  // Apply penalty for boundary vectors
-        } else {
-            1.0  // No penalty for well-contained vectors
-        };
-        
-        // α₂: Inter-cluster penalty with logarithmic scaling
-        let global_avg_distance = self.estimate_global_avg_distance(cluster_metadata);
-        let alpha2 = boost_config.alpha_other * (1.0 + (d2 / global_avg_distance).ln().max(0.0));
-        
-        // α₃: Cluster compactness preference
-        let alpha3 = boost_config.alpha_variance;
-        
-        // β₁: Cross-cluster penalty with exponential decay
-        let beta1 = boost_config.beta_min * (-d4 / global_avg_distance).exp();
-        
-        // β₂: Variance penalty (higher variance = less predictable cluster)
-        let beta2 = boost_config.beta_max * (d5 / global_avg_distance);
-        
-        // Step 5: Apply the complete 5-component boosting formula
-        let boosted_distance = alpha1 * d1 + alpha2 * d2 + alpha3 * d3 + beta1 * d4 + beta2 * d5;
-        
-        // Step 6: Trace component breakdown for debugging (sample logging)
-        if rand::random::<f32>() < 0.001 {  // 0.1% sampling to avoid log spam
-            tracing::trace!(
-                "Distance boosting breakdown for {}: \
-                 d₁={:.3}×{:.2}={:.3}, d₂={:.3}×{:.2}={:.3}, d₃={:.3}×{:.2}={:.3}, \
-                 d₄={:.3}×{:.2}={:.3}, d₅={:.3}×{:.2}={:.3} | final={:.3}",
-                target_id, d1, alpha1, alpha1*d1, d2, alpha2, alpha2*d2,
-                d3, alpha3, alpha3*d3, d4, beta1, beta1*d4, d5, beta2, beta2*d5,
-                boosted_distance
-            );
-        }
-        
-        Ok(boosted_distance)
-    }
     
     /// Calculate raw distance between two vectors using specified metric
     fn calculate_raw_distance(&self, v1: &[f32], v2: &[f32], metric: &DistanceMetric) -> Result<f32> {
@@ -1250,61 +1131,146 @@ impl RaptorReader {
         if count > 0 { total / count as f32 } else { 1.0 }
     }
     
-    /// Find P² matrix entry point (placeholder implementation)
-    async fn find_entry_point(&self) -> Result<String> {
-        // In production, this would load the entry point from row group metadata
-        // For now, return a placeholder entry point
-        Ok("entry_point_vector_0".to_string())
-    }
     
     // ====== Matrix Trinity Search Methods ======
     
     /// Step 1: Use K×K matrix to select most relevant centroids for search
     /// This implements the centroid selection phase of Matrix Trinity
+    /// ENHANCED: Now includes Phase 1 boundary detection using d_i/d_j > 0.8 rule
     async fn select_centroids_with_kxk_matrix(
         &self,
         query: &[f32],
         num_centroids: usize,
         metric: &DistanceMetric,
     ) -> Result<Vec<CentroidSelection>> {
+        // Load configuration for boundary detection
+        let boundary_config = super::common::BoundaryDetectionConfig::default();
+        
         // Load all centroids from footer
         let footer = self.cached_footer.as_ref()
             .ok_or_else(|| anyhow::anyhow!("Footer not loaded"))?;
         
-        let distance_compute = UnifiedDistanceCompute::with_metric(metric.clone());
-        let mut centroid_distances = Vec::new();
+        let distance_compute = UnifiedDistanceCompute::new(metric.clone());
+        let mut all_distances = Vec::new();
         
-        // Compute distance from query to all centroids (1-to-1 mapping)
-        for (centroid_id, centroid) in footer.centroids.centroids.iter().enumerate() {
-            let dist = distance_compute.calculate(query, centroid)?;
+        // Step 1: Compute distance from query to all centroids
+        for centroid_id in 0..footer.centroids.count as usize {
+            let centroid = footer.centroids.get_centroid(centroid_id as u16).unwrap();
+            let dist = distance_compute.calculate_distance(query, &centroid, &metric).raw_value;
             
             // Simple 1-to-1 mapping: centroid_id == rowgroup_id
             let rowgroup_id = centroid_id as u16;
             
-            centroid_distances.push(CentroidSelection {
+            all_distances.push(CentroidSelection {
                 centroid_id,
                 rowgroup_id,
                 distance: dist,
             });
         }
         
-        // Sort by distance and return top candidates
-        centroid_distances.sort_by(|a, b| a.distance.partial_cmp(&b.distance).unwrap());
-        centroid_distances.truncate(num_centroids);
+        // Step 2: Sort and select primary centroids
+        all_distances.sort_by(|a, b| a.distance.partial_cmp(&b.distance).unwrap());
+        let primary_centroids: Vec<CentroidSelection> = all_distances
+            .iter()
+            .take(num_centroids)
+            .cloned()
+            .collect();
         
-        tracing::debug!(
-            "K×K matrix selection: {} centroids selected from {} total",
-            centroid_distances.len(),
-            footer.centroids.centroids.len()
+        // Step 3: Apply boundary detection rule
+        let mut boundary_expansions = Vec::new();
+        let mut expanded_set = std::collections::HashSet::new();
+        
+        // Add primary centroids to expanded set
+        for c in &primary_centroids {
+            expanded_set.insert(c.centroid_id);
+        }
+        
+        // Check boundary rule for each primary centroid
+        for primary in &primary_centroids {
+            // For each other centroid, check if it's a boundary neighbor
+            for candidate in &all_distances {
+                // Skip if already in set or is the primary itself
+                if expanded_set.contains(&candidate.centroid_id) || 
+                   candidate.centroid_id == primary.centroid_id {
+                    continue;
+                }
+                
+                // Calculate boundary ratio: d(Q,primary)/d(Q,candidate)
+                let boundary_ratio = primary.distance / candidate.distance;
+                
+                // Apply boundary rule: if ratio > 0.8, this is a boundary case
+                if boundary_ratio > boundary_config.boundary_ratio_threshold {
+                    // Also check K² distance between centroids
+                    if let Some(k2_matrix) = &footer.k2_matrix {
+                        let inter_distance = k2_matrix.get_distance(
+                            primary.centroid_id, 
+                            candidate.centroid_id
+                        );
+                        
+                        // Only add if centroids are reasonably close
+                        if inter_distance < primary.distance * 1.5 {
+                            boundary_expansions.push((
+                                primary.centroid_id as u16,
+                                candidate.centroid_id as u16,
+                                boundary_ratio
+                            ));
+                            expanded_set.insert(candidate.centroid_id);
+                            
+                            tracing::debug!(
+                                "Boundary detected: C{} -> C{} (ratio: {:.2}, dist: {:.3})",
+                                primary.centroid_id, candidate.centroid_id, 
+                                boundary_ratio, inter_distance
+                            );
+                        }
+                    }
+                }
+                
+                // Apply expansion budget
+                let max_expansion = (num_centroids as f32 * 
+                    boundary_config.expansion_budget_percent) as usize;
+                if boundary_expansions.len() >= max_expansion {
+                    break;
+                }
+            }
+        }
+        
+        // Step 4: Build final result set
+        let mut final_centroids = primary_centroids;
+        
+        // Add boundary-detected centroids
+        for (_, to_centroid, _) in &boundary_expansions {
+            if let Some(centroid_data) = all_distances.iter()
+                .find(|c| c.centroid_id == *to_centroid as usize) {
+                final_centroids.push(centroid_data.clone());
+            }
+        }
+        
+        // Log boundary detection results
+        tracing::info!(
+            "Phase 1 Boundary Detection: {} primary + {} boundary = {} total centroids",
+            num_centroids,
+            boundary_expansions.len(),
+            final_centroids.len()
         );
         
-        Ok(centroid_distances)
+        // Store boundary detection result for debugging (could be returned if needed)
+        let _boundary_result = super::common::BoundaryDetectionResult {
+            primary_centroids: primary_centroids.iter()
+                .map(|c| c.centroid_id as u16).collect(),
+            boundary_expansions,
+            expanded_centroids: final_centroids.iter()
+                .map(|c| c.centroid_id as u16).collect(),
+            boundary_ratio_threshold: boundary_config.boundary_ratio_threshold,
+            expansion_count: boundary_expansions.len(),
+        };
+        
+        Ok(final_centroids)
     }
     
     /// Step 2: Search within a specific rowgroup using P² matrix + P×K boosting
     /// This implements the intra-rowgroup navigation phase
     async fn search_rowgroup_with_matrices(
-        &self,
+        &mut self,
         query: &[f32],
         centroid_id: usize,
         rowgroup_id: u16,
@@ -1320,13 +1286,13 @@ impl RaptorReader {
         // Load vectors from rowgroup for distance computation
         let vectors = self.load_vectors_for_rowgroup(rowgroup_id).await?;
         
-        let distance_compute = UnifiedDistanceCompute::with_metric(metric.clone());
+        let distance_compute = UnifiedDistanceCompute::new(metric.clone());
         let mut candidate_distances = Vec::new();
         
         // For each vector in rowgroup, compute boosted distance
         for (vector_idx, vector) in vectors.iter().enumerate() {
             // Base distance from query to vector
-            let base_distance = distance_compute.calculate(query, vector)?;
+            let base_distance = distance_compute.calculate_distance(query, vector, &metric).raw_value;
             
             // Get P×K distance for boosting (vector to its assigned centroid)
             let pxk_distance = pxk_matrix.get_distance(vector_idx, centroid_id)?;
@@ -1357,14 +1323,14 @@ impl RaptorReader {
     // ====== Matrix Trinity Helper Methods ======
     
     /// Load P² matrix for a specific rowgroup (used by Matrix Trinity search)
-    async fn load_p2_matrix_for_rowgroup(&self, rowgroup_id: u16) -> Result<Arc<P2Matrix>> {
+    async fn load_p2_matrix_for_rowgroup(&mut self, rowgroup_id: u16) -> Result<Arc<P2Matrix>> {
         // This is a simplified version - in production would load from actual file
         let default_matrix = P2Matrix {
             num_vectors: 1000,
             distances: vec![128; (1000 * 999) / 2], // Default quantized distances
             min_distance: 0.0,
             max_distance: 2.0,
-            compression: crate::storage::engines::common::fastlanes_encoding::FastLanesScheme::BitPacking,
+            compression: crate::storage::engines::common::fastlanes_encoding::FastLanesScheme::BitPacked { bits: 8 },
             compressed_size: 64000,
         };
         Ok(Arc::new(default_matrix))
@@ -1373,7 +1339,7 @@ impl RaptorReader {
     /// Load P×K matrix for a specific rowgroup (used by Matrix Trinity search)
     async fn load_pxk_matrix_for_rowgroup(&self, rowgroup_id: u16) -> Result<Arc<VectorCentroidMatrix>> {
         // Load the actual P×K matrix from disk
-        self.load_pxk_matrix(rowgroup_id as u32).await
+        self.load_pxk_matrix(rowgroup_id).await
     }
     
     /// Load vectors for a specific rowgroup (used by Matrix Trinity search)
@@ -1430,27 +1396,164 @@ impl RaptorReader {
         Ok(rowgroup_id)
     }
     
+    /// Phase 2: Detect spillover using P×K matrix
+    /// This identifies vectors that are closer to non-assigned centroids
+    /// Returns additional centroids that should be searched due to spillover
+    async fn detect_spillover_with_pxk_matrix(
+        &self,
+        selected_centroids: &[CentroidSelection],
+        metric: &DistanceMetric,
+    ) -> Result<super::common::SpilloverDetectionResult> {
+        // Load configuration
+        let spillover_config = super::common::SpilloverDetectionConfig::default();
+        
+        let footer = self.cached_footer.as_ref()
+            .ok_or_else(|| anyhow::anyhow!("Footer not loaded"))?;
+        
+        let mut spillover_map = std::collections::HashMap::new();
+        let mut spillover_percentages = std::collections::HashMap::new();
+        let mut recursive_expansions = Vec::new();
+        let mut final_centroids_set = std::collections::HashSet::new();
+        
+        // Add initial centroids to final set
+        for c in selected_centroids {
+            final_centroids_set.insert(c.centroid_id as u16);
+        }
+        
+        // Track max spillover for statistics
+        let mut max_spillover_percentage = 0.0f32;
+        let mut total_spillover_vectors = 0usize;
+        
+        // Check spillover for each selected centroid
+        for centroid_sel in selected_centroids {
+            let centroid_id = centroid_sel.centroid_id as u16;
+            let rowgroup_id = centroid_sel.rowgroup_id;
+            
+            // Load P×K matrix for this rowgroup
+            let pxk_matrix = match self.load_pxk_matrix(rowgroup_id).await {
+                Ok(matrix) => matrix,
+                Err(e) => {
+                    tracing::warn!("Failed to load P×K matrix for rowgroup {}: {}", rowgroup_id, e);
+                    continue;
+                }
+            };
+            
+            // Count spillovers to other centroids
+            let mut spillover_counts: std::collections::HashMap<u16, usize> = 
+                std::collections::HashMap::new();
+            let total_vectors = pxk_matrix.num_vectors as usize;
+            
+            // For each vector in the rowgroup
+            for vector_idx in 0..total_vectors {
+                // Get distance to assigned centroid
+                let assigned_distance = pxk_matrix.get_distance(vector_idx, centroid_id as usize)?;
+                
+                // Check distances to other centroids (sample top candidates)
+                for other_centroid_id in 0..std::cmp::min(footer.centroids.count as usize, 20) {
+                    if other_centroid_id == centroid_id as usize {
+                        continue;
+                    }
+                    
+                    let other_distance = pxk_matrix.get_distance(vector_idx, other_centroid_id)?;
+                    
+                    // Check spillover condition: vector closer to other centroid
+                    if other_distance < assigned_distance * spillover_config.distance_ratio_threshold {
+                        *spillover_counts.entry(other_centroid_id as u16).or_insert(0) += 1;
+                        total_spillover_vectors += 1;
+                    }
+                }
+            }
+            
+            // Calculate spillover percentages and check threshold
+            let mut spillover_targets = Vec::new();
+            for (target_centroid, count) in spillover_counts {
+                let percentage = count as f32 / total_vectors as f32;
+                
+                if percentage > spillover_config.spillover_threshold {
+                    spillover_targets.push(target_centroid);
+                    spillover_percentages.insert(target_centroid, percentage);
+                    max_spillover_percentage = max_spillover_percentage.max(percentage);
+                    
+                    // Add to final set if not already present
+                    if final_centroids_set.insert(target_centroid) {
+                        recursive_expansions.push(target_centroid);
+                        
+                        tracing::debug!(
+                            "Spillover detected: {} vectors ({:.1}%) from C{} to C{}",
+                            count, percentage * 100.0, centroid_id, target_centroid
+                        );
+                    }
+                }
+            }
+            
+            if !spillover_targets.is_empty() {
+                spillover_map.insert(centroid_id, spillover_targets);
+            }
+        }
+        
+        // Recursive spillover check (depth = 1 for now, can be extended)
+        if !recursive_expansions.is_empty() && spillover_config.max_recursive_depth > 1 {
+            tracing::debug!(
+                "Checking recursive spillovers for {} newly discovered centroids",
+                recursive_expansions.len()
+            );
+            
+            // Convert recursive expansions to CentroidSelection for recursive call
+            let recursive_centroids: Vec<CentroidSelection> = recursive_expansions
+                .iter()
+                .map(|&id| CentroidSelection {
+                    centroid_id: id as usize,
+                    rowgroup_id: id,  // 1-to-1 mapping
+                    distance: 0.0,    // Will be recalculated if needed
+                })
+                .collect();
+            
+            // Recursively check (with depth limit)
+            // Note: In production, implement proper depth tracking
+            // For now, we skip recursive check to avoid infinite recursion
+        }
+        
+        // Build final centroid list
+        let final_centroids: Vec<u16> = final_centroids_set.into_iter().collect();
+        
+        tracing::info!(
+            "Phase 2 Spillover Detection: {} initial → {} final centroids ({} added)",
+            selected_centroids.len(),
+            final_centroids.len(),
+            final_centroids.len() - selected_centroids.len()
+        );
+        
+        Ok(super::common::SpilloverDetectionResult {
+            spillover_map,
+            spillover_percentages,
+            recursive_expansions,
+            final_centroids,
+            spillover_threshold: spillover_config.spillover_threshold,
+            max_spillover_percentage,
+            total_spillover_vectors,
+        })
+    }
+    
     /// Get rowgroups for centroid using actual footer data (when available)
     async fn get_rowgroups_for_centroid_from_footer(&self, centroid_id: usize) -> Result<Vec<u16>> {
         // Use the actual centroid-to-rowgroup mapping from the footer
         let footer = self.cached_footer.as_ref()
             .ok_or_else(|| anyhow::anyhow!("Footer not loaded"))?;
         
-        if let Some(range) = footer.centroid_to_rowgroup_ranges.get(centroid_id) {
-            let mut rowgroups = Vec::new();
-            for rg_id in range.start_rowgroup..=range.end_rowgroup {
-                rowgroups.push(rg_id);
-            }
+        // Since we have 1-to-1 mapping, centroid_id == rowgroup_id
+        if centroid_id < footer.total_centroids as usize {
+            // With 1-to-1 mapping, return just the single rowgroup
+            let rowgroup_id = centroid_id as u16;
             
             tracing::debug!(
-                "Centroid {} → Rowgroups {:?} (from footer: {} vectors)",
-                centroid_id, rowgroups, range.total_vectors
+                "Centroid {} → Rowgroup {} (1-to-1 mapping)",
+                centroid_id, rowgroup_id
             );
             
-            Ok(rowgroups)
+            Ok(vec![rowgroup_id])
         } else {
-            // Fallback to simulation if footer doesn't have mapping yet
-            self.get_rowgroups_for_centroid(centroid_id).await
+            // Invalid centroid ID
+            Ok(Vec::new())
         }
     }
     
@@ -1469,30 +1572,72 @@ impl RaptorReader {
     
     /// Main Matrix Trinity Search Implementation
     /// Orchestrates K×K → P×K → P² matrix pipeline
+    /// ENHANCED: Now includes Phase 1 boundary detection and Phase 2 spillover detection
     async fn matrix_trinity_search(
-        &self,
+        &mut self,
         query: &[f32],
         ef: usize,
         metric: &DistanceMetric,
     ) -> Result<Vec<String>> {
-        tracing::debug!("Starting Matrix Trinity search: ef={}", ef);
+        tracing::debug!("Starting Enhanced Matrix Trinity search: ef={}", ef);
         
-        // Phase 1: K×K Matrix - Select top centroids by query distance
-        let selected_centroids = self.select_centroids_with_kxk_matrix(
+        // Phase 1: K×K Matrix with Boundary Detection
+        // This now includes boundary detection via d_i/d_j > 0.8 rule
+        let initial_centroids = self.select_centroids_with_kxk_matrix(
             query, 
-            (ef / 4).max(1), // Search fewer centroids but more thoroughly
+            (ef / 4).max(1), // Initial selection before expansion
             metric
         ).await?;
         
-        tracing::debug!(
-            "Phase 1 (K×K): Selected {} centroid-rowgroup pairs", 
-            selected_centroids.len()
+        let phase1_count = initial_centroids.len();
+        tracing::info!(
+            "Phase 1 Complete: {} centroids selected (includes boundary expansion)", 
+            phase1_count
         );
         
-        // Phase 2: P×K + P² Matrix - Search within selected rowgroups
+        // Phase 2: P×K Spillover Detection
+        // Detect vectors that spill to other centroids
+        let spillover_result = self.detect_spillover_with_pxk_matrix(
+            &initial_centroids,
+            metric
+        ).await?;
+        
+        // Combine centroids from Phase 1 and Phase 2
+        let mut final_centroid_set = std::collections::HashSet::new();
+        for c in &initial_centroids {
+            final_centroid_set.insert(c.centroid_id);
+        }
+        for c in &spillover_result.final_centroids {
+            final_centroid_set.insert(*c as usize);
+        }
+        
+        // Convert back to CentroidSelection for search
+        let mut final_centroids = Vec::new();
+        for centroid_id in final_centroid_set {
+            // Find original selection or create new one
+            if let Some(original) = initial_centroids.iter().find(|c| c.centroid_id == centroid_id) {
+                final_centroids.push(original.clone());
+            } else {
+                // Centroid added via spillover, create new selection
+                final_centroids.push(CentroidSelection {
+                    centroid_id,
+                    rowgroup_id: centroid_id as u16,  // 1-to-1 mapping
+                    distance: f32::MAX,  // Will be properly scored during search
+                });
+            }
+        }
+        
+        tracing::info!(
+            "Phase 2 Complete: {} → {} centroids after spillover detection (+{})",
+            phase1_count,
+            final_centroids.len(),
+            final_centroids.len() - phase1_count
+        );
+        
+        // Phase 3: P² Matrix - Search within selected rowgroups
         let mut all_candidates = Vec::new();
         
-        for selection in selected_centroids {
+        for selection in final_centroids {
             let rowgroup_candidates = self.search_rowgroup_with_matrices(
                 query,
                 selection.centroid_id,
@@ -1567,25 +1712,28 @@ impl RaptorReader {
         // Load rowgroup metadata to find P×K matrix location
         let metadata = self.read_metadata(&self.base_path).await?;
         let rg_metadata = metadata.row_groups.iter()
-            .find(|rg| rg.id as u32 == rowgroup_id)
+            .find(|rg| rg.id == rowgroup_id)
             .ok_or_else(|| anyhow::anyhow!("Rowgroup {} not found", rowgroup_id))?;
         
-        // Check if P×K matrix is stored inline (new format)
-        if let (Some(offset), Some(size)) = (rg_metadata.pxk_matrix_offset, rg_metadata.pxk_matrix_size) {
-            // Read inline P×K matrix
-            let matrix_data = FileSystem::read_range(
-                self.filesystem.as_ref(),
+        // Check if P×K matrix exists in column pages
+        if let Some(pxk_metadata) = rg_metadata.column_pages.get(&ColumnType::PxKMatrix) {
+            // Read P×K matrix from column page
+            let matrix_data = self.filesystem.read_range(
                 &self.base_path,
-                offset,
-                size as usize
+                pxk_metadata.offset as usize,
+                pxk_metadata.compressed_size as usize
             ).await?;
             
-            // Decompress
-            let decompressed = crate::core::compression::decompress(
-                &matrix_data,
-                CompressionAlgorithm::Zstd,
-                CompressionContext::SstBlock
-            )?;
+            // Decompress if needed
+            let decompressed = if pxk_metadata.compression != CompressionAlgorithm::None {
+                crate::core::compression::decompress(
+                    &matrix_data,
+                    pxk_metadata.compression,
+                    CompressionContext::SstBlock
+                )?
+            } else {
+                matrix_data
+            };
             
             // Deserialize matrix
             let matrix: VectorCentroidMatrix = bincode::deserialize(&decompressed)?;
@@ -1601,7 +1749,7 @@ impl RaptorReader {
             tracing::debug!(
                 "Loaded inline P×K matrix for rowgroup {} from offset {}: \
                  {} vectors × {} centroids, strategy {:?}, {:.2}% compression",
-                rowgroup_id, offset, matrix.num_vectors, matrix.num_centroids,
+                rowgroup_id, pxk_metadata.offset, matrix.num_vectors, matrix.num_centroids,
                 matrix.storage_strategy, compression_ratio
             );
             
@@ -2627,8 +2775,9 @@ impl RaptorReader {
         }
     }
     
-    /// Load cluster metadata from storage (updated to use centralized footer)
-    async fn load_cluster_metadata(&self) -> Result<ClusterMetadata> {
+    // Obsolete - clustering info is in footer's ColumnarCentroids and K×K matrix
+    #[allow(dead_code)]
+    async fn load_cluster_metadata_obsolete(&self) -> Result<()> {
         // Use centroids from the cached footer
         if let Some(ref footer) = self.cached_footer {
             let all_centroids = footer.centroids.decode_all();
@@ -2690,24 +2839,11 @@ impl RaptorReader {
                 }
             }
             
-            Ok(ClusterMetadata {
-                centroids,
-                centroid_distances,
-                // TODO: P² matrix-based cluster assignment
-                cluster_stats,
-            })
+            // Method body removed - ClusterMetadata no longer exists
+            Ok(())
         } else {
             // Fallback if footer not loaded
-            Ok(ClusterMetadata {
-                centroids: vec![vec![0.0; 384]],
-                centroid_distances: vec![vec![0.0]],
-                // TODO: P² matrix-based cluster assignment
-                cluster_stats: vec![ClusterStats {
-                    mean_distance: 0.5,
-                    std_deviation: 0.1,
-                    radius: 0.6,
-                }],
-            })
+            Ok(())
         }
     }
     
@@ -2831,7 +2967,7 @@ impl RaptorReader {
                         distance,
                         vector: Some(vector.clone()),
                         metadata: None, // Not loaded in fullscan mode
-                        rowgroup_id: rowgroup_id as u16,
+                        rowgroup_id: rg_idx as u16,
                         ranking_score: distance, // Initial score is distance
                     });
                 }

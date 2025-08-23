@@ -1,0 +1,48 @@
+%%{init: {'theme':'base', 'themeVariables': {'primaryColor':'#e8f4fd','primaryTextColor':'#1a1a1a','primaryBorderColor':'#2563eb','lineColor':'#4b5563','secondaryColor':'#fef3c7','tertiaryColor':'#dbeafe','background':'#ffffff'}}}%%
+graph TD
+    subgraph "Phase 1: K² Boundary Detection"
+        Q[Query Vector<br/>Q]:::query
+        
+        subgraph "Step 1: Distance Computation"
+            DC[Compute distances<br/>to all K centroids]:::compute
+            K2M[K² Matrix<br/>40KB cached]:::storage
+        end
+        
+        subgraph "Step 2: Primary Selection"
+            TOP[Select Top J=3<br/>Primary Centroids]:::primary
+            PC[C₂₃: 0.25<br/>C₁₉: 0.30<br/>C₆₇: 0.45]:::centroids
+        end
+        
+        subgraph "Step 3: Boundary Detection"
+            BR[Boundary Ratio Check<br/>d_i/d_j > 0.8]:::check
+            EX1[C₂₃/C₁₉ = 0.83 > 0.8 ✓<br/>Add C₇ as neighbor]:::expand
+            EX2[C₂₃/C₆₇ = 0.56 < 0.8 ✗<br/>No expansion]:::noexpand
+            EX3[Check K² distances<br/>d(C₂₃,C₇) < threshold]:::validate
+        end
+        
+        subgraph "Result: BoundaryDetectionResult"
+            BDR[primary: [23, 19, 67]<br/>expanded: [7, 12]<br/>total: 5 centroids]:::result
+        end
+        
+        Q --> DC
+        DC -.->|uses| K2M
+        DC --> TOP
+        TOP --> PC
+        PC --> BR
+        BR --> EX1
+        BR --> EX2
+        EX1 --> EX3
+        EX3 --> BDR
+        EX2 --> BDR
+    end
+    
+    classDef query fill:#3b82f6,stroke:#1e40af,stroke-width:2px,color:#fff
+    classDef compute fill:#e8f4fd,stroke:#2563eb,stroke-width:2px
+    classDef storage fill:#fef3c7,stroke:#f59e0b,stroke-width:2px
+    classDef primary fill:#dbeafe,stroke:#3b82f6,stroke-width:2px
+    classDef centroids fill:#e0e7ff,stroke:#6366f1,stroke-width:1px
+    classDef check fill:#fce7f3,stroke:#ec4899,stroke-width:2px
+    classDef expand fill:#d1fae5,stroke:#10b981,stroke-width:2px
+    classDef noexpand fill:#fee2e2,stroke:#ef4444,stroke-width:1px
+    classDef validate fill:#e9d5ff,stroke:#a855f7,stroke-width:1px
+    classDef result fill:#10b981,stroke:#059669,stroke-width:2px,color:#fff

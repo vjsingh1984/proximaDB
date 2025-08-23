@@ -1,0 +1,71 @@
+%%{init: {'theme':'base', 'themeVariables': {'primaryColor':'#e8f4fd','primaryTextColor':'#1a1a1a','primaryBorderColor':'#2563eb','lineColor':'#4b5563','secondaryColor':'#fef3c7','tertiaryColor':'#dbeafe','background':'#ffffff'}}}%%
+graph TB
+    subgraph "WRITE TIME - Storage Layer"
+        direction TB
+        IVF[100K Vectors<br/>IVF Clustering]:::input
+        
+        subgraph "Per RowGroup Storage"
+            CS[Calculate CentroidStats<br/>mean=0.45, std=0.12<br/>radius=0.89]:::compute
+            BV[Identify Boundary Vectors<br/>184/1024 = 18%]:::compute
+            NC[Find Nearest Centroids<br/>[19,7,12,45,67]]:::compute
+            FC[Find Farthest Centroids<br/>[89,91,95,97,99]]:::compute
+        end
+        
+        subgraph "Stored Structures"
+            RGM[RowGroupMetadata<br/>+200 bytes overhead]:::storage
+            P2[P² Matrix<br/>512KB]:::storage
+            PK[P×K Matrix<br/>100KB adaptive]:::storage
+            K2[K² Matrix<br/>40KB global]:::storage
+        end
+        
+        IVF --> CS
+        CS --> BV
+        BV --> NC
+        NC --> FC
+        FC --> RGM
+        RGM --> P2
+        RGM --> PK
+        RGM --> K2
+    end
+    
+    subgraph "READ TIME - Runtime Layer"
+        direction TB
+        Q[Query Vector]:::query
+        
+        subgraph "Phase 1: Boundary Detection"
+            BD[Load K² Matrix<br/>Compute d_i/d_j ratios<br/>Apply 0.8 threshold]:::runtime
+            BDR[BoundaryDetectionResult<br/>primary:[23,19,67]<br/>expanded:[7,12]]:::temp
+        end
+        
+        subgraph "Phase 2: Spillover Detection"
+            SD[Load P×K Matrices<br/>Check spillover %<br/>Apply 15% threshold]:::runtime
+            SDR[SpilloverDetectionResult<br/>spillover_map<br/>final:[23,19,67,7,12,71,88]]:::temp
+        end
+        
+        subgraph "Search & Boosting"
+            SRCH[Search 7 rowgroups<br/>Load P² matrices]:::runtime
+            BOOST[Apply 5-component formula<br/>d₁(runtime) + d₂-d₅(stored)]:::runtime
+            RES[Ranked Results]:::result
+        end
+        
+        Q --> BD
+        BD --> BDR
+        BDR --> SD
+        SD --> SDR
+        SDR --> SRCH
+        SRCH --> BOOST
+        BOOST --> RES
+    end
+    
+    K2 -.->|cached| BD
+    PK -.->|loaded| SD
+    P2 -.->|loaded| SRCH
+    RGM -.->|stats| BOOST
+    
+    classDef input fill:#3b82f6,stroke:#1e40af,stroke-width:2px,color:#fff
+    classDef compute fill:#e8f4fd,stroke:#2563eb,stroke-width:2px
+    classDef storage fill:#fef3c7,stroke:#f59e0b,stroke-width:2px
+    classDef query fill:#ec4899,stroke:#be185d,stroke-width:2px,color:#fff
+    classDef runtime fill:#e9d5ff,stroke:#a855f7,stroke-width:2px
+    classDef temp fill:#fee2e2,stroke:#ef4444,stroke-width:1px,stroke-dasharray: 5 5
+    classDef result fill:#10b981,stroke:#059669,stroke-width:2px,color:#fff

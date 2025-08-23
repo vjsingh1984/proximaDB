@@ -1,0 +1,51 @@
+%%{init: {'theme':'base', 'themeVariables': {'primaryColor':'#e8f4fd','primaryTextColor':'#1a1a1a','primaryBorderColor':'#2563eb','lineColor':'#4b5563','secondaryColor':'#fef3c7','tertiaryColor':'#dbeafe','background':'#ffffff'}}}%%
+graph TD
+    subgraph "Phase 2: P×K Spillover Detection"
+        SEL[Selected Centroids<br/>from Phase 1<br/>[23, 19, 67, 7, 12]]:::input
+        
+        subgraph "Step 1: Load P×K Matrices"
+            PK23[P×K for RG 23<br/>100KB]:::storage
+            PK19[P×K for RG 19<br/>100KB]:::storage
+            PK67[P×K for RG 67<br/>100KB]:::storage
+        end
+        
+        subgraph "Step 2: Spillover Analysis - RG 23"
+            V23[1024 vectors<br/>in RG 23]:::vectors
+            CHK23[Check distances to<br/>all K centroids]:::compute
+            SP23[184 vectors (18%)<br/>closer to C₁₉ than C₂₃]:::spillover
+            TH23{18% > 15%<br/>threshold?}:::threshold
+        end
+        
+        subgraph "Step 3: Recursive Check"
+            REC[Check C₁₉'s<br/>spillovers]:::recursive
+            SP19[92 vectors (9%)<br/>spill to C₈₈]:::nospill
+            TH19{9% > 15%<br/>threshold?}:::threshold
+        end
+        
+        subgraph "Result: SpilloverDetectionResult"
+            SDR[spillover_map:<br/>23→[19,7], 67→[71]<br/>final: [23,19,67,7,12,71,88]<br/>7 total centroids]:::result
+        end
+        
+        SEL --> PK23
+        SEL --> PK19
+        SEL --> PK67
+        PK23 --> V23
+        V23 --> CHK23
+        CHK23 --> SP23
+        SP23 --> TH23
+        TH23 -->|Yes| REC
+        TH23 -->|No| SDR
+        REC --> SP19
+        SP19 --> TH19
+        TH19 -->|No| SDR
+    end
+    
+    classDef input fill:#3b82f6,stroke:#1e40af,stroke-width:2px,color:#fff
+    classDef storage fill:#fef3c7,stroke:#f59e0b,stroke-width:2px
+    classDef vectors fill:#e0e7ff,stroke:#6366f1,stroke-width:1px
+    classDef compute fill:#e8f4fd,stroke:#2563eb,stroke-width:2px
+    classDef spillover fill:#fbbf24,stroke:#f59e0b,stroke-width:2px
+    classDef nospill fill:#fee2e2,stroke:#ef4444,stroke-width:1px
+    classDef threshold fill:#fce7f3,stroke:#ec4899,stroke-width:2px
+    classDef recursive fill:#e9d5ff,stroke:#a855f7,stroke-width:2px
+    classDef result fill:#10b981,stroke:#059669,stroke-width:2px,color:#fff

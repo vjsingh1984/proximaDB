@@ -53,7 +53,7 @@ use tracing::debug;
 
 // Reuse existing platform capabilities
 use crate::core::compression::{StandardCompression, CompressionAlgorithm, CompressionContext};
-use super::common::{RowPageMetadata, HnswSegmentMetadata, VectorStats};
+use super::common::{RowPageMetadata, VectorStats};
 
 // Import bloom filter types from common
 use super::common::{
@@ -314,10 +314,10 @@ impl IvfClusteringBuilder {
     
     /// Add a node with its edges including distance information
     fn add_node(&mut self, vector_id: String, edges: Vec<EdgeWithDistance>) {
-        let node_id = self.ivf_builder.nodes.len() as u32;
+        let node_id = self.nodes.len() as u32;
         self.id_to_node.insert(vector_id.clone(), node_id);
         
-        self.ivf_builder.nodes.push(IvfNode {
+        self.nodes.push(IvfNode {
             vector_id,
             cluster_id: 0,  // Will be assigned during clustering
             row_location: RowLocation {
@@ -513,8 +513,8 @@ impl IvfClusteringBuilder {
             clusters[*cluster_id].push(vector_idx);
             
             // Track vector membership in centroid metadata (if node exists)
-            if vector_idx < self.ivf_builder.nodes.len() {
-                self.centroids[*cluster_id].member_ids.push(self.ivf_builder.nodes[vector_idx].vector_id.clone());
+            if vector_idx < self.nodes.len() {
+                self.centroids[*cluster_id].member_ids.push(self.nodes[vector_idx].vector_id.clone());
             }
             
             if vector_idx % 5000 == 0 && vector_idx > 0 {
@@ -568,13 +568,13 @@ impl IvfClusteringBuilder {
     /// This method works with pre-built HNSW nodes and their connectivity
     pub fn cluster_nodes_into_rowgroups(&mut self, dimension: usize) -> Vec<Vec<u32>> {
         // If we have no nodes, return empty
-        if self.ivf_builder.nodes.is_empty() {
+        if self.nodes.is_empty() {
             return Vec::new();
         }
         
         // For existing HNSW nodes, we can use graph connectivity for clustering
         // This is a simplified approach that groups connected nodes together
-        let n = self.ivf_builder.nodes.len();
+        let n = self.nodes.len();
         let p = self.target_rowgroup_size.max(constants::clustering::MIN_ROWGROUP_SIZE);
         let k = (n + p - 1) / p;  // Number of row groups needed
         
@@ -586,7 +586,7 @@ impl IvfClusteringBuilder {
         // Simple round-robin assignment for now
         // TODO: Use actual graph connectivity for better clustering
         let mut clusters = vec![Vec::new(); k];
-        for (idx, _node) in self.ivf_builder.nodes.iter().enumerate() {
+        for (idx, _node) in self.nodes.iter().enumerate() {
             let cluster_id = idx % k;
             clusters[cluster_id].push(idx as u32);
         }
@@ -629,7 +629,7 @@ impl IvfClusteringBuilder {
         
         tracing::debug!(
             "Applying component boosting to {} nodes with global_avg_distance={:.4}",
-            self.ivf_builder.nodes.len(), global_avg_distance
+            self.nodes.len(), global_avg_distance
         );
         
         let mut total_edges_processed = 0;
@@ -637,7 +637,7 @@ impl IvfClusteringBuilder {
         let mut inter_cluster_edges = 0;
         
         // Step 2: Process each node and apply boosting to all its outgoing edges
-        for (node_idx, node) in self.ivf_builder.nodes.iter_mut().enumerate() {
+        for (node_idx, node) in self.nodes.iter_mut().enumerate() {
             // Identify source vector's cluster assignment and centroid for boosting calculations
             let source_idx = *self.id_to_node.get(&node.vector_id).unwrap() as usize;
             let source_cluster = self.find_cluster_for_node(source_idx, clusters);
@@ -784,7 +784,7 @@ impl IvfClusteringBuilder {
             if node_idx % 2000 == 0 && node_idx > 0 {
                 tracing::debug!(
                     "Processed {} / {} nodes for component boosting",
-                    node_idx, self.ivf_builder.nodes.len()
+                    node_idx, self.nodes.len()
                 );
             }
         }
@@ -796,7 +796,7 @@ impl IvfClusteringBuilder {
         tracing::info!(
             "✅ Component boosting completed: {} nodes, {} edges processed. \
              Edge distribution: {:.1}% intra-cluster, {:.1}% inter-cluster (optimal: >70% intra)",
-            self.ivf_builder.nodes.len(), total_edges_processed, 
+            self.nodes.len(), total_edges_processed, 
             intra_cluster_ratio * 100.0, inter_cluster_ratio * 100.0
         );
         
@@ -880,9 +880,12 @@ impl IvfClusteringBuilder {
             num_centroids: k as u32,
             compressed_data,
             compression_metadata: InterCentroidCompressionMetadata {
-                scale_factor,
+                min_distance: 0.0,
                 max_distance,
-                compression_type: CompressionType::Quantized16Bit,
+                scale_factor: 255.0 / max_distance,
+                compression_type: CompressionType::Quantized8Bit,
+                row_encodings: vec![scheme; k],
+                row_compressed_sizes: vec![compressed_data.len() as u16 / k as u16; k],
             },
             lookup_table,
         }
@@ -901,7 +904,7 @@ impl IvfClusteringBuilder {
         
         // Calculate coverage using smooth exponential decay
         let raw_coverage = (-alpha * (k_over_d + 1.0).ln()).exp();
-        let coverage_ratio = min_coverage.max(raw_coverage.min(1.0));
+        let coverage_ratio = min_coverage.max(raw_coverage.min(1.0f32));
         
         // Determine strategy based on coverage requirements
         let strategy = match coverage_ratio {
@@ -956,14 +959,20 @@ impl IvfClusteringBuilder {
     
     /// Build full P×K matrix with quantization
     fn build_full_pk_matrix(&self, rowgroup: &RowGroup, rg_idx: usize) -> VectorCentroidMatrix {
-        let p = rowgroup.count as usize;
+        let p = rowgroup.row_count;
         let k = self.centroids.len();
         
         // Calculate all distances and find max for quantization
         let mut distances = vec![vec![0.0f32; k]; p];
         let mut max_distance = 0.0f32;
         
-        for (vec_idx, vector_id) in rowgroup.vector_ids.iter().enumerate() {
+        let vector_ids = if let Some(ref columnar_data) = rowgroup.columnar_data {
+            &columnar_data.vector_ids
+        } else {
+            return self.build_empty_pk_matrix();
+        };
+        
+        for (vec_idx, vector_id) in vector_ids.iter().enumerate() {
             // Find the actual vector data
             let vector_data = self.get_vector_by_id(vector_id);
             
@@ -994,7 +1003,7 @@ impl IvfClusteringBuilder {
         }
         
         VectorCentroidMatrix {
-            rowgroup_id: rg_idx as u32,
+            rowgroup_id: rg_idx as u16,
             num_vectors: p as u32,
             num_centroids: k as u32,
             storage_strategy: VectorCentroidStorageStrategy::Full,
@@ -1002,23 +1011,51 @@ impl IvfClusteringBuilder {
             hierarchical_data: None,
             sparse_data: None,
             compression_metadata: VectorCentroidCompressionMetadata {
-                scale_factor,
-                max_distance,
-                compression_type: CompressionType::Quantized16Bit,
+                centroid_stats: Vec::new(),
+                global_min_distance: 0.0,
+                global_max_distance: max_distance,
+                global_mean_distance: max_distance / 2.0,
+                centroid_encodings: Vec::new(),
+            },
+        }
+    }
+    
+    /// Build empty P×K matrix when no data is available
+    fn build_empty_pk_matrix(&self) -> VectorCentroidMatrix {
+        VectorCentroidMatrix {
+            rowgroup_id: 0,
+            num_vectors: 0,
+            num_centroids: 0,
+            storage_strategy: VectorCentroidStorageStrategy::Sparse, // Empty matrix uses sparse
+            compressed_data: Vec::new(),
+            hierarchical_data: None,
+            sparse_data: None,
+            compression_metadata: VectorCentroidCompressionMetadata {
+                centroid_stats: Vec::new(),
+                global_min_distance: 0.0,
+                global_max_distance: 0.0,
+                global_mean_distance: 0.0,
+                centroid_encodings: Vec::new(),
             },
         }
     }
     
     /// Build hierarchical P×K matrix with mean + sparse deltas
     fn build_hierarchical_pk_matrix(&self, rowgroup: &RowGroup, rg_idx: usize) -> VectorCentroidMatrix {
-        let p = rowgroup.count as usize;
+        let p = rowgroup.row_count;
         let k = self.centroids.len();
         
         // Calculate all distances
         let mut distances = vec![vec![0.0f32; k]; p];
         let mut max_distance = 0.0f32;
         
-        for (vec_idx, vector_id) in rowgroup.vector_ids.iter().enumerate() {
+        let vector_ids = if let Some(ref columnar_data) = rowgroup.columnar_data {
+            &columnar_data.vector_ids
+        } else {
+            return self.build_empty_pk_matrix();
+        };
+        
+        for (vec_idx, vector_id) in vector_ids.iter().enumerate() {
             let vector_data = self.get_vector_by_id(vector_id);
             
             for (cent_idx, centroid) in self.centroids.iter().enumerate() {
@@ -1076,7 +1113,7 @@ impl IvfClusteringBuilder {
         );
         
         VectorCentroidMatrix {
-            rowgroup_id: rg_idx as u32,
+            rowgroup_id: rg_idx as u16,
             num_vectors: p as u32,
             num_centroids: k as u32,
             storage_strategy: VectorCentroidStorageStrategy::Hierarchical,
@@ -1087,9 +1124,11 @@ impl IvfClusteringBuilder {
             }),
             sparse_data: None,
             compression_metadata: VectorCentroidCompressionMetadata {
-                scale_factor,
-                max_distance,
-                compression_type: CompressionType::Quantized16Bit,
+                centroid_stats: Vec::new(),
+                global_min_distance: 0.0,
+                global_max_distance: max_distance,
+                global_mean_distance: max_distance / 2.0,
+                centroid_encodings: Vec::new(),
             },
         }
     }
@@ -1097,7 +1136,7 @@ impl IvfClusteringBuilder {
     /// Build sparse P×K matrix with adaptive boundary detection
     /// Stores only vectors with boundary_score > threshold (10%-50% coverage)
     fn build_adaptive_sparse_pk_matrix(&self, rowgroup: &RowGroup, rg_idx: usize, coverage_ratio: f32) -> VectorCentroidMatrix {
-        let p = rowgroup.count as usize;
+        let p = rowgroup.row_count;
         let k = self.centroids.len();
         let d = self.centroids[0].vector.len() as f32;
         
@@ -1108,7 +1147,13 @@ impl IvfClusteringBuilder {
         let mut max_distance = 0.0f32;
         
         // Step 1: Identify boundary vectors using exponential decay formula
-        for (vec_idx, vector_id) in rowgroup.vector_ids.iter().enumerate() {
+        let vector_ids = if let Some(ref columnar_data) = rowgroup.columnar_data {
+            &columnar_data.vector_ids
+        } else {
+            return self.build_empty_pk_matrix();
+        };
+        
+        for (vec_idx, vector_id) in vector_ids.iter().enumerate() {
             let vector_data = self.get_vector_by_id(vector_id);
             
             // Calculate distances to all centroids
@@ -1171,18 +1216,24 @@ impl IvfClusteringBuilder {
         }
         
         // Step 3: Apply FastLanes compression to sparse entries
-        let quantization_engine = StorageQuantizationEngine::new();
         let distances_only: Vec<f32> = sparse_entries.iter()
             .map(|entry| entry.quantized_distance as f32 / 255.0 * max_distance)
             .collect();
         
-        let (quantized_u8, q_min, q_max) = quantization_engine.quantize_to_u8(&distances_only);
+        // Manual quantization
+        let q_min = distances_only.iter().fold(f32::INFINITY, |a, &b| a.min(b));
+        let q_max = distances_only.iter().fold(f32::NEG_INFINITY, |a, &b| a.max(b));
+        let scale = if q_max > q_min { 255.0 / (q_max - q_min) } else { 1.0 };
+        let quantized_u8: Vec<u8> = distances_only.iter()
+            .map(|&d| ((d - q_min) * scale).round() as u8)
+            .collect();
         
         // Apply FastLanes encoding for SIMD optimization
-        let fastlanes_encoder = FastLanesEncoder::new();
-        let scheme = FastLanesScheme::BitPacking; // Efficient for sparse data
-        let compressed_data = fastlanes_encoder.encode_u8_slice(&quantized_u8, scheme)
-            .unwrap_or(quantized_u8); // Fallback to uncompressed if encoding fails
+        use crate::storage::engines::common::fastlanes_encoding::FastLanesScheme;
+        let scheme = FastLanesScheme::BitPacked { bits: 8 }; // Efficient for sparse data
+        let fastlanes_encoder = FastLanesEncoder::new(scheme);
+        let compressed_data = fastlanes_encoder.encode_binary(&quantized_u8)
+            .unwrap_or_else(|_| quantized_u8.clone()); // Fallback to uncompressed if encoding fails
         
         let sparsity_achieved = boundary_vectors.len() as f32 / p as f32;
         
@@ -1195,7 +1246,7 @@ impl IvfClusteringBuilder {
         let bloom_filter = self.create_boundary_vector_bloom_filter(&sparse_entries);
         
         VectorCentroidMatrix {
-            rowgroup_id: rg_idx as u32,
+            rowgroup_id: rg_idx as u16,
             num_vectors: p as u32,
             num_centroids: k as u32,
             storage_strategy: VectorCentroidStorageStrategy::Sparse,
@@ -1208,9 +1259,11 @@ impl IvfClusteringBuilder {
                 sparsity_ratio: sparsity_achieved,
             }),
             compression_metadata: VectorCentroidCompressionMetadata {
-                scale_factor: max_distance,
-                max_distance,
-                compression_type: CompressionType::Quantized8Bit,
+                centroid_stats: Vec::new(), // Would be populated with actual stats
+                global_min_distance: 0.0,
+                global_max_distance: max_distance,
+                global_mean_distance: max_distance / 2.0,
+                centroid_encodings: Vec::new(), // Would be populated with schemes
             },
         }
     }
@@ -1252,7 +1305,7 @@ impl IvfClusteringBuilder {
         // Fallback: return zero vector if not found
         // This shouldn't happen in normal operation
         tracing::warn!("Vector {} not found in storage, returning zero vector", vector_id);
-        vec![0.0; self.centroids.get(0).map(|c| c.vector.len()).unwrap_or(self.dimension)]
+        vec![0.0; self.centroids.get(0).map(|c| c.vector.len()).unwrap_or(768)]
     }
 }
 
@@ -1267,7 +1320,7 @@ impl RaptorWriter {
         let mut distances = Vec::with_capacity(upper_triangle_size);
         
         // Use UnifiedDistanceCompute with SIMD acceleration
-        let distance_compute = UnifiedDistanceCompute::new();
+        let distance_compute = UnifiedDistanceCompute::new(DistanceMetric::Cosine);
         
         // Find min/max for quantization
         let mut min_distance = f32::INFINITY;
@@ -1276,41 +1329,46 @@ impl RaptorWriter {
         // Compute upper triangle only
         for i in 0..n {
             for j in (i + 1)..n {
-                let dist = distance_compute.cosine(&vectors[i], &vectors[j]);
+                let dist = distance_compute.calculate_distance(&vectors[i], &vectors[j], &DistanceMetric::Cosine).raw_value;
                 distances.push(dist);
                 min_distance = min_distance.min(dist);
                 max_distance = max_distance.max(dist);
             }
         }
         
-        // Quantize to INT8 using StorageQuantizationEngine
-        let quant_engine = StorageQuantizationEngine::new();
-        let (quantized, q_min, q_max) = quant_engine.quantize_to_u8(&distances);
+        // Quantize to INT8 manually for now
+        let scale = 255.0 / (max_distance - min_distance);
+        let quantized: Vec<u8> = distances.iter()
+            .map(|&d| {
+                let normalized = (d - min_distance) * scale;
+                normalized.round() as u8
+            })
+            .collect();
         
         // Apply FastLanes encoding using unified encoder
-        let fastlanes_encoder = FastLanesEncoder::new();
-        
-        // Determine best encoding scheme based on data characteristics
+        use crate::storage::engines::common::fastlanes_encoding::FastLanesScheme;
         let scheme = if max_distance - min_distance < 0.1 {
             // Small range - use delta encoding
-            FastLanesScheme::Delta
+            FastLanesScheme::Delta { base: (min_distance * 1000.0) as i64 }
         } else if distances.len() > 10000 {
             // Large dataset - use bit packing
-            FastLanesScheme::BitPacking
+            FastLanesScheme::BitPacked { bits: 8 }
         } else {
             // Default to frame-of-reference
-            FastLanesScheme::FrameOfReference
+            FastLanesScheme::FrameOfReference { reference: (min_distance * 1000.0) as i64, bits: 8 }
         };
         
+        let fastlanes_encoder = FastLanesEncoder::new(scheme);
+        
         // Encode with FastLanes
-        let encoded = fastlanes_encoder.encode_u8_slice(&quantized, scheme)?;
+        let encoded = fastlanes_encoder.encode_binary(&quantized)?;
         
         Ok(P2Matrix {
             num_vectors: n as u32,
             distances: encoded,
-            min_distance: q_min,
-            max_distance: q_max,
-            compression: scheme,
+            min_distance,
+            max_distance,
+            compression: scheme, // Use the same scheme directly
             compressed_size: encoded.len() as u32,
         })
     }
@@ -1332,7 +1390,7 @@ impl RaptorWriter {
         let upper_triangle_size = k * (k - 1) / 2;
         let mut distances = Vec::with_capacity(upper_triangle_size);
         let mut min_distance = f32::INFINITY;
-        let mut max_distance = 0.0;
+        let mut max_distance = f32::NEG_INFINITY;
         
         for i in 0..k {
             for j in (i + 1)..k {
@@ -1358,9 +1416,10 @@ impl RaptorWriter {
             .collect();
         
         // Apply FastLanes encoding
-        let fastlanes_encoder = FastLanesEncoder::new();
-        let scheme = FastLanesScheme::BitPacking;
-        let encoded = fastlanes_encoder.encode_u8_slice(&quantized_distances, scheme)?;
+        use crate::storage::engines::common::fastlanes_encoding::FastLanesScheme;
+        let scheme = FastLanesScheme::BitPacked { bits: 8 };
+        let fastlanes_encoder = FastLanesEncoder::new(scheme);
+        let encoded = fastlanes_encoder.encode_binary(&quantized_distances)?;
         
         tracing::info!(
             "K×K matrix: {} centroids → {} bytes compressed ({:.2}x compression)",
@@ -1369,11 +1428,16 @@ impl RaptorWriter {
         
         Ok(InterCentroidMatrix {
             num_centroids: k as u32,
-            distances: encoded,
-            min_distance,
-            max_distance,
-            compression: scheme,
-            compressed_size: encoded.len() as u32,
+            compressed_data: encoded,
+            compression_metadata: InterCentroidCompressionMetadata {
+                min_distance,
+                max_distance,
+                scale_factor: 255.0 / (max_distance - min_distance),
+                compression_type: CompressionType::Quantized8Bit,
+                row_encodings: vec![scheme; k], // Same scheme for all rows initially
+                row_compressed_sizes: vec![encoded.len() as u16 / k as u16; k], // Average size per row
+            },
+            lookup_table: Vec::new(), // Would be populated with actual offsets
         })
     }
     
@@ -1481,7 +1545,7 @@ impl RaptorWriter {
     
     /// Helper: Calculate centroid statistics for boosting
     fn calculate_centroid_statistics(&mut self, vectors: &[Vec<f32>]) {
-        for centroid in &mut self.centroids {
+        for centroid in &mut self.ivf_builder.centroids {
             let mut distances = Vec::new();
             
             for vec in vectors {
@@ -1546,7 +1610,7 @@ impl RaptorWriter {
             }
             
             // Step 2: For large clusters, use boosted distances to create optimal rowgroups
-            if cluster.len() > self.target_rowgroup_size {
+            if cluster.len() > self.config.rowgroup_size {
                 // Build similarity graph within cluster using boosted distances
                 let subgroups = self.partition_cluster_with_boosting(cluster_idx, &cluster);
                 
@@ -1556,7 +1620,7 @@ impl RaptorWriter {
                     let mut group = Vec::new();
                     
                     for &node_idx in &subgroup {
-                        self.ivf_builder.nodes[node_idx].row_location.row_group_id = row_group_id as u32;
+                        self.nodes[node_idx].row_location.row_group_id = row_group_id as u32;
                         group.push(node_idx as u32);
                     }
                     
@@ -1575,7 +1639,7 @@ impl RaptorWriter {
                 let mut group = Vec::new();
                 
                 for &node_idx in &cluster {
-                    self.ivf_builder.nodes[node_idx].row_location.row_group_id = row_group_id as u32;
+                    self.nodes[node_idx].row_location.row_group_id = row_group_id as u32;
                     group.push(node_idx as u32);
                 }
                 
@@ -1591,8 +1655,8 @@ impl RaptorWriter {
         tracing::info!(
             "Created {} rowgroups from {} clusters using 5-component boosting | \
              avg_size={:.1}, min={}, max={}, target={}",
-            rowgroups.len(), self.centroids.len(),
-            avg_size, min_size, max_size, self.config.vectors_per_rowgroup
+            rowgroups.len(), self.ivf_builder.centroids.len(),
+            avg_size, min_size, max_size, self.config.rowgroup_size
         );
         
         rowgroups
@@ -1613,7 +1677,7 @@ impl RaptorWriter {
             let mut subgroup = vec![seed];
             
             // Step 2: Greedily add vectors with minimum boosted distance to subgroup
-            while subgroup.len() < self.config.vectors_per_rowgroup && !remaining.is_empty() {
+            while subgroup.len() < self.config.rowgroup_size && !remaining.is_empty() {
                 // Find vector with minimum average boosted distance to current subgroup
                 let (best_idx, best_score) = self.find_best_addition_with_boosting(
                     &remaining, 
@@ -1654,7 +1718,7 @@ impl RaptorWriter {
         let mut best_idx = 0;
         
         for (idx, &node_idx) in candidates.iter().enumerate() {
-            let dist = self.ivf_builder.nodes[node_idx].centroid_distance;
+            let dist = self.nodes[node_idx].centroid_distance;
             if dist > max_dist {
                 max_dist = dist;
                 best_idx = idx;
@@ -1685,8 +1749,8 @@ impl RaptorWriter {
             // Step 2: Calculate average boosted distance to current group members
             for &group_member in current_group {
                 // Use edge information if available
-                let candidate_node = &self.ivf_builder.nodes[candidate];
-                let member_node = &self.ivf_builder.nodes[group_member];
+                let candidate_node = &self.nodes[candidate];
+                let member_node = &self.nodes[group_member];
                 
                 // Look for existing edge with boosted distance
                 if let Some(edge) = candidate_node.edges.iter()
@@ -1729,7 +1793,7 @@ impl RaptorWriter {
         
         // Calculate average pairwise boosted distance within group
         for &node_idx in group {
-            let node = &self.ivf_builder.nodes[node_idx as usize];
+            let node = &self.nodes[node_idx as usize];
             
             // Use boosted edge distances for cohesion
             for edge in &node.edges {
@@ -1754,7 +1818,7 @@ impl RaptorWriter {
         let mut count = 0;
         
         for &node_idx in group {
-            let node = &self.ivf_builder.nodes[node_idx as usize];
+            let node = &self.nodes[node_idx as usize];
             // Calculate cohesion using edge distances
             for edge in &node.edges {
                 if group.contains(&edge.target_node_id) {
@@ -2168,12 +2232,9 @@ impl RaptorWriter {
                 metadata_fields: Vec::new(),
                 version: 1,
             },
-            hnsw_metadata: None,
-            global_hnsw_offset: 0,
-            global_hnsw_size: 0,
-            hnsw_entry_points: Vec::new(),
-            hnsw_num_layers: 0,
-            global_hnsw_entry: None,
+            // Matrix Trinity metadata replaces HNSW
+            // K² matrix stored in footer
+            // P² and P×K matrices stored per rowgroup
             bloom_filter_metadata: None,
             compression_codec: format!("{:?}", config.compression),
             custom_metadata: HashMap::new(),
@@ -2337,7 +2398,7 @@ impl RaptorWriter {
         self.id_column_builder.row_offsets.push(offset_in_page as u32);
         
         // Add to IVF builder with hybrid clustering + edges
-        self.ivf_builder.nodes.push(IvfNode {
+        self.nodes.push(IvfNode {
             vector_id: id.clone(),
             cluster_id: 0, // Will be assigned during clustering
             row_location: location,
@@ -3060,6 +3121,7 @@ impl RaptorWriter {
         BloomFilterMetadata {
             num_bits: bloom_bits.len() * 8,  // Convert bytes to bits
             num_hashes: 7,  // Standard value for bloom filters
+            num_entries: self.bloom_builder.ids.len() as u32,  // Number of IDs in filter
             false_positive_rate: 0.001,  // 0.1% FPR
             offset: 0,  // Will be set when writing to file
             size: bloom_bits.len() as u64,
@@ -3236,6 +3298,81 @@ impl RaptorWriter {
             }
         }
         
+        // === NEW: Calculate 5-Component Boosting Statistics ===
+        
+        // Component 3: Locality/Compactness metrics
+        let cluster_density = if distances.is_empty() || *distances.last().unwrap_or(&1.0) == 0.0 {
+            0.0
+        } else {
+            // Vectors per unit volume (approximated using max distance as radius)
+            vectors.len() as f32 / (*distances.last().unwrap_or(&1.0)).powi(centroid.len() as i32)
+        };
+        let intra_cluster_variance = variance;
+        
+        // Boundary detection: Count vectors beyond mean + 1.5*std
+        let boundary_threshold = mean_distance + 1.5 * std_deviation;
+        let boundary_vector_count = distances.iter()
+            .filter(|&&d| d > boundary_threshold)
+            .count();
+        let boundary_vector_ratio = boundary_vector_count as f32 / vectors.len() as f32;
+        
+        // Component 4 & 5: Inter-centroid distances (nearest and farthest)
+        let mut inter_centroid_distances: Vec<(u16, f32)> = Vec::new();
+        for (rg_id, rg_centroid) in all_rowgroup_centroids {
+            if *rg_id != current_rowgroup_id {
+                let dist = self.distance_compute.calculate_distance(
+                    centroid,
+                    rg_centroid,
+                    &DistanceMetric::Euclidean,
+                ).raw_value;
+                inter_centroid_distances.push((*rg_id, dist));
+            }
+        }
+        
+        // Sort by distance for nearest/farthest extraction
+        inter_centroid_distances.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
+        
+        // Extract top 5 nearest centroids (Component 4)
+        let nearest_centroid_ids: Vec<u16> = inter_centroid_distances.iter()
+            .take(5)
+            .map(|(id, _)| *id)
+            .collect();
+        let nearest_centroid_distances: Vec<f32> = inter_centroid_distances.iter()
+            .take(5)
+            .map(|(_, dist)| *dist)
+            .collect();
+        
+        // Extract top 5 farthest centroids (Component 5)
+        let farthest_centroid_ids: Vec<u16> = inter_centroid_distances.iter()
+            .rev()
+            .take(5)
+            .map(|(id, _)| *id)
+            .collect();
+        let farthest_centroid_distances: Vec<f32> = inter_centroid_distances.iter()
+            .rev()
+            .take(5)
+            .map(|(_, dist)| *dist)
+            .collect();
+        
+        // Calculate average spillover ratio for boundary vectors
+        // This requires checking P×K distances which we'll approximate
+        let avg_spillover_ratio = if boundary_vector_count > 0 {
+            // For boundary vectors, estimate how much closer they might be to other centroids
+            // This is an approximation - actual P×K matrix will be computed separately
+            1.0 + (boundary_vector_ratio * 0.2) // Estimate 20% closer on average
+        } else {
+            1.0
+        };
+        
+        tracing::debug!(
+            "RowGroup {}: Boosting stats - density: {:.2}, boundary: {:.1}%, nearest: {:?}, farthest: {:?}",
+            current_rowgroup_id,
+            cluster_density,
+            boundary_vector_ratio * 100.0,
+            &nearest_centroid_ids[..std::cmp::min(3, nearest_centroid_ids.len())],
+            &farthest_centroid_ids[..std::cmp::min(3, farthest_centroid_ids.len())]
+        );
+        
         CentroidStats {
             cluster_id,
             mean_distance,
@@ -3243,6 +3380,17 @@ impl RaptorWriter {
             radius: distances.get(p95_idx).copied().unwrap_or(mean_distance + 2.0 * std_deviation),
             min_distance: *distances.first().unwrap_or(&0.0),
             max_distance: *distances.last().unwrap_or(&0.0),
+            // NEW: 5-Component Boosting fields
+            cluster_density,
+            intra_cluster_variance,
+            nearest_centroid_ids,
+            nearest_centroid_distances,
+            farthest_centroid_ids,
+            farthest_centroid_distances,
+            boundary_vector_count,
+            boundary_vector_ratio,
+            avg_spillover_ratio,
+            // Original fields
             euclidean_bounds: Some(euclidean_bounds),
             cosine_bounds,
             dot_product_bounds: None, // Can be computed if needed
@@ -3401,7 +3549,7 @@ impl RaptorWriter {
     
     pub async fn flush(&mut self) -> Result<()> {
         // Build IVF clusters before flushing (if we have enough vectors)
-        if self.ivf_builder.nodes.len() >= 1000 { // Minimum vectors needed for effective clustering
+        if self.nodes.len() >= 1000 { // Minimum vectors needed for effective clustering
             self.build_ivf_clusters()?;
         }
         
@@ -3440,7 +3588,7 @@ impl RaptorWriter {
                 rg.centroid = Some(centroid.clone());
                 
                 // Find which cluster this rowgroup belongs to (majority vote)
-                let cluster_assignments: Vec<u32> = self.ivf_builder.nodes.iter()
+                let cluster_assignments: Vec<u32> = self.nodes.iter()
                     .map(|n| n.cluster_id)
                     .collect();
                 
@@ -3485,11 +3633,9 @@ impl RaptorWriter {
                 tracing::info!("Wrote IVF clustering data at offset {}", ivf_meta.offset);
             }
             
-            // Write HNSW segment (deprecated - using IVF+Graph instead)
-            if true { // HNSW enabled by default for RAPTOR
-                let hnsw_meta = self.write_hnsw_segment().await?;
-                rg.hnsw_segment_offset = Some(hnsw_meta.file_offset as u64);
-            }
+            // Write Matrix Trinity segment (replaces HNSW)
+            // Matrices are embedded in rowgroup metadata, not separate segment
+            self.write_matrix_segment().await?;
             
             // Write bloom filter for this row group
             let bloom_meta = self.write_bloom_filter().await?;
@@ -3564,7 +3710,7 @@ impl RaptorWriter {
             ivf_data.extend(&centroid.std_deviation.to_le_bytes());
             
             // Write centroid vector using FastLanes
-            let encoder = FastLanesEncoder::new(super::common::FastLanesScheme::BitPacked);
+            let encoder = FastLanesEncoder::new(FastLanesScheme::BitPacked { bits: 32 });
             let encoded = encoder.encode_f32(&centroid.vector)?;
             ivf_data.extend(&(encoded.len() as u32).to_le_bytes());
             ivf_data.extend(&encoded);
@@ -3575,8 +3721,8 @@ impl RaptorWriter {
         // rather than theoretical cluster centroids
         
         // Write node assignments and edges
-        ivf_data.extend(&(self.ivf_builder.nodes.len() as u32).to_le_bytes());
-        for node in &self.ivf_builder.nodes {
+        ivf_data.extend(&(self.nodes.len() as u32).to_le_bytes());
+        for node in &self.nodes {
             // Write node data
             ivf_data.extend(&(node.vector_id.len() as u32).to_le_bytes());
             ivf_data.extend(node.vector_id.as_bytes());
@@ -3610,7 +3756,7 @@ impl RaptorWriter {
         Ok(BloomFilterMetadata {
             offset: offset as u64,
             size: compressed.len() as u64,
-            num_entries: self.ivf_builder.nodes.len() as u32,
+            num_entries: self.nodes.len() as u32,
         })
     }
     
@@ -3712,13 +3858,13 @@ impl RaptorWriter {
             // Choose encoding based on range  
             let encoding = if range < 0.001 {
                 // Very small range, use run-length encoding
-                super::common::FastLanesScheme::RunLength
+                FastLanesScheme::RunLength
             } else if range < 10.0 {
                 // Small range, use delta encoding
-                super::common::FastLanesScheme::Delta { bits: 16 }
+                FastLanesScheme::Delta { base: 0 }
             } else {
                 // Larger range, use bit packing
-                super::common::FastLanesScheme::BitPacked { bits: 24 }
+                FastLanesScheme::BitPacked { bits: 24 }
             };
             
             encoding_metadata.push(FastLanesMetadata {
@@ -3861,138 +4007,34 @@ impl RaptorWriter {
         Ok(offset)
     }
     
-    /// Write HNSW segment to disk
-    async fn write_hnsw_segment(&mut self) -> Result<HnswSegmentMetadata> {
-        // Build both graphs - legacy will be removed once minimal is proven
-        // HNSW graph building now handled by ivf_builder
-        self.build_ivf_clusters()?;  // New memory-efficient approach
+    // HNSW removed - Matrix Trinity handles navigation
+    // Build IVF clusters but store as matrices, not graph
+    async fn write_matrix_segment(&mut self) -> Result<()> {
+        // Build IVF clusters for Matrix Trinity
+        self.build_ivf_clusters()?;
         
-        // Serialize HNSW graph
-        let mut hnsw_data = Vec::new();
+        // Matrices are written as part of rowgroup metadata
+        // P² matrix: Stored per rowgroup
+        // K² matrix: Stored in footer
+        // P×K matrix: Stored per rowgroup
         
-        // Write number of nodes
-        hnsw_data.extend(&(self.ivf_builder.nodes.len() as u32).to_le_bytes());
-        
-        // Write each node
-        for node in &self.ivf_builder.nodes {
-            // Write vector ID as string bytes
-            let id_bytes = node.vector_id.as_bytes();
-            hnsw_data.extend(&(id_bytes.len() as u32).to_le_bytes());
-            hnsw_data.extend(id_bytes);
-            
-            // Write row location
-            hnsw_data.extend(&node.row_location.page_id.to_le_bytes());
-            hnsw_data.extend(&node.row_location.offset_in_page.to_le_bytes());
-            // Write cluster ID and centroid distance for IVF+Graph hybrid
-            hnsw_data.extend(&node.cluster_id.to_le_bytes());
-            hnsw_data.extend(&node.centroid_distance.to_le_bytes());
-            
-            // Write edges for hybrid IVF+Graph
-            hnsw_data.extend(&(node.edges.len() as u32).to_le_bytes());
-            for edge in &node.edges {
-                hnsw_data.extend(&edge.target_node_id.to_le_bytes());
-                hnsw_data.extend(&edge.distance.to_le_bytes());
-            }
-        }
-        
-        // Compress HNSW data
-        // RAPTOR should delegate compression to unified module
-        let compressed = crate::core::compression::compress(
-            &hnsw_data,
-            CompressionAlgorithm::Zstd,
-            6,
-            CompressionContext::SstBlock,
-        )?;
-        
-        // Get current file size for offset
-        let offset = self.filesystem.metadata(&self.file_path).await
-            .map(|m| m.size)
-            .unwrap_or(0);
-        
-        // Write to file
-        self.filesystem.append(&self.file_path, &compressed).await?;
-        
-        // Smart HNSW configuration based on vector count for optimal recall
-        // These params are just recommendations - AXIS does actual graph building
-        let num_vectors = self.ivf_builder.nodes.len();
-        let dimension = self.config.dimension;
-        let (optimal_m, optimal_ef_construction, max_level) = Self::calculate_optimal_hnsw_params(num_vectors, dimension);
-        
-        // Store these in the builder for actual graph construction
-        // m and ef_construction are used during build, not stored in segment metadata
-        tracing::debug!(
-            "HNSW params for {} vectors: m={}, ef_construction={}, max_level={}", 
-            num_vectors, optimal_m, optimal_ef_construction, max_level
-        );
-        
-        Ok(HnswSegmentMetadata {
-            segment_id: 0, // Would be assigned based on context
-            row_group_id: 0, // Would be assigned based on current row group
-            file_offset: offset as i64,
-            compressed_size: compressed.len() as i64,
-            uncompressed_size: hnsw_data.len() as i64,
-            num_nodes: num_vectors as i32,
-            entry_point: Some(0), // Would be determined during graph building
-            max_level,    // Dynamically calculated based on vector count
-            compression_codec: "zstd".to_string(),
-        })
+        Ok(())
     }
     
-    /// Calculate optimal HNSW parameters based on vector count and dimension
-    /// These params are passed to AXIS for actual graph building
-    /// Writer doesn't build graphs - only provides recommendations to AXIS
-    fn calculate_optimal_hnsw_params(num_vectors: usize, dimension: usize) -> (u32, u32, u32) {
-        // Smart configuration based on dataset size
-        // Prioritizing recall over memory efficiency
+    // Calculate optimal Matrix Trinity parameters
+    fn calculate_optimal_matrix_params(&self, num_vectors: usize) -> (usize, usize) {
+        // k = number of clusters/rowgroups (sqrt(n) for optimal complexity)
+        let k = (num_vectors as f64).sqrt().max(1.0) as usize;
         
-        let (m, ef_construction, max_level) = match num_vectors {
-            // Small datasets (<1K): Maximum connectivity for perfect recall
-            0..=1000 => (
-                48,  // High M for dense connectivity
-                500, // High ef_construction for quality graph
-                4,   // Standard max level
-            ),
-            // Medium datasets (1K-10K): Balanced but recall-focused
-            1001..=10000 => (
-                32,  // Good connectivity without excessive memory
-                400, // Strong construction quality
-                5,   // Allow more levels for better navigation
-            ),
-            // Large datasets (10K-100K): Memory-aware but still recall-focused
-            10001..=100000 => (
-                24,  // Moderate connectivity to manage memory
-                300, // Good construction quality
-                6,   // More levels for hierarchical navigation
-            ),
-            // Very large datasets (100K-1M): Memory pressure considered
-            100001..=1000000 => (
-                16,  // Standard M to control memory usage
-                200, // Standard construction quality
-                7,   // More hierarchy for large-scale navigation
-            ),
-            // Huge datasets (>1M): Memory-optimized but maintain quality
-            _ => {
-                // Dynamic calculation based on available memory and actual dimension
-                let available_memory_gb = 16; // Could query system for actual available memory
-                let bytes_per_vector = dimension * 4 + 100; // Actual size: 4 bytes per f32 + metadata
-                let memory_pressure_factor = (num_vectors * bytes_per_vector) / (available_memory_gb * 1024 * 1024 * 1024);
-                
-                if memory_pressure_factor < 1 {
-                    (16, 200, 8) // Memory available, use good params
-                } else {
-                    (12, 150, 8) // Memory pressure, reduce connectivity
-                }
-            }
-        };
+        // p = vectors per rowgroup (based on L3 cache for optimal locality)
+        let p = self.config.rowgroup_size; // Use configured size
         
-        // Log the decision rationale
         tracing::info!(
-            "HNSW optimization for {} vectors: m={} (connectivity), ef_construction={} (build quality), max_level={} (hierarchy). \
-            Optimized for maximum recall with memory awareness.",
-            num_vectors, m, ef_construction, max_level
+            "Matrix Trinity params for {} vectors: k={} clusters, p={} vectors/rowgroup",
+            num_vectors, k, p
         );
         
-        (m, ef_construction, max_level)
+        (k, p)
     }
     
     // REMOVED: Legacy build_hnsw_graph method - replaced by build_ivf_clusters
@@ -4014,7 +4056,7 @@ impl RaptorWriter {
     /// Combines IVF clustering (k clusters) with local graph connectivity (edges within clusters)
     fn build_ivf_clusters(&mut self) -> Result<()> {
         // Step 1: Validate input data
-        let num_vectors = self.ivf_builder.nodes.len();
+        let num_vectors = self.nodes.len();
         if num_vectors == 0 {
             tracing::debug!("No vectors to build IVF clusters, skipping");
             return Ok(());
@@ -4077,7 +4119,7 @@ impl RaptorWriter {
         // Step 6: Update nodes with cluster assignments and calculate centroid distances
         // Use unified distance compute for consistency and optimization
         for (idx, &cluster_id) in assignments.iter().enumerate() {
-            self.ivf_builder.nodes[idx].cluster_id = cluster_id as u32;
+            self.nodes[idx].cluster_id = cluster_id as u32;
             
             // Calculate distance to assigned centroid (d2 component) using unified distance
             let centroid = &self.ivf_builder.centroids[cluster_id as usize];
@@ -4086,7 +4128,7 @@ impl RaptorWriter {
                 &centroid.vector,
                 &DistanceMetric::Euclidean
             );
-            self.ivf_builder.nodes[idx].centroid_distance = dist_result.raw_value;
+            self.nodes[idx].centroid_distance = dist_result.raw_value;
             
             // Update centroid statistics (member count tracked via member_ids.len())
         }
@@ -4094,7 +4136,7 @@ impl RaptorWriter {
         // Step 7: Calculate mean and std deviation for each centroid
         for cluster_id in 0..k {
             let centroid = &mut self.ivf_builder.centroids[cluster_id];
-            let cluster_nodes: Vec<_> = self.ivf_builder.nodes.iter()
+            let cluster_nodes: Vec<_> = self.nodes.iter()
                 .enumerate()
                 .filter(|(_, n)| n.cluster_id == cluster_id as u32)
                 .map(|(idx, _)| idx)
@@ -4103,14 +4145,14 @@ impl RaptorWriter {
             if !cluster_nodes.is_empty() {
                 // Calculate mean distance
                 let sum: f32 = cluster_nodes.iter()
-                    .map(|&idx| self.ivf_builder.nodes[idx].centroid_distance)
+                    .map(|&idx| self.nodes[idx].centroid_distance)
                     .sum();
                 centroid.mean_distance = sum / cluster_nodes.len() as f32;
                 
                 // Calculate standard deviation
                 let variance: f32 = cluster_nodes.iter()
                     .map(|&idx| {
-                        let diff = self.ivf_builder.nodes[idx].centroid_distance - centroid.mean_distance;
+                        let diff = self.nodes[idx].centroid_distance - centroid.mean_distance;
                         diff * diff
                     })
                     .sum::<f32>() / cluster_nodes.len() as f32;
@@ -4125,7 +4167,7 @@ impl RaptorWriter {
         // Step 9: Apply 5-component boosting to edges
         let clusters: Vec<Vec<usize>> = (0..k)
             .map(|cluster_id| {
-                self.ivf_builder.nodes.iter()
+                self.nodes.iter()
                     .enumerate()
                     .filter(|(_, n)| n.cluster_id == cluster_id as u32)
                     .map(|(idx, _)| idx)
@@ -4137,7 +4179,7 @@ impl RaptorWriter {
         
         // Step 10: Create inverted lists for each cluster
         let mut inverted_lists: Vec<Vec<String>> = vec![Vec::new(); k];
-        for node in &self.ivf_builder.nodes {
+        for node in &self.nodes {
             inverted_lists[node.cluster_id as usize].push(node.vector_id.clone());
         }
         
@@ -4172,7 +4214,7 @@ impl RaptorWriter {
         // Process each cluster independently
         for cluster_id in 0..num_clusters {
             // Get all nodes in this cluster
-            let cluster_nodes: Vec<usize> = self.ivf_builder.nodes.iter()
+            let cluster_nodes: Vec<usize> = self.nodes.iter()
                 .enumerate()
                 .filter(|(_, n)| n.cluster_id == cluster_id as u32)
                 .map(|(idx, _)| idx)
@@ -4208,21 +4250,21 @@ impl RaptorWriter {
                 for (target_idx, distance) in distances {
                     edges.push(EdgeWithDistance {
                         target_node_id: target_idx as u32,
-                        target_vector_id: self.ivf_builder.nodes[target_idx].vector_id.clone(),
+                        target_vector_id: self.nodes[target_idx].vector_id.clone(),
                         distance,
                     });
                 }
                 
                 // Store edges in the node
-                self.ivf_builder.nodes[node_idx].edges = edges;
+                self.nodes[node_idx].edges = edges;
             }
         }
         
         // Calculate edge statistics
-        let total_edges: usize = self.ivf_builder.nodes.iter()
+        let total_edges: usize = self.nodes.iter()
             .map(|n| n.edges.len())
             .sum();
-        let avg_edges = total_edges as f32 / self.ivf_builder.nodes.len() as f32;
+        let avg_edges = total_edges as f32 / self.nodes.len() as f32;
         
         tracing::info!(
             "Built {} total edges, average {:.1} edges per node",
@@ -4380,7 +4422,7 @@ impl RaptorWriter {
     }
     
     /// Write bloom filter for this row group
-    async fn write_bloom_filter(&mut self) -> Result<BloomFilterMetadata> {
+    async fn write_bloom_filter_metadata(&mut self) -> Result<BloomFilterMetadata> {
         // Validate we have IDs to build bloom filter
         if self.bloom_builder.ids.is_empty() {
             return Err(anyhow::anyhow!("Cannot create bloom filter with no IDs"));

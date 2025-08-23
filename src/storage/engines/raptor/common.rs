@@ -7,6 +7,8 @@ use crate::core::compression::CompressionAlgorithm;
 use arrow_array::RecordBatch;
 use crate::proto::proximadb::VectorRecord;
 use anyhow::Result;
+// Re-export FastLanesScheme for use in RAPTOR modules
+pub use crate::storage::engines::common::fastlanes_encoding::FastLanesScheme;
 
 // ====== Core RowGroup Structure (unified from rowgroup.rs and compaction.rs) ======
 
@@ -31,6 +33,7 @@ pub struct RowGroup {
     pub compressed_size: u64,         // Compressed size in bytes
     pub uncompressed_size: u64,       // Original size
     pub row_count: usize,            // Number of vectors
+    pub vector_count: usize,         // Alias for row_count (each row is a vector)
     pub max_vectors: usize,           // Maximum capacity (from smart sizing)
     
     // Column pages with individual compression (from RowGroupMetadata)
@@ -76,6 +79,7 @@ impl RowGroup {
             compressed_size: 0,
             uncompressed_size: 0,
             row_count: 0,
+            vector_count: 0,  // Initialize as 0
             max_vectors,
             column_pages: HashMap::new(),
             vector_stats: VectorStats::default(),
@@ -160,6 +164,22 @@ pub struct ColumnarBlock {
     pub quantized_data: Option<QuantizedColumnarData>,
     /// Metadata for each vector
     pub metadata_columns: MetadataColumns,
+}
+
+impl Default for ColumnarBlock {
+    fn default() -> Self {
+        Self {
+            vector_ids: Vec::new(),
+            transposed_vectors: None,
+            fastlanes_data: None,
+            quantized_data: None,
+            metadata_columns: MetadataColumns {
+                string_columns: HashMap::new(),
+                numeric_columns: HashMap::new(),
+                boolean_columns: HashMap::new(),
+            },
+        }
+    }
 }
 
 /// Dimension-major vector storage for SIMD operations
@@ -253,6 +273,10 @@ pub struct RowGroupMetadata {
     pub id: u16,                    // Rowgroup ID == Centroid ID
     pub row_count: usize,
     
+    // File location information
+    pub offset: u64,                // Offset of this rowgroup in the file
+    pub compressed_size: u64,       // Compressed size of this rowgroup
+    
     // Column pages with individual compression
     pub column_pages: HashMap<ColumnType, ColumnPageMetadata>,
     
@@ -278,14 +302,35 @@ pub struct RowGroupMetadata {
 /// 4. These stats enable O(1) pruning decisions without loading vectors
 /// 
 /// The stats are computed during flush/compaction when we already have vectors in memory
+/// 
+/// ENHANCED: Now includes all statistics needed for 5-component boosting formula
+/// These statistics are STORED at write-time and used for runtime boosting calculations
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CentroidStats {
     pub cluster_id: u32,                  // IVF cluster assignment
-    pub mean_distance: f32,                // Mean distance of vectors to centroid
+    pub mean_distance: f32,                // Mean distance of vectors to centroid (d₂ component)
     pub std_deviation: f32,                // Standard deviation for confidence bounds
     pub radius: f32,                       // 95th percentile distance (pruning radius)
     pub min_distance: f32,                 // Closest vector to centroid
     pub max_distance: f32,                 // Farthest vector from centroid
+    
+    // === NEW: 5-Component Boosting Statistics ===
+    // Component 3: Locality/Compactness metrics
+    pub cluster_density: f32,             // Vectors per unit volume (d₃ component)
+    pub intra_cluster_variance: f32,      // Variance within cluster
+    
+    // Component 4: Minimum inter-centroid distances
+    pub nearest_centroid_ids: Vec<u16>,   // Top 5 nearest centroids by ID
+    pub nearest_centroid_distances: Vec<f32>, // Distances to nearest centroids (d₄ component)
+    
+    // Component 5: Maximum inter-centroid distances  
+    pub farthest_centroid_ids: Vec<u16>,  // Top 5 farthest centroids by ID
+    pub farthest_centroid_distances: Vec<f32>, // Distances to farthest centroids (d₅ component)
+    
+    // Boundary detection helpers (for runtime Phase 1 & 2)
+    pub boundary_vector_count: usize,     // Count of vectors near cluster edge
+    pub boundary_vector_ratio: f32,       // Percentage of boundary vectors (e.g., 0.18 = 18%)
+    pub avg_spillover_ratio: f32,         // Avg d(V,C_other)/d(V,C_own) for boundary vectors
     
     // Pre-computed bounds for common distance metrics
     // These enable triangle inequality based pruning
@@ -371,19 +416,10 @@ pub struct RowPageMetadata {
     pub compression_codec: String,
 }
 
-/// HNSW segment metadata for row group navigation
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct HnswSegmentMetadata {
-    pub segment_id: u32,
-    pub row_group_id: u32,
-    pub file_offset: i64,
-    pub compressed_size: i64,
-    pub uncompressed_size: i64,
-    pub num_nodes: i32,
-    pub entry_point: Option<u32>,
-    pub max_level: u32,
-    pub compression_codec: String,
-}
+// HNSW removed - using Matrix Trinity architecture instead
+// P² matrix: Intra-rowgroup distances stored per rowgroup
+// K² matrix: Inter-centroid distances stored in footer  
+// P×K matrix: Vector-to-centroid distances stored per rowgroup
 
 // ====== Vector Statistics (unified) ======
 
@@ -480,7 +516,6 @@ pub enum MetadataValue {
 
 // ====== FastLanes Encoding Schemes (shared) ======
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
 // FastLanesScheme moved to crate::storage::engines::common::fastlanes_encoding
 // Use that unified implementation instead of this duplicate
 
@@ -584,6 +619,7 @@ pub struct FieldDescriptor {
 pub struct BloomFilterMetadata {
     pub num_bits: usize,
     pub num_hashes: usize,
+    pub num_entries: u32,  // Number of entries in the bloom filter
     pub false_positive_rate: f64,
     pub offset: u64,
     pub size: u64,
@@ -1646,27 +1682,7 @@ pub struct FastLanesMetadata {
     pub compressed_size: u32,
 }
 
-/// FastLanes encoding schemes (placeholder - uses unified implementation)
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum FastLanesScheme {
-    /// Direct storage without encoding
-    None,
-    
-    /// Delta encoding with bit-packing
-    DeltaBitPacked { bits_per_value: u8 },
-    
-    /// Dictionary encoding
-    Dictionary { num_entries: u16 },
-    
-    /// Frame of Reference encoding
-    FrameOfReference { base_value: i64, bits_per_delta: u8 },
-    
-    /// Run-length encoding
-    RunLength,
-    
-    /// Zigzag encoding for signed integers
-    Zigzag { bits_per_value: u8 },
-}
+// FastLanesScheme now imported from common::fastlanes_encoding module for code reuse
 
 /// Sparse entry in P×K matrix for boundary vectors only
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1929,6 +1945,108 @@ impl K2Matrix {
             )
         } else {
             self.max_distance // Fallback
+        }
+    }
+}
+
+// ====== Runtime Search Result Structures (NOT STORED) ======
+
+use std::collections::HashMap;
+
+/// Runtime result from Phase 1 boundary detection
+/// This is computed during search using K² matrix - NOT stored
+#[derive(Debug, Clone)]
+pub struct BoundaryDetectionResult {
+    /// Primary centroids selected by distance ranking
+    pub primary_centroids: Vec<u16>,
+    
+    /// Neighbor centroids discovered via boundary rule
+    /// Each tuple: (from_centroid, to_centroid, boundary_ratio)
+    pub boundary_expansions: Vec<(u16, u16, f32)>,
+    
+    /// Final expanded set of centroids to search
+    pub expanded_centroids: Vec<u16>,
+    
+    /// Statistics for debugging/monitoring
+    pub boundary_ratio_threshold: f32,  // Threshold used (default 0.8)
+    pub expansion_count: usize,         // Number of centroids added
+}
+
+/// Runtime result from Phase 2 spillover detection  
+/// This is computed during search using P×K matrix - NOT stored
+#[derive(Debug, Clone)]
+pub struct SpilloverDetectionResult {
+    /// Map of centroid_id -> list of spillover target centroids
+    pub spillover_map: HashMap<u16, Vec<u16>>,
+    
+    /// Spillover percentages for each centroid
+    pub spillover_percentages: HashMap<u16, f32>,
+    
+    /// Centroids added via recursive spillover detection
+    pub recursive_expansions: Vec<u16>,
+    
+    /// Final complete set of centroids after spillover
+    pub final_centroids: Vec<u16>,
+    
+    /// Statistics for debugging/monitoring
+    pub spillover_threshold: f32,       // Threshold used (default 0.15)
+    pub max_spillover_percentage: f32,  // Highest spillover % found
+    pub total_spillover_vectors: usize, // Total vectors that spilled
+}
+
+/// Configuration for boundary detection (runtime)
+#[derive(Debug, Clone)]
+pub struct BoundaryDetectionConfig {
+    /// Boundary ratio threshold (default 0.8)
+    /// If d(Q,C_i)/d(Q,C_j) > threshold, consider C_j as boundary neighbor
+    pub boundary_ratio_threshold: f32,
+    
+    /// Maximum expansion budget as percentage (default 0.2 = 20%)
+    pub expansion_budget_percent: f32,
+    
+    /// Minimum distance for boundary detection (default: mean - 2σ)
+    pub min_boundary_distance: f32,
+    
+    /// Maximum neighbor candidates to consider (default: K/4)
+    pub max_neighbor_candidates: usize,
+}
+
+impl Default for BoundaryDetectionConfig {
+    fn default() -> Self {
+        Self {
+            boundary_ratio_threshold: 0.8,
+            expansion_budget_percent: 0.2,
+            min_boundary_distance: 0.0,  // Will be computed from stats
+            max_neighbor_candidates: 25,  // For K=100
+        }
+    }
+}
+
+/// Configuration for spillover detection (runtime)
+#[derive(Debug, Clone)]
+pub struct SpilloverDetectionConfig {
+    /// Spillover percentage threshold (default 0.15 = 15%)
+    /// If >threshold% of vectors spill to another centroid, expand search
+    pub spillover_threshold: f32,
+    
+    /// Distance ratio for spillover detection (default 0.9)
+    /// Vector spills if d(V,C_other) < d(V,C_own) × ratio
+    pub distance_ratio_threshold: f32,
+    
+    /// Maximum recursive depth for cascading spillovers (default 2)
+    pub max_recursive_depth: usize,
+    
+    /// Maximum spillover centroids to add (default K/2)
+    pub max_spillover_centroids: usize,
+}
+
+impl Default for SpilloverDetectionConfig {
+    fn default() -> Self {
+        Self {
+            spillover_threshold: 0.15,
+            distance_ratio_threshold: 0.9,
+            max_recursive_depth: 2,
+            max_spillover_centroids: 50,  // For K=100
         }
     }
 }

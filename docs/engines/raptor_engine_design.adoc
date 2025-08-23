@@ -104,45 +104,117 @@ Where:
 
 == Two-Phase Search Architecture
 
-=== Phase 1: Cluster-Level Selection
+=== Storage vs Runtime Computation
+
+[source]
+----
+┌─────────────────────────────────────────────────────────────────┐
+│                     STORAGE (Write-Time)                         │
+├─────────────────────────────────────────────────────────────────┤
+│ ✅ K² Matrix: Inter-centroid distances (40KB)                   │
+│ ✅ P×K Matrix: Vector-to-centroid distances (adaptive)          │
+│ ✅ P² Matrix: Intra-rowgroup distances (512KB/rowgroup)         │
+│ ✅ CentroidStats: Boosting statistics in metadata               │
+│    ├── mean_intra_distance, std_deviation                       │
+│    ├── cluster_radius, density                                  │
+│    ├── nearest/farthest centroid lists                          │
+│    └── boundary_vector_ratio                                    │
+└─────────────────────────────────────────────────────────────────┘
+                               ↓
+┌─────────────────────────────────────────────────────────────────┐
+│                    RUNTIME (Read-Time)                           │
+├─────────────────────────────────────────────────────────────────┤
+│ 🔄 BoundaryDetectionResult: Temporary Phase 1 computation       │
+│    └── Uses K² matrix + boundary ratio rule (d_i/d_j > 0.8)     │
+│ 🔄 SpilloverDetectionResult: Temporary Phase 2 computation      │
+│    └── Uses P×K matrix + spillover threshold (>15%)             │
+│ 🔄 5-Component Boosting: Dynamic score calculation              │
+│    └── Uses stored CentroidStats + runtime distances            │
+└─────────────────────────────────────────────────────────────────┘
+----
+
+=== Phase 1: Cluster-Level Selection with Boundary Detection
 
 image::raptor_phase1_cluster_selection.svg[Phase 1: Cluster Selection, align="center", width=100%]
 
 **K² Matrix enables intelligent cluster selection**:
 * Query computes distances to all centroids
-* Boundary detection: d_i/d_j > 0.8 triggers neighbor exploration
-* Budget allocation based on distance ranking
+* **Boundary Rule**: For each selected centroid C_i:
+  - If d(Q,C_i)/d(Q,C_j) > 0.8 AND C_j is nearby → expand to C_j
+  - This detects when query is near cluster boundaries
+* Budget allocation: Initial J + 20% expansion budget
+* Result: BoundaryDetectionResult (temporary, not stored)
+
+[source,mermaid]
+----
+graph TD
+    subgraph "Phase 1: Boundary Detection Algorithm"
+        Q[Query Vector] --> CD[Compute Distances<br/>to All K Centroids]
+        CD --> TOP[Select Top J<br/>Primary Centroids]
+        TOP --> BR{Boundary<br/>Rule Check}
+        BR -->|"d_i/d_j > 0.8"| EXP[Add Neighbor<br/>Centroids]
+        BR -->|"d_i/d_j ≤ 0.8"| SKIP[Keep Primary<br/>Only]
+        EXP --> BDR[BoundaryDetectionResult<br/><i>temporary structure</i>]
+        SKIP --> BDR
+    end
+----
 
 === Phase 2: Vector-Level Spillover Detection
 
 image::raptor_phase2_vector_spillover.svg[Phase 2: Vector Spillover, align="center", width=100%]
 
 **P×K Matrix reveals hidden clusters**:
-* Detects vectors closer to non-assigned centroids
-* >15% spillover triggers dynamic expansion
-* Discovers clusters missed in Phase 1
+* For each selected centroid's rowgroup:
+  - Check P×K matrix for vector spillovers
+  - Count vectors closer to other centroids
+* **Spillover Rule**: If >15% vectors spill to C_j → expand to C_j
+* Recursive check for cascading spillovers (depth limit: 2)
+* Result: SpilloverDetectionResult (temporary, not stored)
+
+[source,mermaid]
+----
+graph TD
+    subgraph "Phase 2: Spillover Detection Algorithm"
+        SEL[Selected Centroids<br/>from Phase 1] --> LOAD[Load P×K Matrix<br/>for Each Rowgroup]
+        LOAD --> CHECK[Check Each Vector's<br/>Distances to All Centroids]
+        CHECK --> CALC[Calculate Spillover %<br/>per Centroid]
+        CALC --> THR{">15%<br/>Spillover?"}
+        THR -->|Yes| REC[Recursive Check<br/>New Centroids]
+        THR -->|No| KEEP[Keep Current Set]
+        REC --> SDR[SpilloverDetectionResult<br/><i>temporary structure</i>]
+        KEEP --> SDR
+    end
+----
 
 [source,mermaid]
 ----
 sequenceDiagram
     participant Q as Query
-    participant K2 as "K² Matrix"
-    participant PK as "P×K Matrix"
-    participant P2 as "P² Matrix"
+    participant K2 as "K² Matrix<br/>(stored)"
+    participant CS as "CentroidStats<br/>(stored)"
+    participant PK as "P×K Matrix<br/>(stored)"
+    participant P2 as "P² Matrix<br/>(stored)"
+    participant BD as "BoundaryDetection<br/>(runtime)"
+    participant SD as "SpilloverDetection<br/>(runtime)"
     participant R as Results
     
-    Note over Q,R: Phase 1: Centroid Selection
-    Q->>K2: Compute centroid distances
-    K2->>Q: Selected centroids [C23, C67, C45]
+    Note over Q,R: Phase 1: Boundary Detection (Runtime)
+    Q->>K2: Load inter-centroid distances
+    Q->>CS: Load cluster statistics
+    Q->>BD: Compute boundary ratios
+    BD->>BD: d(Q,C₂₃)/d(Q,C₁₉) = 0.83 > 0.8 ✓
+    BD->>Q: Expanded set: [C23, C67, C45, C19, C71]
     
-    Note over Q,R: Phase 2: Spillover Detection
-    Q->>PK: Check for boundary vectors
-    PK->>Q: 30% spillover to C4 detected
-    Q->>Q: Expand search to include C4
+    Note over Q,R: Phase 2: Spillover Detection (Runtime)
+    Q->>PK: Load P×K for selected centroids
+    Q->>SD: Check spillover percentages
+    SD->>SD: C23: 18% spillover to C19 > 15% ✓
+    SD->>Q: Final set: [C23, C67, C45, C19, C71, C88]
     
-    Note over Q,R: Intra-Rowgroup Search
-    Q->>P2: Search within selected rowgroups
-    P2->>R: Final ranked results
+    Note over Q,R: Intra-Rowgroup Search with Boosting
+    Q->>P2: Search 6 rowgroups in parallel
+    Q->>CS: Apply 5-component boosting formula
+    P2->>R: Final ranked results with scores
 ----
 
 == Storage Architecture
@@ -156,7 +228,7 @@ graph TB
         Header["<b>Header (512 bytes)</b><br/>Magic: RPTR<br/>Version, Collection ID<br/>Dimension, K Clusters<br/>Footer Offset"]
         
         subgraph "RowGroups[0..K-1]"
-            RGM["<b>RowGroupMetadata</b><br/>ID (u16) = rowgroup_id = centroid_id<br/>Row Count, Timestamps<br/>Centroid Vector, Stats<br/>Column Pages Map"]
+            RGM["<b>RowGroupMetadata (Expanded)</b><br/>ID (u16) = rowgroup_id = centroid_id<br/>Row Count, Timestamps<br/>Centroid Vector<br/><b>NEW: CentroidStats for Boosting</b><br/>├ mean_intra_distance (f32)<br/>├ std_deviation (f32)<br/>├ cluster_radius (f32)<br/>├ boundary_vector_ratio (f32)<br/>├ nearest_centroids [5×u16]<br/>├ nearest_distances [5×f32]<br/>└ farthest_centroids [5×u16]<br/>Column Pages Map"]
             
             subgraph "Column Pages"
                 VID["<b>VectorID Column</b><br/>Type: String/UUID<br/>Dictionary Encoded<br/>ZSTD Compressed"]
@@ -272,20 +344,20 @@ Bloom         Compressed bitmap   Space efficiency
 * **Selective loading**: Load only required rowgroups
 * **Parallel I/O**: Independent rowgroup operations
 
-=== 5-Component Boosting
+=== 5-Component Boosting with Runtime Computation
 
 [source,mermaid]
 ----
 graph LR
     subgraph "5-Component Score Calculation"
         direction LR
-        D1["d₁: Primary<br/>Distance"] --> W1["α₁ weight"]
-        D2["d₂: Centroid<br/>Distance"] --> W2["α₂ weight"]
-        D3["d₃: Locality<br/>Score"] --> W3["α₃ weight"]
-        D4["d₄: Cross<br/>Penalty 1"] --> W4["β₁ weight"]
-        D5["d₅: Cross<br/>Penalty 2"] --> W5["β₂ weight"]
+        D1["d₁: Query-Vector<br/>Distance<br/>(runtime)"] --> W1["α₁ = 0.4"]
+        D2["d₂: Mean Intra<br/>Distance<br/>(stored)"] --> W2["α₂ = 0.2"]
+        D3["d₃: Cluster<br/>Density<br/>(stored)"] --> W3["α₃ = 0.15"]
+        D4["d₄: Min Inter<br/>Distance<br/>(stored)"] --> W4["β₁ = 0.15"]
+        D5["d₅: Max Inter<br/>Distance<br/>(stored)"] --> W5["β₂ = 0.1"]
         
-        W1 --> S[Sum]
+        W1 --> S[Weighted Sum]
         W2 --> S
         W3 --> S
         W4 --> S
@@ -296,11 +368,78 @@ graph LR
     end
 ----
 
-Intelligent result ranking formula:
+**Component Sources**:
 [source]
 ----
-final_score = α₁×d₁ + α₂×d₂ + α₃×locality + β₁×penalty₁ + β₂×penalty₂
-with exponential decay: score × exp(-λ×rank)
+┌────────────┬──────────────────────────┬────────────────────────────┐
+│ Component  │ Source                   │ When Computed              │
+├────────────┼──────────────────────────┼────────────────────────────┤
+│ d₁         │ Runtime calculation      │ During search              │
+│ d₂         │ CentroidStats.mean_intra │ Stored during flush        │
+│ d₃         │ CentroidStats.density    │ Stored during flush        │
+│ d₄         │ CentroidStats.nearest[0] │ Stored during flush        │
+│ d₅         │ CentroidStats.farthest[4]│ Stored during flush        │
+└────────────┴──────────────────────────┴────────────────────────────┘
+
+final_score = 0.4×d₁ + 0.2×d₂ + 0.15×d₃ + 0.15×d₄ + 0.1×d₅
+with exponential decay: score × exp(-0.01×rank)
+----
+
+=== Complete Example: Storage vs Runtime Flow
+
+[source]
+----
+WRITE TIME (During Flush/Compaction)
+=====================================
+Input: 100,000 vectors → IVF clustering → 100 centroids/rowgroups
+
+For RowGroup 23:
+1. Assign 1,024 vectors to centroid C₂₃
+2. Calculate statistics:
+   - mean_intra_distance = 0.45
+   - std_deviation = 0.12
+   - cluster_radius = 0.89
+   - boundary_vectors = 184 (18%)
+   - nearest_centroids = [19, 7, 12, 45, 67]
+   - nearest_distances = [0.3, 0.4, 0.5, 0.6, 0.7]
+3. Store in RowGroupMetadata (200 bytes overhead)
+4. Build P² matrix (512KB)
+5. Build P×K slice (100KB)
+
+READ TIME (During Search)
+=========================
+Query: Q = [0.1, 0.2, 0.3, ...]
+
+Phase 1 - Boundary Detection:
+1. Load K² matrix (40KB, cached)
+2. Compute: d(Q,C₂₃)=0.25, d(Q,C₁₉)=0.30, d(Q,C₆₇)=0.45
+3. Select top 3: [C₂₃, C₁₉, C₆₇]
+4. Check boundary: 0.25/0.30 = 0.83 > 0.8 ✓
+5. BoundaryDetectionResult = {
+     primary: [23, 19, 67],
+     expanded: [7, 12]  // Added via boundary rule
+   }
+
+Phase 2 - Spillover Detection:
+1. Load P×K for rowgroup 23
+2. Check 1,024 vectors:
+   - 184 vectors closer to C₁₉ than C₂₃
+   - Spillover = 184/1024 = 18% > 15% ✓
+3. SpilloverDetectionResult = {
+     spillover_map: {23→[19,7], 67→[71]},
+     final_centroids: [23,19,67,7,12,71]
+   }
+
+Search & Boosting:
+1. For vector V₄₂ in rowgroup 23:
+   d₁ = distance(Q, V₄₂) = 0.35          [computed]
+   d₂ = 0.45                             [from metadata]
+   d₃ = 0.8                              [from metadata]
+   d₄ = 0.3                              [from metadata]
+   d₅ = 0.7                              [from metadata]
+   
+   score = 0.4×0.35 + 0.2×0.45 + 0.15×0.8 + 0.15×0.3 + 0.1×0.7
+        = 0.14 + 0.09 + 0.12 + 0.045 + 0.07 = 0.465
 ----
 
 == Implementation Guidelines
