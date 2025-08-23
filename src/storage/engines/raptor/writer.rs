@@ -876,6 +876,9 @@ impl IvfClusteringBuilder {
             }
         }
         
+        // Default FastLanes scheme for inter-centroid matrix
+        let scheme = crate::storage::engines::common::fastlanes_encoding::FastLanesScheme::BitPacked { bits: 16 };
+        
         InterCentroidMatrix {
             num_centroids: k as u32,
             compressed_data,

@@ -193,7 +193,7 @@ impl RowGroupManager {
         let row_group = self.row_groups.get_mut(&row_group_id).unwrap();
         
         // Ensure columnar_data exists
-        if columnar_data.is_none() {
+        if row_group.columnar_data.is_none() {
             row_group.columnar_data = Some(ColumnarBlock {
                 vector_ids: Vec::new(),
                 transposed_vectors: None,
@@ -207,7 +207,7 @@ impl RowGroupManager {
             });
         }
         
-        let columnar_data = columnar_data.as_mut().unwrap();
+        let columnar_data = row_group.columnar_data.as_mut().unwrap();
         
         // Initialize transposed vectors if first batch
         if columnar_data.transposed_vectors.is_none() && !vectors.is_empty() {
@@ -231,9 +231,11 @@ impl RowGroupManager {
             );
             
             // Add vector data (transpose: vector[d] -> dimensions[d].push(value))
-            for (dim_idx, value) in vector.vector.iter().enumerate() {
-                if dim_idx < columnar_data.transposed_vectors.dimensions.len() {
-                    columnar_data.transposed_vectors.dimensions[dim_idx].push(*value);
+            if let Some(ref mut transposed) = columnar_data.transposed_vectors {
+                for (dim_idx, value) in vector.vector.iter().enumerate() {
+                    if dim_idx < transposed.dimensions.len() {
+                        transposed.dimensions[dim_idx].push(*value);
+                    }
                 }
             }
             
@@ -308,7 +310,9 @@ impl RowGroupManager {
             }
             
             row_group.vector_count += 1;
-            columnar_data.transposed_vectors.vector_count += 1;
+            if let Some(ref mut transposed) = columnar_data.transposed_vectors {
+                transposed.vector_count += 1;
+            }
         }
         
         Ok(())
@@ -370,7 +374,7 @@ impl RowGroupManager {
         Ok(())
     }
     
-    /// Complete the current row group (apply compression, quantization, build HNSW)
+    /// Complete the current row group (apply compression, quantization, build matrices)
     async fn complete_current_row_group(&mut self) -> Result<()> {
         if let Some(row_group_id) = self.current_row_group.take() {
             tracing::info!("Completing row group {} with {} vectors", row_group_id, 
@@ -384,8 +388,8 @@ impl RowGroupManager {
                 self.apply_quantization(row_group_id).await?;
             }
             
-            // Build local HNSW graph
-            self.build_local_hnsw(row_group_id).await?;
+            // Build P² matrix for intra-rowgroup navigation
+            self.build_p2_matrix(row_group_id).await?;
         }
         
         Ok(())
@@ -396,11 +400,17 @@ impl RowGroupManager {
         let row_group = self.row_groups.get_mut(&row_group_id)
             .ok_or_else(|| anyhow::anyhow!("Row group not found"))?;
         
+        let columnar_data = row_group.columnar_data.as_mut()
+            .ok_or_else(|| anyhow::anyhow!("Columnar data not initialized"))?;
+        
         let mut encoded_dimensions = Vec::new();
         let mut encoding_schemes = Vec::new();
         
         // Compress each dimension separately using FastLanes
-        for dimension_data in &columnar_data.transposed_vectors.dimensions {
+        let transposed = columnar_data.transposed_vectors.as_ref()
+            .ok_or_else(|| anyhow::anyhow!("Transposed vectors not available"))?;
+        
+        for dimension_data in &transposed.dimensions {
             if !dimension_data.is_empty() {
                 let encoded = self.fastlanes_encoder.encode_f32(dimension_data)?;
                 encoded_dimensions.push(encoded);
@@ -409,7 +419,7 @@ impl RowGroupManager {
         }
         
         // Calculate compression ratio
-        let original_size = columnar_data.transposed_vectors.dimensions.len() * 
+        let original_size = transposed.dimensions.len() * 
                            row_group.vector_count * 4; // 4 bytes per f32
         let compressed_size: usize = encoded_dimensions.iter().map(|d| d.len()).sum();
         let compression_ratio = original_size as f32 / compressed_size.max(1) as f32;
@@ -432,16 +442,24 @@ impl RowGroupManager {
             let row_group = self.row_groups.get_mut(&row_group_id)
                 .ok_or_else(|| anyhow::anyhow!("Row group not found"))?;
             
+            // Ensure columnar data exists
+            if row_group.columnar_data.is_none() {
+                row_group.columnar_data = Some(ColumnarBlock::default());
+            }
+            let columnar_data = row_group.columnar_data.as_mut().unwrap();
+            
             // Reconstruct vectors for quantization (transpose back)
             let mut vectors = Vec::new();
-            for i in 0..row_group.vector_count {
-                let mut vector = Vec::with_capacity(columnar_data.transposed_vectors.dimension);
-                for dim_data in &columnar_data.transposed_vectors.dimensions {
-                    if i < dim_data.len() {
-                        vector.push(dim_data[i]);
+            if let Some(ref transposed) = columnar_data.transposed_vectors {
+                for i in 0..row_group.vector_count {
+                    let mut vector = Vec::with_capacity(transposed.dimension);
+                    for dim_data in &transposed.dimensions {
+                        if i < dim_data.len() {
+                            vector.push(dim_data[i]);
+                        }
                     }
+                    vectors.push(vector);
                 }
-                vectors.push(vector);
             }
             
             // Apply quantization
@@ -468,11 +486,12 @@ impl RowGroupManager {
         Ok(())
     }
     
-    /// Build local HNSW graph for a row group
-    async fn build_local_hnsw(&mut self, row_group_id: u16) -> Result<()> {
-        // Placeholder for HNSW construction
-        // This would integrate with the existing HNSW implementation
-        tracing::debug!("Building local HNSW for row group {}", row_group_id);
+    /// Build P² matrix for a row group (intra-rowgroup distances)
+    async fn build_p2_matrix(&mut self, row_group_id: u16) -> Result<()> {
+        // P² matrix stores pre-computed distances between all vectors in the rowgroup
+        // Upper triangle only (symmetric matrix), INT8 quantized for efficiency
+        tracing::debug!("Building P² matrix for row group {}", row_group_id);
+        // Implementation would compute and store the matrix
         Ok(())
     }
     

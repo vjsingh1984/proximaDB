@@ -249,9 +249,8 @@ impl RaptorEngine {
             )
         );
         
-        let hnsw_manager = Arc::new(RwLock::new(
-            HnswManager::new(config.clone(), collection_id.clone()).await?
-        ));
+        // Matrix Trinity replaces HNSW - no separate manager needed
+        // Matrices are stored in rowgroups and footer
         
         // Initialize AXIS clustering integration
         let clustering_config = ClusteringConfig {
@@ -301,7 +300,6 @@ impl RaptorEngine {
             writer,
             reader,
             compactor,
-            hnsw_manager,
             cluster_manager,
             clustering_config,
             cluster_assignments,
@@ -417,11 +415,8 @@ impl RaptorEngine {
         let mut writer = self.writer.write().await;
         writer.write_batch(&batch).await?;
         
-        // Update HNSW index if enabled
-        if self.config.enable_clustering {
-            let mut hnsw = self.hnsw_manager.write().await;
-            hnsw.add_batch(&batch).await?;
-        }
+        // Matrix Trinity updates handled by writer during flush
+        // Clustering is done during flush/compaction, not on each write
         
         // Update clustering if we have enough vectors
         let row_count = batch.num_rows();
@@ -518,33 +513,10 @@ impl RaptorEngine {
         // Use clustering for efficient rowgroup pruning
         let selected_rowgroups = self.select_rowgroups_by_clustering(query).await?;
         
-        // First, use HNSW for candidate selection if available
-        let candidates: Vec<InternalSearchResult> = if self.config.enable_hnsw {
-            let hnsw = self.hnsw_manager.read().await;
-            // Convert HNSW results to InternalSearchResult
-            let hnsw_results = hnsw.search(query, k * 2).await?;
-            hnsw_results.into_iter().map(|r| {
-                // Convert HNSW result to InternalSearchResult 
-                // TODO: Create proper VectorRecord from HNSW result for full conversion
-                InternalSearchResult {
-                    id: r.id,
-                    vector_id: None,
-                    score: r.score,
-                    similarity: None,
-                    vector: r.vector,
-                    metadata: r.metadata.unwrap_or_default().into_iter()
-                        .map(|(k, v)| (k, serde_json::json!(v)))
-                        .collect(),
-                    debug_info: None,
-                    version: None,
-                    timestamp: None,
-                    updated_at: None,
-                    expires_at: None,
-                    source: None,
-                    expanded_context: Vec::new(),
-                    ..Default::default()
-                }
-            }).collect()
+        // Use Matrix Trinity for candidate selection
+        let candidates: Vec<InternalSearchResult> = if self.config.enable_clustering {
+            // Use clustered search with Matrix Trinity
+            self.clustered_search(query, k * 2, selected_rowgroups, distance_metric).await?
         } else {
             // Clustered search with pruning
             self.clustered_search(query, k * 2, selected_rowgroups, distance_metric).await?

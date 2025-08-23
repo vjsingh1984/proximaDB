@@ -1951,8 +1951,6 @@ impl K2Matrix {
 
 // ====== Runtime Search Result Structures (NOT STORED) ======
 
-use std::collections::HashMap;
-
 /// Runtime result from Phase 1 boundary detection
 /// This is computed during search using K² matrix - NOT stored
 #[derive(Debug, Clone)]

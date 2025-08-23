@@ -70,26 +70,19 @@ pub mod clustering {
     pub const KMEANS_INIT_ATTEMPTS: usize = 3;
 }
 
-/// HNSW graph construction constants
-pub mod hnsw {
-    /// Default HNSW connectivity (M parameter)
-    /// 16 connections per node provides balanced connectivity
-    pub const DEFAULT_M: usize = 16;
+/// Matrix Trinity constants (replaces HNSW)
+pub mod matrix {
+    /// Default P² matrix dimension (vectors per rowgroup)
+    pub const DEFAULT_P_DIMENSION: usize = 1024;
     
-    /// Default ef_construction for high quality graph building
-    pub const DEFAULT_EF_CONSTRUCTION: usize = 200;
+    /// Maximum K² matrix dimension (number of centroids)
+    pub const MAX_K_DIMENSION: usize = 10000;
     
-    /// Default ef_search for fast approximate search
-    pub const DEFAULT_EF_SEARCH: usize = 100;
+    /// P×K matrix compression threshold
+    pub const PXK_COMPRESSION_THRESHOLD: usize = 100;
     
-    /// Number of HNSW entry points for multi-entry navigation
-    pub const DEFAULT_ENTRY_POINTS: usize = 5;
-    
-    /// Maximum connections per HNSW node
-    pub const MAX_CONNECTIONS: usize = 32;
-    
-    /// Maximum nodes to explore during search to prevent infinite loops
-    pub const MAX_SEARCH_NODES_MULTIPLIER: usize = 3; // ef * 3
+    /// Matrix overhead bytes per vector
+    pub const MATRIX_OVERHEAD_PER_VECTOR: usize = 5;
 }
 
 /// Component boosting default weights
@@ -172,9 +165,7 @@ pub mod io {
 
 /// Complexity calculation constants for performance analysis
 pub mod complexity {
-    /// Standard HNSW complexity multiplier: n × M × EF
-    pub const HNSW_M_FACTOR: usize = 16;
-    pub const HNSW_EF_FACTOR: usize = 200;
+    /// Matrix Trinity complexity: k² + p×(k+p)
     
     /// RAPTOR complexity components: k² + p×(k+p) where:
     /// - k = number of clusters (typically √n)
@@ -194,6 +185,10 @@ pub mod complexity {
     pub const K_SQUARED_FACTOR: f32 = 1.0;
     pub const P_K_FACTOR: f32 = 1.0;
     pub const P_SQUARED_FACTOR: f32 = 1.0;
+    
+    /// HNSW complexity factors (for comparison)
+    pub const HNSW_M_FACTOR: f32 = 16.0;  // M parameter (edges per node)
+    pub const HNSW_EF_FACTOR: f32 = 200.0; // ef construction parameter
 }
 
 /// Common vector dimensions for optimization defaults
@@ -227,9 +222,9 @@ mod tests {
         assert!(clustering::MIN_ROWGROUP_SIZE >= 512);
         assert!(clustering::DEFAULT_ROWGROUP_SIZE >= clustering::MIN_ROWGROUP_SIZE);
         
-        // Ensure HNSW parameters are reasonable
-        assert!(hnsw::DEFAULT_M >= 8 && hnsw::DEFAULT_M <= 64);
-        assert!(hnsw::DEFAULT_EF_CONSTRUCTION >= hnsw::DEFAULT_EF_SEARCH);
+        // Ensure Matrix Trinity parameters are reasonable
+        assert!(matrix::DEFAULT_P_DIMENSION >= 100 && matrix::DEFAULT_P_DIMENSION <= 10000);
+        assert!(matrix::MAX_K_DIMENSION >= matrix::DEFAULT_P_DIMENSION);
         
         // Ensure cache utilization is reasonable
         assert!(clustering::L3_CACHE_UTILIZATION_PERCENT > 0.0);

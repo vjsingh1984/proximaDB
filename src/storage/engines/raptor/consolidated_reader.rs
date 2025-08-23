@@ -397,7 +397,7 @@ impl RaptorReader {
     
     /// Search vectors - directly use unified modules without wrapper overhead
     pub async fn search_vectors(
-        &self,
+        &mut self,
         query: &[f32],
         top_k: usize,
         collection_id: &str,
@@ -988,7 +988,7 @@ impl RaptorReader {
             .ok_or_else(|| anyhow::anyhow!("K×K matrix not available"))?;
         
         // Step 2: Calculate distances to all centroids from footer
-        let distance_compute = UnifiedDistanceCompute::with_metric(*metric);
+        let distance_compute = UnifiedDistanceCompute::new(metric.clone());
         let mut centroid_distances = Vec::with_capacity(kxk_matrix.num_centroids as usize);
         
         // Get all centroids from the footer's ColumnarCentroids
@@ -1003,7 +1003,7 @@ impl RaptorReader {
         
         // Step 3: Select top-k centroids (which map 1:1 to rowgroups)
         centroid_distances.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
-        let num_centroids_to_search = (ef / 10).max(1).min(kxk_matrix.num_centroids);
+        let num_centroids_to_search = (ef / 10).max(1).min(kxk_matrix.num_centroids as usize);
         
         let mut all_candidates = Vec::new();
         
@@ -1064,7 +1064,7 @@ impl RaptorReader {
         let vectors = self.load_rowgroup_vectors(&self.base_path, rowgroup_id).await?;
         let ids = self.load_rowgroup_ids(&self.base_path, rowgroup_id).await?;
         
-        let distance_compute = UnifiedDistanceCompute::with_metric(*metric);
+        let distance_compute = UnifiedDistanceCompute::new(metric.clone());
         let mut candidates = Vec::with_capacity(vectors.len());
         
         // Calculate distances to all vectors in rowgroup
@@ -1072,7 +1072,7 @@ impl RaptorReader {
             let dist = distance_compute.calculate_distance(query, vector, metric).raw_value;
             
             // Optional: Apply P×K boosting based on vector's distance to centroids
-            let boosted_dist = if let Some(centroid_dist) = pxk_matrix.get_distance(idx, rowgroup_id as usize) {
+            let boosted_dist = if let Ok(centroid_dist) = pxk_matrix.get_distance(idx, rowgroup_id as usize) {
                 dist * 0.9 + centroid_dist * 0.1  // Weighted combination
             } else {
                 dist
@@ -1201,7 +1201,7 @@ impl RaptorReader {
                 // Apply boundary rule: if ratio > 0.8, this is a boundary case
                 if boundary_ratio > boundary_config.boundary_ratio_threshold {
                     // Also check K² distance between centroids
-                    if let Some(k2_matrix) = &footer.k2_matrix {
+                    if let Some(k2_matrix) = &self.cached_kxk_matrix {
                         let inter_distance = k2_matrix.get_distance(
                             primary.centroid_id, 
                             candidate.centroid_id
@@ -1337,7 +1337,7 @@ impl RaptorReader {
     }
     
     /// Load P×K matrix for a specific rowgroup (used by Matrix Trinity search)
-    async fn load_pxk_matrix_for_rowgroup(&self, rowgroup_id: u16) -> Result<Arc<VectorCentroidMatrix>> {
+    async fn load_pxk_matrix_for_rowgroup(&mut self, rowgroup_id: u16) -> Result<Arc<VectorCentroidMatrix>> {
         // Load the actual P×K matrix from disk
         self.load_pxk_matrix(rowgroup_id).await
     }
@@ -1400,7 +1400,7 @@ impl RaptorReader {
     /// This identifies vectors that are closer to non-assigned centroids
     /// Returns additional centroids that should be searched due to spillover
     async fn detect_spillover_with_pxk_matrix(
-        &self,
+        &mut self,
         selected_centroids: &[CentroidSelection],
         metric: &DistanceMetric,
     ) -> Result<super::common::SpilloverDetectionResult> {
@@ -1668,7 +1668,7 @@ impl RaptorReader {
         tracing::debug!(
             "Matrix Trinity search completed: {} candidates from {} centroid-rowgroup pairs",
             all_candidates.len(),
-            selected_centroids.len()
+            final_centroids.len()
         );
         
         Ok(all_candidates)
@@ -1720,8 +1720,8 @@ impl RaptorReader {
             // Read P×K matrix from column page
             let matrix_data = self.filesystem.read_range(
                 &self.base_path,
-                pxk_metadata.offset as usize,
-                pxk_metadata.compressed_size as usize
+                pxk_metadata.offset,
+                pxk_metadata.compressed_size
             ).await?;
             
             // Decompress if needed
@@ -1762,10 +1762,26 @@ impl RaptorReader {
             self.load_footer(&file_path).await?;
         }
         
+        // Try to load from footer's vector_centroid_matrices (these are refs, need to load actual data)
         if let Some(footer) = &self.cached_footer {
-            for matrix in &footer.vector_centroid_matrices {
-                if matrix.rowgroup_id == rowgroup_id {
-                    let arc_matrix = Arc::new(matrix.clone());
+            for matrix_ref in &footer.vector_centroid_matrices {
+                if matrix_ref.rowgroup_id == rowgroup_id {
+                    // Load actual matrix data from file using the ref's offset
+                    let matrix_data = self.filesystem.read_range(
+                        &self.base_path,
+                        matrix_ref.file_offset,
+                        matrix_ref.compressed_size
+                    ).await?;
+                    
+                    // Decompress if needed
+                    let decompressed = crate::core::compression::decompress(
+                        &matrix_data,
+                        matrix_ref.compression
+                    )?;
+                    
+                    // Deserialize to VectorCentroidMatrix
+                    let matrix: VectorCentroidMatrix = bincode::deserialize(&decompressed)?;
+                    let arc_matrix = Arc::new(matrix);
                     self.cached_pxk_matrices.insert(rowgroup_id, arc_matrix.clone());
                     return Ok(arc_matrix);
                 }

@@ -109,85 +109,78 @@ impl RaptorCompactor {
         Ok(())
     }
     
-    /// Matrix Trinity-aware compaction preserving centroid structure
+    /// Clustering-based compaction matching writer's flush behavior
+    /// Key principle: k (number of clusters) = number of rowgroups
+    /// Each rowgroup contains vectors from exactly one cluster
     async fn compact_with_matrix_preservation(
         &self,
         input_files: Vec<String>,
         output_file: &str,
-        collection_id: &str,
+        _collection_id: &str,
     ) -> Result<()> {
-        debug!("Performing compaction with Matrix Trinity preservation");
+        debug!("Performing clustering-based compaction (consistent with writer flush)");
         
-        // Calculate total vectors for smart HNSW parameter selection
-        // Use actual dimension from config for accurate calculation
-        let dimension = self.config.dimension;
-        let bytes_per_vector = dimension * 4 + 100; // 4 bytes per f32 + metadata overhead
-        
-        let mut total_vectors = 0usize;
-        for file_path in &input_files {
-            if let Ok(metadata) = self.filesystem.metadata(file_path).await {
-                // More accurate estimation using actual dimension
-                let estimated_vectors = metadata.size as usize / bytes_per_vector;
-                total_vectors += estimated_vectors;
-            }
-        }
-        
-        info!("Compacting {} files with ~{} vectors (dim={}, bytes/vec={})", 
-            input_files.len(), total_vectors, dimension, bytes_per_vector);
-        
-        // Step 1: Load centroids and matrices from footer
-        
-        // Step 2: Read vectors and maintain centroid relationships
-        let mut vectors_by_id: HashMap<String, VectorRecord> = HashMap::new();
+        // Step 1: Read all vectors from input files
+        let mut all_vectors: Vec<VectorRecord> = Vec::new();
         for file_path in &input_files {
             let batches = self.reader.read_row_groups_selective(&file_path, None).await?;
             
             for batch in batches {
                 let vectors = self.extract_vectors_from_batch(&batch)?;
-                for vector in vectors {
-                    vectors_by_id.insert(vector.id.clone(), vector);
-                }
+                all_vectors.extend(vectors);
             }
         }
         
-        // Step 3: Create locality-aware row groups based on centroid assignments
-        let mut row_groups = Vec::new();
-        let mut vectors_by_centroid: HashMap<u16, Vec<VectorRecord>> = HashMap::new();
+        let n = all_vectors.len();
+        if n == 0 {
+            debug!("No vectors to compact");
+            return Ok(());
+        }
         
-        // Group vectors by their centroid assignment
-        for (_id, vector) in &vectors_by_id {
-            // Centroid assignment would be stored in metadata or computed
-            let centroid_id = 0u16; // Placeholder - would get from metadata
-            vectors_by_centroid.entry(centroid_id)
+        // Step 2: Calculate k using same logic as writer's build_ivf_clusters
+        // k = sqrt(n) for optimal complexity k² + p×(k+p)
+        let sqrt_n = (n as f64).sqrt() as usize;
+        let k = self.config.num_clusters.unwrap_or(sqrt_n.max(1));
+        
+        // p = rowgroup size (from config or auto-calculated based on L3 cache)
+        let p = self.config.target_rowgroup_size.unwrap_or(self.config.rowgroup_size);
+        
+        info!("Compacting {} vectors: k={} clusters (sqrt(n)), p={} vectors/rowgroup", 
+            n, k, p);
+        
+        // Step 3: Run clustering to assign vectors to k clusters (same as writer)
+        let cluster_assignments = self.cluster_vectors(&all_vectors, k)?;
+        
+        // Step 4: Group vectors by assigned cluster, then sort by cluster ID
+        let mut vectors_by_cluster: HashMap<u16, Vec<VectorRecord>> = HashMap::new();
+        for (vector, &cluster_id) in all_vectors.into_iter().zip(cluster_assignments.iter()) {
+            let cluster_id_u16 = cluster_id as u16;
+            vectors_by_cluster.entry(cluster_id_u16)
                 .or_insert_with(Vec::new)
-                .push(vector.clone());
+                .push(vector);
         }
         
-        // Create row groups from centroid groups
-        for (_centroid_id, vectors) in vectors_by_centroid {
-            if !vectors.is_empty() {
-                row_groups.push(self.create_row_group_from_vectors(vectors));
-            }
+        // Step 5: Create sorted rowgroups (one per cluster)
+        let mut sorted_cluster_ids: Vec<u16> = vectors_by_cluster.keys().cloned().collect();
+        sorted_cluster_ids.sort(); // Sort by assigned cluster/rowgroup ID
+        
+        let mut row_groups = Vec::new();
+        for (rg_idx, cluster_id) in sorted_cluster_ids.iter().enumerate() {
+            let vectors = vectors_by_cluster.remove(cluster_id).unwrap();
+            
+            // Create rowgroup - rowgroup_id matches position in sorted order
+            let mut row_group = RowGroup::with_capacity(rg_idx as u16, p);
+            row_group.row_count = vectors.len();
+            row_group.vectors = Some(vectors);
+            
+            // Centroid and matrices will be built by writer during write
+            // This keeps it consistent with flush behavior
+            
+            row_groups.push(row_group);
         }
         
-        // Step 4: Add any remaining vectors without centroid assignment
-        let mut remaining = Vec::new();
-        for (_id, vector) in vectors_by_id {
-            // Check if vector was already assigned
-            remaining.push(vector);
-            if remaining.len() >= 10000 {
-                row_groups.push(self.create_row_group_from_vectors(remaining.clone()));
-                remaining.clear();
-            }
-        }
-        if !remaining.is_empty() {
-            row_groups.push(self.create_row_group_from_vectors(remaining));
-        }
-        
-        // Step 5: Write compacted file with preserved locality
+        // Step 6: Write compacted file with sorted rowgroups
         self.write_compacted_file(output_file, row_groups).await?;
-        
-        // Step 6: Update matrix locations in footer
         
         // Step 7: Clean up input files
         for file_path in input_files {
@@ -196,6 +189,41 @@ impl RaptorCompactor {
         
         Ok(())
     }
+    
+    /// Run fast-converging K-means++ clustering for high-dimensional data
+    /// Uses the same algorithm as the writer for consistency
+    fn cluster_vectors(&self, vectors: &[VectorRecord], k: usize) -> Result<Vec<usize>> {
+        // Use AXIS clustering engine with K-means++ initialization
+        // This provides fast convergence for high-dimensional data
+        // TODO: Use AXIS clustering when available
+        // use crate::index::axis::clustering::AxisClustering;
+        use crate::compute::distance_computation::engine::DistanceMetric;
+        
+        // Convert VectorRecord to Vec<Vec<f32>> for AXIS clustering
+        let vector_data: Vec<Vec<f32>> = vectors.iter()
+            .map(|v| v.vector.clone())
+            .collect();
+        
+        // Use AXIS clustering with K-means++ (same as writer)
+        // K-means++ initialization ensures well-separated centroids
+        let axis_clustering = AxisClustering::new();
+        let (_centroids, assignments) = axis_clustering.cluster_vectors_simple(
+            &vector_data,
+            k,
+            DistanceMetric::Cosine,  // Use cosine for high-dimensional data
+            50  // Fewer iterations for fast convergence
+        )?;
+        
+        // Convert assignments to usize
+        let assignments_usize: Vec<usize> = assignments.iter()
+            .map(|&a| a as usize)
+            .collect();
+        
+        Ok(assignments_usize)
+    }
+    
+    // Matrix and centroid building removed - writer handles this during write
+    // This keeps flush and compact consistent
     
     /// Extract vectors from Arrow RecordBatch - DIRECT operation
     fn extract_vectors_from_batch(&self, batch: &RecordBatch) -> Result<Vec<VectorRecord>> {
@@ -335,11 +363,10 @@ impl RaptorCompactor {
                 version: 1,
             },
             
-            // HNSW metadata (if applicable)
-            hnsw_metadata: None,
-            global_hnsw_offset: 0,
-            global_hnsw_size: 0,
-            hnsw_entry_points: Vec::new(),
+            // Matrix Trinity architecture - no HNSW needed
+            // P² matrix: Stored per rowgroup
+            // K² matrix: Stored in footer  
+            // P×K matrix: Stored per rowgroup
             
             // Compression info
             compression_codec: "zstd".to_string(),

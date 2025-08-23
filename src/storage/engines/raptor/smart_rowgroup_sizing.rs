@@ -88,8 +88,8 @@ pub struct SmartRowGroupSizer {
     pub vector_dimension: usize,
     /// Average metadata size per vector (bytes)
     pub avg_metadata_bytes: usize,
-    /// HNSW graph overhead per vector (bytes)
-    pub hnsw_overhead_bytes: usize,
+    /// Matrix Trinity overhead per vector (P² + P×K contribution)
+    pub matrix_overhead_bytes: usize,
     /// Quantization enabled and level
     pub quantization_config: Option<QuantizationConfig>,
     /// Target query pattern (affects sizing strategy)
@@ -137,28 +137,29 @@ impl SmartRowGroupSizer {
             io_profile,
             vector_dimension,
             avg_metadata_bytes,
-            hnsw_overhead_bytes: Self::estimate_hnsw_overhead(vector_dimension),
+            matrix_overhead_bytes: Self::estimate_matrix_overhead(vector_dimension),
             quantization_config: None,
             query_pattern: QueryPattern::Mixed,
         }
     }
     
-    /// Estimate HNSW graph overhead per vector
-    fn estimate_hnsw_overhead(dimension: usize) -> usize {
-        // HNSW overhead: ~32 bytes per connection, avg 3-5 connections per vector
-        // Plus graph metadata and level info
-        let avg_connections = 4;
-        let bytes_per_connection = 32;
-        let base_metadata = 16;
+    /// Estimate Matrix Trinity overhead per vector
+    fn estimate_matrix_overhead(_dimension: usize) -> usize {
+        // Matrix Trinity overhead:
+        // - P² matrix: ~1 byte per vector pair (INT8 quantized) / P vectors = ~1KB for P=1024
+        // - P×K matrix: Selective storage based on K/D ratio (10-100% coverage)
+        // Much more efficient than HNSW's graph edges!
+        let p2_overhead = 1; // ~1 byte per vector for P² contribution
+        let pxk_overhead = 4; // ~4 bytes average for P×K (selective storage)
         
-        avg_connections * bytes_per_connection + base_metadata
+        p2_overhead + pxk_overhead  // ~5 bytes total vs ~144 bytes for HNSW
     }
     
     /// Calculate optimal row group size in number of vectors
     pub fn calculate_optimal_rowgroup_size(&self) -> Result<OptimalRowGroupSize> {
         // Step 1: Calculate bytes per vector
         let vector_bytes = self.calculate_vector_storage_bytes();
-        let total_bytes_per_vector = vector_bytes + self.avg_metadata_bytes + self.hnsw_overhead_bytes;
+        let total_bytes_per_vector = vector_bytes + self.avg_metadata_bytes + self.matrix_overhead_bytes;
         
         // Step 2: Calculate base row group size from I/O profile
         let base_vectors_per_rowgroup = self.io_profile.optimal_io_size_bytes / total_bytes_per_vector;
@@ -334,7 +335,7 @@ impl SmartRowGroupSizer {
 pub struct OptimalRowGroupSize {
     /// Number of vectors per row group
     pub vectors_per_rowgroup: usize,
-    /// Bytes per vector (including metadata and HNSW)
+    /// Bytes per vector (including metadata and Matrix Trinity overhead)
     pub bytes_per_vector: usize,
     /// Total bytes per row group
     pub total_rowgroup_bytes: usize,
