@@ -116,7 +116,7 @@ pub mod markers {
 }
 
 /// FastLanes encoding schemes
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
 pub enum FastLanesScheme {
     /// Bit-packing with configurable bit width
     BitPacked { bits: u8 },

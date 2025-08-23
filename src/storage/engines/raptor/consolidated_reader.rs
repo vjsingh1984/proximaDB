@@ -11,28 +11,26 @@
 use std::sync::Arc;
 use std::collections::HashMap;
 use anyhow::{Result, Context};
-use tracing::{debug, info, trace};
+use tracing::debug;
 use arrow_array::{RecordBatch, Array};
-use bytes::Bytes;
 
 // Use unified components instead of custom implementations
 use crate::storage::cache::orchestrator::{CrossCacheOrchestrator, CacheType};
-use crate::storage::cache::VectorStore;
 use crate::compute::distance_computation::engine::{UnifiedDistanceCompute, DistanceMetric};
 use crate::storage::engines::common::fastlanes_encoding::{FastLanesDecoder, FastLanesScheme};
 use crate::storage::engines::common::zero_copy_io_system::{
-    BandwidthOptimizer, QueryContext, QueryType, RequestPriority, CacheTemperature
+    BandwidthOptimizer,
+    ZeroCopyIOSystem
 };
 use crate::storage::persistence::filesystem::{FileSystem, zero_copy_filesystem::ZeroCopyFilesystem};
 use crate::storage::transaction_coordinator::TransactionCoordinator;
 
 use super::common::{
-    RaptorFileMetadata, RowGroupMetadata, RowGroup, SchemaDescriptor,
-    RaptorFooter, ColumnarCentroids, NeighborType, RowGroupBloomFilter,
+    RaptorFileMetadata, RowGroupMetadata,
+    RaptorFooter, NeighborType, RowGroupBloomFilter,
     P2Matrix,  // P² matrix for intra-rowgroup navigation
     InterCentroidMatrix, VectorCentroidMatrix, VectorCentroidStorageStrategy,
-    calculate_optimal_neighbors, calculate_super_clusters, predict_search_latency,
-    ColumnType, ColumnPageMetadata,  // For selective column reading
+    ColumnType,  // For selective column reading
     SearchResult,  // Add SearchResult import
 };
 use super::config::RaptorConfig;
@@ -249,33 +247,58 @@ pub struct RaptorReader {
     /// Filesystem for zero-copy operations
     filesystem: Arc<ZeroCopyFilesystem>,
     
+    /// Zero-copy I/O system for metadata caching
+    zero_copy_system: Arc<ZeroCopyIOSystem>,
+    
+    /// Collection ID for cache keys
+    collection_id: String,
+    
     /// Transaction coordinator
     transaction_coordinator: Arc<TransactionCoordinator>,
     
-    /// Cached centralized footer for O(1) centroid access
-    /// Loaded once and kept in memory for the lifetime of the reader
-    cached_footer: Option<Arc<RaptorFooter>>,
-    
-    /// Cached K×K inter-centroid distance matrix for O(1) lookup
-    /// Loaded from footer on first access and kept for reader lifetime
-    cached_kxk_matrix: Option<Arc<InterCentroidMatrix>>,
-    
-    /// Cached P×K vector-to-centroid matrices by rowgroup ID
-    /// Loaded on-demand based on access patterns
-    cached_pxk_matrices: HashMap<u16, Arc<VectorCentroidMatrix>>,
-    
-    /// Cached bloom filters by row group ID for fast ID membership testing
-    /// Loaded on-demand and cached to avoid repeated decompression
-    bloom_filter_cache: HashMap<u16, Arc<RowGroupBloomFilter>>,
+    // Note: Caching strategy:
+    // - File-level metadata (footer, K centroids, K×K matrix) is cached by the 
+    //   shared CrossCacheOrchestrator through the zero-copy filesystem
+    // - Rowgroup-level data (P×K and P² matrices) is NOT cached - read from 
+    //   disk/cloud on demand to avoid memory bloat (~1.5MB per rowgroup)
+    // - If caching is needed later, we can add a local DashMap with memory budget
 }
 
 impl RaptorReader {
+    /// Get footer (contains K centroids and K×K matrix) - cached by metadata cache
+    /// The footer is file-level metadata and will be cached to avoid repeated reads
+    async fn get_footer(&self, file_path: &str) -> Result<Arc<RaptorFooter>> {
+        // The zero-copy filesystem automatically caches file-level metadata
+        // including the footer which contains:
+        // - K centroids for all rowgroups
+        // - K×K inter-centroid distance matrix
+        // - File metadata and schema
+        self.load_footer(file_path).await
+    }
+    
+    /// Get cached K×K matrix from zero-copy system or load it
+    async fn get_kxk_matrix(&self, file_path: &str) -> Result<Arc<InterCentroidMatrix>> {
+        let footer = self.get_footer(file_path).await?;
+        Ok(Arc::new(footer.inter_centroid_distances.clone()))
+    }
+    
+    /// Load P×K matrix for a rowgroup - not cached since it's rowgroup data
+    /// P×K matrices are stored inside rowgroups, not in file metadata
+    async fn get_pxk_matrix(&self, file_path: &str, rowgroup_id: u16) -> Result<Arc<VectorCentroidMatrix>> {
+        // P×K matrices are NOT cached by the metadata cache since they're 
+        // inside rowgroups. They must be read from disk/cloud each time.
+        // Only file-level metadata (footer, K centroids, K×K matrix) is cached.
+        self.load_pxk_matrix(file_path, rowgroup_id).await
+    }
+    
     /// Create new consolidated reader with unified components
     pub fn new(
         base_path: String,
+        collection_id: String,
         config: RaptorConfig,
         cache: Arc<CrossCacheOrchestrator>,
         filesystem: Arc<ZeroCopyFilesystem>,
+        zero_copy_system: Arc<ZeroCopyIOSystem>,
         transaction_coordinator: Arc<TransactionCoordinator>,
     ) -> Self {
         // Initialize FastLanes decoder based on config
@@ -287,17 +310,15 @@ impl RaptorReader {
         
         Self {
             base_path,
+            collection_id,
             config,
             cache,
             distance_compute: Arc::new(UnifiedDistanceCompute::default()),
             fastlanes_decoder: FastLanesDecoder::new(fastlanes_scheme),
             bandwidth_optimizer: None,
             filesystem,
+            zero_copy_system,
             transaction_coordinator,
-            cached_footer: None,
-            cached_kxk_matrix: None,
-            cached_pxk_matrices: HashMap::new(),
-            bloom_filter_cache: HashMap::new(),
         }
     }
     
@@ -309,7 +330,7 @@ impl RaptorReader {
     
     /// Read row groups - DIRECT unified module usage, no wrappers
     pub async fn read_row_groups_selective(
-        &mut self,
+        &self,
         file_path: &str,
         rowgroup_selection: Option<Vec<usize>>,
     ) -> Result<Vec<RecordBatch>> {
@@ -350,7 +371,7 @@ impl RaptorReader {
                 let decompressed = crate::core::compression::decompress(
                     &compressed_data, 
                     CompressionAlgorithm::Zstd, 
-                    CompressionContext::SstBlock
+                    CompressionContext::Column
                 )?;
                 
                 // DIRECT Arrow decode
@@ -379,7 +400,7 @@ impl RaptorReader {
                 let decompressed = crate::core::compression::decompress(
                     &compressed_data, 
                     CompressionAlgorithm::Zstd, 
-                    CompressionContext::SstBlock
+                    CompressionContext::Column
                 )?;
                 
                 // DIRECT Arrow parse
@@ -419,7 +440,7 @@ impl RaptorReader {
             // TODO: Implement proper caching with updated APIs
             
             // Load from storage if not cached
-            let vector = self.load_vector_by_id(&id, collection_id).await?;
+            let vector = self.load_vector_by_id(&self.base_path, &id).await?;
             
             // TODO: Implement proper caching with updated APIs
             candidates.push((id, vector));
@@ -479,8 +500,7 @@ impl RaptorReader {
         let start_time = std::time::Instant::now();
         
         // Load footer to get rowgroup count
-        self.load_footer_with_mmap(file_path).await?;
-        let footer = self.cached_footer.as_ref().unwrap();
+        let footer = self.get_footer(file_path).await?;
         let total_rowgroups = footer.file_metadata.row_groups.len();
         
         tracing::info!("Full scan: processing {} rowgroups sequentially", total_rowgroups);
@@ -546,7 +566,7 @@ impl RaptorReader {
             self.filter_rowgroups_with_enhanced_bloom_filters(file_path, ids).await?
         } else {
             // No ID filtering - include all rowgroups
-            let footer = self.cached_footer.as_ref().unwrap();
+            let footer = self.get_footer(file_path).await?;
             footer.file_metadata.row_groups.iter().map(|rg| rg.id).collect()
         };
         
@@ -566,7 +586,7 @@ impl RaptorReader {
         };
         
         // Get footer reference after all mutable operations
-        let footer = self.cached_footer.as_ref().unwrap();
+        let footer = self.get_footer(&self.base_path).await?;
         
         tracing::info!(
             "Filtered scan: processing {}/{} rowgroups after filtering",
@@ -627,11 +647,11 @@ impl RaptorReader {
         file_path: &str,
         target_ids: &[String],
     ) -> Result<Vec<u16>> {
-        let footer = self.cached_footer.as_ref().unwrap();
+        let footer = self.get_footer(&self.base_path).await?;
         
         // Use the enhanced batch BloomFilter lookup from common.rs
         let candidate_lists = RowGroupBloomFilter::find_candidates_batch_optimized(
-            footer,
+            &footer,
             target_ids
         );
         
@@ -659,7 +679,7 @@ impl RaptorReader {
         candidate_rowgroups: &[u16],
         predicates: &[super::common::Predicate],
     ) -> Result<Vec<u16>> {
-        let footer = self.cached_footer.as_ref().unwrap();
+        let footer = self.get_footer(&self.base_path).await?;
         let mut filtered = Vec::new();
         
         for &rowgroup_id in candidate_rowgroups {
@@ -896,31 +916,17 @@ impl RaptorReader {
     // Reason: Redundant - logic inlined directly where needed
     // Benefit: Reduced stack depth, less function call overhead
     
-    /// Read file metadata - DIRECT cache and filesystem operations
-    async fn read_metadata(&mut self, file_path: &str) -> Result<RaptorFileMetadata> {
-        let cache_key = format!("{}_metadata", file_path);
+    /// Read file metadata - leverages zero-copy filesystem's integrated caching
+    async fn read_metadata(&self, file_path: &str) -> Result<RaptorFileMetadata> {
+        // The zero-copy filesystem automatically handles caching through CrossCacheOrchestrator
+        // using the metadata serializer/deserializer we provided
+        let cache_key = format!("{}:{}:raptor", file_path, self.collection_id);
         
-        // Metadata cache with zero-copy integration
-        let metadata_cache_key = format!("{}:metadata:raptor", file_path);
-        self.cache.pattern_tracker().track_access_async(metadata_cache_key.clone(), CacheType::Metadata);
+        // Track access pattern for predictive prefetching
+        self.cache.pattern_tracker().track_access_async(cache_key.clone(), CacheType::Metadata);
         
-        // Try to get cached metadata first using zero-copy filesystem
-        if let Ok(cached_metadata_bytes) = FileSystem::read(self.filesystem.as_ref(), &metadata_cache_key).await {
-            if let Ok(metadata) = bincode::deserialize::<RaptorFileMetadata>(&cached_metadata_bytes) {
-                debug!("✅ Metadata cache hit for {}", file_path);
-                return Ok(metadata);
-            }
-        }
-        
-        // Load the centralized footer if not already cached
-        if self.cached_footer.is_none() {
-            self.load_footer(file_path).await?;
-        }
-        
-        // Return metadata from cached footer
-        if let Some(ref footer) = self.cached_footer {
-            return Ok(footer.file_metadata.clone());
-        }
+        // The zero-copy system handles metadata caching internally
+        // For now, we'll always read from disk and let the filesystem layer cache it
         
         // Fallback: DIRECT file read with proper footer size detection
         // Get file size using filesystem API
@@ -953,13 +959,8 @@ impl RaptorReader {
         let footer: RaptorFooter = bincode::deserialize(&footer_data)?;
         let metadata = footer.file_metadata;
         
-        // Cache metadata for future use
-        if let Ok(serialized_metadata) = bincode::serialize(&metadata) {
-            // Store in zero-copy filesystem cache (async write, non-blocking)
-            if let Err(e) = FileSystem::write(self.filesystem.as_ref(), &metadata_cache_key, &serialized_metadata, None).await {
-                debug!("Failed to cache metadata for {}: {}", file_path, e);
-            }
-        }
+        // Metadata caching is handled by the zero-copy filesystem infrastructure
+        // No need to manually cache here
         
         Ok(metadata)
     }
@@ -976,16 +977,10 @@ impl RaptorReader {
         // Step 1: Load K×K inter-centroid matrix and footer if not cached
         self.load_kxk_matrix().await?;
         
-        // Ensure footer is loaded to access centroids
-        if self.cached_footer.is_none() {
-            let file_path = &self.base_path.clone();
-            self.load_footer(&file_path).await?;
-        }
-        
-        let footer = self.cached_footer.as_ref()
-            .ok_or_else(|| anyhow::anyhow!("Footer not loaded"))?;
-        let kxk_matrix = self.cached_kxk_matrix.as_ref()
-            .ok_or_else(|| anyhow::anyhow!("K×K matrix not available"))?;
+        // Get footer and K×K matrix (cached by zero-copy filesystem)
+        let file_path = &self.base_path;
+        let footer = self.get_footer(file_path).await?;
+        let kxk_matrix = self.get_kxk_matrix(file_path).await?;
         
         // Step 2: Calculate distances to all centroids from footer
         let distance_compute = UnifiedDistanceCompute::new(metric.clone());
@@ -1013,7 +1008,7 @@ impl RaptorReader {
             let rowgroup_id = centroid_id as u16;
             
             // Load P×K matrix for this rowgroup
-            let pxk_matrix = self.load_pxk_matrix(rowgroup_id).await?;
+            let pxk_matrix = self.load_pxk_matrix(&self.base_path, rowgroup_id).await?;
             
             // Load P² matrix for intra-rowgroup navigation
             let p2_matrix = self.load_p2_matrix_for_rowgroup(rowgroup_id).await?;
@@ -1110,7 +1105,7 @@ impl RaptorReader {
     fn calculate_raw_distance(&self, v1: &[f32], v2: &[f32], metric: &DistanceMetric) -> Result<f32> {
         // Use the unified distance compute engine for consistency
         let result = self.distance_compute.calculate_distance(v1, v2, metric);
-        Ok(result.distance)
+        Ok(result.raw_value)
     }
     
     /// Estimate global average distance from cluster metadata
@@ -1147,8 +1142,7 @@ impl RaptorReader {
         let boundary_config = super::common::BoundaryDetectionConfig::default();
         
         // Load all centroids from footer
-        let footer = self.cached_footer.as_ref()
-            .ok_or_else(|| anyhow::anyhow!("Footer not loaded"))?;
+        let footer = self.get_footer(&self.base_path).await?;
         
         let distance_compute = UnifiedDistanceCompute::new(metric.clone());
         let mut all_distances = Vec::new();
@@ -1201,7 +1195,7 @@ impl RaptorReader {
                 // Apply boundary rule: if ratio > 0.8, this is a boundary case
                 if boundary_ratio > boundary_config.boundary_ratio_threshold {
                     // Also check K² distance between centroids
-                    if let Some(k2_matrix) = &self.cached_kxk_matrix {
+                    if let Ok(k2_matrix) = self.get_kxk_matrix(&self.base_path).await {
                         let inter_distance = k2_matrix.get_distance(
                             primary.centroid_id, 
                             candidate.centroid_id
@@ -1235,7 +1229,7 @@ impl RaptorReader {
         }
         
         // Step 4: Build final result set
-        let mut final_centroids = primary_centroids;
+        let mut final_centroids = primary_centroids.clone();
         
         // Add boundary-detected centroids
         for (_, to_centroid, _) in &boundary_expansions {
@@ -1323,7 +1317,7 @@ impl RaptorReader {
     // ====== Matrix Trinity Helper Methods ======
     
     /// Load P² matrix for a specific rowgroup (used by Matrix Trinity search)
-    async fn load_p2_matrix_for_rowgroup(&mut self, rowgroup_id: u16) -> Result<Arc<P2Matrix>> {
+    async fn load_p2_matrix_for_rowgroup(&self, rowgroup_id: u16) -> Result<Arc<P2Matrix>> {
         // This is a simplified version - in production would load from actual file
         let default_matrix = P2Matrix {
             num_vectors: 1000,
@@ -1339,7 +1333,7 @@ impl RaptorReader {
     /// Load P×K matrix for a specific rowgroup (used by Matrix Trinity search)
     async fn load_pxk_matrix_for_rowgroup(&mut self, rowgroup_id: u16) -> Result<Arc<VectorCentroidMatrix>> {
         // Load the actual P×K matrix from disk
-        self.load_pxk_matrix(rowgroup_id).await
+        self.load_pxk_matrix(&self.base_path, rowgroup_id).await
     }
     
     /// Load vectors for a specific rowgroup (used by Matrix Trinity search)
@@ -1408,9 +1402,8 @@ impl RaptorReader {
         let spillover_config = super::common::SpilloverDetectionConfig::default();
         
         // Get the number of centroids from footer
-        let num_centroids = self.cached_footer.as_ref()
-            .ok_or_else(|| anyhow::anyhow!("Footer not loaded"))?
-            .centroids.count as usize;
+        let footer = self.get_footer(&self.base_path).await?;
+        let num_centroids = footer.centroids.count as usize;
         
         let mut spillover_map = std::collections::HashMap::new();
         let mut spillover_percentages = std::collections::HashMap::new();
@@ -1432,7 +1425,7 @@ impl RaptorReader {
             let rowgroup_id = centroid_sel.rowgroup_id;
             
             // Load P×K matrix for this rowgroup
-            let pxk_matrix = match self.load_pxk_matrix(rowgroup_id).await {
+            let pxk_matrix = match self.load_pxk_matrix(&self.base_path, rowgroup_id).await {
                 Ok(matrix) => matrix,
                 Err(e) => {
                     tracing::warn!("Failed to load P×K matrix for rowgroup {}: {}", rowgroup_id, e);
@@ -1539,8 +1532,7 @@ impl RaptorReader {
     /// Get rowgroups for centroid using actual footer data (when available)
     async fn get_rowgroups_for_centroid_from_footer(&self, centroid_id: usize) -> Result<Vec<u16>> {
         // Use the actual centroid-to-rowgroup mapping from the footer
-        let footer = self.cached_footer.as_ref()
-            .ok_or_else(|| anyhow::anyhow!("Footer not loaded"))?;
+        let footer = self.get_footer(&self.base_path).await?;
         
         // Since we have 1-to-1 mapping, centroid_id == rowgroup_id
         if centroid_id < footer.total_centroids as usize {
@@ -1678,21 +1670,15 @@ impl RaptorReader {
     
     /// Load K×K inter-centroid distance matrix from footer
     /// Cached for reader lifetime as it's used frequently in search
-    async fn load_kxk_matrix(&mut self) -> Result<()> {
-        if self.cached_kxk_matrix.is_some() {
-            return Ok(()); // Already loaded
-        }
+    async fn load_kxk_matrix(&self) -> Result<()> {
+        // K×K matrix is loaded on demand from the footer, no need to check cache
         
-        // Ensure footer is loaded first
-        if self.cached_footer.is_none() {
-            let file_path = &self.base_path.clone();
-            self.load_footer(&file_path).await?;
-        }
+        // Footer and K×K matrix are loaded on demand via get_footer() and get_kxk_matrix()
         
-        if let Some(footer) = &self.cached_footer {
-            self.cached_kxk_matrix = Some(Arc::new(footer.inter_centroid_distances.clone()));
+        if let Ok(footer) = self.get_footer(&self.base_path).await {
+            // K×K matrix is derived from footer on demand
             
-            let matrix = self.cached_kxk_matrix.as_ref().unwrap();
+            let matrix = self.get_kxk_matrix(&self.base_path).await?;
             tracing::info!(
                 "Loaded K×K matrix: {} centroids, {} bytes compressed (87.5% compression)",
                 matrix.num_centroids,
@@ -1704,15 +1690,10 @@ impl RaptorReader {
     }
     
     /// Load P×K vector-to-centroid matrix for a specific rowgroup
-    /// Cached on-demand based on access patterns
-    async fn load_pxk_matrix(&mut self, rowgroup_id: u16) -> Result<Arc<VectorCentroidMatrix>> {
-        // Check cache first
-        if let Some(cached) = self.cached_pxk_matrices.get(&rowgroup_id) {
-            return Ok(cached.clone());
-        }
-        
+    /// P×K matrices are stored in rowgroups and must be read from disk each time
+    async fn load_pxk_matrix(&self, file_path: &str, rowgroup_id: u16) -> Result<Arc<VectorCentroidMatrix>> {
         // Load rowgroup metadata to find P×K matrix location
-        let metadata = self.read_metadata(&self.base_path).await?;
+        let metadata = self.read_metadata(file_path).await?;
         let rg_metadata = metadata.row_groups.iter()
             .find(|rg| rg.id == rowgroup_id)
             .ok_or_else(|| anyhow::anyhow!("Rowgroup {} not found", rowgroup_id))?;
@@ -1731,7 +1712,7 @@ impl RaptorReader {
                 crate::core::compression::decompress(
                     &matrix_data,
                     pxk_metadata.compression,
-                    CompressionContext::SstBlock
+                    CompressionContext::Column
                 )?
             } else {
                 matrix_data
@@ -1739,33 +1720,35 @@ impl RaptorReader {
             
             // Deserialize matrix
             let matrix: VectorCentroidMatrix = bincode::deserialize(&decompressed)?;
-            let arc_matrix = Arc::new(matrix.clone());
-            self.cached_pxk_matrices.insert(rowgroup_id, arc_matrix.clone());
             
-            let compression_ratio = match matrix.storage_strategy {
+            // Extract fields before moving matrix into Arc
+            let storage_strategy = matrix.storage_strategy.clone();
+            let num_vectors = matrix.num_vectors;
+            let num_centroids = matrix.num_centroids;
+            
+            let compression_ratio = match storage_strategy {
                 VectorCentroidStorageStrategy::Full => 50.0,
                 VectorCentroidStorageStrategy::Hierarchical => 99.85,
                 VectorCentroidStorageStrategy::Sparse => 99.0,
             };
             
+            let arc_matrix = Arc::new(matrix);
+            
             tracing::debug!(
                 "Loaded inline P×K matrix for rowgroup {} from offset {}: \
                  {} vectors × {} centroids, strategy {:?}, {:.2}% compression",
-                rowgroup_id, pxk_metadata.offset, matrix.num_vectors, matrix.num_centroids,
-                matrix.storage_strategy, compression_ratio
+                rowgroup_id, pxk_metadata.offset, num_vectors, num_centroids,
+                storage_strategy, compression_ratio
             );
             
             return Ok(arc_matrix);
         }
         
         // Fallback: Check footer for P×K matrix (old format for compatibility)
-        if self.cached_footer.is_none() {
-            let file_path = &self.base_path.clone();
-            self.load_footer(&file_path).await?;
-        }
+        // Footer is loaded on demand via get_footer()
         
         // Try to load from footer's vector_centroid_matrices (these are refs, need to load actual data)
-        if let Some(footer) = &self.cached_footer {
+        if let Ok(footer) = self.get_footer(&self.base_path).await {
             for matrix_ref in &footer.vector_centroid_matrices {
                 if matrix_ref.rowgroup_id == rowgroup_id {
                     // Load actual matrix data from file using the ref's offset
@@ -1788,7 +1771,7 @@ impl RaptorReader {
                         crate::core::compression::decompress(
                             &matrix_data,
                             compression_algo,
-                            crate::core::compression::CompressionContext::SstBlock
+                            crate::core::compression::CompressionContext::Column
                         )?
                     } else {
                         matrix_data
@@ -1797,7 +1780,7 @@ impl RaptorReader {
                     // Deserialize to VectorCentroidMatrix
                     let matrix: VectorCentroidMatrix = bincode::deserialize(&decompressed)?;
                     let arc_matrix = Arc::new(matrix);
-                    self.cached_pxk_matrices.insert(rowgroup_id, arc_matrix.clone());
+                    // P×K matrices are not cached - read on demand
                     return Ok(arc_matrix);
                 }
             }
@@ -1807,15 +1790,12 @@ impl RaptorReader {
     }
     
     /// Get inter-centroid distance from K×K matrix with O(1) lookup
-    pub async fn get_inter_centroid_distance(&mut self, centroid_i: usize, centroid_j: usize) -> Result<f32> {
+    pub async fn get_inter_centroid_distance(&self, centroid_i: usize, centroid_j: usize) -> Result<f32> {
         // Ensure K×K matrix is loaded
         self.load_kxk_matrix().await?;
         
-        if let Some(matrix) = &self.cached_kxk_matrix {
-            Ok(matrix.get_distance(centroid_i, centroid_j))
-        } else {
-            Err(anyhow::anyhow!("K×K matrix not available"))
-        }
+        let matrix = self.get_kxk_matrix(&self.base_path).await?;
+        Ok(matrix.get_distance(centroid_i, centroid_j))
     }
     
     /// Get vector-to-centroid distance from P×K matrix
@@ -1825,30 +1805,47 @@ impl RaptorReader {
         vector_idx: usize,
         centroid_idx: usize,
     ) -> Result<f32> {
-        let matrix = self.load_pxk_matrix(rowgroup_id).await?;
+        let matrix = self.load_pxk_matrix(&self.base_path, rowgroup_id).await?;
         matrix.get_distance(vector_idx, centroid_idx)
     }
     
-    /// Load the centralized footer containing all centroids using zero-copy memory-mapped I/O
-    /// This is loaded once and cached for the lifetime of the reader
-    async fn load_footer(&mut self, file_path: &str) -> Result<()> {
-        // TODO: Implement footer caching
-        // Check if footer is already cached
-        if self.cached_footer.is_some() {
-            return Ok(());
+    /// Load the centralized footer containing all centroids
+    /// Returns the footer and caches it through zero-copy system
+    async fn load_footer(&self, file_path: &str) -> Result<Arc<RaptorFooter>> {
+        // Read footer from file - the zero-copy filesystem will handle caching
+        let file_metadata = FileSystem::metadata(self.filesystem.as_ref(), file_path).await?;
+        let file_size = file_metadata.size as usize;
+        
+        // Read magic number and footer size
+        let footer_metadata_offset = file_size - 8;
+        let footer_metadata_bytes = FileSystem::read_range(
+            self.filesystem.as_ref(), 
+            file_path, 
+            footer_metadata_offset as u64, 
+            8
+        ).await?;
+        
+        let footer_size = u32::from_le_bytes(footer_metadata_bytes[0..4].try_into()?) as u64;
+        let magic = &footer_metadata_bytes[4..8];
+        
+        if magic != constants::RAPTOR_MAGIC {
+            return Err(anyhow::anyhow!("Invalid RAPTOR file: magic number mismatch"));
         }
         
-        // Try memory-mapped file access for zero-copy I/O
-        match self.load_footer_with_mmap(file_path).await {
-            Ok(footer) => {
-                self.cached_footer = Some(footer);
-                Ok(())
-            },
-            Err(_) => {
-                // Fallback to traditional file I/O for cloud storage compatibility
-                self.load_footer_traditional(file_path).await
-            }
-        }
+        // Read the actual footer
+        let footer_offset = file_size as u64 - 8 - footer_size;
+        let footer_bytes = FileSystem::read_range(
+            self.filesystem.as_ref(),
+            file_path,
+            footer_offset,
+            footer_size,
+        ).await?;
+        
+        // Deserialize footer
+        let footer: RaptorFooter = bincode::deserialize(&footer_bytes)?;
+        
+        // The zero-copy filesystem will cache this automatically
+        Ok(Arc::new(footer))
     }
     
     /// Zero-copy memory-mapped footer loading (preferred method)
@@ -1926,7 +1923,7 @@ impl RaptorReader {
         let footer: RaptorFooter = bincode::deserialize(&footer_bytes)?;
         
         // Cache the footer
-        self.cached_footer = Some(Arc::new(footer));
+        // Footer is cached by zero-copy filesystem
         
         tracing::info!(
             "Traditional I/O footer load: {} centroids of dimension {}, total size {} bytes",
@@ -1936,24 +1933,23 @@ impl RaptorReader {
         );
         
         // Cache the footer
-        self.cached_footer = Some(Arc::new(footer));
+        // Footer is cached by zero-copy filesystem
         
         Ok(())
     }
     
     /// Get centroid for a specific rowgroup from the cached footer
     /// Returns None if footer not loaded or rowgroup not found
-    pub fn get_centroid(&self, rowgroup_id: u16) -> Option<Vec<f32>> {
-        self.cached_footer.as_ref()?.centroids.get_centroid(rowgroup_id)
+    pub async fn get_centroid(&self, rowgroup_id: u16) -> Result<Option<Vec<f32>>> {
+        let footer = self.get_footer(&self.base_path).await?;
+        Ok(footer.centroids.get_centroid(rowgroup_id))
     }
     
     /// Load bloom filter for a specific row group WITHOUT reading row group data
     /// This enables efficient ID-based row group skipping during search
-    pub async fn load_bloom_filter(&mut self, file_path: &str, rowgroup_id: u16) -> Result<Arc<RowGroupBloomFilter>> {
-        // Check cache first
-        if let Some(cached_filter) = self.bloom_filter_cache.get(&rowgroup_id) {
-            return Ok(cached_filter.clone());
-        }
+    pub async fn load_bloom_filter(&self, file_path: &str, rowgroup_id: u16) -> Result<Arc<RowGroupBloomFilter>> {
+        // Note: Bloom filters are not cached at the engine level
+        // They could be cached by the zero-copy filesystem if needed
         
         // Load metadata to get bloom filter offset
         let metadata = self.read_metadata(file_path).await?;
@@ -1983,8 +1979,7 @@ impl RaptorReader {
         
         let bloom_filter_arc = Arc::new(bloom_filter);
         
-        // Cache the loaded bloom filter
-        self.bloom_filter_cache.insert(rowgroup_id, bloom_filter_arc.clone());
+        // Note: Not caching bloom filter at engine level - rely on filesystem caching
         
         tracing::debug!(
             "Loaded bloom filter: {} IDs, {:.3}% FPR, {} bytes for row group {}",
@@ -2022,16 +2017,17 @@ impl RaptorReader {
     
     /// Decompress bloom filter using unified compression module
     fn decompress_bloom_filter(&self, compressed_data: &[u8]) -> Result<Vec<u8>> {
-        use crate::core::compression::StandardCompression;
+        use crate::core::compression::{StandardCompression, CompressionProvider, CompressionContext};
         
         // Create decompression context
-        let decompressor = StandardCompression::new();
+        let decompressor = StandardCompression;
+        let context = CompressionContext::Block; // Bloom filter data is heterogeneous
         
         // Decompress using ZSTD (matches writer compression)
         let decompressed = decompressor.decompress(
             compressed_data,
             CompressionAlgorithm::Zstd,
-            CompressionContext::SstBlock
+            context
         )?;
         
         Ok(decompressed)
@@ -2039,7 +2035,7 @@ impl RaptorReader {
     
     /// Check if a vector ID might exist in a row group using bloom filter
     /// Returns None if bloom filter not available, Some(bool) for membership test
-    pub async fn check_id_in_rowgroup(&mut self, file_path: &str, rowgroup_id: u16, vector_id: &str) -> Result<Option<bool>> {
+    pub async fn check_id_in_rowgroup(&self, file_path: &str, rowgroup_id: u16, vector_id: &str) -> Result<Option<bool>> {
         match self.load_bloom_filter(file_path, rowgroup_id).await {
             Ok(bloom_filter) => Ok(Some(bloom_filter.contains(vector_id))),
             Err(_) => {
@@ -2051,7 +2047,7 @@ impl RaptorReader {
     
     /// Filter row groups based on vector ID using bloom filters
     /// Returns list of row group IDs that might contain the vector ID
-    pub async fn filter_rowgroups_by_id(&mut self, file_path: &str, vector_id: &str) -> Result<Vec<u16>> {
+    pub async fn filter_rowgroups_by_id(&self, file_path: &str, vector_id: &str) -> Result<Vec<u16>> {
         let metadata = self.read_metadata(file_path).await?;
         let mut candidate_rowgroups = Vec::new();
         
@@ -2086,7 +2082,7 @@ impl RaptorReader {
     
     /// Load a specific vector by ID from the appropriate row group
     /// Uses bloom filter to identify candidate row groups first
-    pub async fn load_vector_by_id(&mut self, file_path: &str, vector_id: &str) -> Result<Vec<f32>> {
+    pub async fn load_vector_by_id(&self, file_path: &str, vector_id: &str) -> Result<Vec<f32>> {
         // Use bloom filter to find candidate row groups
         let candidate_rowgroups = self.filter_rowgroups_by_id(file_path, vector_id).await?;
         
@@ -2137,7 +2133,7 @@ impl RaptorReader {
     }
     
     /// Main similarity search entry point using target vector ID
-    pub async fn similarity_search_by_id(&mut self, 
+    pub async fn similarity_search_by_id(&self, 
         file_path: &str,
         target_id: &str, 
         k: usize
@@ -2158,7 +2154,7 @@ impl RaptorReader {
         let mut cluster_distances = Vec::new();
         
         for &rg_id in &candidate_rowgroups {
-            if let Some(centroid) = self.get_centroid(rg_id) {
+            if let Some(centroid) = self.get_centroid(rg_id).await? {
                 let distance = self.distance_compute.calculate_distance(
                     &target_vector, 
                     &centroid,
@@ -2200,7 +2196,7 @@ impl RaptorReader {
     }
     
     /// Search within a single cluster using local graph traversal
-    async fn search_within_cluster(&mut self,
+    async fn search_within_cluster(&self,
         file_path: &str,
         rg_id: u16,
         target_vector: &[f32],
@@ -2285,13 +2281,14 @@ impl RaptorReader {
     
     /// Decompress P² matrix using unified compression
     fn decompress_p2_matrix(&self, compressed_data: &[u8]) -> Result<Vec<u8>> {
-        use crate::core::compression::StandardCompression;
+        use crate::core::compression::{StandardCompression, CompressionProvider, CompressionContext};
         
-        let decompressor = StandardCompression::new();
+        let decompressor = StandardCompression;
+        let context = CompressionContext::Column; // P² matrix contains homogeneous distance values
         let decompressed = decompressor.decompress(
             compressed_data,
             CompressionAlgorithm::Zstd,
-            CompressionContext::SstBlock
+            context
         )?;
         
         Ok(decompressed)
@@ -2306,7 +2303,7 @@ impl RaptorReader {
         target_id: &str,
         k: usize
     ) -> Result<Vec<CandidateResult>> {
-        let distance_compute = UnifiedDistanceCompute::with_metric(DistanceMetric::Cosine);
+        let distance_compute = UnifiedDistanceCompute::new(DistanceMetric::Cosine);
         
         // P² matrix provides exact distances between all vectors
         // Use it for efficient nearest neighbor search with clustering awareness
@@ -2314,7 +2311,7 @@ impl RaptorReader {
         // Step 1: Compute distances from query to all vectors
         let mut query_distances: Vec<(usize, f32)> = Vec::with_capacity(vectors.len());
         for (idx, vector) in vectors.iter().enumerate() {
-            let dist = distance_compute.calculate(target_vector, vector)?;
+            let dist = distance_compute.calculate_distance(target_vector, vector, &DistanceMetric::Cosine).raw_value;
             query_distances.push((idx, dist));
         }
         
@@ -2347,7 +2344,7 @@ impl RaptorReader {
                             
                             // If close enough in the P² matrix, it's likely relevant
                             if intra_dist < 0.3 {  // Threshold for cluster membership
-                                let query_dist = distance_compute.calculate(target_vector, &vectors[other_idx])?;
+                                let query_dist = distance_compute.calculate_distance(target_vector, &vectors[other_idx], &DistanceMetric::Cosine).raw_value;
                                 if seen.insert(other_idx) && final_candidates.len() < k * 3 {
                                     final_candidates.push(CandidateResult {
                                         id: ids[other_idx].clone(),
@@ -2390,11 +2387,11 @@ impl RaptorReader {
         let mut candidates = Vec::new();
         
         for (idx, (vector, id)) in vectors.iter().zip(ids.iter()).enumerate() {
-            let distance = self.distance_compute.compute_distance(
+            let distance = self.distance_compute.calculate_distance(
                 target_vector,
                 vector,
-                DistanceMetric::Cosine
-            )?;
+                &DistanceMetric::Cosine
+            ).raw_value;
             
             candidates.push(CandidateResult {
                 id: id.clone(),
@@ -2418,11 +2415,11 @@ impl RaptorReader {
         let mut best_idx = 0;
         
         for (idx, vector) in vectors.iter().enumerate() {
-            let distance = self.distance_compute.compute_distance(
+            let distance = self.distance_compute.calculate_distance(
                 target_vector,
                 vector,
-                DistanceMetric::Cosine
-            )?;
+                &DistanceMetric::Cosine
+            ).raw_value;
             
             if distance < min_distance {
                 min_distance = distance;
@@ -2520,16 +2517,17 @@ impl RaptorReader {
     
     /// Get all centroids from the cached footer
     /// Returns empty vec if footer not loaded
-    pub fn get_all_centroids(&self) -> Vec<(u32, Vec<f32>)> {
-        self.cached_footer.as_ref()
-            .map(|f| f.centroids.decode_all())
-            .unwrap_or_default()
+    pub async fn get_all_centroids(&self) -> Result<Vec<(u32, Vec<f32>)>> {
+        let footer = self.get_footer(&self.base_path).await?;
+        let all_centroids = footer.centroids.decode_all();
+        // Convert u16 to u32 for the tuple
+        Ok(all_centroids.into_iter().map(|(id, vec)| (id as u32, vec)).collect())
     }
     
     /// Hierarchical search using the neighbor structure
     
     /// Comprehensive validation method to verify reader-writer alignment
-    pub async fn validate_alignment_with_writer(&mut self, file_path: &str) -> Result<ValidationReport> {
+    pub async fn validate_alignment_with_writer(&self, file_path: &str) -> Result<ValidationReport> {
         tracing::info!("🔍 Validating RAPTOR reader-writer alignment for {}", file_path);
         
         let mut report = ValidationReport::default();
@@ -2693,12 +2691,9 @@ impl RaptorReader {
         top_k_rowgroups: usize,
         distance_metric: &DistanceMetric,
     ) -> Result<Vec<u16>> {
-        // Ensure footer is loaded
-        if self.cached_footer.is_none() {
-            return Err(anyhow::anyhow!("Footer not loaded - call get_metadata first"));
-        }
+        // Footer is loaded on demand via get_footer()
         
-        let footer = self.cached_footer.as_ref().unwrap();
+        let footer = self.get_footer(&self.base_path).await?;
         let all_centroids = footer.centroids.decode_all();
         
         if all_centroids.is_empty() {
@@ -2809,73 +2804,69 @@ impl RaptorReader {
     // Obsolete - clustering info is in footer's ColumnarCentroids and K×K matrix
     #[allow(dead_code)]
     async fn load_cluster_metadata_obsolete(&self) -> Result<()> {
-        // Use centroids from the cached footer
-        if let Some(ref footer) = self.cached_footer {
-            let all_centroids = footer.centroids.decode_all();
-            let centroids: Vec<Vec<f32>> = all_centroids.iter()
-                .map(|(_, c)| c.clone())
-                .collect();
+        // Get footer through helper method
+        let footer = self.get_footer(&self.base_path).await?;
+        let all_centroids = footer.centroids.decode_all();
+        let centroids: Vec<Vec<f32>> = all_centroids.iter()
+            .map(|(_, c)| c.clone())
+            .collect();
+        
+        // PERFORMANCE OPTIMIZATION: Only compute full matrix for small collections
+        // Based on performance testing:
+        // - k ≤ 100: ~1ms (negligible)
+        // - k = 1000: ~105ms (significant)
+        // - k = 10000: ~10.5s (unacceptable)
+        let centroid_distances = if centroids.len() <= 100 {
+            // Small collection: pre-compute full matrix (< 1ms overhead)
+            let mut distances = vec![vec![0.0f32; centroids.len()]; centroids.len()];
             
-            // PERFORMANCE OPTIMIZATION: Only compute full matrix for small collections
-            // Based on performance testing:
-            // - k ≤ 100: ~1ms (negligible)
-            // - k = 1000: ~105ms (significant)
-            // - k = 10000: ~10.5s (unacceptable)
-            let centroid_distances = if centroids.len() <= 100 {
-                // Small collection: pre-compute full matrix (< 1ms overhead)
-                let mut distances = vec![vec![0.0f32; centroids.len()]; centroids.len()];
+            for i in 0..centroids.len() {
+                distances[i][i] = 0.0;
                 
-                for i in 0..centroids.len() {
-                    distances[i][i] = 0.0;
+                for j in (i + 1)..centroids.len() {
+                    let dist = self.distance_compute.calculate_distance(
+                        &centroids[i],
+                        &centroids[j],
+                        &DistanceMetric::Euclidean,
+                    ).raw_value;
                     
-                    for j in (i + 1)..centroids.len() {
-                        let dist = self.distance_compute.calculate_distance(
-                            &centroids[i],
-                            &centroids[j],
-                            &DistanceMetric::Euclidean,
-                        ).raw_value;
-                        
-                        distances[i][j] = dist;
-                        distances[j][i] = dist;
-                    }
-                }
-                
-                tracing::debug!(
-                    "Pre-computed {} centroid distances for small collection",
-                    centroids.len() * (centroids.len() - 1) / 2
-                );
-                
-                distances
-            } else {
-                // Large collection: use lazy loading (compute on-demand during search)
-                // Return empty matrix - distances will be computed as needed
-                tracing::info!(
-                    "Using lazy loading for {} centroids (would need {} distance calculations)",
-                    centroids.len(),
-                    centroids.len() * (centroids.len() - 1) / 2
-                );
-                
-                vec![vec![0.0f32; centroids.len()]; centroids.len()]
-            };
-            
-            // Create cluster stats from rowgroup metadata
-            let mut cluster_stats = Vec::new();
-            for rg in &footer.file_metadata.row_groups {
-                if let Some(ref stats) = rg.centroid_stats {
-                    cluster_stats.push(ClusterStats {
-                        mean_distance: stats.mean_distance,
-                        std_deviation: stats.std_deviation,
-                        radius: stats.radius,
-                    });
+                    distances[i][j] = dist;
+                    distances[j][i] = dist;
                 }
             }
             
-            // Method body removed - ClusterMetadata no longer exists
-            Ok(())
+            tracing::debug!(
+                "Pre-computed {} centroid distances for small collection",
+                centroids.len() * (centroids.len() - 1) / 2
+            );
+            
+            distances
         } else {
-            // Fallback if footer not loaded
-            Ok(())
+            // Large collection: use lazy loading (compute on-demand during search)
+            // Return empty matrix - distances will be computed as needed
+            tracing::info!(
+                "Using lazy loading for {} centroids (would need {} distance calculations)",
+                centroids.len(),
+                centroids.len() * (centroids.len() - 1) / 2
+            );
+            
+            vec![vec![0.0f32; centroids.len()]; centroids.len()]
+        };
+        
+        // Create cluster stats from rowgroup metadata
+        let mut cluster_stats = Vec::new();
+        for rg in &footer.file_metadata.row_groups {
+            if let Some(ref stats) = rg.centroid_stats {
+                cluster_stats.push(ClusterStats {
+                    mean_distance: stats.mean_distance,
+                    std_deviation: stats.std_deviation,
+                    radius: stats.radius,
+                });
+            }
         }
+        
+        // Method body removed - ClusterMetadata no longer exists
+        Ok(())
     }
     
     /// Get boosting configuration (can be customized per collection)
@@ -2886,16 +2877,6 @@ impl RaptorReader {
     }
     
     
-    /// Load a vector by ID (stub - would use actual storage layout)
-    async fn load_vector_by_id(
-        &self,
-        _id: &str,
-        _collection_id: &str,
-    ) -> Result<Vec<f32>> {
-        // This would load the actual vector from storage
-        // For now, return empty to make it compile
-        Ok(Vec::new())
-    }
     
     // REMOVED: encode_for_cache and decode_cached_rowgroup wrapper methods
     // Reason: Redundant - Arrow IPC operations inlined where needed
@@ -2903,7 +2884,7 @@ impl RaptorReader {
     
     /// Parse metadata from footer bytes (stub)
     /// Get metadata for a file without reading the actual data
-    pub async fn get_metadata(&mut self, file_path: &str) -> Result<RaptorFileMetadata> {
+    pub async fn get_metadata(&self, file_path: &str) -> Result<RaptorFileMetadata> {
         self.read_metadata(file_path).await
     }
     
@@ -2989,10 +2970,10 @@ impl RaptorReader {
             
             if let (Some(vectors), Some(ids)) = (partial.vectors, partial.ids) {
                 // Compute distances for all vectors in this rowgroup
-                let distance_compute = UnifiedDistanceCompute::with_metric(DistanceMetric::Cosine);
+                let distance_compute = UnifiedDistanceCompute::new(DistanceMetric::Cosine);
                 
                 for (idx, vector) in vectors.iter().enumerate() {
-                    let distance = distance_compute.calculate(query, vector)?;
+                    let distance = distance_compute.calculate_distance(query, vector, &DistanceMetric::Cosine).raw_value;
                     all_results.push(SearchResult {
                         vector_id: ids[idx].clone(),
                         distance,
@@ -3019,7 +3000,7 @@ impl RaptorReader {
         crate::core::compression::decompress(
             compressed,
             algorithm,
-            crate::core::compression::CompressionContext::SstBlock,
+            crate::core::compression::CompressionContext::Column,
         )
     }
     

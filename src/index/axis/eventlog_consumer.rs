@@ -935,11 +935,22 @@ impl AxisEventLogConsumer {
                                 "raptor".to_string()
                             ));
                             
+                            // Create transaction coordinator for RAPTOR
+                            use crate::storage::transaction_coordinator::TransactionCoordinator;
+                            let transaction_coordinator = Arc::new(
+                                TransactionCoordinator::new(
+                                    fs_factory.clone(),
+                                    Some(format!("{}/temp", cache_dir)),
+                                ).await?
+                            );
+                            
                             let reader = RaptorReader::new(
-                                cache_dir,
+                                cache_dir.clone(),
+                                collection_id.to_string(),
                                 config,
                                 cache,
-                                zero_copy_fs,
+                                zero_copy_fs.clone(),
+                                io_system.clone(),
                                 transaction_coordinator,
                             );
                             

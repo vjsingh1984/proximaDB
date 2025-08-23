@@ -148,7 +148,10 @@ impl StorageEngineFactory {
         info!("Creating RAPTOR (Row-Aligned Predicated Tensor Optimized Repository) storage engine");
         
         let config = config.unwrap_or_else(super::raptor::RaptorConfig::default);
-        let engine = RaptorEngine::new(collection_id, base_path, config).await?;
+        // Create shared cache for RAPTOR
+        use crate::storage::cache::orchestrator::CrossCacheOrchestrator;
+        let cache = Arc::new(CrossCacheOrchestrator::new());
+        let engine = RaptorEngine::new(collection_id, base_path, config, cache).await?;
         Ok(Arc::new(engine))
     }
     

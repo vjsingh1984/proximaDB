@@ -147,18 +147,18 @@ impl UniversalCompressionAdapter {
         context_config: &ContextAwareCompressionConfig,
     ) -> Result<CompressionContext> {
         let context = match context_config.data_type {
-            CompressionDataType::SstBlock => CompressionContext::SstBlock,
+            CompressionDataType::SstBlock => CompressionContext::Block,
             CompressionDataType::VectorData => CompressionContext::VectorSerialization,
-            CompressionDataType::ParquetColumn => CompressionContext::ParquetColumn,
+            CompressionDataType::ParquetColumn => CompressionContext::Parquet,
             CompressionDataType::MetadataJson => CompressionContext::VectorSerialization, // Best fit
-            CompressionDataType::IndexData => CompressionContext::SstBlock, // Best fit
+            CompressionDataType::IndexData => CompressionContext::Block, // Best fit
             CompressionDataType::Custom(ref name) => {
                 // Map custom contexts to best fit
                 match name.as_deref() {
-                    "bloom_filter" | "index_node" => CompressionContext::SstBlock,
+                    "bloom_filter" | "index_node" => CompressionContext::Block,
                     "vector_batch" | "embedding" => CompressionContext::VectorSerialization,
-                    "columnar_chunk" => CompressionContext::ParquetColumn,
-                    _ => CompressionContext::SstBlock, // Default fallback
+                    "columnar_chunk" => CompressionContext::Parquet,
+                    _ => CompressionContext::Block, // Default fallback
                 }
             }
         };
@@ -626,7 +626,7 @@ mod tests {
             access_pattern: None,
         };
         let context = adapter.map_context_aware_config(&sst_context).unwrap();
-        assert_eq!(context, CompressionContext::SstBlock);
+        assert_eq!(context, CompressionContext::Block);
         
         // Test vector data context
         let vector_context = ContextAwareCompressionConfig {
@@ -644,7 +644,7 @@ mod tests {
             access_pattern: None,
         };
         let context = adapter.map_context_aware_config(&parquet_context).unwrap();
-        assert_eq!(context, CompressionContext::ParquetColumn);
+        assert_eq!(context, CompressionContext::Parquet);
     }
     
     #[test]

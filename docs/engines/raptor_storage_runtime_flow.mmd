@@ -6,9 +6,9 @@ graph TB
         
         subgraph "Per RowGroup Storage"
             CS[Calculate CentroidStats<br/>mean=0.45, std=0.12<br/>radius=0.89]:::compute
-            BV[Identify Boundary Vectors<br/>184/1024 = 18%]:::compute
-            NC[Find Nearest Centroids<br/>[19,7,12,45,67]]:::compute
-            FC[Find Farthest Centroids<br/>[89,91,95,97,99]]:::compute
+            BV[Identify Boundary Vectors<br/>184/1024 = 18 percent]:::compute
+            NC[Find Nearest Centroids<br/>19,7,12,45,67]:::compute
+            FC[Find Farthest Centroids<br/>89,91,95,97,99]:::compute
         end
         
         subgraph "Stored Structures"
@@ -34,17 +34,17 @@ graph TB
         
         subgraph "Phase 1: Boundary Detection"
             BD[Load K² Matrix<br/>Compute d_i/d_j ratios<br/>Apply 0.8 threshold]:::runtime
-            BDR[BoundaryDetectionResult<br/>primary:[23,19,67]<br/>expanded:[7,12]]:::temp
+            BDR[BoundaryDetectionResult<br/>primary:23,19,67<br/>expanded:7,12]:::temp
         end
         
         subgraph "Phase 2: Spillover Detection"
-            SD[Load P×K Matrices<br/>Check spillover %<br/>Apply 15% threshold]:::runtime
-            SDR[SpilloverDetectionResult<br/>spillover_map<br/>final:[23,19,67,7,12,71,88]]:::temp
+            SD[Load P×K Matrices<br/>Check spillover percent<br/>Apply 15 percent threshold]:::runtime
+            SDR[SpilloverDetectionResult<br/>spillover_map<br/>final:23,19,67,7,12,71,88]:::temp
         end
         
         subgraph "Search & Boosting"
             SRCH[Search 7 rowgroups<br/>Load P² matrices]:::runtime
-            BOOST[Apply 5-component formula<br/>d₁(runtime) + d₂-d₅(stored)]:::runtime
+            BOOST[Apply 5-component formula<br/>d1 runtime + d2-d5 stored]:::runtime
             RES[Ranked Results]:::result
         end
         

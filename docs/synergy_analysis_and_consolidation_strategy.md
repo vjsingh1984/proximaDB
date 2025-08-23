@@ -85,9 +85,9 @@ impl UniversalCompressionEngine {
     
     fn map_context(&self, context_config: &ContextAwareCompressionConfig) -> CompressionContext {
         match context_config.data_type {
-            DataType::SstBlock => CompressionContext::SstBlock,
+            DataType::Block => CompressionContext::Block,
             DataType::VectorData => CompressionContext::VectorSerialization,
-            DataType::ParquetColumn => CompressionContext::ParquetColumn,
+            DataType::Parquet => CompressionContext::Parquet,
         }
     }
 }

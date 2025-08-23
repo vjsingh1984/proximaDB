@@ -1276,7 +1276,7 @@ impl DataBlock {
                 &raw_data, 
                 compression_algo.clone(), 
                 config.compression_level as i32, 
-                unified_compression::CompressionContext::SstBlock
+                unified_compression::CompressionContext::Block
             ) {
                 let compression_ratio = compressed.len() as f32 / raw_data.len() as f32;
                 
@@ -1392,7 +1392,7 @@ impl DataBlock {
         let decompressed = unified_compression::decompress(
             compressed_data,
             algorithm.clone(),
-            CompressionContext::SstBlock
+            CompressionContext::Block
         )
         .context("Failed to decompress DataBlock using unified compression")?;
         

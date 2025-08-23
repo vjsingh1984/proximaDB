@@ -242,9 +242,9 @@ impl StandardCompression {
 ----
 graph LR
     subgraph "Context Types"
-        CTX1[SstBlock<br/>Row-based blocks]
+        CTX1[Block<br/>Row-based blocks]
         CTX2[VectorSerialization<br/>Wire format]
-        CTX3[ParquetColumn<br/>Columnar data]
+        CTX3[Parquet<br/>Columnar data]
         CTX4[BloomFilter<br/>Bitmap data]
         CTX5[IndexNode<br/>Graph structures]
     end
@@ -299,7 +299,7 @@ Compression Flow:
 
 [source,rust]
 ----
-impl SstBlockWriter {
+impl BlockWriter {
     pub fn write_compressed_block(
         &mut self,
         records: &[VectorRecord],
@@ -310,7 +310,7 @@ impl SstBlockWriter {
         // Apply compression based on config
         let compressed = self.compression.compress(
             &uncompressed,
-            CompressionContext::SstBlock,
+            CompressionContext::Block,
         )?;
         
         // Calculate compression ratio

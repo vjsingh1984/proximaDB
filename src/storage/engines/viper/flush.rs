@@ -1205,7 +1205,7 @@ impl FlushManager {
             let name = field.name();
             
             // Detect column type based on name and context
-            let data_type = detect_column_type(name, &CompressionContext::ParquetColumn);
+            let data_type = detect_column_type(name, &CompressionContext::Parquet);
             
             // Get optimal compression for this column type
             let optimal_algorithm = get_optimal_compression_for_column(&data_type);

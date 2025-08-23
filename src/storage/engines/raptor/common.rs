@@ -3,8 +3,8 @@
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::sync::Arc;
 use crate::core::compression::CompressionAlgorithm;
-use arrow_array::RecordBatch;
 use crate::proto::proximadb::VectorRecord;
 use anyhow::Result;
 // Re-export FastLanesScheme for use in RAPTOR modules
@@ -12,8 +12,11 @@ pub use crate::storage::engines::common::fastlanes_encoding::FastLanesScheme;
 
 // ====== Core RowGroup Structure (unified from rowgroup.rs and compaction.rs) ======
 
+fn default_vector_count() -> usize {
+    0
+}
+
 /// Primary RowGroup structure used throughout RAPTOR
-#[derive(Debug, Clone, Serialize, Deserialize)]
 /// Unified RowGroup structure consolidating all variants
 /// 
 /// This structure replaces:
@@ -26,14 +29,15 @@ pub use crate::storage::engines::common::fastlanes_encoding::FastLanesScheme;
 /// - Use u16 for id/centroid_id (supports 65,536 rowgroups = 67M+ vectors)
 /// - String for vector_id (supports UUIDs and custom IDs)
 /// - Removed GraphNode structures (obsolete with Matrix Trinity)
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RowGroup {
     // Core identifiers (u16 for 67M vectors per file)
     pub id: u16,                      // Rowgroup ID == Centroid ID (1:1 mapping)
     pub offset: u64,                  // File offset for this rowgroup
     pub compressed_size: u64,         // Compressed size in bytes
     pub uncompressed_size: u64,       // Original size
-    pub row_count: usize,            // Number of vectors
-    pub vector_count: usize,         // Alias for row_count (each row is a vector)
+    #[serde(default = "default_vector_count")]
+    pub vector_count: usize,         // Number of vectors in this rowgroup
     pub max_vectors: usize,           // Maximum capacity (from smart sizing)
     
     // Column pages with individual compression (from RowGroupMetadata)
@@ -57,6 +61,8 @@ pub struct RowGroup {
     pub centroid_stats: Option<CentroidStats>,   // Statistics for search
     
     // Columnar storage (from HybridRowGroup)
+    // Columnar data is not serialized - it's loaded at runtime
+    #[serde(skip)]
     pub columnar_data: Option<ColumnarBlock>,    // For active/cached rowgroups
     
     // Matrix storage (Matrix Trinity architecture)
@@ -78,7 +84,6 @@ impl RowGroup {
             offset: 0,
             compressed_size: 0,
             uncompressed_size: 0,
-            row_count: 0,
             vector_count: 0,  // Initialize as 0
             max_vectors,
             column_pages: HashMap::new(),
@@ -100,19 +105,19 @@ impl RowGroup {
     
     /// Check if rowgroup has capacity for more vectors
     pub fn has_capacity(&self) -> bool {
-        self.row_count < self.max_vectors
+        self.vector_count < self.max_vectors
     }
     
     /// Get available capacity
     pub fn available_capacity(&self) -> usize {
-        self.max_vectors.saturating_sub(self.row_count)
+        self.max_vectors.saturating_sub(self.vector_count)
     }
     
     /// Convert to compact metadata for serialization (backward compatibility)
     pub fn to_metadata(&self) -> RowGroupMetadata {
         RowGroupMetadata {
             id: self.id,
-            row_count: self.row_count,
+            vector_count: self.vector_count,
             offset: self.offset,
             compressed_size: self.compressed_size,
             column_pages: self.column_pages.clone(),
@@ -133,8 +138,8 @@ impl RowGroup {
             offset: 0, // Will be set during file reading
             compressed_size: 0, // Will be calculated
             uncompressed_size: 0, // Will be calculated
-            row_count: metadata.row_count,
-            max_vectors: metadata.row_count, // Already full
+            vector_count: metadata.vector_count, // Using vector_count from metadata
+            max_vectors: metadata.vector_count, // Already full
             column_pages: metadata.column_pages,
             vector_stats: metadata.vector_stats,
             metadata_stats: metadata.metadata_stats,
@@ -250,7 +255,7 @@ pub struct ColumnPageMetadata {
     pub compressed_size: u64,     // Compressed size in bytes
     pub uncompressed_size: u64,   // Original size
     pub compression: CompressionAlgorithm,
-    pub encoding: FastLanesScheme,
+    pub encoding: Option<FastLanesScheme>,  // None for metadata/source content
     pub null_count: u32,
     pub min_value: Option<Vec<u8>>,  // For pruning
     pub max_value: Option<Vec<u8>>,  // For pruning
@@ -274,7 +279,7 @@ pub enum ColumnType {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RowGroupMetadata {
     pub id: u16,                    // Rowgroup ID == Centroid ID
-    pub row_count: usize,
+    pub vector_count: usize,        // Number of vectors in this rowgroup
     
     // File location information
     pub offset: u64,                // Offset of this rowgroup in the file
@@ -397,7 +402,7 @@ impl Default for RowGroupMetadata {
     fn default() -> Self {
         Self {
             id: 0,
-            row_count: 0,
+            vector_count: 0,
             offset: 0,
             compressed_size: 0,
             column_pages: HashMap::new(),
@@ -512,7 +517,7 @@ pub enum MetadataDataType {
     Map(Box<MetadataDataType>, Box<MetadataDataType>),
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum MetadataValue {
     Boolean(bool),
     Integer(i64),
@@ -520,6 +525,22 @@ pub enum MetadataValue {
     String(String),
     List(Vec<MetadataValue>),
     Map(HashMap<String, MetadataValue>),
+}
+
+impl PartialOrd for MetadataValue {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        match (self, other) {
+            (MetadataValue::Boolean(a), MetadataValue::Boolean(b)) => a.partial_cmp(b),
+            (MetadataValue::Integer(a), MetadataValue::Integer(b)) => a.partial_cmp(b),
+            (MetadataValue::Float(a), MetadataValue::Float(b)) => a.partial_cmp(b),
+            (MetadataValue::String(a), MetadataValue::String(b)) => a.partial_cmp(b),
+            // Cross-type numeric comparisons
+            (MetadataValue::Integer(a), MetadataValue::Float(b)) => (*a as f64).partial_cmp(b),
+            (MetadataValue::Float(a), MetadataValue::Integer(b)) => a.partial_cmp(&(*b as f64)),
+            // Lists and Maps can't be compared
+            _ => None,
+        }
+    }
 }
 
 
@@ -673,14 +694,14 @@ pub struct SearchResult {
 
 // ====== Predicates for filtering ======
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Predicate {
     pub field: String,
     pub op: PredicateOp,
     pub value: MetadataValue,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum PredicateOp {
     Eq,
     Ne,
@@ -1214,13 +1235,28 @@ impl InterCentroidMatrix {
     /// Hardware-optimized batch decompression using unified quantization module
     /// Automatically detects and uses best SIMD instructions available
     pub fn get_distances_batch_optimized(&self, pairs: &[(usize, usize)]) -> Vec<f32> {
-        use crate::compute::quantization::storage_engine::StorageQuantizationEngine;
         use crate::compute::QuantizedVector;
         use crate::compute::quantization::types::UnifiedQuantizationLevel;
-        use crate::core::hardware_capabilities::HardwareCapabilities;
+        use crate::compute::quantization::storage_engine::StorageQuantizationEngine;
+        use crate::core::hardware_capabilities::{HardwareCapabilities, get_hardware_capabilities};
         
-        let hw = HardwareCapabilities::global();
-        let quant_engine = StorageQuantizationEngine::new(1, hw.clone()); // Dimension 1 for scalars
+        let hw = get_hardware_capabilities();
+        
+        // Create required components for StorageQuantizationEngine
+        use crate::compute::quantization::unified::UnifiedQuantizationEngine;
+        use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
+        use crate::compute::distance_computation::DistanceMetric;
+        use crate::compute::quantization::storage_engine::StorageQuantizationConfig;
+        
+        use crate::compute::quantization::unified::InMemoryCodebookStore;
+        let unified_engine = Arc::new(UnifiedQuantizationEngine::new(
+            Arc::new(UnifiedDistanceCompute::new(DistanceMetric::Cosine)),
+            Arc::new(InMemoryCodebookStore::new())
+        ));
+        let distance_compute = Arc::new(UnifiedDistanceCompute::new(DistanceMetric::Cosine));
+        let config = StorageQuantizationConfig::default();
+        
+        let quant_engine = StorageQuantizationEngine::new(unified_engine, distance_compute, config);
         
         // Prepare quantized values
         let mut quantized_values = Vec::with_capacity(pairs.len());
@@ -1243,14 +1279,18 @@ impl InterCentroidMatrix {
         }
         
         // Create quantized vector wrapper for unified engine processing
+        use crate::compute::quantization::unified::QuantizationMetadata;
         let quantized_vector = QuantizedVector {
-            level: UnifiedQuantizationLevel::PQ16,
             data: quantized_values.iter()
                 .flat_map(|&v| v.to_le_bytes())
                 .collect(),
-            scale_factor: Some(self.compression_metadata.scale_factor),
-            offset: None,
-            codebook: None,
+            quantization_level: UnifiedQuantizationLevel::Int8,
+            metadata: QuantizationMetadata {
+                scale: Some(self.compression_metadata.scale_factor),
+                offset: Some(0.0),
+                norm: None,
+                codebook_id: None,
+            },
         };
         
         // Convert u16 values to f32 using unified quantization engine
@@ -1258,7 +1298,7 @@ impl InterCentroidMatrix {
         let mut results = Vec::with_capacity(pairs.len());
         
         // Process in batches for optimal SIMD utilization
-        let batch_size = if hw.has_avx512 { 16 } else if hw.has_avx2 { 8 } else { 4 };
+        let batch_size = if hw.has_avx512() { 16 } else if hw.cpu.features.avx2_support { 8 } else { 4 };
         
         for chunk in quantized_values.chunks(batch_size) {
             // Create temporary vectors for dequantization
@@ -1568,13 +1608,12 @@ impl VectorCentroidMatrix {
     
     /// Hardware-optimized batch distance retrieval using unified modules
     pub fn get_distances_batch_optimized(&self, queries: &[(usize, usize)]) -> Vec<f32> {
-        use crate::compute::quantization::storage_engine::StorageQuantizationEngine;
-        use crate::core::hardware_capabilities::HardwareCapabilities;
+        use crate::core::hardware_capabilities::{HardwareCapabilities, get_hardware_capabilities};
         
         match self.storage_strategy {
             VectorCentroidStorageStrategy::Full => {
                 // Use unified quantization engine for full matrix
-                let hw = HardwareCapabilities::global();
+                let hw = get_hardware_capabilities();
                 let mut results = Vec::with_capacity(queries.len());
                 
                 // Gather quantized values
@@ -1599,7 +1638,7 @@ impl VectorCentroidMatrix {
                            self.compression_metadata.global_min_distance;
                 let scale_factor = if range > 0.0 { 65535.0 / range } else { 1.0 };
                 let scale_recip = 1.0 / scale_factor;
-                let batch_size = if hw.has_avx512 { 16 } else if hw.has_avx2 { 8 } else { 4 };
+                let batch_size = if hw.has_avx512() { 16 } else if hw.cpu.features.avx2_support { 8 } else { 4 };
                 
                 for chunk in quantized_values.chunks(batch_size) {
                     for &quantized_u16 in chunk {
@@ -1785,13 +1824,9 @@ impl P2Matrix {
         let n = self.num_vectors as usize;
         let idx = i * (2 * n - i - 1) / 2 + j - i - 1;
         
-        // Delegate to unified quantization module for dequantization
-        let quantization_engine = crate::compute::quantization::storage_engine::StorageQuantizationEngine::new();
-        quantization_engine.dequantize_u8(
-            self.distances[idx],
-            self.min_distance,
-            self.max_distance
-        )
+        // Simple dequantization from u8 to f32
+        let scale = (self.max_distance - self.min_distance) / 255.0;
+        self.distances[idx] as f32 * scale + self.min_distance
     }
     
     /// Get all distances for a specific vector
@@ -1870,12 +1905,12 @@ impl RowGroupBloomFilter {
         for vector_id in vector_ids {
             let mut candidates = Vec::new();
             
-            // Check each rowgroup's existing BloomFilter
+            // Check each rowgroup's bloom filter offset (actual bloom filter needs to be loaded)
             for rowgroup in &footer.file_metadata.row_groups {
-                if let Some(ref bloom_filter) = rowgroup.bloom_filter {
-                    if bloom_filter.contains(vector_id) {
-                        candidates.push(rowgroup.id);
-                    }
+                if rowgroup.bloom_filter_offset.is_some() {
+                    // TODO: Load bloom filter from file using offset and check
+                    // For now, add all rowgroups with bloom filters as candidates
+                    candidates.push(rowgroup.id);
                 }
             }
             
@@ -1892,10 +1927,10 @@ impl RowGroupBloomFilter {
         footer: &RaptorFooter,
         vector_ids: &[String]
     ) -> Vec<Vec<u16>> {
-        use crate::core::hardware_capabilities::HardwareCapabilities;
+        use crate::core::hardware_capabilities::{HardwareCapabilities, get_hardware_capabilities};
         
-        let hw = HardwareCapabilities::global();
-        let batch_size = if hw.has_avx512 { 16 } else if hw.has_avx2 { 8 } else { 4 };
+        let hw = get_hardware_capabilities();
+        let batch_size = if hw.has_avx512() { 16 } else if hw.cpu.features.avx2_support { 8 } else { 4 };
         
         let mut results = Vec::with_capacity(vector_ids.len());
         
@@ -1905,10 +1940,10 @@ impl RowGroupBloomFilter {
                 let mut candidates = Vec::new();
                 
                 for rowgroup in &footer.file_metadata.row_groups {
-                    if let Some(ref bloom_filter) = rowgroup.bloom_filter {
-                        if bloom_filter.contains(id) {
-                            candidates.push(rowgroup.id);
-                        }
+                    if rowgroup.bloom_filter_offset.is_some() {
+                        // TODO: Load bloom filter from file using offset and check
+                        // For now, add all rowgroups with bloom filters as candidates
+                        candidates.push(rowgroup.id);
                     }
                 }
                 
@@ -1958,13 +1993,9 @@ impl K2Matrix {
         let idx = i * (2 * n - i - 1) / 2 + j - i - 1;
         
         if idx < self.distances.len() {
-            // Delegate to unified quantization module for dequantization
-            let quantization_engine = crate::compute::quantization::storage_engine::StorageQuantizationEngine::new();
-            quantization_engine.dequantize_u8(
-                self.distances[idx],
-                self.min_distance,
-                self.max_distance
-            )
+            // Simple dequantization from u8 to f32
+            let scale = (self.max_distance - self.min_distance) / 255.0;
+            self.distances[idx] as f32 * scale + self.min_distance
         } else {
             self.max_distance // Fallback
         }

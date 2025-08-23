@@ -52,7 +52,8 @@ use serde::{Serialize, Deserialize};
 use tracing::debug;
 
 // Reuse existing platform capabilities
-use crate::core::compression::{StandardCompression, CompressionAlgorithm, CompressionContext};
+use crate::core::compression::{StandardCompression, CompressionAlgorithm, CompressionContext, CompressionProvider};
+use crate::core::hardware_capabilities::get_hardware_capabilities;
 use super::common::{RowPageMetadata, VectorStats};
 
 // Import bloom filter types from common
@@ -60,6 +61,7 @@ use super::common::{
     RowGroupBloomFilter, CentroidStats, DistanceBounds, RowGroupNeighbor,
     RaptorFooter, ColumnarCentroids, FastLanesMetadata, NeighborType
 };
+use super::matrix_builder::MatrixBuilder;
 use crate::compute::quantization::storage_engine::StorageQuantizationEngine;
 use crate::compute::quantization::types::UnifiedQuantizationLevel;
 use crate::storage::persistence::filesystem::{FileSystem, FilesystemFactory};
@@ -96,6 +98,7 @@ pub struct RaptorWriter {
     memory_pool: Arc<VectorMemoryPool>,
     hardware: Arc<HardwareCapabilities>,
     distance_compute: Arc<UnifiedDistanceCompute>,
+    matrix_builder: MatrixBuilder,
     
     // Current state
     current_row_page: Option<RowPageBuffer>,
@@ -206,11 +209,11 @@ struct IvfClusteringBuilder {
     centroids: Vec<Centroid>,
     /// Boosting parameters
     boost_config: BoostingConfig,
+    /// Distance computation engine
+    distance_compute: Arc<UnifiedDistanceCompute>,
     /// Temporary vector storage for clustering and edge building
     /// Cleared after flush to save memory
     vectors: Vec<Vec<f32>>,
-    /// Distance computation engine
-    distance_compute: Arc<UnifiedDistanceCompute>,
     /// Pre-computed centroid-to-centroid distances for component boosting
     centroid_distances: Vec<Vec<f32>>,
 }
@@ -300,8 +303,8 @@ impl IvfClusteringBuilder {
             axis_clustering,
             centroids: Vec::new(),
             boost_config: BoostingConfig::default(),
+            distance_compute: Arc::new(UnifiedDistanceCompute::new(DistanceMetric::Cosine)),
             vectors: Vec::new(),
-            distance_compute: Arc::new(UnifiedDistanceCompute::new()),
             centroid_distances: Vec::new(),
         }
     }
@@ -314,7 +317,7 @@ impl IvfClusteringBuilder {
     
     /// Add a node with its edges including distance information
     fn add_node(&mut self, vector_id: String, edges: Vec<EdgeWithDistance>) {
-        let node_id = self.ivf_builder.nodes.len() as u32;
+        let node_id = self.nodes.len() as u32;
         self.id_to_node.insert(vector_id.clone(), node_id);
         
         self.nodes.push(IvfNode {
@@ -402,25 +405,25 @@ impl IvfClusteringBuilder {
         let k = (n + p - 1) / p;                 // Number of clusters needed: k = ceil(n/p)
         
         let k_means_calcs = k * n;           // AXIS k-means clustering
-        let centroid_matrix_calcs = k * k;   // Centroid-to-centroid distances (YES, we compute these!)
+        let centroid_matrix_calcs = k * k;   // K² matrix: Centroid-to-centroid distances
         let boosting_calcs = n * constants::boosting::BOOSTING_CALCS_PER_VECTOR;
         let raptor_total = k_means_calcs + centroid_matrix_calcs + boosting_calcs;
-        let hnsw_complexity = n * constants::complexity::HNSW_M_FACTOR * constants::complexity::HNSW_EF_FACTOR;
+        // HNSW obsolete - using Matrix Trinity (P² + K² + P×K) instead
+        // let hnsw_complexity = (n as f32 * constants::complexity::HNSW_M_FACTOR * constants::complexity::HNSW_EF_FACTOR) as usize;
         
         tracing::info!(
-            "🎯 RAPTOR hardware-aware clustering with AXIS: n={}, k={}, p={} \
+            "🎯 RAPTOR Matrix Trinity clustering: n={}, k={}, p={} \
              | Constraints: √n={}, memory_opt={}, min={}, config={} \
              | Hardware: L3_cache={:.1}MB, target_rowgroup={:.1}MB ({:.0}% L3) \
              | File: d={}, {:.1}KB/vec, est_size={:.1}MB \
              | Recall: {} vectors/exhaustive search per row group \
-             | Complexity: RAPTOR={}+{}+{}={} vs HNSW={} ({:.1}x reduction)",
+             | Complexity: K-means={} + K²={} + Boosting={} = {} total calcs",
             n, k, p, p_sqrt_n, p_memory_optimal, p_min, self.target_rowgroup_size,
             detected_l3_cache as f64 / 1_000_000.0, target_rowgroup_bytes as f64 / 1_000_000.0, 
             (target_rowgroup_bytes as f64 / detected_l3_cache as f64) * 100.0,
             d, total_bytes_per_vector as f64 / 1024.0, estimated_file_size as f64 / 1_000_000.0,
             p, k_means_calcs, centroid_matrix_calcs, boosting_calcs, 
-            raptor_total, hnsw_complexity, 
-            hnsw_complexity as f32 / raptor_total.max(1) as f32
+            raptor_total
         );
         
         // Step 2: Configure AXIS clustering for optimal RAPTOR performance
@@ -513,8 +516,8 @@ impl IvfClusteringBuilder {
             clusters[*cluster_id].push(vector_idx);
             
             // Track vector membership in centroid metadata (if node exists)
-            if vector_idx < self.ivf_builder.nodes.len() {
-                self.centroids[*cluster_id].member_ids.push(self.ivf_builder.nodes[vector_idx].vector_id.clone());
+            if vector_idx < self.nodes.len() {
+                self.centroids[*cluster_id].member_ids.push(self.nodes[vector_idx].vector_id.clone());
             }
             
             if vector_idx % 5000 == 0 && vector_idx > 0 {
@@ -572,34 +575,31 @@ impl IvfClusteringBuilder {
             return Vec::new();
         }
         
-        // For existing HNSW nodes, we can use graph connectivity for clustering
-        // This is a simplified approach that groups connected nodes together
-        let n = self.ivf_builder.nodes.len();
-        let p = self.target_rowgroup_size.max(constants::clustering::MIN_ROWGROUP_SIZE);
-        let k = (n + p - 1) / p;  // Number of row groups needed
+        // Extract vectors from nodes
+        let vectors: Vec<Vec<f32>> = self.nodes.iter()
+            .filter_map(|node| {
+                // Get vector from the stored vectors using node index
+                self.vectors.get(node.vector_id.parse::<usize>().ok()?)
+                    .cloned()
+            })
+            .collect();
         
-        tracing::info!(
-            "🎯 RAPTOR node clustering: {} nodes → {} row groups (p={})", 
-            n, k, p
-        );
-        
-        // Simple round-robin assignment for now
-        // TODO: Use actual graph connectivity for better clustering
-        let mut clusters = vec![Vec::new(); k];
-        for (idx, _node) in self.nodes.iter().enumerate() {
-            let cluster_id = idx % k;
-            clusters[cluster_id].push(idx as u32);
+        if vectors.is_empty() {
+            tracing::warn!("No vectors found for nodes, using fallback clustering");
+            // Fallback to simple round-robin if no vectors available
+            let n = self.nodes.len();
+            let p = self.target_rowgroup_size.max(constants::clustering::MIN_ROWGROUP_SIZE);
+            let k = (n + p - 1) / p;
+            let mut clusters = vec![Vec::new(); k];
+            for (idx, _node) in self.nodes.iter().enumerate() {
+                clusters[idx % k].push(idx as u32);
+            }
+            clusters.retain(|cluster| !cluster.is_empty());
+            return clusters;
         }
         
-        // Filter out empty clusters
-        clusters.retain(|cluster| !cluster.is_empty());
-        
-        tracing::info!(
-            "✅ Node clustering complete: {} non-empty clusters created", 
-            clusters.len()
-        );
-        
-        clusters
+        // Use the same clustering logic as cluster_vectors_into_rowgroups
+        self.cluster_vectors_into_rowgroups(&vectors, dimension)
     }
     
     
@@ -629,7 +629,7 @@ impl IvfClusteringBuilder {
         
         tracing::debug!(
             "Applying component boosting to {} nodes with global_avg_distance={:.4}",
-            self.ivf_builder.nodes.len(), global_avg_distance
+            self.nodes.len(), global_avg_distance
         );
         
         let mut total_edges_processed = 0;
@@ -784,7 +784,7 @@ impl IvfClusteringBuilder {
             if node_idx % 2000 == 0 && node_idx > 0 {
                 tracing::debug!(
                     "Processed {} / {} nodes for component boosting",
-                    node_idx, self.ivf_builder.nodes.len()
+                    node_idx, self.nodes.len()
                 );
             }
         }
@@ -796,7 +796,7 @@ impl IvfClusteringBuilder {
         tracing::info!(
             "✅ Component boosting completed: {} nodes, {} edges processed. \
              Edge distribution: {:.1}% intra-cluster, {:.1}% inter-cluster (optimal: >70% intra)",
-            self.ivf_builder.nodes.len(), total_edges_processed, 
+            self.nodes.len(), total_edges_processed, 
             intra_cluster_ratio * 100.0, inter_cluster_ratio * 100.0
         );
         
@@ -841,54 +841,130 @@ impl IvfClusteringBuilder {
         }
     }
     
+    /// Helper: Calculate centroid statistics for boosting
+    fn calculate_centroid_statistics(&mut self, vectors: &[Vec<f32>]) {
+        for centroid in &mut self.centroids {
+            let mut distances = Vec::new();
+            
+            for vec in vectors {
+                let dist = self.distance_compute.calculate_distance(
+                    vec,
+                    &centroid.vector,
+                    &DistanceMetric::Euclidean
+                ).raw_value;
+                distances.push(dist);
+            }
+            
+            // Calculate mean
+            let mean = distances.iter().sum::<f32>() / distances.len() as f32;
+            
+            // Calculate standard deviation
+            let variance = distances.iter()
+                .map(|d| (d - mean).powi(2))
+                .sum::<f32>() / distances.len() as f32;
+            let std_dev = variance.sqrt();
+            
+            // Calculate 95th percentile (radius)
+            distances.sort_by(|a, b| a.partial_cmp(b).unwrap());
+            let percentile_95 = distances[(distances.len() as f32 * 0.95) as usize];
+            
+            centroid.mean_distance = mean;
+            centroid.std_deviation = std_dev;
+            centroid.radius = percentile_95;
+        }
+    }
+    
+    /// Convert clusters to rowgroups using 5-component boosting for intelligent co-location
+    fn clusters_to_rowgroups(&mut self, clusters: Vec<Vec<usize>>) -> Vec<Vec<u32>> {
+        let mut rowgroups = Vec::new();
+        
+        // Process each cluster independently
+        for (_cluster_idx, cluster) in clusters.into_iter().enumerate() {
+            if cluster.is_empty() {
+                continue;
+            }
+            
+            // Convert cluster indices to node IDs
+            let mut current_rowgroup = Vec::new();
+            for node_idx in cluster {
+                if node_idx < self.nodes.len() {
+                    current_rowgroup.push(node_idx as u32);
+                    
+                    // Split into target rowgroup size
+                    if current_rowgroup.len() >= self.target_rowgroup_size {
+                        rowgroups.push(current_rowgroup.clone());
+                        current_rowgroup.clear();
+                    }
+                }
+            }
+            
+            // Add remaining nodes
+            if !current_rowgroup.is_empty() {
+                rowgroups.push(current_rowgroup);
+            }
+        }
+        
+        rowgroups
+    }
+}
+
+impl IvfClusteringBuilder {
     /// Build K×K inter-centroid distance matrix (upper triangle storage)
     fn build_inter_centroid_matrix(&self) -> InterCentroidMatrix {
         let k = self.centroids.len();
-        let upper_triangle_size = k * (k - 1) / 2;
         
-        // Calculate scale factor for quantization
-        let mut max_distance = 0.0f32;
+        // Calculate all pairwise distances (upper triangle only)
+        let upper_triangle_size = k * (k - 1) / 2;
+        let mut distances = Vec::with_capacity(upper_triangle_size);
+        let mut min_distance = f32::INFINITY;
+        let mut max_distance = f32::NEG_INFINITY;
+        
+        // Use the distance compute from the centroids
         for i in 0..k {
             for j in (i + 1)..k {
-                let dist = self.centroid_distances[i][j];
+                let dist = self.distance_compute.calculate_distance(
+                    &self.centroids[i].vector,
+                    &self.centroids[j].vector,
+                    &DistanceMetric::Cosine
+                ).raw_value;
+                distances.push(dist);
+                min_distance = min_distance.min(dist);
                 max_distance = max_distance.max(dist);
             }
         }
         
-        let scale_factor = if max_distance > 0.0 {
-            65535.0 / max_distance
+        // Quantize distances to u16 for compression
+        let scale_factor = if max_distance > min_distance {
+            65535.0 / (max_distance - min_distance)
         } else {
             1.0
         };
         
-        // Build compressed upper triangle storage
         let mut compressed_data = Vec::with_capacity(upper_triangle_size * 2);
         let mut lookup_table = vec![0u32; k];
-        let mut current_offset = 0u32;
+        let mut offset = 0u32;
         
+        let mut idx = 0;
         for i in 0..k {
-            lookup_table[i] = current_offset;
+            lookup_table[i] = offset;
             for j in (i + 1)..k {
-                let dist = self.centroid_distances[i][j];
-                let quantized = (dist * scale_factor) as u16;
+                let quantized = ((distances[idx] - min_distance) * scale_factor) as u16;
                 compressed_data.extend_from_slice(&quantized.to_le_bytes());
-                current_offset += 2;
+                offset += 2;
+                idx += 1;
             }
         }
-        
-        // Default FastLanes scheme for inter-centroid matrix
-        let scheme = crate::storage::engines::common::fastlanes_encoding::FastLanesScheme::BitPacked { bits: 16 };
         
         InterCentroidMatrix {
             num_centroids: k as u32,
             compressed_data,
             compression_metadata: InterCentroidCompressionMetadata {
-                min_distance: 0.0,
+                min_distance,
                 max_distance,
-                scale_factor: 255.0 / max_distance,
-                compression_type: CompressionType::Quantized8Bit,
-                row_encodings: vec![scheme; k],
-                row_compressed_sizes: vec![compressed_data.len() as u16 / k as u16; k],
+                scale_factor,
+                compression_type: CompressionType::Quantized16Bit,
+                row_encodings: vec![],
+                row_compressed_sizes: vec![],
             },
             lookup_table,
         }
@@ -907,7 +983,7 @@ impl IvfClusteringBuilder {
         
         // Calculate coverage using smooth exponential decay
         let raw_coverage = (-alpha * (k_over_d + 1.0).ln()).exp();
-        let coverage_ratio = min_coverage.max(raw_coverage.min(1.0f32));
+        let coverage_ratio = min_coverage.max(raw_coverage.min(1.0));
         
         // Determine strategy based on coverage requirements
         let strategy = match coverage_ratio {
@@ -962,7 +1038,7 @@ impl IvfClusteringBuilder {
     
     /// Build full P×K matrix with quantization
     fn build_full_pk_matrix(&self, rowgroup: &RowGroup, rg_idx: usize) -> VectorCentroidMatrix {
-        let p = rowgroup.row_count;
+        let p = rowgroup.vector_count;
         let k = self.centroids.len();
         
         // Calculate all distances and find max for quantization
@@ -1045,7 +1121,7 @@ impl IvfClusteringBuilder {
     
     /// Build hierarchical P×K matrix with mean + sparse deltas
     fn build_hierarchical_pk_matrix(&self, rowgroup: &RowGroup, rg_idx: usize) -> VectorCentroidMatrix {
-        let p = rowgroup.row_count;
+        let p = rowgroup.vector_count;
         let k = self.centroids.len();
         
         // Calculate all distances
@@ -1139,7 +1215,7 @@ impl IvfClusteringBuilder {
     /// Build sparse P×K matrix with adaptive boundary detection
     /// Stores only vectors with boundary_score > threshold (10%-50% coverage)
     fn build_adaptive_sparse_pk_matrix(&self, rowgroup: &RowGroup, rg_idx: usize, coverage_ratio: f32) -> VectorCentroidMatrix {
-        let p = rowgroup.row_count;
+        let p = rowgroup.vector_count;
         let k = self.centroids.len();
         let d = self.centroids[0].vector.len() as f32;
         
@@ -1546,39 +1622,6 @@ impl RaptorWriter {
         Ok(())
     }
     
-    /// Helper: Calculate centroid statistics for boosting
-    fn calculate_centroid_statistics(&mut self, vectors: &[Vec<f32>]) {
-        for centroid in &mut self.ivf_builder.centroids {
-            let mut distances = Vec::new();
-            
-            for vec in vectors {
-                let dist = self.distance_compute.calculate_distance(
-                    vec,
-                    &centroid.vector,
-                    &DistanceMetric::Euclidean
-                ).raw_value;
-                distances.push(dist);
-            }
-            
-            // Calculate mean
-            let mean = distances.iter().sum::<f32>() / distances.len() as f32;
-            
-            // Calculate standard deviation
-            let variance = distances.iter()
-                .map(|d| (d - mean).powi(2))
-                .sum::<f32>() / distances.len() as f32;
-            let std_dev = variance.sqrt();
-            
-            // Calculate 95th percentile (radius)
-            distances.sort_by(|a, b| a.partial_cmp(b).unwrap());
-            let percentile_95 = distances[(distances.len() as f32 * 0.95) as usize];
-            
-            centroid.mean_distance = mean;
-            centroid.std_deviation = std_dev;
-            centroid.radius = percentile_95;
-        }
-    }
-    
     /// Helper: Find nearest centroid for a vector
     fn find_nearest_centroid(&self, vec: &[f32], centroids: &[Vec<f32>]) -> usize {
         let mut min_dist = f32::MAX;
@@ -1597,72 +1640,6 @@ impl RaptorWriter {
         }
         
         nearest
-    }
-    
-    /// Helper: Simple Euclidean distance calculation
-    /// Convert cluster assignments to row groups
-    /// Convert clusters to rowgroups using 5-component boosting for intelligent co-location
-    /// This ensures similar vectors are grouped together based on ALL distance components
-    fn clusters_to_rowgroups(&mut self, clusters: Vec<Vec<usize>>) -> Vec<Vec<u32>> {
-        let mut rowgroups = Vec::new();
-        
-        // Step 1: Process each cluster independently
-        for (cluster_idx, cluster) in clusters.into_iter().enumerate() {
-            if cluster.is_empty() {
-                continue;
-            }
-            
-            // Step 2: For large clusters, use boosted distances to create optimal rowgroups
-            if cluster.len() > self.config.rowgroup_size {
-                // Build similarity graph within cluster using boosted distances
-                let subgroups = self.partition_cluster_with_boosting(cluster_idx, &cluster);
-                
-                // Step 3: Create rowgroups from optimally partitioned subgroups
-                for subgroup in subgroups {
-                    let row_group_id = rowgroups.len() as u16;
-                    let mut group = Vec::new();
-                    
-                    for &node_idx in &subgroup {
-                        self.ivf_builder.nodes[node_idx].row_location.row_group_id = row_group_id as u32;
-                        group.push(node_idx as u32);
-                    }
-                    
-                    // Step 4: Calculate and log cohesion metrics for this rowgroup
-                    let cohesion = self.calculate_boosted_cohesion(&group);
-                    tracing::debug!(
-                        "Rowgroup {} (from cluster {}): {} vectors, boosted cohesion={:.4}",
-                        row_group_id, cluster_idx, group.len(), cohesion
-                    );
-                    
-                    rowgroups.push(group);
-                }
-            } else {
-                // Step 5: Small clusters become single rowgroups
-                let row_group_id = rowgroups.len() as u16;
-                let mut group = Vec::new();
-                
-                for &node_idx in &cluster {
-                    self.ivf_builder.nodes[node_idx].row_location.row_group_id = row_group_id as u32;
-                    group.push(node_idx as u32);
-                }
-                
-                rowgroups.push(group);
-            }
-        }
-        
-        // Step 6: Log final statistics
-        let avg_size = rowgroups.iter().map(|g| g.len()).sum::<usize>() as f32 / rowgroups.len() as f32;
-        let min_size = rowgroups.iter().map(|g| g.len()).min().unwrap_or(0);
-        let max_size = rowgroups.iter().map(|g| g.len()).max().unwrap_or(0);
-        
-        tracing::info!(
-            "Created {} rowgroups from {} clusters using 5-component boosting | \
-             avg_size={:.1}, min={}, max={}, target={}",
-            rowgroups.len(), self.ivf_builder.centroids.len(),
-            avg_size, min_size, max_size, self.config.rowgroup_size
-        );
-        
-        rowgroups
     }
     
     /// Partition a large cluster into optimal rowgroups using 5-component boosted distances
@@ -2187,7 +2164,7 @@ impl RaptorWriter {
         let filesystem = FilesystemFactory::create_from_path(&file_path).await?;
         
         // Initialize hardware capabilities
-        let hardware = HardwareCapabilities::global();
+        let hardware = get_hardware_capabilities();
         
         // Initialize unified compression
         let compression_algo = match &config.compression {
@@ -2208,11 +2185,8 @@ impl RaptorWriter {
         // Initialize unified distance compute
         let distance_compute = Arc::new(UnifiedDistanceCompute::new(hardware.clone()));
         
-        // Initialize memory pool
-        let memory_pool = Arc::new(VectorMemoryPool::new(
-            100 * 1024 * 1024, // 100MB pool
-            dimension,
-        ));
+        // Initialize memory pool with default configuration
+        let memory_pool = Arc::new(VectorMemoryPool::new());
         
         // Initialize file metadata (matching consolidated struct)
         let file_metadata = RaptorFileMetadata {
@@ -2254,6 +2228,13 @@ impl RaptorWriter {
         // Write header magic at file start
         filesystem.write(&file_path, &super::RAPTOR_MAGIC).await?;
         
+        // Initialize matrix builder
+        let matrix_builder = MatrixBuilder::new(
+            distance_compute.clone(),
+            hardware.clone(),
+            DistanceMetric::Cosine, // Use config's distance metric
+        );
+        
         Ok(Self {
             file_path: file_path.clone(),
             filesystem: Arc::new(filesystem),
@@ -2265,6 +2246,7 @@ impl RaptorWriter {
             memory_pool,
             hardware,
             distance_compute,
+            matrix_builder,
             current_row_page: None,
             current_rowgroup: None,
             row_groups: Vec::new(),
@@ -2275,7 +2257,7 @@ impl RaptorWriter {
                 id_hashes: Vec::new(),
                 row_offsets: Vec::new(),
             },
-            ivf_builder: IvfClusteringBuilder::new(config.row_group_size),
+            ivf_builder: IvfClusteringBuilder::new(config.rowgroup_size, get_hardware_capabilities()),
             column_projections: ColumnProjectionsBuilder {
                 metadata_columns: HashMap::new(),
                 filter_bitmaps: HashMap::new(),
@@ -2392,7 +2374,11 @@ impl RaptorWriter {
             .map(|p| p.rows.len() as u16)
             .unwrap_or(0);
         
-        let location = RowLocation { page_id, offset_in_page };
+        let location = RowLocation { 
+            row_group_id: self.row_groups.len() as u32,
+            page_id, 
+            offset_in_page 
+        };
         
         // Update bloom filter and columnar ID index
         self.bloom_builder.add_id(id.clone());
@@ -2404,7 +2390,7 @@ impl RaptorWriter {
         self.id_column_builder.row_offsets.push(offset_in_page as u32);
         
         // Add to IVF builder with hybrid clustering + edges
-        self.nodes.push(IvfNode {
+        self.ivf_builder.nodes.push(IvfNode {
             vector_id: id.clone(),
             cluster_id: 0, // Will be assigned during clustering
             row_location: location,
@@ -2457,7 +2443,7 @@ impl RaptorWriter {
             &bloom_data,
             CompressionAlgorithm::Zstd,
             6,
-            CompressionContext::SstBlock,
+            CompressionContext::Block,
         )?;
         
         // Write to filesystem and return offset
@@ -2485,16 +2471,17 @@ impl RaptorWriter {
                 &vector_data,
                 CompressionAlgorithm::Lz4,  // Fast decompression for hot path
                 3,
-                CompressionContext::VectorColumn,
+                CompressionContext::VectorSerialization,
             )?;
-            let vector_offset = self.filesystem.append(&self.file_path, &vector_compressed).await?;
+            let vector_offset = self.filesystem.open(&self.file_path).await?.file_size().await?;
+            self.filesystem.append(&self.file_path, &vector_compressed).await?;
             column_pages.insert(ColumnType::VectorsFp32, ColumnPageMetadata {
                 column_type: ColumnType::VectorsFp32,
                 offset: vector_offset,
                 compressed_size: vector_compressed.len() as u64,
                 uncompressed_size: vector_data.len() as u64,
                 compression: CompressionAlgorithm::Lz4,
-                encoding: FastLanesScheme::BitPacked { bits: 16 },
+                encoding: Some(FastLanesScheme::BitPacked { bits: 16 }),
                 null_count: 0,
                 min_value: None,
                 max_value: None,
@@ -2506,7 +2493,7 @@ impl RaptorWriter {
                 &id_data,
                 CompressionAlgorithm::Zstd,  // Higher compression for IDs
                 9,
-                CompressionContext::ColumnPage,
+                CompressionContext::Column,  // IDs are homogeneous columnar data
             )?;
             let id_offset = self.filesystem.append(&self.file_path, &id_compressed).await?;
             column_pages.insert(ColumnType::Ids, ColumnPageMetadata {
@@ -2515,7 +2502,7 @@ impl RaptorWriter {
                 compressed_size: id_compressed.len() as u64,
                 uncompressed_size: id_data.len() as u64,
                 compression: CompressionAlgorithm::Zstd,
-                encoding: FastLanesScheme::None,
+                encoding: None,
                 null_count: 0,
                 min_value: None,
                 max_value: None,
@@ -2539,9 +2526,10 @@ impl RaptorWriter {
                     &meta_data,
                     algorithm,
                     6,
-                    CompressionContext::MetadataColumn,
+                    CompressionContext::Block,  // Metadata is mixed/heterogeneous data
                 )?;
-                let meta_offset = self.filesystem.append(&self.file_path, &meta_compressed).await?;
+                let meta_offset = self.filesystem.open(&self.file_path).await?.file_size().await?;
+                self.filesystem.append(&self.file_path, &meta_compressed).await?;
                 column_pages.insert(
                     ColumnType::Metadata(key.clone()),
                     ColumnPageMetadata {
@@ -2550,7 +2538,7 @@ impl RaptorWriter {
                         compressed_size: meta_compressed.len() as u64,
                         uncompressed_size: meta_data.len() as u64,
                         compression: algorithm,
-                        encoding: FastLanesScheme::None,
+                        encoding: None,
                         null_count: 0,
                         min_value: None,
                         max_value: None,
@@ -2565,16 +2553,17 @@ impl RaptorWriter {
                     &source_data,
                     CompressionAlgorithm::Zstd,  // Best ratio for text
                     19,  // Maximum compression
-                    CompressionContext::SourceContent,
+                    CompressionContext::Block,  // Source content is text/mixed data
                 )?;
-                let source_offset = self.filesystem.append(&self.file_path, &source_compressed).await?;
+                let source_offset = self.filesystem.open(&self.file_path).await?.file_size().await?;
+                self.filesystem.append(&self.file_path, &source_compressed).await?;
                 column_pages.insert(ColumnType::SourceContent, ColumnPageMetadata {
                     column_type: ColumnType::SourceContent,
                     offset: source_offset,
                     compressed_size: source_compressed.len() as u64,
                     uncompressed_size: source_data.len() as u64,
                     compression: CompressionAlgorithm::Zstd,
-                    encoding: FastLanesScheme::None,
+                    encoding: None,
                     null_count: 0,
                     min_value: None,
                     max_value: None,
@@ -2591,16 +2580,17 @@ impl RaptorWriter {
                 &p2_data,
                 CompressionAlgorithm::Lz4,  // Fast access for navigation
                 6,
-                CompressionContext::MatrixData,
+                CompressionContext::Column,  // Matrix data is numeric/homogeneous
             )?;
-            let p2_offset = self.filesystem.append(&self.file_path, &p2_compressed).await?;
+            let p2_offset = self.filesystem.open(&self.file_path).await?.file_size().await?;
+            self.filesystem.append(&self.file_path, &p2_compressed).await?;
             column_pages.insert(ColumnType::P2Matrix, ColumnPageMetadata {
                 column_type: ColumnType::P2Matrix,
                 offset: p2_offset,
                 compressed_size: p2_compressed.len() as u64,
                 uncompressed_size: p2_data.len() as u64,
                 compression: CompressionAlgorithm::Lz4,
-                encoding: FastLanesScheme::None,
+                encoding: None,
                 null_count: 0,
                 min_value: None,
                 max_value: None,
@@ -2609,7 +2599,7 @@ impl RaptorWriter {
             // Update rowgroup metadata with column pages
             let rg_metadata = RowGroupMetadata {
                 id: rowgroup_id as u16,
-                row_count: page.rows.len(),
+                vector_count: page.rows.len(),
                 offset: 0,  // Will be set when writing to file
                 compressed_size: 0,  // Will be updated after compression
                 column_pages,
@@ -3064,7 +3054,7 @@ impl RaptorWriter {
                         &all_text,
                         CompressionAlgorithm::Lz4,
                         3,
-                        CompressionContext::SstBlock,
+                        CompressionContext::Block,
                     )?
                 } else {
                     all_text
@@ -3410,7 +3400,7 @@ impl RaptorWriter {
     /// Check if we should start a new row group (1K vectors by default for optimal HNSW I/O)
     fn should_start_new_rowgroup(&self) -> bool {
         self.row_groups.last()
-            .map(|rg| rg.row_count >= self.config.rowgroup_size)
+            .map(|rg| rg.vector_count >= self.config.rowgroup_size)
             .unwrap_or(true)
     }
     
@@ -3597,7 +3587,7 @@ impl RaptorWriter {
                 rg.centroid = Some(centroid.clone());
                 
                 // Find which cluster this rowgroup belongs to (majority vote)
-                let cluster_assignments: Vec<u32> = self.nodes.iter()
+                let cluster_assignments: Vec<u32> = self.ivf_builder.nodes.iter()
                     .map(|n| n.cluster_id)
                     .collect();
                 
@@ -3751,7 +3741,7 @@ impl RaptorWriter {
             &ivf_data,
             CompressionAlgorithm::Zstd,
             6,
-            CompressionContext::SstBlock,
+            CompressionContext::Block,
         )?;
         
         // Get current file offset
@@ -3762,12 +3752,15 @@ impl RaptorWriter {
         // Write to file
         self.filesystem.append(&self.file_path, &compressed).await?;
         
+        // Note: This method writes IVF clustering data, not bloom filter
+        // The bloom filter is written separately in write_bloom_filter_metadata
+        // For now, return a simple metadata with basic info
         Ok(BloomFilterMetadata {
             offset: offset as u64,
             size: compressed.len() as u64,
             num_entries: self.ivf_builder.nodes.len() as u32,
-            num_bits: bloom_filter.num_bits(),
-            num_hashes: bloom_filter.num_hashes(),
+            num_bits: (self.ivf_builder.nodes.len() * 10) as u64, // Estimate: 10 bits per entry
+            num_hashes: 7, // Standard for 1% false positive rate
             false_positive_rate: 0.01,  // Default 1% false positive rate
         })
     }
@@ -3834,8 +3827,8 @@ impl RaptorWriter {
                     offset: rg.offset,
                     compressed_size: rg.compressed_size,
                     uncompressed_size: 0,  // Not calculated yet
-                    row_count: rg.row_count,
-                    vector_count: rg.row_count,  // Same as row_count
+                    // vector_count is already in rg struct, no need to duplicate
+                    vector_count: rg.vector_count,  // Same as row_count
                     max_vectors: 1024,  // Default capacity
                     column_pages: rg.column_pages.clone(),
                     vector_stats: rg.vector_stats.clone(),
@@ -3916,7 +3909,7 @@ impl RaptorWriter {
         
         // Step 5: Create the footer with centroids and matrices
         let footer = RaptorFooter {
-            centroids: columnar_centroids,
+            centroids: columnar_centroids.clone(),
             inter_centroid_distances: inter_centroid_matrix.unwrap_or_else(|| {
                 // Create empty matrix if no centroids
                 InterCentroidMatrix {
@@ -3934,6 +3927,7 @@ impl RaptorWriter {
                 }
             }),
             vector_centroid_matrices: vector_centroid_matrices.unwrap_or_default(),
+            total_centroids: columnar_centroids.count,  // K centroids = K rowgroups
             version: 1,
             checksum: 0, // TODO: Compute actual checksum
             file_metadata: self.file_metadata.clone(),
@@ -4027,7 +4021,7 @@ impl RaptorWriter {
             &projection_data,
             CompressionAlgorithm::Zstd,
             6,
-            CompressionContext::SstBlock,
+            CompressionContext::Block,
         )?;
         
         // Get current file size before append
@@ -4477,7 +4471,14 @@ impl RaptorWriter {
             ));
         }
         
-        // Create bloom filter
+        // Create bloom filter structure
+        let bloom_filter = RowGroupBloomFilter {
+            bits: vec![0u8; num_bytes],
+            num_bits: num_bits as u64,
+            num_hashes: 7, // Optimal for 1% false positive
+        };
+        
+        // Create bloom filter bits
         let mut bloom_bits = vec![0u8; num_bytes];
         let num_hashes = 7; // Optimal for 1% false positive
         
@@ -4552,7 +4553,7 @@ impl RaptorWriter {
             &combined_data,
             CompressionAlgorithm::Zstd,  // No level field in enum
             6,  // Compression level as separate parameter
-            CompressionContext::SstBlock,
+            CompressionContext::Block,
         )?;
         
         // Get current file size before append

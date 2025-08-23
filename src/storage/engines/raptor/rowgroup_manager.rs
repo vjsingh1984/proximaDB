@@ -99,7 +99,7 @@ impl RowGroupManager {
                 .ok_or_else(|| anyhow::anyhow!("Row group not found"))?;
             
             // Calculate how many vectors can fit
-            let available_space = row_group.max_vectors - row_group.row_count;
+            let available_space = row_group.max_vectors - row_group.vector_count;
             let vectors_to_add = remaining_vectors.len().min(available_space);
             
             if vectors_to_add == 0 {
@@ -117,7 +117,7 @@ impl RowGroupManager {
             
             // Check if row group is now full
             let row_group = self.row_groups.get(&row_group_id).unwrap();
-            if row_group.row_count >= row_group.max_vectors {
+            if row_group.vector_count >= row_group.max_vectors {
                 self.complete_current_row_group().await?;
             }
         }

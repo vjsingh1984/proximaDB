@@ -211,7 +211,7 @@ impl SstableWriter {
             CompressionAlgorithm::Zstd  // High compression for large blocks
         };
         
-        let context = CompressionContext::SstBlock;
+        let context = CompressionContext::Block;
         let compressed = self.compression_provider.compress(&serialized, algorithm, level as i32, context)?;
         debug!("✅ Direct compression: {} -> {} bytes", serialized.len(), compressed.len());
         Ok(compressed)

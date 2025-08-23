@@ -252,7 +252,7 @@ mod tests {
         let config = RaptorConfig::default();
         let rowgroup = manager.add_rowgroup(&batch, &config)?;
         
-        assert_eq!(rowgroup.row_count, 3);
+        assert_eq!(rowgroup.vector_count, 3);
         assert_eq!(rowgroup.vector_stats.dimension, 4);
         
         Ok(())

@@ -179,14 +179,14 @@ fn test_unified_compression_context_integration() {
         &test_data,
         UnifiedCompressionAlgorithm::Zstd,
         3,
-        CompressionContext::SstBlock
+        CompressionContext::Block
     ).unwrap();
     
     // Decompress using unified module
     let decompressed = compression::decompress(
         &compressed,
         UnifiedCompressionAlgorithm::Zstd,
-        CompressionContext::SstBlock
+        CompressionContext::Block
     ).unwrap();
     
     assert_eq!(test_data, decompressed.as_slice());

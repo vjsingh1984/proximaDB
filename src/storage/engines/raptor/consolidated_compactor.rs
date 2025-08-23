@@ -3,6 +3,7 @@
 /// Total elimination: ~1,350 lines of duplicated code
 
 use std::sync::Arc;
+use tokio::sync::RwLock;
 use std::collections::{HashMap, HashSet};
 use anyhow::{Result, Context};
 use tracing::{debug, info, warn};
@@ -11,7 +12,7 @@ use arrow_array::RecordBatch;
 // DIRECT use of unified components - no wrappers
 use crate::compute::distance_computation::engine::{UnifiedDistanceCompute, DistanceMetric};
 use crate::storage::engines::common::fastlanes_encoding::{FastLanesEncoder, FastLanesScheme};
-use crate::storage::persistence::filesystem::zero_copy_filesystem::ZeroCopyFilesystem;
+use crate::storage::persistence::filesystem::FileSystem;
 use crate::storage::transaction_coordinator::TransactionCoordinator;
 use crate::proto::proximadb::VectorRecord;
 use super::common::{RaptorFileMetadata, RowGroup, RowGroupMetadata, SchemaDescriptor};
@@ -26,7 +27,7 @@ pub struct RaptorCompactor {
     // DIRECT references to unified modules
     distance_compute: Arc<UnifiedDistanceCompute>,
     fastlanes_encoder: FastLanesEncoder,
-    filesystem: Arc<ZeroCopyFilesystem>,
+    filesystem: Arc<dyn FileSystem>,
     transaction_coordinator: Arc<TransactionCoordinator>,
 }
 
@@ -34,7 +35,7 @@ impl RaptorCompactor {
     pub fn new(
         config: RaptorConfig,
         reader: Arc<RaptorReader>,
-        filesystem: Arc<ZeroCopyFilesystem>,
+        filesystem: Arc<dyn FileSystem>,
         transaction_coordinator: Arc<TransactionCoordinator>,
     ) -> Self {
         let fastlanes_scheme = if config.use_fastlanes_encoding {
@@ -170,7 +171,7 @@ impl RaptorCompactor {
             
             // Create rowgroup - rowgroup_id matches position in sorted order
             let mut row_group = RowGroup::with_capacity(rg_idx as u16, p);
-            row_group.row_count = vectors.len();
+            row_group.vector_count = vectors.len();
             row_group.vectors = Some(vectors);
             
             // Centroid and matrices will be built by writer during write
@@ -299,7 +300,7 @@ impl RaptorCompactor {
         
         for (idx, chunk) in vectors.chunks(group_size).enumerate() {
             let mut row_group = RowGroup::new(idx as u16);
-            row_group.row_count = chunk.len();
+            row_group.vector_count = chunk.len();
             row_group.offset = current_offset;
             row_group.vectors = Some(chunk.to_vec());
             
@@ -317,10 +318,10 @@ impl RaptorCompactor {
     /// Create row group from vector list
     fn create_row_group_from_vectors(&self, vectors: Vec<VectorRecord>) -> RowGroup {
         let mut row_group = RowGroup::new(0);
-        row_group.row_count = vectors.len();
+        row_group.vector_count = vectors.len();
         row_group.vectors = Some(vectors);
-        row_group.compressed_size = (row_group.row_count * 1024) as u64; // Estimate
-        row_group.uncompressed_size = (row_group.row_count * 1536) as u64; // Estimate
+        row_group.compressed_size = (row_group.vector_count * 1024) as u64; // Estimate
+        row_group.uncompressed_size = (row_group.vector_count * 1536) as u64; // Estimate
         row_group
     }
     
@@ -404,17 +405,14 @@ impl RaptorCompactor {
                 writer.finish()?;
             }
             
-            // Apply FastLanes encoding if enabled
-            let encoded = if self.config.use_fastlanes_encoding {
-                self.fastlanes_encoder.encode_bytes(&buffer)?
-            } else {
-                buffer
-            };
+            // FastLanes encoding is applied to individual columns during write,
+            // not to the entire Arrow IPC buffer
+            let encoded = buffer;
             
             // Update metadata
             let rg_metadata = RowGroupMetadata {
                 id: metadata.row_groups.len() as u16,
-                row_count: row_group.row_count,
+                vector_count: row_group.vector_count,
                 offset: row_group.offset,
                 compressed_size: row_group.compressed_size,
                 column_pages: HashMap::new(),
@@ -428,10 +426,10 @@ impl RaptorCompactor {
             };
             
             metadata.row_groups.push(rg_metadata);
-            metadata.total_vectors += row_group.row_count;
-            metadata.total_rows += row_group.row_count;
+            metadata.total_vectors += row_group.vector_count;
+            metadata.total_rows += row_group.vector_count;
             metadata.rowgroup_sizes.push(encoded.len() as u64);
-            metadata.rowgroup_vector_counts.push(row_group.row_count);
+            metadata.rowgroup_vector_counts.push(row_group.vector_count);
             
             file_data.extend(encoded);
         }
@@ -443,7 +441,7 @@ impl RaptorCompactor {
         let uncompressed_size: u64 = metadata.rowgroup_vector_counts.iter().map(|&c| c as u64 * metadata.dimension as u64 * 4).sum();
         let compressed_size: u64 = metadata.rowgroup_sizes.iter().sum();
         metadata.compression_ratio = if uncompressed_size > 0 {
-            compressed_size as f32 / uncompressed_size as f32
+            compressed_size as f64 / uncompressed_size as f64
         } else {
             1.0
         };
@@ -456,7 +454,7 @@ impl RaptorCompactor {
         file_data.extend(&(metadata_bytes.len() as u64).to_le_bytes());
         
         // DIRECT filesystem write
-        self.filesystem.write(output_file, file_data).await?;
+        self.filesystem.write(output_file, &file_data, None).await?;
         
         info!("Compacted {} vectors into {}", metadata.total_vectors, output_file);
         Ok(())

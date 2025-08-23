@@ -86,7 +86,7 @@ mod tests {
         ];
         
         // Compute upper triangle distances manually
-        let distance_compute = UnifiedDistanceCompute::with_metric(crate::compute::distance_computation::engine::DistanceMetric::Cosine);
+        let distance_compute = UnifiedDistanceCompute::new(crate::compute::distance_computation::engine::DistanceMetric::Cosine);
         let mut distances = Vec::new();
         
         for i in 0..vectors.len() {
@@ -124,7 +124,7 @@ mod tests {
         }
         
         // Compute distances and quantize
-        let distance_compute = UnifiedDistanceCompute::with_metric(crate::compute::distance_computation::engine::DistanceMetric::Cosine);
+        let distance_compute = UnifiedDistanceCompute::new(crate::compute::distance_computation::engine::DistanceMetric::Cosine);
         let mut distances = Vec::new();
         
         for i in 0..vectors.len() {

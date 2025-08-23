@@ -25,6 +25,8 @@ pub mod adaptive_pxk;
 pub mod consolidated_reader;
 pub mod consolidated_compactor;
 pub mod engine;
+pub mod matrix_builder;
+pub mod metadata_serializer;
 pub mod writer;
 // ivf_manager removed - obsolete with Matrix Trinity (P² + K² + P×K)
 pub mod rowgroup_manager;
@@ -36,6 +38,9 @@ mod tests;
 
 #[cfg(test)]
 mod p2_matrix_tests;
+
+#[cfg(test)]
+mod boundary_spillover_tests;
 
 // Re-export commonly used types from common module
 pub use common::{

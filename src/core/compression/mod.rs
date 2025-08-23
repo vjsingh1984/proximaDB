@@ -113,12 +113,21 @@ pub use markers::*;
 /// Compression context - determines how compression is applied
 #[derive(Debug, Clone, PartialEq)]
 pub enum CompressionContext {
-    /// SST block compression - custom format with markers
-    SstBlock,
-    /// Vector serialization - with headers and checksums  
+    /// Block - mixed/heterogeneous data (metadata, source content, SST blocks)
+    /// Best for: Variable entropy data, mixed types, general purpose compression
+    Block,
+    
+    /// Column - homogeneous columnar data (single type, predictable patterns)
+    /// Best for: Numeric columns, IDs, timestamps, uniform data with high redundancy
+    Column,
+    
+    /// Parquet - columnar format with Arrow-specific optimization
+    /// Best for: Parquet files handled by Arrow WriterProperties
+    Parquet,
+    
+    /// VectorSerialization - high-dimensional vectors with random values
+    /// Best for: ML embeddings with low entropy, random dimensions, minimal compression potential
     VectorSerialization,
-    /// Parquet column chunks - handled by Arrow WriterProperties
-    ParquetColumn,
 }
 
 /// Unified compression interface
@@ -197,7 +206,7 @@ impl CompressionProvider for StandardCompression {
         
         // For ParquetColumn context, we don't do compression here - 
         // Arrow handles it via WriterProperties
-        if context == CompressionContext::ParquetColumn {
+        if context == CompressionContext::Parquet {
             tracing::debug!("   ⚠️ ParquetColumn context - deferring to Arrow WriterProperties");
             return Err(anyhow::anyhow!(
                 "Parquet compression should be handled by Arrow WriterProperties, not directly"
@@ -300,7 +309,7 @@ impl CompressionProvider for StandardCompression {
     
     fn decompress(&self, data: &[u8], algorithm: CompressionAlgorithm, context: CompressionContext) -> Result<Vec<u8>> {
         // For ParquetColumn context, decompression is handled by Arrow readers
-        if context == CompressionContext::ParquetColumn {
+        if context == CompressionContext::Parquet {
             return Err(anyhow::anyhow!(
                 "Parquet decompression should be handled by Arrow readers, not directly"
             ));
@@ -499,7 +508,7 @@ pub fn detect_column_type(column_name: &str, context: &CompressionContext) -> Co
     let name_lower = column_name.to_lowercase();
     
     match context {
-        CompressionContext::ParquetColumn => {
+        CompressionContext::Parquet => {
             // VIPER/NOVA columnar storage context
             if name_lower.contains("binary") || name_lower.contains("bin_") {
                 ColumnDataType::BinaryQuantized
@@ -552,7 +561,7 @@ pub fn create_mixed_compression_mapping(column_names: &[String]) -> HashMap<Stri
     let mut mapping = HashMap::new();
     
     for column_name in column_names {
-        let column_type = detect_column_type(column_name, &CompressionContext::ParquetColumn);
+        let column_type = detect_column_type(column_name, &CompressionContext::Parquet);
         let optimal_algorithm = get_optimal_compression_for_column(&column_type);
         mapping.insert(column_name.clone(), optimal_algorithm);
         
@@ -613,10 +622,10 @@ mod tests {
         for algorithm in algorithms {
             println!("Testing SST compression with {:?}", algorithm);
             
-            let compressed = compress(&test_data, algorithm.clone(), 3, CompressionContext::SstBlock)
+            let compressed = compress(&test_data, algorithm.clone(), 3, CompressionContext::Block)
                 .unwrap_or_else(|e| panic!("SST compression failed for {:?}: {}", algorithm, e));
                 
-            let decompressed = decompress(&compressed, algorithm.clone(), CompressionContext::SstBlock)
+            let decompressed = decompress(&compressed, algorithm.clone(), CompressionContext::Block)
                 .unwrap_or_else(|e| panic!("SST decompression failed for {:?}: {}", algorithm, e));
             
             assert_eq!(test_data, decompressed.as_slice(), 
@@ -693,10 +702,10 @@ mod tests {
         let test_data = b"Should not compress directly";
         
         // ParquetColumn context should be rejected for direct compression
-        let result = compress(test_data, CompressionAlgorithm::Zstd, 3, CompressionContext::ParquetColumn);
+        let result = compress(test_data, CompressionAlgorithm::Zstd, 3, CompressionContext::Parquet);
         assert!(result.is_err(), "Parquet context should be rejected for direct compression");
         
-        let result = decompress(test_data, CompressionAlgorithm::Zstd, CompressionContext::ParquetColumn);
+        let result = decompress(test_data, CompressionAlgorithm::Zstd, CompressionContext::Parquet);
         assert!(result.is_err(), "Parquet context should be rejected for direct decompression");
     }
     
@@ -719,10 +728,10 @@ mod tests {
             for level in levels {
                 println!("Testing {:?} at level {}", algorithm, level);
                 
-                let compressed = compress(&test_data, algorithm.clone(), level, CompressionContext::SstBlock)
+                let compressed = compress(&test_data, algorithm.clone(), level, CompressionContext::Block)
                     .unwrap_or_else(|e| panic!("Compression failed for {:?} level {}: {}", algorithm, level, e));
                     
-                let decompressed = decompress(&compressed, algorithm.clone(), CompressionContext::SstBlock)
+                let decompressed = decompress(&compressed, algorithm.clone(), CompressionContext::Block)
                     .unwrap_or_else(|e| panic!("Decompression failed for {:?} level {}: {}", algorithm, level, e));
                 
                 assert_eq!(test_data, decompressed.as_slice(), 
@@ -749,7 +758,7 @@ mod tests {
         ];
         
         let contexts = vec![
-            CompressionContext::SstBlock,
+            CompressionContext::Block,
             CompressionContext::VectorSerialization,
         ];
         
@@ -819,7 +828,7 @@ mod tests {
         ];
         
         for (column_name, expected_type) in test_columns {
-            let detected_type = detect_column_type(&column_name, &CompressionContext::ParquetColumn);
+            let detected_type = detect_column_type(&column_name, &CompressionContext::Parquet);
             assert_eq!(detected_type, expected_type, 
                 "Column type detection failed for: {}", column_name);
         }

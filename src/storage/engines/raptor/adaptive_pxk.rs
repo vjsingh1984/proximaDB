@@ -3,21 +3,19 @@
 //! Implements the refined formula with minimum 10% coverage floor
 //! and intelligent compression strategies based on K/D relationship
 
-use super::common::RowGroupMetadata;
+use super::common::{
+    VectorCentroidMatrix,
+    VectorCentroidStorageStrategy, VectorCentroidCompressionMetadata
+};
 use super::config::{PxKStrategy, CompressionStrategy};
-use crate::core::compression::StandardCompression;
 use crate::compute::quantization::storage_engine::StorageQuantizationEngine;
 use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
+use crate::proto::proximadb::DistanceMetric;
 use anyhow::Result;
 use std::collections::HashSet;
-use serde::{Deserialize, Serialize};
-
-// REMOVED: VectorCentroidMatrix - duplicate of common.rs::VectorCentroidMatrix
-// Use the common.rs version instead
-pub use super::common::VectorCentroidMatrix;
 
 /// Selection reason for sparse storage
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum SelectionReason {
     /// Near cluster boundary
     Boundary,
@@ -32,7 +30,7 @@ pub enum SelectionReason {
 }
 
 /// Vector selection info for sparse storage
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct VectorSelection {
     pub vector_idx: u32,
     pub selection_reason: SelectionReason,
@@ -75,46 +73,96 @@ pub struct DenseFullStorage {
 
 impl PxKStorageImpl for DenseFullStorage {
     fn store_distances(&mut self, vector_idx: usize, distances: &[f32]) -> Result<()> {
-        // TODO: Update to use new VectorCentroidMatrix structure with compression
-        // self.matrix.distances[vector_idx] = distances.to_vec();
+        // For Full storage strategy, we store all distances in compressed_data
+        // Layout: [v0_c0, v0_c1, ..., v0_ck, v1_c0, v1_c1, ..., v1_ck, ...]
+        // Each distance is quantized to u16 for compression
+        
+        let num_centroids = self.matrix.num_centroids as usize;
+        let range = self.matrix.compression_metadata.global_max_distance - 
+                   self.matrix.compression_metadata.global_min_distance;
+        let scale = if range > 0.0 { 65535.0 / range } else { 1.0 };
+        
+        // Ensure we have enough space
+        let required_size = (vector_idx + 1) * num_centroids * 2; // 2 bytes per u16
+        if self.matrix.compressed_data.len() < required_size {
+            self.matrix.compressed_data.resize(required_size, 0);
+        }
+        
+        // Store quantized distances
+        for (centroid_idx, &distance) in distances.iter().enumerate() {
+            let quantized = ((distance - self.matrix.compression_metadata.global_min_distance) * scale) as u16;
+            let offset = (vector_idx * num_centroids + centroid_idx) * 2;
+            self.matrix.compressed_data[offset] = (quantized & 0xFF) as u8;
+            self.matrix.compressed_data[offset + 1] = (quantized >> 8) as u8;
+        }
+        
         Ok(())
     }
     
     fn get_distances(&self, vector_idx: usize) -> Option<Vec<f32>> {
-        // TODO: Update to use new VectorCentroidMatrix get_distance() method
-        // self.matrix.distances.get(vector_idx).cloned()
-        None
+        let num_centroids = self.matrix.num_centroids as usize;
+        let num_vectors = self.matrix.num_vectors as usize;
+        
+        if vector_idx >= num_vectors {
+            return None;
+        }
+        
+        let mut distances = Vec::with_capacity(num_centroids);
+        
+        // Dequantize distances from compressed storage
+        for centroid_idx in 0..num_centroids {
+            match self.matrix.get_distance(vector_idx, centroid_idx) {
+                Ok(distance) => distances.push(distance),
+                Err(_) => distances.push(f32::INFINITY), // Missing distance
+            }
+        }
+        
+        Some(distances)
     }
     
     fn detect_boundaries(&self, threshold: f32) -> Vec<BoundaryInfo> {
         let mut boundaries = Vec::new();
+        let num_vectors = self.matrix.num_vectors as usize;
+        let num_centroids = self.matrix.num_centroids as usize;
         
-        // TODO: Update to iterate through compressed matrix data
-        // for (idx, distances) in self.matrix.distances.iter().enumerate() {
-        //     if distances.len() < 2 {
-        //         continue;
-        //     }
-        //     
-        //     // Find two closest clusters
-        //     let mut sorted: Vec<(usize, f32)> = distances
-        //         .iter()
-        //         .enumerate()
-        //         .map(|(i, &d)| (i, d))
-        //         .collect();
-        //     sorted.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
-        //     
-        //     let ratio = sorted[0].1 / sorted[1].1;
-        //     if ratio > threshold {
-        //         boundaries.push(BoundaryInfo {
-        //             vector_idx: idx as u32,
-        //             primary_cluster: sorted[0].0 as u32,
-        //             primary_distance: sorted[0].1,
-        //             secondary_cluster: sorted[1].0 as u32,
-        //             secondary_distance: sorted[1].1,
-        //             boundary_ratio: ratio,
-        //         });
-        //     }
-        // }
+        // Iterate through all vectors to find boundary cases
+        for vector_idx in 0..num_vectors {
+            // Get all distances for this vector
+            let mut distances: Vec<(usize, f32)> = Vec::with_capacity(num_centroids);
+            
+            for centroid_idx in 0..num_centroids {
+                if let Ok(distance) = self.matrix.get_distance(vector_idx, centroid_idx) {
+                    distances.push((centroid_idx, distance));
+                }
+            }
+            
+            if distances.len() < 2 {
+                continue;
+            }
+            
+            // Sort by distance to find closest centroids
+            distances.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
+            
+            // Calculate boundary ratio: closest / second_closest
+            // A ratio close to 1.0 means the vector is on a boundary
+            let ratio = if distances[1].1 > 0.0 {
+                distances[0].1 / distances[1].1
+            } else {
+                0.0
+            };
+            
+            // Check if this is a boundary vector (ratio > threshold, typically 0.8)
+            if ratio > threshold {
+                boundaries.push(BoundaryInfo {
+                    vector_idx: vector_idx as u32,
+                    primary_cluster: distances[0].0 as u32,
+                    primary_distance: distances[0].1,
+                    secondary_cluster: distances[1].0 as u32,
+                    secondary_distance: distances[1].1,
+                    boundary_ratio: ratio,
+                });
+            }
+        }
         
         boundaries
     }
@@ -150,7 +198,13 @@ impl SparseCoverageStorage {
             selected_vectors: Vec::new(),
             compressed_distances: Vec::new(),
             num_clusters,
-            quantization_engine: StorageQuantizationEngine::new(),
+            // Quantization engine will be initialized when needed
+            quantization_engine: {  
+                let unified_engine = std::sync::Arc::new(crate::compute::quantization::unified::UnifiedQuantizationEngine::new());
+                let distance_compute = std::sync::Arc::new(UnifiedDistanceCompute::new(DistanceMetric::Cosine));
+                let config = crate::compute::quantization::storage_engine::StorageQuantizationConfig::default();
+                StorageQuantizationEngine::new(unified_engine, distance_compute, config)
+            },
         }
     }
     
@@ -218,13 +272,13 @@ impl SparseCoverageStorage {
         budget: usize,
     ) -> Vec<VectorSelection> {
         let mut boundaries = Vec::new();
-        let distance_compute = UnifiedDistanceCompute::new();
+        let distance_compute = UnifiedDistanceCompute::new(DistanceMetric::Cosine);
         
         for (idx, vector) in vectors.iter().enumerate() {
             // Calculate distances to all centroids
             let mut distances: Vec<f32> = centroids
                 .iter()
-                .map(|c| distance_compute.cosine(vector, c))
+                .map(|c| distance_compute.calculate_distance(vector, c, &DistanceMetric::Cosine).raw_value)
                 .collect();
             distances.sort_by(|a, b| a.partial_cmp(b).unwrap());
             
@@ -254,7 +308,7 @@ impl SparseCoverageStorage {
     ) -> Vec<VectorSelection> {
         // Simple k-medoids selection
         let mut representatives = Vec::new();
-        let distance_compute = UnifiedDistanceCompute::new();
+        let distance_compute = UnifiedDistanceCompute::new(DistanceMetric::Cosine);
         
         // Find vectors closest to mean
         let dim = vectors[0].len();
@@ -272,7 +326,7 @@ impl SparseCoverageStorage {
             .iter()
             .enumerate()
             .filter(|(idx, _)| !selected.contains(&(*idx as u32)))
-            .map(|(idx, v)| (idx, distance_compute.cosine(v, &mean)))
+            .map(|(idx, v)| (idx, distance_compute.calculate_distance(v, &mean, &DistanceMetric::Cosine).raw_value))
             .collect();
         
         distances.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
@@ -296,7 +350,7 @@ impl SparseCoverageStorage {
         selected: &HashSet<u32>,
     ) -> Vec<VectorSelection> {
         let mut outliers = Vec::new();
-        let distance_compute = UnifiedDistanceCompute::new();
+        let distance_compute = UnifiedDistanceCompute::new(DistanceMetric::Cosine);
         
         for (idx, vector) in vectors.iter().enumerate() {
             if selected.contains(&(idx as u32)) {
@@ -306,7 +360,7 @@ impl SparseCoverageStorage {
             // Find distance to nearest centroid
             let min_dist = centroids
                 .iter()
-                .map(|c| distance_compute.cosine(vector, c))
+                .map(|c| distance_compute.calculate_distance(vector, c, &DistanceMetric::Cosine).raw_value)
                 .min_by(|a, b| a.partial_cmp(b).unwrap())
                 .unwrap_or(f32::MAX);
             
@@ -330,7 +384,7 @@ impl SparseCoverageStorage {
         selected: &HashSet<u32>,
     ) -> Vec<VectorSelection> {
         let mut diverse = Vec::new();
-        let distance_compute = UnifiedDistanceCompute::new();
+        let distance_compute = UnifiedDistanceCompute::new(DistanceMetric::Cosine);
         let mut selected_diverse = HashSet::new();
         
         // Start with random vector
@@ -363,7 +417,7 @@ impl SparseCoverageStorage {
                 // Find minimum distance to any selected vector
                 let min_dist = selected_diverse
                     .iter()
-                    .map(|&s| distance_compute.cosine(&vectors[idx], &vectors[s]))
+                    .map(|&s| distance_compute.calculate_distance(&vectors[idx], &vectors[s], &DistanceMetric::Cosine).raw_value)
                     .min_by(|a, b| a.partial_cmp(b).unwrap())
                     .unwrap_or(f32::MAX);
                 
@@ -636,9 +690,20 @@ impl AdaptivePxKStorage {
             PxKStrategy::DenseFull | PxKStrategy::DenseCompressed => {
                 Box::new(DenseFullStorage {
                     matrix: VectorCentroidMatrix {
-                        distances: Vec::with_capacity(p),
-                        num_vectors: p,
-                        num_clusters: k,
+                        rowgroup_id: 0,  // Will be set when assigned to rowgroup
+                        num_vectors: p as u32,
+                        num_centroids: k as u32,
+                        storage_strategy: VectorCentroidStorageStrategy::Full,
+                        compressed_data: Vec::new(),
+                        compression_metadata: VectorCentroidCompressionMetadata {
+                            centroid_stats: Vec::new(),
+                            global_min_distance: 0.0,
+                            global_max_distance: 2.0,
+                            global_mean_distance: 1.0,
+                            centroid_encodings: Vec::new(),
+                        },
+                        sparse_data: None,
+                        hierarchical_data: None,
                     },
                 })
             }
@@ -649,9 +714,20 @@ impl AdaptivePxKStorage {
                 // TODO: Implement learned index
                 Box::new(DenseFullStorage {
                     matrix: VectorCentroidMatrix {
-                        distances: Vec::new(),
+                        rowgroup_id: 0,
                         num_vectors: 0,
-                        num_clusters: k,
+                        num_centroids: k as u32,
+                        storage_strategy: VectorCentroidStorageStrategy::Full,
+                        compressed_data: Vec::new(),
+                        compression_metadata: VectorCentroidCompressionMetadata {
+                            centroid_stats: Vec::new(),
+                            global_min_distance: 0.0,
+                            global_max_distance: 2.0,
+                            global_mean_distance: 1.0,
+                            centroid_encodings: Vec::new(),
+                        },
+                        sparse_data: None,
+                        hierarchical_data: None,
                     },
                 })
             }
