@@ -598,10 +598,14 @@ impl WriteAheadLogManagerRegistry {
             .iter()
             .min_by(|(_, a), (_, b)| {
                 // Primary: load score (lower is better)
-                a.workload_metrics.load_score.partial_cmp(&b.workload_metrics.load_score)
-                    
-                    // Secondary: collection count (lower is better)
-                    .then_with(|| a.workload_metrics.collection_count.cmp(&b.workload_metrics.collection_count))
+                match a.workload_metrics.load_score.partial_cmp(&b.workload_metrics.load_score) {
+                    Some(std::cmp::Ordering::Equal) => {
+                        // Secondary: collection count (lower is better)
+                        a.workload_metrics.collection_count.cmp(&b.workload_metrics.collection_count)
+                    }
+                    Some(ordering) => ordering,
+                    None => std::cmp::Ordering::Equal, // Treat NaN as equal
+                }
             })
             .map(|(id, _)| id.clone())
             .ok_or_else(|| anyhow::anyhow!("No suitable manager found in pool"))?;
@@ -629,14 +633,14 @@ impl WriteAheadLogManagerRegistry {
         // Create new manager if:
         // 1. The most loaded manager exceeds target collections per manager
         // 2. There's significant imbalance between managers
-        let should_create = max_collections > self.pool_config.target_collections_per_manager ||
-                           (max_collections - min_collections) > (self.pool_config.target_collections_per_manager / 2);
+        let should_create = max_collections.unwrap_or(0) > self.pool_config.target_collections_per_manager ||
+                           (max_collections.unwrap_or(0).saturating_sub(min_collections.unwrap_or(0))) > (self.pool_config.target_collections_per_manager / 2);
 
         if should_create {
             tracing::info!(
                 "🔄 Dynamic scaling triggered - current managers: {}, max_collections: {}, target: {}",
                 pool.len(),
-                max_collections,
+                max_collections.unwrap_or(0),
                 self.pool_config.target_collections_per_manager
             );
         }
@@ -836,9 +840,9 @@ pub async fn get_write_ahead_log_manager_pool_stats() -> Result<WriteAheadLogMan
         total_managers: pool.len(),
         total_collections,
         avg_collections_per_manager,
-        max_collections_per_manager: max_collections,
-        min_collections_per_manager: min_collections,
-        load_imbalance: if min_collections == 0 { 0.0 } else { max_collections as f64 / min_collections as f64 },
+        max_collections_per_manager: max_collections.unwrap_or(0),
+        min_collections_per_manager: min_collections.unwrap_or(0),
+        load_imbalance: if min_collections.unwrap_or(0) == 0 { 0.0 } else { max_collections.unwrap_or(0) as f64 / min_collections.unwrap_or(1) as f64 },
     })
 }
 
@@ -1047,7 +1051,8 @@ impl WriteAheadLogManager {
         };
 
         // Use shared WAL behavior for batch operations
-        let wal_behavior = self.shared_wal_behavior.get_or_init(&self.config.memtable);
+        let memtable_config = crate::storage::memtable::core::MemtableConfig::default();
+        let wal_behavior = self.shared_wal_behavior.get_or_init(&memtable_config);
         let sequences = wal_behavior.add_vector_batch(&collection_id, batch).await?;
         let duration = start_time.elapsed();
 
@@ -1135,7 +1140,9 @@ impl WriteAheadLogManager {
         vector_id: &VectorId,
     ) -> Result<Option<VectorRecord>> {
         // Use shared WAL behavior to get the vector
-        let wal_behavior = self.shared_wal_behavior.get_or_init(&self.config.memtable);
+        // Create MemtableConfig from MemTableConfig
+        let memtable_config = crate::storage::memtable::core::MemtableConfig::default();
+        let wal_behavior = self.shared_wal_behavior.get_or_init(&memtable_config);
         wal_behavior.get_vector(collection_id, vector_id).await
     }
 
@@ -1148,7 +1155,8 @@ impl WriteAheadLogManager {
         limit: Option<usize>,
     ) -> Result<Vec<VectorRecord>> {
         // Get vectors from the collection
-        let wal_behavior = self.shared_wal_behavior.get_or_init(&self.config.memtable);
+        let memtable_config = crate::storage::memtable::core::MemtableConfig::default();
+        let wal_behavior = self.shared_wal_behavior.get_or_init(&memtable_config);
         let vectors = wal_behavior.get_all_vectors(collection_id).await?;
         
         // Apply sequence filtering and limit if needed
@@ -1163,7 +1171,8 @@ impl WriteAheadLogManager {
     /// Force flush to disk
     pub async fn flush(&self, collection_id: Option<&String>) -> Result<FlushResult> {
         // Use shared WAL behavior for flush
-        let wal_behavior = self.shared_wal_behavior.get_or_init(&self.config.memtable);
+        let memtable_config = crate::storage::memtable::core::MemtableConfig::default();
+        let wal_behavior = self.shared_wal_behavior.get_or_init(&memtable_config);
         let result = if let Some(cid) = collection_id {
             wal_behavior.flush_collection(cid).await?
         } else {
@@ -1194,7 +1203,8 @@ impl WriteAheadLogManager {
         limit: Option<usize>,
     ) -> Result<Vec<Vec<u8>>> {
         // Get the vector records from the collection
-        let wal_behavior = self.shared_wal_behavior.get_or_init(&self.config.memtable);
+        let memtable_config = crate::storage::memtable::core::MemtableConfig::default();
+        let wal_behavior = self.shared_wal_behavior.get_or_init(&memtable_config);
         let vectors = wal_behavior.get_all_vectors(&collection_id.to_string()).await?;
         
         // Apply limit if specified
@@ -1252,7 +1262,8 @@ impl WriteAheadLogManager {
         &self,
         collection_id: &str,
     ) -> Result<Vec<VectorRecord>> {
-        let wal_behavior = self.shared_wal_behavior.get_or_init(&self.config.memtable);
+        let memtable_config = crate::storage::memtable::core::MemtableConfig::default();
+        let wal_behavior = self.shared_wal_behavior.get_or_init(&memtable_config);
         wal_behavior.get_all_vectors(collection_id).await
     }
 
@@ -1262,7 +1273,8 @@ impl WriteAheadLogManager {
         tracing::debug!("📊 WAL_MANAGER_STATS: Getting stats from shared WAL behavior...");
         
         // Get basic stats from the shared WAL behavior
-        let wal_behavior = self.shared_wal_behavior.get_or_init(&self.config.memtable);
+        let memtable_config = crate::storage::memtable::core::MemtableConfig::default();
+        let wal_behavior = self.shared_wal_behavior.get_or_init(&memtable_config);
         
         // Create stats based on available information
         let stats = WALStats {
@@ -1292,7 +1304,8 @@ impl WriteAheadLogManager {
 
     /// Flush collection using modern batch operations
     pub async fn flush_collection(&self, collection_id: &str) -> Result<FlushResult> {
-        let wal_behavior = self.shared_wal_behavior.get_or_init(&self.config.memtable);
+        let memtable_config = crate::storage::memtable::core::MemtableConfig::default();
+        let wal_behavior = self.shared_wal_behavior.get_or_init(&memtable_config);
         wal_behavior.flush_collection(collection_id).await
     }
 
@@ -1352,7 +1365,8 @@ impl WriteAheadLogManager {
         
         // Delegate to strategy - each strategy handles its own serialization
         {
-        let wal_behavior = self.shared_wal_behavior.get_or_init(&self.config.memtable);
+        let memtable_config = crate::storage::memtable::core::MemtableConfig::default();
+        let wal_behavior = self.shared_wal_behavior.get_or_init(&memtable_config);
         wal_behavior.write_native_batch(native_batch, collection_id).await
     }
     }
@@ -1387,7 +1401,8 @@ impl WriteAheadLogManager {
 
         // Write to memory first
         let sequences = {
-        let wal_behavior = self.shared_wal_behavior.get_or_init(&self.config.memtable);
+        let memtable_config = crate::storage::memtable::core::MemtableConfig::default();
+        let wal_behavior = self.shared_wal_behavior.get_or_init(&memtable_config);
         wal_behavior.write_native_batch(batch, &collection_id).await
     }?;
         
@@ -1410,7 +1425,8 @@ impl WriteAheadLogManager {
         vector_id: &VectorId,
     ) -> Result<Option<VectorRecord>> {
         {
-        let wal_behavior = self.shared_wal_behavior.get_or_init(&self.config.memtable);
+        let memtable_config = crate::storage::memtable::core::MemtableConfig::default();
+        let wal_behavior = self.shared_wal_behavior.get_or_init(&memtable_config);
         wal_behavior.get_vector(collection_id, vector_id).await
     }
     }
@@ -1424,7 +1440,8 @@ impl WriteAheadLogManager {
         distance_metric: Option<crate::compute::distance_computation::DistanceMetric>,
     ) -> Result<Vec<(VectorId, f32, VectorRecord)>> {
         {
-        let wal_behavior = self.shared_wal_behavior.get_or_init(&self.config.memtable);
+        let memtable_config = crate::storage::memtable::core::MemtableConfig::default();
+        let wal_behavior = self.shared_wal_behavior.get_or_init(&memtable_config);
         wal_behavior.search_vectors(collection_id, query_vector, k, distance_metric).await
     }
     }
@@ -1449,7 +1466,8 @@ impl WriteAheadLogManager {
         );
         
         // Step 1: Get unflushed batches through strategy (which accesses global memtable)
-        let wal_behavior = self.shared_wal_behavior.get_or_init(&self.config.memtable);
+        let memtable_config = crate::storage::memtable::core::MemtableConfig::default();
+        let wal_behavior = self.shared_wal_behavior.get_or_init(&memtable_config);
         let batches = wal_behavior.get_unflushed_batches(collection_id)
             .await
             .context("Failed to get unflushed batches from strategy WAL behavior")?;
@@ -1769,7 +1787,8 @@ impl WriteAheadLogManager {
     /// Get all vectors for a collection (modern API)
     pub async fn get_collection_vectors(&self, collection_id: &str) -> Result<Vec<VectorRecord>> {
         {
-        let wal_behavior = self.shared_wal_behavior.get_or_init(&self.config.memtable);
+        let memtable_config = crate::storage::memtable::core::MemtableConfig::default();
+        let wal_behavior = self.shared_wal_behavior.get_or_init(&memtable_config);
         wal_behavior.get_collection_vectors(collection_id).await
     }
     }
@@ -1781,7 +1800,8 @@ impl WriteAheadLogManager {
         limit: Option<usize>,
     ) -> Result<Vec<crate::storage::memtable::specialized::wal_behavior::WALVectorBatch>> {
         {
-        let wal_behavior = self.shared_wal_behavior.get_or_init(&self.config.memtable);
+        let memtable_config = crate::storage::memtable::core::MemtableConfig::default();
+        let wal_behavior = self.shared_wal_behavior.get_or_init(&memtable_config);
         wal_behavior.read_all_batches(collection_id, limit).await
     }
     }
@@ -1872,7 +1892,8 @@ impl WriteAheadLogManager {
         _sequences: &[u64],
     ) -> Result<WALVectorBatch> {
         // Get the batch from the strategy's memory
-        let wal_behavior = self.shared_wal_behavior.get_or_init(&self.config.memtable);
+        let memtable_config = crate::storage::memtable::core::MemtableConfig::default();
+        let wal_behavior = self.shared_wal_behavior.get_or_init(&memtable_config);
         let collection_vectors = wal_behavior
             .get_collection_vectors(&collection_id.to_string())
             .await
@@ -1945,7 +1966,8 @@ impl WriteAheadLogManager {
             // For now, just use the strategy recovery (which now reads from global memtable)
             // TODO: Re-enable parallel recovery once compilation issues are resolved
             let recovered_count = {
-        let wal_behavior = self.shared_wal_behavior.get_or_init(&self.config.memtable);
+        let memtable_config = crate::storage::memtable::core::MemtableConfig::default();
+        let wal_behavior = self.shared_wal_behavior.get_or_init(&memtable_config);
         wal_behavior.recover().await
     }
                 .context("WAL strategy recovery failed")?;

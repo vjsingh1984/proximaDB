@@ -35,7 +35,7 @@
 
 use anyhow::{anyhow, Result};
 use serde::{Deserialize, Serialize};
-use crate::query::sql_engine::simd_parser::parse_vector_simd;
+use crate::query::sql_engine::vector_array_parser::parse_vector_simd;
 
 /// Parsed SQL query representation
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -52,7 +52,6 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::hash::Hash;
 use std::sync::Arc;
-use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
 use tokio::sync::RwLock;
 use tracing::{debug, info};
@@ -999,16 +998,7 @@ where
             let mut wm = self.workload_metrics.write().await;
             wm.reads_per_second += 1.0; // Simplified - should be rate-calculated
             if value.is_some() {
-                wm.cache_hit_rate = {
-                    let hits = self.metrics.hits.load(Ordering::Relaxed);
-                    let misses = self.metrics.misses.load(Ordering::Relaxed);
-                    let total = hits + misses;
-                    if total > 0 {
-                        (hits as f64 / total as f64) * 100.0
-                    } else {
-                        0.0
-                    }
-                };
+                wm.cache_hit_rate = self.metrics.hit_rate() * 100.0;
             }
         }
         
@@ -1019,7 +1009,7 @@ where
         let start = Instant::now();
         
         // Remove from DashMap storage
-        let removed = self.storage.remove("key1").map(|(_, v)| v);
+        let removed = self.storage.remove(key).map(|(_, v)| v);
         
         // Update metrics
         self.metrics.record_operation("remove", start.elapsed());
@@ -1142,16 +1132,7 @@ where
             let mut wm = self.workload_metrics.write().await;
             wm.reads_per_second += 1.0; // Simplified - should be rate-calculated
             if value.is_some() {
-                wm.cache_hit_rate = {
-                    let hits = self.metrics.hits.load(Ordering::Relaxed);
-                    let misses = self.metrics.misses.load(Ordering::Relaxed);
-                    let total = hits + misses;
-                    if total > 0 {
-                        (hits as f64 / total as f64) * 100.0
-                    } else {
-                        0.0
-                    }
-                };
+                wm.cache_hit_rate = self.metrics.hit_rate() * 100.0;
             }
         }
         
@@ -1165,7 +1146,7 @@ where
         let removed = self.storage.get(key).await;
         
         // Remove from Moka cache
-        self.storage.remove("key1").await;
+        self.storage.remove(key).await;
         
         // Update metrics
         self.metrics.record_operation("remove", start.elapsed());

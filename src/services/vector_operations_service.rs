@@ -42,7 +42,39 @@ use crate::query::unified_query_optimizer::{
     UnifiedQueryOptimizer, UnifiedQueryContext, UnifiedExecutionPlan,
     ExecutionStep, OptimizationGoal,
 };
+
+/// Unified search configuration that works for SQL, REST, and gRPC
+#[derive(Debug, Clone)]
+pub struct UnifiedSearchConfig {
+    /// Optimization goal (speed vs accuracy)
+    pub optimization_goal: OptimizationGoal,
+    /// Enable progressive quantization search
+    pub progressive_search: bool,
+    /// Custom recall targets for progressive search
+    pub progressive_recalls: Option<crate::core::search::ProgressiveRecalls>,
+    /// Include vectors in results
+    pub include_vectors: bool,
+    /// Include metadata in results
+    pub include_metadata: bool,
+    /// Search scenario hint
+    pub scenario: Option<String>,
+}
+
+impl Default for UnifiedSearchConfig {
+    fn default() -> Self {
+        Self {
+            optimization_goal: OptimizationGoal::Balanced,
+            progressive_search: true,
+            progressive_recalls: None,
+            include_vectors: false,
+            include_metadata: true,
+            scenario: None,
+        }
+    }
+}
 use crate::storage::engines::sst::SstStorage;
+use crate::storage::cache::specialized::query_cache::{QueryCache, QueryKey, CachedQueryResult};
+use std::time::SystemTime;
 
 /// Updated Vector Operations Service using consolidated optimizer
 pub struct VectorOperationsService {
@@ -57,6 +89,9 @@ pub struct VectorOperationsService {
     
     /// Collection cache (unchanged)
     collection_cache: Arc<dashmap::DashMap<String, Arc<Collection>>>,
+    
+    /// Query result cache - unified for all query sources (SQL, REST API, gRPC)
+    query_cache: Arc<QueryCache>,
 }
 
 impl VectorOperationsService {
@@ -73,125 +108,150 @@ impl VectorOperationsService {
         
         let optimizer_config = crate::query::unified_query_optimizer::UnifiedOptimizerConfig::default();
         
+        // Initialize query cache with 512MB memory budget (configurable)
+        let query_cache = Arc::new(QueryCache::new(512));
+        
         Self {
             storage_engine,
             wal_manager,
             query_optimizer: Arc::new(UnifiedQueryOptimizer::new(optimizer_config)),
             collection_cache: Arc::new(dashmap::DashMap::new()),
+            query_cache,
         }
     }
     
     /// Execute progressive quantization-aware search
     /// Uses the formula: k_stage = k · Π(1/r_i) for all subsequent stages
-    pub async fn progressive_search(
+    /// UNIFIED SEARCH METHOD - Single entry point for ALL search operations
+    /// 
+    /// This is THE search method. All search requests (SQL, REST, gRPC) should flow through here.
+    /// It replaces: progressive_search, search_vectors, search_vectors_with_filters
+    /// 
+    /// Flow: SQL/REST/gRPC -> UnifiedHandlers -> THIS METHOD -> Storage/Index
+    pub async fn unified_search(
         &self,
         collection_id: &str,
         query_vector: Vec<f32>,
         k: usize,
-        scenario: Option<&str>,
-        custom_recalls: Option<crate::core::search::ProgressiveRecalls>,
-    ) -> Result<Vec<crate::core::search::SearchResult>> {
-        use crate::core::search::progressive_quantization::{
-            ProgressiveSearchConfig, SearchScenario
-        };
+        filter: Option<FilterExpression>,
+        config: Option<UnifiedSearchConfig>,
+    ) -> Result<Vec<crate::proto::proximadb::SearchResult>> {
+        let config = config.unwrap_or_default();
         
-        info!("🔄 Starting progressive quantization-aware search for collection {}", collection_id);
+        // Create cache key for unified result caching
+        let filter_str = filter.as_ref().map(|f| format!("{:?}", f));
+        let cache_key = QueryKey::new(
+            collection_id.to_string(),
+            &query_vector,
+            k as u32,
+            filter_str.as_deref(),
+        );
+        
+        // Check cache first
+        if let Some(cached) = self.query_cache.get_if_fresh(&cache_key, 300).await {
+            debug!("✅ Cache hit for unified search in collection {}", collection_id);
+            return Ok(cached);
+        }
+        
+        info!("🔍 Starting unified search for collection {} (progressive: {})", 
+              collection_id, config.progressive_search);
         
         // Get collection configuration
         let _collection = self.get_or_load_collection(collection_id).await?;
         
-        // Configure progressive search based on scenario
-        let mut config = if let Some(scenario_str) = scenario {
-            match scenario_str {
-                "high_recall" => ProgressiveSearchConfig::for_scenario(SearchScenario::HighRecall),
-                "high_speed" => ProgressiveSearchConfig::for_scenario(SearchScenario::HighSpeed),
-                "low_memory" => ProgressiveSearchConfig::for_scenario(SearchScenario::LowMemory),
-                _ => ProgressiveSearchConfig::default(),
-            }
+        // Execute search based on configuration
+        if config.progressive_search {
+            // Progressive search with configured recall levels
+            self.execute_progressive_search(
+                collection_id,
+                query_vector,
+                k,
+                filter,
+                config,
+            ).await
         } else {
-            ProgressiveSearchConfig::default()
-        };
-        
-        // Apply custom recall rates if provided
-        if let Some(recalls) = custom_recalls {
-            if let Some(binary) = recalls.binary_recall {
-                config.binary_recall = binary;
-            }
-            if let Some(int8) = recalls.int8_recall {
-                config.int8_recall = int8;
-            }
-            if let Some(pq) = recalls.pq_recall {
-                config.pq_recall = pq;
-            }
+            // Direct search without progressive stages
+            self.execute_search_internal(
+                collection_id,
+                query_vector,
+                k,
+                filter,
+                config.optimization_goal,
+            ).await
         }
+    }
+    
+    
+    /// Execute progressive search with multiple stages
+    async fn execute_progressive_search(
+        &self,
+        collection_id: &str,
+        query_vector: Vec<f32>,
+        k: usize,
+        filter: Option<FilterExpression>,
+        config: UnifiedSearchConfig,
+    ) -> Result<Vec<crate::proto::proximadb::SearchResult>> {
+        debug!("🔍 Executing progressive search for collection {}", collection_id);
         
-        // Compute stage sizes using the formula
-        let stage_sizes = config.compute_stage_sizes(k);
-        
-        info!(
-            "📊 Progressive search stages - Binary: {}, INT8: {}, PQ: {}, FP32: {} (total: {})",
-            stage_sizes.binary_candidates,
-            stage_sizes.int8_candidates,
-            stage_sizes.pq_candidates,
-            stage_sizes.fp32_candidates,
-            stage_sizes.total_computations
-        );
-        
-        // Create search parameters with progressive search enabled
+        // Create search parameters with progressive settings
         let search_params = crate::core::search::SearchParams {
-            query_vectors: Some(vec![query_vector]),
-            vector: None, // query_vectors is used for the actual vector
+            query_vectors: Some(vec![query_vector.clone()]),
+            vector: None,
             top_k: Some(k),
             distance_metric: None,
-            filter_expression: None,
-            filters: None, // Legacy field - we use filter_expression instead
+            filter_expression: filter.clone(),
+            filters: None,
             accuracy_threshold: None,
             include_expired: Some(false),
-            timeout_ms: Some(30000), // 30s timeout
+            timeout_ms: Some(30000),
             enable_two_stage: Some(true),
             custom_hints: None,
             enable_clustering_hint: Some(true),
-            enable_metadata_filtering_hint: Some(false),
+            enable_metadata_filtering_hint: Some(filter.is_some()),
             quantization_hint: None,
             runtime_hints: None,
             requires_ordering: Some(true),
-            // Progressive search specific
             enable_progressive_search: Some(true),
-            progressive_scenario: scenario.map(|s| s.to_string()),
-            progressive_recalls: Some(crate::core::search::ProgressiveRecalls {
-                binary_recall: Some(config.binary_recall),
-                int8_recall: Some(config.int8_recall),
-                pq_recall: Some(config.pq_recall),
-            }),
-            optimization_hint: scenario.map(|s| s.to_string()),
+            progressive_scenario: config.scenario.clone(),
+            progressive_recalls: config.progressive_recalls.clone(),
+            optimization_hint: config.scenario.clone(),
         };
         
-        // Execute with unified optimizer configured for progressive search
-        let query_vector = search_params.query_vectors
-            .as_ref()
-            .and_then(|vecs| vecs.first())
-            .cloned()
-            .unwrap_or_else(|| vec![0.0; 128]); // Default vector if none provided
-        
-        self.search_vectors_with_filters(
+        // Use the internal execution with progressive configuration
+        self.execute_search_internal(
             collection_id,
             query_vector,
             k,
-            None,
-            OptimizationGoal::BalancedSpeedRecall,
+            filter,
+            config.optimization_goal,
         ).await
     }
     
-    /// Search vectors with optional metadata filtering - SIMPLIFIED!
-    pub async fn search_vectors_with_filters(
+    /// Internal implementation for search execution
+    async fn execute_search_internal(
         &self,
         collection_id: &str,
         query_vector: Vec<f32>,
         top_k: usize,
         filter: Option<FilterExpression>,
         optimization_goal: OptimizationGoal,
-    ) -> Result<Vec<crate::core::search::SearchResult>> {
+    ) -> Result<Vec<crate::proto::proximadb::SearchResult>> {
         debug!("🔍 Executing unified search+filter query for collection {}", collection_id);
+        
+        // Create cache key for this query
+        let filter_str = filter.as_ref().map(|f| format!("{:?}", f));
+        let cache_key = QueryKey::new(
+            collection_id.to_string(),
+            &query_vector,
+            top_k as u32,
+            filter_str.as_deref(),
+        );
+        
+        // Check cache first (5 minute TTL)
+        if let Some(cached_results) = self.query_cache.get_if_fresh(&cache_key, 300).await {
+            debug!("✅ Cache hit for query in collection {}", collection_id);
+            return Ok(cached_results);
+        }
         
         // Get collection
         let collection = self.get_or_load_collection(collection_id).await?;
@@ -244,17 +304,24 @@ impl VectorOperationsService {
         let internal_results = self.execute_unified_plan(collection_id, execution_plan, query_vector, top_k, filter).await?;
         
         // Convert InternalSearchResult to proto SearchResult at API boundary
-        let search_vector_records: Vec<crate::proto::proximadb::SearchVectorRecord> = internal_results
-            .iter()
-            .map(|result| result.to_search_vector_record(true, true, true)) // Include vector, metadata, and source
-            .collect();
-            
-        // Wrap in proto SearchResult
-        Ok(vec![crate::core::search::SearchResult {
-            results: search_vector_records,
-            total_found: internal_results.len() as i64,
-            collection_id: Some(collection_id.to_string()),
-        }])
+        let proto_results = vec![self.convert_to_proto_search_result(
+            internal_results,
+            collection_id,
+            true,  // include_vectors
+            true,  // include_metadata  
+            true,  // include_source
+        )];
+        
+        // Cache the results for future queries
+        let cached_result = CachedQueryResult {
+            results: proto_results.clone(),
+            cached_at: SystemTime::now(),
+            file_dependencies: Vec::new(), // TODO: Track file dependencies for invalidation
+        };
+        self.query_cache.put_with_hooks(cache_key, cached_result).await;
+        debug!("💾 Cached query results for collection {}", collection_id);
+        
+        Ok(proto_results)
     }
     
     /// Execute unified plan - NEW capability for combined operations
@@ -487,10 +554,10 @@ impl VectorOperationsService {
             optimization_hint: None,
         };
         
-        // Get the collection from cache for SearchContext
+        // Get the collection from cache for StorageQueryContext
         let collection = self.get_or_load_collection(collection_id).await?;
         
-        let search_context = crate::storage::traits::SearchContext::new(
+        let search_context = crate::storage::traits::StorageQueryContext::new(
             Arc::new(search_params),
             collection.clone(),
         );
@@ -561,8 +628,8 @@ impl VectorOperationsService {
         collection_id: &str,
         conditions: Vec<crate::query::unified_query_optimizer::FilterCondition>,
         method: crate::query::unified_query_optimizer::FilterExecutionMethod,
-        input: Option<&Vec<crate::core::search::SearchResult>>,
-    ) -> Result<Vec<crate::core::search::SearchResult>> {
+        input: Option<&Vec<crate::core::search::InternalSearchResult>>,
+    ) -> Result<Vec<crate::core::search::InternalSearchResult>> {
         // Implementation
         Ok(vec![])
     }
@@ -573,8 +640,8 @@ impl VectorOperationsService {
         method: crate::query::unified_query_optimizer::SearchExecutionMethod,
         quantization: Option<crate::query::unified_query_optimizer::QuantizationStrategy>,
         candidates: usize,
-        input: Option<&Vec<crate::core::search::SearchResult>>,
-    ) -> Result<Vec<crate::core::search::SearchResult>> {
+        input: Option<&Vec<crate::core::search::InternalSearchResult>>,
+    ) -> Result<Vec<crate::core::search::InternalSearchResult>> {
         // Implementation
         Ok(vec![])
     }
@@ -584,7 +651,7 @@ impl VectorOperationsService {
         collection_id: &str,
         index_type: crate::query::unified_query_optimizer::IndexType,
         params: crate::query::unified_query_optimizer::IndexLookupParams,
-    ) -> Result<Vec<crate::core::search::SearchResult>> {
+    ) -> Result<Vec<crate::core::search::InternalSearchResult>> {
         // Implementation
         Ok(vec![])
     }
@@ -593,8 +660,8 @@ impl VectorOperationsService {
         &self,
         collection_id: &str,
         filter_type: crate::query::unified_query_optimizer::BloomFilterType,
-        input: Option<&Vec<crate::core::search::SearchResult>>,
-    ) -> Result<Vec<crate::core::search::SearchResult>> {
+        input: Option<&Vec<crate::core::search::InternalSearchResult>>,
+    ) -> Result<Vec<crate::core::search::InternalSearchResult>> {
         // Implementation
         Ok(vec![])
     }
@@ -759,21 +826,6 @@ impl VectorOperationsService {
         Ok(None)
     }
     
-    pub async fn search_vectors(
-        &self,
-        collection_id: &str,
-        query_vector: Vec<f32>,
-        top_k: usize,
-    ) -> Result<Vec<crate::core::search::SearchResult>> {
-        // Use the search_vectors_with_filters without any filters
-        self.search_vectors_with_filters(
-            collection_id,
-            query_vector,
-            top_k,
-            None,
-            OptimizationGoal::Balanced,
-        ).await
-    }
     
     pub async fn force_flush_all(&self) -> Result<()> {
         // TODO: Implement flush all
@@ -799,6 +851,28 @@ impl VectorOperationsService {
     pub async fn debug_list_all_unflushed_vectors(&self, _collection_id: &str) -> Result<Vec<crate::proto::proximadb::VectorRecord>> {
         // TODO: Implement debug functionality
         Ok(vec![])
+    }
+    
+    /// Helper method to convert InternalSearchResult to proto SearchResult
+    /// This is the standard conversion point from internal to API types
+    fn convert_to_proto_search_result(
+        &self,
+        internal_results: Vec<crate::core::search::InternalSearchResult>,
+        collection_id: &str,
+        include_vectors: bool,
+        include_metadata: bool,
+        include_source: bool,
+    ) -> crate::proto::proximadb::SearchResult {
+        let search_vector_records: Vec<crate::proto::proximadb::SearchVectorRecord> = internal_results
+            .iter()
+            .map(|result| result.to_search_vector_record(include_vectors, include_metadata, include_source))
+            .collect();
+        
+        crate::proto::proximadb::SearchResult {
+            results: search_vector_records,
+            total_found: internal_results.len() as i64,
+            collection_id: Some(collection_id.to_string()),
+        }
     }
 }
 

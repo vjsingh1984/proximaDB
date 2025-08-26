@@ -37,6 +37,8 @@ pub enum CompressionStrategy {
     Float16,
     /// 8-bit quantization (1 byte)
     Quantized8,
+    /// 6-bit quantization (0.75 bytes)
+    Quantized6,
     /// 4-bit quantization (0.5 bytes)
     Quantized4,
     /// Delta encoding for sorted distances

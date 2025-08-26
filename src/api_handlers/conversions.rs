@@ -381,7 +381,7 @@ impl VectorBatchRequestBuilder {
             .unwrap_or_default();
             
         Ok(VectorRecord {
-            id: json.get("id").and_then(|v| v.as_str()).map(String::from),
+            id: json.get("id").and_then(|v| v.as_str()).map(String::from).unwrap_or_default(),
             vector,
             metadata,
             timestamp: chrono::Utc::now().timestamp() as u32,
@@ -389,7 +389,7 @@ impl VectorBatchRequestBuilder {
             version: Some(1),
             expires_at: json.get("expires_at").and_then(|v| v.as_i64()).map(|v| v as u32),
             quantized_vector: None,
-        
+            source: None,
         })
     }
 }

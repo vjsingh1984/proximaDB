@@ -13,6 +13,10 @@ use arrow_array::RecordBatch;
 use crate::compute::distance_computation::engine::{UnifiedDistanceCompute, DistanceMetric};
 use crate::storage::engines::common::fastlanes_encoding::{FastLanesEncoder, FastLanesScheme};
 use crate::storage::persistence::filesystem::FileSystem;
+use crate::index::axis::clustering::{
+    AxisClusteringEngine as AxisClustering, ClusteringConfig as AxisClusteringConfig,
+    ClusteringAlgorithm, KMeansConfig, KMeansInit, ReusableClusteringEngine
+};
 use crate::storage::transaction_coordinator::TransactionCoordinator;
 use crate::proto::proximadb::VectorRecord;
 use super::common::{RaptorFileMetadata, RowGroup, RowGroupMetadata, SchemaDescriptor};
@@ -207,7 +211,24 @@ impl RaptorCompactor {
         
         // Use AXIS clustering with K-means++ (same as writer)
         // K-means++ initialization ensures well-separated centroids
-        let axis_clustering = AxisClustering::new();
+        let clustering_config = AxisClusteringConfig {
+            algorithm: crate::index::axis::clustering::ClusteringAlgorithm::KMeans(
+                crate::index::axis::clustering::KMeansConfig {
+                    k,
+                    max_iterations: 50,
+                    n_init: 3,  // Number of times to run k-means with different initial seeds
+                    init_method: crate::index::axis::clustering::KMeansInit::KMeansPlusPlus,
+                    tolerance: 0.001,
+                }
+            ),
+            min_vectors_for_clustering: 100,
+            max_clusters: k * 2,
+            distance_metric: DistanceMetric::Cosine,
+            adaptive_cluster_count: false,
+            recompute_threshold: 1000,
+            enable_incremental: false,
+        };
+        let axis_clustering = AxisClustering::new(clustering_config);
         let (_centroids, assignments) = axis_clustering.cluster_vectors_simple(
             &vector_data,
             k,

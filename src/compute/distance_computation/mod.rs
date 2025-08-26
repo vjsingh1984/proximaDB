@@ -9,12 +9,25 @@ pub mod platform;
 pub mod quantized; // Unified quantized distance computation for all engines
 pub mod int8_simd; // Native INT8 SIMD distance computation
 
-// INTERNAL: The core module contains low-level distance implementations used by UnifiedDistanceCompute
-// Users should use UnifiedDistanceCompute from engine for comprehensive semantic consistency
-pub(crate) mod core; // Internal: Core distance types and SIMD implementations
+// INTERNAL: UnifiedDistanceCompute provides all distance implementations with hardware acceleration
+// The core module is not needed as UnifiedDistanceCompute already handles:
+// - Hardware-aware SIMD implementations (AVX2, SSE, NEON, etc.)
+// - GPU acceleration when available
+// - Automatic fallback to scalar implementations
+// - Distance metric normalization for consistent semantics
 
-// Internal re-exports for use within compute module
-pub(crate) use core::create_distance_calculator;
+// Factory function for creating distance calculators (used by legacy code paths)
+// This simply returns a UnifiedDistanceCompute instance configured for the metric
+pub(crate) fn create_distance_calculator(metric: DistanceMetric) -> Box<dyn DistanceCalculator> {
+    // UnifiedDistanceCompute already handles all metrics with hardware optimization
+    Box::new(UnifiedDistanceCompute::new(metric))
+}
+
+// Trait for distance calculation (implemented by UnifiedDistanceCompute)
+pub(crate) trait DistanceCalculator: Send + Sync {
+    fn distance(&self, vec_a: &[f32], vec_b: &[f32]) -> f32;
+    fn is_similarity(&self) -> bool;
+}
 
 // DEPRECATED: PlatformCapability is deprecated - use HardwareBackend from core::hardware_capabilities
 // pub use core::PlatformCapability;

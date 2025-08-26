@@ -23,7 +23,7 @@ use crate::compute::quantization::storage_engine::{
 use crate::core::search::{SearchParams, FilterExpression};
 use crate::proto::proximadb::{Collection, CompressionAlgorithm, QuantizationConfig};
 use crate::storage::engines::columnar::common::EarlyTerminationConfig;
-// Removed incorrect SearchContext import - search_modes::SearchContext is for search stages, not query context
+// Note: SearchStageContext from search_modes is for search stages, not query context - using StorageQueryContext instead
 
 // ================================================================================
 // UNIFIED CORE STRUCTURES (Consolidates both systems)
@@ -1156,7 +1156,7 @@ impl UnifiedQueryOptimizer {
     }
 }
 
-// Migration helper removed - was using wrong SearchContext type from search_modes
+// Migration helper removed - was using wrong SearchStageContext type from search_modes
 // The proper flow is:
 // VectorOperationsService creates SearchParams with top_k
 // -> Creates UnifiedQueryContext with search_params

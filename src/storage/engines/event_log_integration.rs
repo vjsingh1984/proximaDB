@@ -229,7 +229,7 @@ impl EventLogNotifierFactory {
         engine_type: &str,
         event_log: Arc<dyn EventLogService>,
     ) -> Box<dyn EventLogNotifier + Send + Sync> {
-        match engine_type.to_lowercase().as_deref() {
+        match engine_type.to_lowercase().as_str() {
             "sst" => Box::new(Self::create_sst_notifier(event_log)),
             "viper" => Box::new(Self::create_viper_notifier(event_log)),
             _ => Box::new(Self::create_sst_notifier(event_log)), // Default to SST

@@ -1055,7 +1055,7 @@ impl UnifiedIvfIndex {
                 let vector_data: Vec<VectorRecord> = training_vectors.iter()
                     .enumerate()
                     .map(|(i, v)| VectorRecord {
-                        id: Some(format!("training_{}", i)),
+                        id: format!("training_{}", i),
                         vector: v.clone(),
                         metadata: vec![],
                         timestamp: 0,
@@ -1063,6 +1063,7 @@ impl UnifiedIvfIndex {
                         expires_at: None,
                         version: None,
                         quantized_vector: None,
+                        source: None,
                     })
                     .collect();
                 let model = engine.train_model(&self.collection_id, vector_data).await?;

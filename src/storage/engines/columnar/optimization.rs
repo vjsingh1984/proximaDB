@@ -12,11 +12,13 @@ use arrow_schema::Schema;
 use parquet::arrow::arrow_reader::{ParquetRecordBatchReader, ParquetRecordBatchReaderBuilder};
 use parquet::bloom_filter::Sbbf as BloomFilter;
 use parquet::file::metadata::{ParquetMetaData, RowGroupMetaData};
+use crate::storage::persistence::filesystem::{FilesystemFactory, FileSystem};
+use crate::storage::persistence::filesystem::zero_copy_filesystem::{ZeroCopyFilesystem, ZeroCopyFilesystemBuilder};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use tracing::{debug, info, trace, warn};
 use crate::core::VectorRecord;
-use crate::core::search::{SearchResult, FilterExpression};
+use crate::core::search::FilterExpression;
 use crate::compute::distance_computation::{DistanceMetric, engine::UnifiedDistanceCompute};
 use crate::storage::engines::columnar::{
     ColumnarConfig, MetadataFilter, SearchCandidate, RowGroupStats, ParquetLocation
@@ -28,6 +30,13 @@ pub struct ColumnarOptimizer {
     
     /// Configuration
     config: ColumnarConfig,
+    
+    /// Zero-copy filesystem for efficient cached reads
+    zero_copy_fs: Arc<ZeroCopyFilesystem>,
+    
+    /// Filesystem factory for writes (selects based on URL scheme)
+    filesystem_factory: Arc<FilesystemFactory>,
+    
     /// Cached bloom filters per file
     bloom_filter_cache: parking_lot::RwLock<HashMap<String, Arc<FileBloomFilters>>>,
     /// Row group statistics cache
@@ -109,16 +118,29 @@ pub struct OptimizationStats {
 
 impl ColumnarOptimizer {
     /// Create new columnar optimizer
-    pub fn new(
+    pub async fn new(
         distance_compute: Arc<UnifiedDistanceCompute>,
         config: ColumnarConfig,
-    ) -> Self {
-        Self {
+        filesystem_factory: Arc<FilesystemFactory>,
+    ) -> Result<Self> {
+        // Create zero-copy filesystem with caching for efficient reads
+        let zero_copy_fs = Arc::new(
+            ZeroCopyFilesystemBuilder::new()
+                .with_filesystem_factory(filesystem_factory.clone())
+                .with_cache_size(1024 * 1024 * 1024) // 1GB cache
+                .with_prefetch_size(8 * 1024 * 1024) // 8MB prefetch
+                .build()
+                .await?
+        );
+        
+        Ok(Self {
             distance_compute,
             config,
+            zero_copy_fs,
+            filesystem_factory,
             bloom_filter_cache: parking_lot::RwLock::new(HashMap::new()),
             stats_cache: parking_lot::RwLock::new(HashMap::new()),
-        }
+        })
     }
     /// Load and cache bloom filters for a Parquet file
     pub async fn load_bloom_filters(&self, file_path: &str) -> Result<Arc<FileBloomFilters>> {
@@ -130,9 +152,10 @@ impl ColumnarOptimizer {
             }
         }
         info!("Loading bloom filters for: {}", file_path);
-        // Read Parquet metadata
-        let file = std::fs::File::open(file_path)?;
-        let reader_builder = ParquetRecordBatchReaderBuilder::try_new(file)?;
+        // Use zero-copy filesystem for cached reads
+        let data = self.zero_copy_fs.read_cached(file_path).await?;
+        let bytes = bytes::Bytes::from(data);
+        let reader_builder = ParquetRecordBatchReaderBuilder::try_new(bytes)?;
         let metadata = reader_builder.metadata();
         let mut file_filters = HashMap::new();
         let mut total_size = 0;
@@ -196,9 +219,10 @@ impl ColumnarOptimizer {
     ) -> Result<StreamingRowGroupIterator> {
         info!("Creating streaming iterator for: {}", file_path);
         
-        // Read metadata
-        let file = std::fs::File::open(file_path)?;
-        let reader_builder = ParquetRecordBatchReaderBuilder::try_new(file)?;
+        // Use zero-copy filesystem for cached reads
+        let data = self.zero_copy_fs.read_cached(file_path).await?;
+        let bytes = bytes::Bytes::from(data);
+        let reader_builder = ParquetRecordBatchReaderBuilder::try_new(bytes)?;
         let metadata = Arc::new(reader_builder.metadata().clone());
         // Select relevant row groups
         let selected_row_groups = self.select_row_groups(&metadata, row_group_filter).await?;
@@ -292,7 +316,7 @@ impl ColumnarOptimizer {
         distance_metric: &DistanceMetric,
         filter: Option<&MetadataFilter>,
         config: &ProgressiveSearchConfig,
-    ) -> Result<Vec<SearchResult>> {
+    ) -> Result<Vec<crate::core::search::InternalSearchResult>> {
         info!("Progressive search across {} files, top_k={}", file_paths.len(), top_k);
         let mut all_candidates = Vec::new();
         let mut stats = OptimizationStats {
@@ -330,7 +354,7 @@ impl ColumnarOptimizer {
         let mut results = Vec::new();
         for candidate in all_candidates {
             if let Some(vector) = self.load_vector_at_location(&candidate).await? {
-                results.push(SearchResult {
+                results.push(crate::core::search::InternalSearchResult {
                     id: candidate.vector_id.unwrap_or_else(|| format!("rg{}_row{}", candidate.row_group_id, candidate.row_offset)),
                     similarity: Some(1.0 - candidate.similarity),
                     vector: Some(vector.vector),
@@ -498,14 +522,15 @@ impl ColumnarOptimizer {
     async fn load_vector_at_location(&self, candidate: &SearchCandidate) -> Result<Option<VectorRecord>> {
         // In production, would load the full record from Parquet
         Ok(Some(VectorRecord {
-            id: candidate.vector_id.clone(),
+            id: candidate.vector_id.clone().unwrap_or_default(),
             vector: vec![0.0; 768], // Placeholder
-            metadata: None,
+            metadata: vec![],
             timestamp: 0,
             updated_at: None,
             quantized_vector: None,
             expires_at: None,
             version: None,
+            source: None,
         }))
     }
     
@@ -548,7 +573,8 @@ impl StreamingRowGroupIterator {
         
         let row_group_idx = self.selected_row_groups[self.current_index];
         self.current_index += 1;
-        // Read the row group
+        // TODO: StreamingRowGroupIterator needs refactoring to use zero-copy filesystem
+        // For now, keeping direct file access but this breaks cloud compatibility
         let file = std::fs::File::open(&self.file_path)?;
         let mut reader_builder = ParquetRecordBatchReaderBuilder::try_new(file)?;
         // Apply column projection if specified

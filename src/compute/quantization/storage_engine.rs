@@ -14,11 +14,13 @@ use super::unified::{
     UnifiedQuantizationEngine, UnifiedQuantizationLevel,
     QuantizedVector, QuantizationMetadata,
     QuantizationLevelType, BinaryQuantization,
+    InMemoryCodebookStore,
 };
 use crate::compute::distance_computation::engine::{
     UnifiedDistanceCompute, DistanceMetric,
 };
-use crate::compute::distance_computation::create_distance_calculator;
+// Note: create_distance_calculator is available but not currently used
+// use crate::compute::distance_computation::create_distance_calculator;
 use crate::core::hardware_capabilities::{
     get_hardware_capabilities, HardwareBackend,
 };
@@ -193,9 +195,18 @@ impl StorageQuantizationEngine {
     
     /// Create with default configuration for a specific engine (used by PRISM)
     pub fn new_with_config(config: StorageQuantizationConfig) -> Self {
-        let unified_engine = Arc::new(UnifiedQuantizationEngine::new());
         let distance_compute = Arc::new(UnifiedDistanceCompute::new(config.distance_metric));
+        let codebook_store = Arc::new(InMemoryCodebookStore::new());
+        let unified_engine = Arc::new(UnifiedQuantizationEngine::new(
+            distance_compute.clone(),
+            codebook_store,
+        ));
         Self::new(unified_engine, distance_compute, config)
+    }
+    
+    /// Create with default configuration (for testing and simple usage)
+    pub fn new_default() -> Self {
+        Self::new_with_config(StorageQuantizationConfig::default())
     }
     
     /// Train quantization models from vectors
@@ -270,9 +281,9 @@ impl StorageQuantizationEngine {
     }
     
     /// Dequantize a quantized vector back to approximate float values
-    pub fn dequantize(&self, quantized: &QuantizedVector) -> Result<Vec<f32>> {
+    pub async fn dequantize(&self, quantized: &QuantizedVector) -> Result<Vec<f32>> {
         // Use the unified engine's dequantization logic
-        self.unified_engine.dequantize(quantized)
+        self.unified_engine.dequantize(quantized).await
     }
     
     /// Quantize a batch of vectors
@@ -481,33 +492,28 @@ impl StorageQuantizationEngine {
         quantized_vector: &QuantizedVector,
         metric: &DistanceMetric,
     ) -> Result<f32> {
-        match &quantized_vector.level_type {
+        match &quantized_vector.quantization_level.level_type {
             Some(QuantizationLevelType::Scalar(scalar)) => {
                 // Use existing INT8 SIMD infrastructure from distance_computation
-                if let Some(int8_data) = quantized_vector.get_int8_data() {
-                    let result = self.distance_compute.calculate_int8_distance(
-                        &self.fp32_to_int8(query, scalar.scale, scalar.offset),
-                        int8_data,
-                        scalar.scale,
-                        scalar.scale,
-                        scalar.offset,
-                        scalar.offset,
-                        metric,
-                    );
-                    Ok(result.raw_value)
-                } else {
-                    // Fallback to FP32 calculation with SIMD optimization
-                    self.calculate_fp32_simd_distance(query, quantized_vector, metric)
-                }
+                // The quantized data is stored in the data field
+                let int8_data: Vec<i8> = quantized_vector.data.iter().map(|&b| b as i8).collect();
+                let result = self.distance_compute.calculate_int8_distance(
+                    &self.fp32_to_int8(query, scalar.scale, scalar.offset as f32),
+                    &int8_data,
+                    scalar.scale,
+                    scalar.scale,
+                    scalar.offset as f32,
+                    scalar.offset as f32,
+                    metric,
+                );
+                Ok(result.raw_value)
             }
             Some(QuantizationLevelType::Binary(_)) => {
                 // Use Hamming distance for binary vectors
-                if let Some(binary_data) = quantized_vector.get_binary_data() {
-                    let query_binary = self.fp32_to_binary(query);
-                    Ok(self.unified_engine.calculate_hamming_distance(&query_binary, binary_data) as f32)
-                } else {
-                    self.calculate_fp32_simd_distance(query, quantized_vector, metric)
-                }
+                // Binary data is stored in the data field
+                let query_binary = self.fp32_to_binary(query);
+                let hamming_dist = self.calculate_hamming_distance(&query_binary, &quantized_vector.data);
+                Ok(hamming_dist as f32)
             }
             Some(QuantizationLevelType::Pq(_)) => {
                 // Use PQ lookup table optimization
@@ -527,13 +533,18 @@ impl StorageQuantizationEngine {
         quantized_vector: &QuantizedVector,
         metric: &DistanceMetric,
     ) -> Result<f32> {
-        // Reconstruct FP32 vector from quantized data
-        let reconstructed = self.unified_engine.dequantize(quantized_vector)?;
+        // For now, use blocking to handle async dequantize in sync context
+        // This should be refactored to be fully async
+        let reconstructed = tokio::task::block_in_place(|| {
+            tokio::runtime::Handle::current().block_on(
+                self.unified_engine.dequantize(quantized_vector)
+            )
+        })?;
         
         // Use existing SIMD-optimized distance computation
         let result = self.distance_compute.calculate_distance(
             query,
-            &reconstructed.vector,
+            &reconstructed,
             metric,
         );
         
@@ -547,20 +558,10 @@ impl StorageQuantizationEngine {
         quantized_vector: &QuantizedVector,
         metric: &DistanceMetric,
     ) -> Result<f32> {
-        if let Some(pq_codes) = quantized_vector.get_pq_codes() {
-            // Use existing PQ distance calculation from distance_compute
-            let codebook = self.get_or_create_codebook(quantized_vector)?;
-            let result = self.distance_compute.calculate_pq_distance(
-                query,
-                pq_codes,
-                &codebook,
-                metric,
-            );
-            Ok(result.raw_value)
-        } else {
-            // Fallback to FP32
-            self.calculate_fp32_simd_distance(query, quantized_vector, metric)
-        }
+        // PQ codes are stored in the data field
+        // For now, fallback to dequantizing and using FP32
+        // TODO: Implement proper PQ distance calculation with lookup tables
+        self.calculate_fp32_simd_distance(query, quantized_vector, metric)
     }
 
     /// Convert FP32 to INT8 using quantization parameters
@@ -793,12 +794,336 @@ impl StorageQuantizationEngine {
         
         total
     }
+    
+    /// Quantize distances to 8-bit values with min/max for dequantization
+    /// Returns (quantized_values, min, max)
+    pub fn quantize_to_u8(&self, distances: &[f32]) -> (Vec<u8>, f32, f32) {
+        self.unified_engine.quantize_to_u8(distances).unwrap()
+    }
+    
+    /// Quantize distances to 16-bit values with min/max for dequantization
+    /// Returns (quantized_values, min, max)
+    pub fn quantize_to_u16(&self, distances: &[f32]) -> (Vec<u16>, f32, f32) {
+        self.unified_engine.quantize_to_u16(distances).unwrap()
+    }
+    
+    /// Quantize distances to 4-bit values with min/max for dequantization
+    /// Returns (packed_values, min, max, num_values)
+    pub fn quantize_to_u4(&self, distances: &[f32]) -> (Vec<u8>, f32, f32, usize) {
+        self.unified_engine.quantize_to_u4(distances).unwrap()
+    }
+    
+    /// Quantize distances to 6-bit values with min/max for dequantization
+    /// Returns (packed_values, min, max, num_values)
+    pub fn quantize_to_u6(&self, distances: &[f32]) -> (Vec<u8>, f32, f32, usize) {
+        self.unified_engine.quantize_to_u6(distances).unwrap()
+    }
+    
+    /// Dequantize 8-bit values back to f32 using stored min/max
+    pub fn dequantize_u8(&self, quantized: &[u8], min: f32, max: f32) -> Vec<f32> {
+        self.unified_engine.dequantize_u8(quantized, min, max)
+    }
+    
+    /// Dequantize 16-bit values back to f32 using stored min/max
+    pub fn dequantize_u16(&self, quantized: &[u16], min: f32, max: f32) -> Vec<f32> {
+        self.unified_engine.dequantize_u16(quantized, min, max)
+    }
+    
+    /// Dequantize 4-bit packed values back to f32
+    pub fn dequantize_u4(&self, packed: &[u8], min: f32, max: f32, num_values: usize) -> Vec<f32> {
+        self.unified_engine.dequantize_u4(packed, min, max, num_values)
+    }
+    
+    /// Dequantize 6-bit packed values back to f32
+    pub fn dequantize_u6(&self, packed: &[u8], min: f32, max: f32, num_values: usize) -> Vec<f32> {
+        self.unified_engine.dequantize_u6(packed, min, max, num_values)
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::compute::quantization::unified::InMemoryCodebookStore;
+    
+    fn generate_test_distances() -> Vec<f32> {
+        vec![
+            0.1, 0.5, 0.9, 1.5, 2.0, 2.5, 3.0, 3.5,
+            4.0, 4.5, 5.0, 5.5, 6.0, 6.5, 7.0, 7.5,
+            8.0, 8.5, 9.0, 9.5, 10.0, 10.5, 11.0, 11.5,
+            12.0, 12.5, 13.0, 13.5, 14.0, 14.5, 15.0, 15.5
+        ]
+    }
+    
+    fn calculate_max_error(original: &[f32], reconstructed: &[f32]) -> f32 {
+        original.iter()
+            .zip(reconstructed.iter())
+            .map(|(o, r)| (o - r).abs())
+            .fold(0.0f32, f32::max)
+    }
+    
+    fn calculate_mse(original: &[f32], reconstructed: &[f32]) -> f32 {
+        let sum_squared_error: f32 = original.iter()
+            .zip(reconstructed.iter())
+            .map(|(o, r)| (o - r).powi(2))
+            .sum();
+        sum_squared_error / original.len() as f32
+    }
+    
+    #[test]
+    fn test_quantize_dequantize_u4() {
+        let engine = StorageQuantizationEngine::new_default();
+        let distances = generate_test_distances();
+        
+        // Test with even number of values
+        let (packed, min, max, num_values) = engine.quantize_to_u4(&distances);
+        assert_eq!(num_values, distances.len());
+        assert_eq!(packed.len(), (distances.len() + 1) / 2);
+        
+        let reconstructed = engine.dequantize_u4(&packed, min, max, num_values);
+        assert_eq!(reconstructed.len(), distances.len());
+        
+        // Check accuracy - 4-bit should have ~6.25% max error ((max-min)/16)
+        let max_error = calculate_max_error(&distances, &reconstructed);
+        let expected_max_error = (max - min) / 15.0;
+        assert!(max_error <= expected_max_error * 1.1); // Allow 10% tolerance
+        
+        // Test with odd number of values
+        let odd_distances = &distances[..31];
+        let (packed, min, max, num_values) = engine.quantize_to_u4(odd_distances);
+        assert_eq!(num_values, 31);
+        assert_eq!(packed.len(), 16); // (31 + 1) / 2
+        
+        let reconstructed = engine.dequantize_u4(&packed, min, max, num_values);
+        assert_eq!(reconstructed.len(), 31);
+    }
+    
+    #[test]
+    fn test_quantize_dequantize_u6() {
+        let engine = StorageQuantizationEngine::new_default();
+        let distances = generate_test_distances();
+        
+        // Test with multiple of 4 values
+        let (packed, min, max, num_values) = engine.quantize_to_u6(&distances);
+        assert_eq!(num_values, distances.len());
+        assert_eq!(packed.len(), (distances.len() * 6 + 7) / 8); // Ceiling division
+        
+        let reconstructed = engine.dequantize_u6(&packed, min, max, num_values);
+        assert_eq!(reconstructed.len(), distances.len());
+        
+        // Check accuracy - 6-bit should have ~1.56% max error ((max-min)/64)
+        let max_error = calculate_max_error(&distances, &reconstructed);
+        let expected_max_error = (max - min) / 63.0;
+        assert!(max_error <= expected_max_error * 1.1);
+        
+        // Test with non-multiple of 4
+        for test_len in [29, 30, 31, 33] {
+            let test_distances = &distances[..test_len];
+            let (packed, min, max, num_values) = engine.quantize_to_u6(test_distances);
+            assert_eq!(num_values, test_len);
+            
+            let reconstructed = engine.dequantize_u6(&packed, min, max, num_values);
+            assert_eq!(reconstructed.len(), test_len);
+        }
+    }
+    
+    #[test]
+    fn test_quantize_dequantize_u8() {
+        let engine = StorageQuantizationEngine::new_default();
+        let distances = generate_test_distances();
+        
+        let (quantized, min, max) = engine.quantize_to_u8(&distances);
+        assert_eq!(quantized.len(), distances.len());
+        
+        let reconstructed = engine.dequantize_u8(&quantized, min, max);
+        assert_eq!(reconstructed.len(), distances.len());
+        
+        // Check accuracy - 8-bit should have ~0.39% max error ((max-min)/256)
+        let max_error = calculate_max_error(&distances, &reconstructed);
+        let expected_max_error = (max - min) / 255.0;
+        assert!(max_error <= expected_max_error * 1.1);
+    }
+    
+    #[test]
+    fn test_quantize_dequantize_u16() {
+        let engine = StorageQuantizationEngine::new_default();
+        let distances = generate_test_distances();
+        
+        let (quantized, min, max) = engine.quantize_to_u16(&distances);
+        assert_eq!(quantized.len(), distances.len());
+        
+        let reconstructed = engine.dequantize_u16(&quantized, min, max);
+        assert_eq!(reconstructed.len(), distances.len());
+        
+        // Check accuracy - 16-bit should have ~0.0015% max error ((max-min)/65536)
+        let max_error = calculate_max_error(&distances, &reconstructed);
+        let expected_max_error = (max - min) / 65535.0;
+        assert!(max_error <= expected_max_error * 1.1);
+        
+        // MSE should be very low for 16-bit
+        let mse = calculate_mse(&distances, &reconstructed);
+        assert!(mse < 0.0001);
+    }
+    
+    #[test]
+    fn test_quantization_edge_cases() {
+        let engine = StorageQuantizationEngine::new_default();
+        
+        // Test with all same values
+        let same_values = vec![5.0; 10];
+        let (quantized, min, max) = engine.quantize_to_u8(&same_values);
+        assert_eq!(min, 5.0);
+        assert_eq!(max, 5.0);
+        let reconstructed = engine.dequantize_u8(&quantized, min, max);
+        assert!(reconstructed.iter().all(|&v| (v - 5.0).abs() < 0.001));
+        
+        // Test with empty vector
+        let empty: Vec<f32> = vec![];
+        let (quantized, min, max) = engine.quantize_to_u8(&empty);
+        assert_eq!(quantized.len(), 0);
+        assert!(min.is_infinite());
+        assert!(max.is_neg_infinite());
+        
+        // Test with single value
+        let single = vec![3.14];
+        let (packed, min, max, num) = engine.quantize_to_u4(&single);
+        assert_eq!(num, 1);
+        assert_eq!(packed.len(), 1);
+        let reconstructed = engine.dequantize_u4(&packed, min, max, num);
+        assert_eq!(reconstructed.len(), 1);
+        assert!((reconstructed[0] - 3.14).abs() < 0.01);
+        
+        // Test with negative values
+        let negative = vec![-5.0, -2.5, 0.0, 2.5, 5.0];
+        let (quantized, min, max) = engine.quantize_to_u8(&negative);
+        assert_eq!(min, -5.0);
+        assert_eq!(max, 5.0);
+        let reconstructed = engine.dequantize_u8(&quantized, min, max);
+        assert_eq!(reconstructed.len(), negative.len());
+    }
+    
+    #[test]
+    fn test_quantization_accuracy_comparison() {
+        let engine = StorageQuantizationEngine::new_default();
+        let distances = generate_test_distances();
+        
+        // Compare accuracy across different bit widths
+        let (q4, min4, max4, num4) = engine.quantize_to_u4(&distances);
+        let (q6, min6, max6, num6) = engine.quantize_to_u6(&distances);
+        let (q8, min8, max8) = engine.quantize_to_u8(&distances);
+        let (q16, min16, max16) = engine.quantize_to_u16(&distances);
+        
+        let r4 = engine.dequantize_u4(&q4, min4, max4, num4);
+        let r6 = engine.dequantize_u6(&q6, min6, max6, num6);
+        let r8 = engine.dequantize_u8(&q8, min8, max8);
+        let r16 = engine.dequantize_u16(&q16, min16, max16);
+        
+        let mse4 = calculate_mse(&distances, &r4);
+        let mse6 = calculate_mse(&distances, &r6);
+        let mse8 = calculate_mse(&distances, &r8);
+        let mse16 = calculate_mse(&distances, &r16);
+        
+        // Verify that higher bit widths have lower error
+        assert!(mse16 < mse8);
+        assert!(mse8 < mse6);
+        assert!(mse6 < mse4);
+        
+        // Print compression ratios and accuracy for documentation
+        println!("Quantization Accuracy Comparison:");
+        println!("4-bit:  MSE={:.6}, Size={}B (50% of 8-bit)", mse4, q4.len());
+        println!("6-bit:  MSE={:.6}, Size={}B (75% of 8-bit)", mse6, q6.len());
+        println!("8-bit:  MSE={:.6}, Size={}B (100%)", mse8, q8.len());
+        println!("16-bit: MSE={:.6}, Size={}B (200% of 8-bit)", mse16, q16.len() * 2);
+    }
+    
+    #[test]
+    fn benchmark_quantization_performance() {
+        use std::time::Instant;
+        
+        let engine = StorageQuantizationEngine::new_default();
+        
+        // Generate larger dataset for benchmarking
+        let mut distances = Vec::with_capacity(100_000);
+        for i in 0..100_000 {
+            distances.push((i as f32 * 0.1) % 100.0);
+        }
+        
+        // Benchmark quantization
+        let iterations = 100;
+        
+        // 4-bit benchmark
+        let start = Instant::now();
+        for _ in 0..iterations {
+            let _ = engine.quantize_to_u4(&distances);
+        }
+        let q4_time = start.elapsed().as_micros() / iterations;
+        
+        // 6-bit benchmark
+        let start = Instant::now();
+        for _ in 0..iterations {
+            let _ = engine.quantize_to_u6(&distances);
+        }
+        let q6_time = start.elapsed().as_micros() / iterations;
+        
+        // 8-bit benchmark
+        let start = Instant::now();
+        for _ in 0..iterations {
+            let _ = engine.quantize_to_u8(&distances);
+        }
+        let q8_time = start.elapsed().as_micros() / iterations;
+        
+        // 16-bit benchmark
+        let start = Instant::now();
+        for _ in 0..iterations {
+            let _ = engine.quantize_to_u16(&distances);
+        }
+        let q16_time = start.elapsed().as_micros() / iterations;
+        
+        println!("\nQuantization Performance (100K values):");
+        println!("4-bit:  {}μs ({:.2} values/μs)", q4_time, 100_000.0 / q4_time as f64);
+        println!("6-bit:  {}μs ({:.2} values/μs)", q6_time, 100_000.0 / q6_time as f64);
+        println!("8-bit:  {}μs ({:.2} values/μs)", q8_time, 100_000.0 / q8_time as f64);
+        println!("16-bit: {}μs ({:.2} values/μs)", q16_time, 100_000.0 / q16_time as f64);
+        
+        // Benchmark dequantization
+        let (q4_data, min4, max4, num4) = engine.quantize_to_u4(&distances);
+        let (q6_data, min6, max6, num6) = engine.quantize_to_u6(&distances);
+        let (q8_data, min8, max8) = engine.quantize_to_u8(&distances);
+        let (q16_data, min16, max16) = engine.quantize_to_u16(&distances);
+        
+        // 4-bit dequantization
+        let start = Instant::now();
+        for _ in 0..iterations {
+            let _ = engine.dequantize_u4(&q4_data, min4, max4, num4);
+        }
+        let dq4_time = start.elapsed().as_micros() / iterations;
+        
+        // 6-bit dequantization
+        let start = Instant::now();
+        for _ in 0..iterations {
+            let _ = engine.dequantize_u6(&q6_data, min6, max6, num6);
+        }
+        let dq6_time = start.elapsed().as_micros() / iterations;
+        
+        // 8-bit dequantization
+        let start = Instant::now();
+        for _ in 0..iterations {
+            let _ = engine.dequantize_u8(&q8_data, min8, max8);
+        }
+        let dq8_time = start.elapsed().as_micros() / iterations;
+        
+        // 16-bit dequantization
+        let start = Instant::now();
+        for _ in 0..iterations {
+            let _ = engine.dequantize_u16(&q16_data, min16, max16);
+        }
+        let dq16_time = start.elapsed().as_micros() / iterations;
+        
+        println!("\nDequantization Performance (100K values):");
+        println!("4-bit:  {}μs ({:.2} values/μs)", dq4_time, 100_000.0 / dq4_time as f64);
+        println!("6-bit:  {}μs ({:.2} values/μs)", dq6_time, 100_000.0 / dq6_time as f64);
+        println!("8-bit:  {}μs ({:.2} values/μs)", dq8_time, 100_000.0 / dq8_time as f64);
+        println!("16-bit: {}μs ({:.2} values/μs)", dq16_time, 100_000.0 / dq16_time as f64);
+    }
     
     #[tokio::test]
     async fn test_storage_quantization_engine() {

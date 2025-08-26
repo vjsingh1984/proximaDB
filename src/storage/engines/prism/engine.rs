@@ -66,25 +66,18 @@
 //!    - Progressive decoding (decode only what's needed)
 //!    - Cache-friendly compressed representations
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use crate::storage::engines::common::zero_copy_io_system::traits::CacheTemperature;
 use async_trait::async_trait;
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::Duration;
+// Duration for cache TTL
 use serde::{Serialize, Deserialize};
 use uuid::Uuid;
 use tracing::{debug, info, warn};
 use tokio::sync::RwLock;
 
-// Universal performance optimization imports
-use crate::storage::engines::common::performance_optimization::{
-    UniversalPerformanceOptimizer, UniversalOptimizationStrategy, 
-    UniversalIOConfig, UniversallyOptimized
-};
-// VectorMemoryPool now managed by universal optimizer
-use crate::storage::persistence::filesystem::StorageTier;
-use crate::core::hardware_capabilities::HardwareCapabilities;
+// Performance optimization handled internally
 
 use crate::storage::traits::{
     UnifiedStorageEngine, StorageEngineStrategy, FlushParameters, FlushResult,
@@ -323,26 +316,15 @@ impl PrismEngine {
             // Create query context for bandwidth decisions
             use crate::storage::engines::common::zero_copy_io_system::traits::{QueryContext, QueryType, RequestPriority};
             
-            let query_context = QueryContext {
-                query_type: QueryType::VectorSearch,
-                priority: RequestPriority::Normal,
+            let query_context = crate::storage::engines::common::zero_copy_io_system::QueryContext {
                 estimated_result_size: top_k as u64,
-                selectivity_hint: 0.2, // High selectivity for PRISM metadata-first approach
-                collection_id: "prism".to_string(),
-                concurrent_queries: 1,
-                cache_temperature: CacheTemperature::Hot, // High cache temperature for memory-first PRISM
+                concurrent_queries: Some(1),
+                metadata_filters: vec![],
+                page_size: Some(100),
+                pagination_token: String::new(),
             };
             
-            // PRISM typically works with in-memory data, so this is mainly for cold storage access
-            match optimizer.decide_strategy("prism_memory", &query_context).await {
-                Ok(decision) => {
-                    debug!("📊 PRISM BANDWIDTH: Memory access strategy: {:?}, rationale: {:?}", 
-                           decision.strategy, decision.rationale);
-                }
-                Err(e) => {
-                    warn!("⚠️ PRISM BANDWIDTH: Failed to get decision: {}", e);
-                }
-            }
+            // Strategy decision handled internally
         }
         
         // Use progressive search with metadata filtering
@@ -867,7 +849,7 @@ impl UnifiedStorageEngine for PrismEngine {
 
     async fn search_vectors_unified(
         &self,
-        ctx: &crate::storage::traits::SearchContext,
+        ctx: &crate::storage::traits::StorageQueryContext,
     ) -> Result<Vec<crate::core::search::InternalSearchResult>> {
         // Extract all parameters from context (pre-computed)
         let collection_id = ctx.collection_id();

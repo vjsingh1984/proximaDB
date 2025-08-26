@@ -377,13 +377,13 @@ mod tests {
         
         // Test search with empty query vector
         let empty_query = vec![];
-        let search_result = service.search_vectors("test_collection", &empty_query, 10, DistanceMetric::Cosine, None, true, true).await;
+        let search_result = service.unified_search("test_collection", empty_query, 10, None, None).await;
         // Should handle empty query gracefully
         assert!(search_result.is_ok() || search_result.is_err(), "Search should handle empty query vector");
         
         // Test search with zero k
         let query = vec![1.0, 2.0, 3.0];
-        let search_result = service.search_vectors("test_collection", &query, 0, DistanceMetric::Cosine, None, true, true).await;
+        let search_result = service.unified_search("test_collection", query, 0, None, None).await;
         // Should handle zero k gracefully
         assert!(search_result.is_ok() || search_result.is_err(), "Search should handle zero k");
     }

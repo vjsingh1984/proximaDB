@@ -20,9 +20,7 @@
 
 pub mod parser;
 pub mod pool;
-pub mod simd_parser;
-pub mod gpu_parser;
-pub mod query_result_cache;
+pub mod vector_array_parser;
 pub mod executor;
 pub mod planner;
 
@@ -31,10 +29,7 @@ pub mod comprehensive_sql_tests;
 
 pub use parser::{SqlParser, ParsedQuery};
 pub use pool::{LockFreeParserPool, get_global_pool, parse_sql_global, PoolStats};
-pub use simd_parser::{SimdVectorParser, SimdCapabilities, parse_vector_simd, get_global_simd_parser};
-pub use gpu_parser::{GpuSqlParser, parse_sql_gpu, get_global_gpu_parser};
-pub use crate::core::hardware_capabilities::GpuBackend;
-pub use query_result_cache::{QueryCache, QueryCacheKey, get_global_query_cache, cache_query_result, get_cached_query_result};
+pub use vector_array_parser::{SimdVectorParser, SimdCapabilities, parse_vector_simd, get_global_simd_parser};
 pub use executor::{SqlExecutor, SqlExecutionResult};
 pub use planner::{QueryPlanner, ExecutionPlan};
 
@@ -48,8 +43,6 @@ pub struct SqlEngine {
     collection_service: Option<Arc<CollectionService>>,
     planner: QueryPlanner,
     executor: SqlExecutor,
-    /// Enable GPU acceleration for SQL parsing
-    use_gpu_acceleration: bool,
 }
 
 impl SqlEngine {
@@ -60,7 +53,6 @@ impl SqlEngine {
             collection_service: None,
             planner: QueryPlanner::new(),
             executor: SqlExecutor::new(vector_service),
-            use_gpu_acceleration: Self::detect_gpu_support(),
         }
     }
     
@@ -74,69 +66,13 @@ impl SqlEngine {
             collection_service: Some(collection_service),
             planner: QueryPlanner::new(),
             executor: SqlExecutor::new(vector_service),
-            use_gpu_acceleration: Self::detect_gpu_support(),
         }
     }
     
-    /// Detect if GPU acceleration should be enabled
-    fn detect_gpu_support() -> bool {
-        // Check if GPU parsing is available
-        if let Ok(parser) = get_global_gpu_parser().lock() {
-            let backend = parser.backend(); // Get the backend value while the guard is active
-            match backend {
-                GpuBackend::None => {
-                    tracing::info!("SQL Engine: GPU acceleration not available");
-                    false
-                }
-                backend => {
-                    tracing::info!("SQL Engine: GPU acceleration enabled with {}", backend);
-                    true
-                }
-            }
-        } else {
-            false
-        }
-    }
-    
-    /// Enable or disable GPU acceleration
-    pub fn set_gpu_acceleration(&mut self, enabled: bool) {
-        self.use_gpu_acceleration = enabled;
-        tracing::info!("SQL Engine: GPU acceleration {}", 
-            if enabled { "enabled" } else { "disabled" });
-    }
-    
-    /// Execute SQL query with unified caching
+    /// Execute SQL query
     pub async fn execute(&self, sql: &str) -> Result<SqlExecutionResult> {
-        // Create cache key for this query and collection
-        let collection_id = self.extract_collection_from_sql(sql);
-        let cache_key = QueryCacheKey::new(sql, &collection_id, None);
-        
-        // Check for cached query result first (fastest path)
-        if let Some(cached_result_data) = get_cached_query_result(&cache_key) {
-            tracing::debug!("🎯 Using cached query result for SQL: {}", sql);
-            // Deserialize cached result - in real implementation we'd use proper serialization
-            // For now, assume the cached data is the serialized SqlExecutionResult
-            if let Ok(result) = bincode::deserialize::<SqlExecutionResult>(&cached_result_data) {
-                return Ok(result);
-            }
-        }
-        
-        // Parse SQL using GPU acceleration if available, otherwise use lock-free parser pool
-        let mut parsed_query = if self.use_gpu_acceleration {
-            // Try GPU-accelerated parsing first
-            match parse_sql_gpu(sql) {
-                Ok(parsed) => {
-                    tracing::debug!("🚀 Used GPU-accelerated SQL parsing");
-                    parsed
-                }
-                Err(e) => {
-                    tracing::debug!("GPU parsing failed, falling back to CPU: {}", e);
-                    get_global_pool().parse_sql(sql.to_string())?
-                }
-            }
-        } else {
-            get_global_pool().parse_sql(sql.to_string())?
-        };
+        // Parse SQL using lock-free parser pool
+        let mut parsed_query = get_global_pool().parse_sql(sql.to_string())?;
         
         // Resolve collection name to UUID if we have a collection service
         if let Some(collection_service) = &self.collection_service {
@@ -170,12 +106,6 @@ impl SqlEngine {
         
         // Execute plan
         let result = self.executor.execute_plan(plan).await?;
-        
-        // Cache the query result
-        if let Ok(serialized_result) = bincode::serialize(&result) {
-            cache_query_result(cache_key, serialized_result, sql.to_string());
-            tracing::debug!("📝 Cached query result for SQL: {}", sql);
-        }
         
         Ok(result)
     }

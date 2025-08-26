@@ -228,10 +228,11 @@ pub use multi_tier_deduplication::{
 
 // Filter types are already defined above, no need to re-export
 pub use results::{InternalSearchResult, SearchResultSet, SearchDebugInfo, QuantizationInfo, EngineStats};
-// Re-export proto SearchResult and SearchVectorRecord for alignment with user expectations
-pub use crate::proto::proximadb::{SearchResult, SearchVectorRecord};
+// NOTE: Proto types (SearchResult, SearchVectorRecord) should NOT be re-exported here.
+// They belong in the API layer only. Services should use InternalSearchResult
+// and convert to proto types at the API boundary.
 pub use unified_interface::{
-    UnifiedSearchEngine, IntegratedSearchOptimizer, UnifiedSearchContext,
+    UnifiedSearchEngine, IntegratedSearchOptimizer, SearchPlan,
     CollectionConfig, FilterableColumn, ColumnDataType, StorageInfo, OptimizationHint,
 };
 

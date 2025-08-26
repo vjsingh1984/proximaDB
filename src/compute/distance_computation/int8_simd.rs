@@ -248,9 +248,12 @@ mod tests {
         // Test SIMD implementations
         #[cfg(target_arch = "x86_64")]
         {
-            if is_x86_feature_detected!("avx2") {
-                let simd_result = unsafe { int8_dot_product_avx2(&vec_a, &vec_b) };
-                assert_eq!(scalar_result, simd_result);
+            use crate::core::hardware_capabilities::try_get_hardware_capabilities;
+            if let Some(caps) = try_get_hardware_capabilities() {
+                if caps.cpu.features.avx2_support {
+                    let simd_result = unsafe { int8_dot_product_avx2(&vec_a, &vec_b) };
+                    assert_eq!(scalar_result, simd_result);
+                }
             }
         }
         
@@ -278,9 +281,12 @@ mod tests {
         // Test SIMD implementations
         #[cfg(target_arch = "x86_64")]
         {
-            if is_x86_feature_detected!("avx2") {
-                let simd_result = unsafe { int8_squared_diff_avx2(&vec_a, &vec_b) };
-                assert_eq!(scalar_result, simd_result);
+            use crate::core::hardware_capabilities::try_get_hardware_capabilities;
+            if let Some(caps) = try_get_hardware_capabilities() {
+                if caps.cpu.features.avx2_support {
+                    let simd_result = unsafe { int8_squared_diff_avx2(&vec_a, &vec_b) };
+                    assert_eq!(scalar_result, simd_result);
+                }
             }
         }
         
@@ -306,9 +312,12 @@ mod tests {
         // Test SIMD implementations for larger vectors
         #[cfg(target_arch = "x86_64")]
         {
-            if is_x86_feature_detected!("avx2") {
-                let simd_result = unsafe { int8_dot_product_avx2(&vec_a, &vec_b) };
-                assert_eq!(scalar_result, simd_result);
+            use crate::core::hardware_capabilities::try_get_hardware_capabilities;
+            if let Some(caps) = try_get_hardware_capabilities() {
+                if caps.cpu.features.avx2_support {
+                    let simd_result = unsafe { int8_dot_product_avx2(&vec_a, &vec_b) };
+                    assert_eq!(scalar_result, simd_result);
+                }
             }
         }
         

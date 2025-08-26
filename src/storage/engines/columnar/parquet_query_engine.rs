@@ -1,20 +1,44 @@
-// Unified Parquet Reader for NOVA and VIPER engines
-// Cloud-optimized reader with bloom filter optimization and streaming support
+// =============================================================================
+// HIGH-LEVEL PARQUET BUSINESS LOGIC READER (parquet_reader.rs)
+// =============================================================================
+//
+// PURPOSE: High-level business logic and query operations for Parquet files
+// USED BY: NOVA and VIPER storage engines
+// 
+// This module provides:
+// - Query execution with metadata filtering and vector similarity search
+// - Schema mapping and column projection optimization  
+// - Row group statistics and selective reading strategies
+// - Progressive search with early termination
+// - Integration with quantization and distance computation
+//
+// RELATIONSHIP WITH shared_parquet_io.rs:
+// This reader USES the SharedParquetFormatReader (shared_parquet_io.rs) for:
+// - Low-level I/O operations (file access, caching, memory mapping)
+// - Footer and column index caching
+// - Bandwidth optimization and cloud storage support
+//
+// Think of this as the "brain" (business logic) while shared_parquet_io.rs 
+// is the "muscles" (I/O operations).
+//
+// RENAME SUGGESTION: This file should be renamed to `parquet_query_engine.rs`
+// to better reflect that it handles query logic rather than raw I/O
 
 use anyhow::{anyhow, Result};
-use arrow_array::{ArrayRef, Float32Array, StringArray, RecordBatch};
-use arrow_schema::Schema;
+// Arrow types handled through parquet crate
+use parquet::arrow::arrow_reader::ArrowReaderBuilder;
 use parquet::arrow::arrow_reader::{ParquetRecordBatchReader, ParquetRecordBatchReaderBuilder};
 use parquet::file::metadata::{RowGroupMetaData, ParquetMetaData};
-use parquet::bloom_filter::Sbbf as BloomFilter;
+// Bloom filter handled internally
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::{debug, info, warn};
 use serde::{Deserialize, Serialize};
-use crate::core::{VectorRecord, hardware_capabilities::HardwareCapabilities};
+use crate::proto::proximadb::VectorRecord;
+use crate::core::hardware_capabilities::HardwareCapabilities;
 use crate::storage::persistence::filesystem::FilesystemFactory;
-use crate::proto::proximadb::Collection;
+// Collection proto handled internally
 use crate::compute::distance_computation::DistanceMetric;
 use super::{ColumnarConfig, MetadataFilter, SearchCandidate, RowGroupStats, FilterCondition};
 use super::optimization::{ColumnarOptimizer, FileBloomFilters, StreamingRowGroupIterator};
@@ -240,7 +264,7 @@ pub struct UnifiedParquetReader {
 }
 impl UnifiedParquetReader {
     /// Create new unified Parquet reader
-    pub async fn new(filesystem: Arc<FilesystemFactory>) -> Self {
+    pub async fn new(filesystem: Arc<FilesystemFactory>) -> Result<Self> {
         Self::new_with_bandwidth_optimizer(filesystem, None).await
     }
     
@@ -248,18 +272,19 @@ impl UnifiedParquetReader {
     pub async fn new_with_bandwidth_optimizer(
         filesystem: Arc<FilesystemFactory>,
         bandwidth_optimizer: Option<Arc<crate::storage::engines::common::zero_copy_io_system::bandwidth_optimizer::BandwidthOptimizer>>
-    ) -> Self {
-        let hardware = crate::core::hardware_capabilities::try_get_hardware_capabilities()
-            .unwrap_or_else(|| {
-                Arc::new(HardwareCapabilities::detect_with_config(crate::core::config::HardwareConfig::default()).unwrap())
-            });
+    ) -> Result<Self> {
+        let hardware = crate::core::hardware_capabilities::get_hardware_capabilities();
         let distance_compute = Arc::new(
             crate::compute::distance_computation::engine::UnifiedDistanceCompute::new(
                 crate::compute::distance_computation::DistanceMetric::Cosine
             )
         );
         let config = ColumnarConfig::default();
-        let optimizer = Arc::new(ColumnarOptimizer::new(distance_compute, config.clone()));
+        let optimizer = Arc::new(ColumnarOptimizer::new(
+            distance_compute, 
+            config.clone(),
+            filesystem.clone()
+        ).await?);
         
         // Initialize footer cache for cloud optimization
         let footer_cache_config = FooterCacheConfig::default();
@@ -269,7 +294,7 @@ impl UnifiedParquetReader {
                 .expect("Failed to initialize footer cache_info")
         );
         
-        Self {
+        Ok(Self {
             filesystem,
             hardware,
             config,
@@ -286,20 +311,21 @@ impl UnifiedParquetReader {
             strategy_selector: Arc::new(ReadingStrategySelector::default()),
             schema_cache: Arc::new(RwLock::new(HashMap::new())),
             collection_context: Arc::new(RwLock::new(None)),
-        }
+        })
     }
     /// Create with custom configuration
-    pub async fn with_config(filesystem: Arc<FilesystemFactory>, config: ColumnarConfig) -> Self {
-        let hardware = crate::core::hardware_capabilities::try_get_hardware_capabilities()
-            .unwrap_or_else(|| {
-                Arc::new(HardwareCapabilities::detect_with_config(crate::core::config::HardwareConfig::default()).unwrap())
-            });
+    pub async fn with_config(filesystem: Arc<FilesystemFactory>, config: ColumnarConfig) -> Result<Self> {
+        let hardware = crate::core::hardware_capabilities::get_hardware_capabilities();
         let distance_compute = Arc::new(
             crate::compute::distance_computation::engine::UnifiedDistanceCompute::new(
                 crate::compute::distance_computation::DistanceMetric::Cosine
             )
         );
-        let optimizer = Arc::new(ColumnarOptimizer::new(distance_compute, config.clone()));
+        let optimizer = Arc::new(ColumnarOptimizer::new(
+            distance_compute, 
+            config.clone(),
+            filesystem.clone()
+        ).await?);
         let footer_cache_config = FooterCacheConfig::default();
         let footer_cache = Arc::new(
             ParquetFooterCache::new(footer_cache_config, filesystem.clone())
@@ -307,7 +333,7 @@ impl UnifiedParquetReader {
                 .expect("Failed to initialize footer cache")
         );
         
-        Self {
+        Ok(Self {
             filesystem,
             hardware,
             config,
@@ -324,14 +350,14 @@ impl UnifiedParquetReader {
             strategy_selector: Arc::new(ReadingStrategySelector::default()),
             schema_cache: Arc::new(RwLock::new(HashMap::new())),
             collection_context: Arc::new(RwLock::new(None)),
-        }
+        })
     }
     
     /// Create with ID-less storage optimization (still keeps ID column)
-    pub async fn with_id_less_mode(filesystem: Arc<FilesystemFactory>, config: ColumnarConfig) -> Self {
-        let mut reader = Self::with_config(filesystem, config).await;
+    pub async fn with_id_less_mode(filesystem: Arc<FilesystemFactory>, config: ColumnarConfig) -> Result<Self> {
+        let mut reader = Self::with_config(filesystem, config).await?;
         reader.id_less_optimization = true;
-        reader
+        Ok(reader)
     }
     /// Read Parquet file metadata without loading data
     /// Uses footer cache for 70-90% reduction in cloud API calls
@@ -341,23 +367,9 @@ impl UnifiedParquetReader {
         match self.footer_cache.get_footer(file_path).await {
             Ok(cached_footer) => {
                 // Deserialize cached footer data
-                match bincode::deserialize::<parquet::file::metadata::ParquetMetaData>(&cached_footer.footer_data) {
-                    Ok(metadata) => {
-                        debug!("Footer cache HIT for {}", file_path);
-                        let metadata = Arc::new(metadata);
-                        
-                        // Also update the legacy cache for compatibility
-                        {
-                            let mut cache = self.metadata_cache.write().await;
-                            cache.insert(file_path.to_string(), metadata.clone());
-                        }
-                        return Ok(metadata);
-                    }
-                    Err(e) => {
-                        warn!("Failed to deserialize cached footer for {}: {}", file_path, e);
-                        // Fall through to read from storage
-                    }
-                }
+                // ParquetMetaData doesn't implement Deserialize, skip cache deserialization
+                debug!("Footer cache HIT but cannot deserialize ParquetMetaData - reading fresh");
+                // Fall through to read from storage
             }
             Err(e) => {
                 debug!("Footer cache miss for {}: {}", file_path, e);
@@ -391,14 +403,15 @@ impl UnifiedParquetReader {
         // Update both caches
         {
             let mut cache = self.metadata_cache.write().await;
-            cache.insert(file_path.to_string(), metadata.clone());
+            cache.insert(file_path.to_string(), Arc::clone(&metadata));
         }
         // Cache the footer for future use (async, don't block)
         let footer_cache = self.footer_cache.clone();
         let file_path_owned = file_path.to_string();
         let metadata_for_cache = metadata.clone();
         tokio::spawn(async move {
-            if let Ok(serialized) = bincode::serialize(metadata_for_cache.as_ref()) {
+            // ParquetMetaData doesn't implement Serialize, skip caching
+            {
                 // Create a mock cached footer for storage
                 // In production, this would be properly extracted from the Parquet file
                 let _ = footer_cache.preload_footer(&file_path_owned).await;
@@ -458,7 +471,7 @@ impl UnifiedParquetReader {
         if let Some(columns) = column_projection {
             let projected_indices = self.resolve_column_indices(&reader_builder, columns)?;
             if !projected_indices.is_empty() {
-                reader_builder = reader_builder.with_projection(projected_indices.into());
+                reader_builder = reader_builder.with_projection(parquet::arrow::ProjectionMask::leaves(reader_builder.parquet_schema(), projected_indices));
             }
         }
         // Apply row group selection
@@ -503,14 +516,14 @@ impl UnifiedParquetReader {
             
             for name in columns {
                 if let Ok(field) = schema.field_with_name(name) {
-                    if let Some(index) = schema.fields().iter().position(|f| f == field) {
+                    if let Some(index) = schema.fields().iter().position(|f| f.name() == field.name()) {
                         projected_indices.push(index);
                     }
                 }
             }
             
             if !projected_indices.is_empty() {
-                reader_builder = reader_builder.with_projection(projected_indices.into());
+                reader_builder = reader_builder.with_projection(parquet::arrow::ProjectionMask::leaves(reader_builder.parquet_schema(), projected_indices));
             }
         }
         
@@ -624,12 +637,13 @@ impl UnifiedParquetReader {
         Ok(Some(VectorRecord {
             id,
             vector,
-            metadata: None, // Would extract from metadata columns
-            timestamp,
+            metadata: vec![], // Would extract from metadata columns
+            timestamp: timestamp.unwrap_or(0),
             updated_at: None,
             quantized_vector: None,
             expires_at: None,
-            version: version.map(|v| v as u32),
+            version: version,
+            source: None,
         }))
     }
     
@@ -841,7 +855,7 @@ impl UnifiedParquetReader {
         query_vector: &[f32],
         top_k: usize,
         distance_metric: &crate::compute::distance_computation::DistanceMetric,
-    ) -> Result<Vec<crate::core::search::SearchResult>> {
+    ) -> Result<Vec<crate::proto::proximadb::SearchResult>> {
         info!("Progressive search across {} files", file_paths.len());
         let search_config = super::optimization::ProgressiveSearchConfig::default();
         self.optimizer.progressive_search(
@@ -972,6 +986,7 @@ impl UnifiedParquetReader {
             expires_at: None,
             version: version.map(|v| v as u32),
             quantized_vector: None,
+            source: None,
         }))
     }
     
@@ -1182,7 +1197,7 @@ impl UnifiedParquetReader {
     /// Resolve column names to indices
     fn resolve_column_indices(
         &self,
-        reader_builder: &ParquetRecordBatchReaderBuilder,
+        reader_builder: &ParquetRecordBatchReaderBuilder<bytes::Bytes>,
         columns: &[String],
     ) -> Vec<usize> {
         let schema = reader_builder.schema();
@@ -1323,16 +1338,13 @@ impl UnifiedParquetReader {
         &self,
         params: &crate::core::search::SearchParams,
         collection_context: &CollectionContext,
-    ) -> Result<Vec<crate::core::search::SearchResult>> {
+    ) -> Result<Vec<crate::proto::proximadb::SearchResult>> {
         debug!("📖 UnifiedParquetReader::search_vectors called");
         debug!("📖 Collection context: files={}, filterable_columns={:?}", 
                collection_context.file_paths.len(), collection_context.filterable_columns);
         
         // Create distance compute locally per query to avoid cross-query contamination
-        let hardware = crate::core::hardware_capabilities::try_get_hardware_capabilities()
-            .unwrap_or_else(|| {
-                Arc::new(HardwareCapabilities::detect_with_config(crate::core::config::HardwareConfig::default()).unwrap())
-            });
+        let hardware = crate::core::hardware_capabilities::get_hardware_capabilities();
         let distance_compute = crate::compute::distance_computation::engine::UnifiedDistanceCompute::new(
             crate::compute::distance_computation::DistanceMetric::Cosine
         );
@@ -1373,7 +1385,7 @@ impl UnifiedParquetReader {
                         metadata_map.insert(item.key.clone(), serde_json::Value::String(item.value.clone()));
                     }
                     
-                    all_results.push(crate::core::search::SearchResult {
+                    all_results.push(crate::proto::proximadb::SearchResult {
                         id: vector_record.id.clone().unwrap_or_default(),
                         vector_id: vector_record.id.clone(),
                         score: similarity,

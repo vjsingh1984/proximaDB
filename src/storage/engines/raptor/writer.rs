@@ -70,7 +70,7 @@ use crate::core::hardware_capabilities::HardwareCapabilities;
 use crate::core::memory::pool::VectorMemoryPool;
 use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
 use crate::compute::distance_computation::DistanceMetric;
-use crate::proto::proximadb::{VectorRecord, metadata_value};
+use crate::proto::proximadb::{VectorRecord, metadata_item};
 
 // Import AXIS clustering for reuse
 use crate::index::axis::clustering::{
@@ -161,7 +161,7 @@ impl BloomFilterBuilder {
     }
     
     /// Build the bloom filter from accumulated IDs
-    fn build(self) -> anyhow::Result<RowGroupBloomFilter> {
+    fn build(&self) -> anyhow::Result<RowGroupBloomFilter> {
         if self.ids.is_empty() {
             return Ok(RowGroupBloomFilter::new(100, self.target_false_positive_rate));
         }
@@ -637,10 +637,15 @@ impl IvfClusteringBuilder {
         let mut inter_cluster_edges = 0;
         
         // Step 2: Process each node and apply boosting to all its outgoing edges
-        for (node_idx, node) in self.nodes.iter_mut().enumerate() {
-            // Identify source vector's cluster assignment and centroid for boosting calculations
+        // Collect information first to avoid borrow checker issues
+        let node_info: Vec<_> = self.nodes.iter().enumerate().map(|(node_idx, node)| {
             let source_idx = *self.id_to_node.get(&node.vector_id).unwrap() as usize;
-            let source_cluster = self.find_cluster_for_node(source_idx, clusters);
+            let source_cluster = Self::find_cluster_for_node_static(source_idx, clusters);
+            (node_idx, source_idx, source_cluster)
+        }).collect();
+        
+        for (node_idx, source_idx, source_cluster) in node_info {
+            let node = &mut self.nodes[node_idx];
             let source_centroid = &self.centroids[source_cluster];
             
             // Process edges with component boosting for hybrid IVF+Graph
@@ -649,7 +654,7 @@ impl IvfClusteringBuilder {
             // Step 3: Process each edge with component boosting
             for (edge_idx, edge) in node.edges.iter().enumerate() {
                 let target_idx = edge.target_node_id as usize;
-                let target_cluster = self.find_cluster_for_node(target_idx, clusters);
+                let target_cluster = Self::find_cluster_for_node_static(target_idx, clusters);
                 let target_centroid = &self.centroids[target_cluster];
                 
                 // Track edge type for monitoring cluster connectivity
@@ -810,14 +815,19 @@ impl IvfClusteringBuilder {
         }
     }
     
-    /// Helper: Find which cluster a node belongs to
-    fn find_cluster_for_node(&self, node_idx: usize, clusters: &[Vec<usize>]) -> usize {
-        for (cluster_idx, cluster) in clusters.iter().enumerate() {
-            if cluster.contains(&node_idx) {
-                return cluster_idx;
+    /// Helper: Find which cluster a node belongs to (static version)
+    fn find_cluster_for_node_static(node_idx: usize, clusters: &[Vec<usize>]) -> usize {
+        for (cluster_id, members) in clusters.iter().enumerate() {
+            if members.contains(&node_idx) {
+                return cluster_id;
             }
         }
-        0 // Default to first cluster
+        0 // Default to first cluster if not found
+    }
+    
+    /// Helper: Find which cluster a node belongs to
+    fn find_cluster_for_node(&self, node_idx: usize, clusters: &[Vec<usize>]) -> usize {
+        Self::find_cluster_for_node_static(node_idx, clusters)
     }
     
     /// Helper: Calculate global average distance for normalization
@@ -983,7 +993,7 @@ impl IvfClusteringBuilder {
         
         // Calculate coverage using smooth exponential decay
         let raw_coverage = (-alpha * (k_over_d + 1.0).ln()).exp();
-        let coverage_ratio = min_coverage.max(raw_coverage.min(1.0));
+        let coverage_ratio = f32::max(min_coverage, f32::min(raw_coverage, 1.0));
         
         // Determine strategy based on coverage requirements
         let strategy = match coverage_ratio {
@@ -1281,7 +1291,8 @@ impl IvfClusteringBuilder {
         }
         
         // Step 2: Quantize and compress boundary vector distances using unified modules
-        let mut sparse_entries = Vec::with_capacity(boundary_vectors.len() * k);
+        let num_boundary_vectors = boundary_vectors.len();
+        let mut sparse_entries = Vec::with_capacity(num_boundary_vectors * k);
         
         for (vec_idx, distances) in boundary_vectors {
             // Store all centroid distances for this boundary vector
@@ -1314,11 +1325,11 @@ impl IvfClusteringBuilder {
         let compressed_data = fastlanes_encoder.encode_binary(&quantized_u8)
             .unwrap_or_else(|_| quantized_u8.clone()); // Fallback to uncompressed if encoding fails
         
-        let sparsity_achieved = boundary_vectors.len() as f32 / p as f32;
+        let sparsity_achieved = num_boundary_vectors as f32 / p as f32;
         
         tracing::info!(
             "Adaptive sparse P×K for rowgroup {}: {}/{} vectors stored ({:.1}% sparsity, target {:.1}%)",
-            rg_idx, boundary_vectors.len(), p, sparsity_achieved * 100.0, coverage_ratio * 100.0
+            rg_idx, num_boundary_vectors, p, sparsity_achieved * 100.0, coverage_ratio * 100.0
         );
         
         // Step 4: Create BloomFilter for fast boundary vector lookup
@@ -1332,7 +1343,7 @@ impl IvfClusteringBuilder {
             compressed_data,
             hierarchical_data: None,
             sparse_data: Some(SparseData {
-                top_k: boundary_vectors.len() as u32,
+                top_k: num_boundary_vectors as u32,
                 entries: sparse_entries,
                 boundary_bloom_filter: Some(bloom_filter),
                 sparsity_ratio: sparsity_achieved,
@@ -1441,6 +1452,7 @@ impl RaptorWriter {
         
         // Encode with FastLanes
         let encoded = fastlanes_encoder.encode_binary(&quantized)?;
+        let compressed_size = encoded.len() as u32;
         
         Ok(P2Matrix {
             num_vectors: n as u32,
@@ -1448,7 +1460,7 @@ impl RaptorWriter {
             min_distance,
             max_distance,
             compression: scheme, // Use the same scheme directly
-            compressed_size: encoded.len() as u32,
+            compressed_size,
         })
     }
     
@@ -1499,10 +1511,11 @@ impl RaptorWriter {
         let scheme = FastLanesScheme::BitPacked { bits: 8 };
         let fastlanes_encoder = FastLanesEncoder::new(scheme);
         let encoded = fastlanes_encoder.encode_binary(&quantized_distances)?;
+        let encoded_len = encoded.len();
         
         tracing::info!(
             "K×K matrix: {} centroids → {} bytes compressed ({:.2}x compression)",
-            k, encoded.len(), quantized_distances.len() as f32 / encoded.len() as f32
+            k, encoded_len, quantized_distances.len() as f32 / encoded_len as f32
         );
         
         Ok(InterCentroidMatrix {
@@ -1514,7 +1527,7 @@ impl RaptorWriter {
                 scale_factor: 255.0 / (max_distance - min_distance),
                 compression_type: CompressionType::Quantized8Bit,
                 row_encodings: vec![scheme; k], // Same scheme for all rows initially
-                row_compressed_sizes: vec![encoded.len() as u16 / k as u16; k], // Average size per row
+                row_compressed_sizes: vec![encoded_len as u16 / k as u16; k], // Average size per row
             },
             lookup_table: Vec::new(), // Would be populated with actual offsets
         })
@@ -1529,6 +1542,7 @@ impl RaptorWriter {
     ) -> Result<Vec<(usize, Vec<Vec<f32>>)>> {
         let mut final_assignments = Vec::new();
         let mut next_centroid_id = 0;
+        let num_initial = initial_assignments.len();
         
         tracing::info!(
             "Handling rowgroup overflow: max {} vectors per rowgroup",
@@ -1555,7 +1569,7 @@ impl RaptorWriter {
         
         tracing::info!(
             "Overflow handling complete: {} initial assignments → {} final centroids (K={})",
-            initial_assignments.len(), final_assignments.len(), next_centroid_id
+            num_initial, final_assignments.len(), next_centroid_id
         );
         
         Ok(final_assignments)
@@ -2160,8 +2174,11 @@ impl RaptorWriter {
         collection_id: String,
         dimension: usize,
     ) -> Result<Self> {
-        // Initialize filesystem using zero-copy API
-        let filesystem = FilesystemFactory::create_from_path(&file_path).await?;
+        // Initialize filesystem using local filesystem
+        use crate::storage::persistence::filesystem::local::{LocalFileSystem, LocalConfig};
+        let local_config = LocalConfig::default();
+        let local_fs = LocalFileSystem::new(local_config).await?;
+        let filesystem: Arc<dyn crate::storage::persistence::filesystem::FileSystem> = Arc::new(local_fs);
         
         // Initialize hardware capabilities
         let hardware = get_hardware_capabilities();
@@ -2174,16 +2191,38 @@ impl RaptorWriter {
             RaptorCompressionCodec::Snappy => CompressionAlgorithm::Snappy,
             RaptorCompressionCodec::Gzip(_level) => CompressionAlgorithm::Gzip,
         };
-        let compression = Arc::new(StandardCompression::new(compression_algo));
+        let compression = Arc::new(StandardCompression);
+        
+        // Initialize unified distance compute first
+        let distance_compute = Arc::new(UnifiedDistanceCompute::new(
+            crate::compute::distance_computation::DistanceMetric::Cosine
+        ));
+        
+        // Initialize codebook store for quantization
+        let codebook_store: Arc<dyn crate::compute::quantization::unified::CodebookStore> = 
+            Arc::new(crate::compute::quantization::unified::InMemoryCodebookStore::new());
+        
+        // Initialize unified quantization engine
+        let unified_quantization = Arc::new(crate::compute::quantization::unified::UnifiedQuantizationEngine::new(
+            distance_compute.clone(),
+            codebook_store,
+        ));
+        
+        // Initialize storage quantization engine config
+        let quant_config = crate::compute::quantization::storage_engine::StorageQuantizationConfig {
+            enable_hardware_acceleration: config.enable_simd,
+            distance_metric: crate::compute::distance_computation::DistanceMetric::Cosine,
+            ..Default::default()
+        };
         
         // Initialize quantization engine
         let quantization_engine = Arc::new(StorageQuantizationEngine::new(
-            dimension,
-            hardware.clone(),
+            unified_quantization,
+            distance_compute.clone(),
+            quant_config,
         ));
         
-        // Initialize unified distance compute
-        let distance_compute = Arc::new(UnifiedDistanceCompute::new(hardware.clone()));
+        // Distance compute already initialized above
         
         // Initialize memory pool with default configuration
         let memory_pool = Arc::new(VectorMemoryPool::new());
@@ -2226,7 +2265,7 @@ impl RaptorWriter {
         };
         
         // Write header magic at file start
-        filesystem.write(&file_path, &super::RAPTOR_MAGIC).await?;
+        filesystem.write(&file_path, &super::RAPTOR_MAGIC, None).await?;
         
         // Initialize matrix builder
         let matrix_builder = MatrixBuilder::new(
@@ -2235,9 +2274,12 @@ impl RaptorWriter {
             DistanceMetric::Cosine, // Use config's distance metric
         );
         
+        // Extract rowgroup_size before moving config
+        let rowgroup_size = config.rowgroup_size;
+        
         Ok(Self {
             file_path: file_path.clone(),
-            filesystem: Arc::new(filesystem),
+            filesystem: filesystem,
             config,
             collection_id,
             dimension,
@@ -2257,7 +2299,7 @@ impl RaptorWriter {
                 id_hashes: Vec::new(),
                 row_offsets: Vec::new(),
             },
-            ivf_builder: IvfClusteringBuilder::new(config.rowgroup_size, get_hardware_capabilities()),
+            ivf_builder: IvfClusteringBuilder::new(rowgroup_size, get_hardware_capabilities()),
             column_projections: ColumnProjectionsBuilder {
                 metadata_columns: HashMap::new(),
                 filter_bitmaps: HashMap::new(),
@@ -2285,9 +2327,7 @@ impl RaptorWriter {
     /// Stores both FP32 and quantized versions for full reconstruction
     async fn add_vector(&mut self, vector: &VectorRecord) -> Result<()> {
         // Extract ID - required field in VectorRecord
-        let id = vector.id.as_ref()
-            .ok_or_else(|| anyhow::anyhow!("Vector ID is required"))?
-            .clone();
+        let id = vector.id.clone();
         
         // Store original FP32 vector for reconstruction
         let fp32_vector = vector.vector.clone();
@@ -2298,10 +2338,13 @@ impl RaptorWriter {
             pre_quantized.clone()
         } else {
             // Quantize vector using unified engine
-            let quantized_batch = self.quantization_engine.quantize_batch(&[vector.vector.clone()]).await?;
+            let quantized_batch = self.quantization_engine.quantize_batch(&[vector.vector.clone()], Some(&[id.clone()])).await?;
             let quantized = quantized_batch.into_iter().next()
                 .ok_or_else(|| anyhow::anyhow!("Failed to quantize vector"))?;
-            quantized.data
+            // Get the primary quantized data
+            quantized.primary
+                .map(|q| q.data)
+                .unwrap_or_else(Vec::new)
         };
         
         // Extract metadata as key-value pairs
@@ -2311,11 +2354,11 @@ impl RaptorWriter {
                     Some(val) => {
                         // Serialize metadata value to bytes
                         match val {
-                            metadata_value::Value::StringValue(s) => s.as_bytes().to_vec(),
-                            metadata_value::Value::IntValue(i) => i.to_le_bytes().to_vec(),
-                            metadata_value::Value::FloatValue(f) => f.to_le_bytes().to_vec(),
-                            metadata_value::Value::BoolValue(b) => vec![if *b { 1 } else { 0 }],
-                            metadata_value::Value::ListValue(list) => {
+                            metadata_item::Value::StringValue(s) => s.as_bytes().to_vec(),
+                            metadata_item::Value::NumberValue(n) => n.to_le_bytes().to_vec(),
+                            metadata_item::Value::BoolValue(b) => vec![if *b { 1 } else { 0 }],
+                            /* Removed ListValue and MapValue - not in current proto
+                            metadata_item::Value::ListValue(list) => {
                                 // Serialize list as length-prefixed items
                                 let mut bytes = Vec::new();
                                 bytes.extend(&(list.values.len() as u32).to_le_bytes());
@@ -2324,19 +2367,7 @@ impl RaptorWriter {
                                     bytes.extend(&[0]); // Placeholder
                                 }
                                 bytes
-                            },
-                            metadata_value::Value::MapValue(map) => {
-                                // Serialize map as length-prefixed key-value pairs
-                                let mut bytes = Vec::new();
-                                bytes.extend(&(map.fields.len() as u32).to_le_bytes());
-                                for (k, v) in &map.fields {
-                                    bytes.extend(&(k.len() as u32).to_le_bytes());
-                                    bytes.extend(k.as_bytes());
-                                    // Recursive serialization
-                                    bytes.extend(&[0]); // Placeholder
-                                }
-                                bytes
-                            },
+                            }*/
                         }
                     },
                     None => Vec::new(),
@@ -2356,7 +2387,7 @@ impl RaptorWriter {
         
         // Create compact row with all VectorRecord fields
         let compact_row = CompactRow {
-            id,
+            id: id.clone(),
             vector: fp32_vector,
             quantized_vector,
             metadata,
@@ -2417,7 +2448,7 @@ impl RaptorWriter {
             self.current_row_page = Some(RowPageBuffer {
                 rows: Vec::new(),
                 page_id,
-                start_offset: self.filesystem.file_size(&self.file_path).await.unwrap_or(0),
+                start_offset: self.filesystem.metadata(&self.file_path).await.map(|m| m.size).unwrap_or(0),
             });
         }
         
@@ -2446,8 +2477,11 @@ impl RaptorWriter {
             CompressionContext::Block,
         )?;
         
-        // Write to filesystem and return offset
-        let offset = self.filesystem.append(&self.file_path, &compressed).await?;
+        // Get current file size as offset before append
+        let offset = self.filesystem.metadata(&self.file_path).await.map(|m| m.size).unwrap_or(0);
+        
+        // Write to filesystem
+        self.filesystem.append(&self.file_path, &compressed).await?;
         
         tracing::debug!(
             "Wrote bloom filter: {} bytes compressed from {} bytes original ({:.1}% compression)",
@@ -2473,7 +2507,7 @@ impl RaptorWriter {
                 3,
                 CompressionContext::VectorSerialization,
             )?;
-            let vector_offset = self.filesystem.open(&self.file_path).await?.file_size().await?;
+            let vector_offset = self.filesystem.metadata(&self.file_path).await?.size;
             self.filesystem.append(&self.file_path, &vector_compressed).await?;
             column_pages.insert(ColumnType::VectorsFp32, ColumnPageMetadata {
                 column_type: ColumnType::VectorsFp32,
@@ -2495,7 +2529,8 @@ impl RaptorWriter {
                 9,
                 CompressionContext::Column,  // IDs are homogeneous columnar data
             )?;
-            let id_offset = self.filesystem.append(&self.file_path, &id_compressed).await?;
+            let id_offset = self.filesystem.metadata(&self.file_path).await.map(|m| m.size).unwrap_or(0);
+            self.filesystem.append(&self.file_path, &id_compressed).await?;
             column_pages.insert(ColumnType::Ids, ColumnPageMetadata {
                 column_type: ColumnType::Ids,
                 offset: id_offset,
@@ -2528,7 +2563,7 @@ impl RaptorWriter {
                     6,
                     CompressionContext::Block,  // Metadata is mixed/heterogeneous data
                 )?;
-                let meta_offset = self.filesystem.open(&self.file_path).await?.file_size().await?;
+                let meta_offset = self.filesystem.metadata(&self.file_path).await?.size;
                 self.filesystem.append(&self.file_path, &meta_compressed).await?;
                 column_pages.insert(
                     ColumnType::Metadata(key.clone()),
@@ -2555,7 +2590,7 @@ impl RaptorWriter {
                     19,  // Maximum compression
                     CompressionContext::Block,  // Source content is text/mixed data
                 )?;
-                let source_offset = self.filesystem.open(&self.file_path).await?.file_size().await?;
+                let source_offset = self.filesystem.metadata(&self.file_path).await?.size;
                 self.filesystem.append(&self.file_path, &source_compressed).await?;
                 column_pages.insert(ColumnType::SourceContent, ColumnPageMetadata {
                     column_type: ColumnType::SourceContent,
@@ -2582,7 +2617,7 @@ impl RaptorWriter {
                 6,
                 CompressionContext::Column,  // Matrix data is numeric/homogeneous
             )?;
-            let p2_offset = self.filesystem.open(&self.file_path).await?.file_size().await?;
+            let p2_offset = self.filesystem.metadata(&self.file_path).await?.size;
             self.filesystem.append(&self.file_path, &p2_compressed).await?;
             column_pages.insert(ColumnType::P2Matrix, ColumnPageMetadata {
                 column_type: ColumnType::P2Matrix,
@@ -3558,9 +3593,12 @@ impl RaptorWriter {
         // Build bloom filter for the final row group
         if !self.bloom_builder.is_empty() {
             let bloom_filter = self.bloom_builder.build()?;
+            
+            // Write bloom filter to disk and store offset
+            let bloom_offset = self.write_bloom_filter(&bloom_filter).await?;
+            
+            // Now update the row group with the bloom filter offset
             if let Some(current_rg) = self.row_groups.last_mut() {
-                // Write bloom filter to disk and store offset
-                let bloom_offset = self.write_bloom_filter(&bloom_filter).await?;
                 current_rg.bloom_filter_offset = Some(bloom_offset);
                 
                 tracing::info!(
@@ -3575,47 +3613,86 @@ impl RaptorWriter {
         }
         
         // Write column projections for the current row group
+        let projections_offset = self.write_column_projections().await?;
+        
+        // Compute centroid and cluster statistics before modifying row group
+        let centroid = if !self.ivf_builder.vectors.is_empty() {
+            Some(self.compute_rowgroup_centroid(&self.ivf_builder.vectors))
+        } else {
+            None
+        };
+        
+        // Compute cluster statistics before modifying row group
+        let dominant_cluster = if !self.ivf_builder.nodes.is_empty() {
+            let cluster_assignments: Vec<u32> = self.ivf_builder.nodes.iter()
+                .map(|n| n.cluster_id)
+                .collect();
+            
+            let mut cluster_counts = HashMap::new();
+            for &cluster_id in &cluster_assignments {
+                *cluster_counts.entry(cluster_id).or_insert(0) += 1;
+            }
+            
+            cluster_counts.iter()
+                .max_by_key(|&(_, count)| count)
+                .map(|(&id, _)| id)
+                .unwrap_or(0)
+        } else {
+            0
+        };
+        
+        // Collect all existing rowgroup centroids for neighbor computation
+        let all_rowgroup_centroids: Vec<(u16, Vec<f32>)> = self.row_groups.iter()
+            .filter_map(|rg| rg.centroid.as_ref().map(|c| (rg.id as u16, c.clone())))
+            .collect();
+        
+        // Compute centroid statistics before modifying row group
+        let centroid_stats = if let Some(ref c) = centroid {
+            let rg_id = self.row_groups.last().map(|rg| rg.id).unwrap_or(0);
+            Some(self.compute_centroid_stats(
+                &self.ivf_builder.vectors,
+                c,
+                dominant_cluster,
+                &all_rowgroup_centroids,
+                rg_id,
+            ))
+        } else {
+            None
+        };
+        
+        // Write IVF clustering data
+        let ivf_meta = if self.config.enable_clustering && !self.ivf_builder.centroids.is_empty() {
+            Some(self.write_ivf_clustering_data().await?)
+        } else {
+            None
+        };
+        
+        // Write Matrix Trinity segment
+        self.write_matrix_segment().await?;
+        
+        // Create and write bloom filter
+        let bloom_filter = RowGroupBloomFilter {
+            bits: vec![0u8; (self.bloom_builder.ids.len() * 10 / 8) + 1], // 10 bits per entry
+            num_hashes: 7,
+            num_ids: self.bloom_builder.ids.len(),
+            size_bits: self.bloom_builder.ids.len() * 10,
+            false_positive_rate: 0.01,
+        };
+        let bloom_offset = self.write_bloom_filter(&bloom_filter).await?;
+        
+        // Now update the row group with all computed values
         if let Some(rg) = self.row_groups.last_mut() {
-            let projections_offset = self.write_column_projections().await?;
             // Note: column_projections_offset not available in common.rs RowGroupMetadata
             // Would need to extend the structure or store separately
             
-            // Compute and store centroid statistics for this rowgroup
-            if !self.ivf_builder.vectors.is_empty() {
-                // Compute centroid for this rowgroup
-                let centroid = self.compute_rowgroup_centroid(&self.ivf_builder.vectors);
-                rg.centroid = Some(centroid.clone());
-                
-                // Find which cluster this rowgroup belongs to (majority vote)
-                let cluster_assignments: Vec<u32> = self.ivf_builder.nodes.iter()
-                    .map(|n| n.cluster_id)
-                    .collect();
-                
-                let mut cluster_counts = HashMap::new();
-                for &cluster_id in &cluster_assignments {
-                    *cluster_counts.entry(cluster_id).or_insert(0) += 1;
-                }
-                
-                let dominant_cluster = cluster_counts.iter()
-                    .max_by_key(|&(_, count)| count)
-                    .map(|(&id, _)| id)
-                    .unwrap_or(0);
-                
-                // Collect all existing rowgroup centroids for neighbor computation
-                let all_rowgroup_centroids: Vec<(u16, Vec<f32>)> = self.row_groups.iter()
-                    .filter_map(|rg| rg.centroid.as_ref().map(|c| (rg.id, c.clone())))
-                    .collect();
-                
-                // Compute centroid statistics for fast pruning
-                let centroid_stats = self.compute_centroid_stats(
-                    &self.ivf_builder.vectors,
-                    &centroid,
-                    dominant_cluster,
-                    &all_rowgroup_centroids,
-                    rg.id,
-                );
-                
-                rg.centroid_stats = Some(centroid_stats);
+            // Store centroid if computed
+            if let Some(c) = centroid {
+                rg.centroid = Some(c);
+            }
+            
+            // Store centroid stats
+            if let Some(stats) = centroid_stats {
+                rg.centroid_stats = Some(stats);
                 
                 tracing::debug!(
                     "RowGroup {} centroid stats: cluster={}, mean_dist={:.3}, radius={:.3}",
@@ -3625,20 +3702,13 @@ impl RaptorWriter {
                 );
             }
             
-            // Write IVF clustering data (centroids, assignments, edges)
-            if self.config.enable_clustering && !self.ivf_builder.centroids.is_empty() {
-                let ivf_meta = self.write_ivf_clustering_data().await?;
-                // Store IVF offset in metadata (would need to extend structure)
-                tracing::info!("Wrote IVF clustering data at offset {}", ivf_meta.offset);
+            // Store IVF metadata offset
+            if let Some(meta) = ivf_meta {
+                tracing::info!("Wrote IVF clustering data at offset {}", meta.offset);
             }
             
-            // Write Matrix Trinity segment (replaces HNSW)
-            // Matrices are embedded in rowgroup metadata, not separate segment
-            self.write_matrix_segment().await?;
-            
-            // Write bloom filter for this row group
-            let bloom_meta = self.write_bloom_filter().await?;
-            rg.bloom_filter_offset = Some(bloom_meta.offset);
+            // Store bloom filter offset
+            rg.bloom_filter_offset = Some(bloom_offset);
             
             // Store columnar ID index as part of row group
             // This enables SIMD scanning after bloom filter check
@@ -3759,7 +3829,7 @@ impl RaptorWriter {
             offset: offset as u64,
             size: compressed.len() as u64,
             num_entries: self.ivf_builder.nodes.len() as u32,
-            num_bits: (self.ivf_builder.nodes.len() * 10) as u64, // Estimate: 10 bits per entry
+            num_bits: (self.ivf_builder.nodes.len() * 10) as usize, // Estimate: 10 bits per entry
             num_hashes: 7, // Standard for 1% false positive rate
             false_positive_rate: 0.01,  // Default 1% false positive rate
         })
@@ -3926,7 +3996,18 @@ impl RaptorWriter {
                     lookup_table: Vec::new(),
                 }
             }),
-            vector_centroid_matrices: vector_centroid_matrices.unwrap_or_default(),
+            vector_centroid_matrices: vector_centroid_matrices
+                .map(|matrices| matrices.into_iter().map(|m| VectorCentroidMatrixRef {
+                    rowgroup_id: m.rowgroup_id,
+                    num_vectors: m.num_vectors,
+                    num_centroids: m.num_centroids,
+                    file_offset: 0, // Will be set when writing to disk
+                    compressed_size: 0, // Will be set when writing to disk
+                    uncompressed_size: (m.num_vectors * m.num_centroids * 4) as u32, // P×K×4 bytes
+                    compression_algorithm: "zstd".to_string(),
+                    encoding_metadata: m.compression_metadata,
+                }).collect())
+                .unwrap_or_default(),
             total_centroids: columnar_centroids.count,  // K centroids = K rowgroups
             version: 1,
             checksum: 0, // TODO: Compute actual checksum
@@ -4202,7 +4283,8 @@ impl RaptorWriter {
             })
             .collect();
         
-        self.ivf_builder.apply_component_boosting(&clusters, &self.ivf_builder.vectors);
+        let vectors = self.ivf_builder.vectors.clone();
+        self.ivf_builder.apply_component_boosting(&clusters, &vectors);
         
         // Step 10: Create inverted lists for each cluster
         let mut inverted_lists: Vec<Vec<String>> = vec![Vec::new(); k];
@@ -4471,11 +4553,13 @@ impl RaptorWriter {
             ));
         }
         
-        // Create bloom filter structure
+        // Create bloom filter structure  
         let bloom_filter = RowGroupBloomFilter {
             bits: vec![0u8; num_bytes],
-            num_bits: num_bits as u64,
             num_hashes: 7, // Optimal for 1% false positive
+            num_ids: num_ids,
+            size_bits: num_bits,
+            false_positive_rate: 0.01,
         };
         
         // Create bloom filter bits

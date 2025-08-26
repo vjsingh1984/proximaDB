@@ -617,7 +617,7 @@ impl ConfigLoader {
         let mut builder = HybridWriterBuilder::new();
         
         // Set mode
-        match toml_config.initial_mode.as_deref() {
+        match toml_config.initial_mode.as_str() {
             "streaming" => builder = builder.streaming_mode(),
             "batch" => builder = builder.batch_mode(),
             _ => {} // Keep adaptive

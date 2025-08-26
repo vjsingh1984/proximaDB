@@ -3,7 +3,7 @@ mod tests {
     use super::*;
     use crate::core::config::HardwareConfig;
     use crate::core::hardware_capabilities::{HardwareCapabilities, GpuBackend, HardwareBackend, HardwareQuery, initialize_hardware_capabilities_default, get_hardware_capabilities, try_get_hardware_capabilities};
-    use crate::query::sql_engine::simd_parser::SimdCapabilities;
+    use crate::query::sql_engine::vector_array_parser::SimdCapabilities;
     
     #[test]
     fn test_hardware_config_defaults() {

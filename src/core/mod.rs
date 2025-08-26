@@ -42,7 +42,7 @@ pub use service_types::{
     BatchSearchRequest, CollectionConfig, CollectionOperation, CollectionRequest,
     CollectionResponse, CompactionConfig, CompactionStrategy, CompressionAlgorithm,
     DistanceMetric, FieldCondition, HealthResponse, IndexStats, IndexingAlgorithm,
-    MetadataFilter, MetricsResponse, NodeId, OperationResponse, SearchContext,
+    MetadataFilter, MetricsResponse, NodeId, OperationResponse, SearchRequest,
     SearchDebugInfo, SearchMetadata, SearchStrategy,
     ServiceMetrics,
     StorageEngine, String, Vector, VectorId, VectorInsertRequest, VectorInsertResponse,
@@ -182,6 +182,7 @@ impl VectorRecordSerialization for VectorRecord {
             expires_at: other_fields.expires_at,
             version: other_fields.version,
             quantized_vector: other_fields.quantized_vector,
+            source: None,
         })
     }
 }

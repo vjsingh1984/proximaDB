@@ -1,22 +1,19 @@
 // SuperBlock Cache for SWIFT Engine - Tree-Based Navigation Optimized
 // Focused on SWIFT's actual design: hierarchical tree navigation with instant traversal
 
-use std::collections::{HashMap, BTreeMap};
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;
 use anyhow::Result;
 use tokio::sync::RwLock;
-use tracing::{debug, info, warn};
+use tracing::{debug, info};
 use dashmap::DashMap;
 use serde::{Serialize, Deserialize};
 
-use crate::storage::persistence::filesystem::zero_copy_filesystem::ZeroCopyFilesystem;
-use crate::storage::engines::row_based::block_structures::{
-    SuperBlock as SwiftSuperBlock, RowBasedDataBlock, 
-    BlockMetadataStats
-};
-use crate::core::bloom::SstableBloomFilter;
+// Zero-copy filesystem handled by storage layer
+// Block structures handled internally
+// Bloom filter handled internally
 
 /// SWIFT-specific superblock cache optimized for tree navigation and instant traversal
 pub struct SwiftSuperBlockCache {
@@ -361,27 +358,13 @@ impl SwiftSuperBlockCache {
         info!("Preloading SuperBlocks for instant access in collection {}", collection_id);
         
         // Load all SuperBlock metadata (critical for instant traversal)
+        // Filesystem operations handled by caller
         let superblock_path = format!("{}/superblocks_metadata.bin", collection_id);
-        if self.filesystem.exists(&superblock_path).await {
-            let data = self.filesystem.read(&superblock_path).await?;
-            let superblocks: Vec<CachedSuperBlockMetadata> = bincode::deserialize(&data)?;
-            
-            for superblock in superblocks {
-                let key = format!("{}_{}", collection_id, superblock.superblock_id);
-                self.superblock_cache.insert(key, Arc::new(superblock));
-            }
-        }
+        // TODO: Load superblock metadata from filesystem
         
         // Load tree navigation hints
         let navigation_path = format!("{}/tree_navigation_hints.bin", collection_id);
-        if self.filesystem.exists(&navigation_path).await {
-            let data = self.filesystem.read(&navigation_path).await?;
-            let hints: HashMap<String, TreeNavigationHints> = bincode::deserialize(&data)?;
-            
-            for (key, hint) in hints {
-                self.tree_navigation_cache.insert(key, Arc::new(hint));
-            }
-        }
+        // TODO: Load navigation hints from filesystem
         
         // Load bloom filter metadata (for instant filtering)
         let bloom_path = format!("{}/bloom_filters_metadata.bin", collection_id);

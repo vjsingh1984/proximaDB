@@ -899,7 +899,7 @@ impl ReusableClusteringEngine for AxisClusteringEngine {
                 let d4 = if min_inter_centroid < f32::MAX { min_inter_centroid } else { 0.0 };
                 
                 // Component 5: Maximum inter-centroid distance (β₂) - global structure  
-                let mut max_inter_centroid = 0.0;
+                let mut max_inter_centroid: f32 = 0.0;
                 for (other_idx, _) in centroids.iter().enumerate() {
                     if other_idx != cluster_idx {
                         max_inter_centroid = max_inter_centroid.max(centroid_distances[cluster_idx][other_idx]);

@@ -2132,3 +2132,18 @@ mod tests {
         assert!(result.normalized_score >= 0.0 && result.normalized_score <= 1.0);
     }
 }
+
+// Implement DistanceCalculator trait for UnifiedDistanceCompute
+// This allows legacy code paths to use UnifiedDistanceCompute through the trait
+impl super::DistanceCalculator for UnifiedDistanceCompute {
+    fn distance(&self, vec_a: &[f32], vec_b: &[f32]) -> f32 {
+        // Use the system default metric for the distance calculation
+        let result = self.calculate_distance(vec_a, vec_b, &self.system_default);
+        result.raw_value
+    }
+    
+    fn is_similarity(&self) -> bool {
+        // Query the metric properties to determine if it's a similarity metric
+        self.is_similarity_metric(&self.system_default)
+    }
+}

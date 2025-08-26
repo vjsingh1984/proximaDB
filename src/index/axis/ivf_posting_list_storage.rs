@@ -180,8 +180,8 @@ impl PostingListStorage {
                             )),
                         },
                     ];
-                    records.insert(id.clone(), crate::core::VectorRecord {
-                        id: Some(id),
+                    records.insert(id.clone(), crate::proto::proximadb::VectorRecord {
+                        id,
                         vector,
                         metadata,
                         timestamp: std::time::SystemTime::now()
@@ -192,6 +192,7 @@ impl PostingListStorage {
                         expires_at: None,
                         version: None,
                         quantized_vector: None,
+                        source: None,
                     });
                 }
                 

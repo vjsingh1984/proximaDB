@@ -247,7 +247,7 @@ impl OptimizedSwiftOperations {
         for (idx, distance) in distances.iter().enumerate() {
             if idx < candidates.len() {
                 results.push((VectorRecord {
-                    id: Some(candidates[idx].record.id.clone()),
+                    id: candidates[idx].record.id.clone(),
                     vector: vectors[idx].clone(),
                     metadata: vec![],
                     timestamp: 0,
@@ -255,6 +255,7 @@ impl OptimizedSwiftOperations {
                     expires_at: None,
                     version: None,
                     quantized_vector: None,
+                    source: None,
                 }, *distance));
             }
         }

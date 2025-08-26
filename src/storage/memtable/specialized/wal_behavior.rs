@@ -19,7 +19,7 @@ use crate::core::VectorRecord;
 use crate::storage::memtable::core::MemtableConfig;
 use crate::storage::memtable::implementations::global_partitioned::GlobalPartitionedMemtable;
 use crate::storage::persistence::write_ahead_log::{BatchId, WALOperation, WALStats};
-use crate::core::bloom::{BloomFilterConfig, BloomStrategy, BloomFilterStrategy, CompositeBloomFilter};
+use crate::core::bloom::{BloomFilterConfig, BloomFilterStrategy, CompositeBloomFilter};
 
 /// Write Buffer-specific vector batch for tracking deserialized data
 #[derive(Debug, Clone)]
@@ -263,7 +263,7 @@ impl WALBehaviorWrapper {
         );
 
         // Single point of deserialization - leverage this for ALL strategies
-        let vector_records = match operation.payload_format.as_deref() {
+        let vector_records = match operation.payload_format.as_str() {
             "avro" => {
                 // Use centralized Avro deserializer
                 // Use the avro serializer for deserialization
@@ -425,8 +425,8 @@ impl WALBehaviorWrapper {
         _metadata_filters: Option<&crate::core::search::FilterExpression>,
         include_vectors: bool,
         include_metadata: bool,
-    ) -> Result<Vec<crate::core::search::SearchResult>> {
-        use crate::core::search::SearchResult;
+    ) -> Result<Vec<crate::proto::proximadb::SearchResult>> {
+        use crate::proto::proximadb::SearchResult;
         
         tracing::info!(
             "🔍 WAL_SEARCH: Searching unflushed vectors in collection {} (top_k={}) using {:?}",

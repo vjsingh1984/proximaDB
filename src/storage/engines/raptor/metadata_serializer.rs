@@ -134,7 +134,7 @@ impl RaptorMetadataSerializer {
         
         // Read the actual footer
         let footer_offset = file_size - 8 - footer_size;
-        let footer_data = fs.read_range(file_path, footer_offset, footer_size as usize).await?;
+        let footer_data = fs.read_range(file_path, footer_offset, footer_size).await?;
         
         // Deserialize footer using bincode  
         let footer: super::common::RaptorFooter = bincode::deserialize(&footer_data)
@@ -145,7 +145,7 @@ impl RaptorMetadataSerializer {
             fs.read_range(
                 file_path,
                 bloom_meta.offset,
-                bloom_meta.size as usize
+                bloom_meta.size
             ).await?
         } else {
             Vec::new()

@@ -485,8 +485,8 @@ impl MetadataWriteAheadLogManager {
             let current_time = chrono::Utc::now().timestamp_micros();
             
             let current_time_secs = (current_time / 1_000_000) as u32; // Convert microseconds to seconds
-            let delete_record = crate::core::VectorRecord {
-                id: Some(vector_id),
+            let delete_record = crate::proto::proximadb::VectorRecord {
+                id: vector_id,
                 vector: vec![0.0], // Vector content irrelevant for delete
                 metadata: Vec::new(),
                 timestamp: current_time_secs,
@@ -494,8 +494,8 @@ impl MetadataWriteAheadLogManager {
                 expires_at: Some(current_time_secs.saturating_sub(1)), // Mark as expired (logical delete)
                 version: Some(1),
                 quantized_vector: None,
-            
-        };
+                source: None,
+            };
 
             // Write delete record to write buffer using modern batch architecture through WALBehaviorWrapper
             let delete_batch_records = vec![delete_record];
@@ -601,8 +601,8 @@ impl MetadataWriteAheadLogManager {
         let vector = json.iter().map(|&b| b as f32).collect();
 
         let timestamp_secs = metadata.timestamp; // Already in seconds
-        Ok(crate::core::VectorRecord {
-            id: Some(format!("metadata_{}", metadata.id)),
+        Ok(crate::proto::proximadb::VectorRecord {
+            id: format!("metadata_{}", metadata.id),
             vector,
             metadata: vec![],
             timestamp: timestamp_secs,
@@ -610,6 +610,7 @@ impl MetadataWriteAheadLogManager {
             expires_at: None,
             version: Some(1),
             quantized_vector: None,
+            source: None,
         })
     }
 

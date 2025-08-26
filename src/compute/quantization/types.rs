@@ -22,7 +22,7 @@ pub enum QuantizationLevelType {
     Custom(CustomQuantization),
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub struct NoQuantization {}
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -32,7 +32,18 @@ pub struct UniformQuantization {
     pub offset: Option<f32>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+impl Eq for UniformQuantization {}
+
+impl std::hash::Hash for UniformQuantization {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.bits.hash(state);
+        // Hash the bits representation of the floats for consistency
+        self.scale.map(|s| s.to_bits()).hash(state);
+        self.offset.map(|o| o.to_bits()).hash(state);
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub struct ProductQuantization {
     pub bits_per_code: i32,
     pub num_subvectors: i32,
@@ -48,13 +59,33 @@ pub struct ScalarQuantization {
     pub clamp_values: bool,
 }
 
+impl Eq for ScalarQuantization {}
+
+impl std::hash::Hash for ScalarQuantization {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.bits.hash(state);
+        self.scale.to_bits().hash(state);
+        self.offset.to_bits().hash(state);
+        self.clamp_values.hash(state);
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct BinaryQuantization {
     pub threshold: Option<f32>,
     pub sign_based: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+impl Eq for BinaryQuantization {}
+
+impl std::hash::Hash for BinaryQuantization {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.threshold.map(|t| t.to_bits()).hash(state);
+        self.sign_based.hash(state);
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct CustomQuantization {
     pub type_id: String,
     pub bits_per_element: i32,

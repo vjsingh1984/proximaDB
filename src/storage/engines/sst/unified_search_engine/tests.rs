@@ -10,7 +10,7 @@ use chrono::Utc;
 use super::*;
 use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
 use crate::compute::quantization::unified::{UnifiedQuantizationEngine, InMemoryCodebookStore};
-use crate::core::search::{SearchParams, UnifiedSearchContext};
+use crate::core::search::{SearchParams, SearchPlan};
 
 use crate::storage::engines::sst::readers::unified_sstable_reader::{
     UnifiedSstableReader, ReaderConfig, CollectionContext,
@@ -33,8 +33,8 @@ async fn create_test_sstable_reader() -> Arc<UnifiedSstableReader> {
 }
 
 /// Create test search context
-fn create_test_search_context() -> UnifiedSearchContext {
-    UnifiedSearchContext {
+fn create_test_search_context() -> SearchPlan {
+    SearchPlan {
         storage_info: crate::core::search::StorageInfo {
             storage_type: "LSM".to_string(),
             file_count: 5,

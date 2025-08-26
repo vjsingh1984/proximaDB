@@ -7,13 +7,12 @@
 
 use std::sync::Arc;
 use std::collections::{HashMap, HashSet};
-use anyhow::Result;
-use tracing::{debug, trace};
+use tracing::debug;
 use serde_json::Value;
 
 use crate::core::search::{FilterExpression, ComparisonOperator};
 use crate::core::bloom::{BloomFilter, BloomFilterBuilder};
-use crate::proto::proximadb::{VectorRecord, MetadataItem};
+use crate::proto::proximadb::VectorRecord;
 
 /// Metadata filter optimizer with pushdown capabilities
 pub struct MetadataFilterPushdown {
@@ -108,7 +107,14 @@ impl MetadataFilterPushdown {
             
             // Build bloom filter for the column
             if stats.distinct_values < 1000 {
-                let mut bloom_builder = BloomFilterBuilder::new(stats.distinct_values, 0.01);
+                use crate::core::bloom::{BloomFilterConfig, BloomStrategy};
+                let config = BloomFilterConfig {
+                    strategy: BloomStrategy::Auto,
+                    bits_per_key: 10,
+                    false_positive_rate: Some(0.01),
+                    expected_items: Some(stats.distinct_values),
+                };
+                let mut bloom_builder = BloomFilterBuilder::new(config);
                 for value in values.iter().flatten() {
                     bloom_builder.add(&serde_json::to_vec(value).unwrap_or_default());
                 }
@@ -178,11 +184,7 @@ impl MetadataFilterPushdown {
         // Filter records by candidate IDs
         records.into_iter()
             .filter(|record| {
-                if let Some(id) = &record.id {
-                    candidate_ids.contains(id)
-                } else {
-                    false
-                }
+                candidate_ids.contains(&record.id)
             })
             .collect()
     }
@@ -222,7 +224,7 @@ impl MetadataFilterPushdown {
                     match operator {
                         ComparisonOperator::Equals => {
                             let value_bytes = serde_json::to_vec(value).unwrap_or_default();
-                            bloom.contains(&value_bytes)
+                            bloom.as_ref().contains(&value_bytes)
                         }
                         _ => true, // Can't use bloom filter for other operators
                     }
@@ -334,8 +336,21 @@ impl MetadataFilterPushdown {
         let mut metadata = HashMap::new();
         
         for entry in &record.metadata {
-            if let Ok(value) = serde_json::from_str(&entry.value) {
-                metadata.insert(entry.key.clone(), value);
+            // Convert the protobuf metadata value to serde_json::Value
+            if let Some(ref proto_value) = entry.value {
+                use crate::proto::proximadb::metadata_item;
+                let json_value = match proto_value {
+                    metadata_item::Value::StringValue(s) => Value::String(s.clone()),
+                    metadata_item::Value::IntValue(i) => Value::Number(serde_json::Number::from(*i)),
+                    metadata_item::Value::FloatValue(f) => {
+                        if let Some(n) = serde_json::Number::from_f64(*f as f64) {
+                            Value::Number(n)
+                        } else {
+                            continue;
+                        }
+                    }
+                };
+                metadata.insert(entry.key.clone(), json_value);
             }
         }
         
@@ -420,10 +435,10 @@ impl MetadataFilterPushdown {
         for (i, value_opt) in values.iter().enumerate() {
             if let Some(value) = value_opt {
                 if let Some(record) = records.get(i) {
-                    if let Some(id) = &record.id {
+                    if !record.id.is_empty() {
                         inverted_index.entry(value.clone())
                             .or_insert_with(HashSet::new)
-                            .insert(id.clone());
+                            .insert(record.id.clone());
                     }
                 }
             }
@@ -537,11 +552,23 @@ impl MetadataBloomBuilder {
     
     /// Add a record's metadata to bloom filters
     pub fn add_record(&mut self, record: &VectorRecord) {
+        use crate::core::bloom::{BloomFilterConfig, BloomStrategy};
+        
         for entry in &record.metadata {
+            let config = BloomFilterConfig {
+                strategy: BloomStrategy::Auto,
+                bits_per_key: 10,
+                false_positive_rate: Some(self.false_positive_rate),
+                expected_items: Some(self.expected_items),
+            };
             let builder = self.builders.entry(entry.key.clone())
-                .or_insert_with(|| BloomFilterBuilder::new(self.expected_items, self.false_positive_rate));
+                .or_insert_with(|| BloomFilterBuilder::new(config));
             
-            builder.add(entry.value.as_bytes());
+            // Serialize the metadata value for the bloom filter
+            if let Some(ref value) = entry.value {
+                let serialized = serde_json::to_vec(value).unwrap_or_default();
+                builder.add(&serialized);
+            }
         }
     }
     

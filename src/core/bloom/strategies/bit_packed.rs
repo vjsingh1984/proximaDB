@@ -114,8 +114,8 @@ impl BloomFilterStrategy for BitPackedBloomFilter {
         self.num_bits
     }
     
-    fn hash_count(&self) -> u32 {
-        self.num_hashes
+    fn hash_count(&self) -> usize {
+        self.num_hashes as usize
     }
     
     fn serialize(&self) -> Result<Vec<u8>> {

@@ -1,28 +1,51 @@
-// Shared Parquet Format Reader for VIPER and NOVA engines
-// Optimized for bandwidth reduction and cache-aware operations
+// =============================================================================
+// LOW-LEVEL PARQUET I/O INFRASTRUCTURE (shared_parquet_reader.rs)
+// =============================================================================
+//
+// PURPOSE: Low-level I/O operations and caching infrastructure for Parquet files
+// USED BY: parquet_reader.rs (high-level query engine)
+//
+// This module provides:
+// - Zero-copy file access with memory mapping strategies
+// - Footer caching (avoids re-reading 8MB footers from cloud storage)
+// - Column index caching for selective column reads
+// - Row group metadata caching for query planning
+// - Bandwidth optimization for cloud storage (S3, Azure, GCS)
+// - Unified caching through ZeroCopyIOSystem
+//
+// RELATIONSHIP WITH parquet_reader.rs:
+// This is the LOW-LEVEL infrastructure layer that handles:
+// - Raw file I/O operations
+// - Memory management and caching
+// - Cloud storage optimizations
+// - Memory mapping strategies
+//
+// The parquet_reader.rs (high-level) calls this module to:
+// - Get cached footers without re-downloading from cloud
+// - Access column data with zero-copy when possible
+// - Manage memory efficiently across multiple Parquet files
+//
+// RENAME SUGGESTION: This file should be renamed to `parquet_io_layer.rs` 
+// or `parquet_cache_manager.rs` to better reflect its I/O and caching role
 
 use std::collections::HashMap;
-use std::ops::Range;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;
 
-use arrow_array::RecordBatch;
+// Arrow types handled through parquet crate
 use dashmap::DashMap;
-use memmap2::{Mmap, MmapOptions};
+// Memory mapping handled by filesystem API
 use parquet::file::metadata::ParquetMetaData;
-use tokio::sync::RwLock;
+// RwLock handled internally
 use tracing::{debug, info, warn};
 
-use crate::storage::persistence::filesystem::{FileSystem, FilesystemFactory};
+use crate::storage::persistence::filesystem::FilesystemFactory;
 // DEPRECATED: refined_integrated_cache replaced by zero_copy_io_system  
-use crate::storage::engines::common::zero_copy_io_system::{
-    ZeroCopyIOSystem, MetadataSerializer, EngineMetadata, QueryContext, DataRange,
-    FileAccessRequest, RequestPriority, IOStrategy
-};
+use crate::storage::engines::common::zero_copy_io_system::ZeroCopyIOSystem;
 use crate::core::errors::ProximaDBError;
-use crate::core::service_types::VectorRecord;
+use crate::proto::proximadb::VectorRecord;
 
 const FOOTER_MAX_SIZE: usize = 8 * 1024 * 1024;  // 8MB max footer size
 const COLUMN_INDEX_CACHE_SIZE: usize = 1024 * 1024 * 1024; // 1GB for column indexes

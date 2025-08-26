@@ -49,7 +49,7 @@ use crate::storage::engines::row_based::block_structures::{
 
 /// SWIFT Engine - Storage With Instant Fast Traversal for zero-overhead vector storage
 /// Enhanced with performance optimizations for fast hierarchical I/O, bandwidth, and cost efficiency.
-/// Stateless design - all metadata comes from SearchContext
+/// Stateless design - all metadata comes from StorageQueryContext
 pub struct SwiftEngine {
     
     /// Optimized operations handler
@@ -488,7 +488,7 @@ impl UnifiedStorageEngine for SwiftEngine {
     
     async fn search_vectors_unified(
         &self,
-        ctx: &crate::storage::traits::SearchContext,
+        ctx: &crate::storage::traits::StorageQueryContext,
     ) -> Result<Vec<crate::core::search::InternalSearchResult>> {
         let search_start = std::time::Instant::now();
         
@@ -624,7 +624,7 @@ impl UnifiedStorageEngine for SwiftEngine {
         all_results.truncate(top_k);
         
         // Convert to core SearchResult format
-        let search_results: Vec<crate::core::search::SearchResult> = all_results.into_iter()
+        let search_results: Vec<crate::proto::proximadb::SearchResult> = all_results.into_iter()
             .enumerate()
             .map(|(idx, (record, distance))| {
                 // Use SimilarityResult for proper semantic meaning
@@ -635,7 +635,7 @@ impl UnifiedStorageEngine for SwiftEngine {
                     metric: crate::compute::distance_computation::DistanceMetric::Euclidean,
                 };
                 
-                crate::core::search::SearchResult {
+                crate::proto::proximadb::SearchResult {
                     id: record.id.unwrap_or_else(|| format!("unknown_{}", idx)),
                     vector_id: Some(record.id.unwrap_or_else(|| format!("unknown_{}", idx))),
                     score: similarity_result.normalized_score,
@@ -823,14 +823,14 @@ impl SwiftEngine {
     /// Fallback to direct search when orchestration fails
     async fn fallback_to_direct_search(
         &self,
-        ctx: &crate::storage::traits::SearchContext,
+        ctx: &crate::storage::traits::StorageQueryContext,
         collection_id: &str,
         storage_path: &str,
         query_vector: &[f32],
         top_k: usize,
         distance_metric: crate::compute::distance_computation::DistanceMetric,
         filter_expression: Option<&crate::core::search::FilterExpression>,
-    ) -> Result<Vec<crate::core::search::SearchResult>> {
+    ) -> Result<Vec<crate::proto::proximadb::SearchResult>> {
         tracing::warn!("🔄 SWIFT: Falling back to direct search implementation");
         
         // Use the existing search implementation
@@ -861,7 +861,7 @@ impl SwiftEngine {
         all_results.truncate(top_k);
         
         // Convert to core SearchResult format
-        let search_results: Vec<crate::core::search::SearchResult> = all_results.into_iter()
+        let search_results: Vec<crate::proto::proximadb::SearchResult> = all_results.into_iter()
             .enumerate()
             .map(|(idx, (record, distance))| {
                 let similarity_result = crate::compute::distance_computation::SimilarityResult {
@@ -871,7 +871,7 @@ impl SwiftEngine {
                     metric: distance_metric,
                 };
                 
-                crate::core::search::SearchResult {
+                crate::proto::proximadb::SearchResult {
                     id: record.id.unwrap_or_else(|| format!("unknown_{}", idx)),
                     vector_id: Some(record.id.unwrap_or_else(|| format!("unknown_{}", idx))),
                     score: similarity_result.normalized_score,

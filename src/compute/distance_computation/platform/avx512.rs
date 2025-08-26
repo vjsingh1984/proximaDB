@@ -283,8 +283,14 @@ use tracing::{debug, error, info};
     #[test]
     #[cfg(target_arch = "x86_64")]
     fn test_cosine_avx512() {
-        if !is_x86_feature_detected!("avx2") {
-            debug!("AVX2 not supported, skipping test");
+        use crate::core::hardware_capabilities::try_get_hardware_capabilities;
+        if let Some(caps) = try_get_hardware_capabilities() {
+            if !caps.cpu.features.avx2_support {
+                debug!("AVX2 not supported, skipping test");
+                return;
+            }
+        } else {
+            debug!("Hardware capabilities not initialized, skipping test");
             return;
         }
 
@@ -301,8 +307,14 @@ use tracing::{debug, error, info};
     #[test]
     #[cfg(target_arch = "x86_64")]
     fn test_euclidean_avx512() {
-        if !is_x86_feature_detected!("avx2") {
-            debug!("AVX2 not supported, skipping test");
+        use crate::core::hardware_capabilities::try_get_hardware_capabilities;
+        if let Some(caps) = try_get_hardware_capabilities() {
+            if !caps.cpu.features.avx2_support {
+                debug!("AVX2 not supported, skipping test");
+                return;
+            }
+        } else {
+            debug!("Hardware capabilities not initialized, skipping test");
             return;
         }
 

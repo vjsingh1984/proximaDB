@@ -752,7 +752,7 @@ impl RaptorReader {
         let target_set: std::collections::HashSet<&String> = target_ids.iter().collect();
         
         vectors.into_iter()
-            .filter(|v| v.id.as_ref().map_or(false, |id| target_set.contains(id)))
+            .filter(|v| target_set.contains(&v.id))
             .collect()
     }
     
@@ -770,45 +770,44 @@ impl RaptorReader {
         
         // Extract column arrays with proper error handling
         let id_array = batch.column_by_name("id")
-            .and_then(|col| col.as_string_opt())
+            .and_then(|col| col.as_any().downcast_ref::<arrow_array::StringArray>())
             .ok_or_else(|| anyhow::anyhow!("Missing or invalid 'id' column in RecordBatch"))?;
             
         let vector_array = batch.column_by_name("vector")
-            .and_then(|col| col.as_list_opt())
+            .and_then(|col| col.as_any().downcast_ref::<arrow_array::ListArray>())
             .ok_or_else(|| anyhow::anyhow!("Missing or invalid 'vector' column in RecordBatch"))?;
         
         // Optional columns (may not exist in all rowgroups)
         let quantized_vector_array = batch.column_by_name("quantized_vector")
-            .and_then(|col| col.as_list_opt());
+            .and_then(|col| col.as_any().downcast_ref::<arrow_array::ListArray>());
             
         let timestamp_array = batch.column_by_name("timestamp")
-            .and_then(|col| col.as_primitive_opt::<arrow_array::types::UInt32Type>());
+            .and_then(|col| col.as_any().downcast_ref::<arrow_array::UInt32Array>());
             
         let updated_at_array = batch.column_by_name("updated_at")
-            .and_then(|col| col.as_primitive_opt::<arrow_array::types::UInt32Type>());
+            .and_then(|col| col.as_any().downcast_ref::<arrow_array::UInt32Array>());
             
         let expires_at_array = batch.column_by_name("expires_at")
-            .and_then(|col| col.as_primitive_opt::<arrow_array::types::UInt32Type>());
+            .and_then(|col| col.as_any().downcast_ref::<arrow_array::UInt32Array>());
             
         let version_array = batch.column_by_name("version")
-            .and_then(|col| col.as_primitive_opt::<arrow_array::types::UInt32Type>());
+            .and_then(|col| col.as_any().downcast_ref::<arrow_array::UInt32Array>());
         
         // Metadata is stored as JSON string in Arrow (serialized HashMap)
         let metadata_array = batch.column_by_name("metadata")
-            .and_then(|col| col.as_string_opt());
+            .and_then(|col| col.as_any().downcast_ref::<arrow_array::StringArray>());
             
         // Source content stored as binary
         let source_content_array = batch.column_by_name("source_content")
-            .and_then(|col| col.as_binary_opt());
+            .and_then(|col| col.as_any().downcast_ref::<arrow_array::BinaryArray>());
         
         // Reconstruct VectorRecord for each row
         for row_idx in 0..num_rows {
             let mut record = crate::proto::proximadb::VectorRecord::default();
             
             // Extract ID (required field)
-            if let Some(id_value) = id_array.value(row_idx) {
-                record.id = Some(id_value.to_string());
-            }
+            let id_value = id_array.value(row_idx);
+            record.id = id_value.to_string();
             
             // Extract vector (required field)
             if !vector_array.is_null(row_idx) {
@@ -823,7 +822,7 @@ impl RaptorReader {
                 if !quant_array.is_null(row_idx) {
                     let quant_list = quant_array.value(row_idx);
                     if let Some(u8_array) = quant_list.as_primitive_opt::<arrow_array::types::UInt8Type>() {
-                        record.quantized_vector = u8_array.values().to_vec();
+                        record.quantized_vector = Some(u8_array.values().to_vec());
                     }
                 }
             }
@@ -831,7 +830,7 @@ impl RaptorReader {
             // Extract timestamp fields (optional)
             if let Some(ts_array) = timestamp_array {
                 if !ts_array.is_null(row_idx) {
-                    record.timestamp = Some(ts_array.value(row_idx));
+                    record.timestamp = ts_array.value(row_idx);
                 }
             }
             
@@ -860,21 +859,17 @@ impl RaptorReader {
                     if let Ok(metadata_map) = serde_json::from_str::<std::collections::HashMap<String, serde_json::Value>>(json_str) {
                         for (key, value) in metadata_map {
                             let metadata_value = match value {
-                                serde_json::Value::String(s) => crate::proto::proximadb::metadata_value::Value::StringValue(s),
+                                serde_json::Value::String(s) => crate::proto::proximadb::metadata_item::Value::StringValue(s),
                                 serde_json::Value::Number(n) => {
-                                    if let Some(i) = n.as_i64() {
-                                        crate::proto::proximadb::metadata_value::Value::IntValue(i)
-                                    } else if let Some(f) = n.as_f64() {
-                                        crate::proto::proximadb::metadata_value::Value::FloatValue(f)
-                                    } else {
-                                        crate::proto::proximadb::metadata_value::Value::StringValue(n.to_string())
-                                    }
+                                    // Convert all numbers to f64 since we only have NumberValue(f64) in the proto
+                                    crate::proto::proximadb::metadata_item::Value::NumberValue(n.as_f64().unwrap_or(0.0))
                                 },
-                                serde_json::Value::Bool(b) => crate::proto::proximadb::metadata_value::Value::BoolValue(b),
-                                _ => crate::proto::proximadb::metadata_value::Value::StringValue(value.to_string()),
+                                serde_json::Value::Bool(b) => crate::proto::proximadb::metadata_item::Value::BoolValue(b),
+                                _ => crate::proto::proximadb::metadata_item::Value::StringValue(value.to_string()),
                             };
                             
-                            record.metadata.insert(key, crate::proto::proximadb::MetadataValue {
+                            record.metadata.push(crate::proto::proximadb::MetadataItem {
+                                key: key.clone(),
                                 value: Some(metadata_value),
                             });
                         }
@@ -1850,15 +1845,16 @@ impl RaptorReader {
     
     /// Zero-copy memory-mapped footer loading (preferred method)
     async fn load_footer_with_mmap(&mut self, file_path: &str) -> Result<Arc<RaptorFooter>> {
-        use memmap2::MmapOptions;
-        use std::fs::File;
+        // Use filesystem API for cloud compatibility
+        let filesystem = self.filesystem_factory.get_filesystem(file_path).await?;
         
-        // Open file for memory mapping
-        let file = File::open(file_path)?;
-        let file_size = file.metadata()?.len();
+        // Get file metadata for size
+        let metadata = filesystem.metadata(file_path).await?;
+        let file_size = metadata.size;
         
         // Memory-map the entire file for zero-copy access
-        let mmap = unsafe { MmapOptions::new().map(&file)? };
+        let mmap = filesystem.get_mmap(file_path).await?
+            .ok_or_else(|| anyhow::anyhow!("Memory mapping not supported for {}", file_path))?;
         
         // Read footer metadata from the end of file (8 bytes: footer_size + magic)
         if file_size < 8 {

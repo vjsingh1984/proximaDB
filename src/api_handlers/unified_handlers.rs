@@ -394,6 +394,8 @@ impl UnifiedHandlers {
                     },
                     version: vector_record.updated_at,
                     timestamp: Some(vector_record.timestamp),
+                    source: vector_record.source,
+                    expanded_context: vec![],
                 };
                 
                 Ok(VectorOperationResponse {
@@ -512,43 +514,39 @@ impl UnifiedHandlers {
         let include_metadata = request.include_fields.as_ref().map(|f| f.metadata);
 
         // Use optimized unified search with all capabilities
-        match self.vector_operations_service.search_vectors(
+        match self.vector_operations_service.unified_search(
             collection_id,
             query_vector.clone(),
             request.top_k as usize,
+            None, // No filter for basic search
+            None, // Use default config
         ).await {
             Ok(search_results) => {
-                // VectorOperationsService returns SearchResult, convert to SearchVectorRecord
-                let results: Vec<crate::proto::proximadb::SearchVectorRecord> = search_results.into_iter().map(|result| {
-                    let vector = if include_vectors.unwrap_or(true) { 
-                        result.vector.unwrap_or_default()
-                    } else { 
-                        vec![]
-                    };
-                    let metadata = if include_metadata.unwrap_or(true) { 
-                        // Convert HashMap<String, serde_json::Value> to Vec<MetadataItem>
-                        result.metadata.into_iter().map(|(key, value)| {
-                            crate::proto::proximadb::MetadataItem {
-                                key,
-                                value: Some(crate::proto::proximadb::metadata_item::Value::StringValue(
-                                    value.to_string()
-                                )),
-                            }
-                        }).collect()
-                    } else { 
-                        vec![]
-                    };
-                    
-                    crate::proto::proximadb::SearchVectorRecord {
-                        id: result.id,
-                        score: result.score,
-                        similarity: result.similarity,
-                        vector,
-                        metadata,
-                        version: result.version,
-                        timestamp: result.timestamp,
-                    }
-                }).collect();
+                // VectorOperationsService returns Vec<SearchResult>, each with a results field
+                let results: Vec<crate::proto::proximadb::SearchVectorRecord> = search_results.into_iter()
+                    .flat_map(|search_result| search_result.results.into_iter())
+                    .map(|record| {
+                        // Already a SearchVectorRecord, just filter fields as needed
+                        crate::proto::proximadb::SearchVectorRecord {
+                            id: record.id,
+                            score: record.score,
+                            similarity: record.similarity,
+                            vector: if include_vectors.unwrap_or(true) { 
+                                record.vector
+                            } else { 
+                                vec![]
+                            },
+                            metadata: if include_metadata.unwrap_or(true) { 
+                                record.metadata
+                            } else { 
+                                vec![]
+                            },
+                            version: record.version,
+                            timestamp: record.timestamp,
+                            source: record.source,
+                            expanded_context: record.expanded_context,
+                        }
+                    }).collect();
                 
                 let result_count = results.len() as i64;
                 let processing_time_us = start_time.elapsed().as_micros() as i64;

@@ -37,7 +37,7 @@ impl ParallelWALSearch {
     /// Create a new parallel WAL search coordinator
     pub fn new(distance_metric: DistanceMetric) -> Self {
         Self {
-            hardware: Arc::new(HardwareCapabilities::detect()),
+            hardware: crate::core::hardware_capabilities::get_hardware_capabilities(),
             distance_compute: Arc::new(UnifiedDistanceCompute::new(distance_metric)),
             parallel_batch_size: 4, // Process 4 batches in parallel
             early_termination_multiplier: 3.0, // Stop when we have 3x candidates

@@ -7,13 +7,13 @@ use tokio::sync::RwLock;
 use anyhow::Result;
 use uuid::Uuid;
 use memmap2::MmapOptions;
-use std::fs::File;
+// Migrated to filesystem API - no longer using std::fs::File directly
 
-use crate::storage::traits::{UnifiedStorageEngine, StorageEngineStrategy, FlushParameters, FlushResult, CompactionParameters, CompactionResult, SearchContext};
+use crate::storage::traits::{UnifiedStorageEngine, StorageEngineStrategy, FlushParameters, FlushResult, CompactionParameters, CompactionResult, StorageQueryContext};
 use crate::storage::persistence::filesystem::{FilesystemFactory, FilesystemConfig};
 use crate::proto::proximadb::Collection;
 use crate::core::VectorRecord;
-use crate::core::search::{SearchResult, FilterExpression, InternalSearchResult};
+use crate::core::search::{FilterExpression, InternalSearchResult};
 use crate::compute::distance_computation::{DistanceMetric, engine::UnifiedDistanceCompute};
 use crate::core::hardware_capabilities::get_hardware_capabilities;
 use super::{RaptorConfig, RaptorWriter, consolidated_reader::RaptorReader, RowGroupManager};
@@ -461,12 +461,15 @@ impl RaptorEngine {
                 }
             }).collect();
         
-        self.universal_optimizer.parallel_operations(
+        let results = self.universal_optimizer.parallel_operations(
             read_operations,
             |operation| operation
-        ).await.map(|results| {
-            results.into_iter().collect::<Result<Vec<_>, _>>()
-        })?
+        ).await?;
+        
+        // Collect results, converting Vec<Result<Vec<u8>>> to Result<Vec<Vec<u8>>>
+        results.into_iter()
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| anyhow::anyhow!("Read operation failed: {:?}", e))
     }
     
     /// Cloud storage cost optimization - determine optimal storage tier (delegates to universal optimizer)
@@ -666,7 +669,7 @@ impl RaptorEngine {
                         // Calculate distance using distance computation engine
                         let distance = 0.0; // TODO: Use distance computation engine
                         if distance < 0.5 { // Threshold for similarity
-                            selected.push(rowgroup.id);
+                            selected.push(rowgroup.id as u32);
                         }
                     }
                 }
@@ -695,7 +698,7 @@ impl RaptorEngine {
                 let vectors = self.extract_vectors_from_batch(&batch)?;
                 let compute = UnifiedDistanceCompute::default();
                 vectors.iter()
-                    .map(|v| compute.calculate_distance(query, v, distance_metric))
+                    .map(|v| compute.calculate_distance(query, v, distance_metric).raw_value)
                     .collect::<Vec<_>>()
             } else {
                 self.compute_distances_scalar(query, &batch)?
@@ -1236,7 +1239,7 @@ impl RaptorEngine {
                 let vectors = self.extract_vectors_from_batch(&batch)?;
                 let compute = UnifiedDistanceCompute::default();
                 vectors.iter()
-                    .map(|v| compute.calculate_distance(query, v, distance_metric))
+                    .map(|v| compute.calculate_distance(query, v, distance_metric).raw_value)
                     .collect::<Vec<_>>()
             } else {
                 self.compute_distances_scalar(query, &batch)?
@@ -1549,7 +1552,7 @@ impl UnifiedStorageEngine for RaptorEngine {
     
     async fn search_vectors_unified(
         &self,
-        ctx: &SearchContext,
+        ctx: &StorageQueryContext,
     ) -> Result<Vec<crate::core::search::InternalSearchResult>> {
         // Extract all parameters from enhanced context (pre-computed)
         let collection_id = ctx.collection_id();

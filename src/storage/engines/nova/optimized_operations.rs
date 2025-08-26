@@ -223,7 +223,7 @@ impl OptimizedNovaOperations {
             for (idx, (vec, dist)) in vectors.iter().zip(distances.iter()).enumerate() {
                 if idx < row_offsets.len() {
                     all_results.push((VectorRecord {
-                        id: Some(format!("rg{}_row{}", rg_idx, row_offsets[idx])),
+                        id: format!("rg{}_row{}", rg_idx, row_offsets[idx]),
                         vector: vec.clone(),
                         metadata: vec![],
                         timestamp: 0,
@@ -231,6 +231,7 @@ impl OptimizedNovaOperations {
                         quantized_vector: None,
                         expires_at: None,
                         version: None,
+                        source: None,
                     }, *dist));
                 }
             }

@@ -94,7 +94,7 @@ mod tests {
         use crate::core::hardware_capabilities::HardwareCapabilities;
         
         let config = UniversalAdapterConfig::default();
-        let capabilities = HardwareCapabilities::detect().unwrap_or_default();
+        let capabilities = crate::core::hardware_capabilities::get_hardware_capabilities();
         
         let calculator = UniversalQuantizedCalculator::new(&config, &capabilities).await;
         assert!(calculator.is_ok(), "Failed to create quantized calculator: {:?}", calculator.err());
@@ -107,7 +107,7 @@ mod tests {
         use crate::core::hardware_capabilities::HardwareCapabilities;
         
         let config = HardwareAccelerationConfig::default();
-        let capabilities = HardwareCapabilities::detect().unwrap_or_default();
+        let capabilities = crate::core::hardware_capabilities::get_hardware_capabilities();
         
         let manager = HardwareAccelerationManager::new(&config, &capabilities).await;
         assert!(manager.is_ok(), "Failed to create hardware acceleration manager: {:?}", manager.err());

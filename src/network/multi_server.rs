@@ -484,6 +484,7 @@ impl SharedServices {
                     description: None,
                     tags: vec![],
                     owner: None,
+                    embedding_models: vec![], // No embedding models for imported collections
                 };
 
                 let proto_collection = crate::proto::proximadb::Collection {

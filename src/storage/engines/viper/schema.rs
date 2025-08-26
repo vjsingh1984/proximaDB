@@ -12,7 +12,7 @@ use anyhow::Result;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use tracing::{debug, info};
+use tracing::{debug, error, info};
 
 
 use super::types::{FilterableColumn, FilterableDataType};
@@ -114,7 +114,7 @@ impl SchemaManager {
                         
                         schema_fields.push(Field::new(
                             "vector_pq",
-                            DataType::FixedSizeBinary(pq_size),
+                            DataType::FixedSizeBinary(pq_size as i32),
                             true, // Nullable for progressive rollout
                         ));
                     },
@@ -129,9 +129,14 @@ impl SchemaManager {
                         schema_fields.push(Field::new("sq_offset", DataType::Float32, true));
                     },
                     "binary" => {
-                        // Binary Quantization
-                        let dimension = collection.config.as_ref().map(|c| c.dimension);
-                        let binary_size = (dimension + 7) / 8; // Bits to bytes
+                        // Binary Quantization - collection config must have dimension
+                        let dimension = collection.config.as_ref()
+                            .map(|c| c.dimension)
+                            .ok_or_else(|| {
+                                error!("Collection config missing for binary quantization schema generation");
+                                anyhow::anyhow!("Collection config is required for binary quantization")
+                            })?;
+                        let binary_size = ((dimension + 7) / 8) as i32; // Bits to bytes
                         schema_fields.push(Field::new(
                             "vector_binary",
                             DataType::FixedSizeBinary(binary_size),

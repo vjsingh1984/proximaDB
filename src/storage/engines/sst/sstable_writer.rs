@@ -817,7 +817,11 @@ impl SstableWriter {
     {
         // Convert VectorRecord iterator to (String, VectorRecord) iterator
         let sorted_with_keys = sorted_records.map(|record| {
-            let key = record.id.clone().unwrap_or_else(|| format!("vec_{}", uuid::Uuid::new_v4()));
+            let key = if record.id.is_empty() {
+                format!("vec_{}", uuid::Uuid::new_v4())
+            } else {
+                record.id.clone()
+            };
             (key, record)
         });
         self.write_sorted_vector_records(sorted_with_keys, record_count).await

@@ -812,6 +812,10 @@ impl ProximaDb for ProximaDbGrpcService {
                     version: r.version,
                     timestamp: r.timestamp,
                     index_path: None,
+                    source: None,
+                    expanded_context: vec![],
+                    expires_at: None,
+                    updated_at: None,
                 }).collect()
             } else {
                 vec![]
@@ -941,10 +945,12 @@ impl ProximaDb for ProximaDbGrpcService {
                 
                 for (index, query) in req.queries.iter().enumerate() {
                     let search_results = self.vector_operations_service
-                        .search_vectors(
+                        .unified_search(
                             &req.collection_id,
                             query.vector.clone(),
                             req.top_k as usize,
+                            None, // No filter
+                            None, // Default config
                         )
                         .await
                         .map_err(|e| Status::internal(format!("Multi-query search {} failed: {}", index, e)))?;
@@ -1057,10 +1063,12 @@ impl ProximaDb for ProximaDbGrpcService {
                 
                 let search_results = self
                     .vector_operations_service
-                    .search_vectors(
+                    .unified_search(
                         &req.collection_id,
                         query.vector.clone(),
                         req.top_k as usize,
+                        None, // No filter
+                        None, // Default config
                     )
                     .instrument(span!(
                         Level::DEBUG,

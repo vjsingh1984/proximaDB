@@ -21,6 +21,9 @@ impl QuantizationSmartDefaults {
         debug!("🧠 Generating smart quantization defaults for dimension: {}", dimension);
         
         let config = match dimension {
+            // Invalid dimension
+            0 => return Err(anyhow::anyhow!("Invalid dimension: 0")),
+            
             // Small dimensions (d < 64): Minimal quantization to preserve quality
             1..=63 => Self::create_minimal_config(dimension),
             

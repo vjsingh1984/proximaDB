@@ -295,10 +295,12 @@ impl StreamingSearchService {
             let search_k = ((remaining_k as f32) * 1.5).ceil() as usize;
             
             // Search using unified method
-            let results = self.direct_service.search_vectors(
+            let results = self.direct_service.unified_search(
                 &collection_id,
                 query_vector.clone(),
-                search_k
+                search_k,
+                None, // No filter
+                None, // Default config
             ).await?;
             
             // Convert search results to SearchResult format

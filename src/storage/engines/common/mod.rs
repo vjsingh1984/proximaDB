@@ -49,6 +49,45 @@ pub mod zero_copy_reader_integration;
 /// Used by SST, SWIFT, RAPTOR, and PRISM for efficient vector storage
 pub mod fastlanes_encoding;
 
+/// Common utility function for estimating vector record size in bytes
+/// 
+/// This function calculates the storage size of a vector record based on:
+/// - Vector dimension (known upfront from collection metadata)
+/// - Quantization level (if any)
+/// - 10% overhead for metadata, IDs, and file structure
+/// 
+/// # Arguments
+/// * `dimension` - The vector dimension
+/// * `quantization` - Optional quantization type (e.g., "int8", "pq8", "pq4")
+/// * `num_vectors` - Number of vectors to estimate total size for
+/// 
+/// # Returns
+/// Estimated total size in bytes
+pub fn estimate_vector_storage_size(dimension: usize, quantization: Option<&str>, num_vectors: u64) -> u64 {
+    // Base size: fp32 = 4 bytes per dimension
+    let base_vector_size = dimension * 4;
+    
+    // Adjust for quantization if enabled
+    let vector_size = if let Some(quant) = quantization {
+        match quant {
+            "int8" | "INT8" => dimension, // 1 byte per dimension
+            "pq8" | "PQ8" => dimension / 8, // Product quantization with 8 subvectors
+            "pq4" | "PQ4" => dimension / 16, // Product quantization with 16 subvectors
+            "pq16" | "PQ16" => dimension / 4, // Product quantization with 4 subvectors
+            "binary" | "BINARY" => dimension / 8, // Binary quantization (1 bit per dimension)
+            _ => base_vector_size, // Default to fp32
+        }
+    } else {
+        base_vector_size
+    };
+    
+    // Add 10% overhead for metadata, IDs, and file structure
+    let bytes_per_vector = (vector_size as f64 * 1.1) as u64;
+    
+    // Calculate total size
+    num_vectors * bytes_per_vector
+}
+
 /// Tensor-specific encoding operations (sparse tensors, quantization, transpose)
 /// Re-exported through fastlanes_encoding for consolidated access
 pub mod fastlanes_tensor_encoding;
@@ -898,7 +937,7 @@ mod tests {
     
     #[test]
     fn test_workload_specific_config() {
-        let hardware = HardwareCapabilities::detect().unwrap();
+        let hardware = crate::core::hardware_capabilities::get_hardware_capabilities();
         
         let high_throughput_config = create_config_for_workload(
             WorkloadType::HighThroughput,

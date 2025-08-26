@@ -26,7 +26,7 @@ use tracing::info;
 use num_cpus;
 
 // No longer importing duplicate CpuFeatures from compute module
-use crate::query::sql_engine::simd_parser::SimdCapabilities;
+use crate::query::sql_engine::vector_array_parser::SimdCapabilities;
 use crate::core::config::HardwareConfig;
 // No longer importing PlatformCapability from compute - using our own HardwareBackend
 

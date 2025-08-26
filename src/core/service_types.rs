@@ -9,7 +9,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::io::Cursor;
-use crate::core::search::SearchResult;
+// SearchResult is now only used from proto layer - not re-exported in core::search
 
 // Hardcoded Avro schema for compile-time reliability and zero dependencies
 const VECTOR_RECORD_SCHEMA_JSON: &str = r#" {
@@ -253,8 +253,8 @@ impl VectorRecord {
     }
 
     /// Convert to search result (zero-copy field mapping)
-    pub fn to_search_result(&self, similarity: f32) -> SearchResult {
-        SearchResult {
+    pub fn to_search_result(&self, similarity: f32) -> crate::core::search::InternalSearchResult {
+        crate::core::search::InternalSearchResult {
             id: self.id.clone(),
             vector_id: Some(self.id.clone()),
             score: similarity,
@@ -602,7 +602,7 @@ pub struct SearchDebugInfo {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VectorSearchResponse {
     pub success: bool,
-    pub results: Vec<SearchResult>,
+    pub results: Vec<crate::core::search::InternalSearchResult>,
     pub total_count: i64,
     pub total_found: i64,
     pub processing_time_us: i64,
@@ -859,7 +859,7 @@ pub enum VectorOperation {
         soft_delete: bool,
     },
     /// Search for similar vectors
-    Search(SearchContext),
+    Search(SearchRequest),
     /// Get a vector by ID
     Get {
         vector_id: String,
@@ -872,9 +872,20 @@ pub enum VectorOperation {
     },
 }
 
-/// Search context for vector operations
+/// SearchRequest - External API representation of a vector search request.
+/// 
+/// This structure represents what clients send when requesting a search operation.
+/// It's designed for API compatibility and ease of use from client SDKs.
+/// 
+/// # Purpose
+/// - API contract for search requests
+/// - Client SDK interface
+/// - REST/gRPC request representation
+/// 
+/// # Usage
+/// Used by API handlers to receive search requests from clients.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct SearchContext {
+pub struct SearchRequest {
     pub collection_id: String,
     pub query_vector: Vec<f32>,
     pub k: usize,
@@ -912,7 +923,7 @@ pub enum OperationResult {
     /// Vector was deleted
     Deleted { vector_id: String },
     /// Search results
-    SearchResults(Vec<SearchResult>),
+    SearchResults(Vec<crate::core::search::InternalSearchResult>),
     /// Vector data retrieved
     VectorData {
         vector_id: String,
@@ -1101,6 +1112,6 @@ impl OperationResponse {
 
 // Type aliases for backward compatibility during migration
 pub type UnifiedVectorRecord = VectorRecord;
-pub type UnifiedSearchResult = SearchResult;
+pub type UnifiedSearchResult = crate::core::search::InternalSearchResult;
 pub type UnifiedCollection = crate::proto::proximadb::Collection;
-pub type VectorSearchResult = SearchResult; // Alias from schema_types.rs
+pub type VectorSearchResult = crate::core::search::InternalSearchResult; // Alias from schema_types.rs

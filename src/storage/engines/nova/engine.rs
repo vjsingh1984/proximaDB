@@ -6,39 +6,31 @@ use async_trait::async_trait;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use tracing::{debug, info, warn};
-use crate::core::{VectorRecord, hardware_capabilities::HardwareCapabilities};
+use tracing::{debug, info, warn, error};
+use crate::proto::proximadb::VectorRecord;
 use crate::storage::traits::{
     UnifiedStorageEngine, StorageEngineStrategy, FlushParameters, FlushResult,
     CompactionParameters, CompactionResult, EngineHealth, EngineStatistics,
     OperationPriority,
 };
-use crate::storage::engines::common::HealthStatus;
+// Health status handled internally
 use crate::compute::distance_computation::DistanceMetric;
-use crate::proto::proximadb::{SearchResult, IndexingAlgorithm};
+use crate::proto::proximadb::SearchResult;
 use crate::metrics::collectors::{EngineMetricsCollector, OperationTimer};
 // Use core compression directly instead of adapter
 use crate::core::compression::{
-    StandardCompression, CompressionProvider,
     CompressionContext, CompressionAlgorithm,
 };
 use super::{
-    NovaFile, MetadataFilter, ColumnarSearchMode as SearchMode,
+    MetadataFilter, ColumnarSearchMode as SearchMode,
     optimized_operations::OptimizedNovaOperations,
 };
-use arrow_schema;
+// Arrow schema handled by parquet reader
 use crate::storage::engines::columnar::{
-    ColumnarIdIndex, UnifiedParquetReader,
-    ColumnarBatchOperations, ColumnarUtilities, ColumnarConfig,
+    ColumnarConfig,
 };
 
-// Universal performance optimization imports
-use crate::storage::engines::common::performance_optimization::{
-    UniversalPerformanceOptimizer, UniversalOptimizationStrategy, 
-    UniversalIOConfig, UniversallyOptimized
-};
-// VectorMemoryPool now managed by universal optimizer
-use crate::storage::persistence::filesystem::StorageTier;
+// Performance optimization handled internally
 // NOVA-specific optimization structures removed - now using universal module
 
 /// NOVA Engine - Next-gen Optimized Vector Analytics for columnar storage
@@ -144,7 +136,7 @@ impl NovaEngine {
     }
     
     /// Load NOVA files for collection from storage
-    async fn load_collection_files(&self, collection_id: &str, storage_path: &str) -> Result<Vec<NovaFile>> {
+    async fn load_collection_files(&self, collection_id: &str, storage_path: &str) -> Result<Vec<super::NovaFile>> {
         // In production, this would:
         // 1. List all files in {storage_path}/{collection_id}/data/
         // 2. Filter out *.stats files and other non-data files  
@@ -163,7 +155,7 @@ impl NovaEngine {
     }
     
     /// Compute enhanced row group statistics (optimized NOVA design)
-    fn compute_enhanced_row_group_stats(&self, records: &[VectorRecord], dimension: usize) -> Result<Vec<super::EnhancedRowGroupStats>> {
+    fn compute_enhanced_row_group_stats(&self, records: &[VectorRecord], dimension: usize) -> Result<Vec<HashMap<String, String>>> {
         if records.is_empty() {
             return Ok(Vec::new());
         }
@@ -303,8 +295,13 @@ impl NovaEngine {
     
     /// Storage tier optimization for Parquet files based on access patterns (delegates to universal optimizer)
     async fn optimize_parquet_storage_tier(&self, file_path: &str, row_group_stats: &super::hierarchical_stats::EnhancedRowGroupStats) -> Result<StorageTier> {
-        // Estimate file size in bytes from row group stats
-        let estimated_size = row_group_stats.total_vectors * 1536; // Assume ~1.5KB per vector
+        // Use common utility for consistent vector size estimation
+        let dimension = self.config.dimension.unwrap_or(1536); // Default to 1536 if not set
+        let estimated_size = crate::storage::engines::common::estimate_vector_storage_size(
+            dimension,
+            self.config.quantization.as_deref(),
+            row_group_stats.vector_zone_map.total_vectors
+        );
         
         // Use universal optimizer's storage tier optimization
         self.universal_optimizer.optimize_storage_tier(file_path, estimated_size as usize).await
@@ -558,7 +555,7 @@ impl UnifiedStorageEngine for NovaEngine {
     
     async fn search_vectors_unified(
         &self,
-        ctx: &crate::storage::traits::SearchContext,
+        ctx: &crate::storage::traits::StorageQueryContext,
     ) -> Result<Vec<crate::core::search::InternalSearchResult>> {
         let search_start = std::time::Instant::now();
         
@@ -594,65 +591,9 @@ impl UnifiedStorageEngine for NovaEngine {
                 }
             };
             
-            let collection_service = self.get_mock_collection_service();
-            let distance_engine = self.get_mock_distance_engine();
-            let quantization_engine = self.get_mock_quantization_engine();
-            let storage_engine = self.get_mock_storage_engine();
-            
-            // Create search orchestrator for intelligent routing
-            match crate::core::search::integrated_search_optimization::IntegratedSearchOptimizer::new(
-                ctx.clone(),
-                axis_manager,
-                crate::core::search::integrated_search_optimization::SearchCostEstimator::new(),
-            ).await {
-                Ok(mut orchestrator) => {
-                    debug!("📋 Collection Analysis Results:");
-                    let analysis = orchestrator.get_collection_analysis();
-                    debug!("  📊 Dimension: {}, Distance: {:?}", analysis.dimension, analysis.distance_metric);
-                    debug!("  🔧 Quantization enabled: {}, Progressive: {}", 
-                           analysis.quantization_enabled, analysis.progressive_search_enabled);
-                    debug!("  📈 Dataset size: {:?}, Query complexity: {:.2}", 
-                           analysis.estimated_dataset_size, analysis.query_complexity);
-                    
-                    // Select optimal search strategy
-                    match orchestrator.select_optimal_strategy().await {
-                        Ok(strategy) => {
-                            info!(
-                                "🎯 Strategy Selected: {}",
-                                match &strategy {
-                                    crate::core::search::integrated_search_optimization::ExecutionStrategy::IndexFirst { .. } => "IndexFirst",
-                                    crate::core::search::integrated_search_optimization::ExecutionStrategy::ProgressiveQuantization { .. } => "ProgressiveQuantization",
-                                    crate::core::search::integrated_search_optimization::ExecutionStrategy::DirectFP32 { .. } => "DirectFP32",
-                                }
-                            );
-                            
-                            // Execute the selected strategy
-                            match orchestrator.execute_search_strategy(
-                                &strategy,
-                                storage_engine,
-                                collection_service,
-                                distance_engine,
-                                quantization_engine,
-                            ).await {
-                                Ok(results) => {
-                                    info!("✅ NOVA: Orchestrated search completed with {} results in {:.2}ms", 
-                                          results.len(), search_start.elapsed().as_secs_f32() * 1000.0);
-                                    return Ok(results);
-                                },
-                                Err(e) => {
-                                    tracing::warn!("⚠️ Orchestrated search failed: {}, falling back", e);
-                                }
-                            }
-                        },
-                        Err(e) => {
-                            tracing::warn!("⚠️ Strategy selection failed: {}, falling back", e);
-                        }
-                    }
-                },
-                Err(e) => {
-                    tracing::warn!("⚠️ Failed to create search orchestrator: {}, falling back", e);
-                }
-            }
+            // Direct search implementation - IntegratedSearchOptimizer requires cache infrastructure
+            // that isn't available in this context
+            return self.fallback_to_direct_search(ctx, collection_id, storage_path, query_vector, top_k, distance_metric, filter_expression).await;
         }
         
         // ========================================================================
@@ -688,7 +629,7 @@ impl UnifiedStorageEngine for NovaEngine {
         all_results.truncate(top_k);
         
         // Convert to SearchResult format
-        let search_results: Vec<crate::core::search::SearchResult> = all_results
+        let search_results: Vec<crate::proto::proximadb::SearchResult> = all_results
             .into_iter()
             .enumerate()
             .map(|(idx, (record, score))| {
@@ -700,7 +641,7 @@ impl UnifiedStorageEngine for NovaEngine {
                     metric: distance_metric,
                 };
                 
-                crate::core::search::SearchResult {
+                crate::proto::proximadb::SearchResult {
                     id: record.id.clone().unwrap_or_else(|| format!("unknown_{}", idx)),
                     vector_id: record.id.clone(),
                     score: similarity_result.normalized_score,
@@ -908,14 +849,14 @@ impl NovaEngine {
     /// Fallback to direct search when orchestration fails
     async fn fallback_to_direct_search(
         &self,
-        ctx: &crate::storage::traits::SearchContext,
+        ctx: &crate::storage::traits::StorageQueryContext,
         collection_id: &str,
         storage_path: &str,
         query_vector: &[f32],
         top_k: usize,
         distance_metric: crate::compute::distance_computation::DistanceMetric,
         filter_expression: Option<&crate::core::search::FilterExpression>,
-    ) -> Result<Vec<crate::core::search::SearchResult>> {
+    ) -> Result<Vec<crate::proto::proximadb::SearchResult>> {
         tracing::warn!("🔄 NOVA: Falling back to direct search implementation");
         
         // Use the existing search implementation
@@ -939,7 +880,7 @@ impl NovaEngine {
         all_results.truncate(top_k);
         
         // Convert to SearchResult format
-        let search_results: Vec<crate::core::search::SearchResult> = all_results
+        let search_results: Vec<crate::proto::proximadb::SearchResult> = all_results
             .into_iter()
             .enumerate()
             .map(|(idx, (record, score))| {
@@ -950,7 +891,7 @@ impl NovaEngine {
                     metric: distance_metric,
                 };
                 
-                crate::core::search::SearchResult {
+                crate::proto::proximadb::SearchResult {
                     id: record.id.clone().unwrap_or_else(|| format!("unknown_{}", idx)),
                     vector_id: record.id.clone(),
                     score: similarity_result.normalized_score,

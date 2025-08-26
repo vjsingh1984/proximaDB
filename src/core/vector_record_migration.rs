@@ -52,7 +52,7 @@ pub fn service_to_proto(service_record: &ServiceVectorRecord, _collection_id: &s
         .collect();
 
     ProtoVectorRecord {
-        id: if service_record.id.is_empty() { None } else { Some(service_record.id.clone()) },
+        id: service_record.id.clone(),
         vector: service_record.vector.clone(),
         metadata,
         timestamp: (service_record.timestamp / 1_000_000) as u32, // Convert microseconds to seconds
@@ -60,6 +60,7 @@ pub fn service_to_proto(service_record: &ServiceVectorRecord, _collection_id: &s
         expires_at: service_record.expires_at.map(|v| (v / 1_000_000) as u32),
         version: service_record.version.map(|v| v as u32),
         quantized_vector: None,
+        source: None,
     }
 }
 
@@ -69,7 +70,7 @@ pub fn proto_to_service(proto_record: &ProtoVectorRecord, collection_id: &str) -
     let metadata = crate::core::proto_metadata_helper::proto_metadata_to_json(&proto_record.metadata);
 
     ServiceVectorRecord {
-        id: proto_record.id.clone().unwrap_or_default(),
+        id: proto_record.id.clone(),
         collection_id: collection_id.to_string(),
         vector: proto_record.vector.clone(),
         metadata,

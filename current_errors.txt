@@ -1,0 +1,100 @@
+    Checking proximadb v0.1.4 (/Users/vijaysingh/code/proximaDB)
+warning: unused macro definition: `is_x86_feature_detected`
+ --> src/compute/distance_computation/platform/distance_arm64_patch.rs:7:14
+  |
+7 | macro_rules! is_x86_feature_detected {
+  |              ^^^^^^^^^^^^^^^^^^^^^^^
+  |
+  = note: `#[warn(unused_macros)]` on by default
+
+warning: unused import: `distance_arm64_patch::*`
+  --> src/compute/distance_computation/platform/mod.rs:17:9
+   |
+17 | pub use distance_arm64_patch::*;
+   |         ^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: `#[warn(unused_imports)]` on by default
+
+warning: unused import: `SearchResult`
+  --> src/core/search/unified_interface.rs:11:41
+   |
+11 | use crate::core::search::{SearchParams, SearchResult, SearchResultSet, InternalSearchResult};
+   |                                         ^^^^^^^^^^^^
+
+warning: unused import: `warn`
+  --> src/core/search/engine_benchmarks.rs:10:28
+   |
+10 | use tracing::{info, debug, warn};
+   |                            ^^^^
+
+warning: unused import: `SearchResult`
+  --> src/core/search/engine_benchmarks.rs:13:41
+   |
+13 | use crate::core::search::{SearchParams, SearchResult};
+   |                                         ^^^^^^^^^^^^
+
+warning: unused import: `std::collections::HashMap`
+ --> src/core/search/query_preprocessing.rs:9:5
+  |
+9 | use std::collections::HashMap;
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `UnifiedQuantizationEngine`
+  --> src/core/search/query_preprocessing.rs:14:45
+   |
+14 | use crate::compute::quantization::unified::{UnifiedQuantizationEngine, UnifiedQuantizationLevel};
+   |                                             ^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused imports: `BinaryQuantization`, `ProductQuantization`, and `ScalarQuantization`
+  --> src/core/search/query_preprocessing.rs:15:66
+   |
+15 | use crate::compute::quantization::types::{QuantizationLevelType, BinaryQuantization, ScalarQuantization, ProductQuantization};
+   |                                                                  ^^^^^^^^^^^^^^^^^^  ^^^^^^^^^^^^^^^^^^  ^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `anyhow::Result`
+  --> src/core/search/metadata_filter_pushdown.rs:10:5
+   |
+10 | use anyhow::Result;
+   |     ^^^^^^^^^^^^^^
+
+warning: unused import: `trace`
+  --> src/core/search/metadata_filter_pushdown.rs:11:22
+   |
+11 | use tracing::{debug, trace};
+   |                      ^^^^^
+
+warning: unused import: `MetadataItem`
+  --> src/core/search/metadata_filter_pushdown.rs:16:45
+   |
+16 | use crate::proto::proximadb::{VectorRecord, MetadataItem};
+   |                                             ^^^^^^^^^^^^
+
+warning: unused import: `trace`
+  --> src/core/search/unified_progressive_pipeline.rs:11:28
+   |
+11 | use tracing::{debug, info, trace};
+   |                            ^^^^^
+
+warning: unused import: `SearchParams`
+  --> src/core/search/unified_progressive_pipeline.rs:14:59
+   |
+14 | use crate::core::search::{SearchResult, FilterExpression, SearchParams};
+   |                                                           ^^^^^^^^^^^^
+
+warning: unused import: `QuantizationLevel`
+  --> src/core/search/unified_progressive_pipeline.rs:15:51
+   |
+15 | use crate::proto::proximadb::{QuantizationConfig, QuantizationLevel};
+   |                                                   ^^^^^^^^^^^^^^^^^
+
+warning: unused import: `Context`
+  --> src/core/search/smart_execution_strategy.rs:10:14
+   |
+10 | use anyhow::{Context, Result};
+   |              ^^^^^^^
+
+warning: unused import: `FilterExpression`
+  --> src/core/search/smart_execution_strategy.rs:15:41
+   |
+15 | use crate::core::search::{SearchParams, FilterExpression};
+   |                                         ^^^^^^^^^^^^^^^^

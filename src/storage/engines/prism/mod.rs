@@ -9,7 +9,8 @@ pub const PRISM_MAGIC: [u8; 4] = *b"PRSM";
 // Re-export the memory-optimized PRISM engine implementation
 pub mod engine;
 pub mod tree;
-pub mod core;
+// TODO: Implement core module for PRISM engine
+// pub mod core;
 pub mod cache;
 pub mod compaction;
 pub mod fastlanes_serializer;

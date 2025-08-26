@@ -25,11 +25,11 @@ use anyhow::{Context, Result};
 use std::sync::Arc;
 use tracing::{debug, info, trace};
 
-use crate::core::search::SearchResult;
+// Note: SearchResult is proto type, not in core::search anymore
 use crate::proto::proximadb::VectorRecord;
-use crate::storage::traits::{SearchContext, QuantizationType, QuantizationLevel};
+use crate::storage::traits::{StorageQueryContext, QuantizationType, QuantizationLevel};
 use crate::compute::quantization::unified::{QuantizedVector, UnifiedQuantizationEngine};
-use crate::compute::distance_computation::core::DistanceMetric;
+use crate::compute::distance_computation::DistanceMetric;
 use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
 
 /// Progressive search executor that can be used by any storage engine
@@ -100,10 +100,10 @@ impl ProgressiveSearchExecutor {
     /// Execute progressive search with the given context and candidates
     pub async fn execute_progressive_search(
         &self,
-        ctx: &SearchContext,
+        ctx: &StorageQueryContext,
         initial_candidates: Vec<VectorRecord>,
         query_vector: &[f32],
-    ) -> Result<Vec<SearchResult>> {
+    ) -> Result<Vec<crate::core::search::InternalSearchResult>> {
         // Check if progressive search is enabled
         if !ctx.is_progressive_search_enabled() {
             debug!("Progressive search not enabled, falling back to full precision search");
@@ -161,7 +161,7 @@ impl ProgressiveSearchExecutor {
     /// Prepare candidates using PRE-STORED quantized representations (no re-quantization!)
     fn prepare_candidates(
         &self,
-        ctx: &SearchContext,
+        ctx: &StorageQueryContext,
         records: Vec<VectorRecord>,
         levels: &[QuantizationLevel],
     ) -> Result<Vec<SearchCandidate>> {
@@ -211,7 +211,7 @@ impl ProgressiveSearchExecutor {
     /// Apply a progressive search stage
     async fn apply_progressive_stage(
         &self,
-        ctx: &SearchContext,
+        ctx: &StorageQueryContext,
         mut candidates: Vec<SearchCandidate>,
         query_vector: &[f32],
         level: &QuantizationLevel,
@@ -241,16 +241,16 @@ impl ProgressiveSearchExecutor {
         // Score candidates based on quantization level
         match level.quantization_type {
             QuantizationType::Binary => {
-                self.score_binary(&mut candidates, query_vector, level)?;
+                self.score_binary(&mut candidates, query_vector, level).await?;
             },
             QuantizationType::Scalar => {
-                self.score_scalar(&mut candidates, query_vector, level)?;
+                self.score_scalar(&mut candidates, query_vector, level).await?;
             },
             QuantizationType::Product => {
-                self.score_product(&mut candidates, query_vector, level)?;
+                self.score_product(&mut candidates, query_vector, level).await?;
             },
             QuantizationType::None => {
-                self.score_full_precision(&mut candidates, query_vector, ctx.distance_metric())?;
+                self.score_full_precision(&mut candidates, query_vector, ctx.distance_metric()).await?;
             },
             _ => {
                 debug!("Unsupported quantization type: {:?}", level.quantization_type);
@@ -272,7 +272,7 @@ impl ProgressiveSearchExecutor {
     }
     
     /// Score candidates using binary quantization (delegates to unified quantization)
-    fn score_binary(
+    async fn score_binary(
         &self,
         candidates: &mut [SearchCandidate],
         query_vector: &[f32],
@@ -309,7 +309,7 @@ impl ProgressiveSearchExecutor {
     }
     
     /// Score candidates using scalar quantization (INT8) - delegates to unified quantization
-    fn score_scalar(
+    async fn score_scalar(
         &self,
         candidates: &mut [SearchCandidate],
         query_vector: &[f32],
@@ -335,7 +335,7 @@ impl ProgressiveSearchExecutor {
     }
     
     /// Score candidates using product quantization - delegates to unified quantization
-    fn score_product(
+    async fn score_product(
         &self,
         candidates: &mut [SearchCandidate],
         query_vector: &[f32],
@@ -365,7 +365,7 @@ impl ProgressiveSearchExecutor {
     }
     
     /// Score candidates using full precision
-    fn score_full_precision(
+    async fn score_full_precision(
         &self,
         candidates: &mut [SearchCandidate],
         query_vector: &[f32],
@@ -389,13 +389,13 @@ impl ProgressiveSearchExecutor {
     /// Final reranking with full precision
     async fn final_rerank(
         &self,
-        ctx: &SearchContext,
+        ctx: &StorageQueryContext,
         mut candidates: Vec<SearchCandidate>,
         query_vector: &[f32],
     ) -> Result<Vec<SearchCandidate>> {
         debug!("🎯 Final reranking {} candidates with full precision", candidates.len());
         
-        self.score_full_precision(&mut candidates, query_vector, ctx.distance_metric())?;
+        self.score_full_precision(&mut candidates, query_vector, ctx.distance_metric()).await?;
         
         // Sort and truncate to top_k
         candidates.sort_by(|a, b| a.score.partial_cmp(&b.score).unwrap());
@@ -412,10 +412,10 @@ impl ProgressiveSearchExecutor {
     /// Fallback to full precision search
     async fn full_precision_search(
         &self,
-        ctx: &SearchContext,
+        ctx: &StorageQueryContext,
         records: Vec<VectorRecord>,
         query_vector: &[f32],
-    ) -> Result<Vec<SearchResult>> {
+    ) -> Result<Vec<crate::core::search::InternalSearchResult>> {
         let mut results = Vec::with_capacity(records.len());
         
         for record in records {
@@ -426,7 +426,7 @@ impl ProgressiveSearchExecutor {
             );
             let distance = result.rank_value;
             
-            results.push(SearchResult {
+            results.push(crate::core::search::InternalSearchResult {
                 id: record.id.unwrap_or_default(),
                 score: distance,
                 vector: Some(record.vector),
@@ -449,11 +449,11 @@ impl ProgressiveSearchExecutor {
         &self,
         candidates: Vec<SearchCandidate>,
         top_k: usize,
-    ) -> Result<Vec<SearchResult>> {
+    ) -> Result<Vec<crate::core::search::InternalSearchResult>> {
         let mut results = Vec::with_capacity(top_k.min(candidates.len()));
         
         for candidate in candidates.into_iter().take(top_k) {
-            results.push(SearchResult {
+            results.push(crate::core::search::InternalSearchResult {
                 id: candidate.id,
                 score: candidate.score,
                 vector: candidate.vector,
@@ -466,7 +466,7 @@ impl ProgressiveSearchExecutor {
     }
     
     /// Determine if runtime quantization should be allowed based on multiple factors
-    fn should_allow_runtime_quantization(&self, ctx: &SearchContext) -> Result<bool> {
+    fn should_allow_runtime_quantization(&self, ctx: &StorageQueryContext) -> Result<bool> {
         // 1. Check collection configuration
         let collection_config = ctx.get_collection_config();
         let quantization_enabled = collection_config

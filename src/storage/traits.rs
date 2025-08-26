@@ -123,10 +123,10 @@ pub trait UnifiedStorageEngine: Send + Sync {
     /// - SST: Hierarchical bloom filters, progressive quantization
     /// - NOVA: Extended Parquet statistics, aggressive pruning
     /// 
-    /// Uses SearchContext which provides zero-copy access via Arc references
+    /// Uses StorageQueryContext which provides zero-copy access via Arc references
     async fn search_vectors_unified(
         &self,
-        ctx: &SearchContext,
+        ctx: &StorageQueryContext,
     ) -> Result<Vec<crate::core::search::InternalSearchResult>>;
     
     /// Compact a specific collection's data
@@ -529,8 +529,7 @@ pub trait UnifiedStorageEngine: Send + Sync {
                     .engine_specific
                     .get("vector_count")
                     .and_then(|v| v.as_u64())
-                    
-                    > 10)
+                    .unwrap_or(0) > 10)
             }
             StorageEngineStrategy::Lsm => {
                 // LSM default: compact when level ratios are unbalanced
@@ -538,8 +537,8 @@ pub trait UnifiedStorageEngine: Send + Sync {
                 Ok(stats
                     .engine_specific
                     .get("index_count")
-                    .and_then(|v| v.as_bool())
-                    )
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0) > 10)
             }
             StorageEngineStrategy::Hybrid => {
                 // Hybrid: check both strategies
@@ -551,8 +550,8 @@ pub trait UnifiedStorageEngine: Send + Sync {
                 Ok(stats
                     .engine_specific
                     .get("index_count")
-                    .and_then(|v| v.as_bool())
-                    )
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0) > 10)
             }
             StorageEngineStrategy::Swift => {
                 // SWIFT: compact based on file count
@@ -561,8 +560,7 @@ pub trait UnifiedStorageEngine: Send + Sync {
                     .engine_specific
                     .get("file_count")
                     .and_then(|v| v.as_u64())
-                    
-                    > 5)
+                    .unwrap_or(0) > 5)
             }
             StorageEngineStrategy::Nova => {
                 // NOVA: compact when row groups exceed threshold
@@ -571,8 +569,7 @@ pub trait UnifiedStorageEngine: Send + Sync {
                     .engine_specific
                     .get("row_group_count")
                     .and_then(|v| v.as_u64())
-                    
-                    > 20)
+                    .unwrap_or(0) > 20)
             }
             StorageEngineStrategy::Raptor => {
                 // RAPTOR: adaptive compaction
@@ -581,7 +578,7 @@ pub trait UnifiedStorageEngine: Send + Sync {
                     .engine_specific
                     .get("needs_compaction")
                     .and_then(|v| v.as_bool())
-                    )
+                    .unwrap_or(false))
             }
         }
     }
@@ -600,15 +597,15 @@ pub trait UnifiedStorageEngine: Send + Sync {
             total_storage_bytes: engine_metrics
                 .get("collection_id")
                 .and_then(|v| v.as_u64())
-                ,
+                .unwrap_or(0),
             memory_usage_bytes: engine_metrics
                 .get("dimension")
                 .and_then(|v| v.as_u64())
-                ,
+                .unwrap_or(0),
             collection_count: engine_metrics
                 .get("engine_type")
                 .and_then(|v| v.as_u64())
-                 as usize,
+                .unwrap_or(0) as usize,
             last_flush: engine_metrics
                 .get("created_at")
                 .and_then(|v| v.as_i64())
@@ -620,11 +617,11 @@ pub trait UnifiedStorageEngine: Send + Sync {
             pending_flushes: engine_metrics
                 .get("is_active")
                 .and_then(|v| v.as_u64())
-                ,
+                .unwrap_or(0) as usize,
             pending_compactions: engine_metrics
                 .get("metadata")
                 .and_then(|v| v.as_u64())
-                ,
+                .unwrap_or(0) as usize,
             engine_specific: engine_metrics,
         })
     }
@@ -831,8 +828,15 @@ pub enum OperationPriority {
     Critical = 3,
 }
 
-/// Search context that bundles immutable references to search parameters
+/// Search context for STORAGE ENGINES - bundles immutable references to search parameters
 /// and collection configuration for zero-copy access during search operations.
+/// 
+/// **IMPORTANT**: This is the STORAGE LAYER context. Do not confuse with:
+/// - `core::search::SearchPlan` - Used for search planning/optimization  
+/// - `core::service_types::SearchRequest` - Used for API request representation
+/// 
+/// Used by: Storage engines (SST, VIPER, NOVA, SWIFT, RAPTOR)
+/// Created by: VectorOperationsService.execute_search_internal()
 /// 
 /// Design principles:
 /// - Immutable: All references are read-only during search
@@ -840,7 +844,7 @@ pub enum OperationPriority {
 /// - Cache-friendly: Collection comes directly from cache as Arc
 /// - Extensible: Additional context can be added as needed
 #[derive(Debug, Clone)]
-pub struct SearchContext {
+pub struct StorageQueryContext {
     /// Original search parameters (immutable reference)
     pub search_params: Arc<crate::core::search::SearchParams>,
     
@@ -850,7 +854,7 @@ pub struct SearchContext {
     
     /// Additional context that might be needed during search
     /// (can be extended without breaking existing code)
-    pub metadata: SearchContextMetadata,
+    pub metadata: StorageQueryMetadata,
 }
 
 /// Parsed quantization configuration for efficient progressive search
@@ -910,10 +914,10 @@ pub enum QuantizationType {
     None,
 }
 
-/// Additional metadata for search context
+/// Additional metadata for storage query context
 /// Contains all information storage engines need - no additional cache lookups required
 #[derive(Debug, Clone, Default)]
-pub struct SearchContextMetadata {
+pub struct StorageQueryMetadata {
     /// Collection ID extracted for convenience
     pub collection_id: String,
     
@@ -948,7 +952,7 @@ pub struct SearchContextMetadata {
     pub quantization_enabled: bool,
 }
 
-impl SearchContext {
+impl StorageQueryContext {
     /// Parse quantization config into ready-to-use format for progressive search
     fn parse_quantization_config(
         quant_config: &crate::proto::proximadb::QuantizationConfig,
@@ -1027,7 +1031,7 @@ impl SearchContext {
         let config = collection.config.as_ref();
         let storage_assignment = collection.storage_assignment.as_ref();
         
-        let metadata = SearchContextMetadata {
+        let metadata = StorageQueryMetadata {
             collection_id: collection.id.clone().unwrap_or_default(),
             use_axis_indexes: config
                 .and_then(|c| c.index_config.as_ref())

@@ -421,14 +421,15 @@ impl StreamingRowGroupProcessor {
         for candidate in &mut candidates {
             // Would load actual vectors and compute real distances
             candidate.record = Some(VectorRecord {
-                id: candidate.vector_id.clone(),
+                id: candidate.vector_id.clone().unwrap_or_default(),
                 vector: vec![0.0f32; context.query_vector.len()],
-                metadata: None,
+                metadata: vec![],
                 timestamp: 0,
                 updated_at: None,
                 quantized_vector: None,
                 expires_at: None,
                 version: None,
+                source: None,
             });
         }
         Ok(candidates)

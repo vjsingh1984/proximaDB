@@ -113,13 +113,14 @@ impl MatrixBuilder {
             (1.0 - compressed_bytes.len() as f32 / (distances.len() * 4) as f32) * 100.0
         );
 
+        let compressed_size = compressed_bytes.len() as u32;
         Ok(P2Matrix {
             num_vectors: num_vectors as u32,
             distances: compressed_bytes,
             min_distance: min_dist,
             max_distance: max_dist,
             compression: FastLanesScheme::BitPacked { bits: 16 },
-            compressed_size: compressed_bytes.len() as u32,
+            compressed_size,
         })
     }
 
@@ -205,7 +206,7 @@ impl MatrixBuilder {
         let mut offset = 0u32;
         for size in &row_compressed_sizes {
             lookup_table.push(offset);
-            offset += *size;
+            offset += *size as u32;
         }
 
         debug!(

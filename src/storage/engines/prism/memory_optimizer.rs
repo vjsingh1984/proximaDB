@@ -255,9 +255,10 @@ impl MemoryOptimizedStorage {
     }
     
     /// Memory-map a file for ultra-fast access
-    pub async fn mmap_file(&self, file_path: &str, tier: MemoryTier) -> Result<Arc<Mmap>> {
-        let file = std::fs::File::open(file_path)?;
-        let mmap = unsafe { MmapOptions::new().map(&file)? };
+    pub async fn mmap_file(&self, file_path: &str, tier: MemoryTier, filesystem: &Arc<dyn FileSystem>) -> Result<Arc<Mmap>> {
+        // Use filesystem API for cloud compatibility
+        let mmap = filesystem.get_mmap(file_path).await?
+            .ok_or_else(|| anyhow::anyhow!("Memory mapping not supported for {}", file_path))?;
         let mmap_arc = Arc::new(mmap);
         
         match tier {
@@ -509,14 +510,14 @@ impl PrismMemoryOptimizer {
         // Load binary sketches into L2 (smallest, most frequently accessed)
         let binary_path = format!("{}/binary_sketches.bin", collection_id);
         if self.filesystem.exists(&binary_path).await {
-            self.storage.mmap_file(&binary_path, MemoryTier::L2Binary).await?;
+            self.storage.mmap_file(&binary_path, MemoryTier::L2Binary, &self.filesystem).await?;
             debug!("Loaded binary sketches into L2 memory-mapped cache");
         }
         
         // Load frequently accessed quantized vectors
         let quantized_path = format!("{}/quantized_vectors.pq", collection_id);
         if self.filesystem.exists(&quantized_path).await {
-            self.storage.mmap_file(&quantized_path, MemoryTier::L2Quantized).await?;
+            self.storage.mmap_file(&quantized_path, MemoryTier::L2Quantized, &self.filesystem).await?;
             debug!("Loaded quantized vectors into L2 memory-mapped cache");
         }
         

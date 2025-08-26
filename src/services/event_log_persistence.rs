@@ -185,9 +185,9 @@ impl EventLogWAL {
         acknowledged_ids: &std::collections::HashSet<String>,
     ) -> Result<Vec<IndexEvent>> {
         let mut events = Vec::new();
-        let mut file = fs::File::open(path).await?;
-        let mut buffer = Vec::new();
-        file.read_to_end(&mut buffer).await?;
+        // Use filesystem API for cloud compatibility
+        let filesystem = self.filesystem_factory.get_filesystem(path.to_str().unwrap_or("")).await?;
+        let buffer = filesystem.read(path.to_str().unwrap_or("")).await?;
         
         let mut cursor = 0;
         while cursor + 4 <= buffer.len() {

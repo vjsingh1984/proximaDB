@@ -282,8 +282,8 @@ impl<T: IndexData> UniversalIndexStorage<T> {
                 let _value = bincode::serialize(&data)?;
                 // Note: SstableWriter doesn't have add method, need to use write_sorted_records
                 let mut records = std::collections::BTreeMap::new();
-                records.insert(id.to_string(), crate::core::VectorRecord {
-                    id: Some(id.to_string()),
+                records.insert(id.to_string(), crate::proto::proximadb::VectorRecord {
+                    id: id.to_string(),
                     vector: vec![],  // Empty vector for index data
                     metadata: vec![],
                     timestamp: std::time::SystemTime::now()
@@ -294,6 +294,7 @@ impl<T: IndexData> UniversalIndexStorage<T> {
                     expires_at: None,
                     version: None,
                     quantized_vector: None,
+                    source: None,
                 });
                 // Write records using streaming approach for production consistency
                 let record_count = records.len();
@@ -426,8 +427,8 @@ impl<T: IndexData> UniversalIndexStorage<T> {
                 let value = bincode::serialize(&data)?;
                 let mut records = std::collections::BTreeMap::new();
                 // Create a dummy SstRecord with serialized data as the vector
-                let record = crate::core::VectorRecord {
-                    id: Some(id.to_string()),
+                let record = crate::proto::proximadb::VectorRecord {
+                    id: id.to_string(),
                     vector: vec![], // Empty vector since we're storing serialized data
                     metadata: vec![
                         crate::proto::proximadb::MetadataItem {
@@ -442,6 +443,7 @@ impl<T: IndexData> UniversalIndexStorage<T> {
                     expires_at: None,
                     version: None,
                     quantized_vector: None,
+                    source: None,
                 };
                 records.insert(id.to_string(), record);
                 // Write records using streaming approach for production consistency

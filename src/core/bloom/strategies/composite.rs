@@ -88,7 +88,7 @@ impl BloomFilterStrategy for CompositeBloomFilter {
             .sum::<usize>()
     }
     
-    fn hash_count(&self) -> u32 {
+    fn hash_count(&self) -> usize {
         self.key_filter.hash_count()
     }
     

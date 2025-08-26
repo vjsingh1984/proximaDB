@@ -200,27 +200,19 @@ impl SparseCoverageStorage {
             num_clusters,
             // Quantization engine will be initialized when needed
             quantization_engine: {  
-                let unified_engine = std::sync::Arc::new(crate::compute::quantization::unified::UnifiedQuantizationEngine::new());
                 let distance_compute = std::sync::Arc::new(UnifiedDistanceCompute::new(DistanceMetric::Cosine));
+                let codebook_store: std::sync::Arc<dyn crate::compute::quantization::unified::CodebookStore> = 
+                    std::sync::Arc::new(crate::compute::quantization::unified::InMemoryCodebookStore::new());
+                let unified_engine = std::sync::Arc::new(crate::compute::quantization::unified::UnifiedQuantizationEngine::new(
+                    distance_compute.clone(),
+                    codebook_store,
+                ));
                 let config = crate::compute::quantization::storage_engine::StorageQuantizationConfig::default();
                 StorageQuantizationEngine::new(unified_engine, distance_compute, config)
             },
         }
     }
     
-    /// Helper to quantize to u16
-    fn quantize_to_u16(&self, distances: &[f32]) -> (Vec<u16>, f32, f32) {
-        let min = distances.iter().cloned().fold(f32::INFINITY, f32::min);
-        let max = distances.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
-        let range = max - min;
-        
-        let quantized: Vec<u16> = distances.iter().map(|&d| {
-            let normalized = (d - min) / range;
-            (normalized * 65535.0) as u16
-        }).collect();
-        
-        (quantized, min, max)
-    }
     
     /// Select vectors intelligently based on coverage
     pub fn select_vectors(
@@ -449,19 +441,25 @@ impl SparseCoverageStorage {
                 bincode::serialize(distances).unwrap()
             }
             CompressionStrategy::Float16 => {
-                // Use quantization engine to convert to 16-bit representation
-                let (quantized, min, max) = self.quantize_to_u16(distances);
+                // Use the quantization engine for consistent quantization
+                let (quantized, min, max) = self.quantization_engine.quantize_to_u16(distances);
+                
+                // Store quantization parameters for accurate dequantization
+                // Format: [min:4bytes][max:4bytes][quantized_values:2bytes each]
                 let mut result = Vec::new();
                 result.extend_from_slice(&min.to_le_bytes());
                 result.extend_from_slice(&max.to_le_bytes());
+                
                 for val in quantized {
                     result.extend_from_slice(&val.to_le_bytes());
                 }
                 result
             }
             CompressionStrategy::Quantized8 => {
-                let (quantized, min, max) = self.quantization_engine
-                    .quantize_to_u8(distances);
+                // Use the quantization engine for consistent quantization
+                let (quantized, min, max) = self.quantization_engine.quantize_to_u8(distances);
+                
+                // Format: [min:4bytes][max:4bytes][quantized_values:1byte each]
                 let mut result = Vec::new();
                 result.extend_from_slice(&min.to_le_bytes());
                 result.extend_from_slice(&max.to_le_bytes());
@@ -469,21 +467,27 @@ impl SparseCoverageStorage {
                 result
             }
             CompressionStrategy::Quantized4 => {
-                // Pack two 4-bit values into each byte
-                let (quantized, min, max) = self.quantization_engine
-                    .quantize_to_u8(distances);
+                // Use the quantization engine's dedicated 4-bit quantization
+                let (packed, min, max, num_values) = self.quantization_engine.quantize_to_u4(distances);
+                
+                // Format: [min:4bytes][max:4bytes][num_values:4bytes][packed_values]
                 let mut result = Vec::new();
                 result.extend_from_slice(&min.to_le_bytes());
                 result.extend_from_slice(&max.to_le_bytes());
+                result.extend_from_slice(&(num_values as u32).to_le_bytes());
+                result.extend_from_slice(&packed);
+                result
+            }
+            CompressionStrategy::Quantized6 => {
+                // Use the quantization engine's 6-bit quantization
+                let (packed, min, max, num_values) = self.quantization_engine.quantize_to_u6(distances);
                 
-                for chunk in quantized.chunks(2) {
-                    let byte = if chunk.len() == 2 {
-                        ((chunk[0] >> 4) << 4) | (chunk[1] >> 4)
-                    } else {
-                        chunk[0] >> 4
-                    };
-                    result.push(byte);
-                }
+                // Format: [min:4bytes][max:4bytes][num_values:4bytes][packed_values]
+                let mut result = Vec::new();
+                result.extend_from_slice(&min.to_le_bytes());
+                result.extend_from_slice(&max.to_le_bytes());
+                result.extend_from_slice(&(num_values as u32).to_le_bytes());
+                result.extend_from_slice(&packed);
                 result
             }
             CompressionStrategy::DeltaEncoded => {
@@ -561,23 +565,68 @@ impl PxKStorageImpl for SparseCoverageStorage {
             }
             CompressionStrategy::Float16 => {
                 // Decompress from 16-bit quantized format
+                // Format: [min:4bytes][max:4bytes][quantized_values:2bytes each]
                 if compressed.len() < 8 {
                     return None;
                 }
                 let min = f32::from_le_bytes([compressed[0], compressed[1], compressed[2], compressed[3]]);
                 let max = f32::from_le_bytes([compressed[4], compressed[5], compressed[6], compressed[7]]);
-                let range = max - min;
+                let range = if max > min { max - min } else { 1.0 };
                 
                 let mut distances = Vec::new();
                 for chunk in compressed[8..].chunks_exact(2) {
-                    let val = u16::from_le_bytes([chunk[0], chunk[1]]);
-                    let normalized = val as f32 / 65535.0;
+                    let quantized = u16::from_le_bytes([chunk[0], chunk[1]]);
+                    let normalized = quantized as f32 / 65535.0;
                     distances.push(min + normalized * range);
                 }
                 Some(distances)
             }
-            // ... other decompression strategies ...
-            _ => None, // Simplified for now
+            CompressionStrategy::Quantized8 => {
+                // Decompress from 8-bit quantized format
+                // Format: [min:4bytes][max:4bytes][quantized_values:1byte each]
+                if compressed.len() < 8 {
+                    return None;
+                }
+                let min = f32::from_le_bytes([compressed[0], compressed[1], compressed[2], compressed[3]]);
+                let max = f32::from_le_bytes([compressed[4], compressed[5], compressed[6], compressed[7]]);
+                let range = if max > min { max - min } else { 1.0 };
+                
+                let mut distances = Vec::new();
+                for &quantized in &compressed[8..] {
+                    let normalized = quantized as f32 / 255.0;
+                    distances.push(min + normalized * range);
+                }
+                Some(distances)
+            }
+            CompressionStrategy::Quantized4 => {
+                // Decompress from 4-bit quantized format
+                // Format: [min:4bytes][max:4bytes][num_values:4bytes][packed_values]
+                if compressed.len() < 12 {
+                    return None;
+                }
+                let min = f32::from_le_bytes([compressed[0], compressed[1], compressed[2], compressed[3]]);
+                let max = f32::from_le_bytes([compressed[4], compressed[5], compressed[6], compressed[7]]);
+                let num_values = u32::from_le_bytes([compressed[8], compressed[9], compressed[10], compressed[11]]) as usize;
+                
+                let packed = &compressed[12..];
+                let distances = self.quantization_engine.dequantize_u4(packed, min, max, num_values);
+                Some(distances)
+            }
+            CompressionStrategy::Quantized6 => {
+                // Decompress from 6-bit quantized format
+                // Format: [min:4bytes][max:4bytes][num_values:4bytes][packed_values]
+                if compressed.len() < 12 {
+                    return None;
+                }
+                let min = f32::from_le_bytes([compressed[0], compressed[1], compressed[2], compressed[3]]);
+                let max = f32::from_le_bytes([compressed[4], compressed[5], compressed[6], compressed[7]]);
+                let num_values = u32::from_le_bytes([compressed[8], compressed[9], compressed[10], compressed[11]]) as usize;
+                
+                let packed = &compressed[12..];
+                let distances = self.quantization_engine.dequantize_u6(packed, min, max, num_values);
+                Some(distances)
+            }
+            _ => None, // DeltaEncoded and other strategies not implemented yet
         }
     }
     

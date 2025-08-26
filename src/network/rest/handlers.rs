@@ -1236,7 +1236,7 @@ fn convert_index_config_to_proto(config: IndexConfiguration) -> IndexConfig {
             bucket_width: c.bucket_width,
             binary_vectors: c.binary_vectors,
             max_candidates: c.max_candidates,
-            projection: match c.projection.as_ref().map(|s| s.as_str()) {
+            projection: match c.projection.as_ref().map(|s: &String| s.as_str()) {
                 Some("binary") => RandomProjectionType::Binary as i32,
                 Some("sparse") => RandomProjectionType::Sparse as i32,
                 _ => RandomProjectionType::Gaussian as i32,

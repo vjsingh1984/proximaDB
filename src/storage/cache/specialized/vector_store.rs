@@ -288,7 +288,7 @@ impl VectorStore {
         
         // Create a placeholder vector record that holds the compressed block
         let block_record = VectorRecord {
-            id: Some(cache_key.clone()),
+            id: cache_key.clone(),
             vector: vec![], // No vector data, just using as container
             metadata: vec![
                 crate::proto::proximadb::MetadataItem {
@@ -315,6 +315,7 @@ impl VectorStore {
             updated_at: None,
             expires_at: None,
             quantized_vector: None,
+            source: None,
         };
         
         self.put(cache_key, block_record).await;

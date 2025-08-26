@@ -8,7 +8,7 @@ use async_trait::async_trait;
 use std::sync::Arc;
 
 use crate::core::VectorRecord;
-use crate::core::search::{SearchResult, FilterExpression};
+use crate::core::search::FilterExpression;
 use crate::compute::distance_computation::DistanceMetric;
 use crate::compute::quantization::unified::UnifiedQuantizationLevel;
 

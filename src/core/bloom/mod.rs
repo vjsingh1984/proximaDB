@@ -627,7 +627,7 @@ pub struct BloomFilterBuilder {
 
 impl BloomFilterBuilder {
     pub fn new(config: BloomFilterConfig) -> Self {
-        let filter = factory::BloomFilterFactory::create(config.clone());
+        let filter = factory::BloomFilterFactory::create(&config);
         Self { config, filter }
     }
     

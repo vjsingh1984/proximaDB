@@ -39,8 +39,7 @@ pub struct CompactionCoordinator {
     collection_states: Arc<RwLock<HashMap<String, CollectionCompactionState>>>,
     
     /// Storage engines for compaction
-    // TODO: Restore when ViperEngine is available
-    // viper_engine: Arc<ViperEngine>,
+    viper_engine: Arc<crate::storage::engines::viper::engine::ViperEngine>,
     sst_engine: Arc<SstStorage>,
     
     /// Compaction configuration
@@ -195,8 +194,7 @@ pub struct CompactionResult {
 impl CompactionCoordinator {
     /// Create new compaction coordinator
     pub fn new(
-        // TODO: Restore when ViperEngine is available
-    // viper_engine: Arc<ViperEngine>,
+        viper_engine: Arc<crate::storage::engines::viper::engine::ViperEngine>,
         sst_engine: Arc<SstStorage>,
         config: Option<CompactionConfig>,
         axis_manager: Option<Arc<AxisManager>>,
@@ -212,8 +210,7 @@ impl CompactionCoordinator {
         
         Self {
             collection_states: Arc::new(RwLock::new(HashMap::new())),
-            // TODO: Restore when ViperEngine is available
-            // viper_engine,
+            viper_engine,
             sst_engine,
             config,
             active_compactions: Arc::new(Mutex::new(HashMap::new())),

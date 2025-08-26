@@ -135,7 +135,7 @@ mod tests {
         }
         
         // Quantize to u8
-        let quantization_engine = StorageQuantizationEngine::new();
+        let quantization_engine = StorageQuantizationEngine::new_default();
         let (quantized, min_dist, max_dist) = quantization_engine.quantize_to_u8(&distances);
         
         // Apply FastLanes encoding

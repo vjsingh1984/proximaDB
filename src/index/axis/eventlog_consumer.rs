@@ -10,7 +10,7 @@
 
 use anyhow::{Result, Context};
 use std::sync::Arc;
-use std::sync::atomic::Ordering;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 use std::collections::HashMap;
 use tokio::time::sleep;
@@ -56,6 +56,12 @@ impl Default for ConsumerConfig {
     }
 }
 
+/// Consumer metrics
+#[derive(Default)]
+struct ConsumerMetrics {
+    events_skipped: AtomicU64,
+}
+
 /// AXIS EventLog consumer
 pub struct AxisEventLogConsumer {
     /// Configuration
@@ -73,6 +79,12 @@ pub struct AxisEventLogConsumer {
     /// Collection cache
     collection_cache: Arc<DashMap<String, Arc<Collection>>>,
     
+    /// Unified cache orchestrator (shared across system)
+    cache_orchestrator: Arc<crate::storage::cache::orchestrator::CrossCacheOrchestrator>,
+    
+    /// Metrics
+    metrics: Arc<ConsumerMetrics>,
+    
     /// Shutdown signal
     shutdown: tokio::sync::watch::Receiver<bool>,
 }
@@ -85,6 +97,7 @@ impl AxisEventLogConsumer {
         axis_manager: Arc<AxisManager>,
         filesystem_factory: Arc<FilesystemFactory>,
         collection_cache: Arc<DashMap<String, Arc<Collection>>>,
+        cache_orchestrator: Arc<crate::storage::cache::orchestrator::CrossCacheOrchestrator>,
         shutdown: tokio::sync::watch::Receiver<bool>,
     ) -> Self {
         Self {
@@ -93,6 +106,8 @@ impl AxisEventLogConsumer {
             axis_manager,
             filesystem_factory,
             collection_cache,
+            cache_orchestrator,
+            metrics: Arc::new(ConsumerMetrics::default()),
             shutdown,
         }
     }
@@ -847,7 +862,7 @@ impl AxisEventLogConsumer {
                                         
                                         // Create VectorRecord
                                         let record = VectorRecord {
-                                            id,
+                                            id: id.unwrap_or_default(), // Use empty string if no ID
                                             vector,
                                             quantized_vector: Some(quantized_vector),
                                             metadata: Vec::new(), // TODO: Extract metadata columns
@@ -855,6 +870,7 @@ impl AxisEventLogConsumer {
                                             timestamp: timestamp as u32,
                                             expires_at: None,
                                             updated_at: None,
+                                            source: None,
                                         };
                                         
                                         all_records.push(record);
@@ -899,9 +915,8 @@ impl AxisEventLogConsumer {
                             ).await?);
                             let cache_dir = "/tmp/raptor_cache".to_string();
                             
-                            // Create cache orchestrator for RAPTOR
-                            use crate::storage::cache::CrossCacheOrchestrator;
-                            let cache = Arc::new(CrossCacheOrchestrator::new());
+                            // Use unified cache orchestrator
+                            let cache = self.cache_orchestrator.clone();
                             
                             // Create ZeroCopyFilesystem for RAPTOR
                             use crate::storage::persistence::filesystem::zero_copy_filesystem::ZeroCopyFilesystem;
@@ -936,7 +951,6 @@ impl AxisEventLogConsumer {
                             ));
                             
                             // Create transaction coordinator for RAPTOR
-                            use crate::storage::transaction_coordinator::TransactionCoordinator;
                             let transaction_coordinator = Arc::new(
                                 TransactionCoordinator::new(
                                     fs_factory.clone(),
@@ -977,6 +991,7 @@ impl AxisEventLogConsumer {
                                         timestamp: 0,
                                         expires_at: None,
                                         updated_at: None,
+                                        source: None,
                                     };
                                     all_records.push(record);
                                 }
@@ -1020,24 +1035,25 @@ impl AxisEventLogConsumer {
                             
                             // PRISM uses FastLanes progressive serialization
                             // The data contains multiple resolution levels (Binary, INT8, FP32)
-                            let serializer = PrismFastLanesSerializer::new();
+                            use crate::compute::quantization::storage_engine::StorageQuantizationConfig;
+                            let serializer = PrismFastLanesSerializer::new(StorageQuantizationConfig::default());
                             
                             // Deserialize the progressive format
                             // For AXIS indexing, we typically want the highest resolution (FP32)
                             let records = match extraction_mode {
                                 ExtractionMode::Fp32Only => {
                                     // Extract FP32 resolution level
-                                    let (records, _metadata) = serializer.deserialize_resolution(&file_data)?;
+                                    let (records, _metadata) = serializer.deserialize_resolution(&file_data).await?;
                                     records
                                 }
                                 ExtractionMode::QuantizedOnly => {
                                     // Extract quantized resolution level
-                                    let (records, _metadata) = serializer.deserialize_resolution(&file_data)?;
+                                    let (records, _metadata) = serializer.deserialize_resolution(&file_data).await?;
                                     records
                                 }
                                 ExtractionMode::Both | ExtractionMode::Auto => {
                                     // Extract all available resolution levels
-                                    let (records, _metadata) = serializer.deserialize_resolution(&file_data)?;
+                                    let (records, _metadata) = serializer.deserialize_resolution(&file_data).await?;
                                     records
                                 }
                             };
@@ -1104,6 +1120,7 @@ impl AxisEventLogConsumer {
                             } else {
                                 None
                             },
+                            source: None,
                         };
                         
                         all_vectors.push(proto_record);

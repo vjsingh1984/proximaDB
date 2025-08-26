@@ -20,6 +20,10 @@ pub enum CompressionAlgorithm {
     Gzip,
     /// Deflate compression
     Deflate,
+    /// Brotli compression
+    Brotli,
+    /// Mixed adaptive compression
+    Mixed,
 }
 
 impl Default for CompressionAlgorithm {

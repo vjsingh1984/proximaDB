@@ -91,7 +91,7 @@ impl BloomFilterStrategy for NoOpBloomFilter {
         0
     }
     
-    fn hash_count(&self) -> u32 {
+    fn hash_count(&self) -> usize {
         0
     }
     

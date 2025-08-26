@@ -203,14 +203,17 @@ impl EngineMetricsCollector {
 impl MetricsCollector for EngineMetricsCollector {
     async fn collect(&self) -> Result<MetricsSample> {
         let mut values = HashMap::new();
-        let engines = self.engines.read().await;
         let acc = self.accumulated_metrics.read().await;
         
+        // Collect engine names first, then release the lock
+        let engine_names: Vec<String> = {
+            let engines = self.engines.read().await;
+            engines.keys().cloned().collect()
+        };
+        
         // Collect metrics for each registered engine
-        for (engine_name, _weak_ref) in engines.iter() {
-            let stats = drop(engines); // Release lock
+        for engine_name in &engine_names {
             let stats = self.get_engine_statistics(engine_name).await;
-            let engines = self.engines.read().await; // Re-acquire lock
             
             // Add engine-specific metrics
             values.insert(
@@ -236,7 +239,7 @@ impl MetricsCollector for EngineMetricsCollector {
         }
         
         // Add summary metrics
-        values.insert("total_engines_registered".to_string(), engines.len() as f64);
+        values.insert("total_engines_registered".to_string(), engine_names.len() as f64);
         values.insert("metrics_collection_duration_ms".to_string(), {
             let start = Instant::now();
             // Simulate collection work

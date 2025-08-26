@@ -152,12 +152,15 @@ impl FlushManager {
             }
         };
 
-        // Extract vector dimensions for efficient capacity planning
+        // Extract vector dimensions - REQUIRED for proper processing
         let vector_dimensions = collection_config
             .as_ref()
             .and_then(|c| c.config.as_ref())
             .map(|config| config.dimension as usize)
-            ; // Default to 512 if not available
+            .ok_or_else(|| {
+                error!("CRITICAL: Collection config missing or incomplete for collection {}. Cannot determine vector dimensions!", collection_id);
+                anyhow::anyhow!("Collection config with dimension is required for flush operation")
+            })?;
 
         info!("🔧 VIPER FLUSH: Using {} dimensions for collection {}", 
               vector_dimensions, collection_id);
@@ -278,7 +281,7 @@ impl FlushManager {
 
         // Step 4: Check for compaction trigger
         info!("🔄 VIPER: Step 4 - Checking compaction trigger");
-        let compaction_triggered = self.check_compaction_trigger(collection_id).await;
+        let compaction_triggered = self.check_compaction_trigger(collection_id).await.unwrap_or(false);
 
         // Step 5: Update collection metadata
         info!("🔄 VIPER: Step 5 - Updating collection metadata_info");
@@ -469,7 +472,7 @@ impl FlushManager {
         let mut vector_int8_data: Vec<Vec<i8>> = Vec::with_capacity(capacity);
         let mut vector_pq8_data: Vec<Vec<u8>> = Vec::with_capacity(capacity);
         let mut vector_pq4_data: Vec<Vec<u8>> = Vec::with_capacity(capacity);
-        let has_quantization = quantization.map(|q| q.enabled);
+        let has_quantization = quantization.as_ref().map(|q| q.enabled).unwrap_or(false);
         
         let filterable_field_names: std::collections::HashSet<String> = filterable_metadata
             .iter()
@@ -477,7 +480,7 @@ impl FlushManager {
             .collect();
 
         for record in records {
-            ids.push(record.id.as_deref().to_string());
+            ids.push(record.id.clone());
             collection_ids.push(collection_id.to_string());
             vectors.push(record.vector.clone());
             
@@ -488,7 +491,7 @@ impl FlushManager {
                 
                 if let Some(quant_config) = quantization {
                     debug!("🔧 VIPER: Applying collection quantization config for vector {}", 
-                           record.id.as_deref());
+                           &record.id);
                     
                     info!("🎯 VIPER: Collection quantization enabled - strategy={:?}", 
                           quant_config.strategy);
@@ -524,7 +527,7 @@ impl FlushManager {
                             None => serde_json::Value::Null,
                         }
                     })
-                    ;
+                    .unwrap_or(serde_json::Value::Null);
                 values.push(value);
             }
             
@@ -554,7 +557,7 @@ impl FlushManager {
             }
             // Use timestamp as updated_at (represents either creation or last update time)
             updated_at_values.push(record.timestamp as i64);
-            expires_at_values.push(record.expires_at as i64);
+            expires_at_values.push(record.expires_at.unwrap_or(0) as i64);
         }
 
         // Create Arrow arrays with proper List<Float32> for vectors
@@ -597,7 +600,7 @@ impl FlushManager {
                 match FilterableDataType::try_from(filterable_column.data_type) {
                     Ok(FilterableDataType::FilterableString) => {
                         let string_values: Vec<Option<String>> = values.iter()
-                            .map(|v| if v.is_null() { None } else { Some(v.as_deref().to_string()) })
+                            .map(|v| if v.is_null() { None } else { v.as_str().map(|s| s.to_string()) })
                             .collect();
                         Arc::new(StringArray::from(string_values))
                     }
@@ -797,13 +800,13 @@ impl FlushManager {
                 .and_then(|c| c.level)
                 
         } else {
-            viper_config.compression_level
+            Some(viper_config.compression_level)
         };
         
         // Map core compression to Parquet compression using shared function
         let compression_algo = crate::storage::engines::columnar::map_core_to_parquet_compression(
             compression_algorithm, 
-            Some(compression_level)
+            compression_level
         )?;
         debug!("   Selected Parquet compression: {:?}", compression_algo);
         
@@ -824,7 +827,7 @@ impl FlushManager {
             collection.config.as_ref()
                 .and_then(|c| c.quantization.as_ref())
                 .map(|q| q.enabled)
-                
+                .unwrap_or(false)
         } else {
             false
         };
@@ -861,7 +864,7 @@ impl FlushManager {
         for filterable_column in &filterable_metadata {
             if let Some(encoding_hint) = filterable_column.encoding_hint {
                 use crate::proto::proximadb::ColumnEncoding;
-                let column_path = parquet::schema::types::ColumnPath::from(filterable_column.name.as_deref());
+                let column_path = parquet::schema::types::ColumnPath::from(filterable_column.name.as_str());
                 
                 match ColumnEncoding::try_from(encoding_hint) {
                     Ok(ColumnEncoding::EncodingDictionary) => {
@@ -1160,9 +1163,9 @@ impl FlushManager {
             // No filterable columns, sort by vector ID for consistent ordering
             let mut sorted_records = records.to_vec();
             sorted_records.sort_by(|a, b| {
-                let a_id = a.id.as_deref();
-                let b_id = b.id.as_deref();
-                a_id.cmp(b_id)
+                let a_id = a.id.as_str();
+                let b_id = b.id.as_str();
+                a_id.cmp(&b_id)
             });
             
             return Ok((sorted_records, SortingStats {

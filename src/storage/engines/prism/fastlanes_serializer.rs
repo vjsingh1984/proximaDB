@@ -2,6 +2,7 @@ use anyhow::Result;
 use std::collections::HashMap;
 use std::sync::Arc;
 use serde::{Serialize, Deserialize};
+use tracing::error;
 
 use crate::core::VectorRecord;
 use crate::storage::engines::common::fastlanes_encoding::{
@@ -158,9 +159,16 @@ impl PrismFastLanesSerializer {
         let metadata = PrismResolutionMetadata {
             resolution_level: level,
             num_vectors: records.len(),
-            dimension: records.first().map(|r| r.vector.len()).unwrap_or(0),
+            dimension: records.first().map(|r| r.vector.len()).ok_or_else(|| {
+                error!("Cannot serialize empty record set - no vectors to encode");
+                anyhow::anyhow!("Empty record set provided to FastLanes serializer")
+            })?,
             encoding_scheme,
-            compression_ratio: (records.len() * records[0].vector.len() * 4) as f32 / encoded_data.len() as f32,
+            compression_ratio: if !records.is_empty() && !encoded_data.is_empty() {
+                (records.len() * records[0].vector.len() * 4) as f32 / encoded_data.len() as f32
+            } else {
+                1.0
+            },
             quality_score: self.estimate_quality_for_level(level),
         };
         
@@ -310,6 +318,7 @@ impl PrismFastLanesSerializer {
                 expires_at: None,
                 version: None,
                 quantized_vector: None,
+                source: None,
             });
         }
         

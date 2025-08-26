@@ -17,7 +17,7 @@ mod tests {
     async fn test_query_preprocessing_with_simd() {
         init_test_environment();
         
-        let hardware = Arc::new(HardwareCapabilities::detect());
+        let hardware = crate::core::hardware_capabilities::get_hardware_capabilities();
         let preprocessor = QueryPreprocessor::new(hardware.clone(), 100);
         
         // Test vector normalization with SIMD
@@ -46,7 +46,7 @@ mod tests {
     async fn test_parallel_wal_search() {
         init_test_environment();
         
-        let hardware = Arc::new(HardwareCapabilities::detect());
+        let hardware = crate::core::hardware_capabilities::get_hardware_capabilities();
         let distance_compute = Arc::new(crate::compute::distance_computation::engine::UnifiedDistanceCompute::new());
         
         let parallel_search = ParallelWALSearch::new(
@@ -129,7 +129,7 @@ mod tests {
     async fn test_progressive_search_pipeline() {
         init_test_environment();
         
-        let hardware = Arc::new(HardwareCapabilities::detect());
+        let hardware = crate::core::hardware_capabilities::get_hardware_capabilities();
         let query_preprocessor = Arc::new(QueryPreprocessor::new(hardware.clone(), 100));
         
         let config = PipelineConfig {
@@ -179,7 +179,7 @@ mod tests {
     async fn test_smart_execution_strategy() {
         init_test_environment();
         
-        let hardware = Arc::new(HardwareCapabilities::detect());
+        let hardware = crate::core::hardware_capabilities::get_hardware_capabilities();
         let strategy = SmartExecutionStrategy::new(hardware.clone());
         
         // Test strategy selection for small dataset
@@ -361,7 +361,7 @@ mod tests {
         init_test_environment();
         
         // This test validates that optimizations achieve expected performance gains
-        let hardware = Arc::new(HardwareCapabilities::detect());
+        let hardware = crate::core::hardware_capabilities::get_hardware_capabilities();
         
         // Baseline: Unoptimized search
         let start_baseline = std::time::Instant::now();

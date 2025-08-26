@@ -773,7 +773,7 @@ mod tests {
     
     #[tokio::test]
     async fn test_batch_operations_creation() {
-        let hardware = Arc::new(HardwareCapabilities::detect().unwrap());
+        let hardware = crate::core::hardware_capabilities::get_hardware_capabilities();
         let memory_pool = Arc::new(VectorMemoryPool::new(1024 * 1024 * 1024));
         let quantization_engine = Arc::new(
             crate::compute::quantization::unified::UnifiedQuantizationEngine::new(
@@ -804,7 +804,7 @@ mod tests {
     
     #[test]
     fn test_batch_size_calculation() {
-        let hardware = Arc::new(HardwareCapabilities::detect().unwrap());
+        let hardware = crate::core::hardware_capabilities::get_hardware_capabilities();
         let memory_pool = Arc::new(VectorMemoryPool::new(1024 * 1024 * 1024));
         let quantization_engine = Arc::new(
             crate::compute::quantization::unified::UnifiedQuantizationEngine::new(
@@ -836,7 +836,7 @@ mod tests {
     
     #[test]
     fn test_batch_splitting() {
-        let hardware = Arc::new(HardwareCapabilities::detect().unwrap());
+        let hardware = crate::core::hardware_capabilities::get_hardware_capabilities();
         let memory_pool = Arc::new(VectorMemoryPool::new(1024 * 1024 * 1024));
         let quantization_engine = Arc::new(
             crate::compute::quantization::unified::UnifiedQuantizationEngine::new(

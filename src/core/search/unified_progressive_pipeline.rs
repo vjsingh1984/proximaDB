@@ -8,13 +8,12 @@
 use std::sync::Arc;
 use std::collections::{HashMap, BinaryHeap};
 use anyhow::{Context, Result};
-use tracing::{debug, info, trace};
+use tracing::{debug, info};
 use parking_lot::RwLock;
 
-use crate::core::search::{SearchResult, FilterExpression, SearchParams};
-use crate::proto::proximadb::{QuantizationConfig, QuantizationLevel};
+use crate::core::search::FilterExpression;
+use crate::proto::proximadb::QuantizationConfig;
 use crate::compute::distance_computation::DistanceMetric;
-use crate::compute::quantization::unified::UnifiedQuantizationLevel;
 use crate::proto::proximadb::VectorRecord;
 use crate::core::search::query_preprocessing::{QueryPreprocessor, QueryVectorCache};
 
@@ -157,7 +156,7 @@ impl UnifiedProgressiveSearchPipeline {
         distance_metric: DistanceMetric,
         quantization_config: &QuantizationConfig,
         metadata_filter: Option<&FilterExpression>,
-    ) -> Result<Vec<SearchResult>> {
+    ) -> Result<Vec<crate::core::search::InternalSearchResult>> {
         let start = std::time::Instant::now();
         let query_id = self.generate_query_id();
         
@@ -210,14 +209,25 @@ impl UnifiedProgressiveSearchPipeline {
     fn determine_stages(&self, config: &QuantizationConfig) -> Vec<SearchStage> {
         let mut stages = Vec::new();
         
-        for level in &config.levels {
-            match level {
-                UnifiedQuantizationLevel::Binary => stages.push(SearchStage::Binary),
-                UnifiedQuantizationLevel::Int8 => stages.push(SearchStage::Int8),
-                UnifiedQuantizationLevel::Pq4 => stages.push(SearchStage::Pq4),
-                UnifiedQuantizationLevel::Pq8 => stages.push(SearchStage::Pq8),
-                UnifiedQuantizationLevel::Fp32 => stages.push(SearchStage::Fp32),
-                _ => {}
+        // Use strategy to determine stages since custom_levels is proto QuantizationLevel
+        use crate::proto::proximadb::quantization_config::Strategy;
+        match config.strategy() {
+            Strategy::SmartDefaults => {
+                stages.push(SearchStage::Binary);
+                stages.push(SearchStage::Int8);
+                stages.push(SearchStage::Pq8);
+            }
+            Strategy::Minimal => {
+                stages.push(SearchStage::Int8);
+            }
+            Strategy::Aggressive => {
+                stages.push(SearchStage::Binary);
+                stages.push(SearchStage::Pq4);
+                stages.push(SearchStage::Int8);
+            }
+            Strategy::CustomLevels => {
+                // TODO: Convert custom_levels to SearchStage
+                stages.push(SearchStage::Int8);
             }
         }
         
@@ -613,8 +623,22 @@ impl UnifiedProgressiveSearchPipeline {
         let mut map = HashMap::new();
         
         for entry in &record.metadata {
-            if let Ok(value) = serde_json::from_str(&entry.value) {
-                map.insert(entry.key.clone(), value);
+            if let Some(ref proto_value) = entry.value {
+                use crate::proto::proximadb::metadata_item;
+                use serde_json::Value;
+                
+                let json_value = match proto_value {
+                    metadata_item::Value::StringValue(s) => Value::String(s.clone()),
+                    metadata_item::Value::IntValue(i) => Value::Number(serde_json::Number::from(*i)),
+                    metadata_item::Value::FloatValue(f) => {
+                        if let Some(n) = serde_json::Number::from_f64(*f as f64) {
+                            Value::Number(n)
+                        } else {
+                            continue;
+                        }
+                    }
+                };
+                map.insert(entry.key.clone(), json_value);
             }
         }
         
@@ -633,19 +657,25 @@ impl UnifiedProgressiveSearchPipeline {
     }
     
     /// Finalize candidates into search results
-    fn finalize_results(&self, candidates: Vec<StageCandidate>, top_k: usize) -> Vec<SearchResult> {
+    fn finalize_results(&self, candidates: Vec<StageCandidate>, top_k: usize) -> Vec<crate::core::search::InternalSearchResult> {
         candidates.into_iter()
             .take(top_k)
             .enumerate()
-            .map(|(rank, candidate)| SearchResult {
-                id: candidate.record.id.clone().unwrap_or_default(),
-                vector_id: candidate.record.id.clone(),
+            .map(|(rank, candidate)| crate::core::search::InternalSearchResult {
+                id: candidate.record.id.clone(),
+                vector_id: if candidate.record.id.is_empty() { None } else { Some(candidate.record.id.clone()) },
                 score: candidate.score,
-                similarity: candidate.score,
-                rank: Some((rank + 1) as u16),
+                similarity: Some(candidate.score),
                 vector: Some(candidate.record.vector.clone()),
                 metadata: self.convert_metadata(&candidate.record),
-                debug_info: Some(format!("stage: {:?}, refined: {}", candidate.stage, candidate.refined_count)),
+                debug_info: Some(crate::core::search::SearchDebugInfo {
+                    computation_time_ms: 0.0,
+                    stage_timings: vec![],
+                    vectors_compared: candidate.refined_count as u64,
+                    early_termination: false,
+                    cache_hits: 0,
+                    cache_misses: 0,
+                }),
                 semantic_similarity: None,
                 quantization_info: None,
                 engine_stats: None,
@@ -726,7 +756,7 @@ impl ThresholdAdjuster {
         }
     }
     
-    fn adjust_thresholds(&self, stages: &[SearchStage], results: &[SearchResult]) {
+    fn adjust_thresholds(&self, stages: &[SearchStage], results: &[crate::core::search::InternalSearchResult]) {
         // Simple adjustment logic - can be made more sophisticated
         let mut thresholds = self.current_thresholds.write();
         

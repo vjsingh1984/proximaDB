@@ -7,7 +7,7 @@
 
 use std::sync::Arc;
 use std::collections::HashMap;
-use anyhow::{Context, Result};
+use anyhow::Result;
 use tracing::{debug, info, trace};
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};

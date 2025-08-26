@@ -1,5 +1,25 @@
-// Shared SST Format Reader for SST and SWIFT engines
-// Optimized for bandwidth reduction and cache-aware operations
+// =============================================================================
+// LOW-LEVEL SST I/O INFRASTRUCTURE (shared_sst_reader.rs)
+// =============================================================================
+//
+// PURPOSE: Low-level I/O operations and caching infrastructure for SST files
+// USED BY: unified_sstable_reader.rs (high-level query engine)
+//
+// This module provides:
+// - Zero-copy file access with memory mapping strategies
+// - Block-level caching for SST data blocks
+// - Bloom filter caching (4KB per file)
+// - Index block caching (60KB per file)
+// - Bandwidth optimization for cloud storage
+// - FastLanes encoding support for compressed blocks
+//
+// RELATIONSHIP WITH unified_sstable_reader.rs:
+// Similar to parquet_io_layer vs parquet_query_engine:
+// - This handles LOW-LEVEL I/O and caching
+// - unified_sstable_reader handles HIGH-LEVEL query logic
+//
+// RENAME SUGGESTION: This file should be renamed to `sst_io_layer.rs`
+// to match the parquet naming convention
 //
 // FASTLANES INTEGRATION ARCHITECTURE:
 // ====================================
@@ -36,15 +56,13 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use memmap2::{Mmap, MmapOptions};
-use tracing::{debug, info, warn};
+// memmap2 imports removed - using filesystem API for memory mapping
+use tracing::info;
+use anyhow::Result;
 
-use crate::storage::persistence::filesystem::{FileSystem, FilesystemFactory};
-// DEPRECATED: refined_integrated_cache replaced by zero_copy_io_system
-use crate::storage::engines::common::zero_copy_io_system::{
-    ZeroCopyIOSystem, MetadataSerializer, EngineMetadata, QueryContext, DataRange,
-    FileAccessRequest, RequestPriority, IOStrategy
-};
+use crate::storage::persistence::filesystem::FilesystemFactory;
+// Using zero-copy I/O system for efficient caching
+use crate::storage::engines::common::zero_copy_io_system::ZeroCopyIOSystem;
 use crate::core::errors::ProximaDBError;
 
 /// File type enum for cache key discrimination
@@ -173,10 +191,10 @@ impl SharedSstFormatReader {
     async fn get_bloom_filter_smart(&self, file_path: &str, collection_id: &str) -> Result<Arc<Vec<u8>>, ProximaDBError> {
         let filename = std::path::Path::new(file_path).file_name()
             .and_then(|name| name.to_str())
-            ;
+            .unwrap_or("unknown");
         
         // Check if file metadata with bloom filter is cached
-        if let Some(file_metadata) = self.cache.get_file_metadata(collection_id, filename, FileType::SST) {
+        if let Some(file_metadata) = self.zero_copy_system.get_cached_metadata(&format!("{}/{}", collection_id, filename)).await {
             if let Some(sst_metadata) = file_metadata.downcast_ref::<SstFileMetadata>() {
                 self.stats.bloom_hits.fetch_add(1, Ordering::Relaxed);
                 return Ok(sst_metadata.file_bloom_filter.clone());
@@ -188,9 +206,8 @@ impl SharedSstFormatReader {
         // For cloud files, download ONLY the bloom filter range
         if self.is_cloud_file(file_path) {
             // Use range request to get just 4KB bloom filter
-            let bloom_data = self.filesystem
-                .get_filesystem(file_path)?
-                .read_range(file_path, 0, BLOOM_FILTER_SIZE as u64)
+            let fs = self.filesystem.get_filesystem(file_path)?;
+            let bloom_data = fs.read_range(file_path, 0, BLOOM_FILTER_SIZE as u64)
                 .await?;
             
             self.stats.bytes_downloaded.fetch_add(BLOOM_FILTER_SIZE as u64, Ordering::Relaxed);
@@ -205,7 +222,7 @@ impl SharedSstFormatReader {
                 num_blocks: 0, // Will be updated later
             };
             
-            self.cache.put_file_metadata(collection_id, filename, Arc::new(file_metadata))?;
+            self.zero_copy_system.cache_metadata(&format!("{}/{}", collection_id, filename), Arc::new(file_metadata)).await?;
             
             return Ok(bloom_arc);
         }
@@ -218,10 +235,10 @@ impl SharedSstFormatReader {
     async fn get_index_block_smart(&self, file_path: &str, collection_id: &str) -> Result<Arc<Vec<u8>>, ProximaDBError> {
         let filename = std::path::Path::new(file_path).file_name()
             .and_then(|name| name.to_str())
-            ;
+            .unwrap_or("unknown");
         
         // Check if file metadata with index is cached
-        if let Some(file_metadata) = self.cache.get_file_metadata(collection_id, filename, FileType::SST) {
+        if let Some(file_metadata) = self.zero_copy_system.get_cached_metadata(&format!("{}/{}", collection_id, filename)).await {
             if let Some(sst_metadata) = file_metadata.downcast_ref::<SstFileMetadata>() {
                 if !sst_metadata.file_index.is_empty() {
                     self.stats.index_hits.fetch_add(1, Ordering::Relaxed);
@@ -236,7 +253,7 @@ impl SharedSstFormatReader {
         if self.is_cloud_file(file_path) {
             // Use range request to get just the index block
             let index_data = self.filesystem
-                .get_filesystem(file_path)?
+                .get_filesystem(file_path).await?
                 .read_range(
                     file_path,
                     BLOOM_FILTER_SIZE as u64,
@@ -248,7 +265,7 @@ impl SharedSstFormatReader {
             
             // Update or create file metadata with index
             let index_arc = Arc::new(index_data);
-            if let Some(file_metadata) = self.cache.get_file_metadata(collection_id, filename, FileType::SST) {
+            if let Some(file_metadata) = self.zero_copy_system.get_cached_metadata(&format!("{}/{}", collection_id, filename)).await {
                 if let Some(mut sst_metadata) = file_metadata.downcast_ref::<SstFileMetadata>().cloned() {
                     sst_metadata.file_index = index_arc.clone();
                     self.cache.put_file_metadata(collection_id, filename, Arc::new(sst_metadata))?;
@@ -261,7 +278,7 @@ impl SharedSstFormatReader {
                     file_size: 0,
                     num_blocks: 0,
                 };
-                self.cache.put_file_metadata(collection_id, filename, Arc::new(file_metadata))?;
+                self.zero_copy_system.cache_metadata(&format!("{}/{}", collection_id, filename), Arc::new(file_metadata)).await?;
             }
             
             return Ok(index_arc);
@@ -280,20 +297,16 @@ impl SharedSstFormatReader {
     ) -> Result<Vec<u8>, ProximaDBError> {
         let filename = std::path::Path::new(file_path).file_name()
             .and_then(|name| name.to_str())
-            ;
+            .unwrap_or("unknown");
         
         // For cloud files, use the integrated cache for caching
         let data = if self.is_cloud_file(file_path) {
             // Get cached file path or download
             let cached_path = self.cache.get_cached_file_path(collection_id, filename, file_path).await?;
             
-            // Read the specific block from cached file
-            let file = std::fs::File::open(&cached_path)?;
-            let mut buffer = vec![0; block_info.size as usize];
-            use std::io::{Read, Seek, SeekFrom};
-            let mut file = std::io::BufReader::new(file);
-            file.seek(SeekFrom::Start(block_info.offset))?;
-            file.read_exact(&mut buffer)?;
+            // Read the specific block from cached file using filesystem API
+            let filesystem = self.filesystem.get_filesystem(&cached_path)?;
+            let buffer = filesystem.read_range(&cached_path, block_info.offset, block_info.size as u64).await?;
             
             buffer
         } else {
@@ -306,14 +319,14 @@ impl SharedSstFormatReader {
                 } else {
                     // Fallback to direct read
                     self.filesystem
-                        .get_filesystem(file_path)?
+                        .get_filesystem(file_path).await?
                         .read_range(file_path, block_info.offset, block_info.size)
                         .await?
                 }
             } else {
                 // Fallback to direct read
                 self.filesystem
-                    .get_filesystem(file_path)?
+                    .get_filesystem(file_path).await?
                     .read_range(file_path, block_info.offset, block_info.size)
                     .await?
             }
@@ -391,7 +404,7 @@ impl SharedSstFormatReader {
     /// Cache invalidation during compaction
     pub async fn invalidate_cache_for_collection(&self, collection_id: &str) -> Result<(), ProximaDBError> {
         // Use the integrated cache's collection-level invalidation
-        let invalidated = self.cache.invalidate_collection(collection_id).await?;
+        let invalidated = self.zero_copy_system.invalidate_prefix(&format!("{}/", collection_id)).await?;
         
         self.stats.cache_invalidations.fetch_add(invalidated, Ordering::Relaxed);
         
@@ -453,7 +466,7 @@ impl SharedSstFormatReader {
                     file_size: mmap.len() as u64,
                     num_blocks: 0,
                 };
-                self.cache.put_file_metadata(collection_id, filename, Arc::new(file_metadata))?;
+                self.zero_copy_system.cache_metadata(&format!("{}/{}", collection_id, filename), Arc::new(file_metadata)).await?;
                 
                 return Ok(bloom_arc);
             }
@@ -461,7 +474,7 @@ impl SharedSstFormatReader {
         
         // Fallback to direct read
         let bloom_data = self.filesystem
-            .get_filesystem(file_path)?
+            .get_filesystem(file_path).await?
             .read_range(file_path, 0, BLOOM_FILTER_SIZE as u64)
             .await?;
         Ok(Arc::new(bloom_data))
@@ -478,7 +491,7 @@ impl SharedSstFormatReader {
                 let index_arc = Arc::new(index_data);
                 
                 // Update file metadata with index
-                if let Some(file_metadata) = self.cache.get_file_metadata(collection_id, filename, FileType::SST) {
+                if let Some(file_metadata) = self.zero_copy_system.get_cached_metadata(&format!("{}/{}", collection_id, filename)).await {
                     if let Some(mut sst_metadata) = file_metadata.downcast_ref::<SstFileMetadata>().cloned() {
                         sst_metadata.file_index = index_arc.clone();
                         sst_metadata.file_size = mmap.len() as u64;
@@ -492,7 +505,7 @@ impl SharedSstFormatReader {
         
         // Fallback to direct read
         let index_data = self.filesystem
-            .get_filesystem(file_path)?
+            .get_filesystem(file_path).await?
             .read_range(file_path, BLOOM_FILTER_SIZE as u64, INDEX_BLOCK_SIZE as u64)
             .await?;
         Ok(Arc::new(index_data))

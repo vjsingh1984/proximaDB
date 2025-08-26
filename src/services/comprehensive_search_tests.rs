@@ -28,7 +28,7 @@ mod tests {
     use crate::compute::distance_computation::engine::{UnifiedDistanceCompute, DistanceMode};
     use crate::core::hardware_capabilities::HardwareBackend;
     use crate::core::search::{
-        SearchParams, SearchResultSet, UnifiedSearchContext, UnifiedSearchEngine,
+        SearchParams, SearchResultSet, SearchPlan, UnifiedSearchEngine,
         FilterExpression, SearchResult, FilterableColumn, ComparisonOperator,
         CollectionConfig, ColumnDataType, StorageInfo
     };
@@ -241,13 +241,13 @@ mod tests {
     }
 
     /// Create mock search context for testing
-    fn create_test_context(collection_id: &str, engine_type: TestEngineType) -> UnifiedSearchContext {
+    fn create_test_context(collection_id: &str, engine_type: TestEngineType) -> SearchPlan {
         let storage_type = match engine_type {
             TestEngineType::Lsm => "LSM",
             TestEngineType::Viper => "VIPER",
         };
 
-        UnifiedSearchContext {
+        SearchPlan {
             collection_id: collection_id.to_string(),
             collection_config: Some(CollectionConfig {
                 default_distance_metric: DistanceMetric::Cosine,

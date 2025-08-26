@@ -27,7 +27,7 @@ mod tests {
 
         async fn search_unified(
             &self,
-            _context: &UnifiedSearchContext,
+            _context: &SearchPlan,
             _params: &SearchParams,
             _distance_compute: &UnifiedDistanceCompute,
             _quantization_engine: Option<&UnifiedQuantizationEngine>,
@@ -42,11 +42,11 @@ mod tests {
             })
         }
 
-        async fn can_handle(&self, _context: &UnifiedSearchContext, _params: &SearchParams) -> bool {
+        async fn can_handle(&self, _context: &SearchPlan, _params: &SearchParams) -> bool {
             self.can_handle_result
         }
 
-        async fn optimization_hints(&self, _context: &UnifiedSearchContext) -> Vec<OptimizationHint> {
+        async fn optimization_hints(&self, _context: &SearchPlan) -> Vec<OptimizationHint> {
             vec![
                 OptimizationHint::UseQuantization {
                     method: UnifiedQuantizationLevel::pq8(32),
@@ -58,13 +58,13 @@ mod tests {
             ]
         }
 
-        async fn estimate_cost(&self, _context: &UnifiedSearchContext, _params: &SearchParams) -> f64 {
+        async fn estimate_cost(&self, _context: &SearchPlan, _params: &SearchParams) -> f64 {
             self.cost_estimate
         }
     }
 
-    fn create_test_search_context() -> UnifiedSearchContext {
-        UnifiedSearchContext {
+    fn create_test_search_context() -> SearchPlan {
+        SearchPlan {
             collection_id: "test_collection".to_string(),
             collection_config: Some(CollectionConfig {
                 default_distance_metric: DistanceMetric::Cosine,

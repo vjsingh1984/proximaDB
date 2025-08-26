@@ -28,6 +28,7 @@ use std::cmp::Ordering;
 use std::sync::Arc;
 use tokio::sync::{broadcast, Mutex, RwLock};
 use tokio::time::{Duration, Instant};
+use crate::compute::quantization::types::UnifiedQuantizationLevel;
 use tracing::{debug, info, warn};
 
 // use super::ml_clustering::{KMeansConfig, MLClusteringEngine}; // Moved to AXIS
@@ -818,7 +819,7 @@ impl VectorRecordProcessor {
             (Value::Number(a_num), Value::Number(b_num)) => {
                 match (a_num.as_f64(), b_num.as_f64()) {
                     (Some(a_f), Some(b_f)) => {
-                        a_f.partial_cmp(&b_f)
+                        a_f.partial_cmp(&b_f).unwrap_or(Ordering::Equal)
                     }
                     _ => Ordering::Equal,
                 }
@@ -1002,76 +1003,36 @@ impl VectorRecordProcessor {
             records.len()
         );
 
-        let mut quantization_engine = self.quantization.lock().await;
+        let quantization_engine = self.quantization.lock().await;
 
-        // Override the engine's quantization level
-        quantization_engine.set_quantization_level(quantization_level);
+        debug!(
+            "🧠 Quantizing {} vectors with {:?}",
+            records.len(),
+            quantization_level
+        );
 
-        // Check if we need to train a quantization model
-        let needs_training = match quantization_engine.get_model() {
-            Some(model) => {
-                // Retrain if dimension mismatch, level mismatch, or quality degradation
-                model.dimension != records[0].vector.len()
-                    || model.level != quantization_level
-                    || model.quality_metrics.search_quality_retention < 0.8
-            }
-            None => true,
-        };
+        // Extract vectors for quantization
+        let vectors: Vec<Vec<f32>> = records.iter().map(|r| r.vector.to_vec()).collect();
 
-        if needs_training {
-            debug!(
-                "🧠 Training {:?} quantization model for {} vectors",
-                quantization_level,
-                records.len()
-            );
-
-            // Extract vectors for training (sample if too many)
-            let training_vectors: Vec<Vec<f32>> = if records.len() > 10000 {
-                // Sample every nth vector for training
-                let step = records.len() / 10000;
-                records
-                    .iter()
-                    .step_by(step.max(1))
-                    .map(|r| r.vector.to_vec())
-                    .collect()
-            } else {
-                records.iter().map(|r| r.vector.to_vec()).collect()
-            };
-
-            let train_result = quantization_engine.train_model(&training_vectors);
-            match train_result {
-                Ok(model) => {
-                    info!("{:?} quantization model trained: {:.1}x compression, {:.1}% quality_level retention",
-                          quantization_level,
-                          model.quality_metrics.compression_ratio,
-                          model.quality_metrics.search_quality_retention * 100.0);
-                }
-                Err(e) => {
-                    warn!(
-                        "⚠️ {:?} quantization training failed: {}, skipping quantization",
-                        quantization_level, e
-                    );
-                    return Ok(vec![]); // Return empty if training fails
-                }
-            }
-        }
-
-        // Apply quantization to all vectors
-        let quantization_result = quantization_engine.as_ref().quantize_vectors(records);
+        // Apply quantization to all vectors using the correct method
+        let quantization_result = quantization_engine.quantize_batch_with_level(&vectors, quantization_level).await;
         match quantization_result {
-            Ok(quantized_vectors) => {
+            Ok(storage_quantized_data) => {
                 debug!(
                     "Quantized {} vectors successfully",
-                    quantized_vectors.len()
+                    storage_quantized_data.len()
                 );
 
-                // Log quantization statistics
-                let stats = quantization_engine.get_stats();
+                // Convert StorageQuantizedData to QuantizedVector
+                let quantized_vectors: Vec<crate::compute::quantization::unified::QuantizedVector> = 
+                    storage_quantized_data.into_iter()
+                        .filter_map(|data| data.primary)
+                        .collect();
+
+                // Log quantization success
                 debug!(
-                    "Quantization stats: {} vectors processed, {:.2} KB saved, {:.1}μs avg time",
-                    stats.vectors_quantized,
-                    stats.bytes_saved as f32 / 1024.0,
-                    stats.avg_quantization_time_us
+                    "Quantization complete: {} vectors processed",
+                    quantized_vectors.len()
                 );
 
                 Ok(quantized_vectors)
@@ -1105,7 +1066,7 @@ impl VectorRecordProcessor {
         );
 
         // Stage 1: Apply quantization if configured
-        let quantized_vectors = if let Some(quantization_level) = self.config.quantization_level {
+        let quantized_vectors = if let Some(quantization_level) = self.config.quantization_level.clone() {
             match self
                 .apply_vector_quantization(records, quantization_level)
                 .await
@@ -1155,7 +1116,7 @@ impl VectorRecordProcessor {
 
         // Create minimal RecordBatch (placeholder implementation)
         let id_array = arrow_array::StringArray::from(
-            records.iter().map(|r| r.id.as_deref()).collect::<Vec<_>>(),
+            records.iter().map(|r| r.id.as_str()).collect::<Vec<_>>(),
         );
         let collection_array = arrow_array::StringArray::from(
             vec![collection_id; records.len()]
@@ -1248,7 +1209,7 @@ impl VectorRecordProcessor {
                     let mag_b: f32 = b.vector.iter().map(|x| x * x).sum::<f32>().sqrt();
                     mag_a
                         .partial_cmp(&mag_b)
-                        
+                        .unwrap_or(Ordering::Equal)
                 });
             }
 
@@ -1260,7 +1221,7 @@ impl VectorRecordProcessor {
                         return count_cmp;
                     }
                     // Secondary sort by ID for consistency
-                    a.id.as_deref().cmp(&b.id.as_deref().unwrap_or(""))
+                    a.id.as_str().cmp(&b.id.as_str())
                 });
             }
 
@@ -1278,7 +1239,7 @@ impl VectorRecordProcessor {
                     for i in 0..std::cmp::min(3, std::cmp::min(a.vector.len(), b.vector.len())) {
                         let dim_cmp = a.vector[i]
                             .partial_cmp(&b.vector[i])
-                            ;
+                            .unwrap_or(Ordering::Equal);
                         if dim_cmp != Ordering::Equal {
                             return dim_cmp;
                         }
@@ -1307,7 +1268,7 @@ impl VectorRecordProcessor {
                 records.sort_by(|a, b| a.timestamp.cmp(&b.timestamp));
             }
             SortingStrategy::ById => {
-                records.sort_by(|a, b| a.id.as_deref().cmp(&b.id.as_deref().unwrap_or("")));
+                records.sort_by(|a, b| a.id.as_str().cmp(&b.id.as_str()));
             }
             SortingStrategy::ByMetadata(fields) => {
                 records.sort_by(|a, b| self.compare_by_metadata_fields(a, b, fields));
@@ -1319,7 +1280,7 @@ impl VectorRecordProcessor {
             } => {
                 records.sort_by(|a, b| {
                     if *include_id {
-                        let id_cmp = a.id.as_deref().cmp(&b.id.as_deref().unwrap_or(""));
+                        let id_cmp = a.id.as_str().cmp(&b.id.as_str());
                         if id_cmp != Ordering::Equal {
                             return id_cmp;
                         }
@@ -1366,7 +1327,7 @@ impl VectorRecordProcessor {
                     let mag_b: f32 = b.vector.iter().map(|x| x * x).sum::<f32>().sqrt();
                     let mag_cmp = mag_a
                         .partial_cmp(&mag_b)
-                        ;
+                        .unwrap_or(Ordering::Equal);
 
                     if mag_cmp != Ordering::Equal {
                         return mag_cmp;
@@ -1376,7 +1337,7 @@ impl VectorRecordProcessor {
                     for i in 0..std::cmp::min(5, std::cmp::min(a.vector.len(), b.vector.len())) {
                         let dim_cmp = a.vector[i]
                             .partial_cmp(&b.vector[i])
-                            ;
+                            .unwrap_or(Ordering::Equal);
                         if dim_cmp != Ordering::Equal {
                             return dim_cmp;
                         }
@@ -1386,7 +1347,7 @@ impl VectorRecordProcessor {
                 });
             }
             SortingStrategy::ById => {
-                records.sort_by(|a, b| a.id.as_deref().cmp(&b.id.as_deref().unwrap_or("")));
+                records.sort_by(|a, b| a.id.as_str().cmp(&b.id.as_str()));
             }
             SortingStrategy::ByMetadata(fields) => {
                 records.sort_by(|a, b| self.compare_by_metadata_fields(a, b, fields));
@@ -1398,7 +1359,7 @@ impl VectorRecordProcessor {
             } => {
                 records.sort_by(|a, b| {
                     if *include_id {
-                        let id_cmp = a.id.as_deref().cmp(&b.id.as_deref().unwrap_or(""));
+                        let id_cmp = a.id.as_str().cmp(&b.id.as_str());
                         if id_cmp != Ordering::Equal {
                             return id_cmp;
                         }
@@ -1435,7 +1396,7 @@ impl VectorRecordProcessor {
 
     /// Apply column pruning to remove unnecessary columns for storage optimization
     fn apply_column_pruning(&self, batch: RecordBatch) -> Result<RecordBatch> {
-        if !self.config.enable_compression {
+        if !self.config.compression {
             return Ok(batch);
         }
 
@@ -1804,7 +1765,7 @@ impl VectorProcessor for VectorRecordProcessor {
                     let mag_b: f32 = b.vector.iter().map(|x| x * x).sum::<f32>().sqrt();
                     let mag_cmp = mag_a
                         .partial_cmp(&mag_b)
-                        ;
+                        .unwrap_or(Ordering::Equal);
 
                     if mag_cmp != Ordering::Equal {
                         return mag_cmp;
@@ -1814,7 +1775,7 @@ impl VectorProcessor for VectorRecordProcessor {
                     for i in 0..std::cmp::min(5, std::cmp::min(a.vector.len(), b.vector.len())) {
                         let dim_cmp = a.vector[i]
                             .partial_cmp(&b.vector[i])
-                            ;
+                            .unwrap_or(Ordering::Equal);
                         if dim_cmp != Ordering::Equal {
                             return dim_cmp;
                         }
@@ -1826,7 +1787,7 @@ impl VectorProcessor for VectorRecordProcessor {
             }
 
             SortingStrategy::ById => {
-                records.sort_by(|a, b| a.id.as_deref().cmp(&b.id.as_deref().unwrap_or("")));
+                records.sort_by(|a, b| a.id.as_str().cmp(&b.id.as_str()));
                 tracing::debug!("🔢 Sorted {} records by ID", record_count);
             }
 
@@ -1849,7 +1810,7 @@ impl VectorProcessor for VectorRecordProcessor {
 
                     // Stage 1: ID comparison (if enabled)
                     if *include_id {
-                        let id_cmp = a.id.as_deref().cmp(&b.id.as_deref().unwrap_or(""));
+                        let id_cmp = a.id.as_str().cmp(&b.id.as_str());
                         if id_cmp != Ordering::Equal {
                             return id_cmp;
                         }
@@ -2245,9 +2206,22 @@ impl ParquetFlusher {
         let mut is_pq = Vec::new();
 
         for qvec in quantized_vectors {
-            bits_per_value.push(qvec.level.bits_per_value());
-            errors.push(qvec.reconstruction_error);
-            is_pq.push(qvec.level.is_product_quantization());
+            // Get bits per value based on quantization level
+            use crate::compute::quantization::types::QuantizationLevelType;
+            let (bits, is_product_quant) = match &qvec.quantization_level.level_type {
+                Some(QuantizationLevelType::Binary(_)) => (1, false),
+                Some(QuantizationLevelType::Scalar(s)) => (s.bits as u8, false),
+                Some(QuantizationLevelType::Uniform(u)) => (u.bits as u8, false),
+                Some(QuantizationLevelType::Pq(pq)) => (pq.bits_per_code as u8, true),
+                Some(QuantizationLevelType::Custom(c)) => (c.bits_per_element as u8, false),
+                None | Some(QuantizationLevelType::None(_)) => (32, false), // Default to FP32
+            };
+            bits_per_value.push(bits);
+            
+            // Default error value - reconstruction error not tracked in current structure
+            errors.push(0.0);
+            
+            is_pq.push(is_product_quant);
         }
 
         if !bits_per_value.is_empty() {
@@ -2517,8 +2491,7 @@ impl CompactionEngine {
 
             CompactionType::Reclustering {
                 new_cluster_count,
-                quality_threshold,
-            } => Self::execute_reclustering(task, *new_cluster_count, *quality_threshold).await?,
+            } => Self::execute_reclustering(task, *new_cluster_count).await?,
 
             CompactionType::FeatureReorganization {
                 important_features,
@@ -2534,9 +2507,8 @@ impl CompactionEngine {
 
             CompactionType::CompressionOptimization {
                 target_algorithm,
-                quality_threshold,
             } => {
-                Self::execute_compression_optimization(task, target_algorithm, *quality_threshold)
+                Self::execute_compression_optimization(task, target_algorithm)
                     .await?
             }
 
@@ -2982,7 +2954,7 @@ impl CompactionEngine {
             };
             let timestamp = chrono::Utc::now().timestamp_millis();
             let record = VectorRecord {
-                id: Some(format!("vec_{:06}", i)),
+                id: format!("vec_{:06}", i),
                 vector: vec![0.1 * i as f32; 768], // Simulate 768-dim vectors
                 metadata: proto_metadata_helper::json_metadata_to_proto(&metadata),
                 timestamp: timestamp as u32,
@@ -2990,6 +2962,7 @@ impl CompactionEngine {
                 expires_at: None,
                 version: Some(1),
                 quantized_vector: None,
+                source: None,
             };
             records.push(record);
         }
@@ -3492,7 +3465,7 @@ impl Default for ViperPipelineConfig {
                 batch_size: 1000,
                 compression: true,
                 sorting_strategy: SortingStrategy::ByTimestamp,
-                quantization_level: Some(crate::compute::quantization::unified::UnifiedQuantizationLevel::Uniform(8)), // Default to 8-bit quantization
+                quantization_level: Some(crate::compute::quantization::types::UnifiedQuantizationLevel::Int8), // Default to 8-bit quantization
             },
             flushing_config: FlushingConfig {
                 compression_algorithm: CompressionAlgorithm::Mixed, // Use Mixed as the recommended default

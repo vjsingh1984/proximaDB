@@ -287,47 +287,17 @@ impl TierDataMovement {
         );
         let writer = SstableWriter::new(&path, 4096, filesystem);
         
-        // Convert vectors to SST records
-        let mut records = std::collections::BTreeMap::new();
+        // Pass vectors directly without any ID manipulation or deduplication
+        // Collection service handles ID validation when needed
         let mut total_bytes = 0;
-        
-        for vector in vectors {
-            let id = vector.id.clone().unwrap_or_else(|| format!("vec_{}", records.len()));
-            let vector_bytes = vector.vector.len() * 4; // f32 is 4 bytes
-            total_bytes += vector_bytes;
-            
-            // Convert proto metadata to SST metadata
-            let metadata = vector.metadata.iter().map(|m| {
-                crate::proto::proximadb::MetadataItem {
-                    key: m.key.clone(),
-                    value: Some(crate::proto::proximadb::metadata_item::Value::StringValue(
-                        m.value.as_ref().map(|v| match v {
-                            crate::proto::proximadb::metadata_item::Value::StringValue(s) => s.clone(),
-                            crate::proto::proximadb::metadata_item::Value::NumberValue(n) => n.to_string(),
-                            crate::proto::proximadb::metadata_item::Value::BoolValue(b) => b.to_string(),
-                        }).unwrap_or_default()
-                    )),
-                }
-            }).collect();
-            
-            records.insert(id.clone(), crate::core::VectorRecord {
-                id: Some(id),
-                vector: vector.vector.clone(),
-                metadata,
-                timestamp: std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap()
-                    .as_secs() as u32,
-                updated_at: None,
-                expires_at: None,
-                version: vector.version,
-                quantized_vector: None,
-            });
-        }
+        let records: Vec<VectorRecord> = vectors.iter().map(|vector| {
+            total_bytes += vector.vector.len() * 4; // f32 is 4 bytes
+            vector.clone()
+        }).collect();
         
         // Write records using streaming approach for production consistency
         let record_count = records.len();
-        let sorted_records_iter = records.into_iter().map(|(_, record)| record); // Extract just the VectorRecord
+        let sorted_records_iter = records.into_iter();
         writer.write_sorted_records(sorted_records_iter, record_count).await?;
         Ok(total_bytes)
     }

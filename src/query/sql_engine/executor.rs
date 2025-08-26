@@ -130,28 +130,31 @@ impl SqlExecutor {
             Some(params)
         };
         
-        // Execute search
-        let search_results = self.vector_service.search_vectors(
+        // Execute search using unified_search
+        let search_results = self.vector_service.unified_search(
             &plan.collection,
             search_params.query_vector.clone(),
             search_params.top_k,
+            None, // No filter for basic SQL search
+            None, // Use default config
         ).await?;
         
         // Convert to result rows
         let mut rows = Vec::new();
-        for result in search_results {
-            let mut data = HashMap::new();
-            
-            // Add requested fields
-            for field in &plan.select_fields {
-                match field.as_str() {
-                    "id" => {
-                        data.insert("id".to_string(), serde_json::Value::String(result.id.clone()));
-                    }
-                    "vector" => {
-                        if let Some(ref vector) = result.vector {
-                            if !vector.is_empty() {
-                                let vec_json: Vec<serde_json::Value> = vector
+        // search_results is Vec<SearchResult>, each containing results: Vec<SearchVectorRecord>
+        for search_result in search_results {
+            for result in search_result.results {
+                let mut data = HashMap::new();
+                
+                // Add requested fields
+                for field in &plan.select_fields {
+                    match field.as_str() {
+                        "id" => {
+                            data.insert("id".to_string(), serde_json::Value::String(result.id.clone()));
+                        }
+                        "vector" => {
+                            if !result.vector.is_empty() {
+                                let vec_json: Vec<serde_json::Value> = result.vector
                                     .iter()
                                     .map(|&v| serde_json::Value::Number(
                                         serde_json::Number::from_f64(v as f64).unwrap()
@@ -160,30 +163,49 @@ impl SqlExecutor {
                                 data.insert("vector".to_string(), serde_json::Value::Array(vec_json));
                             }
                         }
-                    }
                     "metadata_info" => {
-                        // Convert metadata HashMap to JSON
+                        // Convert metadata Vec<MetadataItem> to JSON
                         let mut metadata_map = serde_json::Map::new();
-                        for (key, value) in &result.metadata {
-                            metadata_map.insert(key.clone(), value.clone());
+                        for item in &result.metadata {
+                            if let Some(ref value) = item.value {
+                                use crate::proto::proximadb::metadata_item::Value;
+                                let json_value = match value {
+                                    Value::StringValue(s) => serde_json::Value::String(s.clone()),
+                                    Value::NumberValue(n) => serde_json::json!(n),
+                                    Value::BoolValue(b) => serde_json::Value::Bool(*b),
+                                };
+                                metadata_map.insert(item.key.clone(), json_value);
+                            }
                         }
                         data.insert("metadata_info".to_string(), serde_json::Value::Object(metadata_map));
                     }
                     field if field.starts_with("metadata.") => {
                         // Extract specific metadata field
                         let key = &field[9..]; // Skip "metadata."
-                        if let Some(value) = result.metadata.get(key) {
-                            data.insert(field.to_string(), value.clone());
+                        for item in &result.metadata {
+                            if item.key == key {
+                                if let Some(ref value) = item.value {
+                                    use crate::proto::proximadb::metadata_item::Value;
+                                    let json_value = match value {
+                                        Value::StringValue(s) => serde_json::Value::String(s.clone()),
+                                        Value::NumberValue(n) => serde_json::json!(n),
+                                        Value::BoolValue(b) => serde_json::Value::Bool(*b),
+                                    };
+                                    data.insert(field.to_string(), json_value);
+                                    break;
+                                }
+                            }
                         }
                     }
-                    _ => {} // Ignore unknown fields
+                        _ => {} // Ignore unknown fields
+                    }
                 }
+                
+                rows.push(ResultRow {
+                    data,
+                    similarity: Some(result.score), // Use actual score from search result
+                });
             }
-            
-            rows.push(ResultRow {
-                data,
-                similarity: Some(1.0), // TODO: Extract actual score from search result
-            });
         }
         
         Ok(rows)

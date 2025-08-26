@@ -14,13 +14,15 @@
  * limitations under the License.
  */
 
-//! SIMD-optimized vector array parsing for high-performance SQL processing
+//! High-performance vector array parsing for SQL queries
 //!
-//! This module provides hardware-accelerated parsing of vector arrays in SQL queries,
-//! using SIMD instructions (AVX2/SSE) when available with automatic fallback to
-//! scalar implementations.
+//! This module provides optimized parsing of floating-point vector arrays from their
+//! string representation in SQL queries (e.g., [0.1, 0.2, 0.3, ...]) to Vec<f32>.
+//! Uses SIMD instructions (AVX2/SSE) when available for bulk float parsing,
+//! with automatic fallback to scalar implementation.
 
 use anyhow::{anyhow, Result};
+#[cfg(target_arch = "x86_64")]
 use std::arch::x86_64::*;
 use tracing::info;
 use crate::core::hardware_capabilities::try_get_hardware_capabilities;
@@ -45,75 +47,61 @@ pub struct SimdCapabilities {
 }
 
 impl SimdCapabilities {
-    /// Detect SIMD capabilities at runtime
+    /// Detect SIMD capabilities using global hardware instance
     pub fn detect() -> Self {
-        #[cfg(target_arch = "x86_64")]
-        {
-            let has_avx2 = is_x86_feature_detected!("avx2");
-            let has_avx = is_x86_feature_detected!("avx");
-            let has_sse = is_x86_feature_detected!("sse");
-            let has_avx512 = is_x86_feature_detected!("avx512f");
-            let sse41 = is_x86_feature_detected!("sse4.1");
-            let fma = is_x86_feature_detected!("fma");
+        // Use global hardware capabilities instance
+        if let Some(caps) = try_get_hardware_capabilities() {
+            Self {
+                has_sse: caps.cpu.features.sse42_support,  // SSE4.2 implies SSE
+                has_sse41: caps.cpu.features.sse42_support, // SSE4.2 implies SSE4.1
+                has_avx: caps.cpu.features.avx2_support,    // AVX2 implies AVX
+                has_avx2: caps.cpu.features.avx2_support,
+                has_avx512: caps.cpu.features.avx512_support,
+                has_neon: caps.cpu.features.neon_support,
+                has_fma: caps.cpu.features.avx2_support,    // FMA typically comes with AVX2
+            }
+        } else {
+            // Fallback if global instance not initialized (should not happen in production)
+            #[cfg(target_arch = "x86_64")]
+            {
+                Self {
+                    has_sse: false,
+                    has_sse41: false,
+                    has_avx: false,
+                    has_avx2: false,
+                    has_avx512: false,
+                    has_neon: false,
+                    has_fma: false,
+                }
+            }
             
-            Self {
-                has_sse,
-                has_sse41: sse41,
-                has_avx,
-                has_avx2,
-                has_avx512,
-                has_neon: false,
-                has_fma: fma,
+            #[cfg(target_arch = "aarch64")]
+            {
+                Self {
+                    has_sse: false,
+                    has_sse41: false,
+                    has_avx: false,
+                    has_avx2: false,
+                    has_avx512: false,
+                    has_neon: false,
+                    has_fma: false,
+                }
             }
-        }
-        
-        #[cfg(target_arch = "aarch64")]
-        {
-            Self {
-                has_sse: false,
-                has_sse41: false,
-                has_avx: false,
-                has_avx2: false,
-                has_avx512: false,
-                has_neon: true, // ARM NEON is typically always available on aarch64
-                has_fma: false,
-            }
-        }
-        
-        #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
-        {
-            Self {
-                has_sse: false,
-                has_sse41: false,
-                has_avx: false,
-                has_avx2: false,
-                has_avx512: false,
-                has_neon: false,
-                has_fma: false,
+            
+            #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+            {
+                Self {
+                    has_sse: false,
+                    has_sse41: false,
+                    has_avx: false,
+                    has_avx2: false,
+                    has_avx512: false,
+                    has_neon: false,
+                    has_fma: false,
+                }
             }
         }
     }
-    
-    // TODO: Implement GPU capability detection methods
-    // fn detect_cuda_capability() -> bool {
-    //     // Check CUDA runtime availability
-    //     // Similar to compute::gpu::cuda::is_cuda_available()
-    // }
-    //
-    // fn detect_rocm_capability() -> bool {
-    //     // Check ROCm/HIP runtime availability
-    //     // Similar to compute::gpu::rocm::is_rocm_available()
-    // }
-    //
-    // fn detect_metal_capability() -> bool {
-    //     // Check Metal Performance Shaders availability
-    //     // Similar to compute::gpu::metal::is_metal_available()
-    // }
-    //
-    // fn detect_opencl_capability() -> bool {
-    //     // Check OpenCL runtime availability
-    //     // Similar to compute::gpu::opencl::is_opencl_available()
-    // }
     
     /// Get human-readable capability string
     pub fn to_string(&self) -> String {
@@ -157,15 +145,6 @@ pub struct SimdParserStats {
     pub scalar_operations: u64,
     /// Total parsing time in nanoseconds
     pub total_parse_time_ns: u64,
-    // TODO: Add GPU operation counters
-    // /// Number of times CUDA path was used
-    // pub cuda_operations: u64,
-    // /// Number of times ROCm path was used
-    // pub rocm_operations: u64,
-    // /// Number of times Metal path was used
-    // pub mps_operations: u64,
-    // /// Number of times OpenCL path was used
-    // pub opencl_operations: u64,
 }
 
 impl SimdParserStats {
@@ -273,27 +252,6 @@ impl SimdVectorParser {
             self.parse_scalar(&parts)
         };
         
-        // TODO: Add GPU-accelerated parsing paths
-        // GPU parsing would be beneficial for:
-        // 1. Very large vectors (1000+ elements)
-        // 2. Batch parsing of multiple vectors
-        // 3. Complex transformations during parsing (normalization, quantization)
-        //
-        // Example GPU path selection:
-        // if count >= 1000 && self.capabilities.cuda {
-        //     self.stats.cuda_operations += 1;
-        //     self.parse_with_cuda(&parts)
-        // } else if count >= 1000 && self.capabilities.rocm {
-        //     self.stats.rocm_operations += 1;
-        //     self.parse_with_rocm(&parts)
-        // } else if count >= 1000 && self.capabilities.mps {
-        //     self.stats.mps_operations += 1;
-        //     self.parse_with_metal(&parts)
-        // } else if count >= 1000 && self.capabilities.opencl {
-        //     self.stats.opencl_operations += 1;
-        //     self.parse_with_opencl(&parts)
-        // }
-        
         // Update statistics
         let elapsed = start_time.elapsed();
         self.stats.total_parse_time_ns += elapsed.as_nanos() as u64;
@@ -304,8 +262,11 @@ impl SimdVectorParser {
     }
     
     /// Parse vector using AVX2 SIMD instructions
+    #[cfg(target_arch = "x86_64")]
     #[target_feature(enable = "avx2")]
     unsafe fn parse_with_avx2(&self, parts: &[&str]) -> Result<Vec<f32>> {
+        #[cfg(target_arch = "x86_64")]
+        use std::arch::x86_64::{_mm256_loadu_ps, _mm256_storeu_ps};
         let mut result = Vec::with_capacity(parts.len());
         
         // Process 8 elements at a time with AVX2
@@ -339,9 +300,18 @@ impl SimdVectorParser {
         Ok(result)
     }
     
+    #[cfg(not(target_arch = "x86_64"))]
+    unsafe fn parse_with_avx2(&self, parts: &[&str]) -> Result<Vec<f32>> {
+        // On non-x86_64, fallback to scalar parsing
+        self.parse_scalar(parts)
+    }
+    
     /// Parse vector using SSE4.1 SIMD instructions
+    #[cfg(target_arch = "x86_64")]
     #[target_feature(enable = "sse4.1")]
     unsafe fn parse_with_sse41(&self, parts: &[&str]) -> Result<Vec<f32>> {
+        #[cfg(target_arch = "x86_64")]
+        use std::arch::x86_64::{_mm_loadu_ps, _mm_storeu_ps};
         let mut result = Vec::with_capacity(parts.len());
         
         // Process 4 elements at a time with SSE4.1
@@ -375,6 +345,12 @@ impl SimdVectorParser {
         Ok(result)
     }
     
+    #[cfg(not(target_arch = "x86_64"))]
+    unsafe fn parse_with_sse41(&self, parts: &[&str]) -> Result<Vec<f32>> {
+        // On non-x86_64, fallback to scalar parsing
+        self.parse_scalar(parts)
+    }
+    
     /// Scalar fallback implementation
     fn parse_scalar(&self, parts: &[&str]) -> Result<Vec<f32>> {
         let mut result = Vec::with_capacity(parts.len());
@@ -387,36 +363,6 @@ impl SimdVectorParser {
         
         Ok(result)
     }
-    
-    // TODO: Implement GPU-accelerated parsing methods
-    // These methods would follow similar patterns to UnifiedDistanceCompute GPU implementations
-    
-    // /// Parse vector using CUDA GPU acceleration
-    // fn parse_with_cuda(&self, parts: &[&str]) -> Result<Vec<f32>> {
-    //     // 1. Allocate GPU memory for input strings and output floats
-    //     // 2. Transfer string data to GPU
-    //     // 3. Launch CUDA kernel for parallel float parsing
-    //     // 4. Transfer results back to CPU
-    //     // Benefits: Massive parallelism for large vectors (1000+ elements)
-    // }
-    //
-    // /// Parse vector using ROCm/HIP GPU acceleration
-    // fn parse_with_rocm(&self, parts: &[&str]) -> Result<Vec<f32>> {
-    //     // Similar to CUDA but using HIP API
-    //     // Supports AMD GPUs for broader hardware compatibility
-    // }
-    //
-    // /// Parse vector using Apple Metal Performance Shaders
-    // fn parse_with_metal(&self, parts: &[&str]) -> Result<Vec<f32>> {
-    //     // Use Metal compute shaders for parsing on Apple Silicon
-    //     // Optimized for M1/M2/M3 unified memory architecture
-    // }
-    //
-    // /// Parse vector using OpenCL for cross-platform GPU support
-    // fn parse_with_opencl(&self, parts: &[&str]) -> Result<Vec<f32>> {
-    //     // OpenCL kernel for parsing on any GPU
-    //     // Most portable but potentially less optimized than native APIs
-    // }
     
     /// Get parser statistics
     pub fn stats(&self) -> &SimdParserStats {
@@ -453,12 +399,6 @@ impl SimdVectorParser {
             self.stats.sse41_operations,
             self.stats.scalar_operations
         )
-        // TODO: Add GPU statistics to performance summary
-        // When GPU support is added, include:
-        // - GPU utilization percentage
-        // - GPU memory bandwidth usage
-        // - Kernel launch overhead
-        // - CPU<->GPU transfer statistics
     }
 }
 

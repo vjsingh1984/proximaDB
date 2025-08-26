@@ -119,14 +119,17 @@ impl MetricsAggregationEngine {
             0.0
         };
         
-        let total_bytes_written: i64 = filtered.iter()
+        let max_bytes = filtered.iter()
             .map(|m| m.data_size_bytes)
             .max()
+            .unwrap_or(0);
             
-            - filtered.iter()
+        let min_bytes = filtered.iter()
             .map(|m| m.data_size_bytes)
             .min()
-            ;
+            .unwrap_or(0);
+            
+        let total_bytes_written: i64 = max_bytes - min_bytes;
         
         Ok(AggregatedMetrics {
             window,

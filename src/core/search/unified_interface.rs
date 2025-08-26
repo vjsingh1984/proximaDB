@@ -8,15 +8,27 @@ use async_trait::async_trait;
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use crate::core::search::{SearchParams, SearchResult, SearchResultSet};
+use crate::core::search::{SearchParams, SearchResultSet, InternalSearchResult};
 use crate::compute::distance_computation::DistanceMetric;
 use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
 use crate::compute::quantization::unified::{UnifiedQuantizationEngine, UnifiedQuantizationLevel};
 use crate::services::collection_service::CollectionService;
 
-/// Unified search execution context with collection awareness
+/// SearchPlan - High-level search execution plan with optimization metadata.
+/// 
+/// This structure represents the planning and optimization layer for searches,
+/// containing all metadata needed to make intelligent routing and optimization decisions.
+/// 
+/// # Purpose
+/// - Query planning and optimization
+/// - Resource allocation decisions  
+/// - Quantization strategy selection
+/// - Filter pushdown optimization
+/// 
+/// # Usage
+/// Created by search coordinators and optimizers before executing the actual search.
 #[derive(Debug, Clone)]
-pub struct UnifiedSearchContext {
+pub struct SearchPlan {
     /// Collection metadata for optimization
     pub collection_id: String,
     pub collection_config: Option<CollectionConfig>,
@@ -93,20 +105,20 @@ pub trait UnifiedSearchEngine: Send + Sync {
     /// Search vectors with unified parameters and semantic results
     async fn search_unified(
         &self,
-        context: &UnifiedSearchContext,
+        context: &SearchPlan,
         params: &SearchParams,
         distance_compute: &UnifiedDistanceCompute,
         quantization_engine: Option<&UnifiedQuantizationEngine>,
     ) -> Result<SearchResultSet>;
     
     /// Check if this engine can handle the given search context
-    async fn can_handle(&self, context: &UnifiedSearchContext, params: &SearchParams) -> bool;
+    async fn can_handle(&self, context: &SearchPlan, params: &SearchParams) -> bool;
     
     /// Get optimization recommendations for this engine
-    async fn optimization_hints(&self, context: &UnifiedSearchContext) -> Vec<OptimizationHint>;
+    async fn optimization_hints(&self, context: &SearchPlan) -> Vec<OptimizationHint>;
     
     /// Estimate search cost for query planning
-    async fn estimate_cost(&self, context: &UnifiedSearchContext, params: &SearchParams) -> f64;
+    async fn estimate_cost(&self, context: &SearchPlan, params: &SearchParams) -> f64;
 }
 
 /// Optimization hints for search execution
@@ -203,7 +215,7 @@ impl IntegratedSearchOptimizer {
         &self,
         collection_id: &str,
         _params: &SearchParams,
-    ) -> Result<UnifiedSearchContext> {
+    ) -> Result<SearchPlan> {
         // Get collection from service
         let collection = self.collection_service
             .get_proto_collection(collection_id)
@@ -245,7 +257,7 @@ impl IntegratedSearchOptimizer {
             estimated_document_count: storage_info.file_count * 1000, // Rough estimate
         });
         
-        Ok(UnifiedSearchContext {
+        Ok(SearchPlan {
             collection_id: collection_id.to_string(),
             collection_config,
             filterable_columns,
@@ -261,7 +273,7 @@ impl IntegratedSearchOptimizer {
     /// Select optimal engines for search execution
     async fn select_engines(
         &self,
-        context: &UnifiedSearchContext,
+        context: &SearchPlan,
         params: &SearchParams,
     ) -> Result<Vec<Arc<dyn UnifiedSearchEngine>>> {
         let mut selected = Vec::new();
@@ -292,7 +304,7 @@ impl IntegratedSearchOptimizer {
     /// Apply unified ranking using semantic distance information
     async fn apply_unified_ranking(
         &self,
-        results: &mut Vec<SearchResult>,
+        results: &mut Vec<InternalSearchResult>,
         params: &SearchParams,
     ) -> Result<()> {
         // Sort by score (higher = better, so reverse order)

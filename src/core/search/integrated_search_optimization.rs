@@ -17,7 +17,7 @@ use memmap2::{Mmap, MmapOptions};
 use parking_lot::RwLock;
 
 use crate::core::search::{
-    SearchParams, InternalSearchResult, SearchVectorRecord, FilterExpression,
+    SearchParams, InternalSearchResult, FilterExpression,
     query_preprocessing::QueryPreprocessor,
     metadata_filter_pushdown::MetadataFilterPushdown,
     unified_progressive_pipeline::UnifiedProgressiveSearchPipeline,
@@ -32,7 +32,7 @@ use crate::storage::cache::{
 use crate::proto::proximadb::{VectorRecord, Collection, QuantizationConfig};
 use crate::compute::distance_computation::DistanceMetric;
 use crate::compute::quantization::unified::UnifiedQuantizationLevel;
-use crate::storage::traits::{SearchContext, UnifiedStorageEngine};
+use crate::storage::traits::{StorageQueryContext, UnifiedStorageEngine};
 use crate::services::collection_service::CollectionService;
 use crate::index::axis::manager::AxisManager;
 use crate::index::axis::serialization::IndexType;
@@ -218,9 +218,10 @@ impl IntegratedSearchOptimizer {
         config: OptimizationConfig,
     ) -> Self {
         // Detect hardware capabilities
+        let caps = crate::core::hardware_capabilities::get_hardware_capabilities();
         let hardware_profile = HardwareProfile {
-            has_avx2: is_x86_feature_detected!("avx2"),
-            has_avx512: is_x86_feature_detected!("avx512f"),
+            has_avx2: caps.cpu.features.avx2_support,
+            has_avx512: caps.cpu.features.avx512_support,
             cpu_cores: num_cpus::get(),
             available_memory_gb: (sys_info::mem_info().unwrap().total as f32) / (1024.0 * 1024.0),
         };
@@ -270,10 +271,37 @@ impl IntegratedSearchOptimizer {
         self.axis_manager = Some(axis_manager);
     }
     
+    /// Simple search method for compatibility
+    pub async fn search(
+        &self,
+        collection_id: &str,
+        query_vector: &[f32],
+        k: usize,
+        search_params: &SearchParams,
+        filter: Option<&FilterExpression>,
+    ) -> Result<Vec<InternalSearchResult>> {
+        // Create a StorageQueryContext from the parameters
+        let collection = Arc::new(crate::proto::proximadb::Collection {
+            id: collection_id.to_string(),
+            config: None,
+            stats: None,
+            created_at: 0,
+            updated_at: 0,
+            storage_assignment: None,
+        });
+        
+        let ctx = crate::storage::traits::StorageQueryContext::new(
+            Arc::new(search_params.clone()),
+            collection,
+        );
+        
+        self.execute_unified_search(&ctx).await
+    }
+    
     /// Execute unified search with cost-based routing (merged from IntegratedSearchOptimizer)
     pub async fn execute_unified_search(
         &self,
-        ctx: &SearchContext,
+        ctx: &StorageQueryContext,
     ) -> Result<Vec<InternalSearchResult>> {
         let start = Instant::now();
         
@@ -316,7 +344,7 @@ impl IntegratedSearchOptimizer {
     }
     
     /// Select optimal search strategy based on cost estimation (from IntegratedSearchOptimizer)
-    async fn select_optimal_strategy(&self, ctx: &SearchContext) -> Result<ExecutionStrategy> {
+    async fn select_optimal_strategy(&self, ctx: &StorageQueryContext) -> Result<ExecutionStrategy> {
         let dataset_size = ctx.metadata.estimated_vector_count;
         let has_index = self.axis_manager.is_some();
         let has_quantization = ctx.metadata.quantization_config.is_some();
@@ -346,7 +374,7 @@ impl IntegratedSearchOptimizer {
     }
     
     /// Execute progressive search with stage management (from IntegratedSearchOptimizer)
-    async fn execute_progressive_search(&self, ctx: &SearchContext) -> Result<Vec<InternalSearchResult>> {
+    async fn execute_progressive_search(&self, ctx: &StorageQueryContext) -> Result<Vec<InternalSearchResult>> {
         let query_vector = ctx.query_vector()
             .ok_or_else(|| anyhow::anyhow!("No query vector in context"))?;
         let k = ctx.top_k();
@@ -490,8 +518,12 @@ impl IntegratedSearchOptimizer {
                         quantization_info: None,
                         engine_stats: None,
                         index_path: None,
-                        timestamp: None,
-                        version: None,
+                        timestamp: record.timestamp,
+                        version: record.version,
+                        updated_at: None,
+                        expires_at: None,
+                        source: record.source,
+                        expanded_context: record.expanded_context,
                     });
                 }
             }
@@ -528,6 +560,8 @@ impl IntegratedSearchOptimizer {
                     metadata: vec![], // Would convert metadata
                     version: r.version,
                     timestamp: r.timestamp,
+                    source: r.source.clone(),
+                    expanded_context: r.expanded_context.clone(),
                 })
                 .collect(),
             total_found: results.len() as i64,
@@ -681,6 +715,10 @@ impl IntegratedSearchOptimizer {
                 index_path: None,
                 timestamp: None,
                 version: None,
+                updated_at: None,
+                expires_at: None,
+                source: None,
+                expanded_context: vec![],
             });
         }
         
@@ -710,27 +748,8 @@ impl IntegratedSearchOptimizer {
                     params.filter_expression.as_ref(),
                 ).await?;
                 
-                // Convert proto SearchResult to InternalSearchResult
-                let mut internal_results = Vec::new();
-                for proto_result in proto_results {
-                    for record in proto_result.results {
-                        internal_results.push(InternalSearchResult {
-                            id: record.id.clone(),
-                            vector_id: Some(record.id),
-                            score: record.score,
-                            similarity: record.similarity,
-                            vector: if record.vector.is_empty() { None } else { Some(record.vector) },
-                            metadata: Default::default(),
-                            debug_info: None,
-                            semantic_similarity: None,
-                            quantization_info: None,
-                            engine_stats: None,
-                            index_path: None,
-                            timestamp: record.timestamp,
-                            version: record.version,
-                        });
-                    }
-                }
+                // proto_results is already Vec<InternalSearchResult>
+                let internal_results = proto_results;
                 Ok(internal_results)
             }
             ExecutionStrategy::DirectFP32 { .. } => {
@@ -755,40 +774,21 @@ impl IntegratedSearchOptimizer {
                     params.filter_expression.as_ref(),
                 ).await?;
                 
-                // Convert proto SearchResult to InternalSearchResult
-                let mut internal_results = Vec::new();
-                for proto_result in proto_results {
-                    for record in proto_result.results {
-                        internal_results.push(InternalSearchResult {
-                            id: record.id.clone(),
-                            vector_id: Some(record.id),
-                            score: record.score,
-                            similarity: record.similarity,
-                            vector: if record.vector.is_empty() { None } else { Some(record.vector) },
-                            metadata: Default::default(),
-                            debug_info: None,
-                            semantic_similarity: None,
-                            quantization_info: None,
-                            engine_stats: None,
-                            index_path: None,
-                            timestamp: record.timestamp,
-                            version: record.version,
-                        });
-                    }
-                }
+                // proto_results is already Vec<InternalSearchResult>
+                let internal_results = proto_results;
                 Ok(internal_results)
             }
         }
     }
     
     /// Check cache from search context
-    async fn check_cache_from_context(&self, ctx: &SearchContext) -> Result<Option<Vec<InternalSearchResult>>> {
+    async fn check_cache_from_context(&self, ctx: &StorageQueryContext) -> Result<Option<Vec<InternalSearchResult>>> {
         // TODO: Implement cache lookup based on context
         Ok(None)
     }
     
     /// Execute index-first search strategy
-    async fn execute_index_first_search(&self, ctx: &SearchContext) -> Result<Vec<InternalSearchResult>> {
+    async fn execute_index_first_search(&self, ctx: &StorageQueryContext) -> Result<Vec<InternalSearchResult>> {
         // TODO: Implement index-first search using AXIS
         Err(anyhow::anyhow!("Index-first search not yet implemented"))
     }
@@ -800,7 +800,7 @@ impl IntegratedSearchOptimizer {
     }
     
     /// Cache search results
-    async fn cache_search_results(&self, ctx: &SearchContext, results: &[InternalSearchResult]) -> Result<()> {
+    async fn cache_search_results(&self, ctx: &StorageQueryContext, results: &[InternalSearchResult]) -> Result<()> {
         // TODO: Implement result caching
         Ok(())
     }
@@ -827,6 +827,11 @@ impl IntegratedSearchOptimizer {
         let mut results = Vec::new();
         
         for record in filtered_records {
+            // Skip records with empty IDs for search results
+            if record.id.is_empty() {
+                continue;
+            }
+            
             let dist_result = distance_compute.calculate_distance(
                 query_vector,
                 &record.vector,
@@ -834,8 +839,8 @@ impl IntegratedSearchOptimizer {
             );
             
             results.push(InternalSearchResult {
-                id: record.id.clone().unwrap_or_default(),
-                vector_id: record.id.clone(),
+                id: record.id.clone(),
+                vector_id: Some(record.id.clone()),
                 score: dist_result.normalized_score,
                 similarity: Some(dist_result.normalized_score),
                 vector: Some(record.vector),
@@ -847,15 +852,17 @@ impl IntegratedSearchOptimizer {
                 index_path: None,
                 timestamp: Some(record.timestamp),
                 version: record.version,
+                updated_at: record.updated_at,
+                expires_at: record.expires_at,
+                source: record.source,
+                expanded_context: vec![],
             });
         }
         
         results.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
         results.truncate(top_k);
         
-        for (i, result) in results.iter_mut().enumerate() {
-            result.rank = Some((i + 1) as u16);
-        }
+        // Rank is implicit from position in the results vector
         
         Ok(results)
     }
@@ -889,7 +896,13 @@ impl IntegratedSearchOptimizer {
         let total_results = search_params.top_k.unwrap_or(10);
         
         // Create a stream that processes batches lazily
-        let stream = stream::iter(records.chunks(batch_size).map(|chunk| chunk.to_vec()))
+        // Convert records into owned chunks to avoid lifetime issues
+        let chunks: Vec<Vec<VectorRecord>> = records
+            .chunks(batch_size)
+            .map(|chunk| chunk.to_vec())
+            .collect();
+        
+        let stream = stream::iter(chunks)
             .then(move |batch| {
                 let params = search_params.clone();
                 async move {

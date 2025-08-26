@@ -7,10 +7,10 @@ use anyhow::Result;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Instant;
-use tracing::{info, debug, warn};
+use tracing::{info, debug};
 
-use crate::storage::traits::{UnifiedStorageEngine, SearchContext};
-use crate::core::search::{SearchParams, SearchResult};
+use crate::storage::traits::{UnifiedStorageEngine, StorageQueryContext};
+use crate::core::search::SearchParams;
 use crate::compute::distance_computation::DistanceMetric;
 use crate::proto::proximadb::Collection;
 
@@ -384,8 +384,8 @@ impl StorageEngineBenchmark {
         top_k: usize,
         enable_quantization: bool,
         enable_indexes: bool,
-    ) -> SearchContext {
-        use crate::storage::traits::SearchContextMetadata;
+    ) -> StorageQueryContext {
+        use crate::storage::traits::StorageQueryMetadata;
         
         // Create mock query vector
         let query_vector: Vec<f32> = (0..dimension)
@@ -422,10 +422,10 @@ impl StorageEngineBenchmark {
             ..Default::default()
         });
         
-        SearchContext {
+        StorageQueryContext {
             search_params,
             collection,
-            metadata: SearchContextMetadata {
+            metadata: StorageQueryMetadata {
                 collection_id: "benchmark_collection".to_string(),
                 use_axis_indexes: enable_indexes,
                 has_quantization: enable_quantization,
@@ -439,7 +439,7 @@ impl StorageEngineBenchmark {
         &self,
         dimension: usize,
         top_k: usize,
-    ) -> SearchContext {
+    ) -> StorageQueryContext {
         let mut ctx = self.create_mock_search_context(dimension, top_k, false, false);
         
         // Add a simple filter expression

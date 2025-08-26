@@ -214,12 +214,10 @@ impl AxisManager {
         let search_strategy = self.get_collection_strategy(collection_id).await?;
 
         // Insert into global ID index if ID is present
-        if let Some(id) = &processed_vector.id {
-            if !id.is_empty() {
-                self.global_id_index
-                    .insert(id.clone(), collection_id, &processed_vector)
-                    .await?;
-            }
+        if !processed_vector.id.is_empty() {
+            self.global_id_index
+                .insert(processed_vector.id.clone(), collection_id, &processed_vector)
+                .await?;
         }
 
         // Insert into other indexes based on search_strategy

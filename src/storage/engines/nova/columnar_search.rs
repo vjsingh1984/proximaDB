@@ -760,7 +760,7 @@ impl NovaColumnarSearch {
             // Use ID index or scan to find record
             // Simplified implementation
             Ok(Some(VectorRecord {
-                id: Some(id.clone()),
+                id: id.clone(),
                 vector: vec![0.0; nova_file.metadata.dimension],
                 metadata: vec![],
                 timestamp: 0,
@@ -768,6 +768,7 @@ impl NovaColumnarSearch {
                 expires_at: None,
                 version: None,
                 quantized_vector: None,
+                source: None,
             }))
         } else {
             Ok(None)

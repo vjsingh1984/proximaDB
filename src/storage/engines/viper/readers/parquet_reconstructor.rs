@@ -358,7 +358,7 @@ impl ParquetReconstructor {
         let mut arrays: Vec<Arc<dyn Array>> = Vec::new();
         
         for column_name in required_columns {
-            match column_name.as_deref() {
+            match column_name.as_str() {
                 "id" => {
                     fields.push(Field::new("id", DataType::Utf8, false));
                     arrays.push(Arc::new(StringArray::from(vec!["placeholder_id"])));
@@ -439,7 +439,7 @@ impl ParquetReconstructor {
             };
             
             vector_records.push(VectorRecord {
-                id: Some(id),
+                id,
                 vector,
                 metadata,
                 timestamp: chrono::Utc::now().timestamp() as u32,
@@ -447,8 +447,8 @@ impl ParquetReconstructor {
                 expires_at: None,
                 version: Some(1),
                 quantized_vector: None,
-            
-        });
+                source: None,
+            });
         }
         
         Ok(vector_records)

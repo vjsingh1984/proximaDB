@@ -16,8 +16,9 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tracing::debug;
 
-use crate::compute::distance_computation::core::DistanceMetric;
+use crate::compute::distance_computation::DistanceMetric;
 use crate::compute::distance_computation::engine::{UnifiedDistanceCompute, SimilarityResult, MetricProperties};
+use super::hardware_accelerated::AcceleratedQuantization;
 
 // Use internal types (Release 1 - no legacy proto compatibility)
 pub use super::types::{
@@ -36,6 +37,9 @@ pub struct UnifiedQuantizationEngine {
     
     /// Codebook storage for PQ and other methods
     codebook_store: Arc<dyn CodebookStore>,
+    
+    /// Hardware-accelerated quantization
+    accelerated: AcceleratedQuantization,
 }
 
 /// Trait for codebook storage (can be backed by LSM, VIPER, or external store)
@@ -120,6 +124,7 @@ impl std::fmt::Debug for UnifiedQuantizationEngine {
         f.debug_struct("UnifiedQuantizationEngine")
             .field("distance_compute", &self.distance_compute)
             .field("codebook_store", &"<dyn CodebookStore>")
+            .field("accelerated", &"AcceleratedQuantization")
             .finish()
     }
 }
@@ -133,6 +138,7 @@ impl UnifiedQuantizationEngine {
         Self {
             distance_compute,
             codebook_store,
+            accelerated: AcceleratedQuantization::new(),
         }
     }
     
@@ -625,6 +631,35 @@ impl UnifiedQuantizationEngine {
         Ok(quantized)
     }
     
+    /// Quantize vector to 4-bit representation with min/max
+    /// Returns (packed_values, min, max, num_values)
+    /// Uses hardware acceleration when available
+    pub fn quantize_to_u4(&self, vector: &[f32]) -> Result<(Vec<u8>, f32, f32, usize)> {
+        self.accelerated.quantize_u4_accelerated(vector)
+    }
+    
+    /// Quantize vector to 6-bit representation with min/max
+    /// Returns (packed_values, min, max, num_values)
+    /// Uses hardware acceleration when available
+    pub fn quantize_to_u6(&self, vector: &[f32]) -> Result<(Vec<u8>, f32, f32, usize)> {
+        self.accelerated.quantize_u6_accelerated(vector)
+    }
+    
+    /// Quantize vector to 8-bit representation with min/max  
+    /// Returns (quantized_values, min, max)
+    /// Uses hardware acceleration when available
+    pub fn quantize_to_u8(&self, vector: &[f32]) -> Result<(Vec<u8>, f32, f32)> {
+        // Use hardware-accelerated implementation
+        self.accelerated.quantize_u8_accelerated(vector)
+    }
+    
+    /// Quantize vector to 16-bit representation with min/max
+    /// Returns (quantized_values, min, max)
+    /// Uses hardware acceleration when available
+    pub fn quantize_to_u16(&self, vector: &[f32]) -> Result<(Vec<u16>, f32, f32)> {
+        self.accelerated.quantize_u16_accelerated(vector)
+    }
+    
     /// Quantize vector to Product Quantization
     pub fn quantize_to_pq(
         &self,
@@ -861,6 +896,95 @@ impl UnifiedQuantizationEngine {
         self.dequantize_scalar(bytes, bits, scale, offset)
     }
     
+    /// Dequantize 4-bit packed values back to f32
+    pub fn dequantize_u4(&self, packed: &[u8], min: f32, max: f32, num_values: usize) -> Vec<f32> {
+        let range = if max > min { max - min } else { 1.0 };
+        let mut result = Vec::with_capacity(num_values);
+        
+        for &byte in packed.iter() {
+            // Extract high nibble (first value)
+            let high = (byte >> 4) as f32 / 15.0;
+            result.push(min + high * range);
+            
+            // Only extract low nibble if we haven't reached num_values
+            if result.len() < num_values {
+                let low = (byte & 0x0F) as f32 / 15.0;
+                result.push(min + low * range);
+            }
+        }
+        
+        result.truncate(num_values);
+        result
+    }
+    
+    /// Dequantize 6-bit packed values back to f32
+    pub fn dequantize_u6(&self, packed: &[u8], min: f32, max: f32, num_values: usize) -> Vec<f32> {
+        let range = if max > min { max - min } else { 1.0 };
+        let mut result = Vec::with_capacity(num_values);
+        let max_val = 63.0;
+        
+        // Process in groups of 3 bytes (which contain 4 6-bit values)
+        for chunk in packed.chunks(3) {
+            if result.len() >= num_values {
+                break;
+            }
+            
+            match chunk.len() {
+                1 => {
+                    let val0 = (chunk[0] >> 2) as f32 / max_val;
+                    result.push(min + val0 * range);
+                }
+                2 => {
+                    let val0 = (chunk[0] >> 2) as f32 / max_val;
+                    let val1 = (((chunk[0] & 0x03) << 4) | (chunk[1] >> 4)) as f32 / max_val;
+                    result.push(min + val0 * range);
+                    if result.len() < num_values {
+                        result.push(min + val1 * range);
+                    }
+                }
+                3 => {
+                    let val0 = (chunk[0] >> 2) as f32 / max_val;
+                    let val1 = (((chunk[0] & 0x03) << 4) | (chunk[1] >> 4)) as f32 / max_val;
+                    let val2 = (((chunk[1] & 0x0F) << 2) | (chunk[2] >> 6)) as f32 / max_val;
+                    let val3 = (chunk[2] & 0x3F) as f32 / max_val;
+                    
+                    result.push(min + val0 * range);
+                    if result.len() < num_values {
+                        result.push(min + val1 * range);
+                    }
+                    if result.len() < num_values {
+                        result.push(min + val2 * range);
+                    }
+                    if result.len() < num_values {
+                        result.push(min + val3 * range);
+                    }
+                }
+                _ => {}
+            }
+        }
+        
+        result.truncate(num_values);
+        result
+    }
+    
+    /// Dequantize 8-bit values back to f32
+    pub fn dequantize_u8(&self, quantized: &[u8], min: f32, max: f32) -> Vec<f32> {
+        let range = if max > min { max - min } else { 1.0 };
+        quantized.iter().map(|&q| {
+            let normalized = q as f32 / 255.0;
+            min + normalized * range
+        }).collect()
+    }
+    
+    /// Dequantize 16-bit values back to f32
+    pub fn dequantize_u16(&self, quantized: &[u16], min: f32, max: f32) -> Vec<f32> {
+        let range = if max > min { max - min } else { 1.0 };
+        quantized.iter().map(|&q| {
+            let normalized = q as f32 / 65535.0;
+            min + normalized * range
+        }).collect()
+    }
+    
     pub fn calculate_pq_distance_async(
         &self,
         query: &[f32],
@@ -1020,7 +1144,8 @@ impl UnifiedQuantizationEngine {
         // Use platform-specific optimizations if available
         #[cfg(target_arch = "x86_64")]
         {
-            if is_x86_feature_detected!("popcnt") {
+            let caps = crate::core::hardware_capabilities::get_hardware_capabilities();
+            if caps.cpu.features.popcnt {
                 return a.iter()
                     .zip(b.iter())
                     .map(|(byte_a, byte_b)| (*byte_a ^ *byte_b).count_ones())

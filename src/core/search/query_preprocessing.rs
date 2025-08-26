@@ -6,16 +6,15 @@
 //! Expected Performance Improvement: 15-25% reduction in repeated computation
 
 use std::sync::Arc;
-use std::collections::HashMap;
 use lru::LruCache;
 use parking_lot::RwLock;
 use tracing::{debug, trace};
 use crate::compute::quantization::storage_engine::StorageQuantizationEngine;
-use crate::compute::quantization::unified::{UnifiedQuantizationEngine, UnifiedQuantizationLevel};
-use crate::compute::quantization::types::{QuantizationLevelType, BinaryQuantization, ScalarQuantization, ProductQuantization};
+use crate::compute::quantization::unified::UnifiedQuantizationLevel;
+use crate::compute::quantization::types::QuantizationLevelType;
 use crate::compute::distance_computation::DistanceMetric;
 use crate::proto::proximadb::QuantizationConfig;
-use crate::core::hardware_capabilities::HardwareCapabilities;
+use crate::core::hardware_capabilities::{HardwareCapabilities, get_hardware_capabilities};
 use std::num::NonZeroUsize;
 use std::hash::{Hash, Hasher};
 use std::collections::hash_map::DefaultHasher;
@@ -79,7 +78,7 @@ impl QueryPreprocessor {
         Self {
             cache: Arc::new(RwLock::new(LruCache::new(cache_size))),
             quantization_engine: Arc::new(StorageQuantizationEngine::new()),
-            hardware: Arc::new(HardwareCapabilities::detect()),
+            hardware: get_hardware_capabilities(),
             stats: Arc::new(RwLock::new(CacheStats::default())),
         }
     }
@@ -310,8 +309,10 @@ impl QueryPreprocessor {
                 .quantize_batch_with_level(&[vector.to_vec()], UnifiedQuantizationLevel::Binary)
                 .await
             {
-                if let Some(data) = quantized.into_iter().next() {
-                    binary = Some(Arc::new(data));
+                if let Some(storage_data) = quantized.into_iter().next() {
+                    if let Some(primary) = storage_data.primary {
+                        binary = Some(Arc::new(primary.data));
+                    }
                 }
             }
         }
@@ -321,8 +322,10 @@ impl QueryPreprocessor {
                 .quantize_batch_with_level(&[vector.to_vec()], UnifiedQuantizationLevel::Int8)
                 .await
             {
-                if let Some(data) = quantized.into_iter().next() {
-                    int8 = Some(Arc::new(data.into_iter().map(|b| b as i8).collect()));
+                if let Some(storage_data) = quantized.into_iter().next() {
+                    if let Some(primary) = storage_data.primary {
+                        int8 = Some(Arc::new(primary.data.into_iter().map(|b| b as i8).collect()));
+                    }
                 }
             }
         }
@@ -332,8 +335,10 @@ impl QueryPreprocessor {
                 .quantize_batch_with_level(&[vector.to_vec()], UnifiedQuantizationLevel::Pq4)
                 .await
             {
-                if let Some(data) = quantized.into_iter().next() {
-                    pq4 = Some(Arc::new(data));
+                if let Some(storage_data) = quantized.into_iter().next() {
+                    if let Some(primary) = storage_data.primary {
+                        pq4 = Some(Arc::new(primary.data));
+                    }
                 }
             }
         }
@@ -343,8 +348,10 @@ impl QueryPreprocessor {
                 .quantize_batch_with_level(&[vector.to_vec()], UnifiedQuantizationLevel::Pq8)
                 .await
             {
-                if let Some(data) = quantized.into_iter().next() {
-                    pq8 = Some(Arc::new(data));
+                if let Some(storage_data) = quantized.into_iter().next() {
+                    if let Some(primary) = storage_data.primary {
+                        pq8 = Some(Arc::new(primary.data));
+                    }
                 }
             }
         }

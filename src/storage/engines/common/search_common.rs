@@ -9,7 +9,7 @@ use std::sync::Arc;
 use std::collections::HashMap;
 use futures::stream::{self, StreamExt};
 
-use crate::core::search::{SearchResult, FilterExpression};
+use crate::core::search::FilterExpression;
 use crate::core::VectorRecord;
 use crate::compute::distance_computation::engine::{UnifiedDistanceCompute, SimilarityResult};
 use crate::compute::distance_computation::DistanceMetric;
@@ -131,7 +131,7 @@ pub trait FileSearcher<F: SearchableFile, B: SearchableBlock>: Send + Sync {
         file: &F,
         query_vector: &[f32],
         config: &SearchConfig,
-    ) -> Result<Vec<SearchResult>>;
+    ) -> Result<Vec<crate::core::search::InternalSearchResult>>;
     
     /// Get searchable blocks from a file
     async fn get_blocks(&self, file: &F) -> Result<Vec<B>>;
@@ -142,7 +142,7 @@ pub trait FileSearcher<F: SearchableFile, B: SearchableBlock>: Send + Sync {
         block: &B,
         query_vector: &[f32],
         config: &SearchConfig,
-    ) -> Result<Vec<SearchResult>>;
+    ) -> Result<Vec<crate::core::search::InternalSearchResult>>;
 }
 
 /// Universal search pipeline used by all engines
@@ -173,7 +173,7 @@ impl UniversalSearchPipeline {
         query_vector: &[f32],
         config: SearchConfig,
         file_searcher: Arc<S>,
-    ) -> Result<Vec<SearchResult>> 
+    ) -> Result<Vec<crate::core::search::InternalSearchResult>> 
     where
         F: SearchableFile + Send + 'static,
         B: SearchableBlock + Send + 'static,
@@ -234,7 +234,7 @@ impl UniversalSearchPipeline {
         query_vector: &[f32],
         config: &SearchConfig,
         file_searcher: Arc<S>,
-    ) -> Result<Vec<Vec<SearchResult>>>
+    ) -> Result<Vec<Vec<crate::core::search::InternalSearchResult>>>
     where
         F: SearchableFile + Send + 'static,
         B: SearchableBlock + Send + 'static,
@@ -256,7 +256,7 @@ impl UniversalSearchPipeline {
         });
         
         // Execute with controlled parallelism
-        let results: Vec<Result<Vec<SearchResult>>> = stream::iter(search_futures)
+        let results: Vec<Result<Vec<crate::core::search::InternalSearchResult>>> = stream::iter(search_futures)
             .buffer_unordered(max_parallel)
             .collect()
             .await;
@@ -268,10 +268,10 @@ impl UniversalSearchPipeline {
     /// Rerank top results with full precision
     async fn rerank_results(
         &self,
-        candidates: Vec<SearchResult>,
+        candidates: Vec<crate::core::search::InternalSearchResult>,
         query_vector: &[f32],
         config: &SearchConfig,
-    ) -> Result<Vec<SearchResult>> {
+    ) -> Result<Vec<crate::core::search::InternalSearchResult>> {
         if !config.include_vectors {
             // Can't rerank without vectors
             return Ok(candidates);
@@ -309,7 +309,7 @@ impl UniversalSearchPipeline {
         records: Vec<VectorRecord>,
         query_vector: &[f32],
         config: &ProgressiveConfig,
-    ) -> Result<Vec<SearchResult>> {
+    ) -> Result<Vec<crate::core::search::InternalSearchResult>> {
         let mut candidates = records;
         
         // Stage 1: Binary filtering
@@ -402,7 +402,7 @@ impl UniversalSearchPipeline {
         records: Vec<VectorRecord>,
         query_vector: &[f32],
         top_k: usize,
-    ) -> Result<Vec<SearchResult>> {
+    ) -> Result<Vec<crate::core::search::InternalSearchResult>> {
         let mut results = Vec::with_capacity(records.len());
         
         for record in records {
@@ -420,7 +420,7 @@ impl UniversalSearchPipeline {
                 .map(|item| (item.key, serde_json::Value::String(item.value.unwrap_or_default())))
                 .collect::<HashMap<String, serde_json::Value>>();
 
-            results.push(SearchResult {
+            results.push(crate::core::search::InternalSearchResult {
                 id: record.id.unwrap_or_default(),
                 score: similarity_result.normalized_score,
                 vector: Some(record.vector),
@@ -496,7 +496,7 @@ impl ResultManager {
     }
     
     /// Merge multiple result sets
-    pub fn merge_results(&self, results: Vec<Vec<SearchResult>>) -> Result<Vec<SearchResult>> {
+    pub fn merge_results(&self, results: Vec<Vec<crate::core::search::InternalSearchResult>>) -> Result<Vec<crate::core::search::InternalSearchResult>> {
         let mut merged = Vec::new();
         for result_set in results {
             merged.extend(result_set);
@@ -507,9 +507,9 @@ impl ResultManager {
     /// Rank results by distance
     pub fn rank_by_distance(
         &self,
-        mut results: Vec<SearchResult>,
+        mut results: Vec<crate::core::search::InternalSearchResult>,
         _distance_metric: &DistanceMetric,
-    ) -> Result<Vec<SearchResult>> {
+    ) -> Result<Vec<crate::core::search::InternalSearchResult>> {
         results.sort_by(|a, b| {
             a.similarity.partial_cmp(&b.similarity)
         });
@@ -517,7 +517,7 @@ impl ResultManager {
     }
     
     /// Select top-k results
-    pub fn select_top_k(&self, mut results: Vec<SearchResult>, k: usize) -> Result<Vec<SearchResult>> {
+    pub fn select_top_k(&self, mut results: Vec<crate::core::search::InternalSearchResult>, k: usize) -> Result<Vec<crate::core::search::InternalSearchResult>> {
         results.truncate(k.min(results.len()));
         Ok(results)
     }
@@ -525,9 +525,9 @@ impl ResultManager {
     /// Apply field configuration to results
     pub fn apply_field_config(
         &self,
-        mut results: Vec<SearchResult>,
+        mut results: Vec<crate::core::search::InternalSearchResult>,
         config: &SearchConfig,
-    ) -> Result<Vec<SearchResult>> {
+    ) -> Result<Vec<crate::core::search::InternalSearchResult>> {
         for result in &mut results {
             if !config.include_vectors {
                 result.vector = None;

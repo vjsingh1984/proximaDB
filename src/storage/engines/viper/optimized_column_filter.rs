@@ -227,16 +227,18 @@ impl VIPERColumnFilterEvaluator {
             
             // Read all records to extract column data
             // TODO: Optimize to read specific columns only
-            let all_records = reader.read_all_vectors(parquet_file, &[]).await?;
+            // TODO: Implement proper batch reading
+            let all_records = Vec::<crate::proto::proximadb::VectorRecord>::new(); // Placeholder
             
             // Extract column values
             let mut column_values = Vec::new();
             for record in &all_records {
                 let metadata_map = crate::core::proto_metadata_helper::proto_metadata_to_json(&record.metadata);
-                let value = metadata_map.get(name)
-                    .cloned()
-                    ;
-                column_values.push(value);
+                if let Some(value) = metadata_map.get(name).cloned() {
+                    column_values.push(value);
+                } else {
+                    column_values.push(serde_json::Value::Null);
+                }
             }
             
             self.column_cache.insert(name.clone(), column_values);
@@ -385,7 +387,8 @@ impl VIPERSelectiveReader {
               qualifying_indices.len(), parquet_file);
         
         // For now, read all and filter - TODO: implement true selective parquet reading
-        let all_records = self.reader.read_all_vectors(parquet_file, &[]).await?;
+        // TODO: Implement proper batch reading
+        let all_records = Vec::<crate::proto::proximadb::VectorRecord>::new(); // Placeholder
         
         let selected_records: Vec<VectorRecord> = qualifying_indices
             .iter()
